@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Последнее обновление: зафиксированы термины **Bounding Box** и **Smart Patch Layer**, а также правило `N raster sub-layers → 1 active/visible raster sub-layer` внутри одного Smart Patch Layer.
+> Последнее обновление: документ перенесён в `docs/`, зафиксированы термины **Bounding Box** и **Smart Patch Layer**, а также правило `N raster sub-layers → 1 active/visible raster sub-layer` внутри одного Smart Patch Layer.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -1219,6 +1219,23 @@ Regenerate duplicate
 Сравнить варианты через visibility/opacity/layer order
 ```
 
+---
+
+## 15. Предварительная модель данных для canvas
+
+### 15.1. Назначение
+
+Эта схема описывает минимальные SQLite-таблицы, нужные для хранения canvas-проектов, слоёв и raster/mask assets в MVP.
+
+### 15.2. Таблицы
+
+#### canvas_projects
+
+```text
+id
+name
+width
+height
 created_at
 updated_at
 metadata_json
@@ -1719,5 +1736,3 @@ MVP можно считать готовым, если пользователь 
 ```
 
 MVP должен доказать именно эту ценность.
-
-P.S. дополнить этот документ best practices по Electron, уточнить про CQRS

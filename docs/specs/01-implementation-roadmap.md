@@ -1,0 +1,111 @@
+# Implementation Roadmap
+
+## Документационный трек перед активной разработкой
+
+Перед стартом реализации нужно закрыть два документационных шага.
+
+### Шаг 1. Закрыть open questions
+
+Ответить на вопросы из [open-questions.md](../open-questions.md), которые влияют на архитектуру первого среза:
+
+- где хранить CivitAI API token;
+- какой inference backend берём первым;
+- какие base model families поддерживает MVP;
+- входит ли LoRA в первый generation slice;
+- нужна ли очередь генераций в MVP;
+- где и как создаются thumbnails;
+- нужен ли soft delete.
+
+Результат: открытые вопросы превращаются в зафиксированные решения или явно помечаются как `Later`.
+
+### Шаг 2. Составить подробный feature catalog
+
+Создать каталог фич в `docs/features/`, чтобы явно отделить MVP от later-scope и зафиксировать отношение к InvokeAI как к reference product.
+
+Предварительная структура:
+
+```text
+docs/features/
+├─ README.md
+├─ generation.md
+├─ model-library.md
+├─ presets.md
+├─ history.md
+├─ canvas-smart-patch.md
+├─ settings.md
+└─ import-export.md
+```
+
+Для каждой фичи фиксировать:
+
+- `Feature` — что именно делает пользователь.
+- `InvokeAI reference` — как похожий сценарий устроен в InvokeAI.
+- `ImageGen Studio decision` — берём как есть, берём с доработками, делаем с нуля, откладываем или отказываемся.
+- `Reason` — почему выбрано такое решение.
+- `Scope` — `MVP`, `Post-MVP`, `Later`, `Rejected`.
+- `Dependencies` — модели, worker, БД, UI, canvas, presets и т.д.
+- `Acceptance criteria` — как понять, что фича готова.
+
+Важно: формулировать это не как механическое копирование InvokeAI, а как reference-анализ. Если поведение InvokeAI важно для решения, его нужно проверять по актуальным docs/source/UI, а не по памяти.
+
+Результат: feature catalog становится инструментом отсечения scope, а не бесконечным списком хотелок.
+
+## Фаза 0. Каркас приложения
+
+- Vite + Vue 3 + TypeScript.
+- Electron main/preload/renderer.
+- Naive UI и базовая тёмная тема.
+- Typed `window.api` без прямого доступа renderer к Node.js.
+- SQLite init, migrations, app data directory.
+
+Результат: приложение запускается как desktop shell, renderer общается с main process через безопасный typed API.
+
+## Фаза 1. Model Library
+
+- Настройка CivitAI API token.
+- Импорт модели по CivitAI URL.
+- Получение metadata и preview перед скачиванием.
+- Download manager с временным файлом.
+- Проверка size/hash, если данные доступны.
+- Запись Model / ModelVersion / LocalModelFile в SQLite.
+
+Результат: модель можно установить локально и увидеть в библиотеке.
+
+## Фаза 2. Generation Slice
+
+- Долгоживущий Python worker.
+- Очередь generation jobs в main process.
+- Минимальная форма txt2img.
+- Progress/done/error events.
+- Сохранение изображения UUID-именем.
+- Сохранение immutable generation snapshot.
+- История генераций с fallback для отсутствующего файла.
+
+Результат: пользователь выбирает модель, генерирует изображение и видит его в истории.
+
+## Фаза 3. Presets
+
+- Создание пресета вручную.
+- Создание пресета из generation snapshot.
+- Редактирование секций пресета.
+- Full apply.
+- Partial apply.
+- Проверка missing resources только для выбранных секций.
+- Warning при base model family mismatch.
+
+Результат: snapshot превращается в переиспользуемую настройку, а настройки можно применять точечно.
+
+## Фаза 4. Smart Patch Layer
+
+- Canvas project.
+- Layer stack.
+- Smart Patch Layer с mask, bounding box, internal resolution.
+- Regenerate создаёт новый raster sub-layer.
+- Active raster sub-layer единственный видимый внутри Smart Patch Layer.
+- Outdated status при изменении mask/bbox/settings.
+
+Результат: появляется локальное генеративное редактирование без standalone-масок и неочевидных связей.
+
+## Первый вертикальный срез
+
+Минимальный срез для начала разработки: Фаза 0 + импорт одной модели + одна txt2img генерация + запись snapshot в историю. Всё остальное можно наращивать поверх этого скелета.
