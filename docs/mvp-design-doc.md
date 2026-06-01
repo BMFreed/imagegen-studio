@@ -12,6 +12,25 @@
 
 Цель проекта — создать локальное desktop-приложение для генерации изображений с помощью нейросетей, похожее по классу задач на InvokeAI / Forge / ComfyUI, но с другим продуктовым акцентом.
 
+InvokeAI рассматривается как основной reference product для рабочих паттернов генерации, canvas, истории, presets, model management, очередей и локального inference pipeline.
+
+Глобальный инженерный принцип проекта: **NIH недопустим**. ImageGen Studio не должен изобретать заново уже хорошо работающие механизмы без причины. Если подход InvokeAI доказал практическую ценность, мы сначала рассматриваем его как базовый вариант и адаптируем под нашу доменную модель, desktop-архитектуру, typed storage и UX-цели.
+
+Расхождения с InvokeAI ожидаются прежде всего в:
+
+- технологическом стеке;
+- бизнес-логике ImageGen Studio;
+- модели данных и границах desktop security;
+- UX, навигации и пользовательских workflow.
+
+В сложных низкоуровневых механизмах — работа с моделями, compatibility metadata, очереди, worker protocol, canvas lifecycle, caching, compositing, generation pipeline — проект опирается на InvokeAI настолько, насколько это возможно в рамках выбранного стека. Если механизм InvokeAI не подходит, сначала ищем другое зрелое готовое решение или reference implementation, и только после этого проектируем своё.
+
+Это не означает механическое копирование. Решения InvokeAI используются как проверенная отправная точка:
+
+- берём подход как есть, если он хорошо ложится на ImageGen Studio;
+- адаптируем, если наша модель данных или UX требуют другой формы;
+- отказываемся или проектируем своё только если подход конфликтует с целями проекта, выбранным стеком, UX, бизнес-логикой или создаёт неочевидное состояние.
+
 Основная идея приложения: не просто дать пользователю кнопку `Generate`, а помочь ему управлять творческим процессом:
 
 - скачивать и обновлять модели;
@@ -507,6 +526,8 @@ type ResourceIdentity = {
 Поэтому snapshot должен хранить не только ID, но и копии human-readable данных:
 
 ```ts
+type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample'
+
 type SnapshotModelRef = {
   localResourceId?: string
   civitaiModelId?: number
@@ -515,10 +536,13 @@ type SnapshotModelRef = {
   versionName?: string
   fileHash?: string
   baseModelFamily?: string
+  predictionType?: ModelPredictionType
 }
 ```
 
 То же правило применяется к LoRA.
+
+`predictionType` — compatibility metadata модели. Для `v_prediction`-моделей scheduler должен работать в `v_prediction` mode; запуск такой модели как обычной `epsilon`-модели приводит к неверному denoising.
 
 ---
 
@@ -923,6 +947,26 @@ Selected Smart Patch Layer / Bounding Box
 - `Lock aspect ratio` — опциональный режим;
 - маска и bounding box являются разными сущностями и не должны путаться в UI;
 - термин в интерфейсе оставляем именно **Bounding Box**, а не `Generation Box`, чтобы явно отделять его от `Mask`.
+
+### 14.2.1. Canvas rendering pipeline
+
+В MVP canvas строится по Invoke-like пайплайну:
+
+```text
+Konva scene graph
+→ application canvas manager
+→ entity adapters / layer lifecycle
+→ compositor/cache
+→ rasterized assets for worker/export
+```
+
+Konva используется как интерактивный 2D scene graph поверх browser Canvas 2D: stage, layers, groups, image/line/rect objects, pointer events, transforms и hit testing.
+
+Логика продукта не должна зависеть напрямую от Konva-нод. Состояние проекта хранится в собственных структурах ImageGen Studio: canvas project, layer stack, Smart Patch Layer, mask, bounding box, raster sub-layers, assets и generation snapshots.
+
+Композиция, кэширование, rasterization для worker'а/export и lifecycle canvas-сущностей являются ответственностью приложения, а не Konva. Это позволяет позднее заменить или дополнить renderer без изменения доменной модели canvas.
+
+В MVP не закладываем WebGPU как основной renderer. WebGL/WebGPU можно рассмотреть позже как отдельный backend для узких тяжёлых задач: tiled preview, фильтры, большие композиции, GPU mask operations.
 
 ### 14.3. Почему не standalone-маски
 
@@ -1555,7 +1599,22 @@ UI показывает fallback "Изображение не найдено"
 
 Статус: закрыто для MVP.
 
-### 18.7. Риск: изображение удалено вне приложения
+### 18.7. Риск: неверный prediction type модели
+
+Некоторые checkpoint'ы обучены как `v_prediction`, а обычные Stable Diffusion checkpoint'ы чаще используют `epsilon`.
+
+Если `v_prediction`-модель запустить как `epsilon`, генерация может дать неправильный контраст, мыло, пересветы или плохую сходимость.
+
+Решение:
+
+- хранить `predictionType` в metadata основной модели;
+- передавать `predictionType` в Python worker вместе с generation job;
+- сохранять фактический `predictionType` в immutable generation snapshot;
+- если prediction type неизвестен, показывать пользователю compatibility warning и не маскировать это как художественную настройку.
+
+Статус: закрыто для MVP.
+
+### 18.8. Риск: изображение удалено вне приложения
 
 Решение:
 
@@ -1563,7 +1622,7 @@ UI показывает fallback "Изображение не найдено"
 
 Статус: закрыто для MVP.
 
-### 18.8. Риск: битые/неполные скачивания
+### 18.9. Риск: битые/неполные скачивания
 
 Решение:
 
@@ -1573,7 +1632,7 @@ UI показывает fallback "Изображение не найдено"
 
 Статус: закрыто для MVP.
 
-### 18.9. Риск: ошибки CivitAI/API token
+### 18.10. Риск: ошибки CivitAI/API token
 
 Решение:
 
@@ -1582,7 +1641,7 @@ UI показывает fallback "Изображение не найдено"
 
 Статус: достаточно закрыто для MVP.
 
-### 18.10. Риск: рассинхрон БД и sidecar/metadata
+### 18.11. Риск: рассинхрон БД и sidecar/metadata
 
 Решение:
 
@@ -1593,7 +1652,7 @@ UI показывает fallback "Изображение не найдено"
 Статус: закрыто для MVP.
 
 
-### 18.11. Риск: бесхозные маски и неочевидные связи mask/result
+### 18.12. Риск: бесхозные маски и неочевидные связи mask/result
 
 **Решение:** в MVP standalone-маски не используются как top-level слои.
 
@@ -1603,7 +1662,7 @@ UI показывает fallback "Изображение не найдено"
 1 Smart Patch Layer = 1 mask = 1 bounding box = N raster sub-layers = 1 active/visible raster sub-layer
 ```
 
-### 18.12. Риск: переусложнение smart patch layer'ов внутренними ревизиями
+### 18.13. Риск: переусложнение smart patch layer'ов внутренними ревизиями
 
 **Решение:** в MVP Smart Patch Layer может хранить несколько raster sub-layers, но не хранит полноценные внутренние ревизии всего состояния слоя и отдельный source mask snapshot.
 

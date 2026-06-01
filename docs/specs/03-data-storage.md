@@ -178,6 +178,8 @@ UI может использовать `workflow_type`, чтобы показы�
 Предварительная TypeScript-форма:
 
 ```ts
+type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample'
+
 type PresetPayload = {
   schemaVersion: 1
   prompt?: string
@@ -210,6 +212,7 @@ type PresetResourceRef = {
   name?: string
   versionName?: string
   baseModelFamily?: string
+  predictionType?: ModelPredictionType
 }
 ```
 
@@ -217,6 +220,8 @@ type PresetResourceRef = {
 
 - `payload_json` валидируется runtime-схемой при чтении и записи.
 - Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`.
+- `predictionType` хранит scheduler prediction mode модели. Это compatibility metadata, а не user-facing style setting.
+- Для `v_prediction`-моделей generation worker должен получить `v_prediction`; запуск такой модели как `epsilon` считается несовместимой конфигурацией.
 - `has_loras`, `primary_model_resource_id` и похожие derived-поля в MVP не добавляются.
 - `engineSpecific` в MVP не добавляется, чтобы не создавать неструктурированный escape hatch заранее.
 - LoRA stack хранится внутри payload как часть цельной настройки пресета, а не в отдельной `preset_loras` таблице.
@@ -256,6 +261,7 @@ ImageGen Studio/
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
 - Generation snapshot создаётся после успешной генерации и больше не изменяется.
+- Generation snapshot должен сохранять фактический `predictionType` основной модели, чтобы результат можно было воспроизвести с правильным scheduler mode.
 - Удаление файла вне приложения не удаляет историю: UI показывает fallback.
 - При применении preset/snapshot проверяются только выбранные секции.
 - Другая версия той же CivitAI-модели не считается валидной заменой.

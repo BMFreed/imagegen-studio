@@ -24,6 +24,7 @@ type GenerationJob = {
     localPath: string
     resourceId: string
     baseModelFamily?: string
+    predictionType?: 'epsilon' | 'v_prediction' | 'sample'
   }
   prompt: string
   negativePrompt?: string
@@ -63,5 +64,6 @@ type WorkerMessage =
 - `jobId` создаёт main process.
 - Worker не выбирает имена файлов финального output.
 - Worker может сообщить фактический seed, если seed был сгенерирован автоматически.
+- `predictionType` — compatibility-параметр модели, а не художественная настройка. Worker должен использовать его при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
 - В MVP достаточно одного активного generation job, если это ускоряет реализацию.

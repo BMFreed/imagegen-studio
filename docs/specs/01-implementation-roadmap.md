@@ -40,13 +40,13 @@ docs/features/
 
 - `Feature` — что именно делает пользователь.
 - `InvokeAI reference` — как похожий сценарий устроен в InvokeAI.
-- `ImageGen Studio decision` — берём как есть, берём с доработками, делаем с нуля, откладываем или отказываемся.
+- `ImageGen Studio decision` — берём как есть, берём с доработками, берём другой mature reference, откладываем или отказываемся. Своя реализация с нуля допустима только после явного обоснования, почему готовые механизмы не подходят.
 - `Reason` — почему выбрано такое решение.
 - `Scope` — `MVP`, `Post-MVP`, `Later`, `Rejected`.
 - `Dependencies` — модели, worker, БД, UI, canvas, presets и т.д.
 - `Acceptance criteria` — как понять, что фича готова.
 
-Важно: формулировать это не как механическое копирование InvokeAI, а как reference-анализ. Если поведение InvokeAI важно для решения, его нужно проверять по актуальным docs/source/UI, а не по памяти.
+Формулировать это как reference-анализ. Базовая стратегия проекта — брать из InvokeAI всё, что уже хорошо работает, и адаптировать под доменную модель ImageGen Studio, вместо того чтобы изобретать велосипед. NIH недопустим: для сложных механизмов вроде моделей, очередей, worker protocol, canvas lifecycle, caching и generation pipeline сначала проверяем InvokeAI, затем другие зрелые решения, и только потом проектируем своё. Если поведение InvokeAI важно для решения, его нужно проверять по актуальным docs/source/UI, а не по памяти.
 
 Результат: feature catalog становится инструментом отсечения scope, а не бесконечным списком хотелок.
 
@@ -67,6 +67,7 @@ docs/features/
 - Получение metadata и preview перед скачиванием.
 - Download manager с временным файлом.
 - Проверка size/hash, если данные доступны.
+- Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
 
 Результат: модель можно установить локально и увидеть в библиотеке.
@@ -99,6 +100,7 @@ docs/features/
 
 - Canvas project.
 - Layer stack.
+- Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
 - Regenerate создаёт новый raster sub-layer.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
