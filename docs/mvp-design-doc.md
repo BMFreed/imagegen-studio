@@ -1411,6 +1411,21 @@ generate
 keep worker alive
 ```
 
+### 16.5. Python tooling
+
+Python worker типизируется и проверяется с самого начала.
+
+Решение MVP:
+
+- BasedPyright — основной type checker и language server;
+- Ruff — formatter и linter;
+- `ty` можно запускать экспериментально, но не делать обязательным CI gate;
+- mypy не является baseline-инструментом MVP.
+
+Strict typing применяется к собственному worker/domain-коду: worker protocol DTO, parsing/validation generation jobs, model metadata, progress/error/result messages и application-level inference adapters.
+
+Diffusers/PyTorch остаются за прагматичным adapter-слоем. Внутри adapter'а допустимы локальные `Any`, `cast(...)` или suppressions, если они не протекают в остальной worker-код. Проект не пишет stub-файлы для Diffusers/PyTorch заранее и не переписывает inference-механику ради чистоты типов.
+
 ---
 
 ## 17. Основные пользовательские сценарии

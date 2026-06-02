@@ -11,6 +11,7 @@
 - [specs/03-data-storage.md](./specs/03-data-storage.md) — SQLite, файлы, snapshots, ресурсы и правила целостности.
 - [specs/04-ui-ux-navigation.md](./specs/04-ui-ux-navigation.md) — основные экраны, навигация и UX-поведение MVP.
 - [specs/05-worker-protocol.md](./specs/05-worker-protocol.md) — контракт Python worker'а и формат job/progress/error.
+- [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — типизация, linting и formatting для Python worker'а.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
 
 ## Правило обновления

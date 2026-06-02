@@ -75,6 +75,7 @@ docs/features/
 ## Фаза 2. Generation Slice
 
 - Долгоживущий Python worker.
+- Python worker tooling: BasedPyright для типов, Ruff для formatting/linting.
 - Очередь generation jobs в main process.
 - Минимальная форма txt2img.
 - Progress/done/error events.
