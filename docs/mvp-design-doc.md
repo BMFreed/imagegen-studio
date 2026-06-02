@@ -544,6 +544,22 @@ type SnapshotModelRef = {
 
 `predictionType` — compatibility metadata модели. Для `v_prediction`-моделей scheduler должен работать в `v_prediction` mode; запуск такой модели как обычной `epsilon`-модели приводит к неверному denoising.
 
+### 9.4. Загрузка SDXL/Illustrious-like checkpoint'ов
+
+Для SDXL/Illustrious-like `.safetensors` checkpoint'ов MVP следует InvokeAI-пути.
+
+Правило:
+
+```text
+.safetensors = исходный пользовательский артефакт
+Diffusers single-file loading = runtime path
+RAM/VRAM model cache = основной cache MVP
+```
+
+Worker не должен скрыто заменять checkpoint на diffusers-директорию и не должен выполнять destructive-конвертацию исходного файла. Обычный запуск модели загружает `.safetensors` через Diffusers single-file mechanism, аналогично InvokeAI `from_single_file`, после чего уже загруженные pipeline/components могут кэшироваться в памяти.
+
+Постоянная конвертация в diffusers-формат допускается только как явное пользовательское действие или как отдельная будущая оптимизация. Если позже понадобится ускорить cold load, можно добавить internal non-destructive disk cache по hash файла, но это не является базовым поведением MVP.
+
 ---
 
 ## 10. Generation Snapshot

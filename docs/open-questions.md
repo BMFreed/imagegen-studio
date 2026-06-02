@@ -36,3 +36,4 @@
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в generation snapshot.
 - Canvas renderer: MVP берёт Invoke-like пайплайн через Konva scene graph поверх Canvas 2D, но compositor/cache/layer lifecycle остаются логикой ImageGen Studio; WebGL/WebGPU откладываются как возможные backend'ы для тяжёлых задач.
 - Global engineering policy: InvokeAI-first reference, no NIH. Готовые механизмы InvokeAI заимствуются настолько, насколько возможно в рамках стека и бизнес-логики ImageGen Studio; если InvokeAI не подходит, сначала ищем другое зрелое готовое решение.
+- SDXL/Illustrious-like checkpoint loading: `.safetensors` остаётся исходным пользовательским файлом; worker использует Invoke-like Diffusers `from_single_file` path и RAM/VRAM model cache. Постоянная diffusers-конвертация допускается только как явное действие или отдельная будущая оптимизация, но не как скрытый шаг MVP.

@@ -65,5 +65,6 @@ type WorkerMessage =
 - Worker не выбирает имена файлов финального output.
 - Worker может сообщить фактический seed, если seed был сгенерирован автоматически.
 - `predictionType` — compatibility-параметр модели, а не художественная настройка. Worker должен использовать его при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`.
+- Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
 - В MVP достаточно одного активного generation job, если это ускоряет реализацию.
