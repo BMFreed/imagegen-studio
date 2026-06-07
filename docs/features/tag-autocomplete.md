@@ -34,7 +34,7 @@ MVP source policy:
 - Translation search is not supported in MVP.
 - Chants/styles are not supported.
 - Embeddings are handled by a separate resource-selection feature, not prompt text autocomplete.
-- Wildcards are handled by a separate prompt-variation feature, not by the Danbooru tag endpoint.
+- Wildcards are not needed for the current product direction and are not supported.
 
 Manual tag database update is supported. Automatic scheduled update can be added later.
 
@@ -53,6 +53,11 @@ MVP:
 Post-MVP:
 
 - scheduled auto-update;
+- multiple tag sources;
+- e621 source;
+- translations;
+- custom tag packs;
+- richer visual tag explorer.
 
 Rejected for this feature:
 
@@ -61,9 +66,6 @@ Rejected for this feature:
 - embedding token autocomplete;
 - wildcard expansion;
 - chants/styles.
-- e621 source;
-- translations;
-- custom tag packs;
 
 ## Tag Index Format
 

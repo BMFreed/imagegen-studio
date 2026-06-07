@@ -33,6 +33,8 @@ InvokeAI рассматривается как основной reference produc
 
 Основная идея приложения: не просто дать пользователю кнопку `Generate`, а помочь ему управлять творческим процессом:
 
+- организовывать работы через `Workspaces`;
+- хранить canvas-проекты как переносимые `.igs` project files;
 - скачивать и обновлять модели;
 - хранить версии моделей и LoRA;
 - сохранять полные snapshot'ы генераций;
@@ -568,6 +570,8 @@ Worker не должен скрыто заменять checkpoint на diffusers
 
 Generation snapshot — это полный неизменяемый слепок настроек, использованных при создании конкретного изображения.
 
+В контексте canvas-проекта snapshot является project-local записью внутри `.igs`: он фиксирует, каким job'ом был создан конкретный raster layer или raster sub-layer, и ссылается на результат внутри того же project package.
+
 Snapshot нужен для:
 
 - воспроизводимости;
@@ -603,7 +607,10 @@ Preset:
 
 ### 10.3. Где хранить snapshot
 
-В рамках MVP snapshot хранится только в SQLite.
+В рамках MVP есть два контекста хранения snapshot'ов:
+
+- global generation history index хранится в SQLite;
+- project-local generation snapshots, относящиеся к canvas-проекту, хранятся внутри `.igs`.
 
 Sidecar JSON не делается.
 
@@ -612,7 +619,8 @@ Embedded metadata в изображении не делается.
 Правило MVP:
 
 ```text
-SQLite = единственный источник истины для истории генераций и snapshot'ов.
+SQLite = источник истины для глобального индекса истории генераций.
+.igs = источник истины для snapshot'ов внутри конкретного canvas-проекта.
 ```
 
 ### 10.4. Иммутабельность snapshot'а
@@ -700,7 +708,7 @@ f0d7c7a0-2b92-4f2f-9f91-5e8f9f7a1c6b.png
 - UUID изображения;
 - путь к файлу;
 - дата создания;
-- snapshot генерации;
+- snapshot генерации для global history, либо ссылка на project-local snapshot внутри `.igs`;
 - preview/thumbnail path, если будет реализовано;
 - статус файла.
 
@@ -1285,76 +1293,89 @@ Regenerate duplicate
 
 ### 15.1. Назначение
 
-Эта схема описывает минимальные SQLite-таблицы, нужные для хранения canvas-проектов, слоёв и raster/mask assets в MVP.
+Canvas-проект в MVP хранится как переносимый `.igs` project file. SQLite не является источником истины для canvas-проекта, слоёв и raster/mask assets.
 
-### 15.2. Таблицы
+SQLite может хранить только восстанавливаемый project index:
 
-#### canvas_projects
+- путь к `.igs`;
+- workspace id/path;
+- display name;
+- project thumbnail cache key/path;
+- last opened time;
+- derived search fields;
+- статус missing/corrupt.
 
-```text
-id
-name
-width
-height
-created_at
-updated_at
-metadata_json
-```
+Project index можно пересобрать сканированием workspace-папок.
 
-#### canvas_layers
+### 15.2. `.igs` package
 
 ```text
-id
-project_id
-type
-name
-visible
-opacity
-blend_mode
-order_index
-layer_json
-created_at
-updated_at
+project.igs
+├─ mimetype
+├─ manifest.json
+├─ project.json
+├─ preview/
+│  ├─ thumbnail.webp
+│  └─ merged.png
+├─ assets/
+│  ├─ layers/
+│  ├─ masks/
+│  └─ references/
+└─ snapshots/
+   └─ generation-*.json
 ```
 
-Для `Smart Patch Layer` поле `layer_json` хранит:
+`.igs` является ZIP-пакетом без обязательной compression. Обычный save собирает новый archive во временный файл, валидирует его и атомарно заменяет исходный `.igs`.
+
+`preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они являются source of truth для project preview.
+
+`ImageGen Studio/previews/project-thumbnails/` может хранить только derived cache для быстрого отображения `Workspaces`. Этот кэш можно удалить и пересобрать из `.igs`.
+
+`project.json` хранит:
 
 ```text
-mask_asset_id
-raster_sub_layers_json
-active_raster_sub_layer_id
-bounding_box_json
-internal_resolution_json
-status
+canvas metadata
+canvas size
+layer stack
+Smart Patch Layer state
+mask references
+raster asset references
+generation settings
+project-local snapshots
+resource references
 ```
 
-Каждый элемент `raster_sub_layers_json` хранит:
+Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family и `predictionType`.
+
+### 15.3. Autosave
+
+Autosave не пересобирает полный `.igs` archive на каждое изменение. Во время работы приложение пишет dirty-части проекта в shadow project directory внутри app data:
 
 ```text
-id
-name
-raster_asset_id
-generation_snapshot_json
-created_at
+ImageGen Studio/
+└─ autosave/
+   └─ {project-id}/
+      ├─ manifest.json
+      ├─ project.json
+      ├─ assets/
+      ├─ snapshots/
+      └─ autosave-state.json
 ```
 
-#### canvas_assets
+Правила:
 
-```text
-id
-project_id
-asset_type
-file_name
-file_path
-mime_type
-width
-height
-metadata_json
-created_at
-updated_at
-```
+- JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
+- Raster assets, masks и previews пишутся только по dirty-флагам.
+- Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
+- После краша приложение предлагает восстановление из autosave.
+- После успешного обычного save autosave state помечается clean или удаляется.
+- Запись autosave-файлов выполняется через temp file + atomic rename.
 
-`canvas_assets` используется для хранения растровых результатов слоёв и масок.
+### 15.4. Валидация
+
+При открытии `.igs` приложение проверяет package signature, `schemaVersion`, runtime-схемы `manifest.json`/`project.json`, отсутствие опасных archive paths, наличие обязательных assets и допустимые размеры canvas/layers/masks.
+
+Повреждённый или несовместимый `.igs` должен давать понятную ошибку, а не частично открытый проект с неочевидным состоянием.
 
 ---
 
@@ -1678,7 +1699,8 @@ UI показывает fallback "Изображение не найдено"
 
 - sidecar не делается;
 - embedded metadata не делается;
-- snapshot хранится только в SQLite.
+- global history index хранится в SQLite;
+- project-local canvas snapshots хранятся внутри `.igs`.
 
 Статус: закрыто для MVP.
 

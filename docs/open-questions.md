@@ -7,7 +7,7 @@
 - Какие base model families поддерживает MVP: SD 1.5, SDXL, Flux, Illustrious, Pony.
 - Нужна ли поддержка LoRA в первом generation slice или её можно добавить сразу после txt2img checkpoint-only.
 - Нужна ли очередь генераций в MVP или достаточно одного активного job.
-- Какой формат thumbnail'ов и где они создаются: main process или worker.
+- Где создаются thumbnail/previews: main process или worker.
 - Нужен ли soft delete для истории, моделей и пресетов.
 
 ## Можно решить позже
@@ -27,7 +27,7 @@
 - Renderer: Vue 3 + TypeScript.
 - UI kit: Naive UI.
 - Runtime validation: Valibot как предпочтительный вариант.
-- История и snapshots: SQLite как источник истины.
+- Global history index: SQLite. Project-local generation snapshots: `.igs`.
 - Типизированный доступ к SQLite: Kysely + SqliteDialect + better-sqlite3 + kysely-codegen входит в MVP.
 - Product direction: только однопользовательское desktop-приложение; server/multi-user направление не планируется.
 - Presets: плоские, без наследования и композиции в MVP.
@@ -35,6 +35,11 @@
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в generation snapshot.
 - Canvas renderer: MVP берёт Invoke-like пайплайн через Konva scene graph поверх Canvas 2D, но compositor/cache/layer lifecycle остаются логикой ImageGen Studio; WebGL/WebGPU откладываются как возможные backend'ы для тяжёлых задач.
+- Project UX: primary navigation is `Workspaces → Canvas`. Отдельная `Generate` вкладка, `Launchpad`, `Viewer` и постоянный Boards sidebar не входят в целевую модель.
+- Project storage: `.igs` project file является источником истины для canvas-проекта; SQLite хранит только глобальные сущности и восстанавливаемый индекс проектов/workspace'ов.
+- `.igs` format: MVP использует переносимый ZIP-package без обязательной compression; основной save собирается во временный файл, валидируется и атомарно заменяет исходный project file.
+- Project thumbnails: source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем для быстрого UI.
+- `.igs` autosave: частое автосохранение работает через shadow project directory в app data, с debounce для JSON state, dirty-флагами для raster/mask assets и recovery flow после краша.
 - Global engineering policy: InvokeAI-first reference, no NIH. Готовые механизмы InvokeAI заимствуются настолько, насколько возможно в рамках стека и бизнес-логики ImageGen Studio; если InvokeAI не подходит, сначала ищем другое зрелое готовое решение.
 - SDXL/Illustrious-like checkpoint loading: `.safetensors` остаётся исходным пользовательским файлом; worker использует Invoke-like Diffusers `from_single_file` path и RAM/VRAM model cache. Постоянная diffusers-конвертация допускается только как явное действие или отдельная будущая оптимизация, но не как скрытый шаг MVP.
 - Python worker tooling: BasedPyright — основной type checker/LSP, Ruff — formatter/linter, `ty` можно запускать экспериментально, mypy не является baseline. Строго типизируем собственный worker/domain-код, а Diffusers/PyTorch держим за прагматичным adapter-слоем.

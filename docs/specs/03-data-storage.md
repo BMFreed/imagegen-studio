@@ -19,21 +19,125 @@ ImageGen Studio остаётся однопользовательским deskto
 SQLite — источник истины для:
 
 - installed resources;
-- generation history;
-- immutable generation snapshots;
+- глобального индекса generation history/recent projects;
 - presets;
-- canvas projects and layers;
 - references на файлы изображений, масок и моделей.
+
+Project file `.igs` — источник истины для конкретного canvas-проекта:
+
+- canvas document metadata;
+- canvas size and color/profile metadata;
+- layer stack;
+- raster layer assets;
+- masks;
+- generation settings and immutable generation snapshots, относящиеся к этому проекту;
+- references на модели, LoRA, VAE и другие внешние ресурсы.
+
+SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, display name, derived search fields, статус missing/corrupt и похожую служебную информацию.
 
 Файловая система хранит тяжёлые артефакты:
 
 - checkpoint / LoRA / VAE / ControlNet files;
 - generated images;
-- thumbnails, если будут добавлены;
-- canvas raster assets;
-- mask assets.
+- `.igs` project files;
+- workspace directories;
+- derived thumbnail/cache previews;
+- autosave shadow directories;
+- temporary exports/downloads.
 
-Sidecar JSON и embedded metadata не входят в MVP.
+Sidecar JSON рядом с пользовательскими изображениями и embedded metadata не входят в MVP. Project metadata хранится внутри `.igs`.
+
+## Workspaces и `.igs` project files
+
+Workspace — обычная папка на диске. В MVP workspace не может быть вложенным workspace'ом: приложение сканирует только прямые `.igs` файлы в выбранной папке, а вложенные папки и файлы других форматов игнорирует.
+
+Всегда существует дефолтный workspace `Uncategorized`. Пользователь может перемещать `.igs` project files между workspace'ами. Проект не может существовать вне workspace в пользовательской модели, но физически `.igs` остаётся обычным переносимым файлом.
+
+`.igs` — переносимый рабочий формат ImageGen Studio. Базовый формат для MVP:
+
+```text
+project.igs
+├─ mimetype
+├─ manifest.json
+├─ project.json
+├─ preview/
+│  ├─ thumbnail.webp
+│  └─ merged.png
+├─ assets/
+│  ├─ layers/
+│  ├─ masks/
+│  └─ references/
+└─ snapshots/
+   └─ generation-*.json
+```
+
+Формат `.igs` проектируется как ZIP-пакет без обязательной compression. Обычный save может собирать новый archive во временный файл, валидировать его и затем атомарно заменять старый `.igs`.
+
+Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, `predictionType`, display name/version и отсутствующий-resource status после проверки.
+
+`preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они едут вместе с project file и являются источником истины для project preview.
+
+`ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения вкладки `Workspaces`. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
+
+### Generation snapshots
+
+Generation snapshot — immutable запись о конкретной генерации: какие настройки, ресурсы, входные изображения/маски и технические параметры привели к конкретному результату.
+
+Project-local generation snapshots хранятся внутри `.igs` и относятся к конкретному canvas-проекту. Обычно snapshot связан с raster layer или raster sub-layer и содержит:
+
+- prompt / negative prompt;
+- seed;
+- sampler, scheduler, steps, CFG and size;
+- model, LoRA, VAE references and compatibility metadata;
+- фактический `predictionType`;
+- input image, mask, bounding box and internal resolution для img2img/inpaint;
+- reference на результат внутри `.igs`;
+- created_at и worker/runtime metadata, нужные для воспроизводимости.
+
+SQLite может хранить только global history/project index для быстрых списков и поиска: project path, snapshot id, created_at, thumbnail/cache key и derived metadata. Source of truth для project-local snapshot остаётся `.igs`.
+
+### Валидация `.igs`
+
+При открытии `.igs` приложение должно:
+
+- проверить, что файл является корректным project package ImageGen Studio;
+- проверить `schemaVersion`;
+- валидировать `manifest.json` и `project.json` через runtime schema;
+- запретить опасные archive paths вроде `../` и абсолютных путей;
+- проверить наличие обязательных assets, referenced layers, masks и previews;
+- проверить допустимые размеры canvas/layers/masks;
+- показать понятную ошибку, если файл повреждён, не поддерживается или создан более новой версией приложения.
+
+Изменения формата проходят через явные schema migrations. Старый `.igs` нельзя молча пересохранять в новой схеме без успешной миграции и атомарного save.
+
+## Autosave для `.igs`
+
+Autosave не должен часто пересобирать полный `.igs` archive. Базовое решение MVP:
+
+```text
+ImageGen Studio/
+└─ autosave/
+   └─ {project-id}/
+      ├─ manifest.json
+      ├─ project.json
+      ├─ assets/
+      ├─ snapshots/
+      └─ autosave-state.json
+```
+
+Во время работы приложение пишет изменённые части проекта в shadow project directory внутри app data. Это recovery/cache слой, а не пользовательский project file.
+
+Правила autosave:
+
+- JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
+- Raster assets, masks и previews пишутся только по dirty-флагам.
+- Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
+- При запуске приложение проверяет незавершённые autosave directories и предлагает восстановление.
+- После успешного обычного save autosave state для проекта помечается clean или удаляется.
+- Запись autosave-файлов выполняется через temp file + atomic rename.
+- Main `.igs` save выполняется отдельно: собрать archive во временный файл, провалидировать, затем атомарно заменить исходный project file.
+
+Такой подход сохраняет переносимость `.igs`, но не превращает каждое изменение canvas в перепаковку всего project archive.
 
 ## Типизированный доступ к SQLite
 
@@ -249,9 +353,12 @@ ImageGen Studio/
 │  └─ other/
 ├─ outputs/
 │  └─ generations/
-├─ canvas-assets/
-│  ├─ rasters/
-│  └─ masks/
+├─ workspaces/
+│  └─ Uncategorized/
+├─ previews/
+│  └─ project-thumbnails/
+├─ autosave/
+│  └─ {project-id}/
 └─ temp/
    └─ downloads/
 ```
@@ -262,7 +369,10 @@ ImageGen Studio/
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
 - Generation snapshot создаётся после успешной генерации и больше не изменяется.
 - Generation snapshot должен сохранять фактический `predictionType` основной модели, чтобы результат можно было воспроизвести с правильным scheduler mode.
+- Project thumbnail source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем.
 - Удаление файла вне приложения не удаляет историю: UI показывает fallback.
+- Удаление или перемещение `.igs` вне приложения не должно ломать БД: UI показывает missing project и может предложить relink/rescan workspace.
+- `.igs` является источником истины проекта; SQLite project index можно пересобрать сканированием workspace'ов.
 - При применении preset/snapshot проверяются только выбранные секции.
 - Другая версия той же CivitAI-модели не считается валидной заменой.
 
@@ -270,5 +380,5 @@ ImageGen Studio/
 
 - Нужен ли soft delete для моделей, пресетов и истории.
 - Где хранить CivitAI API token: OS keychain или зашифрованная app config.
-- Какой минимальный набор thumbnail'ов нужен для MVP.
+- Нужны ли дополнительные размеры cache thumbnail'ов сверх `.igs` `preview/thumbnail.webp` и `preview/merged.png`.
 - Нужно ли хранить нормализованные поля snapshot'а отдельно от JSON для поиска и фильтров.
