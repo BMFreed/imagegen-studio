@@ -2,55 +2,91 @@
 
 ## Основные зоны приложения
 
-MVP строится вокруг двух основных рабочих зон:
+MVP строится как document-based desktop editor, ближе к Photoshop / Affinity / Krita, а не как Invoke-like набор равноправных разделов.
 
-- Workspaces — просмотр и организация `.igs` project files по workspace-папкам.
-- Canvas — работа с открытым `.igs` project: generation, layer stack, Smart Patch Layer, mask/bounding box controls, model settings, snapshots.
+Основные top-level поверхности:
 
-`Generate` не является отдельной рабочей зоной. Быстрая генерация с нуля начинается с создания нового `.igs` project и открытия его в `Canvas`.
+- `Home` tab — стартовый и организационный экран приложения: Workspaces, recent projects, new/open project, access to Model Manager.
+- `Project` tab — открытый `.igs` document. Таких вкладок может быть несколько одновременно.
+- app-level overlays/dialogs — Model Manager, Settings, Queue/Downloads, command palette.
 
-`Model Library`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не обязаны быть равноправными primary tabs. Их можно оформить как панели, dialogs, command actions или dedicated secondary views, если это лучше поддерживает основной поток `Workspaces → Canvas`.
+`Canvas` не является primary navigation item или отдельной вкладкой приложения. Canvas — это сущность внутри `Project` tab: interactive рабочая поверхность открытого `.igs` проекта.
+
+`Generate` не является отдельной рабочей зоной. Быстрая генерация с нуля начинается с создания нового `.igs` project и открытия его в `Project` tab.
+
+`Model Library`/`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
 
 `Launchpad`, `Viewer` и постоянный Invoke-like Boards sidebar не входят в целевую навигационную модель.
 
-## Workspaces
+## Home
 
-Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании.
+`Home` является обычной вкладкой в document tab strip. Её можно закрыть, но пользователь всегда может открыть её снова через Home button/menu action. Если `Home` уже открыта, Home action фокусирует существующую вкладку.
 
-Вкладка `Workspaces` не имеет левой и правой canvas-панелей. Её задача — дать пользователю спокойный просмотрщик и файловую организацию проектов:
+Home screen не имеет левой и правой project/canvas-панелей. Его задача — дать пользователю спокойный стартовый экран и файловую организацию проектов:
 
 - список/сетку workspace'ов;
 - дефолтный workspace `Uncategorized`;
 - thumbnails и basic metadata проектов;
 - поиск/сортировку;
+- recent projects;
+- `New Project`;
+- `Open Project`;
+- `Manage Models`;
 - создание, переименование и удаление workspace'ов;
 - перемещение `.igs` проектов между workspace'ами;
 - readonly preview проекта с нормальными tools для zoom/pan.
 
-Readonly preview не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions: открыть в Canvas, переместить, переименовать, удалить, показать в файловом менеджере.
+Readonly preview не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions: открыть, открыть в новой вкладке, переместить, переименовать, удалить, показать в файловом менеджере.
 
-## Canvas
+Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании.
 
-Вкладка `Canvas` сфокусирована на одном открытом `.igs` project. В ней находятся:
+## Project Tabs
+
+`Project` tab сфокусирована на одном открытом `.igs` project. В ней находятся:
 
 - interactive Konva-based canvas;
 - layer stack;
 - Smart Patch Layer controls;
 - generation settings;
 - model/LoRA/VAE controls;
+- project resource warnings;
 - project-local generation snapshots/history;
 - save/autosave/recovery status.
 
-Boards/gallery не показываются как постоянная боковая панель Canvas. Управление проектами вынесено в `Workspaces`, чтобы Canvas не конкурировал за внимание с файловой организацией.
+Каждая `Project` tab имеет собственные:
+
+- `.igs` file identity;
+- dirty state;
+- autosave state;
+- undo/redo stack;
+- canvas viewport state;
+- selected layer/tool state.
+
+Страниц `Project` может быть несколько одновременно. Каждая открытая `.igs` живёт в своей вкладке.
+
+Один и тот же `.igs` категорически запрещено открывать в нескольких вкладках. Если пользователь пытается открыть уже открытый project file, приложение фокусирует существующую `Project` tab. Это правило действует для открытия из `Home`, recent projects, file picker, deep link, menu action и любых других entry points.
+
+Boards/gallery не показываются как постоянная боковая панель Project. Управление проектами находится на `Home`, чтобы Project tab не конкурировала за внимание с файловой организацией.
+
+### Opening behavior
+
+Открытие проекта из `Home` работает как браузерная ссылка:
+
+- left click по `.igs` project card открывает проект в текущей вкладке. Если текущая вкладка — `Home`, она заменяется на `Project` tab.
+- middle click / Ctrl+click открывает проект в новой вкладке рядом с `Home`.
+- right click показывает меню `Open`, `Open in New Tab`, `Show in File Manager`, `Move to Workspace`, `Delete`.
+- если проект уже открыт, любое действие открытия фокусирует существующую `Project` tab вместо создания дубликата.
 
 ## Навигация
 
 Для desktop creative tool лучше подходит спокойная рабочая оболочка:
 
-- левая навигация между `Workspaces` и `Canvas`;
-- верхняя строка для статуса worker'а, текущей модели и глобальных действий;
+- верхнее меню/app bar для глобальных действий: File, Edit, Project, Models, Window, Help;
+- document tab strip: `Home`, затем открытые `Project` tabs;
+- Home button/action, который фокусирует или заново открывает `Home`;
+- верхняя строка для статуса worker'а, текущей модели, queue/download status и глобальных действий;
 - центральная рабочая область;
-- правая панель параметров для выбранного объекта в Canvas;
+- правая панель параметров для выбранного объекта внутри Project;
 - project-local history/snapshots там, где она нужна работе с открытым `.igs`.
 
 ## MVP-состояния, которые нужно спроектировать заранее

@@ -99,7 +99,7 @@ docs/features/
 
 ## Фаза 4. Smart Patch Layer
 
-- Canvas project.
+- `.igs` Project tab with embedded Canvas.
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.

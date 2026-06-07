@@ -33,7 +33,8 @@ InvokeAI рассматривается как основной reference produc
 
 Основная идея приложения: не просто дать пользователю кнопку `Generate`, а помочь ему управлять творческим процессом:
 
-- организовывать работы через `Workspaces`;
+- организовывать работы через `Home` screen с workspace'ами;
+- открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
 - хранить canvas-проекты как переносимые `.igs` project files;
 - скачивать и обновлять модели;
 - хранить версии моделей и LoRA;
@@ -47,6 +48,14 @@ InvokeAI рассматривается как основной reference produc
 ```text
 Локальная ImageGen Studio для управления моделями, пресетами, генерациями и экспериментами.
 ```
+
+Основная shell-модель — document-based editor:
+
+- `Home` является обычной вкладкой со workspace'ами, recent projects, new/open project и доступом к Model Manager;
+- `.igs` project file открывается как `Project` tab;
+- `Project` tabs могут быть открыты одновременно;
+- `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
+- один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
 
 ---
 
@@ -1307,6 +1316,8 @@ SQLite может хранить только восстанавливаемый
 
 Project index можно пересобрать сканированием workspace-папок.
 
+Runtime tab manager дополнительно держит in-memory registry открытых `.igs` identities. В MVP identity строится из нормализованного абсолютного пути к `.igs`. Если пользователь пытается открыть уже открытый project file из Home, recent projects, file picker, menu action или другого entry point, приложение фокусирует существующую `Project` tab и не создаёт дубликат.
+
 ### 15.2. `.igs` package
 
 ```text
@@ -1538,7 +1549,7 @@ UI показывает progress
 ### 17.5. Smart Patch Layer
 
 ```text
-Пользователь открывает canvas
+Пользователь открывает Project tab
 ↓
 Создаёт Smart Patch Layer
 ↓
