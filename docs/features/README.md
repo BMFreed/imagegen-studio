@@ -15,5 +15,4 @@ The feature catalog is a scope-control tool. It should make explicit what is inc
 
 ## Features
 
-- [Project Generate mode](./project-generate-mode.md)
-- [Tag autocomplete](./tag-autocomplete.md)
+- [Project / Generate mode](./project/generate-mode/README.md)

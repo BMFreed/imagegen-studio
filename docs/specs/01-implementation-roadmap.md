@@ -101,13 +101,17 @@ docs/features/
 
 - `.igs` Project tab with embedded Canvas.
 - Project mode bar: `Generate` and `Upscale`.
-- Generate mode according to `docs/features/project-generate-mode.md`.
+- Generate mode according to `docs/features/project/generate-mode/README.md`.
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
-- Regenerate создаёт новый raster sub-layer.
+- Invoke-like StagingArea для multi-candidate generation и Smart Patch regeneration.
+- StagingArea candidates are temporary; Smart Patch kept variants are permanent raster sub-layers.
+- `Keep Variant` / `Keep All` can save multiple Smart Patch candidates as variants.
+- `Accept` / `Use as Active` chooses the active raster sub-layer.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
 - Outdated status при изменении mask/bbox/settings.
+- Regional Guidance with images.
 - `Send Composite to Upscale` creates immutable flattened composite input.
 - Upscale mode can add result as new raster layer or export it.
 

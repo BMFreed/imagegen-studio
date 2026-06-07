@@ -1194,7 +1194,28 @@ Smart Patch Layer может хранить несколько растровы�
 
 ### 14.10. Regenerate
 
-В MVP `Regenerate` создаёт новый raster sub-layer внутри Smart Patch Layer и делает его активным.
+В MVP `Regenerate` для Smart Patch Layer использует Invoke-like **StagingArea**, если генерация возвращает один или несколько candidate results.
+
+StagingArea — временная зона предпросмотра результатов перед коммитом в проект. Candidates в StagingArea являются временными session results. Постоянные варианты Smart Patch Layer живут только внутри `.igs` как raster sub-layers.
+
+```text
+Worker result candidates
+↓
+StagingArea
+↓
+Keep Variant / Keep All / Accept selected candidate
+↓
+Permanent raster sub-layer variant
+```
+
+Пользователь может сохранить один или несколько candidates:
+
+- `Keep Variant` сохраняет выбранный candidate как постоянный raster sub-layer, но оставляет StagingArea открытой;
+- `Keep All` сохраняет все completed candidates как постоянные raster sub-layers;
+- `Accept` / `Use as Active` сохраняет выбранный candidate, если он ещё не сохранён, и делает соответствующий raster sub-layer active;
+- candidates, которые не были kept/accepted, не засоряют layer stack и по умолчанию отбрасываются.
+
+Если candidate уже сохранён как permanent raster sub-layer, `Discard Selected` в StagingArea удаляет только временный candidate из StagingArea. Удаление постоянного варианта выполняется из списка raster sub-layers внутри Smart Patch Layer.
 
 ```text
 Smart Patch Layer
@@ -1208,12 +1229,12 @@ Smart Patch Layer
    └─ result 03
 ```
 
-После успешной генерации:
+После keep/accept candidate:
 
 - создаётся новый raster sub-layer;
-- `activeRasterSubLayerId` указывает на новый raster sub-layer;
+- при `Accept` / `Use as Active` `activeRasterSubLayerId` указывает на выбранный raster sub-layer;
 - в raster sub-layer записывается новый immutable generation snapshot;
-- статус слоя становится `ready`.
+- статус слоя становится `ready`, если active raster sub-layer соответствует текущим editable inputs.
 
 Старые raster sub-layers остаются доступны для переключения, но одновременно может отображаться только один из них.
 
@@ -1264,7 +1285,7 @@ Smart Patch — face fix 02 [hidden]
 - создание нового Smart Patch Layer из маски существующего слоя;
 - сравнение вариантов генерации;
 - группировку Smart Patch Layer'ов;
-- более сложные типы Smart Patch Layer'ов: control, regional guidance.
+- более сложные типы Smart Patch Layer'ов: control.
 
 ### 14.14. Пользовательский сценарий Smart Patch Layer
 
@@ -1589,6 +1610,12 @@ UI показывает progress
 Запускает генерацию
 ↓
 Worker возвращает результат
+↓
+Результат попадает в StagingArea
+↓
+Пользователь сохраняет один или несколько candidates через Keep Variant / Keep All
+↓
+Пользователь выбирает active candidate через Accept / Use as Active
 ↓
 Результат сохраняется как raster sub-layer
 ↓
