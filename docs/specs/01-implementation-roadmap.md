@@ -101,6 +101,7 @@ docs/features/
 
 - `.igs` Project tab with embedded Canvas.
 - Project mode bar: `Generate` and `Upscale`.
+- Generate mode according to `docs/features/project-generate-mode.md`.
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.

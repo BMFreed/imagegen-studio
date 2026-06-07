@@ -58,6 +58,8 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - `Generate` — основной режим генерации и редактирования через canvas, слои, Smart Patch Layer, маски и model settings.
 - `Upscale` — режим апскейла через ESRGAN-like модели. Он работает с immutable flattened composite input, полученным из текущего состояния `Generate`.
 
+Детальная спецификация содержимого `Generate` mode: `docs/features/project-generate-mode.md`.
+
 Project mode bar должна визуально отличаться от верхнего document tab strip. Это не второй ряд document tabs, а компактный segmented control / toolbar mode switch внутри Project с отдельными отступами и стилем.
 
 `Canvas` остаётся общей сущностью Project. `Generate` использует его как основную рабочую поверхность. `Upscale` может показывать preview/input/result view, но не превращается в отдельный project document.
@@ -143,3 +145,5 @@ Boards/gallery не показываются как постоянная бок�
 ## UX-правило для Smart Patch
 
 Mask, Bounding Box и Canvas Size должны быть разными секциями интерфейса. Пользователь не должен гадать, что именно он сейчас изменяет: размер всего проекта, область генерации или форму маски.
+
+Для выбранного Smart Patch Layer точное редактирование bounding box оформляется как компактная кнопка/бейдж `Bounding Box` в selected-layer controls. Кнопка открывает popover с x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-canvas и scale-before-processing. Прямое редактирование bbox handles на canvas остаётся основным способом работы, popover нужен для точных значений.

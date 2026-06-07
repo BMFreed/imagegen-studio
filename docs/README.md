@@ -13,6 +13,8 @@
 - [specs/05-worker-protocol.md](./specs/05-worker-protocol.md) — контракт Python worker'а и формат job/progress/error.
 - [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — типизация, linting и formatting для Python worker'а.
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
+  - [features/project-generate-mode.md](./features/project-generate-mode.md) — детальная спецификация `Project` / `Generate` mode: prompts, bbox, Smart Patch Layer, LoRA, embeddings, dynamic prompting и regional guidance.
+  - [features/tag-autocomplete.md](./features/tag-autocomplete.md) — Danbooru-style tag autocomplete для prompt editor.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
 
 ## Правило обновления

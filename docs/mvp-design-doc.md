@@ -980,6 +980,8 @@ Selected Smart Patch Layer / Bounding Box
 └─ regenerate
 ```
 
+В режиме `Project` / `Generate` также может существовать **current working bounding box**: временная рабочая область генерации до того, как пользователь создаёт или выбирает Smart Patch Layer. Это Invoke-like bbox для подготовки операции. После создания Smart Patch Layer эта область копируется в слой и становится уже layer-owned bounding box.
+
 Правила:
 
 - изменение `Canvas Size` не должно неявно менять bounding box слоя;
