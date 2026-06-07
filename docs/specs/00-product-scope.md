@@ -18,6 +18,7 @@ MVP должен доказать ценность не как “ещё одн�
 - создавать и открывать project files формата `.igs`;
 - открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
 - генерировать изображения через локальный Python worker внутри `Project`;
+- апскейлить flattened composite проекта через `Upscale` project mode;
 - видеть историю генераций;
 - открывать immutable snapshot каждой генерации;
 - создавать пресеты вручную и из старых генераций;
@@ -27,13 +28,20 @@ MVP должен доказать ценность не как “ещё одн�
 Основная продуктовая оболочка строится как document-based editor:
 
 - `Home` tab — стартовый экран: Workspaces, recent projects, new/open project, доступ к Model Manager;
-- `Project` tab — открытый `.igs` документ: canvas, генерация, слои, маски, настройки модели, snapshots, autosave status.
+- `Project` tab — открытый `.igs` документ: canvas, project modes, генерация, upscale, слои, маски, настройки модели, snapshots, autosave status.
 
 `Canvas` — не отдельная вкладка приложения, а сущность внутри `Project` tab.
 
+Внутри `Project` tab есть project modes:
+
+- `Generate` — генерация и локальное редактирование на canvas;
+- `Upscale` — ESRGAN-like upscale flattened composite input'а.
+
+`Upscale` получает вход через immutable flattened composite snapshot из `Generate`, а не через живую ссылку на текущие слои.
+
 Один и тот же `.igs` нельзя открыть дважды. Повторное открытие уже открытого project file фокусирует существующую `Project` tab.
 
-Отдельная вкладка `Generate`, режимы `Launchpad`/`Viewer` и постоянный mini-gallery/boards sidebar не входят в целевую UX-модель ImageGen Studio. Быстрая генерация с нуля реализуется как создание нового `.igs` проекта и работа с ним в `Project`.
+Отдельная top-level вкладка `Generate`, режимы `Launchpad`/`Viewer` и постоянный mini-gallery/boards sidebar не входят в целевую UX-модель ImageGen Studio. Быстрая генерация с нуля реализуется как создание нового `.igs` проекта и работа с ним в `Project` / `Generate` mode.
 
 ## Продуктовые нецели MVP
 

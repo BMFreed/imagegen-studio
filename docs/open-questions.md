@@ -36,7 +36,9 @@
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в generation snapshot.
 - Canvas renderer: MVP берёт Invoke-like пайплайн через Konva scene graph поверх Canvas 2D, но compositor/cache/layer lifecycle остаются логикой ImageGen Studio; WebGL/WebGPU откладываются как возможные backend'ы для тяжёлых задач.
 - Project UX: document-based shell. `Home` is a normal tab with Workspaces/recent projects; opened `.igs` files are `Project` tabs; `Canvas` is an entity inside `Project`, not a primary tab. Отдельная `Generate` вкладка, `Launchpad`, `Viewer` и постоянный Boards sidebar не входят в целевую модель.
+- Project modes: внутри `Project` tab есть `Generate` и `Upscale`. `Upscale` принимает immutable flattened composite input из Generate и может добавить результат как новый layer или экспортировать его.
 - Project tabs: несколько `.igs` проектов могут быть открыты одновременно, но один и тот же `.igs` нельзя открыть дважды; повторное открытие фокусирует существующую `Project` tab.
+- Electron runtime: приложение работает в single-instance режиме через `app.requestSingleInstanceLock()`. Повторный запуск или open-file/deep-link intent передаётся в уже запущенный instance, чтобы нельзя было открыть один `.igs` в двух независимых процессах.
 - Project storage: `.igs` project file является источником истины для canvas-проекта; SQLite хранит только глобальные сущности и восстанавливаемый индекс проектов/workspace'ов.
 - `.igs` format: MVP использует переносимый ZIP-package без обязательной compression; основной save собирается во временный файл, валидируется и атомарно заменяет исходный project file.
 - Project thumbnails: source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем для быстрого UI.

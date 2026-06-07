@@ -100,12 +100,15 @@ docs/features/
 ## Фаза 4. Smart Patch Layer
 
 - `.igs` Project tab with embedded Canvas.
+- Project mode bar: `Generate` and `Upscale`.
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
 - Regenerate создаёт новый raster sub-layer.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
 - Outdated status при изменении mask/bbox/settings.
+- `Send Composite to Upscale` creates immutable flattened composite input.
+- Upscale mode can add result as new raster layer or export it.
 
 Результат: появляется локальное генеративное редактирование без standalone-масок и неочевидных связей.
 

@@ -66,6 +66,8 @@ project.igs
 ├─ assets/
 │  ├─ layers/
 │  ├─ masks/
+│  ├─ upscale-inputs/
+│  ├─ upscale-results/
 │  └─ references/
 └─ snapshots/
    └─ generation-*.json
@@ -96,6 +98,40 @@ Project-local generation snapshots хранятся внутри `.igs` и от�
 
 SQLite может хранить только global history/project index для быстрых списков и поиска: project path, snapshot id, created_at, thumbnail/cache key и derived metadata. Source of truth для project-local snapshot остаётся `.igs`.
 
+### Upscale assets
+
+Upscale внутри `Project` работает не с живой ссылкой на слои, а с immutable flattened composite input.
+
+При команде `Send Composite to Upscale` или `Use Current Composite` приложение создаёт внутри `.igs` отдельный upscale input asset:
+
+```text
+assets/upscale-inputs/{id}.png
+```
+
+Metadata input'а хранит:
+
+- source layer stack hash;
+- source canvas size;
+- source project snapshot id или timestamp;
+- visible layers metadata;
+- created_at;
+- исходный project mode/action, который создал input.
+
+Если после создания input'а слой, маска, opacity, blend mode или canvas size изменились, input считается устаревшим относительно текущего Generate composite. Upscale mode должен показывать `Source is outdated` и предлагать refresh.
+
+Upscale result хранится как отдельный asset:
+
+```text
+assets/upscale-results/{id}.png
+```
+
+В MVP результат можно:
+
+- добавить в Project как новый raster layer;
+- экспортировать наружу.
+
+Destructive replace source/composite не входит в MVP.
+
 ### Project identity
 
 Для runtime tab management каждый открытый `.igs` должен иметь стабильную identity.
@@ -106,6 +142,7 @@ MVP-правило:
 - приложение держит in-memory registry открытых project identities;
 - при попытке открыть `.igs`, identity которого уже есть в registry, приложение фокусирует существующую `Project` tab;
 - создание второй вкладки для того же `.igs` запрещено для всех entry points: `Home`, recent projects, file picker, menu action, drag/drop, deep link.
+- приложение запускается в single-instance режиме через Electron main process, чтобы второй OS-инстанс не мог открыть тот же `.igs` параллельно с первым.
 
 Если позже понадобится поддержка symlink-heavy workflow или network paths, identity policy можно расширить через filesystem inode/file id там, где платформа это поддерживает. Для MVP достаточно canonical path + rescan/relink поведения.
 

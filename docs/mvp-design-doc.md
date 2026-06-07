@@ -55,6 +55,8 @@ InvokeAI рассматривается как основной reference produc
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
+- внутри `Project` есть project modes `Generate` и `Upscale`;
+- `Upscale` работает с immutable flattened composite input, созданным из текущего состояния `Generate`;
 - один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
 
 ---
@@ -133,8 +135,14 @@ Electron main process в этом проекте выступает как ло�
 - проверку целостности файлов;
 - хранение истории генераций;
 - хранение пресетов;
+- single-instance lifecycle через Electron `app.requestSingleInstanceLock()`;
+- обработку `second-instance` intents для повторного запуска, file association и deep links;
 - регистрацию IPC handlers;
 - отправку событий во frontend.
+
+Приложение должно работать в single-instance режиме. Второй OS-процесс не создаёт окно, не открывает SQLite, не запускает worker и не меняет autosave state. Он передаёт intent уже запущенному instance, а существующий main process фокусирует окно и передаёт open-project intent в tab manager.
+
+Это нужно, чтобы пользователь не мог открыть один и тот же `.igs` в двух независимых инстансах приложения. Запрет дублей внутри одного instance всё равно остаётся обязанностью Project tab manager: повторное открытие уже открытого `.igs` фокусирует существующую `Project` tab.
 
 ### 3.3. Роль Renderer process
 
@@ -1331,6 +1339,8 @@ project.igs
 ├─ assets/
 │  ├─ layers/
 │  ├─ masks/
+│  ├─ upscale-inputs/
+│  ├─ upscale-results/
 │  └─ references/
 └─ snapshots/
    └─ generation-*.json
@@ -1351,12 +1361,29 @@ layer stack
 Smart Patch Layer state
 mask references
 raster asset references
+upscale input/result asset references
 generation settings
 project-local snapshots
 resource references
 ```
 
 Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family и `predictionType`.
+
+Upscale mode не работает с живой ссылкой на слои. Команды `Send Composite to Upscale` и `Use Current Composite` создают immutable flattened composite input внутри `.igs`:
+
+```text
+assets/upscale-inputs/{id}.png
+```
+
+Metadata input'а хранит source layer stack hash, source canvas size, source project snapshot id или timestamp, visible layers metadata и created_at. Если source composite после этого изменился, Upscale показывает состояние `Source is outdated` и предлагает refresh.
+
+Upscale result хранится как:
+
+```text
+assets/upscale-results/{id}.png
+```
+
+В MVP результат можно добавить как новый raster layer или экспортировать.
 
 ### 15.3. Autosave
 
@@ -1590,7 +1617,29 @@ Duplicate Smart Patch Layer
 Регенерировать другую версию отдельно
 ```
 
-### 17.6. Отсутствующее изображение в истории
+### 17.6. Send Composite to Upscale
+
+```text
+Пользователь находится в Project tab / Generate mode
+↓
+Нажимает Send Composite to Upscale
+↓
+Приложение flatten'ит видимые слои текущего Project
+↓
+Создаёт immutable upscale input asset внутри .igs
+↓
+Сохраняет source layer stack hash и metadata источника
+↓
+Переключает Project в Upscale mode
+↓
+Пользователь запускает ESRGAN-like upscale
+↓
+Worker возвращает result
+↓
+Пользователь добавляет result как новый raster layer или экспортирует наружу
+```
+
+### 17.7. Отсутствующее изображение в истории
 
 ```text
 Пользователь открывает историю

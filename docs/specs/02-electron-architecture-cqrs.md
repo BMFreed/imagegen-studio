@@ -15,6 +15,23 @@ Renderer не импортирует:
 
 Все системные операции доступны только через доменный `window.api`, опубликованный preload-слоем.
 
+## Single application instance
+
+ImageGen Studio должен запускаться как single-instance desktop app.
+
+Main process обязан использовать Electron `app.requestSingleInstanceLock()` на старте. Если lock не получен, второй процесс должен завершиться. Если lock получен, main process должен обрабатывать `second-instance` и передавать intent уже запущенному приложению.
+
+Причина: project identity registry и autosave/recovery state должны существовать в одном runtime. Пользователь не должен иметь возможность открыть два независимых инстанса приложения и в каждом открыть один и тот же `.igs`.
+
+Поведение:
+
+- повторный запуск приложения фокусирует существующее окно;
+- запуск приложения с `.igs` path, file association или deep link передаёт open-project intent в уже запущенный instance;
+- существующий instance нормализует путь `.igs`, проверяет project identity registry и либо открывает новую `Project` tab, либо фокусирует уже открытую;
+- второй OS process не должен создавать окно, открывать SQLite, запускать worker или менять autosave state.
+
+Этот механизм не заменяет запрет дублей внутри tab manager. Он делает runtime registry единственным источником правды в рамках запущенного приложения, а tab manager всё равно обязан запрещать вторую вкладку для того же `.igs`.
+
 ## IPC best practices
 
 - Использовать `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.

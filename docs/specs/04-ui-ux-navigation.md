@@ -12,7 +12,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Canvas` не является primary navigation item или отдельной вкладкой приложения. Canvas — это сущность внутри `Project` tab: interactive рабочая поверхность открытого `.igs` проекта.
 
-`Generate` не является отдельной рабочей зоной. Быстрая генерация с нуля начинается с создания нового `.igs` project и открытия его в `Project` tab.
+`Generate` и `Upscale` не являются top-level вкладками приложения. Это project modes внутри `Project` tab.
 
 `Model Library`/`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
 
@@ -53,6 +53,36 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - project-local generation snapshots/history;
 - save/autosave/recovery status.
 
+Внутри `Project` tab есть project mode bar. В MVP в неё входят:
+
+- `Generate` — основной режим генерации и редактирования через canvas, слои, Smart Patch Layer, маски и model settings.
+- `Upscale` — режим апскейла через ESRGAN-like модели. Он работает с immutable flattened composite input, полученным из текущего состояния `Generate`.
+
+Project mode bar должна визуально отличаться от верхнего document tab strip. Это не второй ряд document tabs, а компактный segmented control / toolbar mode switch внутри Project с отдельными отступами и стилем.
+
+`Canvas` остаётся общей сущностью Project. `Generate` использует его как основную рабочую поверхность. `Upscale` может показывать preview/input/result view, но не превращается в отдельный project document.
+
+### Generate → Upscale handoff
+
+В режиме `Generate` должна быть команда `Send Composite to Upscale`.
+
+Команда:
+
+- берёт flattened composite видимых слоёв текущего Project;
+- создаёт immutable upscale input asset внутри `.igs`;
+- сохраняет metadata источника: source layer stack hash, canvas size, source snapshot/timestamp, visible layers metadata;
+- переключает Project в режим `Upscale`;
+- делает новый input активным для upscale job.
+
+В режиме `Upscale` должна быть команда `Use Current Composite` / `Refresh Composite`, которая выполняет тот же handoff из текущего состояния Generate. Если слои или настройки композита изменились после предыдущего handoff, Upscale показывает состояние `Source is outdated` и предлагает refresh.
+
+Upscale result в MVP должен поддерживать минимум:
+
+- `Add as New Layer`;
+- `Export`.
+
+`Replace Source` можно отложить, потому что оно повышает риск destructive workflow.
+
 Каждая `Project` tab имеет собственные:
 
 - `.igs` file identity;
@@ -61,6 +91,7 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - undo/redo stack;
 - canvas viewport state;
 - selected layer/tool state.
+- active project mode.
 
 Страниц `Project` может быть несколько одновременно. Каждая открытая `.igs` живёт в своей вкладке.
 
