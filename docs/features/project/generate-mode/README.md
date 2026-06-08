@@ -16,6 +16,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [LoRA selector](./lora-selector.md)
 - [Embeddings selector](./embeddings-selector.md)
 - [Regional guidance](./regional-guidance.md)
+- [ControlNet follow-up](./controlnet-follow-up.md)
 - [Smart Patch compositing settings](./smart-patch-compositing.md)
 - [Canvas tools](./canvas-tools.md)
 - [Layer stack](./layer-stack.md)
@@ -65,6 +66,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - tag autocomplete is included for Danbooru-style prompt authoring;
 - dynamic prompting is included;
 - Regional Guidance Layer is included with an owned region/mask, regional prompts and regional guidance images, but ControlNet/IP-Adapter as general-purpose feature families are not included in this Generate scope;
+- ControlNet is explicitly deferred to post-MVP; first follow-up workflows are tiled upscale, pose control, depth control and Canny/contour control;
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
 - canvas side controls always show panel collapse buttons and `View`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;

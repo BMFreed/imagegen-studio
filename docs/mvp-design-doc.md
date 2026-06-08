@@ -1086,6 +1086,8 @@ Regional Guidance
 
 Generic ControlNet/IP-Adapter layers в MVP не вводятся. Regional reference images являются частью Regional Guidance Layer, а не отдельным универсальным адаптерным workflow.
 
+ControlNet остаётся post-MVP follow-up. Первые сценарии, которые стоит рассмотреть после MVP: tiled upscale, pose control, depth control, Canny/контуры. Остальные виды ControlNet добавляются только при появлении реальной пользовательской необходимости.
+
 ### 14.4.2. Layer row controls
 
 Для Raster Layer, Smart Patch Layer и Regional Guidance Layer используется единый принцип строки слоя:
@@ -1945,6 +1947,7 @@ UI показывает fallback "Изображение не найдено"
 - variables in presets;
 - experiment sessions;
 - batch testing across models;
+- ControlNet follow-up: tiled upscale, pose control, depth control, Canny/контуры;
 - remote/headless mode;
 - plugin API;
 - более продвинутый workflow editor.
