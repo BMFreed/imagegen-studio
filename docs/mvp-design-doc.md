@@ -1118,6 +1118,47 @@ visibility | active raster thumbnail | mask thumbnail | layer name + status | sw
 - action `switch variants` использует понятную cycle/swap-style icon и открывает `GenerationResults` или compact variants browser;
 - если вариантов несколько, рядом с action можно показывать variant count.
 
+### 14.4.3. Canvas side tools
+
+В MVP canvas side tools не превращают ImageGen Studio в raster editor. Они обслуживают masks, regions и Smart Patch Bounding Box.
+
+Всегда доступны:
+
+```text
+collapse left panel
+View
+collapse right panel
+```
+
+`View` — это navigation/inspection tool, а не отдельный Viewer mode.
+
+Если выбран Smart Patch Layer, справа показываются:
+
+```text
+Transform Mask
+Lasso
+Polygon Lasso
+Brush
+Eraser
+Bounding Box
+```
+
+`Transform Mask` двигает/масштабирует/вращает только layer-owned mask. Он не двигает active raster sub-layer и не меняет Bounding Box.
+
+Если выбран Regional Guidance Layer, справа показываются:
+
+```text
+Transform Region
+Lasso
+Polygon Lasso
+Brush
+Eraser
+```
+
+У Regional Guidance Layer нет Bounding Box tool, потому что слой владеет region/mask для conditioning, а не generation bbox.
+
+Обычные Raster Layers в MVP не редактируются на canvas: без raster transform, crop, paint и filters. Для полноценного растрового редактирования пользователь использует внешний редактор вроде Photoshop/Krita.
+
 ### 14.5. Что входит в Smart Patch Layer
 
 Предварительная структура:

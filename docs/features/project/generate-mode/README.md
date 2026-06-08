@@ -67,6 +67,8 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Regional Guidance Layer is included with an owned region/mask, regional prompts and regional guidance images, but ControlNet/IP-Adapter as general-purpose feature families are not included in this Generate scope;
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
+- canvas side controls always show panel collapse buttons and `View`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- ordinary Raster Layer canvas editing is not included in MVP;
 - `GenerationResults` is included for browsing and cleaning up recent generated results;
 - completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.

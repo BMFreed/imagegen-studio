@@ -64,6 +64,23 @@ Project mode bar должна визуально отличаться от ве�
 
 `Canvas` остаётся общей сущностью Project. `Generate` использует его как основную рабочую поверхность. `Upscale` может показывать preview/input/result view, но не превращается в отдельный project document.
 
+### Canvas side controls
+
+В `Project` / `Generate` всегда видимы только базовые side controls:
+
+- collapse left panel;
+- `View`;
+- collapse right panel.
+
+`View` является navigation/inspection tool, а не отдельным `Viewer` mode.
+
+Contextual right-side tools появляются только для выбранных layer types:
+
+- Smart Patch Layer: `Transform Mask`, Lasso, Polygon Lasso, Brush, Eraser, Bounding Box;
+- Regional Guidance Layer: `Transform Region`, Lasso, Polygon Lasso, Brush, Eraser.
+
+Raster Layer canvas editing в MVP не поддерживается. Для Raster Layer не показываются transform/crop/paint/filter tools.
+
 ### Generate → Upscale handoff
 
 В режиме `Generate` должна быть команда `Send Composite to Upscale`.

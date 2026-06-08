@@ -89,6 +89,12 @@ It should expose:
 
 The region/mask should be directly editable on canvas. Numeric precision controls can live in selected-entity settings if needed.
 
+Canvas tools for the selected Regional Guidance Layer:
+
+- `Transform Region` moves/scales/rotates the layer-owned region/mask;
+- Lasso, Polygon Lasso, Brush and Eraser edit the layer-owned region/mask;
+- no Bounding Box tool is shown, because Regional Guidance Layer does not own a generation bbox.
+
 Prompt and reference-image blocks are optional per layer:
 
 - if no prompt/reference block exists, show compact `+ Prompt`, `+ Negative Prompt`, `+ Reference Image` actions;

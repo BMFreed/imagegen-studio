@@ -156,6 +156,14 @@ Rules:
 - mask visibility/overlay can be changed without changing generated raster pixels;
 - editing mask marks existing generated result `outdated`.
 
+Canvas tools for the selected Smart Patch Layer:
+
+- `Transform Mask` moves/scales/rotates the layer-owned mask only;
+- `Transform Mask` does not move active raster sub-layer pixels;
+- `Transform Mask` does not move or resize the layer-owned Bounding Box;
+- Lasso, Polygon Lasso, Brush and Eraser edit the layer-owned mask;
+- Bounding Box tool edits the layer-owned Bounding Box.
+
 ## Raster Sub-Layers
 
 Smart Patch Layer can store multiple raster sub-layers as generated result alternatives.
