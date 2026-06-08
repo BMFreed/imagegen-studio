@@ -8,11 +8,15 @@ Generation settings define the model and core inference parameters for the curre
 
 Reference: InvokeAI Generation and Advanced settings accordions.
 
+ImageGen Studio adapts Invoke's controls, but not Invoke's separate lower `Advanced` accordion.
+
 ## ImageGen Studio Decision
 
 Use an Invoke-like model-aware settings panel, adapted to ImageGen Studio's supported model families and worker protocol.
 
 LoRAs and Embeddings are separate sections. They are not grouped under one shared `Concepts` label.
+
+All generation-related advanced controls live inside the `Generation` card's own `Advanced Options` area. Do not create a separate Invoke-like `Advanced` dropdown/accordion below `Generation`.
 
 ## Scope
 
@@ -27,22 +31,27 @@ MVP controls:
 - steps;
 - guidance/CFG;
 - denoising strength;
-- CFG rescale where the active model/pipeline supports it;
 - seed;
 - randomize seed;
 - shuffle/advance seed;
 - output count/iterations once queue support is available;
 - model compatibility warnings for selected LoRAs/embeddings/presets.
 
-Advanced controls:
+`Generation > Advanced Options` controls:
 
 - VAE selector;
-- VAE precision where relevant;
+- VAE precision where relevant, preferably `Auto` by default with manual precision only as an advanced troubleshooting/performance control;
+- CFG rescale where the active model/pipeline supports it;
 - clip skip where relevant;
-- seamless X/Y;
-- CFG rescale;
-- color correction/compensation where supported;
 - model-family-specific encoder/decoder options only when the selected pipeline needs them.
+
+Rejected for MVP:
+
+- separate Invoke-like `Advanced` dropdown/accordion outside `Generation`;
+- seamless X/Y toggles as generic Generate controls;
+- generic color correction/compensation as a Generate control.
+
+If color matching is needed later, design it as a Smart Patch/compositing behavior such as `Match source colors`, not as an always-visible global generation toggle.
 
 ## Model-Aware Visibility
 
@@ -59,3 +68,6 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - Prediction type metadata is passed to the worker and stored in snapshots.
 - LoRAs and Embeddings appear as separate sections inside Generation.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
+- VAE, VAE precision and CFG rescale live in `Generation > Advanced Options`.
+- A separate Invoke-like `Advanced` accordion is not implemented.
+- Seamless X/Y and generic color compensation are excluded from MVP Generate settings.

@@ -20,7 +20,7 @@ MVP layer/entity types:
 
 - Raster Layer;
 - Smart Patch Layer;
-- Regional Guidance.
+- Regional Guidance Layer.
 
 Not included:
 
@@ -33,7 +33,7 @@ Layer stack behavior:
 
 - add raster layer;
 - add Smart Patch Layer;
-- add Regional Guidance;
+- add Regional Guidance Layer;
 - reorder layers/entities;
 - rename;
 - duplicate;
@@ -44,28 +44,84 @@ Layer stack behavior:
 - blend mode;
 - selected-entity action bar.
 
+## Layer Row Controls
+
+Use the same row-control layout for Raster Layer, Smart Patch Layer and Regional Guidance Layer unless a layer type has a strong reason to differ.
+
+Base row order:
+
+```text
+visibility | thumbnail/preview | name + status | secondary actions | lock | delete
+```
+
+Rules:
+
+- the visibility button is shown to the left of the layer thumbnail/preview, Photoshop-style;
+- do not place the visibility button in the right-side common action cluster like Invoke does;
+- warning/status icons stay near the layer name/status area;
+- Regional Guidance Layer keeps an Invoke-like warning icon for compatibility or missing/unsupported setup warnings;
+- lock is supported for layers where editing/moving/deleting should be preventable;
+- delete is supported from the row actions;
+- destructive delete should use the app's normal confirm/undo policy once that policy is defined;
+- right-side actions should remain compact and type-specific, while visibility remains visually tied to the thumbnail.
+
 ## Smart Patch Layer Display
 
 Smart Patch Layer display should include:
 
 - layer status: `empty`, `ready`, `outdated`, `generating`, `failed`;
-- active raster sub-layer;
-- list/switcher for permanent raster sub-layer variants;
+- active raster sub-layer thumbnail;
+- mask thumbnail;
+- variant count badge/action;
 - bbox size badge;
 - internal resolution badge;
 - regenerate action;
 - bbox popover action;
 - mask edit action.
 
+Smart Patch Layer row order:
+
+```text
+visibility | active raster thumbnail | mask thumbnail | name + status | switch variants | lock | delete
+```
+
+The active raster thumbnail comes before the mask thumbnail so the layer stack remains readable by visible canvas result first, while the mask thumbnail still communicates where the generated patch applies.
+
+The `switch variants` action should use a clear cycle/swap-style icon and expose a tooltip such as `Switch variant`. If multiple variants exist, pair it with a variant count where space allows.
+
+The layer row should stay compact. Do not expand saved raster sub-layer variants into a vertical thumbnail list under the Smart Patch Layer by default.
+
+Use [GenerationResults](./generation-results.md) as the richer browser for newly generated Smart Patch variants. Smart Patch selected-layer controls may also expose a compact variants action/list, but the default layer stack row shows only the active raster thumbnail and variant count.
+
 Only one raster sub-layer inside a Smart Patch Layer can be active/visible at a time.
 
 The detailed Smart Patch Layer ownership model is documented in [Smart Patch Layer](./smart-patch-layer.md).
 
+## Regional Guidance Layer Display
+
+Regional Guidance Layer display should follow Invoke's Regional Guidance entity layout closely:
+
+- grouped `Regional Guidance` section in the layer stack;
+- layer row with preview, name, status badges and common actions;
+- layer-owned region/mask preview;
+- inline `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` actions;
+- positive prompt block when present;
+- negative prompt block when present;
+- regional reference image thumbnails when present;
+- compatibility warning when the active model/worker cannot use regional guidance or regional guidance images.
+
+Regional Guidance Layer owns its region/mask. The mask is not a standalone layer and is not shared with Smart Patch Layer or other Regional Guidance Layers.
+
 ## Acceptance Criteria
 
-- User can manage Raster Layer, Smart Patch Layer and Regional Guidance entities from the layer stack.
+- User can manage Raster Layer, Smart Patch Layer and Regional Guidance Layer from the layer stack.
 - Standalone inpaint masks are not exposed.
+- Visibility toggle is placed left of the thumbnail/preview for all layer rows.
+- Warning/status icons, lock and delete actions are available in layer rows.
 - Smart Patch Layer status and active raster sub-layer are visible.
-- Smart Patch permanent variants are visible in the Smart Patch Layer variants list.
+- Smart Patch Layer row shows both active raster thumbnail and mask thumbnail.
+- Regional Guidance Layer prompt/reference-image controls are visible inline in the layer stack.
+- Regional Guidance Layer mask ownership is explicit and non-shared.
+- Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
 - Only one raster sub-layer inside one Smart Patch Layer can be active at a time.
 - Denoising strength is not displayed above the layer stack; it belongs to Generation settings.

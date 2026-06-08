@@ -808,6 +808,8 @@ VAE
 Other generation params
 ```
 
+В UI `VAE` и VAE precision не становятся отдельной нижней панелью. Они находятся внутри `Generation -> Advanced Options` вместе с другими model-aware advanced generation params, например CFG rescale.
+
 ### 12.5. Full apply
 
 Full apply применяет все доступные секции пресета.
@@ -1049,6 +1051,73 @@ Smart Patch Layer владеет:
 
 Если пользователю нужно сохранить альтернативное состояние маски/bounding box/internal resolution, он дублирует Smart Patch Layer.
 
+### 14.4.1. Regional Guidance Layer
+
+Помимо Smart Patch Layer в MVP есть **Regional Guidance Layer**.
+
+Regional Guidance Layer нужен не для хранения сгенерированного raster-result, а для regional conditioning во время генерации. Он следует InvokeAI Regional Guidance model максимально близко:
+
+```text
+Regional Guidance Layer
+= 1 owned region/mask
+= optional positive prompt
+= optional negative prompt
+= N regional reference images
+```
+
+В layer stack он отображается отдельной группой/секцией `Regional Guidance` и раскрывается inline:
+
+```text
+Regional Guidance
+└─ Regional Guidance Layer
+   ├─ + Prompt
+   ├─ + Negative Prompt
+   └─ + Reference Image
+```
+
+Правила ownership:
+
+- regional mask принадлежит конкретному Regional Guidance Layer;
+- regional mask не является standalone layer;
+- regional mask не переиспользуется Smart Patch Layer'ом;
+- regional mask не переиспользуется другим Regional Guidance Layer;
+- удаление Regional Guidance Layer удаляет его region/mask, prompts и reference image bindings из проекта;
+- duplicate создаёт отдельный Regional Guidance Layer с копией region/mask, prompts и reference images.
+
+Generic ControlNet/IP-Adapter layers в MVP не вводятся. Regional reference images являются частью Regional Guidance Layer, а не отдельным универсальным адаптерным workflow.
+
+### 14.4.2. Layer row controls
+
+Для Raster Layer, Smart Patch Layer и Regional Guidance Layer используется единый принцип строки слоя:
+
+```text
+visibility | thumbnail/preview | layer name + status | secondary actions | lock | delete
+```
+
+Решения:
+
+- кнопка visibility находится слева от thumbnail/preview, как в Photoshop, а не справа как в Invoke;
+- warning/status icons находятся рядом с именем/status area;
+- Regional Guidance Layer сохраняет Invoke-like warning icon для compatibility/setup предупреждений;
+- lock layers поддерживается;
+- delete action поддерживается;
+- правый action cluster не должен смешивать visibility с lock/delete.
+
+Для Smart Patch Layer используется расширенная строка:
+
+```text
+visibility | active raster thumbnail | mask thumbnail | layer name + status | switch variants | lock | delete
+```
+
+Решения:
+
+- Smart Patch Layer показывает два thumbnails: active raster result и mask;
+- первым идёт active raster thumbnail, чтобы слой было проще найти по видимому результату на canvas;
+- mask thumbnail идёт вторым и показывает область применения patch;
+- saved raster variants не раскрываются вертикальным списком под слоем по умолчанию;
+- action `switch variants` использует понятную cycle/swap-style icon и открывает `GenerationResults` или compact variants browser;
+- если вариантов несколько, рядом с action можно показывать variant count.
+
 ### 14.5. Что входит в Smart Patch Layer
 
 Предварительная структура:
@@ -1194,28 +1263,27 @@ Smart Patch Layer может хранить несколько растровы�
 
 ### 14.10. Regenerate
 
-В MVP `Regenerate` для Smart Patch Layer использует Invoke-like **StagingArea**, если генерация возвращает один или несколько candidate results.
+В MVP `Regenerate` для Smart Patch Layer использует **GenerationResults**, если генерация возвращает один или несколько results.
 
-StagingArea — временная зона предпросмотра результатов перед коммитом в проект. Candidates в StagingArea являются временными session results. Постоянные варианты Smart Patch Layer живут только внутри `.igs` как raster sub-layers.
+ImageGen Studio не использует философию временных preview results для completed results. Completed generation result сразу становится частью project state.
 
 ```text
-Worker result candidates
+Worker completed results
 ↓
-StagingArea
+Permanent raster sub-layer variants
 ↓
-Keep Variant / Keep All / Accept selected candidate
-↓
-Permanent raster sub-layer variant
+GenerationResults for review / active selection / cleanup
 ```
 
-Пользователь может сохранить один или несколько candidates:
+Для Smart Patch Layer:
 
-- `Keep Variant` сохраняет выбранный candidate как постоянный raster sub-layer, но оставляет StagingArea открытой;
-- `Keep All` сохраняет все completed candidates как постоянные raster sub-layers;
-- `Accept` / `Use as Active` сохраняет выбранный candidate, если он ещё не сохранён, и делает соответствующий raster sub-layer active;
-- candidates, которые не были kept/accepted, не засоряют layer stack и по умолчанию отбрасываются.
+- каждый completed result создаёт постоянный raster sub-layer;
+- `GenerationResults` показывает свежесозданные variants;
+- `Set Active` выбирает active raster sub-layer;
+- `Delete Selected` удаляет соответствующий постоянный raster sub-layer;
+- `Delete All Except Active` очищает лишние variants из текущего result set.
 
-Если candidate уже сохранён как permanent raster sub-layer, `Discard Selected` в StagingArea удаляет только временный candidate из StagingArea. Удаление постоянного варианта выполняется из списка raster sub-layers внутри Smart Patch Layer.
+Для обычной генерации внутри общего bbox каждый completed result создаёт отдельный Raster Layer. `GenerationResults` позволяет быстро просмотреть новые Raster Layers, выбрать активный/видимый вариант и удалить ненужные.
 
 ```text
 Smart Patch Layer
@@ -1229,10 +1297,10 @@ Smart Patch Layer
    └─ result 03
 ```
 
-После keep/accept candidate:
+После completed result:
 
 - создаётся новый raster sub-layer;
-- при `Accept` / `Use as Active` `activeRasterSubLayerId` указывает на выбранный raster sub-layer;
+- при `Set Active` `activeRasterSubLayerId` указывает на выбранный raster sub-layer;
 - в raster sub-layer записывается новый immutable generation snapshot;
 - статус слоя становится `ready`, если active raster sub-layer соответствует текущим editable inputs.
 
@@ -1611,13 +1679,13 @@ UI показывает progress
 ↓
 Worker возвращает результат
 ↓
-Результат попадает в StagingArea
+Completed result автоматически сохраняется как raster sub-layer
 ↓
-Пользователь сохраняет один или несколько candidates через Keep Variant / Keep All
+GenerationResults показывает новые variants
 ↓
-Пользователь выбирает active candidate через Accept / Use as Active
+Пользователь выбирает active variant через Set Active
 ↓
-Результат сохраняется как raster sub-layer
+Пользователь удаляет ненужные variants, если нужно
 ↓
 В raster sub-layer записывается generation snapshot
 ↓

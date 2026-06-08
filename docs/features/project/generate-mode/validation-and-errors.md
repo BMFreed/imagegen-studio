@@ -43,7 +43,7 @@ Generate must handle:
 - Smart Patch `outdated` status lives on the layer row and selected-layer controls;
 - worker unavailable/failed state can appear in global status and in Generate action area;
 - regional guidance compatibility warnings live on regional guidance entity rows/settings.
-- candidate staging errors live in StagingArea.
+- result/job errors live in `GenerationResults`.
 
 ## Blocking Rules
 

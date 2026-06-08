@@ -49,8 +49,8 @@ MVP:
 - edit layer-owned bounding box;
 - edit layer-owned internal resolution;
 - regenerate layer;
-- generate multiple StagingArea candidates and keep one or more as raster sub-layer variants;
-- store multiple committed raster sub-layers as result alternatives;
+- generate multiple results and store each completed result as a raster sub-layer variant;
+- store multiple raster sub-layers as result alternatives;
 - keep exactly one active/visible raster sub-layer;
 - mark layer `outdated` when editable inputs change after generation;
 - duplicate Smart Patch Layer when the user wants an alternate mask/bbox/internal-resolution state.
@@ -169,23 +169,39 @@ Rules:
 
 If the user needs to preserve an alternate mask/bbox/internal-resolution state, they duplicate the whole Smart Patch Layer.
 
-## StagingArea
+## Layer Row Display
 
-Smart Patch regeneration can produce several temporary candidates before committing one result.
+Smart Patch Layer should be visually distinct from a normal Raster Layer.
+
+Layer stack row:
+
+```text
+visibility | active raster thumbnail | mask thumbnail | name + status | switch variants | lock | delete
+```
 
 Rules:
 
-- candidates are staged before they become raster sub-layers;
-- StagingArea candidates are temporary session state;
-- Smart Patch raster sub-layers are permanent `.igs` project state;
-- the user may `Keep Variant` for more than one candidate;
-- each kept candidate becomes a permanent raster sub-layer;
-- the user may `Use as Active` / `Accept` one candidate as the active visible variant;
-- only one permanent raster sub-layer can be active/visible at a time;
-- unkept candidates are discarded by default;
-- each kept/accepted raster sub-layer stores its immutable generation snapshot.
+- active raster thumbnail shows the currently visible generated result;
+- mask thumbnail shows the layer-owned mask;
+- active raster thumbnail comes before mask thumbnail for easier visual scanning;
+- `status` shows whether the active raster result matches current mask/bbox/internal resolution/settings;
+- `switch variants` opens `GenerationResults` or a compact variants browser for this Smart Patch Layer;
+- saved variants are not expanded into a vertical thumbnail list under the layer row by default.
 
-See [StagingArea](./staging-area.md).
+## GenerationResults
+
+Smart Patch regeneration can produce several results in one action.
+
+Rules:
+
+- every completed result becomes a permanent raster sub-layer variant inside `.igs`;
+- `GenerationResults` shows the newest generated variants for review, activation and cleanup;
+- the user may `Set Active` on one result as the active visible variant;
+- only one permanent raster sub-layer can be active/visible at a time;
+- unwanted variants can be deleted from `GenerationResults` or Smart Patch variant controls;
+- each raster sub-layer stores its immutable generation snapshot.
+
+See [GenerationResults](./generation-results.md).
 
 ## Status Model
 
@@ -212,5 +228,5 @@ Inputs that mark a layer `outdated`:
 - Smart Patch Layer owns its mask, bbox, internal resolution, compositing settings and raster sub-layers.
 - Standalone inpaint mask layers are not part of MVP.
 - Only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.
-- Smart Patch regeneration can stage multiple candidates and keep more than one as permanent variants.
+- Smart Patch regeneration can generate multiple results and persist them as permanent variants.
 - Changing layer-owned editable inputs marks existing generated output `outdated`.

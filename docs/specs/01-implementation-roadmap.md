@@ -105,13 +105,14 @@ docs/features/
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
-- Invoke-like StagingArea для multi-candidate generation и Smart Patch regeneration.
-- StagingArea candidates are temporary; Smart Patch kept variants are permanent raster sub-layers.
-- `Keep Variant` / `Keep All` can save multiple Smart Patch candidates as variants.
-- `Accept` / `Use as Active` chooses the active raster sub-layer.
+- `GenerationResults` для просмотра, выбора active result и очистки свежих multi-result generations.
+- Completed results auto-commit into `.igs`.
+- Normal bbox generation creates Raster Layers for every completed result.
+- Smart Patch regeneration creates raster sub-layer variants for every completed result.
+- `Set Active` chooses the active raster sub-layer/result.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
 - Outdated status при изменении mask/bbox/settings.
-- Regional Guidance with images.
+- Regional Guidance Layer with owned region/mask, inline prompt/negative/reference-image controls and regional guidance images.
 - `Send Composite to Upscale` creates immutable flattened composite input.
 - Upscale mode can add result as new raster layer or export it.
 

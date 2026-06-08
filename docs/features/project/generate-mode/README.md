@@ -20,7 +20,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Canvas tools](./canvas-tools.md)
 - [Layer stack](./layer-stack.md)
 - [Generate action behavior](./generation-actions.md)
-- [StagingArea](./staging-area.md)
+- [GenerationResults](./generation-results.md)
 - [Generation snapshots](./generation-snapshots.md)
 - [Validation and error states](./validation-and-errors.md)
 
@@ -36,7 +36,7 @@ Useful InvokeAI areas to adapt:
 - `invokeai/frontend/web/src/features/parameters/components/Dimensions` and `features/controlLayers/components/common/Bbox` — dimension controls, aspect ratio locking, swap dimensions, optimal size, bounding-box sizing.
 - `invokeai/frontend/web/src/features/settingsAccordions/components/Generation` — model selection, LoRA stack, scheduler/steps/guidance settings and model-family-specific advanced options.
 - `invokeai/frontend/web/src/features/dynamicPrompts` — prompt expansion preview, max prompts, seed behavior and parse errors.
-- `invokeai/frontend/web/src/features/controlLayers/components/RegionalGuidance` — regional prompt/image guidance entity, adapted without exposing generic IP-Adapter/ControlNet feature families.
+- `invokeai/frontend/web/src/features/controlLayers/components/RegionalGuidance` — regional prompt/image guidance layer/entity with owned region/mask, prompt blocks and reference images, adapted without exposing generic IP-Adapter/ControlNet feature families.
 - `invokeai/frontend/web/src/features/controlLayers/components/CanvasEntityList` — layer/entity list, selected-entity action bar and add-layer menu.
 - `invokeai/frontend/web/src/features/controlLayers/components/InpaintMask` — denoise/noise/compositing ideas, adapted into Smart Patch Layer instead of standalone masks.
 
@@ -60,10 +60,15 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - no standalone inpaint mask layers;
 - Smart Patch Layer owns its mask, layer-owned bounding box, internal resolution and raster sub-layers;
 - LoRAs and Embeddings are separate Generation sections, not one shared `Concepts` menu;
+- VAE, VAE precision and CFG rescale live in `Generation > Advanced Options`;
+- no separate Invoke-like `Advanced` accordion/dropdown below `Generation`;
 - tag autocomplete is included for Danbooru-style prompt authoring;
 - dynamic prompting is included;
-- regional guidance is included with regional prompts and regional guidance images, but ControlNet/IP-Adapter as general-purpose feature families are not included in this Generate scope;
-- Invoke-like StagingArea for multiple generated candidates is included;
+- Regional Guidance Layer is included with an owned region/mask, regional prompts and regional guidance images, but ControlNet/IP-Adapter as general-purpose feature families are not included in this Generate scope;
+- Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
+- layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
+- `GenerationResults` is included for browsing and cleaning up recent generated results;
+- completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
 
 ## Layout
@@ -97,7 +102,6 @@ Project: portrait.igs
 │ Generation    │ raster layers               │ smart patch    │
 │ Dynamic       │ regional guidance regions   │ sub-layers     │
 │ Compositing   │                             │ snapshots      │
-│ Advanced      │                             │                │
 └───────────────┴─────────────────────────────┴────────────────┘
 ```
 

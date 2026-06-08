@@ -64,7 +64,8 @@ If current editable inputs differ from the active raster sub-layer snapshot, the
 ## Acceptance Criteria
 
 - Every generated raster result stores a snapshot in `.igs`.
-- For StagingArea, kept or accepted Smart Patch candidates store snapshots as permanent raster sub-layer variants; discarded temporary candidates do not become project state by default.
+- For `GenerationResults`, every completed result stores a snapshot because every completed result is automatically persisted into project state.
+- For Smart Patch Layer, every completed result creates a permanent raster sub-layer variant with its own snapshot.
 - Snapshot can recall settings and create presets.
 - Missing LoRA/embedding/model resources can be detected from snapshot metadata.
 - Smart Patch Layer stale status can be derived from snapshot vs current editable state.
