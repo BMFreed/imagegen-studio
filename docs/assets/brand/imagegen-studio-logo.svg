@@ -20,9 +20,9 @@
      inkscape:pageopacity="0"
      inkscape:pagecheckerboard="1"
      inkscape:deskcolor="#505050"
-     inkscape:zoom="0.47535168"
-     inkscape:cx="520.66714"
-     inkscape:cy="625.85241"
+     inkscape:zoom="0.23767584"
+     inkscape:cx="44.177818"
+     inkscape:cy="742.60808"
      inkscape:window-width="1920"
      inkscape:window-height="1052"
      inkscape:window-x="0"
@@ -46,12 +46,12 @@
          offset="0"
          stop-color="#00B0CF"
          id="stop1"
-         style="stop-color:#686868;stop-opacity:1;" />
+         style="stop-color:#009a33;stop-opacity:1;" />
       <stop
          offset="1"
          stop-color="#00DFF9"
          id="stop2"
-         style="stop-color:#7d7d7d;stop-opacity:1;" />
+         style="stop-color:#01ff56;stop-opacity:1;" />
     </linearGradient>
   </defs>
   <path
@@ -75,12 +75,12 @@
          offset="0"
          stop-color="#EDF51E"
          id="stop3"
-         style="stop-color:#b2b2b2;stop-opacity:1;" />
+         style="stop-color:#33ff77;stop-opacity:1;" />
       <stop
          offset="1"
          stop-color="#9DD43E"
          id="stop4"
-         style="stop-color:#999999;stop-opacity:1;" />
+         style="stop-color:#00ff55;stop-opacity:1;" />
     </linearGradient>
   </defs>
   <path
@@ -100,12 +100,12 @@
          offset="0"
          stop-color="#99D442"
          id="stop5"
-         style="stop-color:#999999;stop-opacity:1;" />
+         style="stop-color:#00ff55;stop-opacity:1;" />
       <stop
          offset="1"
          stop-color="#67C45E"
          id="stop6"
-         style="stop-color:#808080;stop-opacity:1;" />
+         style="stop-color:#00cc42;stop-opacity:1;" />
     </linearGradient>
   </defs>
   <path
