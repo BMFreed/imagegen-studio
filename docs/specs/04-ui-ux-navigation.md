@@ -167,12 +167,10 @@ Boards/gallery не показываются как постоянная бок�
 
 ## UX-правило для Smart Patch
 
-Mask, Smart Patch Bounding Box и Project Canvas должны быть разными секциями интерфейса. Пользователь не должен гадать, что именно он сейчас изменяет: размер рабочей области документа, область локальной генерации или форму маски.
+Mask, Bounding Box и Canvas Size должны быть разными секциями интерфейса. Пользователь не должен гадать, что именно он сейчас изменяет: размер всего проекта, область генерации или форму маски.
 
 Smart Patch Layer описан как отдельная feature-сущность в `docs/features/project/generate-mode/smart-patch-layer.md`. Этот документ является рабочим источником правил ownership для layer-owned mask, layer-owned bounding box, internal resolution и raster sub-layers.
 
 Для выбранного Smart Patch Layer точное редактирование bounding box оформляется как компактная кнопка/бейдж `Bounding Box` в selected-layer controls. Кнопка открывает popover с x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-canvas и scale-before-processing. Прямое редактирование bbox handles на canvas остаётся основным способом работы, popover нужен для точных значений.
 
 Основная видимая команда `Fit Patch BBox to Mask` находится в контекстном тулбаре Smart Patch Layer. В bbox popover она может дублироваться как precision/action command, но не является глобальной командой canvas toolbar.
-
-Если Smart Patch Bounding Box выходит за текущие границы Project Canvas, это считается outpainting-сценарием: Project Canvas автоматически расширяется до bbox bounds с нужным padding/grid alignment. Это undoable document mutation и не transform'ит Raster Layers.

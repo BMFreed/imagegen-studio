@@ -12,7 +12,7 @@ Reference: InvokeAI local settings warnings and Forge prompt warning ideas, adap
 
 Prefer local, actionable warnings over global error banners.
 
-Global app errors are reserved for worker/app-level failures. Prompt, model-resource, Project Canvas, bbox and layer warnings should live near the affected UI.
+Global app errors are reserved for worker/app-level failures. Prompt, model-resource, bbox and layer warnings should live near the affected UI.
 
 ## States
 
@@ -25,9 +25,8 @@ Generate must handle:
 - missing LoRA/embedding from snapshot/preset;
 - invalid prompt dynamic syntax;
 - prompt bracket mismatch warning;
-- Smart Patch bbox extends beyond Project Canvas and will auto-expand it;
+- bbox outside canvas;
 - bbox too small/too large;
-- Project Canvas too small/too large for selected model/settings;
 - internal resolution unsupported by selected model;
 - worker unavailable;
 - generation failed;
@@ -40,9 +39,7 @@ Generate must handle:
 - prompt diagnostics live in the prompt editor status area;
 - missing/incompatible LoRA warnings live on LoRA rows and selector rows;
 - missing/incompatible embedding warnings live on embedding rows and selector rows;
-- Project Canvas warnings live near Project Canvas controls and canvas frame;
 - bbox validity warnings live near bbox controls and canvas handles;
-- Smart Patch outpaint auto-expand notices live near Smart Patch bbox controls and canvas frame;
 - Smart Patch `outdated` status lives on the layer row and selected-layer controls;
 - worker unavailable/failed state can appear in global status and in Generate action area;
 - regional guidance compatibility warnings live on regional guidance entity rows/settings.
@@ -55,15 +52,13 @@ Block generation when:
 - no compatible model is selected;
 - worker is unavailable;
 - bbox/internal resolution cannot produce a valid worker request;
-- Project Canvas dimensions cannot produce a valid worker request;
 - required source assets for Smart Patch regeneration are missing.
 
 Warn but allow generation when:
 
 - prompt diagnostics are non-fatal;
 - LoRA/embedding compatibility is uncertain but resource exists;
-- dynamic prompt expansion is large but within configured limits;
-- Smart Patch bbox exceeds Project Canvas but can be handled by auto-expanding Project Canvas.
+- dynamic prompt expansion is large but within configured limits.
 
 ## Acceptance Criteria
 

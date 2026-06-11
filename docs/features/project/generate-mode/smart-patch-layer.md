@@ -34,7 +34,7 @@ This is intentionally separate from:
 Hard rule:
 
 ```text
-Project Canvas / Document Work Area
+Project / Canvas Size
 != Smart Patch Layer Bounding Box
 != Raster Layer Transform
 ```

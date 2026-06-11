@@ -989,8 +989,8 @@ Selected Smart Patch Layer / Bounding Box
 
 Правила:
 
-- изменение Project Canvas не должно неявно менять bounding box слоя;
-- изменение Project Canvas не должно неявно transform/resize Raster Layers;
+- изменение `Canvas Size` не должно неявно менять bounding box слоя;
+- изменение `Canvas Size` не должно неявно transform/resize Raster Layers;
 - изменение bounding box не должно менять размер canvas;
 - bounding box по умолчанию **не лочит aspect ratio**;
 - `Lock aspect ratio` — опциональный режим;
@@ -998,7 +998,6 @@ Selected Smart Patch Layer / Bounding Box
 - термин в интерфейсе оставляем именно **Bounding Box**, а не `Generation Box`, чтобы явно отделять его от `Mask`.
 - Raster Layers могут быть меньше Project Canvas, больше Project Canvas или частично находиться за его пределами;
 - уменьшение Project Canvas не уничтожает off-canvas pixels, если пользователь явно не выбирает trim/crop layer data.
-- если Smart Patch Bounding Box выходит за Project Canvas, это outpainting-сценарий: Project Canvas автоматически расширяется до bbox bounds с нужным padding/grid alignment, без transform'а Raster Layers.
 
 ### 14.2.1. Canvas rendering pipeline
 
