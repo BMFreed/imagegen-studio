@@ -8,6 +8,8 @@ Pressing `Generate` creates one or more generation jobs from current Generate st
 
 Reference: InvokeAI generation queue behavior, adapted to ImageGen Studio `.igs` project storage and Smart Patch Layer model.
 
+See also: [Queue Manager](../../queue-manager.md).
+
 ## ImageGen Studio Decision
 
 Generation output is written into the open project as raster assets and immutable generation snapshots.
@@ -19,6 +21,8 @@ The generation target depends on selection/context:
 - regional guidance entities: included as conditioning data when supported.
 
 When a Generate action produces multiple results, each completed result is written into project state immediately and appears in [GenerationResults](./generation-results.md) for review, activation and cleanup.
+
+Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks or bbox while they are pending.
 
 ## New Raster Generation
 
@@ -54,6 +58,8 @@ Dynamic prompting can expand one visible Generate action into multiple concrete 
 
 Each generated result stores the concrete expanded prompt used for that result.
 
+Every concrete prompt/seed combination becomes its own queue item, grouped by one batch id for the originating user action.
+
 ## Generate To Upscale
 
 `Send Composite to Upscale` is not a normal generation job.
@@ -68,6 +74,7 @@ It:
 ## Acceptance Criteria
 
 - Generate creates raster output inside the open `.igs`.
+- Generate creates queue items from frozen project/generation state.
 - Smart Patch regeneration can create one or more raster sub-layer variants, with only one active.
 - Multi-result generation auto-commits completed outputs and shows them in `GenerationResults`.
 - Dynamic prompt expansion can create multiple concrete jobs.

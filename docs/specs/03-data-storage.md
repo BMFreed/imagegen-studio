@@ -20,6 +20,7 @@ SQLite — источник истины для:
 
 - installed resources;
 - глобального индекса generation history/recent projects;
+- Queue Manager runtime/history records: queue items, batches, status, progress, errors and serialized worker job payloads;
 - presets;
 - references на файлы изображений, масок и моделей.
 
@@ -34,6 +35,8 @@ Project file `.igs` — источник истины для конкретно�
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
 SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, display name, derived search fields, статус missing/corrupt и похожую служебную информацию.
+
+Queue rows are not project source of truth. They describe runtime/history state for jobs that may read from or commit into `.igs`. Completed queue rows can be pruned without deleting committed project results.
 
 Файловая система хранит тяжёлые артефакты:
 

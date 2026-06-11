@@ -76,7 +76,8 @@ docs/features/
 
 - Долгоживущий Python worker.
 - Python worker tooling: BasedPyright для типов, Ruff для formatting/linting.
-- Очередь generation jobs в main process.
+- Invoke-like persistent Queue Manager baseline: SQLite-backed generation/upscale jobs в main process.
+- Worker protocol вокруг queue item lifecycle, даже если active worker job в MVP один.
 - Минимальная форма txt2img.
 - Progress/done/error events.
 - Сохранение изображения UUID-именем.
@@ -106,6 +107,7 @@ docs/features/
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
 - `GenerationResults` для просмотра, выбора active result и очистки свежих multi-result generations.
+- Project-local undo/redo для `.igs` document mutations.
 - Completed results auto-commit into `.igs`.
 - Normal bbox generation creates Raster Layers for every completed result.
 - Smart Patch regeneration creates raster sub-layer variants for every completed result.

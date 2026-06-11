@@ -403,6 +403,8 @@ MVP включает:
 16. Проверка отсутствующих моделей/LoRA при применении выбранных секций.
 17. Warning при несовместимости base model family.
 18. Fallback-состояние, если файл изображения отсутствует.
+19. Invoke-like persistent Queue Manager для generation/upscale jobs.
+20. Project-local undo/redo для `.igs` document mutations.
 
 ### 7.2. Что НЕ входит в MVP
 
@@ -1565,7 +1567,7 @@ Python worker:
 
 - загружает модели;
 - держит модель в памяти;
-- принимает generation job;
+- принимает active worker job из main-process queue;
 - выполняет inference;
 - отдаёт progress;
 - сохраняет output image или возвращает путь;
@@ -1578,11 +1580,22 @@ Electron main process:
 - запускает worker;
 - останавливает worker;
 - перезапускает worker при падении;
-- отправляет jobs;
+- владеет SQLite-backed queue generation/upscale jobs;
+- отправляет worker'у active job;
 - читает stdout/stderr;
 - нормализует ошибки;
 - пересылает progress events в renderer;
-- сохраняет результат в SQLite.
+- сохраняет результат в `.igs`/SQLite согласно политике queue item.
+
+Queue Manager следует InvokeAI-like модели:
+
+- queue source of truth хранится в SQLite;
+- job создаётся из frozen project/generation snapshot;
+- статусы: `pending`, `running`, `completed`, `failed`, `canceled`;
+- один active worker job одновременно допустим для MVP;
+- pending jobs могут накапливаться и выполняться по очереди;
+- completed results commit'ятся в `.igs` и появляются в `GenerationResults`;
+- queue status не участвует в undo/redo.
 
 ### 16.4. Worker должен быть долгоживущим
 

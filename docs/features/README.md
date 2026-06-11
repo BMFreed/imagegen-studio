@@ -16,3 +16,5 @@ The feature catalog is a scope-control tool. It should make explicit what is inc
 ## Features
 
 - [Project / Generate mode](./project/generate-mode/README.md)
+- [Project undo / redo](./project/undo-redo.md)
+- [Queue Manager](./queue-manager.md)

@@ -16,6 +16,8 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Model Library`/`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
 
+Queue Manager является app-level surface. Он открывается из верхнего status bar/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
+
 `Launchpad`, `Viewer` и постоянный Invoke-like Boards sidebar не входят в целевую навигационную модель.
 
 ## Home
@@ -111,6 +113,8 @@ Upscale result в MVP должен поддерживать минимум:
 - canvas viewport state;
 - selected layer/tool state.
 - active project mode.
+
+Undo/redo stack scoped strictly to this Project tab. Он не влияет на другие открытые `.igs`, queue status, Model Manager, Home или глобальные settings.
 
 Страниц `Project` может быть несколько одновременно. Каждая открытая `.igs` живёт в своей вкладке.
 

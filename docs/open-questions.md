@@ -6,7 +6,6 @@
 - Какой inference backend берём первым: diffusers, ComfyUI как backend, Invoke-like pipeline или отдельный минимальный PyTorch/diffusers worker.
 - Какие base model families поддерживает MVP: SD 1.5, SDXL, Flux, Illustrious, Pony.
 - Нужна ли поддержка LoRA в первом generation slice или её можно добавить сразу после txt2img checkpoint-only.
-- Нужна ли очередь генераций в MVP или достаточно одного активного job.
 - Где создаются thumbnail/previews: main process или worker.
 - Нужен ли soft delete для истории, моделей и пресетов.
 
@@ -46,6 +45,8 @@
 - Global engineering policy: InvokeAI-first reference, no NIH. Готовые механизмы InvokeAI заимствуются настолько, насколько возможно в рамках стека и бизнес-логики ImageGen Studio; если InvokeAI не подходит, сначала ищем другое зрелое готовое решение.
 - SDXL/Illustrious-like checkpoint loading: `.safetensors` остаётся исходным пользовательским файлом; worker использует Invoke-like Diffusers `from_single_file` path и RAM/VRAM model cache. Постоянная diffusers-конвертация допускается только как явное действие или отдельная будущая оптимизация, но не как скрытый шаг MVP.
 - Python worker tooling: BasedPyright — основной type checker/LSP, Ruff — formatter/linter, `ty` можно запускать экспериментально, mypy не является baseline. Строго типизируем собственный worker/domain-код, а Diffusers/PyTorch держим за прагматичным adapter-слоем.
+- Queue Manager: берём InvokeAI-like persistent queue как архитектурный baseline MVP. Очередь хранится в SQLite, job'ы создаются из frozen project/generation snapshots, статусы `pending/running/completed/failed/canceled`, completed results commit'ятся в `.igs` и появляются в `GenerationResults`. Один active worker job одновременно допустим для MVP, но UI/протокол проектируются вокруг очереди, а не ad-hoc single job.
+- Undo/redo: берём InvokeAI-like canvas undo/redo, но scoped per `.igs` Project tab. История покрывает project/document mutations, маски, bbox, слои, Regional Guidance и committed generation results; queue status, Model Manager, Home и глобальные настройки не undoable.
 - Tag autocomplete: MVP поддерживает Danbooru-style tag autocomplete с manual update tag database, alias search и local usage ranking. Rule34, custom extra CSV import, translation search, chants/styles, embedding token autocomplete и wildcard expansion не входят в эту фичу.
 - Project Generate mode: строим Invoke-like Generate внутри `Project`, но без standalone `Generate` tab, `Launchpad`, `Viewer`, Boards sidebar и `Choose Prompt Template` dropdown. В scope входят LoRA selector, отдельный embeddings selector, tag autocomplete, dynamic prompting, Smart Patch Layer, Regional Guidance Layer with owned region/mask and images, `GenerationResults` для auto-committed multi-result generation, Forge-like prompt token counter/bracket checker без generic ControlNet/IP-Adapter feature families. ControlNet отложен на post-MVP follow-up; первые сценарии: tiled upscale, pose control, depth control, Canny/контуры.
 - Smart Patch bbox UX: основной bbox можно редактировать Invoke-like controls/handles, а bbox выбранного Smart Patch Layer редактируется через canvas handles плюс компактный `Bounding Box` popover в selected-layer controls. Изменение bbox/internal resolution помечает слой `outdated`.

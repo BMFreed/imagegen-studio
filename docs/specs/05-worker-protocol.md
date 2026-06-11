@@ -8,18 +8,36 @@ Main process:
 
 - запускает worker;
 - держит его долгоживущим;
-- отправляет jobs;
+- держит persistent queue generation/upscale jobs;
+- отправляет в worker только один active job за раз в MVP;
 - читает progress/done/error;
 - нормализует ошибки;
-- сохраняет результат в SQLite;
+- сохраняет результат в `.igs`/SQLite согласно политике job'а;
 - публикует renderer events.
 
-## Минимальный job
+## Queue-first contract
+
+MVP проектируется вокруг очереди jobs, а не вокруг ad-hoc single generation call.
+
+Main process владеет:
+
+- SQLite-backed queue;
+- job lifecycle;
+- frozen job payloads;
+- project/result commit policy;
+- cancel/retry/delete/prune actions;
+- renderer events.
+
+Python worker выполняет только текущий job и не знает о полной очереди.
+
+## Минимальный worker job
 
 ```ts
-type GenerationJob = {
+type WorkerJob = {
   id: string
-  workflowType: 'txt2img' | 'img2img' | 'inpaint'
+  queueItemId: string
+  operation: 'generate' | 'smart-patch-generate' | 'upscale'
+  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'upscale'
   model: {
     localPath: string
     resourceId: string
@@ -46,6 +64,11 @@ type GenerationJob = {
     targetPath: string
     format: 'png' | 'jpg' | 'webp'
   }
+  metadata: {
+    projectId: string
+    generationSnapshotId: string
+    targetLayerId?: string
+  }
 }
 ```
 
@@ -56,16 +79,38 @@ type WorkerMessage =
   | { type: 'ready'; workerVersion?: string }
   | { type: 'progress'; jobId: string; progress: number; step?: number; totalSteps?: number }
   | { type: 'done'; jobId: string; outputPath: string; seed?: number }
+  | { type: 'canceled'; jobId: string }
   | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown }
 ```
 
 ## Правила протокола
 
 - `jobId` создаёт main process.
+- `queueItemId` связывает worker job с SQLite queue item.
+- Queue item создаётся из frozen project/generation snapshot. Worker не должен читать mutable renderer state.
+- В MVP main process отправляет worker'у только один active job одновременно, но pending jobs уже хранятся в queue.
 - Worker не выбирает имена файлов финального output.
 - Worker может сообщить фактический seed, если seed был сгенерирован автоматически.
+- Worker должен поддерживать cancel request на безопасных границах, особенно во время denoising steps.
 - `predictionType` — compatibility-параметр модели, а не художественная настройка. Worker должен использовать его при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`.
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Worker-код должен быть совместим с BasedPyright и Ruff. Собственные DTO/protocol/model metadata типизируются строго; прямой Diffusers/PyTorch integration изолируется в adapter-слое.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
-- В MVP достаточно одного активного generation job, если это ускоряет реализацию.
+- Completed results commit'ятся main process'ом в `.igs` according to `targetResultPolicy` from queue item, затем renderer получает queue/result events.
+
+## Queue item lifecycle
+
+```ts
+type QueueItemStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'canceled'
+```
+
+Startup rule:
+
+- `running` jobs from previous app lifetime become `canceled`;
+- `pending` jobs remain pending unless user/app clears them;
+- terminal queue history may be pruned by retention policy.
