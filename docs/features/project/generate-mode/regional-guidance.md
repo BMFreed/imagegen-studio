@@ -94,6 +94,7 @@ Canvas tools for the selected Regional Guidance Layer:
 - `Transform Region` moves/scales/rotates the layer-owned region/mask;
 - Lasso, Polygon Lasso, Brush and Eraser edit the layer-owned region/mask;
 - no Bounding Box tool is shown, because Regional Guidance Layer does not own a generation bbox.
+- no `Fit BBox to Mask` / `Fit Patch BBox to Mask` action is shown for the same reason.
 
 Prompt and reference-image blocks are optional per layer:
 

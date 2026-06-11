@@ -76,12 +76,14 @@ Project mode bar должна визуально отличаться от ве�
 
 `View` является navigation/inspection tool, а не отдельным `Viewer` mode.
 
-Contextual right-side tools появляются только для выбранных layer types:
+Contextual canvas tool rails появляются только для выбранных layer types:
 
-- Smart Patch Layer: `Transform Mask`, Lasso, Polygon Lasso, Brush, Eraser, Bounding Box;
+- Smart Patch Layer: `Transform Mask`, Lasso, Polygon Lasso, Brush, Eraser, Bounding Box, `Fit Patch BBox to Mask`;
 - Regional Guidance Layer: `Transform Region`, Lasso, Polygon Lasso, Brush, Eraser.
 
 Raster Layer canvas editing в MVP не поддерживается. Для Raster Layer не показываются transform/crop/paint/filter tools.
+
+`Fit Patch BBox to Mask` показывается только для Smart Patch Layer в его контекстном тулбаре. Для Regional Guidance Layer такая кнопка не показывается, потому что у Regional Guidance нет собственного generation bbox.
 
 ### Generate → Upscale handoff
 
@@ -170,3 +172,5 @@ Mask, Bounding Box и Canvas Size должны быть разными секц�
 Smart Patch Layer описан как отдельная feature-сущность в `docs/features/project/generate-mode/smart-patch-layer.md`. Этот документ является рабочим источником правил ownership для layer-owned mask, layer-owned bounding box, internal resolution и raster sub-layers.
 
 Для выбранного Smart Patch Layer точное редактирование bounding box оформляется как компактная кнопка/бейдж `Bounding Box` в selected-layer controls. Кнопка открывает popover с x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-canvas и scale-before-processing. Прямое редактирование bbox handles на canvas остаётся основным способом работы, popover нужен для точных значений.
+
+Основная видимая команда `Fit Patch BBox to Mask` находится в контекстном тулбаре Smart Patch Layer. В bbox popover она может дублироваться как precision/action command, но не является глобальной командой canvas toolbar.

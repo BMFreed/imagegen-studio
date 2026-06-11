@@ -63,7 +63,7 @@ Controls:
 - lock aspect ratio;
 - set optimal size for the selected model;
 - fit to canvas;
-- fit to selection/mask when available;
+- fit to visible/selected Raster Layers;
 - scale before processing:
   - none;
   - auto;
@@ -88,7 +88,7 @@ Popover controls:
 - internal resolution width;
 - internal resolution height;
 - aspect lock;
-- fit to mask;
+- fit to mask, exposed primarily as `Fit Patch BBox to Mask` in the Smart Patch Layer contextual toolbar;
 - fit to canvas;
 - scale before processing.
 
@@ -103,4 +103,6 @@ Hard rule: a Smart Patch Layer bbox is not a global project setting. It belongs 
 - Canvas Size, current working bbox and Smart Patch Layer bbox are visually separate.
 - User can edit bbox via canvas handles and numeric controls.
 - Selected Smart Patch Layer exposes bbox precision editing through a compact popover.
+- Selected Smart Patch Layer exposes `Fit Patch BBox to Mask` from its contextual toolbar.
+- Regional Guidance Layer does not expose bbox controls.
 - Changing Smart Patch bbox/internal resolution marks an existing result as `outdated`.

@@ -979,7 +979,7 @@ Selected Smart Patch Layer / Bounding Box
 ├─ width / height
 ├─ internal generation resolution
 ├─ lock aspect ratio
-├─ fit to mask
+├─ fit to mask via Smart Patch contextual toolbar
 ├─ fit to canvas
 └─ regenerate
 ```
@@ -1136,7 +1136,7 @@ collapse right panel
 
 `View` — это navigation/inspection tool, а не отдельный Viewer mode.
 
-Если выбран Smart Patch Layer, справа показываются:
+Если выбран Smart Patch Layer, в контекстном canvas tool rail показываются:
 
 ```text
 Transform Mask
@@ -1145,11 +1145,14 @@ Polygon Lasso
 Brush
 Eraser
 Bounding Box
+Fit Patch BBox to Mask
 ```
 
 `Transform Mask` двигает/масштабирует/вращает только layer-owned mask. Он не двигает active raster sub-layer и не меняет Bounding Box.
 
-Если выбран Regional Guidance Layer, справа показываются:
+`Fit Patch BBox to Mask` подгоняет layer-owned Bounding Box выбранного Smart Patch Layer под bounds его layer-owned mask с учётом padding/blur и model grid size. Эта команда не является глобальной canvas toolbar action.
+
+Если выбран Regional Guidance Layer, в контекстном canvas tool rail показываются:
 
 ```text
 Transform Region
@@ -1160,6 +1163,8 @@ Eraser
 ```
 
 У Regional Guidance Layer нет Bounding Box tool, потому что слой владеет region/mask для conditioning, а не generation bbox.
+
+По той же причине для Regional Guidance Layer не показывается `Fit Patch BBox to Mask`.
 
 Обычные Raster Layers в MVP не редактируются на canvas: без raster transform, crop, paint и filters. Для полноценного растрового редактирования пользователь использует внешний редактор вроде Photoshop/Krita.
 

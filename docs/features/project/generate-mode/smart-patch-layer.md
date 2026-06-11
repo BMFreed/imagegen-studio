@@ -139,7 +139,7 @@ Layer bbox controls:
 - popover for exact x/y/width/height;
 - internal resolution width/height;
 - aspect lock;
-- fit to mask;
+- `Fit Patch BBox to Mask`, exposed primarily in the Smart Patch contextual left toolbar;
 - fit to canvas;
 - scale before processing.
 

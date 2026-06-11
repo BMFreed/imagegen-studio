@@ -18,6 +18,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Regional guidance](./regional-guidance.md)
 - [ControlNet follow-up](./controlnet-follow-up.md)
 - [Smart Patch compositing settings](./smart-patch-compositing.md)
+- [Canvas toolbar](./canvas-toolbar.md)
 - [Canvas tools](./canvas-tools.md)
 - [Layer stack](./layer-stack.md)
 - [Generate action behavior](./generation-actions.md)
@@ -69,7 +70,9 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - ControlNet is explicitly deferred to post-MVP; first follow-up workflows are tiled upscale, pose control, depth control and Canny/contour control;
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
+- canvas toolbar includes viewport zoom, fit view and fit current working bbox to visible/selected Raster Layers, but does not copy Invoke's project/gallery/snapshot/session buttons;
 - canvas side controls always show panel collapse buttons and `View`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
 - `GenerationResults` is included for browsing and cleaning up recent generated results;
 - completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
