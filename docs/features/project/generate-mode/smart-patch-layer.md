@@ -28,16 +28,15 @@ Smart Patch Layer is a self-contained layer. The mask, bounding box, internal re
 
 This is intentionally separate from:
 
-- project `Canvas Size`;
-- current working bounding box used before a layer exists;
+- Project Canvas / document work area;
 - ordinary Raster Layer transform/position.
 
 Hard rule:
 
 ```text
-Project / Canvas Size
-!= Current Working Bounding Box
+Project Canvas / Document Work Area
 != Smart Patch Layer Bounding Box
+!= Raster Layer Transform
 ```
 
 ## Scope
@@ -128,9 +127,9 @@ type SmartPatchLayer = {
 
 ## Layer-Owned Bounding Box
 
-Smart Patch Layer Bounding Box is not the same thing as project size or current working bbox.
+Smart Patch Layer Bounding Box is not the same thing as Project Canvas or Raster Layer transform.
 
-It defines the area of the project canvas that is sent to the worker for this layer's local generation.
+It defines the project-space area sent to the worker for this layer's local generation.
 
 Layer bbox controls:
 
@@ -144,6 +143,8 @@ Layer bbox controls:
 - scale before processing.
 
 Changing layer bbox or internal resolution marks the layer `outdated` if it already has an active raster sub-layer.
+
+If the bbox extends beyond Project Canvas bounds, Smart Patch outpainting should automatically expand Project Canvas to include the bbox. This canvas growth is undoable and does not transform Raster Layer pixels.
 
 ## Mask
 
@@ -232,7 +233,7 @@ Inputs that mark a layer `outdated`:
 ## Acceptance Criteria
 
 - Smart Patch Layer is documented as its own Generate feature.
-- Project Canvas Size, current working bbox and Smart Patch Layer bbox are explicitly separate.
+- Project Canvas, Raster Layer transform and Smart Patch Layer bbox are explicitly separate.
 - Smart Patch Layer owns its mask, bbox, internal resolution, compositing settings and raster sub-layers.
 - Standalone inpaint mask layers are not part of MVP.
 - Only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.

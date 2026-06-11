@@ -25,7 +25,7 @@ Snapshot should include:
 - negative prompt;
 - seed and seed behavior;
 - dimensions;
-- current working bbox or Smart Patch Layer-owned bbox;
+- Project Canvas bounds for normal generation, or Smart Patch Layer-owned bbox for Smart Patch generation;
 - internal resolution;
 - sampler/scheduler;
 - steps;

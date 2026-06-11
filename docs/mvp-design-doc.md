@@ -957,22 +957,23 @@ Smart Patch Layer является самодостаточным слоем, к
 В ImageGen Studio размер холста/изображения и bounding box локальной генерации не смешиваются в один инструмент.
 
 ```text
-Canvas / Image Size
-= размер проекта, холста, финальной композиции
+Project Canvas / Work Area
+= рабочая область документа, видимая композиция и default export bounds
 
 Bounding Box
 = область конкретного Smart Patch Layer, которая подаётся в генерацию
 ```
 
-В UI это должны быть две разные секции:
+В UI это должны быть разные секции:
 
 ```text
-Project / Canvas Size
+Project Canvas / Work Area
 ├─ canvas width
 ├─ canvas height
 ├─ resize canvas
 ├─ crop / extend canvas
-└─ output/export size
+├─ fit canvas to selected/visible raster layers
+└─ output/export bounds
 
 Selected Smart Patch Layer / Bounding Box
 ├─ x / y
@@ -984,16 +985,20 @@ Selected Smart Patch Layer / Bounding Box
 └─ regenerate
 ```
 
-В режиме `Project` / `Generate` также может существовать **current working bounding box**: временная рабочая область генерации до того, как пользователь создаёт или выбирает Smart Patch Layer. Это Invoke-like bbox для подготовки операции. После создания Smart Patch Layer эта область копируется в слой и становится уже layer-owned bounding box.
+Отдельного **current working bounding box** для всего изображения в ImageGen Studio нет. Normal generation использует Project Canvas как target bounds. Smart Patch generation использует layer-owned Bounding Box выбранного Smart Patch Layer.
 
 Правила:
 
-- изменение `Canvas Size` не должно неявно менять bounding box слоя;
+- изменение Project Canvas не должно неявно менять bounding box слоя;
+- изменение Project Canvas не должно неявно transform/resize Raster Layers;
 - изменение bounding box не должно менять размер canvas;
 - bounding box по умолчанию **не лочит aspect ratio**;
 - `Lock aspect ratio` — опциональный режим;
 - маска и bounding box являются разными сущностями и не должны путаться в UI;
 - термин в интерфейсе оставляем именно **Bounding Box**, а не `Generation Box`, чтобы явно отделять его от `Mask`.
+- Raster Layers могут быть меньше Project Canvas, больше Project Canvas или частично находиться за его пределами;
+- уменьшение Project Canvas не уничтожает off-canvas pixels, если пользователь явно не выбирает trim/crop layer data.
+- если Smart Patch Bounding Box выходит за Project Canvas, это outpainting-сценарий: Project Canvas автоматически расширяется до bbox bounds с нужным padding/grid alignment, без transform'а Raster Layers.
 
 ### 14.2.1. Canvas rendering pipeline
 
@@ -1333,7 +1338,7 @@ GenerationResults for review / active selection / cleanup
 - `Delete Selected` удаляет соответствующий постоянный raster sub-layer;
 - `Delete All Except Active` очищает лишние variants из текущего result set.
 
-Для обычной генерации внутри общего bbox каждый completed result создаёт отдельный Raster Layer. `GenerationResults` позволяет быстро просмотреть новые Raster Layers, выбрать активный/видимый вариант и удалить ненужные.
+Для обычной генерации внутри Project Canvas каждый completed result создаёт отдельный Raster Layer. `GenerationResults` позволяет быстро просмотреть новые Raster Layers, выбрать активный/видимый вариант и удалить ненужные.
 
 ```text
 Smart Patch Layer

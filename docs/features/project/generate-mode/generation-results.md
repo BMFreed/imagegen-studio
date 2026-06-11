@@ -70,7 +70,7 @@ Post-MVP:
 
 Every completed result is written to project state.
 
-For normal generation inside the current working bbox:
+For normal generation targeting Project Canvas:
 
 ```text
 Generate action
@@ -195,7 +195,7 @@ For Smart Patch Layer, the layer row shows the active raster thumbnail and a var
 
 - User can generate multiple results and inspect them in `GenerationResults`.
 - Completed results are automatically persisted into `.igs`.
-- Normal bbox generation creates persistent Raster Layers for all completed outputs.
+- Normal Project Canvas generation creates persistent Raster Layers for all completed outputs.
 - Smart Patch regeneration creates persistent raster sub-layer variants for all completed outputs.
 - `GenerationResults` supports thumbnails, previous/next, set active, delete selected and delete all except active.
 - `GenerationResults` supports show/hide selected result on canvas where relevant.

@@ -22,14 +22,14 @@ The generation target depends on selection/context:
 
 When a Generate action produces multiple results, each completed result is written into project state immediately and appears in [GenerationResults](./generation-results.md) for review, activation and cleanup.
 
-Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks or bbox while they are pending.
+Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, Project Canvas or Smart Patch bbox while they are pending.
 
 ## New Raster Generation
 
 When no Smart Patch Layer is the generation target:
 
 - worker receives prompt/settings/model resources;
-- worker receives current working bbox/dimensions;
+- worker receives Project Canvas bounds/dimensions as the normal generation target;
 - each completed result is stored as a raster asset inside `.igs`;
 - each completed result creates a new Raster Layer or fills an explicitly selected empty target layer;
 - every result stores its own generation snapshot;

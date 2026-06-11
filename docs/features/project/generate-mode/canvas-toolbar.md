@@ -2,7 +2,7 @@
 
 ## Feature
 
-Generate mode needs a compact canvas toolbar for viewport and global bbox actions.
+Generate mode needs a compact canvas toolbar for viewport and Project Canvas work-area actions.
 
 This toolbar is not a project/file toolbar. It should contain actions that operate on the visible canvas workspace, not actions that replace `.igs` project saving, exporting or session management.
 
@@ -14,13 +14,13 @@ Useful InvokeAI reference points:
 
 - `features/controlLayers/components/Toolbar/CanvasToolbarScale.tsx` — zoom out, percent input/dropdown and zoom in;
 - `features/controlLayers/components/Toolbar/CanvasToolbarResetViewButton.tsx` — fit visible layers to the stage;
-- `features/controlLayers/components/Toolbar/CanvasToolbarFitBboxToLayersButton.tsx` — fit generation bbox to visible layers, then fit view;
+- `features/controlLayers/components/Toolbar/CanvasToolbarFitBboxToLayersButton.tsx` — useful as a reference for fitting a rect to visible layer bounds, adapted as Project Canvas fit/grow behavior;
 - `features/controlLayers/components/Toolbar/CanvasToolbarFitBboxToMasksButton.tsx` — useful behavior, but moved out of the global toolbar in ImageGen Studio;
 - `features/controlLayers/components/Toolbar/CanvasToolbarProjectMenuButton.tsx`, `CanvasToolbarSnapshotMenuButton.tsx`, `CanvasToolbarSaveToGalleryButton.tsx` and `CanvasToolbarNewSessionMenuButton.tsx` — rejected as top-toolbar patterns for ImageGen Studio.
 
 ## ImageGen Studio Decision
 
-Use Invoke's proven viewport and bbox commands, but do not copy its file/session toolbar model.
+Use Invoke's proven viewport and rect-fitting commands, but do not copy its global bbox or file/session toolbar model.
 
 ImageGen Studio treats `.igs` as the default project document. Saving, opening, exporting and project-level reset commands belong in the app menu, project menu or command palette, not in the canvas toolbar.
 
@@ -32,20 +32,21 @@ Include in the canvas toolbar:
 - zoom percent input/dropdown;
 - zoom in;
 - `Fit View to Layers` / `Fit Content`;
-- `Fit Generation BBox to Layers`.
+- `Fit Project Canvas to Layers` / `Resize Canvas to Layers`.
 
-`Fit View to Layers` changes only the viewport/camera. It does not mutate layers, canvas size or bbox.
+`Fit View to Layers` changes only the viewport/camera. It does not mutate layers, Project Canvas size or Smart Patch bbox.
 
-`Fit Generation BBox to Layers` changes the current working generation bbox. It is used for the common workflow where the user drops or imports a large image as a Raster Layer and wants the generation bbox to match that visible content.
+`Fit Project Canvas to Layers` changes Project Canvas size. It is used for the common workflow where the user drops or imports a large image as a Raster Layer and wants the document work area/export bounds to match that visible content.
 
-When fitting the generation bbox to layers:
+When fitting Project Canvas to layers:
 
 - prefer selected visible Raster Layers when there is an explicit layer selection;
 - otherwise use the bounds of visible Raster Layers;
 - ignore hidden layers;
-- fit the resulting rect to the model/bbox grid size;
-- do not resize the project canvas;
-- after the bbox is updated, the viewport may also fit the relevant layers for convenience.
+- preserve Raster Layer pixels and transforms;
+- preserve Smart Patch Layer bboxes and masks in project coordinates;
+- support undo/redo;
+- after Project Canvas is updated, the viewport may also fit the relevant layers for convenience.
 
 ## Smart Patch Fit-To-Mask
 
@@ -99,14 +100,14 @@ Hints must not appear as inactive chrome in readonly Home previews.
 Document separately:
 
 - drag-and-drop/importing images into canvas as new Raster Layers;
-- snapping rules for current working bbox and Smart Patch Layer bbox;
+- snapping rules for Project Canvas resize/grow and Smart Patch Layer bbox;
 - exact placement of zoom controls and interaction hints after UI layout exploration.
 
 ## Acceptance Criteria
 
 - User can zoom with explicit controls and a percentage readout.
 - User can fit the viewport to visible layers/content.
-- User can fit the current working generation bbox to visible/selected Raster Layers.
+- User can fit Project Canvas to visible/selected Raster Layers.
 - Smart Patch Layer exposes `Fit Patch BBox to Mask` in its contextual left toolbar.
 - Regional Guidance Layer does not expose any bbox fit-to-mask action.
 - Project save/load/export/snapshot/reset actions are not presented as primary canvas toolbar controls.

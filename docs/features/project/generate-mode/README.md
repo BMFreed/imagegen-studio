@@ -10,7 +10,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Prompt diagnostics](./prompt-diagnostics.md)
 - [Tag autocomplete](./tag-autocomplete.md)
 - [Dynamic prompting](./dynamic-prompting.md)
-- [Image size and bounding boxes](./image-and-bounding-box.md)
+- [Project canvas and bounding boxes](./image-and-bounding-box.md)
 - [Smart Patch Layer](./smart-patch-layer.md)
 - [Generation settings](./generation-settings.md)
 - [LoRA selector](./lora-selector.md)
@@ -70,7 +70,8 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - ControlNet is explicitly deferred to post-MVP; first follow-up workflows are tiled upscale, pose control, depth control and Canny/contour control;
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
-- canvas toolbar includes viewport zoom, fit view and fit current working bbox to visible/selected Raster Layers, but does not copy Invoke's project/gallery/snapshot/session buttons;
+- Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
+- canvas toolbar includes viewport zoom, fit view and fit Project Canvas to visible/selected Raster Layers, but does not copy Invoke's project/gallery/snapshot/session buttons;
 - canvas side controls always show panel collapse buttons and `View`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
@@ -104,8 +105,8 @@ Project: portrait.igs
 ├───────────────┬─────────────────────────────┬────────────────┤
 │ Settings      │ Canvas                      │ Layers /       │
 │               │                             │ selected item  │
-│ Prompts       │ bbox handles                │                │
-│ Image/BBox    │ masks                       │ layer stack    │
+│ Prompts       │ Project Canvas frame        │                │
+│ Canvas/BBox   │ masks                       │ layer stack    │
 │ Generation    │ raster layers               │ smart patch    │
 │ Dynamic       │ regional guidance regions   │ sub-layers     │
 │ Compositing   │                             │ snapshots      │
@@ -121,7 +122,7 @@ Canvas controls should remain close to the canvas. Layer ownership and object-sp
 ## Acceptance Criteria
 
 - User can open a `.igs` Project tab and switch to `Generate`.
-- Generate shows prompt, model, LoRA, embeddings, dimensions/bbox, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
+- Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
 - Preset actions exist only as explicit preset actions.
 - Generate feature behavior is covered by the individual feature docs in this folder.

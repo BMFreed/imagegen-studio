@@ -109,7 +109,7 @@ docs/features/
 - `GenerationResults` для просмотра, выбора active result и очистки свежих multi-result generations.
 - Project-local undo/redo для `.igs` document mutations.
 - Completed results auto-commit into `.igs`.
-- Normal bbox generation creates Raster Layers for every completed result.
+- Normal Project Canvas generation creates Raster Layers for every completed result.
 - Smart Patch regeneration creates raster sub-layer variants for every completed result.
 - `Set Active` chooses the active raster sub-layer/result.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
