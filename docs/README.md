@@ -13,6 +13,8 @@
 - [specs/05-worker-protocol.md](./specs/05-worker-protocol.md) — контракт Python worker'а и формат job/progress/error.
 - [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — типизация, linting и formatting для Python worker'а.
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
+  - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, readonly preview, open/new project flows и recovery states.
+  - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, local resource library, metadata, missing-resource diagnostics.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Generate` mode: prompts, bbox, Smart Patch Layer, LoRA, embeddings, dynamic prompting и regional guidance.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для generation/upscale jobs.

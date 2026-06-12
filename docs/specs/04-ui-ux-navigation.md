@@ -16,7 +16,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Model Library`/`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
 
-Queue Manager является app-level surface. Он открывается из верхнего status bar/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
+Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
 
 `Launchpad`, `Viewer` и постоянный Invoke-like Boards sidebar не входят в целевую навигационную модель.
 
@@ -36,11 +36,13 @@ Home screen не имеет левой и правой project/canvas-панел
 - `Manage Models`;
 - создание, переименование и удаление workspace'ов;
 - перемещение `.igs` проектов между workspace'ами;
-- readonly preview проекта с нормальными tools для zoom/pan.
+- preview проекта с нормальными tools для zoom/pan.
 
-Readonly preview не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions: открыть, открыть в новой вкладке, переместить, переименовать, удалить, показать в файловом менеджере.
+Preview на Home не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions: открыть, открыть в новой вкладке, переместить, переименовать, удалить, показать в файловом менеджере.
 
 Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании.
+
+Детальная спецификация Home screen: `docs/features/home-screen.md`.
 
 ## Project Tabs
 
@@ -140,14 +142,28 @@ Boards/gallery не показываются как постоянная бок�
 - верхнее меню/app bar для глобальных действий: File, Edit, Project, Models, Window, Help;
 - document tab strip: `Home`, затем открытые `Project` tabs;
 - Home button/action, который фокусирует или заново открывает `Home`;
-- верхняя строка для статуса worker'а, текущей модели, queue/download status и глобальных действий;
+- compact queue/download activity buttons в верхнем app chrome;
 - центральная рабочая область;
 - правая панель параметров для выбранного объекта внутри Project;
 - project-local history/snapshots там, где она нужна работе с открытым `.igs`.
 
+### App chrome
+
+В MVP используем custom Electron titlebar/chrome по T3Code-like схеме:
+
+- системный titlebar скрыт через Electron `titleBarStyle`;
+- нативные кнопки окна остаются через `titleBarOverlay`;
+- app menu row и document tab strip являются частью draggable titlebar region;
+- интерактивные элементы верхней панели помечаются как no-drag regions;
+- справа резервируется зона под native window controls через Window Controls Overlay geometry.
+
+Горизонтальный логотип находится в menu row. Высота menu row — около 40px, чтобы логотип оставался читаемым без перегруза верхнего chrome.
+
+Project tab marker использует цвет workspace. Цвет workspace можно менять вручную, а для новых workspace'ов он генерируется автоматически. `Home` tab использует home icon вместо workspace color marker.
+
 ## MVP-состояния, которые нужно спроектировать заранее
 
-- Worker unavailable / starting / ready / busy / failed.
+- Generation engine unavailable / starting / busy / failed.
 - No model installed.
 - CivitAI token missing.
 - Download in progress.
@@ -155,7 +171,7 @@ Boards/gallery не показываются как постоянная бок�
 - Generation failed.
 - Missing output file in history.
 - Missing/corrupt `.igs` project.
-- Autosave recovery available.
+- Autosave available / recoverable project state.
 - Workspace path missing or inaccessible.
 - Preset resource missing.
 - Base model family warning.

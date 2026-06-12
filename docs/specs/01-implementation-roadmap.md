@@ -55,12 +55,15 @@ docs/features/
 - Vite + Vue 3 + TypeScript.
 - Electron main/preload/renderer.
 - Naive UI и базовая тёмная тема.
+- `Home` tab shell according to [Home Screen](../features/home-screen.md).
 - Typed `window.api` без прямого доступа renderer к Node.js.
 - SQLite init, migrations, app data directory.
 
 Результат: приложение запускается как desktop shell, renderer общается с main process через безопасный typed API.
 
 ## Фаза 1. Model Library
+
+Подробный user flow и scope зафиксированы в [Model Manager](../features/model-manager.md).
 
 - Настройка CivitAI API token.
 - Импорт модели по CivitAI URL.
