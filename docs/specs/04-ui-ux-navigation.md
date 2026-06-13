@@ -18,6 +18,8 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
 
+Загрузки моделей не получают отдельный Download Manager в MVP. Кнопка downloads в верхнем app chrome открывает Model Manager, сфокусированный на `Downloading` / install queue. Это быстрый вход в активные установки моделей, а не отдельная равноправная поверхность.
+
 `Launchpad`, `Viewer` и постоянный Invoke-like Boards sidebar не входят в целевую навигационную модель.
 
 ## UX-язык и аудитория
@@ -156,6 +158,14 @@ Boards/gallery не показываются как постоянная бок�
 - центральная рабочая область;
 - правая панель параметров для выбранного объекта внутри Project;
 - project-local history/snapshots там, где она нужна работе с открытым `.igs`.
+
+Activity buttons в app chrome разделены по ownership:
+
+- generation/upscale queue button открывает app-level Queue Manager;
+- downloads button открывает Model Manager на установках/загрузках моделей;
+- settings button открывает глобальные настройки приложения.
+
+Когда app-level overlay открыт, document tab strip и рабочая область под ним визуально уходят в фон: dim/blur + pointer-events disabled. Верхнее меню и native window controls могут оставаться читаемыми как часть оболочки приложения, но вкладки не должны выглядеть доступными для прямой навигации за модальным слоем.
 
 ### App chrome
 

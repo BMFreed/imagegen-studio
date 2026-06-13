@@ -413,7 +413,9 @@ Model Manager:
 Queue / Downloads:
 
 - Home can show compact queue/download activity buttons in the app chrome.
-- Clicking it opens the app-level Queue/Downloads surface.
+- The generation/upscale queue button opens Queue Manager.
+- The downloads button opens Model Manager focused on `Downloading` / model install queue.
+- Model downloads do not have a separate Download Manager in MVP.
 - Home does not show a permanent queue panel.
 
 Autosave / Recovery:

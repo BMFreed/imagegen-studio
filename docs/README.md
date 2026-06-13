@@ -21,6 +21,11 @@
   - [features/project/generate-mode/tag-autocomplete.md](./features/project/generate-mode/tag-autocomplete.md) — Danbooru-style tag autocomplete для prompt editor.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
 
+## HTML-прототипы
+
+- [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
+- [prototypes/model-manager.html](./prototypes/model-manager.html) — первый прототип Model Manager как app-level overlay.
+
 ## Правило обновления
 
 Если решение меняет scope, архитектуру или пользовательское поведение, его нужно записать в один из документов выше. `mvp-design-doc.md` остаётся каноническим обзором, а `specs/` содержит рабочие уточнения для реализации.

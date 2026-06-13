@@ -23,6 +23,7 @@ All generation-related advanced controls live inside the `Generation` card's own
 MVP controls:
 
 - model selector;
+- model version selector for the selected model;
 - base model family badge;
 - prediction type badge/warning where useful, such as `epsilon` or `v_prediction`;
 - separate LoRAs selector and selected LoRA stack;
@@ -59,11 +60,22 @@ The selected model controls which fields are visible.
 
 Unsupported controls should be hidden or disabled with a clear reason.
 
+The selected model version is project-local state. Generate shows a `Version` select in the selected model card, populated from Model Manager's installed versions for that model identity.
+
+Rules:
+
+- new selections default to the latest installed/default version from Model Manager;
+- existing `.igs` projects preserve their exact selected version;
+- changing the version in Generate updates the current project settings and future jobs for that project;
+- changing Model Manager's default version must not silently rewrite open projects, presets or generation snapshots;
+- if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager.
+
 If the user selects a v-prediction model, Generate should use the model metadata to pass the correct prediction type to the worker and store it in the snapshot. This is a model compatibility behavior, not a separate user-facing generation mode.
 
 ## Acceptance Criteria
 
 - User can select a model and configure core sampling parameters.
+- User can select the installed version of the selected model.
 - Unsupported controls are not shown as generic always-on clutter.
 - Prediction type metadata is passed to the worker and stored in snapshots.
 - LoRAs and Embeddings appear as separate sections inside Generation.

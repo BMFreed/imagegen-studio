@@ -103,7 +103,7 @@ Model Manager
 │  ├─ status filter
 │  ├─ Add from CivitAI URL
 │  ├─ Install Queue badge/button
-│  └─ Settings / token status
+│  └─ CivitAI token status pill
 ├─ Resource List
 │  └─ installed / missing / downloading resources
 └─ Details Panel
@@ -128,9 +128,21 @@ The header should include:
   - source;
 - `Add from CivitAI URL` primary action;
 - install queue badge with active/pending count;
-- compact settings action for CivitAI token and model storage path.
+- compact CivitAI token status pill.
 
 The header should stay task-focused. It should not contain marketplace discovery, featured models, recommendations or promotional content in MVP.
+
+The CivitAI token status pill is the persistent entry point for token management:
+
+- connected state: `CivitAI connected`;
+- missing state: `CivitAI token needed`;
+- failed state: `CivitAI connection failed`;
+- click opens a compact popover with `Change token`, `Remove token` and `Check connection`;
+- if the user clicks `Add from CivitAI URL` without a valid token, the same token setup flow is shown before URL preview.
+
+Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
+
+`Add from CivitAI URL` opens a dedicated import dialog/drawer. Import preview must not be shown permanently inside the selected-model details panel, because that makes it look like metadata for the currently selected model.
 
 ### Resource List
 
@@ -183,13 +195,29 @@ Actions:
 - reveal file in folder;
 - copy source URL;
 - copy hash;
-- re-fetch metadata;
 - re-identify local file;
 - delete local resource;
 - repair missing file from CivitAI when identity is known;
 - edit user-controlled metadata such as display name, thumbnail override and notes.
 
 Do not expose low-level loader internals as primary UI. They can appear in diagnostics/dev details only.
+
+### Installed Versions
+
+Several versions of one CivitAI model can be installed side by side.
+
+The version list in Details Panel should use explicit actions:
+
+- the default version shows `Default`;
+- inactive installed versions use `Set Default`;
+- installing another version uses `Install Version`;
+- avoid vague labels such as `Show` when the action changes default selection behavior.
+
+Default version is only a starting point for new model selections. It must not silently change existing projects, presets or generation snapshots.
+
+Project / Generate owns the actual selected version for a project. The model card in Generate must expose a `Version` select for the selected model. By default it uses the latest installed/default version, but an existing project can keep or switch to any installed version explicitly.
+
+Do not implement a visible `Refresh Info` / `Update Metadata` action in MVP. We do not currently have evidence that CivitAI metadata refresh is important enough to promote as a product feature.
 
 ## MVP Scope
 
@@ -294,7 +322,7 @@ Validation steps:
 - select downloadable file;
 - detect resource type from metadata and file name where possible;
 - detect duplicate local resource;
-- show preview with name, version, type, base model, file size, preview image, source URL and target directory.
+- show preview with name, author, version, type, base model, file size, preview image, source URL and target directory.
 
 The user can cancel before the install job is created.
 
@@ -332,6 +360,10 @@ sequenceDiagram
 
 Model downloads can be long-running. Treat install jobs as first-class state, not as invisible toasts.
 
+Model downloads belong to Model Manager. The app chrome download activity button opens Model Manager focused on the `Downloading` status / install queue. It does not open a separate Download Manager in MVP.
+
+Generation and upscale jobs use the separate Queue Manager described in `docs/features/queue-manager.md`.
+
 Install job statuses:
 
 ```ts
@@ -358,6 +390,8 @@ Each install queue row should show:
 - cancel;
 - retry failed;
 - reveal error details.
+
+The compact install strip should use an explicit `View Queue` button. Avoid a bare `Queue` label, because it does not explain whether it opens the queue, adds something to the queue or changes current item state.
 
 Bulk queue actions:
 
