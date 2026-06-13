@@ -93,7 +93,7 @@ The hint area should be context-sensitive:
 - `Transform Mask` shows move/scale/rotate hints;
 - Lasso/Polygon Lasso/Brush/Eraser show mask editing hints.
 
-Hints must not appear as inactive chrome in readonly Home previews.
+Hints must not appear as inactive chrome in Home previews.
 
 ## Follow-Up Scope
 

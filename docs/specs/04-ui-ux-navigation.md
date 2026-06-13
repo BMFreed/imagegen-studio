@@ -20,6 +20,14 @@ Queue Manager является app-level surface. Он открывается и
 
 `Launchpad`, `Viewer` и постоянный Invoke-like Boards sidebar не входят в целевую навигационную модель.
 
+## UX-язык и аудитория
+
+ImageGen Studio проектируется не только для технически подкованных пользователей diffusion-инструментов. Значительная часть аудитории — люди, которые просто хотят генерировать и дорабатывать изображения.
+
+Поэтому основной UI должен использовать человеческие формулировки: `Preview`, `Size`, `Open Project`, `Show in Folder`, `Generation is starting`, `Generation is unavailable`. Постоянные visible labels вроде `Worker ready`, `runtime`, `readonly`, `direct .igs files only`, `last scan` и похожие внутренние термины не должны попадать в основной интерфейс.
+
+Технические детали допустимы в логах, диагностике, recovery dialogs и `Show details`, но не как обычная навигация или дефолтные подписи на Home/Project screens.
+
 ## Home
 
 `Home` является обычной вкладкой в document tab strip. Её можно закрыть, но пользователь всегда может открыть её снова через Home button/menu action. Если `Home` уже открыта, Home action фокусирует существующую вкладку.
@@ -38,7 +46,9 @@ Home screen не имеет левой и правой project/canvas-панел
 - перемещение `.igs` проектов между workspace'ами;
 - preview проекта с нормальными tools для zoom/pan.
 
-Preview на Home не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions: открыть, открыть в новой вкладке, переместить, переименовать, удалить, показать в файловом менеджере.
+Preview на Home не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions. Постоянно видимые действия текущего прототипа: открыть, открыть в новой вкладке, переместить, показать в файловом менеджере. Более редкие действия вроде переименовать, удалить или relink должны жить в overflow/context menu.
+
+В текущем Home-прототипе допустимы две primary-кнопки, потому что они принадлежат разным контекстам: `New Project` относится к выбранному workspace, а `Open Project` в Preview / Inspector относится к выбранному проекту. Это не должно превращаться в правило “много primary-кнопок в одной зоне”: внутри одной панели главный CTA должен оставаться один.
 
 Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании.
 
@@ -156,6 +166,8 @@ Boards/gallery не показываются как постоянная бок�
 - app menu row и document tab strip являются частью draggable titlebar region;
 - интерактивные элементы верхней панели помечаются как no-drag regions;
 - справа резервируется зона под native window controls через Window Controls Overlay geometry.
+
+HTML-прототип может рисовать статичные кнопки окна справа, чтобы показать композицию chrome. В реальном Electron-приложении это место занимает native `titleBarOverlay`.
 
 Горизонтальный логотип находится в menu row. Высота menu row — около 40px, чтобы логотип оставался читаемым без перегруза верхнего chrome.
 

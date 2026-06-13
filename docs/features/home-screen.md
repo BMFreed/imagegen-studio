@@ -53,23 +53,25 @@ Recommended MVP layout:
 ```text
 Home tab
 ├─ App Chrome
+│  ├─ horizontal product logo in the menu row
 │  ├─ app menu
-│  ├─ document tabs
 │  ├─ queue/download activity buttons
-│  ├─ native window controls overlay
-│  └─ horizontal product logo in the menu row
-├─ Home Header
+│  ├─ settings button
+│  ├─ window controls
+│  └─ document tabs
+├─ Workspace Sidebar
+│  ├─ workspace actions
 │  ├─ New Project
 │  ├─ Open Project
 │  ├─ Manage Models
-├─ Workspace Sidebar
 │  ├─ Uncategorized
 │  ├─ user workspaces
 │  └─ add workspace
 ├─ Project Browser
+│  ├─ selected workspace title
+│  ├─ refresh / workspace options
 │  ├─ search
 │  ├─ sort/view controls
-│  ├─ recent projects strip or filter
 │  └─ project grid/list
 └─ Preview / Inspector
    ├─ project preview
@@ -85,29 +87,42 @@ The exact visual split can change during prototyping, but the functional zones s
 - project preview/inspection;
 - app-level actions.
 
-## Header
+## Workspace Quick Actions
 
-Header actions:
+The primary Home actions live in the Workspace Sidebar:
 
 - `New Project`;
 - `Open Project`;
-- `Manage Models`;
-- queue/download status button;
-- app settings/menu action.
+- `Manage Models`.
 
-The header should not duplicate project editing controls. It should stay focused on app-level and project-opening actions.
+`New Project` is the primary action for the Home/workspace context. The selected-project preview may also show a primary `Open Project` action, because it belongs to a separate selected-project context. This is allowed in the current prototype: the two primary buttons answer different user questions.
 
 Normal healthy runtime state should not be shown as technical text. Avoid labels like `Worker ready`, `readonly`, `direct .igs files only` or `last scan`. Only show engine/model/worker state when it needs user attention, and use user-facing language such as `Generation is starting` or `Generation is unavailable`.
+
+Home should not show a permanent app-readiness panel. Queue, downloads and settings are compact icon buttons in the app chrome. Recovery and scan details live in dedicated flows or overflow menus, not as default Home content.
+
+## Audience And Language
+
+Home is for people who want to generate and manage images, not necessarily for people who understand application internals.
+
+Rules:
+
+- prefer human-facing terms like `Preview`, `Size`, `Open Project`, `Show in Folder`;
+- avoid persistent labels like `Worker ready`, `readonly`, `runtime`, `direct .igs files only`, `last scan`;
+- technical diagnostics may exist behind `Show details`, logs, recovery dialogs or developer views;
+- when a technical state blocks work, explain the user impact first and the technical cause second.
 
 ## App Chrome
 
 ImageGen Studio should use a custom Electron titlebar/chrome similar to T3Code:
 
 - hide the system titlebar with Electron `titleBarStyle`;
-- keep native window controls through `titleBarOverlay` instead of drawing custom close/minimize/maximize buttons in MVP;
+- keep native window controls through `titleBarOverlay` in the real Electron app;
 - make the app menu row and tab strip part of the draggable titlebar region;
 - mark buttons, tabs, inputs and menus as no-drag regions;
 - reserve the native window-controls area with `env(titlebar-area-*)` when the Window Controls Overlay is visible.
+
+The HTML prototype may draw static window-control buttons so the layout communicates the intended chrome. That visual placeholder does not override the Electron implementation rule above.
 
 The horizontal app logo lives in the menu row. The menu row should be tall enough, around 40px, for the logo to stay legible without making the chrome feel heavy.
 
@@ -178,7 +193,7 @@ Preview tools:
 - fit to view;
 - pan;
 - reset view;
-- optional open/reveal actions.
+- selected-project actions.
 
 Preview must not show inactive canvas/generation controls. It is a viewer/inspector only.
 
@@ -186,11 +201,10 @@ Preview actions:
 
 - open;
 - open in new tab;
-- reveal in file manager;
-- rename;
 - move to workspace;
-- delete;
-- rescan/relink if missing.
+- show in folder.
+
+Less common actions such as rename, delete and relink may live in the preview overflow/context menu instead of being permanent visible buttons.
 
 Autosave recovery is intentionally not a permanent preview-panel action. Recovery belongs in `File -> Recover Autosaves...`, a startup/opening-flow modal or a project-opening decision dialog. Home cards may show a subtle `Autosave` status marker, but should not show an inline recovery warning block that competes with normal project browsing.
 
@@ -337,7 +351,7 @@ flowchart TD
   C --> G["Zoom / pan / inspect"]
   E --> G
   F --> H["Offer rescan/rebuild when possible"]
-  G --> I["Open / move / rename / delete / reveal"]
+  G --> I["Open / open in new tab / move / show in folder / overflow actions"]
 ```
 
 ## Workspace Management Flow
@@ -393,7 +407,7 @@ State behavior:
 Model Manager:
 
 - `Manage Models` opens Model Manager.
-- If no model is installed, Home may show a subtle app-readiness warning and an action to open Model Manager.
+- If no model is installed, Home may show a subtle, user-facing warning and an action to open Model Manager.
 - Home must not duplicate Model Manager's resource list.
 
 Queue / Downloads:
@@ -434,11 +448,12 @@ MVP does not include:
 - Home shows `Uncategorized` by default.
 - User can create a new `.igs` project inside a workspace.
 - User can open an existing `.igs` from Home.
+- Home may show `New Project` as the workspace primary action and `Open Project` as the selected-project primary action.
 - Opening an already-open `.igs` focuses the existing `Project` tab.
 - Left click, middle click / Ctrl-click and context-menu open behavior match the documented tab rules.
 - Project cards show thumbnail, name, basic metadata and status.
 - Home preview supports zoom and pan without showing inactive generation/canvas controls.
-- User can create, rename, rescan and reveal workspaces.
+- User can create and rename workspaces; refresh/reveal-style maintenance actions are available via icon or overflow menu.
 - Workspace scan ignores nested folders and non-`.igs` files.
 - Missing/corrupt/incompatible projects produce visible recoverable states.
 - Autosave recovery is reachable through a dedicated recovery flow and is not presented as a permanent Home warning.

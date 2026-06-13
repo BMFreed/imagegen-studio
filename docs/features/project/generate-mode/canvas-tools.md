@@ -58,7 +58,7 @@ Post-MVP:
 
 Canvas tools should be close to the canvas and visually distinct from project mode tabs.
 
-Tools should not be visible in readonly Home preview unless they actually work there. Readonly preview gets viewer tools only: pan, zoom, fit view and project actions.
+Tools should not be visible in Home preview unless they actually work there. Home preview gets viewer tools only: pan, zoom, fit view and project actions.
 
 Generate canvas tools should not create a separate `Viewer` mode.
 
