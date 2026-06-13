@@ -82,6 +82,35 @@ Each selected row should include:
 
 Only the info button opens the metadata popover/card.
 
+## LoRA Application And Trigger Words
+
+Adding a LoRA through the UI applies the LoRA resource and its weight automatically to the generation job.
+
+Conceptually this is equivalent to the common prompt token form:
+
+```text
+<lora:LoRA_Name:Weight>
+```
+
+But in ImageGen Studio this should be represented as structured generation state, not as user-authored prompt text. The prompt editor should not require the user to manually type the LoRA attachment token after they have selected the LoRA in the UI.
+
+Rules:
+
+- selected LoRA resource id/version and weight are stored in the LoRA stack;
+- the worker receives the selected LoRA stack as structured job input;
+- exported metadata may include an A1111-style token for compatibility when useful;
+- changing the weight in the selected LoRA row updates the structured LoRA stack;
+- removing or disabling the selected LoRA removes/disables the structured LoRA attachment.
+
+Secondary trigger words are different. They are normal prompt words/phrases supplied by the LoRA author, and the user chooses whether to add them to the prompt.
+
+Rules for secondary trigger words:
+
+- trigger words must be visible from the selected LoRA row through the explicit info button;
+- trigger words should also be available from the dropdown row's info button;
+- metadata popover should offer copy/insert affordances when practical, but must not insert secondary trigger words automatically;
+- the UI should make clear that these words are optional prompt guidance, not the LoRA attachment itself.
+
 ## Metadata Popover
 
 The metadata popover/card should include:
@@ -116,4 +145,6 @@ Each LoRA snapshot entry should include:
 - Selected LoRAs appear below the selector.
 - Info buttons exist on both dropdown rows and selected rows.
 - Metadata popover opens only by explicit info-button click.
+- Adding a LoRA in the UI applies the LoRA resource and weight without requiring the user to type `<lora:...:...>` manually.
+- Secondary trigger words are visible through the info popover and are never inserted automatically.
 - LoRA stack is stored in generation snapshots.

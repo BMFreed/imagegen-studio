@@ -2,7 +2,7 @@
 
 ## Feature
 
-Model Manager is the app-level place where the user installs, inspects, repairs, deletes and selects reusable generation resources:
+Model Manager is the app-level place where the user installs, inspects, repairs, removes and selects reusable generation resources:
 
 - checkpoints / main models;
 - LoRAs;
@@ -62,7 +62,7 @@ Model Manager should borrow InvokeAI's durable mechanics:
 - search and filters;
 - model detail panel;
 - default model settings where useful;
-- install/repair/delete actions;
+- install/repair/remove actions;
 - resource cards used by Generate selectors.
 
 But adapt the product shape:
@@ -92,43 +92,46 @@ Opening Model Manager should not close the current `Project` tab, should not aff
 
 ## Information Architecture
 
-Use a two-pane operational layout:
+Use an app-level overlay with a three-column operational layout:
 
 ```text
 Model Manager
 ├─ Header
-│  ├─ search
-│  ├─ resource type filter
-│  ├─ base model family filter
-│  ├─ status filter
+│  ├─ title and short description
+│  ├─ CivitAI token status pill
 │  ├─ Add from CivitAI URL
-│  ├─ Install Queue badge/button
-│  └─ CivitAI token status pill
-├─ Resource List
-│  └─ installed / missing / downloading resources
-└─ Details Panel
-   ├─ preview
-   ├─ identity and metadata
-   ├─ local file status
-   ├─ compatibility metadata
-   ├─ default settings
-   ├─ related resources
-   └─ actions
+│  └─ close
+├─ Left Navigation
+│  ├─ Library filters: All Models, Checkpoints, LoRA, Embeddings, VAE, Upscalers
+│  ├─ Status filters: Installed, Downloading, Needs Attention
+│  └─ Storage/download summary with Open Folder
+├─ Resource List Panel
+│  ├─ search
+│  ├─ base model filter
+│  ├─ sort
+│  ├─ more filters
+│  ├─ installed / missing / downloading resources
+│  └─ compact install strip
+├─ Details Panel
+│  ├─ preview
+│  ├─ identity and metadata
+│  ├─ installed versions
+│  ├─ local file status
+│  └─ actions
+└─ Import Dialog
+   ├─ CivitAI URL
+   ├─ import preview
+   └─ install / cancel
 ```
 
 ### Header
 
 The header should include:
 
-- search input;
-- filters:
-  - resource type;
-  - base model family;
-  - status;
-  - source;
+- title and short description;
+- compact CivitAI token status pill;
 - `Add from CivitAI URL` primary action;
-- install queue badge with active/pending count;
-- compact CivitAI token status pill.
+- close action.
 
 The header should stay task-focused. It should not contain marketplace discovery, featured models, recommendations or promotional content in MVP.
 
@@ -143,6 +146,44 @@ The CivitAI token status pill is the persistent entry point for token management
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 
 `Add from CivitAI URL` opens a dedicated import dialog/drawer. Import preview must not be shown permanently inside the selected-model details panel, because that makes it look like metadata for the currently selected model.
+
+### Left Navigation
+
+The left navigation owns broad filtering and compact status summaries.
+
+Library filters:
+
+- `All Models`;
+- `Checkpoints`;
+- `LoRA`;
+- `Embeddings`;
+- `VAE`;
+- `Upscalers`.
+
+Status filters:
+
+- `Installed`;
+- `Downloading`;
+- `Needs Attention`.
+
+The side summary shows:
+
+- storage used;
+- active model downloads;
+- `Open Folder`.
+
+The side summary is not a full storage settings page. It is a compact utility area.
+
+### Resource List Toolbar
+
+The resource list toolbar owns day-to-day search and narrowing:
+
+- search input;
+- base model family filter;
+- sort select;
+- compact more-filters action.
+
+Do not duplicate Library/Status filters in the header.
 
 ### Resource List
 
@@ -162,43 +203,47 @@ Each row should show:
 The list should support:
 
 - single selection to show details;
-- multi-select for bulk delete and bulk reidentify/repair later;
 - keyboard navigation;
-- sorting by name, recently installed, size and resource type;
-- search by name, version, trigger phrase, CivitAI id, hash and local filename.
+- sorting by name, recently installed and size;
+- search by name, version, trigger phrase, CivitAI id and local filename.
 
 ### Details Panel
 
-The selected resource detail panel should show:
+The selected resource detail panel follows the prototype's compact structure.
+
+Visible MVP detail content:
 
 - preview image;
 - display name;
-- version name;
-- source URL;
-- CivitAI model id / version id;
-- local resource id;
-- file hash;
-- file path;
+- short description;
+- status/type/base-model badges;
+- `predictionType` badge for main checkpoints when known, such as `v-pred`;
+- installed versions;
+- selected/default version;
+- source summary, for example CivitAI model/version ids;
+- managed file path;
 - file size;
-- resource type;
-- base model family;
-- model format;
-- `predictionType` for main checkpoints when known;
-- trigger phrases for LoRA / embeddings when known;
-- default LoRA weight when known;
-- recommended insertion tokens for embeddings when known;
-- compatibility warnings;
-- related resources when useful.
+- usage summary, for example presets and project snapshots.
+
+For LoRA and embeddings, the same details area should additionally expose trigger words / activation tokens in a dedicated section or popover.
+
+Do not expose local resource id, file hash, loader internals or full diagnostics in the default details view. Those can exist behind diagnostics / `Show details` later, but are not part of the visible MVP action grid.
 
 Actions:
 
-- reveal file in folder;
 - copy source URL;
-- copy hash;
-- re-identify local file;
-- delete local resource;
-- repair missing file from CivitAI when identity is known;
-- edit user-controlled metadata such as display name, thumbnail override and notes.
+- reveal file in folder;
+- remove local resource;
+
+Visible action layout:
+
+- `Copy Link` spans the full action grid width;
+- `Show in Folder` and `Remove` appear below as a two-button row.
+
+Contextual actions:
+
+- missing resources can show `Repair` directly in the resource row;
+- lower-level actions such as copy hash, re-identify local file, edit metadata and diagnostics should not be visible in the default detail action grid for MVP.
 
 Do not expose low-level loader internals as primary UI. They can appear in diagnostics/dev details only.
 
@@ -238,7 +283,7 @@ MVP includes:
 - detect duplicate already-installed resources by CivitAI version id and/or file hash;
 - show resource details;
 - show missing-file status;
-- delete local resource with confirmation;
+- remove local resource with confirmation;
 - prevent deletion while resource is currently used by a running job;
 - keep snapshots/presets readable after deletion by storing human-readable copied metadata in snapshots;
 - expose installed resources to Generate model, LoRA and embeddings selectors;
@@ -252,7 +297,7 @@ Post-MVP:
 - scan folder for models;
 - repair/relink missing local files;
 - one-click model update by CivitAI identity;
-- bulk actions beyond delete;
+- bulk actions;
 - richer model relationships;
 - optional non-destructive disk cache for expensive model conversion or cold-load optimization;
 - ControlNet resources once ControlNet itself is added after MVP.
@@ -322,7 +367,7 @@ Validation steps:
 - select downloadable file;
 - detect resource type from metadata and file name where possible;
 - detect duplicate local resource;
-- show preview with name, author, version, type, base model, file size, preview image, source URL and target directory.
+- show preview with name, author, version, type, base model, file size, preview image and source URL.
 
 The user can cancel before the install job is created.
 
@@ -451,9 +496,9 @@ flowchart TD
   H -- "No" --> J
 ```
 
-### Delete Local Resource
+### Remove Local Resource
 
-Deleting a model removes the local reusable resource, but does not rewrite history.
+Removing a model removes the local reusable resource, but does not rewrite history.
 
 Rules:
 
@@ -465,8 +510,8 @@ Rules:
 
 ```mermaid
 flowchart TD
-  A["User clicks Delete"] --> B{"Used by running job?"}
-  B -- "Yes" --> C["Block delete and explain"]
+  A["User clicks Remove"] --> B{"Used by running job?"}
+  B -- "Yes" --> C["Block removal and explain"]
   B -- "No" --> D{"Used by pending jobs?"}
   D -- "Yes" --> E["Warn and offer cancel affected jobs"]
   D -- "No" --> F{"Referenced by presets/snapshots?"}
@@ -476,7 +521,7 @@ flowchart TD
   G --> I{"User confirms?"}
   H --> I
   I -- "No" --> J["Keep resource"]
-  I -- "Yes" --> K["Delete file and mark resource removed/missing"]
+  I -- "Yes" --> K["Remove file and mark resource removed/missing"]
   K --> L["Update selectors and diagnostics"]
 ```
 
@@ -532,7 +577,7 @@ Embeddings selector:
 Generation snapshots:
 
 - store resource ids and copied human-readable metadata;
-- are not mutated when a model is renamed, deleted or updated;
+- are not mutated when a model is renamed, removed or updated;
 - can resolve current local resources by id/hash/CivitAI version;
 - show missing resource diagnostics when exact resource is not available.
 
@@ -630,7 +675,7 @@ Detailed technical errors can be available behind `Show details` for debugging a
 - Installed embedding appears in Embeddings selector with token metadata when available.
 - Duplicate exact resource install does not download again by default.
 - Missing local file is shown as a missing resource state.
-- Delete is blocked for resources used by running jobs.
-- Delete confirmation warns when resource is referenced by presets/snapshots.
-- Generation snapshots remain readable after a resource is deleted.
+- Remove is blocked for resources used by running jobs.
+- Remove confirmation warns when resource is referenced by presets/snapshots.
+- Generation snapshots remain readable after a resource is removed.
 - Model Manager actions are not part of project undo/redo.
