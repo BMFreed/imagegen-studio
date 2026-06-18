@@ -10,6 +10,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Prompt diagnostics](./prompt-diagnostics.md)
 - [Tag autocomplete](./tag-autocomplete.md)
 - [Dynamic prompting](./dynamic-prompting.md)
+- [Presets](../../presets.md)
 - [Project canvas and bounding boxes](./image-and-bounding-box.md)
 - [Smart Patch Layer](./smart-patch-layer.md)
 - [Generation settings](./generation-settings.md)
@@ -59,6 +60,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - no `Launchpad`, `Viewer` or permanent Boards sidebar inside Generate;
 - no `Choose Prompt Template` dropdown copied from Invoke;
 - prompt templates/settings templates are handled by the Presets feature;
+- Generate uses a compact Invoke-like preset selector above the prompt editor, but selecting a preset opens apply preview and supports partial apply instead of silently overwriting settings;
 - no standalone inpaint mask layers;
 - Smart Patch Layer owns its mask, layer-owned bounding box, internal resolution and raster sub-layers;
 - LoRAs and Embeddings are separate Generation sections, not one shared `Concepts` menu;
@@ -105,8 +107,9 @@ Project: portrait.igs
 ├───────────────┬─────────────────────────────┬────────────────┤
 │ Settings      │ Canvas                      │ Layers /       │
 │               │                             │ selected item  │
-│ Prompts       │ Project Canvas frame        │                │
-│ Canvas/BBox   │ masks                       │ layer stack    │
+│ Presets       │ Project Canvas frame        │                │
+│ Prompts       │ masks                       │ layer stack    │
+│ Canvas/BBox   │ raster layers               │ smart patch    │
 │ Generation    │ raster layers               │ smart patch    │
 │ Dynamic       │ regional guidance regions   │ sub-layers     │
 │ Compositing   │                             │ snapshots      │
@@ -124,5 +127,5 @@ Canvas controls should remain close to the canvas. Layer ownership and object-sp
 - User can open a `.igs` Project tab and switch to `Generate`.
 - Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
-- Preset actions exist only as explicit preset actions.
+- Preset actions exist through the explicit compact selector/apply preview workflow described in [Presets](../../presets.md).
 - Generate feature behavior is covered by the individual feature docs in this folder.

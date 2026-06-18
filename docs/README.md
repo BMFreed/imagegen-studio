@@ -15,6 +15,7 @@
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, open/new project flows и recovery states.
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, local resource library, metadata, missing-resource diagnostics.
+  - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, apply preview, partial apply, save current as preset и Preset Manager.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Generate` mode: prompts, bbox, Smart Patch Layer, LoRA, embeddings, dynamic prompting и regional guidance.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для generation/upscale jobs.
@@ -25,6 +26,9 @@
 
 - [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
 - [prototypes/model-manager.html](./prototypes/model-manager.html) — первый прототип Model Manager как app-level overlay.
+- [prototypes/preset-manager.html](./prototypes/preset-manager.html) — app-level Preset Manager (browse + edit), фон Home.
+- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — apply preview модалка, Project-scoped, фон Project / Generate.
+- [prototypes/save-preset.html](./prototypes/save-preset.html) — Save Current as Preset модалка, Project-scoped, фон Project / Generate.
 
 ## Правило обновления
 

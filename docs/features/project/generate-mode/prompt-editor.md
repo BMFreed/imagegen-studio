@@ -16,7 +16,7 @@ Secondary reference: Forge prompt toolbar ideas, limited to useful actions such 
 
 Use an ImageGen Studio-native prompt editor. Do not copy Invoke's `Choose Prompt Template` dropdown.
 
-Prompt templates/settings templates belong to Presets. Generate can expose explicit preset actions, but direct prompt writing remains the main UI.
+Prompt templates/settings templates belong to [Presets](../../presets.md). Generate exposes presets through a compact selector above the prompt editor, while direct prompt writing remains the main UI.
 
 ## Scope
 
@@ -61,8 +61,9 @@ Prompt editor status area should contain:
 
 Allowed preset-related affordances in Generate:
 
-- `Apply Preset`;
-- `Save Preset from Current Settings`;
+- compact `Preset` selector above the prompt editor;
+- `Apply Preset` through apply preview;
+- `Save Current as Preset`;
 - `Apply Settings from Snapshot`;
 - missing-resource warnings after applying a preset.
 
