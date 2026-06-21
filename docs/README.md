@@ -29,6 +29,7 @@
 - [prototypes/preset-manager.html](./prototypes/preset-manager.html) — app-level Preset Manager (browse + edit), фон Home.
 - [prototypes/apply-preset.html](./prototypes/apply-preset.html) — apply preview модалка, Project-scoped, фон Project / Generate.
 - [prototypes/save-preset.html](./prototypes/save-preset.html) — Save Current as Preset модалка, Project-scoped, фон Project / Generate.
+- [prototypes/project-generate.html](./prototypes/project-generate.html) — рабочая вкладка `Project` / `Generate`: mode bar, левая панель настроек, canvas, правая панель слоёв с выбранным Smart Patch Layer.
 
 ## Правило обновления
 
