@@ -73,7 +73,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
 - Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
-- `Generate | Upscale` is a compact mode switch at the top of the left settings panel, not a separate Project header row;
+- the UI mode switch is labeled `Create | Upscale` and sits at the top of the left settings panel; `Generate` is reserved for the action button that starts generation;
 - viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
 - Project Canvas resize/fit actions live in the left `Size` section, not in the viewport bar;
 - canvas-area overlays own the Project Canvas size label at top-left and the canvas context menu at top-right; these controls sit outside the canvas frame itself;
@@ -82,6 +82,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - ordinary Raster Layer canvas editing is not included in MVP;
 - `GenerationResults` is included for browsing and cleaning up recent generated results, but it is not part of the first `project-page.html` prototype layout and should get a separate UI pass;
 - completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
+- the Generate action area is fixed at the bottom of the left settings panel and contains `Generate`, images-per-click, queue menu and cancel controls;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
 
 ## Layout
@@ -97,7 +98,8 @@ Document tab strip
 Project: portrait.igs
 └─ Generate mode
    ├─ left settings panel
-   │  └─ mode switch: Generate | Upscale
+   │  ├─ mode switch: Create | Upscale
+   │  └─ fixed Generate action area
    ├─ center canvas
    └─ right layer/settings panel
 ```

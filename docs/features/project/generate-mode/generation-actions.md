@@ -24,6 +24,21 @@ When a Generate action produces multiple results, each completed result is writt
 
 Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, Project Canvas or Smart Patch bbox while they are pending.
 
+## Generate Action Area
+
+In the current Project UI, generation commands live in a fixed footer at the bottom of the left settings panel:
+
+```text
+[ Generate ] [ 1 v ] [ ... ] [ x ]
+```
+
+Rules:
+
+- `Generate` starts one batch from the current frozen project/generation state;
+- the count selector controls how many images are generated per click;
+- `...` opens queue/actions menu with queue navigation, pause/resume and cleanup/cancel actions;
+- `x` is the visible cancel-current-generation action and must not be hidden inside the menu.
+
 ## New Raster Generation
 
 When no Smart Patch Layer is the generation target:

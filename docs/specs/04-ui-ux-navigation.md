@@ -76,7 +76,7 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 
 Детальная спецификация содержимого `Generate` mode: `docs/features/project/generate-mode/README.md`.
 
-Переключатель `Generate | Upscale` должен визуально отличаться от верхнего document tab strip. В текущем Project-прототипе это компактный segmented control в верхней части левой settings panel, а не отдельный широкий ряд под вкладками.
+Переключатель режимов должен визуально отличаться от верхнего document tab strip. В текущем Project-прототипе пользовательская надпись — `Create | Upscale`: это компактный segmented control в верхней части левой settings panel, а не отдельный широкий ряд под вкладками. `Generate` зарезервирован для кнопки запуска генерации, чтобы не смешивать режим и действие.
 
 Project tab не показывает отдельную строку с названием файла и статусом сохранения над рабочей областью. Название проекта, dirty marker и базовый статус документа принадлежат document tab/app chrome, чтобы не дублировать информацию.
 
@@ -105,6 +105,8 @@ Raster Layer canvas editing в MVP не поддерживается. Для Ras
 Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Изменение размера Project Canvas (`Fit Size to Layers`, grow/resize) находится в `Size` секции левой панели, а не дублируется в canvas toolbar.
 
 Project Canvas size label и `...` canvas context menu позиционируются как overlays самой `canvas-area`: label сверху слева, menu сверху справа. Они не должны быть вложены в canvas frame так, чтобы перекрывать изображение.
+
+Generate action area находится фиксированно внизу левой settings panel. В ней находятся кнопка `Generate`, селектор количества изображений за одно нажатие, queue/context menu и отдельная кнопка отмены текущей генерации.
 
 ### Generate → Upscale handoff
 
