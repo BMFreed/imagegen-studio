@@ -185,14 +185,14 @@ Smart Patch Layer should be visually distinct from a normal Raster Layer.
 Layer stack row:
 
 ```text
-visibility | active raster thumbnail | mask thumbnail | name + status | switch variants | lock | delete
+visibility | mask thumbnail | active raster thumbnail | name + status | switch variants | lock | delete
 ```
 
 Rules:
 
-- active raster thumbnail shows the currently visible generated result;
 - mask thumbnail shows the layer-owned mask;
-- active raster thumbnail comes before mask thumbnail for easier visual scanning;
+- active raster thumbnail shows the currently visible generated result;
+- mask thumbnail comes before active raster thumbnail to match the Photoshop-like mental model where the mask is visually tied to the layer's visible pixels;
 - `status` shows whether the active raster result matches current mask/bbox/internal resolution/settings;
 - `switch variants` opens `GenerationResults` or a compact variants browser for this Smart Patch Layer;
 - saved variants are not expanded into a vertical thumbnail list under the layer row by default.

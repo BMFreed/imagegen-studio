@@ -1,10 +1,10 @@
-# Canvas Toolbar
+# Canvas Viewport Controls
 
 ## Feature
 
-Generate mode needs a compact canvas toolbar for viewport and Project Canvas work-area actions.
+Generate mode needs compact viewport controls, canvas-area metadata/actions and a clear place for Project Canvas work-area actions.
 
-This toolbar is not a project/file toolbar. It should contain actions that operate on the visible canvas workspace, not actions that replace `.igs` project saving, exporting or session management.
+The current Project prototype does not use a large top canvas toolbar. Viewport controls live in a bottom bar attached to the canvas area, while Project Canvas resizing lives in the left `Size` section.
 
 ## Reference
 
@@ -26,17 +26,19 @@ ImageGen Studio treats `.igs` as the default project document. Saving, opening, 
 
 ## MVP Scope
 
-Include in the canvas toolbar:
+Include in the bottom viewport bar:
 
 - zoom out;
 - zoom percent input/dropdown;
 - zoom in;
-- `Fit View to Layers` / `Fit Content`;
-- `Fit Project Canvas to Layers` / `Resize Canvas to Layers`.
+- `Fit View`;
+- context-sensitive interaction hints.
 
 `Fit View to Layers` changes only the viewport/camera. It does not mutate layers, Project Canvas size or Smart Patch bbox.
 
-`Fit Project Canvas to Layers` changes Project Canvas size. It is used for the common workflow where the user drops or imports a large image as a Raster Layer and wants the document work area/export bounds to match that visible content.
+`Fit Project Canvas to Layers` / `Fit Size to Layers` changes Project Canvas size. It is used for the common workflow where the user drops or imports a large image as a Raster Layer and wants the document work area/export bounds to match that visible content.
+
+This command belongs in the left `Size` section, not in the bottom viewport bar, so the user does not see two visually similar `fit` controls doing different things.
 
 When fitting Project Canvas to layers:
 
@@ -47,6 +49,13 @@ When fitting Project Canvas to layers:
 - preserve Smart Patch Layer bboxes and masks in project coordinates;
 - support undo/redo;
 - after Project Canvas is updated, the viewport may also fit the relevant layers for convenience.
+
+Canvas-area overlays:
+
+- Project Canvas size label sits at the top-left edge of the `canvas-area`;
+- the canvas context menu button sits at the top-right edge of the `canvas-area`;
+- both overlays are outside the canvas frame/wrapper so they do not cover the image content itself;
+- contextual menus may include canvas/layer actions, but primary save/load/export/reset commands remain outside this control.
 
 ## Smart Patch Fit-To-Mask
 
@@ -84,7 +93,7 @@ Harmless viewport reset/fit actions are allowed near zoom controls.
 
 ## Tool Hints
 
-Canvas interaction hints are required, but their final position is a UI layout decision.
+Canvas interaction hints are required and live in the bottom viewport bar in the current prototype.
 
 The hint area should be context-sensitive:
 
@@ -101,13 +110,14 @@ Document separately:
 
 - drag-and-drop/importing images into canvas as new Raster Layers;
 - snapping rules for Project Canvas resize/grow and Smart Patch Layer bbox;
-- exact placement of zoom controls and interaction hints after UI layout exploration.
+- exact design of the canvas context menu.
 
 ## Acceptance Criteria
 
 - User can zoom with explicit controls and a percentage readout.
 - User can fit the viewport to visible layers/content.
-- User can fit Project Canvas to visible/selected Raster Layers.
+- User can fit Project Canvas to visible/selected Raster Layers from the left `Size` section.
+- Project Canvas size label and canvas context menu are positioned as `canvas-area` overlays, not inside the image/canvas frame.
 - Smart Patch Layer exposes `Fit Patch BBox to Mask` in its contextual left toolbar.
 - Regional Guidance Layer does not expose any bbox fit-to-mask action.
 - Project save/load/export/snapshot/reset actions are not presented as primary canvas toolbar controls.

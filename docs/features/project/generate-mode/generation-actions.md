@@ -64,6 +64,8 @@ Every concrete prompt/seed combination becomes its own queue item, grouped by on
 
 `Send Composite to Upscale` is not a normal generation job.
 
+In the current Generate UI, this command is exposed from the right canvas rail as a compact canvas-adjacent action. It may also be available from menus/command palette, but it should not consume a wide top Project toolbar row.
+
 It:
 
 - takes flattened composite of visible layers;

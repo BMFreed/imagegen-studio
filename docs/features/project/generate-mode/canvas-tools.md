@@ -22,7 +22,8 @@ Always-visible side controls:
 
 - collapse left panel;
 - `View`;
-- collapse right panel.
+- collapse right panel;
+- `Send Composite to Upscale` / `Send to Upscale` in the right canvas rail.
 
 `View` is not a separate `Viewer` mode. It is the default navigation/inspection tool for pan, zoom, fit view and non-editing canvas interaction.
 
@@ -64,9 +65,13 @@ Generate canvas tools should not create a separate `Viewer` mode.
 
 Side toolbars/tool rails:
 
+- tool rails are solid light vertical panels, visually distinct from the dark checkerboard canvas background;
 - panel collapse controls are always available at the canvas edges;
-- `View` is always available on the left side;
+- `View` is always available on the left rail;
+- `Send to Upscale` is always available on the right rail;
+- the Project Canvas size label and canvas context menu are `canvas-area` overlays, not children of the canvas frame;
 - layer-specific editing tools appear only when a compatible layer is selected;
+- layer selection in the right panel drives the contextual tool rail; there are no visible prototype state tabs in the product UI;
 - Smart Patch mask/bbox tools appear in the Smart Patch contextual tool rail when Smart Patch Layer is selected;
 - Regional Guidance region/mask tools appear in the Regional Guidance contextual tool rail when Regional Guidance Layer is selected;
 - Raster Layer selection does not show raster editing tools in MVP.
@@ -120,4 +125,4 @@ Not in MVP:
 - Smart Patch Layer selection shows `Fit Patch BBox to Mask` in its contextual toolbar.
 - Regional Guidance Layer selection shows Transform Region, Lasso, Polygon Lasso, Brush and Eraser.
 - Regional Guidance Layer selection does not show bbox actions.
-- `Send Composite to Upscale` is available from Generate.
+- `Send Composite to Upscale` is available from the right canvas rail in Generate.

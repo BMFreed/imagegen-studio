@@ -69,14 +69,16 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - project-local generation snapshots/history;
 - save/autosave/recovery status.
 
-Внутри `Project` tab есть project mode bar. В MVP в неё входят:
+Внутри `Project` tab есть project modes. В MVP в них входят:
 
 - `Generate` — основной режим генерации и редактирования через canvas, слои, Smart Patch Layer, маски и model settings.
 - `Upscale` — режим апскейла через ESRGAN-like модели. Он работает с immutable flattened composite input, полученным из текущего состояния `Generate`.
 
 Детальная спецификация содержимого `Generate` mode: `docs/features/project/generate-mode/README.md`.
 
-Project mode bar должна визуально отличаться от верхнего document tab strip. Это не второй ряд document tabs, а компактный segmented control / toolbar mode switch внутри Project с отдельными отступами и стилем.
+Переключатель `Generate | Upscale` должен визуально отличаться от верхнего document tab strip. В текущем Project-прототипе это компактный segmented control в верхней части левой settings panel, а не отдельный широкий ряд под вкладками.
+
+Project tab не показывает отдельную строку с названием файла и статусом сохранения над рабочей областью. Название проекта, dirty marker и базовый статус документа принадлежат document tab/app chrome, чтобы не дублировать информацию.
 
 `Canvas` остаётся общей сущностью Project. `Generate` использует его как основную рабочую поверхность. `Upscale` может показывать preview/input/result view, но не превращается в отдельный project document.
 
@@ -86,7 +88,8 @@ Project mode bar должна визуально отличаться от ве�
 
 - collapse left panel;
 - `View`;
-- collapse right panel.
+- collapse right panel;
+- `Send Composite to Upscale` / `Send to Upscale` в правом canvas rail.
 
 `View` является navigation/inspection tool, а не отдельным `Viewer` mode.
 
@@ -98,6 +101,10 @@ Contextual canvas tool rails появляются только для выбра
 Raster Layer canvas editing в MVP не поддерживается. Для Raster Layer не показываются transform/crop/paint/filter tools.
 
 `Fit Patch BBox to Mask` показывается только для Smart Patch Layer в его контекстном тулбаре. Для Regional Guidance Layer такая кнопка не показывается, потому что у Regional Guidance нет собственного generation bbox.
+
+Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Изменение размера Project Canvas (`Fit Size to Layers`, grow/resize) находится в `Size` секции левой панели, а не дублируется в canvas toolbar.
+
+Project Canvas size label и `...` canvas context menu позиционируются как overlays самой `canvas-area`: label сверху слева, menu сверху справа. Они не должны быть вложены в canvas frame так, чтобы перекрывать изображение.
 
 ### Generate → Upscale handoff
 

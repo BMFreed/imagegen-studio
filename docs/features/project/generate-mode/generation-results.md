@@ -40,6 +40,12 @@ The user should not lose useful generation results because they forgot to press 
 
 `GenerationResults` is therefore not a temporary staging area. It is a recent-results tray for already saved outputs.
 
+## Prototype Placement Note
+
+The current first-pass Project prototype, `docs/prototypes/project-page.html`, intentionally does not render `GenerationResults`.
+
+The feature remains in MVP, but its exact tray/browser UI should be designed in a separate pass. The Project page prototype should not be treated as evidence that `GenerationResults` was removed from scope.
+
 ## Scope
 
 MVP:

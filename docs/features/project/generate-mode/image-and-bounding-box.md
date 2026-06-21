@@ -77,6 +77,8 @@ Controls:
 
 Changing Project Canvas size must not silently resize Raster Layers or Smart Patch Layer bounding boxes.
 
+In the current Project prototype, Project Canvas size controls live in the left `Size` section. The canvas area may show a compact `Project Canvas W x H` label at the top-left edge as readout/context, but that label is not the primary editing control and must not cover important image content.
+
 If Project Canvas shrinks, off-canvas layer pixels are preserved in `.igs` unless the user explicitly trims/crops layer pixel data.
 
 ## Raster Layer Transform
@@ -144,6 +146,7 @@ This behavior follows the creative-editor mental model: the canvas grows to prov
 - There is no global/current working bbox separate from Project Canvas.
 - Normal generation uses Project Canvas as its target bounds.
 - User can resize/grow/fit Project Canvas without transforming layer pixels.
+- Project Canvas resize/fit controls are presented in the `Size` section, while the canvas area only shows a compact size readout.
 - Raster Layers may be smaller, larger or partially outside Project Canvas.
 - User can edit Smart Patch bbox via canvas handles and numeric controls.
 - Selected Smart Patch Layer exposes bbox precision editing through a compact popover.

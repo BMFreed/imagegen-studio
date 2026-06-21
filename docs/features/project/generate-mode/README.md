@@ -73,11 +73,14 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
 - Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
-- canvas toolbar includes viewport zoom, fit view and fit Project Canvas to visible/selected Raster Layers, but does not copy Invoke's project/gallery/snapshot/session buttons;
-- canvas side controls always show panel collapse buttons and `View`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- `Generate | Upscale` is a compact mode switch at the top of the left settings panel, not a separate Project header row;
+- viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
+- Project Canvas resize/fit actions live in the left `Size` section, not in the viewport bar;
+- canvas-area overlays own the Project Canvas size label at top-left and the canvas context menu at top-right; these controls sit outside the canvas frame itself;
+- canvas side controls always show panel collapse buttons and `View`; the right rail also exposes `Send to Upscale`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
-- `GenerationResults` is included for browsing and cleaning up recent generated results;
+- `GenerationResults` is included for browsing and cleaning up recent generated results, but it is not part of the first `project-page.html` prototype layout and should get a separate UI pass;
 - completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
 
@@ -92,9 +95,9 @@ Document tab strip
 └─ Project: background.igs
 
 Project: portrait.igs
-├─ project mode bar: Generate | Upscale
 └─ Generate mode
    ├─ left settings panel
+   │  └─ mode switch: Generate | Upscale
    ├─ center canvas
    └─ right layer/settings panel
 ```
@@ -103,24 +106,26 @@ Project: portrait.igs
 ┌──────────────────────────────────────────────────────────────┐
 │ App menu / global status / document tabs                     │
 ├──────────────────────────────────────────────────────────────┤
-│ Project toolbar + Generate | Upscale                         │
+│ Generate workspace                                           │
 ├───────────────┬─────────────────────────────┬────────────────┤
 │ Settings      │ Canvas                      │ Layers /       │
 │               │                             │ selected item  │
-│ Presets       │ Project Canvas frame        │                │
-│ Prompts       │ masks                       │ layer stack    │
-│ Canvas/BBox   │ raster layers               │ smart patch    │
+│ Generate/     │ Project Canvas frame        │                │
+│ Upscale       │ canvas-area overlays        │ layer stack    │
+│ Presets       │ masks                       │ regional       │
+│ Prompts       │ raster layers               │ guidance       │
+│ Size          │ raster layers               │ smart patch    │
 │ Generation    │ raster layers               │ smart patch    │
 │ Dynamic       │ regional guidance regions   │ sub-layers     │
 │ Compositing   │                             │ snapshots      │
 └───────────────┴─────────────────────────────┴────────────────┘
 ```
 
-The left panel contains settings for the current generation operation.
+The left panel contains the project mode switch and settings for the current generation operation.
 
 The right panel contains project structure and settings for the selected canvas entity or layer.
 
-Canvas controls should remain close to the canvas. Layer ownership and object-specific settings should remain in the right panel so the user can always tell whether they are editing the global generation setup or a selected layer.
+Canvas controls should remain close to the canvas. Viewport controls and interaction hints live in the bottom canvas bar; canvas-area metadata/actions live as overlays near the canvas edges; layer ownership and object-specific settings remain in the right panel so the user can always tell whether they are editing the global generation setup or a selected layer.
 
 ## Acceptance Criteria
 
@@ -128,4 +133,6 @@ Canvas controls should remain close to the canvas. Layer ownership and object-sp
 - Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
 - Preset actions exist through the explicit compact selector/apply preview workflow described in [Presets](../../presets.md).
+- `project-page.html` does not show a separate Project title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
+- `GenerationResults` remains an MVP feature, but its detailed UI is intentionally deferred from the first Project page prototype.
 - Generate feature behavior is covered by the individual feature docs in this folder.
