@@ -1,0 +1,16 @@
+{
+  "name": "imagegen-studio-docs-tooling",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "icons:export": "node scripts/export-icons.mjs",
+    "screenshots": "node scripts/capture-prototype-screenshots.mjs",
+    "screenshots:project": "node scripts/capture-prototype-screenshots.mjs project-page"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@vicons/tabler": "^0.13.0",
+    "@vue/server-renderer": "^3.5.38",
+    "vue": "^3.5.38"
+  }
+}
