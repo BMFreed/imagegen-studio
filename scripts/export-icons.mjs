@@ -10,10 +10,14 @@ const outputDir = path.join(rootDir, 'docs', 'assets', 'icons', 'tabler');
 
 const icons = [
   'AdjustmentsHorizontal',
+  'ArrowAutofitContent',
+  'ArrowAutofitHeight',
+  'ArrowAutofitWidth',
   'ArrowBackUp',
   'ArrowForwardUp',
   'ArrowsMaximize',
   'Box',
+  'Braces',
   'Brush',
   'ChevronDown',
   'ChevronLeft',
@@ -22,15 +26,20 @@ const icons = [
   'Crop',
   'DeviceFloppy',
   'Download',
+  'DotsVertical',
   'Eraser',
+  'Exchange',
   'Eye',
   'EyeOff',
+  'FilePlus',
   'Folder',
   'HandMove',
+  'Hash',
   'Home',
   'InfoCircle',
   'Lasso',
   'LayersSubtract',
+  'ListDetails',
   'Lock',
   'Menu2',
   'PlayerPause',
@@ -38,6 +47,7 @@ const icons = [
   'Polygon',
   'Plus',
   'Refresh',
+  'RotateClockwise2',
   'Search',
   'Select',
   'Settings',
@@ -77,7 +87,7 @@ async function renderIcon(name) {
   return html
     .replace(/\sdata-v-[a-f0-9]+=""/g, '')
     .replace(/\sclass="[^"]*"/g, '')
-    .replace(/currentColor/g, 'currentColor')
+    .replace(/currentColor/g, '#fff')
     .trim();
 }
 
