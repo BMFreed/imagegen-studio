@@ -87,11 +87,14 @@ Project tab не показывает отдельную строку с наз�
 В `Project` / `Generate` всегда видимы только базовые side controls:
 
 - collapse left panel;
-- `View`;
+- `Pan Tool`;
+- `Crop / Resize Project Canvas`;
 - collapse right panel;
 - `Send Composite to Upscale` / `Send to Upscale` в правом canvas rail.
 
-`View` является navigation/inspection tool, а не отдельным `Viewer` mode.
+`Pan Tool` является navigation/inspection tool, а не отдельным `Viewer` mode.
+
+`Crop / Resize Project Canvas` изменяет рабочую область документа. Это не crop растрового слоя: пиксели Raster Layers за пределами Project Canvas сохраняются в `.igs`, пока пользователь явно не запускает destructive trim/export operation.
 
 Contextual canvas tool rails появляются только для выбранных layer types:
 
@@ -102,7 +105,7 @@ Raster Layer canvas editing в MVP не поддерживается. Для Ras
 
 `Fit Patch BBox to Mask` показывается только для Smart Patch Layer в его контекстном тулбаре. Для Regional Guidance Layer такая кнопка не показывается, потому что у Regional Guidance нет собственного generation bbox.
 
-Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Изменение размера Project Canvas (`Fit Size to Layers`, grow/resize) находится в `Size` секции левой панели, а не дублируется в canvas toolbar.
+Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Точные числовые изменения Project Canvas (`Fit Size to Layers`, grow/resize, width/height) находятся в `Size` секции левой панели, а прямое ручное изменение границ рабочей области доступно через `Crop / Resize Project Canvas` в левом canvas rail.
 
 Project Canvas size label и `...` canvas context menu позиционируются как overlays самой `canvas-area`: label сверху слева, menu сверху справа. Они не должны быть вложены в canvas frame так, чтобы перекрывать изображение.
 

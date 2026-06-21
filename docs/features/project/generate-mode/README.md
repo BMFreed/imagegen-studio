@@ -75,9 +75,9 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
 - the UI mode switch is labeled `Create | Upscale` and sits at the top of the left settings panel; `Generate` is reserved for the action button that starts generation;
 - viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
-- Project Canvas resize/fit actions live in the left `Size` section, not in the viewport bar;
+- Project Canvas numeric resize/fit actions live in the left `Size` section, while direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail;
 - canvas-area overlays own the Project Canvas size label at top-left and the canvas context menu at top-right; these controls sit outside the canvas frame itself;
-- canvas side controls always show panel collapse buttons and `View`; the right rail also exposes `Send to Upscale`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- canvas side controls always show panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; the right rail also exposes `Send to Upscale`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
 - `GenerationResults` is included for browsing and cleaning up recent generated results, but it is not part of the first `project-page.html` prototype layout and should get a separate UI pass;

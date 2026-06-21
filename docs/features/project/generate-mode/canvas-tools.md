@@ -21,11 +21,14 @@ MVP canvas tools are scoped to generative editing primitives. ImageGen Studio do
 Always-visible side controls:
 
 - collapse left panel;
-- `View`;
+- `Pan Tool`;
+- `Crop / Resize Project Canvas`;
 - collapse right panel;
 - `Send Composite to Upscale` / `Send to Upscale` in the right canvas rail.
 
-`View` is not a separate `Viewer` mode. It is the default navigation/inspection tool for pan, zoom, fit view and non-editing canvas interaction.
+`Pan Tool` is not a separate `Viewer` mode. It is the default navigation/inspection tool for pan, zoom, fit view and non-editing canvas interaction.
+
+`Crop / Resize Project Canvas` edits the document work area bounds. It does not crop, resample or transform Raster Layer pixels. Layer pixels outside the Project Canvas remain preserved in `.igs` unless the user later runs an explicit destructive trim/export action.
 
 Contextual tools when a Smart Patch Layer is selected:
 
@@ -67,7 +70,8 @@ Side toolbars/tool rails:
 
 - tool rails are solid light vertical panels, visually distinct from the dark checkerboard canvas background;
 - panel collapse controls are always available at the canvas edges;
-- `View` is always available on the left rail;
+- `Pan Tool` is always available on the left rail;
+- `Crop / Resize Project Canvas` is always available on the left rail;
 - `Send to Upscale` is always available on the right rail;
 - the Project Canvas size label and canvas context menu are `canvas-area` overlays, not children of the canvas frame;
 - layer-specific editing tools appear only when a compatible layer is selected;
@@ -120,6 +124,8 @@ Not in MVP:
 - User can manipulate masks, regional guidance regions and Smart Patch bounding boxes directly on canvas.
 - Precision controls exist in panels/popovers where needed.
 - Generate does not expose inactive Launchpad/Viewer controls.
+- Pan Tool is available as the neutral canvas navigation tool.
+- Crop / Resize Project Canvas is available as a Project Canvas tool, not a Raster Layer crop tool.
 - Raster Layer canvas editing is not exposed in MVP.
 - Smart Patch Layer selection shows Transform Mask, Lasso, Polygon Lasso, Brush, Eraser and Bounding Box.
 - Smart Patch Layer selection shows `Fit Patch BBox to Mask` in its contextual toolbar.

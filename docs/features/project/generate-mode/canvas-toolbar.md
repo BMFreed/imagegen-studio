@@ -4,7 +4,7 @@
 
 Generate mode needs compact viewport controls, canvas-area metadata/actions and a clear place for Project Canvas work-area actions.
 
-The current Project prototype does not use a large top canvas toolbar. Viewport controls live in a bottom bar attached to the canvas area, while Project Canvas resizing lives in the left `Size` section.
+The current Project prototype does not use a large top canvas toolbar. Viewport controls live in a bottom bar attached to the canvas area. Project Canvas numeric sizing lives in the left `Size` section, while direct Project Canvas crop/resize manipulation lives in the left canvas rail.
 
 ## Reference
 
@@ -39,6 +39,8 @@ Include in the bottom viewport bar:
 `Fit Project Canvas to Layers` / `Fit Size to Layers` changes Project Canvas size. It is used for the common workflow where the user drops or imports a large image as a Raster Layer and wants the document work area/export bounds to match that visible content.
 
 This command belongs in the left `Size` section, not in the bottom viewport bar, so the user does not see two visually similar `fit` controls doing different things.
+
+`Crop / Resize Project Canvas` is the direct manipulation tool for changing the document work area by dragging handles on canvas. It changes Project Canvas bounds only. It does not crop, resample or transform Raster Layer pixels.
 
 When fitting Project Canvas to layers:
 
@@ -97,7 +99,8 @@ Canvas interaction hints are required and live in the bottom viewport bar in the
 
 The hint area should be context-sensitive:
 
-- `View` shows pan/zoom/fit hints;
+- `Pan Tool` shows pan/zoom/fit hints;
+- `Crop / Resize Project Canvas` shows crop/resize/commit/cancel hints;
 - `Bounding Box` shows move/resize/snap/aspect hints;
 - `Transform Mask` shows move/scale/rotate hints;
 - Lasso/Polygon Lasso/Brush/Eraser show mask editing hints.
@@ -117,6 +120,7 @@ Document separately:
 - User can zoom with explicit controls and a percentage readout.
 - User can fit the viewport to visible layers/content.
 - User can fit Project Canvas to visible/selected Raster Layers from the left `Size` section.
+- User can directly crop/resize Project Canvas from the left canvas rail without destructive Raster Layer crop.
 - Project Canvas size label and canvas context menu are positioned as `canvas-area` overlays, not inside the image/canvas frame.
 - Smart Patch Layer exposes `Fit Patch BBox to Mask` in its contextual left toolbar.
 - Regional Guidance Layer does not expose any bbox fit-to-mask action.
