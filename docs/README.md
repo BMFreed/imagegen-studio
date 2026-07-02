@@ -22,10 +22,23 @@
   - [features/project/generate-mode/tag-autocomplete.md](./features/project/generate-mode/tag-autocomplete.md) — Danbooru-style tag autocomplete для prompt editor.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
 
+## Vue/Naive Prototype App
+
+- [prototype-app](./prototype-app/) — текущий источник истины для визуального прототипа Model Manager на реальных компонентах Naive UI.
+
+`prototype-app` — это отдельный Vite/Vue/TypeScript playground для итераций над UI. Он не является production renderer'ом и пока не заменяет HTML-прототипы остальных экранов.
+
+Tooling проекта использует `pnpm`. Основные команды для Vue/Naive prototype app:
+
+- `pnpm run prototype:dev`;
+- `pnpm run prototype:typecheck`;
+- `pnpm run prototype:build`;
+- `pnpm run prototype:screenshots`.
+
 ## HTML-прототипы
 
 - [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
-- [prototypes/model-manager.html](./prototypes/model-manager.html) — первый прототип Model Manager как app-level overlay.
+- [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
 - [prototypes/preset-manager.html](./prototypes/preset-manager.html) — app-level Preset Manager (browse + edit), фон Home.
 - [prototypes/apply-preset.html](./prototypes/apply-preset.html) — apply preview модалка, Project-scoped, фон Project / Generate.
 - [prototypes/save-preset.html](./prototypes/save-preset.html) — Save Current as Preset модалка, Project-scoped, фон Project / Generate.

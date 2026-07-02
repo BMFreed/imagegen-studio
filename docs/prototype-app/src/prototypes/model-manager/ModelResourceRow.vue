@@ -1,0 +1,106 @@
+<template>
+  <div class="resource-row" :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }" role="button" tabindex="0" @click="$emit('select', resource.id)" @keydown.enter="$emit('select', resource.id)">
+    <ResourceThumbnail :tone="resource.thumbnailTone" />
+    <div class="resource-main">
+      <div class="resource-title-line">
+        <strong>{{ resource.name }}</strong>
+        <StatusBadge :status="resource.status" />
+      </div>
+      <p>{{ resource.description }}</p>
+      <div class="resource-meta">
+        <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
+        <span>{{ resource.sizeLabel }}</span>
+        <span>{{ resource.source }}</span>
+      </div>
+    </div>
+    <NButton v-if="resource.status === 'missing'" tertiary size="small" @click.stop>
+      <template #icon>
+        <NIcon :component="ToolIcon" />
+      </template>
+      Repair
+    </NButton>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { Tool as ToolIcon } from '@vicons/tabler';
+import { NButton, NIcon, NTag } from 'naive-ui';
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
+import StatusBadge from '../../components/StatusBadge.vue';
+import type { ModelResource } from './model-manager.types';
+
+defineProps<{
+  resource: ModelResource;
+  selected: boolean;
+  muted?: boolean;
+}>();
+
+defineEmits<{
+  select: [id: string];
+}>();
+</script>
+
+<style scoped>
+.resource-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius);
+  background: var(--app-surface-raised);
+  outline: 0;
+}
+
+.resource-row:hover {
+  border-color: var(--app-border);
+  background: var(--app-control);
+}
+
+.resource-row--selected {
+  border-color: var(--app-accent-strong);
+  background: #1f2621;
+}
+
+.resource-row--muted {
+  opacity: 0.64;
+}
+
+.resource-main {
+  min-width: 0;
+}
+
+.resource-title-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.resource-title-line strong {
+  overflow: hidden;
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+p {
+  overflow: hidden;
+  margin: 3px 0 8px;
+  color: var(--app-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-text-soft);
+  font-size: 12px;
+}
+</style>

@@ -17,6 +17,8 @@ It is not a CivitAI marketplace browser in MVP. It is a local model library and 
 
 Primary reference: InvokeAI Model Manager V2 and backend model management system.
 
+Current visual prototype reference: `docs/prototype-app`. The older standalone HTML file `docs/prototypes/model-manager.html` remains historical reference only for the first Model Manager layout exploration.
+
 Useful InvokeAI areas:
 
 - `invokeai/backend/model_manager/README.md` — model lifecycle split into identification, loading/cache and running;
