@@ -11,7 +11,8 @@
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
     "prototype:typecheck": "vue-tsc --project docs/prototype-app/tsconfig.json --noEmit",
-    "prototype:screenshots": "node scripts/capture-vue-prototype-screenshots.mjs"
+    "prototype:test": "playwright test --config docs/prototype-app/playwright.config.ts",
+    "prototype:screenshots": "playwright test --config docs/prototype-app/playwright.config.ts"
   },
   "dependencies": {
     "naive-ui": "^2.44.1"

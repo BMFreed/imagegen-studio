@@ -3,3 +3,5 @@ node_modules/
 docs/prototypes/screenshots/
 docs/prototype-app/dist/
 docs/prototype-app/screenshots/
+docs/prototype-app/test-results/
+docs/prototype-app/playwright-report/

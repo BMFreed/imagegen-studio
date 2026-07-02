@@ -33,7 +33,7 @@ Tooling проекта использует `pnpm`. Основные коман�
 - `pnpm run prototype:dev`;
 - `pnpm run prototype:typecheck`;
 - `pnpm run prototype:build`;
-- `pnpm run prototype:screenshots`.
+- `pnpm run prototype:test` / `pnpm run prototype:screenshots` — Playwright-сценарии Vue-прототипов.
 
 ## HTML-прототипы
 
