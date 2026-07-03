@@ -162,9 +162,6 @@ h3 {
   text-transform: uppercase;
 }
 
-p {
-}
-
 .badge-row,
 .trigger-list {
   display: flex;

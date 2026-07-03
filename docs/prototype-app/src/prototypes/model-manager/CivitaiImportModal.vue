@@ -111,12 +111,6 @@ h2 {
   min-width: 0;
 }
 
-.preview-copy strong {
-}
-
-.preview-copy span {
-}
-
 .modal-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

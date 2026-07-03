@@ -54,7 +54,7 @@ defineEmits<{
   outline: 0;
 }
 
-.resource-row:hover {
+.resource-row:hover:not(.resource-row--selected) {
   border-color: var(--app-border);
   background: #232327;
 }

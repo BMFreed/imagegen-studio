@@ -37,8 +37,6 @@ import { NButton, NIcon } from 'naive-ui';
 }
 
 .document-tab {
-  --n-text-color-hover: #dbdbdc;
-  --n-text-color-pressed: #dbdbdc;
   --n-padding: 0 12px;
   display: inline-flex;
   align-items: center;

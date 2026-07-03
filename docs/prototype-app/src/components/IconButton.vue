@@ -23,8 +23,3 @@ defineProps<{
   badge?: number | string;
 }>();
 </script>
-
-<style scoped>
-.icon-button {
-}
-</style>
