@@ -56,7 +56,7 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   height: 40px;
   padding-left: 12px;
   background: var(--app-chrome);
-  border-bottom: 1px solid #202024;
+  border-bottom: 1px solid var(--app-elevated);
   user-select: none;
 }
 
@@ -88,10 +88,6 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   cursor: pointer;
 }
 
-.menu-item:hover {
-  color: #dbdbdc;
-}
-
 .menu-right {
   gap: 4px;
   height: 100%;
@@ -100,7 +96,7 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
 .window-controls {
   height: 100%;
   margin-left: 8px;
-  border-left: 1px solid #202024;
+  border-left: 1px solid var(--app-elevated);
 }
 
 .window-control {
@@ -110,12 +106,7 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   cursor: pointer;
 }
 
-.window-control:hover {
-  color: #dbdbdc;
-}
-
 .window-control--close:hover {
-  color: #ffffff;
-  background: #e88080;
+  background: var(--app-window-close);
 }
 </style>

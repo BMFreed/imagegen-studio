@@ -59,8 +59,8 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #64e36e;
-  box-shadow: 0 0 10px #64e36e;
+  background: var(--workspace-green);
+  box-shadow: 0 0 10px var(--workspace-green);
 }
 
 .token-menu {

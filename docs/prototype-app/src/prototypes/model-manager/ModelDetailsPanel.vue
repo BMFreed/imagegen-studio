@@ -50,7 +50,7 @@
             <h3>Trigger Words</h3>
           </template>
           <div class="trigger-list">
-            <NTag v-for="word in resource.triggerWords" :key="word" size="small">{{ word }}</NTag>
+            <NTag v-for="word in resource.triggerWords" :key="word" size="small" :bordered="false">{{ word }}</NTag>
           </div>
         </NCard>
 
@@ -129,10 +129,6 @@ defineProps<{
   padding: 16px;
 }
 
-.preview-card {
-  background: #202024;
-}
-
 .preview-card :deep(.n-card__content) {
   display: grid;
   gap: 12px;
@@ -150,12 +146,10 @@ p {
 }
 
 h2 {
-  color: #dbdbdc;
   font-size: 19px;
 }
 
 h3 {
-  color: #dbdbdc;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -167,10 +161,6 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.details-card {
-  background: #202024;
 }
 
 .version-list {
@@ -187,10 +177,6 @@ h3 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-}
-
-.version-card strong {
-  color: #dbdbdc;
 }
 
 .version-card p {
@@ -210,7 +196,6 @@ h3 {
 }
 
 dt {
-  color: #6f6f73;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -220,7 +205,6 @@ dt {
 dd {
   overflow: hidden;
   margin: 3px 0 0;
-  color: #dbdbdc;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

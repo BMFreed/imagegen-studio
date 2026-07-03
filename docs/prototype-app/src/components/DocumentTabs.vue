@@ -45,7 +45,7 @@ import { NButton, NIcon } from 'naive-ui';
   max-width: 260px;
   height: 35px;
   padding: 0 12px;
-  background: #18181c;
+  background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-bottom: 0;
   border-radius: var(--app-radius) var(--app-radius) 0 0;
@@ -66,7 +66,7 @@ import { NButton, NIcon } from 'naive-ui';
 }
 
 .document-tab--active {
-  background: #232327;
+  background: var(--app-elevated-hover);
 }
 
 .workspace-marker,
@@ -78,18 +78,18 @@ import { NButton, NIcon } from 'naive-ui';
 }
 
 .workspace-marker--green {
-  background: #64e36e;
+  background: var(--workspace-green);
 }
 
 .workspace-marker--blue {
-  background: #74a8ff;
+  background: var(--workspace-blue);
 }
 
 .dirty-dot {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #f2c97d;
+  background: var(--status-warning);
 }
 
 .tab-title {
@@ -102,6 +102,6 @@ import { NButton, NIcon } from 'naive-ui';
 .tab-close {
   flex: 0 0 auto;
   margin-left: auto;
-  color: #6f6f73;
+  color: var(--app-text-soft);
 }
 </style>

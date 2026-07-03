@@ -82,7 +82,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
 }
 
 .sidebar-item--active {
-  background: #232327;
+  background: var(--app-elevated-hover);
 }
 
 .workspace-grid {
@@ -97,7 +97,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   height: 210px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: #18181c;
+  background: var(--app-surface);
 }
 
 .workspace-card--wide {

@@ -75,7 +75,6 @@ const statusOptions: MenuOption[] = [
 
 h2 {
   margin: 0 0 5px;
-  color: #6f6f73;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -84,12 +83,6 @@ h2 {
 
 :deep(.n-menu) {
   --n-item-height: 32px;
-  --n-item-text-color: #a0a0a3;
-  --n-item-text-color-hover: #dbdbdc;
-  --n-item-text-color-active: #64e36e;
-  --n-item-color-hover: #232327;
-  --n-item-color-active: #19391f;
-  --n-item-color-active-hover: #1e4425;
   --n-item-border-radius: var(--app-radius);
 }
 
@@ -112,7 +105,7 @@ h2 {
   padding: 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: #202024;
+  background: var(--app-elevated);
 }
 
 .storage-summary div {
@@ -122,7 +115,6 @@ h2 {
 }
 
 .storage-summary strong {
-  color: #dbdbdc;
   font-weight: 600;
 }
 </style>

@@ -74,8 +74,8 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
   padding: 18px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: #18181c;
-  box-shadow: 0 24px 70px #0000009c;
+  background: var(--app-surface);
+  box-shadow: 0 24px 70px var(--app-shadow-dialog);
 }
 
 .dialog-header {
@@ -101,7 +101,7 @@ h2 {
   padding: 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: #202024;
+  background: var(--app-elevated);
 }
 
 .preview-copy {

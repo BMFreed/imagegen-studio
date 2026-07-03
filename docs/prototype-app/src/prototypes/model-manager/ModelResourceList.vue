@@ -121,17 +121,13 @@ const sortOptions = [
   gap: 12px;
   padding: 12px 14px;
   border-top: 1px solid var(--app-border);
-  background: #18181c;
+  background: var(--app-surface);
 }
 
 .install-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
-}
-
-.install-copy strong {
-  color: #dbdbdc;
 }
 
 .install-copy span {

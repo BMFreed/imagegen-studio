@@ -42,7 +42,7 @@ const selectedResource = computed(() => {
   display: grid;
   place-items: center;
   padding: 36px;
-  background: #0505079a;
+  background: var(--app-overlay-backdrop);
   backdrop-filter: blur(7px);
 }
 
@@ -55,8 +55,8 @@ const selectedResource = computed(() => {
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: #18181c;
-  box-shadow: 0 24px 70px #00000073;
+  background: var(--app-surface);
+  box-shadow: 0 24px 70px var(--app-shadow-shell);
 }
 
 .manager-body {

@@ -1,7 +1,21 @@
 :root {
   color-scheme: dark;
   --app-chrome: #101014;
+  --app-surface: #18181c;
+  --app-elevated: #202024;
+  --app-elevated-hover: #232327;
   --app-border: #343437;
+  --app-overlay-backdrop: #0505079a;
+  --app-overlay-mask: #050507b8;
+  --app-shadow-shell: #00000073;
+  --app-shadow-dialog: #0000009c;
+  --app-window-close: #e88080;
+  --app-text: #dbdbdc;
+  --app-text-soft: #6f6f73;
+  --workspace-green: #64e36e;
+  --workspace-blue: #74a8ff;
+  --status-warning: #f2c97d;
+  --app-radius: 3px;
 }
 
 * {
@@ -19,7 +33,7 @@ body {
   margin: 0;
   min-width: 1200px;
   overflow: hidden;
-  color: #dbdbdc;
+  color: var(--app-text);
   background: var(--app-chrome);
 }
 
@@ -30,6 +44,6 @@ textarea {
 }
 
 body .n-modal-mask {
-  background: #050507b8;
+  background: var(--app-overlay-mask);
   backdrop-filter: blur(8px);
 }

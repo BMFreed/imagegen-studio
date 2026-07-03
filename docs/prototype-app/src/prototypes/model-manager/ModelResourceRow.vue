@@ -4,7 +4,6 @@
     <div class="resource-main">
       <div class="resource-title-line">
         <strong>{{ resource.name }}</strong>
-        <StatusBadge :status="resource.status" />
       </div>
       <p>{{ resource.description }}</p>
       <div class="resource-meta">
@@ -13,12 +12,15 @@
         <span>{{ resource.source }}</span>
       </div>
     </div>
-    <NButton v-if="resource.status === 'missing'" secondary type="warning" size="small" @click.stop>
-      <template #icon>
-        <NIcon :component="ToolIcon" />
-      </template>
-      Repair
-    </NButton>
+    <div class="resource-state">
+      <StatusBadge :status="resource.status" />
+      <NButton v-if="resource.status === 'missing'" secondary type="warning" size="small" @click.stop>
+        <template #icon>
+          <NIcon :component="ToolIcon" />
+        </template>
+        Repair
+      </NButton>
+    </div>
   </div>
 </template>
 
@@ -49,19 +51,18 @@ defineEmits<{
   padding: 12px;
   border: 1px solid transparent;
   border-radius: var(--app-radius);
-  background: #202024;
+  background: var(--app-elevated);
   cursor: pointer;
   outline: 0;
 }
 
 .resource-row:hover:not(.resource-row--selected) {
   border-color: var(--app-border);
-  background: #232327;
+  background: var(--app-elevated-hover);
 }
 
 .resource-row--selected {
-  border-color: #5ccc65;
-  background: #1f2621;
+  border-color: var(--workspace-green);
 }
 
 .resource-row--muted {
@@ -69,8 +70,8 @@ defineEmits<{
 }
 
 .resource-row:focus-visible {
-  border-color: #5ccc65;
-  box-shadow: 0 0 0 2px #64e36e40;
+  border-color: var(--workspace-green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-green) 25%, transparent);
 }
 
 .resource-main {
@@ -87,7 +88,6 @@ defineEmits<{
 
 .resource-title-line strong {
   overflow: hidden;
-  color: #dbdbdc;
   font-size: 13px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -105,7 +105,13 @@ p {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #6f6f73;
   font-size: 12px;
+}
+
+.resource-state {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
 }
 </style>
