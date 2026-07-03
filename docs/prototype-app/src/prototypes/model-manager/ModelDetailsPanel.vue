@@ -2,52 +2,62 @@
   <aside class="details-panel">
     <NScrollbar>
       <div class="details-scroll">
-        <section class="preview-section">
+        <NCard size="small" class="details-card preview-card" :bordered="true">
+          <template #cover>
           <ResourceThumbnail :tone="resource.thumbnailTone" class="large-preview" />
-          <div class="identity-copy">
+          </template>
+          <template #header>
             <h2>{{ resource.name }}</h2>
+          </template>
             <p>{{ resource.description }}</p>
-          </div>
+          <template #footer>
           <div class="badge-row">
             <StatusBadge :status="resource.status" />
             <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
             <NTag v-if="resource.predictionType" size="small" :bordered="false" type="info">{{ resource.predictionType }}</NTag>
           </div>
-        </section>
+          </template>
+        </NCard>
 
-        <section class="details-card">
-          <header class="section-header">
+        <NCard size="small" class="details-card" :bordered="true">
+          <template #header>
             <h3>Installed Versions</h3>
-            <NButton tertiary size="small">
+          </template>
+          <template #header-extra>
+            <NButton ghost size="small">
               <template #icon>
                 <NIcon :component="DownloadIcon" />
               </template>
               Install Version
             </NButton>
-          </header>
+          </template>
           <div class="version-list">
-            <article v-for="version in resource.versions" :key="version.id" class="version-row">
-              <div>
-                <strong>{{ version.label }}</strong>
-                <p>{{ version.description }} · {{ version.sizeLabel }}</p>
+            <NCard v-for="version in resource.versions" :key="version.id" size="small" class="version-card" :bordered="true">
+              <div class="version-card-content">
+                <div>
+                  <strong>{{ version.label }}</strong>
+                  <p>{{ version.description }} · {{ version.sizeLabel }}</p>
+                </div>
+                <NTag v-if="version.isDefault" size="small" :bordered="false" type="success">Default</NTag>
+                <NButton v-else ghost size="small">Set Default</NButton>
               </div>
-              <NTag v-if="version.isDefault" size="small" :bordered="false" type="success">Default</NTag>
-              <NButton v-else secondary size="small">Set Default</NButton>
-            </article>
+            </NCard>
           </div>
-        </section>
+        </NCard>
 
-        <section v-if="resource.triggerWords?.length" class="details-card">
-          <header class="section-header">
+        <NCard v-if="resource.triggerWords?.length" size="small" class="details-card" :bordered="true">
+          <template #header>
             <h3>Trigger Words</h3>
-          </header>
+          </template>
           <div class="trigger-list">
             <NTag v-for="word in resource.triggerWords" :key="word" size="small">{{ word }}</NTag>
           </div>
-        </section>
+        </NCard>
 
-        <section class="details-card">
-          <h3>Metadata</h3>
+        <NCard size="small" class="details-card" :bordered="true">
+          <template #header>
+            <h3>Metadata</h3>
+          </template>
           <dl class="metadata-grid">
             <div>
               <dt>Version</dt>
@@ -66,22 +76,22 @@
               <dd>3 presets, 12 project snapshots</dd>
             </div>
           </dl>
-        </section>
+        </NCard>
 
         <section class="action-grid" aria-label="Model actions">
-          <NButton secondary class="action-wide">
+          <NButton secondary type="primary" class="action-wide">
             <template #icon>
               <NIcon :component="LinkIcon" />
             </template>
             Copy Link
           </NButton>
-          <NButton secondary>
+          <NButton secondary type="info">
             <template #icon>
               <NIcon :component="FolderIcon" />
             </template>
             Show in Folder
           </NButton>
-          <NButton tertiary type="error">
+          <NButton secondary type="error">
             <template #icon>
               <NIcon :component="TrashIcon" />
             </template>
@@ -95,7 +105,7 @@
 
 <script setup lang="ts">
 import { Download as DownloadIcon, Folder as FolderIcon, Link as LinkIcon, Trash as TrashIcon } from '@vicons/tabler';
-import { NButton, NIcon, NScrollbar, NTag } from 'naive-ui';
+import { NButton, NCard, NIcon, NScrollbar, NTag } from 'naive-ui';
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
 import StatusBadge from '../../components/StatusBadge.vue';
 import type { ModelResource } from './model-manager.types';
@@ -109,6 +119,8 @@ defineProps<{
 .details-panel {
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .details-scroll {
@@ -117,23 +129,18 @@ defineProps<{
   padding: 16px;
 }
 
-.preview-section {
+.preview-card {
+  background: #202024;
+}
+
+.preview-card :deep(.n-card__content) {
   display: grid;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  background: var(--app-surface-raised);
 }
 
 .large-preview {
   width: 100%;
   height: 178px;
-}
-
-.identity-copy {
-  display: grid;
-  gap: 4px;
 }
 
 h2,
@@ -143,12 +150,12 @@ p {
 }
 
 h2 {
-  color: var(--app-text);
+  color: #dbdbdc;
   font-size: 19px;
 }
 
 h3 {
-  color: var(--app-text);
+  color: #dbdbdc;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -156,7 +163,6 @@ h3 {
 }
 
 p {
-  color: var(--app-text-muted);
 }
 
 .badge-row,
@@ -167,19 +173,7 @@ p {
 }
 
 .details-card {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  background: var(--app-surface-raised);
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  background: #202024;
 }
 
 .version-list {
@@ -187,21 +181,22 @@ p {
   gap: 8px;
 }
 
-.version-row {
+.version-card {
+  background: transparent;
+}
+
+.version-card-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 10px;
-  border-radius: var(--app-radius);
-  background: var(--app-control);
 }
 
-.version-row strong {
-  color: var(--app-text);
+.version-card strong {
+  color: #dbdbdc;
 }
 
-.version-row p {
+.version-card p {
   margin-top: 2px;
   font-size: 12px;
 }
@@ -218,7 +213,7 @@ p {
 }
 
 dt {
-  color: var(--app-text-soft);
+  color: #6f6f73;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -228,7 +223,7 @@ dt {
 dd {
   overflow: hidden;
   margin: 3px 0 0;
-  color: var(--app-text);
+  color: #dbdbdc;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

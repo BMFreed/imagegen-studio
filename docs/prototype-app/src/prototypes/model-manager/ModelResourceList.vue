@@ -31,13 +31,13 @@
       </div>
       <NProgress type="line" :percentage="64" :show-indicator="false" />
       <div class="install-actions">
-        <NButton tertiary size="small">
+        <NButton tertiary type="error" size="small">
           <template #icon>
             <NIcon :component="XIcon" />
           </template>
           Cancel
         </NButton>
-        <NButton secondary size="small">
+        <NButton tertiary type="info" size="small">
           <template #icon>
             <NIcon :component="ListIcon" />
           </template>
@@ -91,7 +91,8 @@ const sortOptions = [
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--app-border);
+  height: 100%;
+  overflow: hidden;
 }
 
 .list-toolbar {
@@ -100,6 +101,7 @@ const sortOptions = [
   gap: 8px;
   padding: 14px;
   border-bottom: 1px solid var(--app-border);
+  align-items: center;
 }
 
 .resource-scroll {
@@ -119,7 +121,7 @@ const sortOptions = [
   gap: 12px;
   padding: 12px 14px;
   border-top: 1px solid var(--app-border);
-  background: var(--app-surface);
+  background: #18181c;
 }
 
 .install-copy {
@@ -129,12 +131,11 @@ const sortOptions = [
 }
 
 .install-copy strong {
-  color: var(--app-text);
+  color: #dbdbdc;
 }
 
 .install-copy span {
   overflow: hidden;
-  color: var(--app-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

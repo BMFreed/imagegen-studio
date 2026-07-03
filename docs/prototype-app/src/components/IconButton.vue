@@ -26,6 +26,5 @@ defineProps<{
 
 <style scoped>
 .icon-button {
-  color: var(--app-text-muted);
 }
 </style>

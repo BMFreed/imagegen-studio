@@ -1,27 +1,27 @@
 <template>
   <nav class="document-tabs" aria-label="Open documents">
-    <button class="document-tab" type="button">
+    <NButton text class="document-tab">
       <NIcon :component="HomeIcon" />
-      <span>Home</span>
-      <span class="tab-close">×</span>
-    </button>
-    <button class="document-tab document-tab--active" type="button">
+      <span class="tab-title">Home</span>
+      <NIcon class="tab-close" :component="XIcon" />
+    </NButton>
+    <NButton text class="document-tab document-tab--active">
       <span class="workspace-marker workspace-marker--green" />
-      <span>Sample Project B.igs</span>
+      <span class="tab-title">Sample Project B.igs</span>
       <span class="dirty-dot" aria-label="Unsaved changes" />
-      <span class="tab-close">×</span>
-    </button>
-    <button class="document-tab" type="button">
+      <NIcon class="tab-close" :component="XIcon" />
+    </NButton>
+    <NButton text class="document-tab">
       <span class="workspace-marker workspace-marker--blue" />
-      <span>Sample Project A.igs</span>
-      <span class="tab-close">×</span>
-    </button>
+      <span class="tab-title">Sample Project A.igs</span>
+      <NIcon class="tab-close" :component="XIcon" />
+    </NButton>
   </nav>
 </template>
 
 <script setup lang="ts">
-import { Home as HomeIcon } from '@vicons/tabler';
-import { NIcon } from 'naive-ui';
+import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon } from 'naive-ui';
 </script>
 
 <style scoped>
@@ -37,19 +37,30 @@ import { NIcon } from 'naive-ui';
 }
 
 .document-tab {
+  --n-text-color-hover: #dbdbdc;
+  --n-text-color-pressed: #dbdbdc;
+  --n-padding: 0 12px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-start;
   min-width: 0;
   max-width: 260px;
   height: 35px;
   padding: 0 12px;
-  color: var(--app-text-muted);
-  background: var(--app-control);
+  background: #18181c;
   border: 1px solid var(--app-border);
   border-bottom: 0;
   border-radius: var(--app-radius) var(--app-radius) 0 0;
+  cursor: pointer;
   font: inherit;
+}
+
+.document-tab :deep(.n-button__content) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .document-tab + .document-tab {
@@ -57,9 +68,7 @@ import { NIcon } from 'naive-ui';
 }
 
 .document-tab--active {
-  color: var(--app-text);
-  background: var(--app-surface);
-  box-shadow: inset 0 2px 0 var(--app-accent);
+  background: #232327;
 }
 
 .workspace-marker,
@@ -71,7 +80,7 @@ import { NIcon } from 'naive-ui';
 }
 
 .workspace-marker--green {
-  background: var(--app-accent);
+  background: #64e36e;
 }
 
 .workspace-marker--blue {
@@ -82,11 +91,19 @@ import { NIcon } from 'naive-ui';
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--app-warning);
+  background: #f2c97d;
+}
+
+.tab-title {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-close {
+  flex: 0 0 auto;
   margin-left: auto;
-  color: var(--app-text-soft);
+  color: #6f6f73;
 }
 </style>

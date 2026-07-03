@@ -13,7 +13,7 @@
         <span>{{ resource.source }}</span>
       </div>
     </div>
-    <NButton v-if="resource.status === 'missing'" tertiary size="small" @click.stop>
+    <NButton v-if="resource.status === 'missing'" secondary type="warning" size="small" @click.stop>
       <template #icon>
         <NIcon :component="ToolIcon" />
       </template>
@@ -49,22 +49,28 @@ defineEmits<{
   padding: 12px;
   border: 1px solid transparent;
   border-radius: var(--app-radius);
-  background: var(--app-surface-raised);
+  background: #202024;
+  cursor: pointer;
   outline: 0;
 }
 
 .resource-row:hover {
   border-color: var(--app-border);
-  background: var(--app-control);
+  background: #232327;
 }
 
 .resource-row--selected {
-  border-color: var(--app-accent-strong);
+  border-color: #5ccc65;
   background: #1f2621;
 }
 
 .resource-row--muted {
   opacity: 0.64;
+}
+
+.resource-row:focus-visible {
+  border-color: #5ccc65;
+  box-shadow: 0 0 0 2px #64e36e40;
 }
 
 .resource-main {
@@ -81,7 +87,7 @@ defineEmits<{
 
 .resource-title-line strong {
   overflow: hidden;
-  color: var(--app-text);
+  color: #dbdbdc;
   font-size: 13px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -91,7 +97,6 @@ defineEmits<{
 p {
   overflow: hidden;
   margin: 3px 0 8px;
-  color: var(--app-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -100,7 +105,7 @@ p {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--app-text-soft);
+  color: #6f6f73;
   font-size: 12px;
 }
 </style>

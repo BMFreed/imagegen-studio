@@ -47,14 +47,12 @@ defineEmits<{
 
 h1 {
   margin: 0 0 4px;
-  color: var(--app-text);
   font-size: 20px;
   font-weight: 700;
 }
 
 p {
   margin: 0;
-  color: var(--app-text-muted);
 }
 
 .header-actions {

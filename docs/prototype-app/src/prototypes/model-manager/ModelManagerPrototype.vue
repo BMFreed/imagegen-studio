@@ -1,13 +1,19 @@
 <template>
   <section class="manager-backdrop" aria-label="Model Manager prototype">
-    <div class="manager-shell">
+    <section class="manager-shell">
       <ModelManagerHeader @open-import="showImportModal = true" />
       <div class="manager-body">
-        <ModelManagerNavigation />
-        <ModelResourceList :resources="modelResources" :selected-id="selectedId" @select="selectedId = $event" />
-        <ModelDetailsPanel :resource="selectedResource" />
+        <aside class="manager-column manager-column--navigation">
+          <ModelManagerNavigation />
+        </aside>
+        <main class="resource-content">
+          <ModelResourceList :resources="modelResources" :selected-id="selectedId" @select="selectedId = $event" />
+        </main>
+        <aside class="manager-column manager-column--details">
+          <ModelDetailsPanel :resource="selectedResource" />
+        </aside>
       </div>
-    </div>
+    </section>
     <CivitaiImportModal v-model:show="showImportModal" />
   </section>
 </template>
@@ -49,14 +55,30 @@ const selectedResource = computed(() => {
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: var(--app-surface);
+  background: #18181c;
   box-shadow: 0 24px 70px #00000073;
 }
 
 .manager-body {
   display: grid;
-  grid-template-columns: 230px minmax(480px, 1fr) 370px;
+  grid-template-columns: 230px minmax(0, 1fr) 370px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+}
+
+.manager-column,
+.resource-content,
+.manager-column--navigation,
+.manager-column--details {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.manager-column--navigation,
+.resource-content {
+  border-right: 1px solid var(--app-border);
 }
 </style>

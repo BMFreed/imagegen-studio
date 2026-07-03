@@ -2,18 +2,12 @@
   <aside class="manager-navigation">
     <section class="nav-section">
       <h2>Library</h2>
-      <button v-for="item in libraryItems" :key="item.label" class="nav-item" :class="{ 'nav-item--active': item.active }" type="button">
-        <span>{{ item.label }}</span>
-        <span>{{ item.count }}</span>
-      </button>
+      <NMenu v-model:value="activeLibraryKey" :options="libraryOptions" />
     </section>
 
     <section class="nav-section">
       <h2>Status</h2>
-      <button v-for="item in statusItems" :key="item.label" class="nav-item" type="button">
-        <span>{{ item.label }}</span>
-        <span>{{ item.count }}</span>
-      </button>
+      <NMenu v-model:value="activeStatusKey" :options="statusOptions" />
     </section>
 
     <section class="storage-summary">
@@ -21,11 +15,7 @@
         <span>Storage used</span>
         <strong>84 GB</strong>
       </div>
-      <div>
-        <span>Downloads</span>
-        <strong>2 active</strong>
-      </div>
-      <NButton secondary block size="small">
+      <NButton ghost type="info" block size="small">
         <template #icon>
           <NIcon :component="FolderIcon" />
         </template>
@@ -36,22 +26,34 @@
 </template>
 
 <script setup lang="ts">
+import { h, ref } from 'vue';
 import { Folder as FolderIcon } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
+import { NButton, NIcon, NMenu, type MenuOption } from 'naive-ui';
 
-const libraryItems = [
-  { label: 'All Models', count: 28, active: true },
-  { label: 'Checkpoints', count: 7 },
-  { label: 'LoRA', count: 15 },
-  { label: 'Embeddings', count: 4 },
-  { label: 'VAE', count: 1 },
-  { label: 'Upscalers', count: 1 }
+const activeLibraryKey = ref('all');
+const activeStatusKey = ref('');
+
+function makeMenuLabel(label: string, count: number) {
+  return () =>
+    h('div', { class: 'menu-label' }, [
+      h('span', label),
+      h('span', { class: 'menu-count' }, String(count))
+    ]);
+}
+
+const libraryOptions: MenuOption[] = [
+  { key: 'all', label: makeMenuLabel('All Models', 28) },
+  { key: 'checkpoints', label: makeMenuLabel('Checkpoints', 7) },
+  { key: 'lora', label: makeMenuLabel('LoRA', 15) },
+  { key: 'embeddings', label: makeMenuLabel('Embeddings', 4) },
+  { key: 'vae', label: makeMenuLabel('VAE', 1) },
+  { key: 'upscalers', label: makeMenuLabel('Upscalers', 1) }
 ];
 
-const statusItems = [
-  { label: 'Installed', count: 25 },
-  { label: 'Downloading', count: 1 },
-  { label: 'Needs Attention', count: 2 }
+const statusOptions: MenuOption[] = [
+  { key: 'installed', label: makeMenuLabel('Installed', 25) },
+  { key: 'downloading', label: makeMenuLabel('Downloading', 1) },
+  { key: 'needs-attention', label: makeMenuLabel('Needs Attention', 2) }
 ];
 </script>
 
@@ -61,8 +63,9 @@ const statusItems = [
   grid-template-rows: auto auto 1fr;
   gap: 22px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   padding: 18px;
-  border-right: 1px solid var(--app-border);
 }
 
 .nav-section {
@@ -72,37 +75,34 @@ const statusItems = [
 
 h2 {
   margin: 0 0 5px;
-  color: var(--app-text-soft);
+  color: #6f6f73;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.nav-item {
+:deep(.n-menu) {
+  --n-item-height: 32px;
+  --n-item-text-color: #a0a0a3;
+  --n-item-text-color-hover: #dbdbdc;
+  --n-item-text-color-active: #64e36e;
+  --n-item-color-hover: #232327;
+  --n-item-color-active: #19391f;
+  --n-item-color-active-hover: #1e4425;
+  --n-item-border-radius: var(--app-radius);
+}
+
+:deep(.n-menu-item-content) {
+  cursor: pointer;
+}
+
+:deep(.menu-label) {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 32px;
-  padding: 0 12px;
-  color: var(--app-text-muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--app-radius);
-  font: inherit;
-  text-align: left;
-}
-
-.nav-item:hover {
-  color: var(--app-text);
-  background: var(--app-control);
-}
-
-.nav-item--active {
-  color: var(--app-text);
-  background: #19391f;
-  box-shadow: inset 0 0 0 1px var(--app-accent-strong);
+  gap: 12px;
 }
 
 .storage-summary {
@@ -112,18 +112,17 @@ h2 {
   padding: 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: var(--app-surface-raised);
+  background: #202024;
 }
 
 .storage-summary div {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  color: var(--app-text-muted);
 }
 
 .storage-summary strong {
-  color: var(--app-text);
+  color: #dbdbdc;
   font-weight: 600;
 }
 </style>

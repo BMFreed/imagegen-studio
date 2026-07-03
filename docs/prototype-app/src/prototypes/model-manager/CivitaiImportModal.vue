@@ -74,7 +74,7 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
   padding: 18px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: var(--app-surface);
+  background: #18181c;
   box-shadow: 0 24px 70px #0000009c;
 }
 
@@ -87,13 +87,11 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
 
 h2 {
   margin: 0 0 5px;
-  color: var(--app-text);
   font-size: 17px;
 }
 
 .dialog-header p {
   margin: 0;
-  color: var(--app-text-muted);
 }
 
 .import-preview {
@@ -103,7 +101,7 @@ h2 {
   padding: 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: var(--app-surface-raised);
+  background: #202024;
 }
 
 .preview-copy {
@@ -114,11 +112,9 @@ h2 {
 }
 
 .preview-copy strong {
-  color: var(--app-text);
 }
 
 .preview-copy span {
-  color: var(--app-text-muted);
 }
 
 .modal-actions {

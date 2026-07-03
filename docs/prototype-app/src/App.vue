@@ -41,14 +41,14 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   grid-template-rows: 40px 40px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
-  background: var(--app-bg);
+  background: var(--app-chrome);
 }
 
 .prototype-stage {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  background: var(--app-bg);
+  background: var(--app-chrome);
 }
 
 .home-context {
@@ -56,7 +56,6 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   inset: 0;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  color: var(--app-text-muted);
   filter: blur(2px);
   opacity: 0.55;
 }
@@ -71,7 +70,6 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
 }
 
 .sidebar-title {
-  color: var(--app-text-soft);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -84,8 +82,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
 }
 
 .sidebar-item--active {
-  color: var(--app-text);
-  background: var(--app-control);
+  background: #232327;
 }
 
 .workspace-grid {
@@ -100,7 +97,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   height: 210px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  background: var(--app-surface);
+  background: #18181c;
 }
 
 .workspace-card--wide {

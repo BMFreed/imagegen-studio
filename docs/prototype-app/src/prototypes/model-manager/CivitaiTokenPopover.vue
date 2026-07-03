@@ -1,9 +1,9 @@
 <template>
   <NPopover trigger="click" placement="bottom-end" class="token-popover" :width="270">
     <template #trigger>
-      <NButton secondary size="small" class="token-trigger">
+      <NButton secondary size="medium" class="token-trigger">
         <span class="status-dot" />
-        CivitAI connected
+        <span class="token-label">CivitAI connected</span>
         <NIcon :component="ChevronDownIcon" />
       </NButton>
     </template>
@@ -41,15 +41,26 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
 
 <style scoped>
 .token-trigger {
-  min-width: 158px;
+  min-width: 184px;
+  justify-content: center;
+}
+
+.token-trigger :deep(.n-button__content) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-label {
+  white-space: nowrap;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--app-accent);
-  box-shadow: 0 0 10px var(--app-accent);
+  background: #64e36e;
+  box-shadow: 0 0 10px #64e36e;
 }
 
 .token-menu {
@@ -59,7 +70,6 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
 
 .token-menu p {
   margin: 0;
-  color: var(--app-text-muted);
 }
 
 .menu-action {
