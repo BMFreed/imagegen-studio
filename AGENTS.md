@@ -109,6 +109,13 @@ Preferred order:
 3. Local scoped CSS on wrapper elements.
 4. `:deep()` only as a last resort.
 
+## Frontend design skill
+
+- For frontend UI work, review `.codex/skills/frontend-design-principles/`.
+- Use it as design guidance for product feel, density, hierarchy, color meaning, spacing, and anti-pattern checks.
+- Project rules in this `AGENTS.md` take precedence when they conflict with the skill.
+- For ImageGen Studio app screens, prefer the skill's application guidance in `app.md`.
+
 ## Layout
 
 - Use regular CSS layout primitives: grid, flexbox, positioning, overflow, and container queries when appropriate.
