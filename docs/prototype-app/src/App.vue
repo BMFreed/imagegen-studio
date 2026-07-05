@@ -1,12 +1,21 @@
+<script setup lang="ts">
+import { darkTheme, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui';
+
+import AppChrome from './components/AppChrome.vue';
+import DocumentTabs from './components/DocumentTabs.vue';
+import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue';
+import { imageGenNaiveTheme } from './theme/naive-theme';
+</script>
+
 <template>
-  <NConfigProvider :theme="darkTheme" :theme-overrides="imageGenNaiveTheme">
+  <NConfigProvider :theme="darkTheme" :themeOverrides="imageGenNaiveTheme">
     <NDialogProvider>
       <NMessageProvider>
         <div class="app-shell">
           <AppChrome />
           <DocumentTabs />
           <main class="prototype-stage">
-            <section class="home-context" aria-hidden="true">
+            <section aria-hidden="true" class="home-context">
               <div class="workspace-sidebar">
                 <span class="sidebar-title">Workspaces</span>
                 <span class="sidebar-item sidebar-item--active">Uncategorized</span>
@@ -26,14 +35,6 @@
     </NDialogProvider>
   </NConfigProvider>
 </template>
-
-<script setup lang="ts">
-import { darkTheme, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui';
-import AppChrome from './components/AppChrome.vue';
-import DocumentTabs from './components/DocumentTabs.vue';
-import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue';
-import { imageGenNaiveTheme } from './theme/naive-theme';
-</script>
 
 <style scoped>
 .app-shell {

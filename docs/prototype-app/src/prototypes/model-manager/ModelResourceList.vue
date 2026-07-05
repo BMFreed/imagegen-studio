@@ -1,65 +1,11 @@
-<template>
-  <section class="resource-list-panel">
-    <header class="list-toolbar">
-      <label class="toolbar-field">
-        <span>Name</span>
-        <NInput v-model:value="searchValue" clearable placeholder="Search models" />
-      </label>
-      <label class="toolbar-field">
-        <span>Base model</span>
-        <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
-      </label>
-      <label class="toolbar-field">
-        <span>Sort by</span>
-        <NSelect v-model:value="sortValue" :options="sortOptions" :consistent-menu-width="false" />
-      </label>
-    </header>
-
-    <NScrollbar class="resource-scroll">
-      <div class="resource-list">
-        <ModelResourceRow
-          v-for="resource in resources"
-          :key="resource.id"
-          :resource="resource"
-          :selected="resource.id === selectedId"
-          :muted="resource.id === 'uncanny-valley-noobai'"
-          @select="$emit('select', $event)"
-        />
-      </div>
-    </NScrollbar>
-
-    <footer class="install-strip">
-      <div class="install-copy">
-        <strong v-overflow-title>Installing Digital Art XL v0.2</strong>
-      </div>
-      <div class="install-progress">
-        <NProgress type="line" :percentage="64" :show-indicator="false" />
-      </div>
-      <span v-overflow-title class="install-subtitle">Downloading from CivitAI · 1.4 GB of 2.2 GB</span>
-      <div class="install-actions">
-        <NButton tertiary type="error" size="small">
-          <template #icon>
-            <NIcon :component="XIcon" />
-          </template>
-          Cancel
-        </NButton>
-        <NButton tertiary type="info" size="small">
-          <template #icon>
-            <NIcon :component="ListIcon" />
-          </template>
-          View Queue
-        </NButton>
-      </div>
-    </footer>
-  </section>
-</template>
-
 <script setup lang="ts">
-import { ref } from 'vue';
 import { ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
 import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect } from 'naive-ui';
-import ModelResourceRow from './ModelResourceRow.vue';
+import { ref } from 'vue';
+
 import type { ModelResource } from './model-manager.types';
+
+import ModelResourceRow from './ModelResourceRow.vue';
 
 defineProps<{
   resources: ModelResource[];
@@ -77,15 +23,73 @@ const sortValue = ref('name');
 const baseModelOptions = [
   { label: 'Illustrious', value: 'illustrious' },
   { label: 'SDXL', value: 'sdxl' },
-  { label: 'NoobAI', value: 'noobai' }
+  { label: 'NoobAI', value: 'noobai' },
 ];
 
 const sortOptions = [
   { label: 'Name', value: 'name' },
   { label: 'Recently installed', value: 'recent' },
-  { label: 'Size', value: 'size' }
+  { label: 'Size', value: 'size' },
 ];
 </script>
+
+<template>
+  <section class="resource-list-panel">
+    <header class="list-toolbar">
+      <label class="toolbar-field">
+        <span>Name</span>
+        <NInput v-model:value="searchValue" clearable placeholder="Search models" />
+      </label>
+      <label class="toolbar-field">
+        <span>Base model</span>
+        <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
+      </label>
+      <label class="toolbar-field">
+        <span>Sort by</span>
+        <NSelect v-model:value="sortValue" :consistentMenuWidth="false" :options="sortOptions" />
+      </label>
+    </header>
+
+    <NScrollbar class="resource-scroll">
+      <div class="resource-list">
+        <ModelResourceRow
+          v-for="resource of resources"
+          :key="resource.id"
+          :muted="resource.id === 'uncanny-valley-noobai'"
+          :resource
+          :selected="resource.id === selectedId"
+          @select="$emit('select', $event)"
+        />
+      </div>
+    </NScrollbar>
+
+    <footer class="install-strip">
+      <div class="install-copy">
+        <strong v-overflow-title>Installing Digital Art XL v0.2</strong>
+      </div>
+      <div class="install-progress">
+        <NProgress :percentage="64" :showIndicator="false" type="line" />
+      </div>
+      <span v-overflow-title class="install-subtitle"
+        >Downloading from CivitAI · 1.4 GB of 2.2 GB</span
+      >
+      <div class="install-actions">
+        <NButton size="small" tertiary type="error">
+          <template v-slot:icon>
+            <NIcon :component="XIcon" />
+          </template>
+          Cancel
+        </NButton>
+        <NButton size="small" tertiary type="info">
+          <template v-slot:icon>
+            <NIcon :component="ListIcon" />
+          </template>
+          View Queue
+        </NButton>
+      </div>
+    </footer>
+  </section>
+</template>
 
 <style scoped>
 .resource-list-panel {
@@ -135,9 +139,9 @@ const sortOptions = [
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "title actions"
-    "progress actions"
-    "subtitle actions";
+    'title actions'
+    'progress actions'
+    'subtitle actions';
   align-items: center;
   gap: 2px 12px;
   min-height: 70px;

@@ -1,14 +1,13 @@
+import { expect, type Page, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { expect, test, type Page } from '@playwright/test';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname;
 const screenshotsDir = path.resolve(__dirname, '..', 'screenshots');
 
 const viewports = [
-  { name: 'desktop-1920', width: 1920, height: 1080 },
-  { name: 'laptop-1440', width: 1440, height: 900 }
+  { height: 1080, name: 'desktop-1920', width: 1920 },
+  { height: 900, name: 'laptop-1440', width: 1440 },
 ];
 
 test.beforeAll(async () => {
@@ -25,18 +24,18 @@ async function openModelManager(page: Page) {
 test.describe('Model Manager prototype', () => {
   for (const viewport of viewports) {
     test(`captures ${viewport.name}`, async ({ page }) => {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.setViewportSize({ height: viewport.height, width: viewport.width });
       await openModelManager(page);
 
       await page.screenshot({
+        fullPage: false,
         path: path.join(screenshotsDir, `model-manager-${viewport.name}.png`),
-        fullPage: false
       });
     });
   }
 
   test('opens CivitAI token popover', async ({ page }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);
 
     await page.getByRole('button', { name: /CivitAI connected/ }).click();
@@ -46,7 +45,7 @@ test.describe('Model Manager prototype', () => {
   });
 
   test('captures import dialog', async ({ page }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);
 
     await page.getByRole('button', { name: 'Add from CivitAI URL' }).click();
@@ -55,8 +54,8 @@ test.describe('Model Manager prototype', () => {
     await page.waitForTimeout(250);
 
     await page.screenshot({
+      fullPage: false,
       path: path.join(screenshotsDir, 'model-manager-import-dialog-1920.png'),
-      fullPage: false
     });
   });
 });

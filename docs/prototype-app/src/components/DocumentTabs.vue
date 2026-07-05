@@ -1,28 +1,28 @@
+<script setup lang="ts">
+import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon } from 'naive-ui';
+</script>
+
 <template>
-  <nav class="document-tabs" aria-label="Open documents">
-    <NButton text class="document-tab">
+  <nav aria-label="Open documents" class="document-tabs">
+    <NButton class="document-tab" text>
       <NIcon :component="HomeIcon" />
       <span v-overflow-title class="tab-title">Home</span>
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
-    <NButton text class="document-tab document-tab--active">
+    <NButton class="document-tab document-tab--active" text>
       <span class="workspace-marker workspace-marker--green" />
       <span v-overflow-title class="tab-title">Sample Project B.igs</span>
-      <span class="dirty-dot" aria-label="Unsaved changes" />
+      <span aria-label="Unsaved changes" class="dirty-dot" />
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
-    <NButton text class="document-tab">
+    <NButton class="document-tab" text>
       <span class="workspace-marker workspace-marker--blue" />
       <span v-overflow-title class="tab-title">Sample Project A.igs</span>
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
   </nav>
 </template>
-
-<script setup lang="ts">
-import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
-</script>
 
 <style scoped>
 .document-tabs {

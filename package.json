@@ -4,10 +4,14 @@
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "icons:export": "node scripts/export-icons.mjs",
+    "icons:export": "node scripts/export-icons.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier AGENTS.md eslint.config.ts prettier.config.ts pnpm-workspace.yaml package.json tsconfig.json 'docs/prototype-app/**/*.{css,json,ts,vue}' 'scripts/*.js' --write",
+    "format:check": "prettier AGENTS.md eslint.config.ts prettier.config.ts pnpm-workspace.yaml package.json tsconfig.json 'docs/prototype-app/**/*.{css,json,ts,vue}' 'scripts/*.js' --check",
     "typecheck": "pnpm run prototype:typecheck",
-    "screenshots": "node scripts/capture-prototype-screenshots.mjs",
-    "screenshots:project": "node scripts/capture-prototype-screenshots.mjs project-page",
+    "screenshots": "node scripts/capture-prototype-screenshots.js",
+    "screenshots:project": "node scripts/capture-prototype-screenshots.js project-page",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
     "prototype:typecheck": "vue-tsc --project docs/prototype-app/tsconfig.json --noEmit",
@@ -18,13 +22,18 @@
     "naive-ui": "^2.44.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.7",
     "@playwright/test": "^1.61.0",
+    "@types/node": "^26.1.0",
     "@vicons/tabler": "^0.13.0",
+    "@vitejs/plugin-vue": "^6.0.7",
     "@vue/server-renderer": "^3.5.38",
+    "eslint": "^10.6.0",
+    "prettier": "^3.9.4",
+    "prettier-plugin-jsdoc": "^1.8.1",
+    "productive-eslint": "^4.1.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
-    "vue-tsc": "^3.3.6",
-    "vue": "^3.5.38"
+    "vue": "^3.5.38",
+    "vue-tsc": "^3.3.6"
   }
 }

@@ -59,7 +59,7 @@ const icons = [
   'Wand',
   'X',
   'ZoomIn',
-  'ZoomOut'
+  'ZoomOut',
 ];
 
 function toKebabCase(name) {
@@ -83,8 +83,8 @@ async function renderIcon(name) {
       width: '24',
       height: '24',
       'aria-hidden': 'true',
-      focusable: 'false'
-    })
+      focusable: 'false',
+    }),
   );
 
   return html

@@ -1,19 +1,18 @@
+import { defineConfig } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { defineConfig } from '@playwright/test';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname;
 const rootDir = path.resolve(__dirname, '..', '..');
 const port = 5174;
 
 const chromiumCandidates = [
-  process.env.CHROMIUM_PATH,
+  ...(process.env.CHROMIUM_PATH ? [process.env.CHROMIUM_PATH] : []),
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
   '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome'
-].filter(Boolean);
+  '/usr/bin/google-chrome',
+];
 
 function findChromiumExecutable() {
   return chromiumCandidates.find((candidate) => existsSync(candidate));
@@ -22,29 +21,29 @@ function findChromiumExecutable() {
 const executablePath = findChromiumExecutable();
 
 export default defineConfig({
-  testDir: './tests',
-  outputDir: './test-results',
-  fullyParallel: false,
-  timeout: 30_000,
   expect: {
-    timeout: 5_000
+    timeout: 5000,
   },
-  reporter: [['list'], ['html', { outputFolder: './playwright-report', open: 'never' }]],
-  webServer: {
-    command: `pnpm exec vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
-    cwd: rootDir,
-    url: `http://127.0.0.1:${port}/`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 20_000
-  },
+  fullyParallel: false,
+  outputDir: './test-results',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: './playwright-report' }]],
+  testDir: './tests',
+  timeout: 30_000,
   use: {
     baseURL: `http://127.0.0.1:${port}/`,
     browserName: 'chromium',
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
     launchOptions: {
       ...(executablePath ? { executablePath } : {}),
-      args: ['--no-sandbox']
-    }
-  }
+      args: ['--no-sandbox'],
+    },
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
+  },
+  webServer: {
+    command: `pnpm exec vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
+    cwd: rootDir,
+    reuseExistingServer: !process.env.CI,
+    timeout: 20_000,
+    url: `http://127.0.0.1:${port}/`,
+  },
 });

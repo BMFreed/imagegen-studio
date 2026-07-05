@@ -1,10 +1,7 @@
-<template>
-  <NTag :type="tagType" size="small" round :bordered="bordered" class="status-badge" :class="`status-badge--${status}`">{{ label }}</NTag>
-</template>
-
 <script setup lang="ts">
-import { computed } from 'vue';
 import { NTag } from 'naive-ui';
+import { computed } from 'vue';
+
 import type { ModelResourceStatus } from '../prototypes/model-manager/model-manager.types';
 
 const props = defineProps<{
@@ -14,18 +11,24 @@ const props = defineProps<{
 
 const label = computed(() => {
   switch (props.status) {
-    case 'installed':
-      return 'Installed';
-    case 'downloading':
-      return 'Downloading';
-    case 'missing':
-      return 'File missing';
-    case 'checking':
+    case 'checking': {
       return 'Checking';
-    case 'needsAttention':
+    }
+    case 'downloading': {
+      return 'Downloading';
+    }
+    case 'installed': {
+      return 'Installed';
+    }
+    case 'missing': {
+      return 'File missing';
+    }
+    case 'needsAttention': {
       return 'Needs attention';
-    default:
+    }
+    default: {
       return 'Unknown';
+    }
   }
 });
 
@@ -35,17 +38,33 @@ const tagType = computed(() => {
   }
 
   switch (props.status) {
-    case 'installed':
-      return 'success';
-    case 'downloading':
+    case 'downloading': {
       return 'info';
+    }
+    case 'installed': {
+      return 'success';
+    }
     case 'missing':
-    case 'needsAttention':
+    case 'needsAttention': {
       return 'warning';
-    default:
+    }
+    default: {
       return 'default';
+    }
   }
 });
 
 const bordered = computed(() => props.variant !== 'neutral');
 </script>
+
+<template>
+  <NTag
+    :bordered
+    class="status-badge"
+    :class="`status-badge--${status}`"
+    round
+    size="small"
+    :type="tagType"
+    >{{ label }}</NTag
+  >
+</template>

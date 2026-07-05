@@ -1,48 +1,78 @@
+<script setup lang="ts">
+import {
+  Download as DownloadIcon,
+  Folder as FolderIcon,
+  InfoCircle as InfoIcon,
+  Link as LinkIcon,
+  Trash as TrashIcon,
+} from '@vicons/tabler';
+import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag } from 'naive-ui';
+
+import type { ModelResource } from './model-manager.types';
+
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
+import StatusBadge from '../../components/StatusBadge.vue';
+
+defineProps<{
+  resource: ModelResource;
+}>();
+</script>
+
 <template>
   <aside class="details-panel">
     <NScrollbar>
       <div class="details-scroll">
-        <NCard size="small" class="details-card preview-card" :bordered="true">
-          <template #cover>
-          <ResourceThumbnail :tone="resource.thumbnailTone" class="large-preview" />
+        <NCard :bordered="true" class="details-card preview-card" size="small">
+          <template v-slot:cover>
+            <ResourceThumbnail class="large-preview" :tone="resource.thumbnailTone" />
           </template>
-          <template #header>
+          <template v-slot:header>
             <h2>{{ resource.name }}</h2>
           </template>
-            <p>{{ resource.description }}</p>
-          <template #footer>
-          <div class="badge-row">
-            <StatusBadge :status="resource.status" variant="neutral" />
-            <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
-            <NTag v-if="resource.predictionType" size="small" :bordered="false" type="info">{{ resource.predictionType }}</NTag>
-          </div>
+          <p>{{ resource.description }}</p>
+          <template v-slot:footer>
+            <div class="badge-row">
+              <StatusBadge :status="resource.status" variant="neutral" />
+              <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
+                badge
+              }}</NTag>
+              <NTag v-if="resource.predictionType" :bordered="false" size="small" type="info">{{
+                resource.predictionType
+              }}</NTag>
+            </div>
           </template>
         </NCard>
 
-        <NCard size="small" class="details-card" :bordered="true">
-          <template #header>
+        <NCard :bordered="true" class="details-card" size="small">
+          <template v-slot:header>
             <h3>Installed Versions</h3>
           </template>
-          <template #header-extra>
+          <template v-slot:header-extra>
             <NButton ghost size="small">
-              <template #icon>
+              <template v-slot:icon>
                 <NIcon :component="DownloadIcon" />
               </template>
               Install Version
             </NButton>
           </template>
           <div class="version-list">
-            <NCard v-for="version in resource.versions" :key="version.id" size="small" class="version-card" :bordered="true">
+            <NCard
+              v-for="version of resource.versions"
+              :key="version.id"
+              :bordered="true"
+              class="version-card"
+              size="small"
+            >
               <div class="version-card-content">
                 <div>
                   <strong>{{ version.label }}</strong>
                   <p>{{ version.sizeLabel }}</p>
                 </div>
                 <div class="version-actions">
-                  <NPopover trigger="click" placement="left">
-                    <template #trigger>
-                      <NButton quaternary circle size="tiny" aria-label="Version notes">
-                        <template #icon>
+                  <NPopover placement="left" trigger="click">
+                    <template v-slot:trigger>
+                      <NButton aria-label="Version notes" circle quaternary size="tiny">
+                        <template v-slot:icon>
                           <NIcon :component="InfoIcon" />
                         </template>
                       </NButton>
@@ -57,17 +87,28 @@
           </div>
         </NCard>
 
-        <NCard v-if="resource.triggerWords?.length" size="small" class="details-card" :bordered="true">
-          <template #header>
+        <NCard
+          v-if="resource.triggerWords?.length"
+          :bordered="true"
+          class="details-card"
+          size="small"
+        >
+          <template v-slot:header>
             <h3>Trigger Words</h3>
           </template>
           <div class="trigger-list">
-            <NTag v-for="word in resource.triggerWords" :key="word" size="small" :bordered="false">{{ word }}</NTag>
+            <NTag
+              v-for="word of resource.triggerWords"
+              :key="word"
+              :bordered="false"
+              size="small"
+              >{{ word }}</NTag
+            >
           </div>
         </NCard>
 
-        <NCard size="small" class="details-card" :bordered="true">
-          <template #header>
+        <NCard :bordered="true" class="details-card" size="small">
+          <template v-slot:header>
             <h3>Metadata</h3>
           </template>
           <dl class="metadata-grid">
@@ -86,21 +127,21 @@
           </dl>
         </NCard>
 
-        <section class="action-grid" aria-label="Model actions">
-          <NButton secondary type="primary" class="action-wide">
-            <template #icon>
+        <section aria-label="Model actions" class="action-grid">
+          <NButton class="action-wide" secondary type="primary">
+            <template v-slot:icon>
               <NIcon :component="LinkIcon" />
             </template>
             Copy Link
           </NButton>
           <NButton secondary type="info">
-            <template #icon>
+            <template v-slot:icon>
               <NIcon :component="FolderIcon" />
             </template>
             Show in Folder
           </NButton>
           <NButton secondary type="error">
-            <template #icon>
+            <template v-slot:icon>
               <NIcon :component="TrashIcon" />
             </template>
             Remove
@@ -110,18 +151,6 @@
     </NScrollbar>
   </aside>
 </template>
-
-<script setup lang="ts">
-import { Download as DownloadIcon, Folder as FolderIcon, InfoCircle as InfoIcon, Link as LinkIcon, Trash as TrashIcon } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag } from 'naive-ui';
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
-import StatusBadge from '../../components/StatusBadge.vue';
-import type { ModelResource } from './model-manager.types';
-
-defineProps<{
-  resource: ModelResource;
-}>();
-</script>
 
 <style scoped>
 .details-panel {

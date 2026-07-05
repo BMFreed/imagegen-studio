@@ -1,0 +1,7 @@
+allowBuilds:
+  unrs-resolver: true
+
+peerDependencyRules:
+  allowedVersions:
+    eslint: ^10.0.0
+    typescript: ^6.0.0

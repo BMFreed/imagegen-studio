@@ -1,0 +1,6 @@
+export default {
+  plugins: ['prettier-plugin-jsdoc'],
+  printWidth: 100,
+  singleQuote: true,
+  trailingComma: 'all',
+};

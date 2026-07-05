@@ -1,3 +1,14 @@
+<script setup lang="ts">
+import { Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon } from 'naive-ui';
+
+import CivitaiTokenPopover from './CivitaiTokenPopover.vue';
+
+defineEmits<{
+  openImport: [];
+}>();
+</script>
+
 <template>
   <header class="manager-header">
     <div class="title-block">
@@ -6,30 +17,26 @@
     </div>
     <div class="header-actions">
       <CivitaiTokenPopover />
-      <NButton type="primary" size="medium" @click="$emit('openImport')">
-        <template #icon>
+      <NButton size="medium" type="primary" @click="$emit('openImport')">
+        <template v-slot:icon>
           <NIcon :component="PlusIcon" />
         </template>
         Add from CivitAI URL
       </NButton>
-      <NButton quaternary circle size="small" aria-label="Close Model Manager" title="Close Model Manager">
-        <template #icon>
+      <NButton
+        aria-label="Close Model Manager"
+        circle
+        quaternary
+        size="small"
+        title="Close Model Manager"
+      >
+        <template v-slot:icon>
           <NIcon :component="XIcon" />
         </template>
       </NButton>
     </div>
   </header>
 </template>
-
-<script setup lang="ts">
-import { Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
-import CivitaiTokenPopover from './CivitaiTokenPopover.vue';
-
-defineEmits<{
-  openImport: [];
-}>();
-</script>
 
 <style scoped>
 .manager-header {

@@ -1,18 +1,18 @@
-<template>
-  <div class="resource-thumbnail" :class="toneClass" aria-hidden="true">
-    <span class="thumbnail-shine" />
-  </div>
-</template>
-
 <script setup lang="ts">
 import { computed } from 'vue';
 
 const props = defineProps<{
-  tone: 'green' | 'blue' | 'violet' | 'warning';
+  tone: 'blue' | 'green' | 'violet' | 'warning';
 }>();
 
 const toneClass = computed(() => `resource-thumbnail--${props.tone}`);
 </script>
+
+<template>
+  <div aria-hidden="true" class="resource-thumbnail" :class="toneClass">
+    <span class="thumbnail-shine" />
+  </div>
+</template>
 
 <style scoped>
 .resource-thumbnail {

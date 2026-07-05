@@ -1,7 +1,17 @@
+<script setup lang="ts">
+import {
+  ChevronDown as ChevronDownIcon,
+  Key as KeyIcon,
+  Refresh as RefreshIcon,
+  Trash as TrashIcon,
+} from '@vicons/tabler';
+import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
+</script>
+
 <template>
-  <NPopover trigger="click" placement="bottom-end" class="token-popover" :width="270">
-    <template #trigger>
-      <NButton secondary size="medium" class="token-trigger">
+  <NPopover class="token-popover" placement="bottom-end" trigger="click" :width="270">
+    <template v-slot:trigger>
+      <NButton class="token-trigger" secondary size="medium">
         <span class="status-dot" />
         <span class="token-label">CivitAI connected</span>
         <NIcon :component="ChevronDownIcon" />
@@ -12,20 +22,20 @@
       <strong>CivitAI token</strong>
       <p>Connected and ready for downloads.</p>
       <NDivider />
-      <NButton tertiary block size="small" class="menu-action">
-        <template #icon>
+      <NButton block class="menu-action" size="small" tertiary>
+        <template v-slot:icon>
           <NIcon :component="KeyIcon" />
         </template>
         Change token
       </NButton>
-      <NButton tertiary block size="small" class="menu-action">
-        <template #icon>
+      <NButton block class="menu-action" size="small" tertiary>
+        <template v-slot:icon>
           <NIcon :component="RefreshIcon" />
         </template>
         Check connection
       </NButton>
-      <NButton tertiary block size="small" type="error" class="menu-action">
-        <template #icon>
+      <NButton block class="menu-action" size="small" tertiary type="error">
+        <template v-slot:icon>
           <NIcon :component="TrashIcon" />
         </template>
         Remove token
@@ -33,11 +43,6 @@
     </div>
   </NPopover>
 </template>
-
-<script setup lang="ts">
-import { ChevronDown as ChevronDownIcon, Key as KeyIcon, Refresh as RefreshIcon, Trash as TrashIcon } from '@vicons/tabler';
-import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
-</script>
 
 <style scoped>
 .token-trigger {

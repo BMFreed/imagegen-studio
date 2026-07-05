@@ -17,12 +17,12 @@ const prototypes = {
   'preset-manager': 'preset-manager.html',
   'apply-preset': 'apply-preset.html',
   'save-preset': 'save-preset.html',
-  'project-page': 'project-page.html'
+  'project-page': 'project-page.html',
 };
 
 const viewports = [
   { name: 'desktop-1920', width: 1920, height: 1080 },
-  { name: 'laptop-1440', width: 1440, height: 900 }
+  { name: 'laptop-1440', width: 1440, height: 900 },
 ];
 
 const chromiumCandidates = [
@@ -30,7 +30,7 @@ const chromiumCandidates = [
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
   '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome'
+  '/usr/bin/google-chrome',
 ].filter(Boolean);
 
 function findChromiumExecutable() {
@@ -56,7 +56,7 @@ await mkdir(screenshotsDir, { recursive: true });
 
 const browser = await chromium.launch({
   executablePath: findChromiumExecutable(),
-  args: ['--no-sandbox']
+  args: ['--no-sandbox'],
 });
 
 try {
@@ -66,13 +66,13 @@ try {
     for (const viewport of viewports) {
       const page = await browser.newPage({
         viewport: { width: viewport.width, height: viewport.height },
-        deviceScaleFactor: 1
+        deviceScaleFactor: 1,
       });
 
       await page.goto(url);
       await page.screenshot({
         path: path.join(screenshotsDir, `${prototypeName}-${viewport.name}.png`),
-        fullPage: false
+        fullPage: false,
       });
       await page.close();
     }

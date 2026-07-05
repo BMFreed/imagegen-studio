@@ -1,13 +1,42 @@
+<script setup lang="ts">
+import { Download as DownloadIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon, NInput, NModal } from 'naive-ui';
+import { ref } from 'vue';
+
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
+
+defineProps<{
+  show: boolean;
+}>();
+
+defineEmits<{
+  'update:show': [show: boolean];
+}>();
+
+const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
+</script>
+
 <template>
-  <NModal :show="show" :mask-closable="true" @update:show="$emit('update:show', $event)">
-    <section class="import-dialog" role="dialog" aria-modal="true" aria-labelledby="civitai-import-title">
+  <NModal :maskClosable="true" :show @update:show="$emit('update:show', $event)">
+    <section
+      aria-labelledby="civitai-import-title"
+      aria-modal="true"
+      class="import-dialog"
+      role="dialog"
+    >
       <header class="dialog-header">
         <div>
           <h2 id="civitai-import-title">Add from CivitAI URL</h2>
           <p>Paste a model link, review what will be installed, then start the download.</p>
         </div>
-        <NButton quaternary circle size="small" aria-label="Close import dialog" @click="$emit('update:show', false)">
-          <template #icon>
+        <NButton
+          aria-label="Close import dialog"
+          circle
+          quaternary
+          size="small"
+          @click="$emit('update:show', false)"
+        >
+          <template v-slot:icon>
             <NIcon :component="XIcon" />
           </template>
         </NButton>
@@ -27,14 +56,14 @@
       </div>
 
       <div class="modal-actions">
-        <NButton type="primary" class="install-button">
-          <template #icon>
+        <NButton class="install-button" type="primary">
+          <template v-slot:icon>
             <NIcon :component="DownloadIcon" />
           </template>
           Install
         </NButton>
         <NButton tertiary @click="$emit('update:show', false)">
-          <template #icon>
+          <template v-slot:icon>
             <NIcon :component="XIcon" />
           </template>
           Cancel
@@ -43,23 +72,6 @@
     </section>
   </NModal>
 </template>
-
-<script setup lang="ts">
-import { ref } from 'vue';
-import { Download as DownloadIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInput, NModal } from 'naive-ui';
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
-
-defineProps<{
-  show: boolean;
-}>();
-
-defineEmits<{
-  'update:show': [show: boolean];
-}>();
-
-const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
-</script>
 
 <style scoped>
 .import-content {

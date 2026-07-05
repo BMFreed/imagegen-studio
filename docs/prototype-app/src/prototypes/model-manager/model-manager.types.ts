@@ -1,37 +1,28 @@
-export type ModelResourceType =
-  | 'checkpoint'
-  | 'lora'
-  | 'embedding'
-  | 'vae'
-  | 'upscaler';
+export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae';
 
 export type ModelResourceStatus =
-  | 'installed'
-  | 'downloading'
-  | 'missing'
-  | 'checking'
-  | 'needsAttention';
+  'checking' | 'downloading' | 'installed' | 'missing' | 'needsAttention';
 
 export interface ModelResourceVersion {
-  id: string;
-  label: string;
   description: string;
+  id: string;
   isDefault: boolean;
+  label: string;
   sizeLabel: string;
 }
 
 export interface ModelResource {
+  badges: string[];
+  baseModel: string;
+  description?: string;
   id: string;
   name: string;
-  versionLabel?: string;
-  description?: string;
-  type: ModelResourceType;
-  baseModel: string;
-  status: ModelResourceStatus;
-  sizeLabel: string;
-  thumbnailTone: 'green' | 'blue' | 'violet' | 'warning';
-  badges: string[];
-  triggerWords?: string[];
   predictionType?: 'epsilon' | 'v-pred';
+  sizeLabel: string;
+  status: ModelResourceStatus;
+  thumbnailTone: 'blue' | 'green' | 'violet' | 'warning';
+  triggerWords?: string[];
+  type: ModelResourceType;
+  versionLabel?: string;
   versions?: ModelResourceVersion[];
 }

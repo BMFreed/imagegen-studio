@@ -10,12 +10,12 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
     "paths": {
       "@/*": ["./src/*"],
       "@docs-assets/*": ["../assets/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"]
+  "include": ["*.ts", "src/**/*.ts", "src/**/*.vue", "tests/**/*.ts"]
 }

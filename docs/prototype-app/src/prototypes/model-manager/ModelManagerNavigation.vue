@@ -1,3 +1,35 @@
+<script setup lang="ts">
+import { Folder as FolderIcon } from '@vicons/tabler';
+import { type MenuOption, NButton, NIcon, NMenu } from 'naive-ui';
+import { h, ref } from 'vue';
+
+const activeLibraryKey = ref('all');
+const activeStatusKey = ref('');
+
+function makeMenuLabel(label: string, count: number) {
+  return () =>
+    h('div', { class: 'menu-label' }, [
+      h('span', label),
+      h('span', { class: 'menu-count' }, String(count)),
+    ]);
+}
+
+const libraryOptions: MenuOption[] = [
+  { key: 'all', label: makeMenuLabel('All Models', 28) },
+  { key: 'checkpoints', label: makeMenuLabel('Checkpoints', 7) },
+  { key: 'lora', label: makeMenuLabel('LoRA', 15) },
+  { key: 'embeddings', label: makeMenuLabel('Embeddings', 4) },
+  { key: 'vae', label: makeMenuLabel('VAE', 1) },
+  { key: 'upscalers', label: makeMenuLabel('Upscalers', 1) },
+];
+
+const statusOptions: MenuOption[] = [
+  { key: 'installed', label: makeMenuLabel('Installed', 25) },
+  { key: 'downloading', label: makeMenuLabel('Downloading', 1) },
+  { key: 'needs-attention', label: makeMenuLabel('Needs Attention', 2) },
+];
+</script>
+
 <template>
   <aside class="manager-navigation">
     <section class="nav-section">
@@ -15,8 +47,8 @@
         <span>Storage used</span>
         <strong>84 GB</strong>
       </div>
-      <NButton ghost type="info" block size="small">
-        <template #icon>
+      <NButton block ghost size="small" type="info">
+        <template v-slot:icon>
           <NIcon :component="FolderIcon" />
         </template>
         Open Folder
@@ -24,38 +56,6 @@
     </section>
   </aside>
 </template>
-
-<script setup lang="ts">
-import { h, ref } from 'vue';
-import { Folder as FolderIcon } from '@vicons/tabler';
-import { NButton, NIcon, NMenu, type MenuOption } from 'naive-ui';
-
-const activeLibraryKey = ref('all');
-const activeStatusKey = ref('');
-
-function makeMenuLabel(label: string, count: number) {
-  return () =>
-    h('div', { class: 'menu-label' }, [
-      h('span', label),
-      h('span', { class: 'menu-count' }, String(count))
-    ]);
-}
-
-const libraryOptions: MenuOption[] = [
-  { key: 'all', label: makeMenuLabel('All Models', 28) },
-  { key: 'checkpoints', label: makeMenuLabel('Checkpoints', 7) },
-  { key: 'lora', label: makeMenuLabel('LoRA', 15) },
-  { key: 'embeddings', label: makeMenuLabel('Embeddings', 4) },
-  { key: 'vae', label: makeMenuLabel('VAE', 1) },
-  { key: 'upscalers', label: makeMenuLabel('Upscalers', 1) }
-];
-
-const statusOptions: MenuOption[] = [
-  { key: 'installed', label: makeMenuLabel('Installed', 25) },
-  { key: 'downloading', label: makeMenuLabel('Downloading', 1) },
-  { key: 'needs-attention', label: makeMenuLabel('Needs Attention', 2) }
-];
-</script>
 
 <style scoped>
 .manager-navigation {

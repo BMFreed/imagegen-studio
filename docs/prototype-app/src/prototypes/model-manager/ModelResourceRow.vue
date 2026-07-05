@@ -1,5 +1,32 @@
+<script setup lang="ts">
+import { Tool as ToolIcon } from '@vicons/tabler';
+import { NButton, NIcon, NTag } from 'naive-ui';
+
+import type { ModelResource } from './model-manager.types';
+
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
+import StatusBadge from '../../components/StatusBadge.vue';
+
+defineProps<{
+  muted?: boolean;
+  resource: ModelResource;
+  selected: boolean;
+}>();
+
+defineEmits<{
+  select: [id: string];
+}>();
+</script>
+
 <template>
-  <div class="resource-row" :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }" role="button" tabindex="0" @click="$emit('select', resource.id)" @keydown.enter="$emit('select', resource.id)">
+  <div
+    class="resource-row"
+    :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }"
+    role="button"
+    tabindex="0"
+    @click="$emit('select', resource.id)"
+    @keydown.enter="$emit('select', resource.id)"
+  >
     <ResourceThumbnail :tone="resource.thumbnailTone" />
     <div class="resource-main">
       <div class="resource-title-line">
@@ -7,14 +34,16 @@
       </div>
       <p v-overflow-title>{{ resource.description }}</p>
       <div class="resource-meta">
-        <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
+        <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
+          badge
+        }}</NTag>
         <span>{{ resource.sizeLabel }}</span>
       </div>
     </div>
     <div class="resource-state">
       <StatusBadge :status="resource.status" />
-      <NButton v-if="resource.status === 'missing'" ghost type="warning" size="small" @click.stop>
-        <template #icon>
+      <NButton v-if="resource.status === 'missing'" ghost size="small" type="warning" @click.stop>
+        <template v-slot:icon>
           <NIcon :component="ToolIcon" />
         </template>
         Repair
@@ -22,24 +51,6 @@
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { Tool as ToolIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTag } from 'naive-ui';
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
-import StatusBadge from '../../components/StatusBadge.vue';
-import type { ModelResource } from './model-manager.types';
-
-defineProps<{
-  resource: ModelResource;
-  selected: boolean;
-  muted?: boolean;
-}>();
-
-defineEmits<{
-  select: [id: string];
-}>();
-</script>
 
 <style scoped>
 .resource-row {
@@ -75,7 +86,7 @@ defineEmits<{
   width: 2px;
   border-radius: 999px;
   background: var(--workspace-green);
-  content: "";
+  content: '';
 }
 
 .resource-row--muted {

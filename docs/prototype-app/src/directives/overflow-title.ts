@@ -5,7 +5,7 @@ type OverflowTitleElement = HTMLElement & {
 };
 
 function getText(el: HTMLElement) {
-  return el.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+  return el.textContent?.trim().replaceAll(/\s+/g, ' ') ?? '';
 }
 
 function updateTitle(el: HTMLElement) {
@@ -25,6 +25,10 @@ function updateTitle(el: HTMLElement) {
 }
 
 export const overflowTitleDirective: Directive<OverflowTitleElement> = {
+  beforeUnmount(el) {
+    el.__overflowTitleCleanup?.();
+    delete el.__overflowTitleCleanup;
+  },
   mounted(el) {
     const refresh = () => updateTitle(el);
 
@@ -42,8 +46,4 @@ export const overflowTitleDirective: Directive<OverflowTitleElement> = {
   updated(el) {
     requestAnimationFrame(() => updateTitle(el));
   },
-  beforeUnmount(el) {
-    el.__overflowTitleCleanup?.();
-    delete el.__overflowTitleCleanup;
-  }
 };

@@ -1,28 +1,50 @@
+<script setup lang="ts">
+import logoUrl from '@docs-assets/brand/imagegen-studio-logo-horizontal-no-bg.svg';
+import {
+  Download as DownloadIcon,
+  ListDetails as ListDetailsIcon,
+  Minus as MinusIcon,
+  Settings as SettingsIcon,
+  Square as SquareIcon,
+  X as XIcon,
+} from '@vicons/tabler';
+import { NButton, NIcon } from 'naive-ui';
+
+import IconButton from './IconButton.vue';
+
+const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
+</script>
+
 <template>
   <header class="app-chrome">
     <div class="menu-left">
-      <img class="brand-logo" :src="logoUrl" alt="ImageGen Studio" />
-      <nav class="menu-items" aria-label="Application menu">
-        <NButton v-for="item in menuItems" :key="item" text class="menu-item">{{ item }}</NButton>
+      <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
+      <nav aria-label="Application menu" class="menu-items">
+        <NButton v-for="item of menuItems" :key="item" class="menu-item" text>{{ item }}</NButton>
       </nav>
     </div>
     <div class="menu-right">
-      <IconButton :icon="ListDetailsIcon" label="Generation queue" badge="2" />
-      <IconButton :icon="DownloadIcon" label="Downloads" badge="1" />
+      <IconButton badge="2" :icon="ListDetailsIcon" label="Generation queue" />
+      <IconButton badge="1" :icon="DownloadIcon" label="Downloads" />
       <IconButton :icon="SettingsIcon" label="Settings" />
-      <div class="window-controls" aria-label="Window controls">
-        <NButton quaternary class="window-control" aria-label="Minimize" title="Minimize">
-          <template #icon>
+      <div aria-label="Window controls" class="window-controls">
+        <NButton aria-label="Minimize" class="window-control" quaternary title="Minimize">
+          <template v-slot:icon>
             <NIcon :component="MinusIcon" />
           </template>
         </NButton>
-        <NButton quaternary class="window-control" aria-label="Maximize" title="Maximize">
-          <template #icon>
+        <NButton aria-label="Maximize" class="window-control" quaternary title="Maximize">
+          <template v-slot:icon>
             <NIcon :component="SquareIcon" />
           </template>
         </NButton>
-        <NButton quaternary class="window-control window-control--close" aria-label="Close" title="Close">
-          <template #icon>
+        <NButton
+          aria-label="Close"
+          class="window-control window-control--close"
+          quaternary
+          title="Close"
+        >
+          <template v-slot:icon>
             <NIcon :component="XIcon" />
           </template>
         </NButton>
@@ -30,22 +52,6 @@
     </div>
   </header>
 </template>
-
-<script setup lang="ts">
-import {
-  Download as DownloadIcon,
-  ListDetails as ListDetailsIcon,
-  Minus as MinusIcon,
-  Settings as SettingsIcon,
-  Square as SquareIcon,
-  X as XIcon
-} from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
-import logoUrl from '@docs-assets/brand/imagegen-studio-logo-horizontal-no-bg.svg';
-import IconButton from './IconButton.vue';
-
-const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
-</script>
 
 <style scoped>
 .app-chrome {

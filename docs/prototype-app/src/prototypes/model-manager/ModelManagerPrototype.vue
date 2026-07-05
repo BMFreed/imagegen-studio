@@ -1,13 +1,35 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue';
+
+import CivitaiImportModal from './CivitaiImportModal.vue';
+import { modelResources, selectedModelId } from './model-manager.mock';
+import ModelDetailsPanel from './ModelDetailsPanel.vue';
+import ModelManagerHeader from './ModelManagerHeader.vue';
+import ModelManagerNavigation from './ModelManagerNavigation.vue';
+import ModelResourceList from './ModelResourceList.vue';
+
+const selectedId = ref(selectedModelId);
+const showImportModal = ref(false);
+
+const selectedResource = computed(
+  () => modelResources.find((resource) => resource.id === selectedId.value) ?? modelResources[0],
+);
+</script>
+
 <template>
-  <section class="manager-backdrop" aria-label="Model Manager prototype">
+  <section aria-label="Model Manager prototype" class="manager-backdrop">
     <section class="manager-shell">
-      <ModelManagerHeader @open-import="showImportModal = true" />
+      <ModelManagerHeader @openImport="showImportModal = true" />
       <div class="manager-body">
         <aside class="manager-column manager-column--navigation">
           <ModelManagerNavigation />
         </aside>
         <main class="resource-content">
-          <ModelResourceList :resources="modelResources" :selected-id="selectedId" @select="selectedId = $event" />
+          <ModelResourceList
+            :resources="modelResources"
+            :selectedId
+            @select="selectedId = $event"
+          />
         </main>
         <aside class="manager-column manager-column--details">
           <ModelDetailsPanel :resource="selectedResource" />
@@ -17,23 +39,6 @@
     <CivitaiImportModal v-model:show="showImportModal" />
   </section>
 </template>
-
-<script setup lang="ts">
-import { computed, ref } from 'vue';
-import CivitaiImportModal from './CivitaiImportModal.vue';
-import ModelDetailsPanel from './ModelDetailsPanel.vue';
-import ModelManagerHeader from './ModelManagerHeader.vue';
-import ModelManagerNavigation from './ModelManagerNavigation.vue';
-import ModelResourceList from './ModelResourceList.vue';
-import { modelResources, selectedModelId } from './model-manager.mock';
-
-const selectedId = ref(selectedModelId);
-const showImportModal = ref(false);
-
-const selectedResource = computed(() => {
-  return modelResources.find((resource) => resource.id === selectedId.value) ?? modelResources[0];
-});
-</script>
 
 <style scoped>
 .manager-backdrop {
