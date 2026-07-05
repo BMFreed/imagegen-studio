@@ -20,7 +20,7 @@ export const modelResources: ModelResource[] = [
       {
         id: 'v1-1',
         label: 'v1.1 main',
-        description: 'Default for new selections · installed today',
+        description: 'Default for new selections',
         isDefault: true,
         sizeLabel: '6.6 GB'
       },

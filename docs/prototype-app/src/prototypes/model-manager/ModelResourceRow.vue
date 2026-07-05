@@ -3,9 +3,9 @@
     <ResourceThumbnail :tone="resource.thumbnailTone" />
     <div class="resource-main">
       <div class="resource-title-line">
-        <strong>{{ resource.name }}</strong>
+        <strong v-overflow-title>{{ resource.name }}</strong>
       </div>
-      <p>{{ resource.description }}</p>
+      <p v-overflow-title>{{ resource.description }}</p>
       <div class="resource-meta">
         <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
         <span>{{ resource.sizeLabel }}</span>
@@ -14,7 +14,7 @@
     </div>
     <div class="resource-state">
       <StatusBadge :status="resource.status" />
-      <NButton v-if="resource.status === 'missing'" secondary type="warning" size="small" @click.stop>
+      <NButton v-if="resource.status === 'missing'" ghost type="warning" size="small" @click.stop>
         <template #icon>
           <NIcon :component="ToolIcon" />
         </template>
@@ -44,11 +44,13 @@ defineEmits<{
 
 <style scoped>
 .resource-row {
+  position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(112px, auto);
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  min-height: 76px;
+  padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
@@ -62,7 +64,19 @@ defineEmits<{
 }
 
 .resource-row--selected {
-  border-color: var(--workspace-green);
+  border-color: var(--app-border);
+  background: var(--app-elevated-hover);
+}
+
+.resource-row--selected::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--workspace-green);
+  content: "";
 }
 
 .resource-row--muted {
@@ -96,7 +110,7 @@ defineEmits<{
 
 p {
   overflow: hidden;
-  margin: 3px 0 8px;
+  margin: 2px 0 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -113,5 +127,6 @@ p {
   align-items: center;
   justify-content: end;
   gap: 8px;
+  min-width: 0;
 }
 </style>

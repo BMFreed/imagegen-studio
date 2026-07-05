@@ -41,14 +41,15 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
 
 <style scoped>
 .token-trigger {
-  min-width: 184px;
+  min-width: 192px;
   justify-content: center;
 }
 
 .token-trigger :deep(.n-button__content) {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 11px;
+  width: 100%;
 }
 
 .token-label {
@@ -60,7 +61,7 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
   height: 8px;
   border-radius: 999px;
   background: var(--workspace-green);
-  box-shadow: 0 0 10px var(--workspace-green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--workspace-green) 60%, transparent);
 }
 
 .token-menu {

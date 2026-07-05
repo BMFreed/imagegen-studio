@@ -12,7 +12,7 @@
             <p>{{ resource.description }}</p>
           <template #footer>
           <div class="badge-row">
-            <StatusBadge :status="resource.status" />
+            <StatusBadge :status="resource.status" variant="neutral" />
             <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
             <NTag v-if="resource.predictionType" size="small" :bordered="false" type="info">{{ resource.predictionType }}</NTag>
           </div>
@@ -36,10 +36,22 @@
               <div class="version-card-content">
                 <div>
                   <strong>{{ version.label }}</strong>
-                  <p>{{ version.description }} · {{ version.sizeLabel }}</p>
+                  <p>{{ version.sizeLabel }}</p>
                 </div>
-                <NTag v-if="version.isDefault" size="small" :bordered="false" type="success">Default</NTag>
-                <NButton v-else ghost size="small">Set Default</NButton>
+                <div class="version-actions">
+                  <NPopover trigger="click" placement="left">
+                    <template #trigger>
+                      <NButton quaternary circle size="tiny" aria-label="Version notes">
+                        <template #icon>
+                          <NIcon :component="InfoIcon" />
+                        </template>
+                      </NButton>
+                    </template>
+                    {{ version.description }}
+                  </NPopover>
+                  <NTag v-if="version.isDefault" type="success">Default</NTag>
+                  <NButton v-else ghost size="small">Set Default</NButton>
+                </div>
               </div>
             </NCard>
           </div>
@@ -61,19 +73,19 @@
           <dl class="metadata-grid">
             <div>
               <dt>Version</dt>
-              <dd>{{ resource.versionLabel }}</dd>
+              <dd v-overflow-title>{{ resource.versionLabel }}</dd>
             </div>
             <div>
               <dt>Source</dt>
-              <dd>{{ resource.source }}</dd>
+              <dd v-overflow-title>{{ resource.source }}</dd>
             </div>
             <div>
               <dt>File</dt>
-              <dd>{{ resource.name.replaceAll(' ', '_') }}.safetensors</dd>
+              <dd v-overflow-title>{{ resource.name.replaceAll(' ', '_') }}.safetensors</dd>
             </div>
             <div>
               <dt>Used by</dt>
-              <dd>3 presets, 12 project snapshots</dd>
+              <dd v-overflow-title>3 presets, 12 project snapshots</dd>
             </div>
           </dl>
         </NCard>
@@ -104,8 +116,8 @@
 </template>
 
 <script setup lang="ts">
-import { Download as DownloadIcon, Folder as FolderIcon, Link as LinkIcon, Trash as TrashIcon } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NScrollbar, NTag } from 'naive-ui';
+import { Download as DownloadIcon, Folder as FolderIcon, InfoCircle as InfoIcon, Link as LinkIcon, Trash as TrashIcon } from '@vicons/tabler';
+import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag } from 'naive-ui';
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
 import StatusBadge from '../../components/StatusBadge.vue';
 import type { ModelResource } from './model-manager.types';
@@ -125,8 +137,8 @@ defineProps<{
 
 .details-scroll {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 12px;
+  padding: 14px;
 }
 
 .preview-card :deep(.n-card__content) {
@@ -146,7 +158,7 @@ p {
 }
 
 h2 {
-  font-size: 19px;
+  font-size: 18px;
 }
 
 h3 {
@@ -165,7 +177,7 @@ h3 {
 
 .version-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .version-card {
@@ -177,6 +189,12 @@ h3 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.version-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .version-card p {

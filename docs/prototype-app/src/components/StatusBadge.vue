@@ -1,5 +1,5 @@
 <template>
-  <NTag :type="tagType" size="small" round :bordered="false">{{ label }}</NTag>
+  <NTag :type="tagType" size="small" round :bordered="bordered" class="status-badge" :class="`status-badge--${status}`">{{ label }}</NTag>
 </template>
 
 <script setup lang="ts">
@@ -9,6 +9,7 @@ import type { ModelResourceStatus } from '../prototypes/model-manager/model-mana
 
 const props = defineProps<{
   status: ModelResourceStatus;
+  variant?: 'default' | 'neutral';
 }>();
 
 const label = computed(() => {
@@ -29,6 +30,10 @@ const label = computed(() => {
 });
 
 const tagType = computed(() => {
+  if (props.variant === 'neutral') {
+    return 'default';
+  }
+
   switch (props.status) {
     case 'installed':
       return 'success';
@@ -41,4 +46,6 @@ const tagType = computed(() => {
       return 'default';
   }
 });
+
+const bordered = computed(() => props.variant !== 'neutral');
 </script>

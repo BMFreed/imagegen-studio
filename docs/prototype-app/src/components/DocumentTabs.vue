@@ -2,18 +2,18 @@
   <nav class="document-tabs" aria-label="Open documents">
     <NButton text class="document-tab">
       <NIcon :component="HomeIcon" />
-      <span class="tab-title">Home</span>
+      <span v-overflow-title class="tab-title">Home</span>
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
     <NButton text class="document-tab document-tab--active">
       <span class="workspace-marker workspace-marker--green" />
-      <span class="tab-title">Sample Project B.igs</span>
+      <span v-overflow-title class="tab-title">Sample Project B.igs</span>
       <span class="dirty-dot" aria-label="Unsaved changes" />
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
     <NButton text class="document-tab">
       <span class="workspace-marker workspace-marker--blue" />
-      <span class="tab-title">Sample Project A.igs</span>
+      <span v-overflow-title class="tab-title">Sample Project A.igs</span>
       <NIcon class="tab-close" :component="XIcon" />
     </NButton>
   </nav>

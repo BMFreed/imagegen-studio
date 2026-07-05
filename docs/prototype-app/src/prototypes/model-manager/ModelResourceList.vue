@@ -27,7 +27,7 @@
     <footer class="install-strip">
       <div class="install-copy">
         <strong>Installing Digital Art XL v0.2</strong>
-        <span>Downloading from CivitAI · 1.4 GB of 2.2 GB</span>
+        <span v-overflow-title>Downloading from CivitAI · 1.4 GB of 2.2 GB</span>
       </div>
       <NProgress type="line" :percentage="64" :show-indicator="false" />
       <div class="install-actions">
@@ -99,7 +99,7 @@ const sortOptions = [
   display: grid;
   grid-template-columns: minmax(170px, 1fr) 145px 130px 32px;
   gap: 8px;
-  padding: 14px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--app-border);
   align-items: center;
 }
@@ -110,23 +110,24 @@ const sortOptions = [
 
 .resource-list {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 6px;
+  padding: 12px 14px;
 }
 
 .install-strip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 170px auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 14px;
   border-top: 1px solid var(--app-border);
   background: var(--app-surface);
 }
 
 .install-copy {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
