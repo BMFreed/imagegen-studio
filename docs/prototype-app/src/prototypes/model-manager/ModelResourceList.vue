@@ -1,9 +1,18 @@
 <template>
   <section class="resource-list-panel">
     <header class="list-toolbar">
-      <NInput v-model:value="searchValue" clearable placeholder="Search models" />
-      <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
-      <NSelect v-model:value="sortValue" :options="sortOptions" :render-label="renderSortLabel" />
+      <label class="toolbar-field">
+        <span>Name</span>
+        <NInput v-model:value="searchValue" clearable placeholder="Search models" />
+      </label>
+      <label class="toolbar-field">
+        <span>Base model</span>
+        <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
+      </label>
+      <label class="toolbar-field">
+        <span>Sort by</span>
+        <NSelect v-model:value="sortValue" :options="sortOptions" :consistent-menu-width="false" />
+      </label>
     </header>
 
     <NScrollbar class="resource-scroll">
@@ -46,9 +55,9 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref } from 'vue';
-import { ListDetails as ListIcon, SortAscending as SortIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect, type SelectOption } from 'naive-ui';
+import { ref } from 'vue';
+import { ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect } from 'naive-ui';
 import ModelResourceRow from './ModelResourceRow.vue';
 import type { ModelResource } from './model-manager.types';
 
@@ -76,17 +85,6 @@ const sortOptions = [
   { label: 'Recently installed', value: 'recent' },
   { label: 'Size', value: 'size' }
 ];
-
-function renderSortLabel(option: SelectOption, selected?: boolean) {
-  const children = selected
-    ? [
-        h(NIcon, { component: SortIcon, size: 15 }),
-        h('span', String(option.label))
-      ]
-    : [h('span', String(option.label))];
-
-  return h('span', { class: 'sort-option-label' }, children);
-}
 </script>
 
 <style scoped>
@@ -103,16 +101,24 @@ function renderSortLabel(option: SelectOption, selected?: boolean) {
   display: grid;
   grid-template-columns: minmax(170px, 1fr) 145px 150px;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 8px 14px 10px;
   border-bottom: 1px solid var(--app-border);
-  align-items: center;
+  align-items: end;
 }
 
-:global(.sort-option-label) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.toolbar-field {
+  display: grid;
+  gap: 5px;
   min-width: 0;
+}
+
+.toolbar-field span {
+  color: var(--app-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .resource-scroll {
