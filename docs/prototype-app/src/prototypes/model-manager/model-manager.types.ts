@@ -27,7 +27,6 @@ export interface ModelResource {
   description?: string;
   type: ModelResourceType;
   baseModel: string;
-  source: 'CivitAI' | 'Local';
   status: ModelResourceStatus;
   sizeLabel: string;
   thumbnailTone: 'green' | 'blue' | 'violet' | 'warning';

@@ -61,7 +61,7 @@ const selectedResource = computed(() => {
 
 .manager-body {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr) 370px;
+  grid-template-columns: 230px minmax(540px, 1fr) clamp(420px, 36%, 500px);
   min-width: 0;
   min-height: 0;
   height: 100%;

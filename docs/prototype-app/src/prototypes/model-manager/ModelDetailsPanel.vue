@@ -75,11 +75,7 @@
               <dt>Version</dt>
               <dd v-overflow-title>{{ resource.versionLabel }}</dd>
             </div>
-            <div>
-              <dt>Source</dt>
-              <dd v-overflow-title>{{ resource.source }}</dd>
-            </div>
-            <div>
+            <div class="metadata-item metadata-item--wide">
               <dt>File</dt>
               <dd v-overflow-title>{{ resource.name.replaceAll(' ', '_') }}.safetensors</dd>
             </div>
@@ -148,7 +144,7 @@ defineProps<{
 
 .large-preview {
   width: 100%;
-  height: 178px;
+  height: 320px;
 }
 
 h2,
@@ -204,13 +200,16 @@ h3 {
 
 .metadata-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
 }
 
 .metadata-grid div {
   min-width: 0;
+}
+
+.metadata-item--wide {
+  grid-column: 1 / -1;
 }
 
 dt {

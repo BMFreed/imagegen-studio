@@ -111,7 +111,6 @@ Model Manager
 │  ├─ search
 │  ├─ base model filter
 │  ├─ sort
-│  ├─ more filters
 │  ├─ installed / missing / downloading resources
 │  └─ compact install strip
 ├─ Details Panel
@@ -183,7 +182,6 @@ The resource list toolbar owns day-to-day search and narrowing:
 - search input;
 - base model family filter;
 - sort select;
-- compact more-filters action.
 
 Do not duplicate Library/Status filters in the header.
 
@@ -198,7 +196,6 @@ Each row should show:
 - base model family badge;
 - status badge;
 - file size;
-- source marker, for example `CivitAI`;
 - compatibility warning icon when metadata is missing or suspicious;
 - missing-file warning when DB metadata exists but the local file is absent.
 
@@ -222,7 +219,6 @@ Visible MVP detail content:
 - `predictionType` badge for main checkpoints when known, such as `v-pred`;
 - installed versions;
 - selected/default version;
-- source summary, for example CivitAI model/version ids;
 - managed file path;
 - file size;
 - usage summary, for example presets and project snapshots.
@@ -233,7 +229,7 @@ Do not expose local resource id, file hash, loader internals or full diagnostics
 
 Actions:
 
-- copy source URL;
+- copy CivitAI link;
 - reveal file in folder;
 - remove local resource;
 
@@ -369,7 +365,7 @@ Validation steps:
 - select downloadable file;
 - detect resource type from metadata and file name where possible;
 - detect duplicate local resource;
-- show preview with name, author, version, type, base model, file size, preview image and source URL.
+- show preview with name, author, version, type, base model, file size, preview image and CivitAI URL.
 
 The user can cancel before the install job is created.
 
@@ -428,7 +424,6 @@ type ModelInstallStatus =
 Each install queue row should show:
 
 - thumbnail/name/version if metadata is known;
-- source;
 - target file;
 - downloaded bytes / total bytes;
 - progress percent;
@@ -607,7 +602,6 @@ The exact schema can evolve during implementation, but the user flow assumes the
 model_resource
 ├─ id
 ├─ type
-├─ source
 ├─ display_name
 ├─ description
 ├─ thumbnail_path / thumbnail_cache_key
@@ -632,7 +626,7 @@ local_model_file
 
 model_install_job
 ├─ id
-├─ source_url
+├─ download_url
 ├─ target_resource_id
 ├─ status
 ├─ bytes_downloaded

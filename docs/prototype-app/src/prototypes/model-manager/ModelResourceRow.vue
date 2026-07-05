@@ -9,7 +9,6 @@
       <div class="resource-meta">
         <NTag v-for="badge in resource.badges" :key="badge" size="small" :bordered="false">{{ badge }}</NTag>
         <span>{{ resource.sizeLabel }}</span>
-        <span>{{ resource.source }}</span>
       </div>
     </div>
     <div class="resource-state">
