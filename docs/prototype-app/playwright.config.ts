@@ -5,9 +5,10 @@ import path from 'node:path';
 const __dirname = import.meta.dirname;
 const rootDir = path.resolve(__dirname, '..', '..');
 const port = 5174;
+const chromiumPath = process.env['CHROMIUM_PATH'];
 
 const chromiumCandidates = [
-  ...(process.env.CHROMIUM_PATH ? [process.env.CHROMIUM_PATH] : []),
+  ...(chromiumPath ? [chromiumPath] : []),
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
   '/usr/bin/google-chrome-stable',
@@ -42,7 +43,7 @@ export default defineConfig({
   webServer: {
     command: `pnpm exec vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
     cwd: rootDir,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: !process.env['CI'],
     timeout: 20_000,
     url: `http://127.0.0.1:${port}/`,
   },

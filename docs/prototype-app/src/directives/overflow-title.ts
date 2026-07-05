@@ -14,13 +14,13 @@ function updateTitle(el: HTMLElement) {
 
   if (text && hasOverflow) {
     el.setAttribute('title', text);
-    el.dataset.overflowTitle = 'managed';
+    el.dataset['overflowTitle'] = 'managed';
     return;
   }
 
-  if (el.dataset.overflowTitle === 'managed') {
+  if (el.dataset['overflowTitle'] === 'managed') {
     el.removeAttribute('title');
-    delete el.dataset.overflowTitle;
+    delete el.dataset['overflowTitle'];
   }
 }
 

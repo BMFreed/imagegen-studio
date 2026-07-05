@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
+import type { ModelResource } from './model-manager.types';
+
 import CivitaiImportModal from './CivitaiImportModal.vue';
 import { modelResources, selectedModelId } from './model-manager.mock';
 import ModelDetailsPanel from './ModelDetailsPanel.vue';
@@ -11,9 +13,22 @@ import ModelResourceList from './ModelResourceList.vue';
 const selectedId = ref(selectedModelId);
 const showImportModal = ref(false);
 
-const selectedResource = computed(
-  () => modelResources.find((resource) => resource.id === selectedId.value) ?? modelResources[0],
-);
+function getSelectedResource(): ModelResource {
+  const resource = modelResources.find((resource) => resource.id === selectedId.value);
+  const fallbackResource = modelResources[0];
+
+  if (resource) {
+    return resource;
+  }
+
+  if (fallbackResource) {
+    return fallbackResource;
+  }
+
+  throw new Error('Model Manager prototype requires at least one mock resource.');
+}
+
+const selectedResource = computed(getSelectedResource);
 </script>
 
 <template>
