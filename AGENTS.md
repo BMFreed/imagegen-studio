@@ -12,6 +12,12 @@
 - Avoid inline styles except when a library API genuinely requires them.
 - Use standard CSS layout primitives: grid, flexbox, positioning, overflow and container queries.
 
+## Vue patterns
+
+- Use `defineModel` for component `v-model` bindings.
+- Do not hand-write `prop` plus `update:*` emit pairs for ordinary model bindings.
+- Use explicit `defineProps` / `defineEmits` for non-model props/events or when custom model behavior genuinely needs it.
+
 ## Naive UI
 
 - Prefer Naive UI components and props before custom CSS.

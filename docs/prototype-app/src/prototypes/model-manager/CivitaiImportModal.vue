@@ -5,19 +5,12 @@ import { ref } from 'vue';
 
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
 
-defineProps<{
-  show: boolean;
-}>();
-
-defineEmits<{
-  'update:show': [show: boolean];
-}>();
-
+const show = defineModel<boolean>('show', { required: true });
 const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
 </script>
 
 <template>
-  <NModal :maskClosable="true" :show @update:show="$emit('update:show', $event)">
+  <NModal v-model:show="show" :maskClosable="true">
     <section
       aria-labelledby="civitai-import-title"
       aria-modal="true"
@@ -34,7 +27,7 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
           circle
           quaternary
           size="small"
-          @click="$emit('update:show', false)"
+          @click="show = false"
         >
           <template v-slot:icon>
             <NIcon :component="XIcon" />
@@ -62,7 +55,7 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
           </template>
           Install
         </NButton>
-        <NButton tertiary @click="$emit('update:show', false)">
+        <NButton tertiary @click="show = false">
           <template v-slot:icon>
             <NIcon :component="XIcon" />
           </template>
