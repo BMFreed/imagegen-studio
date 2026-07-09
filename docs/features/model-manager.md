@@ -299,6 +299,7 @@ Post-MVP:
 - richer model relationships;
 - optional non-destructive disk cache for expensive model conversion or cold-load optimization;
 - ControlNet resources once ControlNet itself is added after MVP.
+- LoRA training workspace inspired by `LoRA_Easy_Training_Scripts`, with trained LoRAs registered back into Model Manager.
 
 Rejected for MVP:
 

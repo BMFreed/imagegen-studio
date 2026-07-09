@@ -123,6 +123,31 @@ docs/features/
 
 Результат: появляется локальное генеративное редактирование без standalone-масок и неочевидных связей.
 
+## Post-MVP направления
+
+Эти направления явно не входят в MVP и не должны блокировать первые вертикальные срезы.
+
+### LoRA Training Workspace
+
+Добавить встроенный workflow для тренировки LoRA как post-MVP функционал Model Manager / resource tooling.
+
+Главный reference/inspiration: [LoRA Easy Training Scripts](https://github.com/67372a/LoRA_Easy_Training_Scripts). Ориентируемся на его подход как на удобный UI поверх зрелого training backend, а не проектируем обучение LoRA с нуля.
+
+Ожидаемый scope направления:
+
+- подготовка training dataset из пользовательских изображений;
+- управление captions/tags для dataset;
+- выбор base checkpoint и совместимой model family;
+- пресеты training settings для простых сценариев;
+- advanced training settings без перегруза основного UI;
+- очередь training jobs рядом с общим подходом к Queue Manager;
+- preview/sample generation по ходу или после тренировки;
+- сохранение результата как обычной LoRA в Model Manager;
+- metadata/trigger words/preview для обученной LoRA;
+- явная проверка совместимости LoRA с base model family.
+
+Технический принцип: training backend должен опираться на зрелое существующее решение вроде Kohya `sd-scripts` / производных workflow. ImageGen Studio отвечает за UX, orchestration, хранение metadata и интеграцию результата в Model Manager.
+
 ## Первый вертикальный срез
 
 Минимальный срез для начала разработки: Фаза 0 + импорт одной модели + одна txt2img генерация + запись snapshot в историю. Всё остальное можно наращивать поверх этого скелета.
