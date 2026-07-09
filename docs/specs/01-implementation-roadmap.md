@@ -28,7 +28,7 @@
 docs/features/
 ├─ README.md
 ├─ generation.md
-├─ model-library.md
+├─ model-manager.md
 ├─ presets.md
 ├─ history.md
 ├─ canvas-smart-patch.md
@@ -61,7 +61,7 @@ docs/features/
 
 Результат: приложение запускается как desktop shell, renderer общается с main process через безопасный typed API.
 
-## Фаза 1. Model Library
+## Фаза 1. Model Manager
 
 Подробный user flow и scope зафиксированы в [Model Manager](../features/model-manager.md).
 
@@ -73,7 +73,7 @@ docs/features/
 - Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
 
-Результат: модель можно установить локально и увидеть в библиотеке.
+Результат: модель можно установить локально и увидеть в Model Manager.
 
 ## Фаза 2. Generation Slice
 

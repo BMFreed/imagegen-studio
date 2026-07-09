@@ -14,7 +14,7 @@
 - [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — типизация, linting и formatting для Python worker'а.
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, open/new project flows и recovery states.
-  - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, local resource library, metadata, missing-resource diagnostics.
+  - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
   - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, apply preview, partial apply, save current as preset и Preset Manager.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Generate` mode: prompts, bbox, Smart Patch Layer, LoRA, embeddings, dynamic prompting и regional guidance.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.

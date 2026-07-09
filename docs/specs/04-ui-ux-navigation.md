@@ -14,7 +14,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Generate` и `Upscale` не являются top-level вкладками приложения. Это project modes внутри `Project` tab.
 
-`Model Library`/`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
+`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
 
 Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
 

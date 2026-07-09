@@ -1648,9 +1648,9 @@ Diffusers/PyTorch остаются за прагматичным adapter-сло�
 ### 17.1. Импорт модели с CivitAI
 
 ```text
-Пользователь открывает Model Library
+Пользователь открывает Model Manager
 ↓
-Нажимает Import from CivitAI
+Нажимает Add from CivitAI URL
 ↓
 Вставляет URL
 ↓
@@ -1666,7 +1666,7 @@ Diffusers/PyTorch остаются за прагматичным adapter-сло�
 ↓
 Файл проверяется
 ↓
-Модель появляется в библиотеке
+Модель появляется в Model Manager
 ```
 
 ### 17.2. Генерация изображения

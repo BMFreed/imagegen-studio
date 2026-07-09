@@ -11,7 +11,7 @@ Model Manager is the app-level place where the user installs, inspects, repairs,
 - ESRGAN/upscale models;
 - future post-MVP resources such as ControlNet models.
 
-It is not a CivitAI marketplace browser in MVP. It is a local model library and install manager.
+It is not a CivitAI marketplace browser in MVP. It is the local manager for installed model resources and model downloads.
 
 ## Reference
 
@@ -55,7 +55,7 @@ Already fixed project decisions:
 
 ## ImageGen Studio Decision
 
-Build an app-level Model Manager that feels like a compact desktop resource library, not a web marketplace.
+Build an app-level Model Manager that feels like a compact desktop resource manager, not a web marketplace.
 
 Model Manager should borrow InvokeAI's durable mechanics:
 
@@ -81,7 +81,7 @@ But adapt the product shape:
 
 ## Entry Points
 
-Model Manager is an app-level modal or dedicated overlay, not a `Project` tab.
+Model Manager is an app-level overlay, not a `Project` tab.
 
 Required entry points:
 
@@ -108,17 +108,19 @@ Model Manager
 ├─ Left Navigation
 │  ├─ Model Types: All Models, Checkpoints, LoRA, Embeddings, VAE, Upscalers
 │  ├─ Status filters: All, Installed, Downloading, Needs Attention
-│  └─ Storage/download summary with Open Folder
+│  └─ Models use summary with Open Folder
 ├─ Resource List Panel
-│  ├─ search
-│  ├─ base model filter
-│  ├─ sort
+│  ├─ Name search
+│  ├─ Base Model filter
+│  ├─ Sort By select
+│  ├─ Reset filters
 │  ├─ installed / missing / downloading resources
 │  └─ compact install strip
 ├─ Details Panel
 │  ├─ preview
 │  ├─ identity and metadata
 │  ├─ installed versions
+│  ├─ trigger words when available
 │  ├─ local file status
 │  └─ actions
 └─ Import Dialog
@@ -148,7 +150,7 @@ The CivitAI token status pill is the persistent entry point for token management
 
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 
-`Add from CivitAI URL` opens a dedicated import dialog/drawer. Import preview must not be shown permanently inside the selected-model details panel, because that makes it look like metadata for the currently selected model.
+`Add from CivitAI URL` opens a dedicated import dialog. Import preview must not be shown permanently inside the selected-model details panel, because that makes it look like metadata for the currently selected model.
 
 ### Left Navigation
 
@@ -163,6 +165,8 @@ Model type filters:
 - `VAE`;
 - `Upscalers`.
 
+Each Model Types option shows its current resource count.
+
 Status filters:
 
 - `All`;
@@ -170,10 +174,11 @@ Status filters:
 - `Downloading`;
 - `Needs Attention`.
 
-The side summary shows:
+Each Status option shows its current resource count.
 
-- storage used;
-- active model downloads;
+The bottom side summary shows:
+
+- `Models use` with the total size of managed model files;
 - `Open Folder`.
 
 The side summary is not a full storage settings page. It is a compact utility area.
@@ -182,9 +187,9 @@ The side summary is not a full storage settings page. It is a compact utility ar
 
 The resource list toolbar owns day-to-day search and narrowing:
 
-- search input;
-- base model family filter with `All` as the default;
-- sort select;
+- `Name` search input with `Search models` placeholder;
+- `Base Model` family filter with `All` as the default;
+- `Sort By` select with `Name`, `Recently installed` and `Size` options;
 - persistent `Reset filters` action, disabled when no non-default filter is active.
 
 The visual prototype does not need to apply the filters to mock resources, but filter controls must retain coherent local state. `Reset filters` clears search and restores Model Types, Status and base model filters to their `All` values; it does not reset sorting.
@@ -199,16 +204,22 @@ Each row should show:
 - model display name;
 - version name when available;
 - resource type badge;
-- base model family badge;
+- compact metadata badges relevant to that resource, such as base model family or trigger-word availability;
 - status badge;
 - file size;
-- compatibility warning icon when metadata is missing or suspicious;
 - missing-file warning when DB metadata exists but the local file is absent.
+
+List-row status treatment follows the prototype:
+
+- installed resources use a bordered success `Installed` tag;
+- missing resources keep the warning `File missing` tag adjacent to the `Repair` action;
+- verification uses the human-facing `Verifying file` label;
+- the selected row uses the narrow primary-color marker at its left edge.
 
 The list should support:
 
 - single selection to show details;
-- keyboard navigation;
+- keyboard selection through the focused row with `Enter` or `Space`;
 - sorting by name, recently installed and size;
 - search by name, version, trigger phrase, CivitAI id and local filename.
 
@@ -222,14 +233,16 @@ Visible MVP detail content:
 - display name;
 - short description;
 - status/type/base-model badges;
-- `predictionType` badge for main checkpoints when known, such as `v-pred`;
+- `predictionType` badge for main checkpoints when known, such as `v-pred`, with a short explanatory tooltip;
 - installed versions;
 - selected/default version;
-- managed file path;
-- file size;
+- managed file name;
+- version/file size;
 - usage summary, for example presets and project snapshots.
 
-For LoRA and embeddings, the same details area should additionally expose trigger words / activation tokens in a dedicated section or popover.
+For LoRA and embeddings, the same details area exposes trigger words / activation tokens in a dedicated `Trigger Words` card.
+
+The visible `Metadata` card contains `Version`, `File` and `Used by`. It does not show a `Source` field in MVP because URL installation is CivitAI-only; the CivitAI identity remains available through internal metadata and the `Copy Link` action.
 
 Do not expose local resource id, file hash, loader internals or full diagnostics in the default details view. Those can exist behind diagnostics / `Show details` later, but are not part of the visible MVP action grid.
 
@@ -260,6 +273,7 @@ The version list in Details Panel should use explicit actions:
 - the default version shows `Default`;
 - inactive installed versions use `Set Default`;
 - installing another version uses `Install Version`;
+- each version has a compact info action that opens its explanatory note in a popover;
 - avoid vague labels such as `Show` when the action changes default selection behavior.
 
 Default version is only a starting point for new model selections. It must not silently change existing projects, presets or generation snapshots.
@@ -318,12 +332,12 @@ Rejected for MVP:
 
 ## Core User Flow
 
-### First Run / Empty Library
+### First Run / No Models Installed
 
 1. User opens the app.
 2. `Home` shows no installed model state.
 3. User clicks `Manage Models`.
-4. Model Manager opens with an empty state.
+4. Model Manager opens with an empty model-list state.
 5. Empty state explains that the user needs to add a model from a CivitAI URL.
 6. User clicks `Add from CivitAI URL`.
 7. If no CivitAI token is configured, app opens token setup before allowing download.
@@ -339,7 +353,7 @@ Rejected for MVP:
 flowchart TD
   A["Home"] --> B["Open Model Manager"]
   B --> C{"Any installed checkpoints?"}
-  C -- "No" --> D["Empty library state"]
+  C -- "No" --> D["No models installed"]
   D --> E["Add from CivitAI URL"]
   E --> F{"CivitAI token configured?"}
   F -- "No" --> G["Configure token"]
@@ -355,11 +369,11 @@ flowchart TD
   N --> O["Download and verify"]
   O --> P{"Install completed?"}
   P -- "No" --> Q["Show failed job with retry/cancel"]
-  P -- "Yes" --> R["Resource appears in library"]
+  P -- "Yes" --> R["Resource appears in Model Manager"]
   R --> S["Available in Generate selectors"]
 ```
 
-### Import From CivitAI URL
+### Add From CivitAI URL
 
 The import flow is preview-first. The app should not start downloading a large model before the user sees what will be installed.
 
@@ -442,6 +456,13 @@ Each install queue row should show:
 
 The compact install strip should use an explicit `View Queue` button. Avoid a bare `Queue` label, because it does not explain whether it opens the queue, adds something to the queue or changes current item state.
 
+The strip follows the current prototype layout:
+
+- installation title on its own first line;
+- full-width progress bar for the remaining center-column space;
+- small downloaded/total size line under the progress bar;
+- `Cancel` and `View Queue` actions grouped on the right.
+
 Bulk queue actions:
 
 - pause all active downloads;
@@ -477,7 +498,7 @@ When the user imports a resource that appears to be already installed:
 
 - if exact CivitAI model version id and file hash match, show `Already installed`;
 - do not download again by default;
-- offer `Show in library`;
+- offer `Show in Model Manager`;
 - offer `Re-download / repair` only if the local file is missing, corrupted or user explicitly chooses reinstall.
 
 If same CivitAI model but different version:
@@ -490,7 +511,7 @@ If same CivitAI model but different version:
 flowchart TD
   A["Import preview"] --> B{"Exact version/hash installed?"}
   B -- "Yes" --> C["Show Already Installed"]
-  C --> D["Show in library"]
+  C --> D["Show in Model Manager"]
   C --> E{"Local file missing/corrupt?"}
   E -- "Yes" --> F["Offer repair/re-download"]
   E -- "No" --> G["No new install"]
