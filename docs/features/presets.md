@@ -4,7 +4,7 @@
 
 Presets let the user save and reuse generation settings without treating them as a hidden workflow graph.
 
-A preset is an editable user template made from sections of generation state: prompt, negative prompt, model, LoRAs, embeddings, project size, sampler, steps, CFG, seed policy, VAE and advanced generation parameters.
+A preset is an editable user template made from explicit sections of generation state: prompt, negative prompt, model, LoRAs, embeddings, project size, sampler and scheduler, steps and CFG, denoising strength when applicable, seed policy and VAE.
 
 ## Reference
 
@@ -68,7 +68,6 @@ Size
 Steps
 Seed
 VAE
-Advanced
 ```
 
 Avoid technical wording like `payload`, `workflow_type`, `resource ref` or `snapshot schema` in the user-facing selector.
@@ -151,15 +150,15 @@ Open entry points:
 - after saving a preset, optional `Edit Preset`;
 - generation result or snapshot actions like `Save Preset from Result`.
 
-Recommended layout should mirror the Model Manager pattern:
+The layout mirrors the Model Manager pattern:
 
-- left filters/categories;
+- left workflow navigation;
 - center preset list;
 - right details/edit form.
 
 The right panel is an edit form, not a read-only inspector. Unlike the Model Manager (which browses installed resources), the Preset Manager is a full editor: model and version, LoRA stack with weights, enabled state and per-row removal, project size, sampler, scheduler, steps, CFG, seed policy and VAE are all editable controls.
 
-Preset list filtering lives entirely in the center toolbar (search, workflow filter, sort, favorites toggle, needs-attention toggle for missing resources). There is no separate `Status` navigation section. Missing-resource visibility is a filter pill in the toolbar, plus an inline warning badge on affected preset rows.
+The left navigation owns the workflow filter: `All Presets`, `Text to Image`, `Image to Image` and `Smart Patch`. The center toolbar contains search, sort, `Favorites`, `Needs Attention` and an always-present reset action. Reset is disabled while all filters are at their defaults. There is no duplicate workflow select in the toolbar and no separate `Status` navigation section. Missing-resource visibility is a filter pill in the toolbar, plus an inline warning badge on affected preset rows.
 
 Editable fields:
 
@@ -177,6 +176,30 @@ Editable fields:
 - steps and CFG;
 - seed policy;
 - VAE.
+
+Each generation section has an `Included` control in its section header. Turning it off removes that section from the preset rather than merely disabling its editor. The storage source of truth is field presence in `PresetPayload`; the UI must not maintain a separate inclusion list.
+
+Workflow-specific fields are conditional:
+
+- `Denoising Strength` is available for `Image to Image` and `Smart Patch`, but not `Text to Image`;
+- choosing `Fixed` seed reveals the seed value input;
+- a Smart Patch preset stores reusable generation settings only, not a mask, patch bounding box, layer position or generated raster variants.
+
+Prompt fields use visible `Prompt` and `Negative Prompt` labels. Compatibility metadata such as `v-pred` may be shown compactly with an info tooltip, but must not be presented as an unexplained editable generation field.
+
+### Edit Lifecycle
+
+The manager uses an explicit save model:
+
+- `Save Changes` is disabled while the selected preset has no unsaved edits;
+- editing any included field, catalog metadata or included-state marks the preset as changed;
+- selecting another preset or closing the manager with unsaved edits opens a `Save`, `Discard` or `Cancel` confirmation;
+- `Delete` requires confirmation and explains that projects already created from the preset are not changed;
+- `Duplicate` creates a separately named copy, selects it and leaves the original unchanged.
+
+Visual HTML prototypes may show only the clean happy path. The Vue/Naive prototype should own interaction states; the historical HTML prototype is not expected to implement form state, validation or confirmations.
+
+Preset import and export are not planned for MVP. The manager does not show import/export actions, and no portable preset bundle format is defined yet.
 
 `Advanced` is not a saved section in MVP. `PresetPayload` in `docs/specs/03-data-storage.md` intentionally does not include an `engineSpecific` or generic advanced bag, to avoid an unstructured escape hatch. When a concrete advanced parameter (for example clip skip, tiling, refiner or noise multiplier) is supported, it is added as an explicit named field in `PresetPayload` and an explicit named section in the editor, not folded into a generic `Advanced` group. In MVP the section is simply `VAE`.
 
@@ -216,6 +239,7 @@ Presets should store enough copied display metadata to remain understandable aft
 - a `Status` navigation section in the Preset Manager — favorites and missing-resource filtering live in the list toolbar;
 - `Save Current as Preset` or `Apply Preset` hosted inside the app-level Preset Manager — they are Project-scoped;
 - a generic `Advanced` saved section or engine-specific bag — advanced parameters become explicit named fields when supported.
+- preset import/export or a portable preset bundle format in MVP.
 
 ## Acceptance Criteria
 
@@ -226,7 +250,10 @@ Presets should store enough copied display metadata to remain understandable aft
 - User can save current settings as a preset and choose saved sections; sampling is saved as `Sampler & scheduler` and `Steps & CFG` separately, and seed is an explicit off-by-default block.
 - Full preset editing lives in the Preset Manager, not in the small Project selector; the right panel is an editable form (model, LoRA stack with removal, sampler, steps, CFG, seed, VAE, etc.).
 - The Preset Manager does not host `Save Current as Preset` or `Apply Preset`.
-- Favorites and missing-resource filtering live in the Preset Manager list toolbar; there is no `Status` navigation section.
+- Workflow filtering lives in the Preset Manager left navigation. Search, sort, favorites, missing-resource filtering and reset live in the list toolbar; there is no duplicate workflow select or `Status` navigation section.
+- Included sections are editable in the Preset Manager and are represented by field presence in `PresetPayload`.
+- Preset Manager uses an explicit dirty/save lifecycle and protects unsaved edits when switching presets or closing.
+- Preset import/export is absent from MVP.
 - Workflow labels shown to the user are `Text to Image`, `Image to Image`, `Smart Patch`; internal `workflow_type` tokens are not exposed.
 - Missing resources are visible before apply and only block selected affected sections.
 - Applying a preset copies settings into the project and does not create a live synchronization relationship.

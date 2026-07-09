@@ -151,8 +151,7 @@ const sortOptions = [
 .resource-list {
   display: grid;
   gap: 6px;
-  padding-block: 12px 0;
-  padding-inline: 14px;
+  padding: 12px 14px;
 }
 
 .install-strip {

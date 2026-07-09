@@ -11,7 +11,6 @@
 
 ## Можно решить позже
 
-- Import/export presets.
 - Sidecar JSON and embedded metadata.
 - Local model import by file/hash.
 - Поиск модели по hash через CivitAI.
@@ -30,6 +29,7 @@
 - Типизированный доступ к SQLite: Kysely + SqliteDialect + better-sqlite3 + kysely-codegen входит в MVP.
 - Product direction: только однопользовательское desktop-приложение; server/multi-user направление не планируется.
 - Presets: плоские, без наследования и композиции в MVP.
+- Preset import/export: не планируется; отдельный portable preset bundle format не проектируем.
 - Preset storage: гибридная SQLite-модель; каталог и `workflow_type` в колонках, настройки генерации в валидируемом `payload_json`.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в generation snapshot.

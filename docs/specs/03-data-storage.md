@@ -303,6 +303,8 @@ CREATE TABLE presets (
   name TEXT NOT NULL,
   description TEXT,
   workflow_type TEXT NOT NULL,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -311,6 +313,8 @@ CREATE TABLE presets (
 ```
 
 `workflow_type` — категория применимости пресета, а не параметр генерации.
+
+`tags_json` and `favorite` are catalog metadata used for browsing and filtering. They do not belong in `PresetPayload`, because they do not change generation behavior. `tags_json` is validated as a string array at the storage boundary.
 
 На MVP-уровне допустимые значения:
 
@@ -348,6 +352,7 @@ type PresetPayload = {
     enabled: boolean
     triggerWords?: string[]
   }>
+  embeddings?: PresetResourceRef[]
   vae?: PresetResourceRef
   params?: {
     width?: number
@@ -356,6 +361,7 @@ type PresetPayload = {
     scheduler?: string
     steps?: number
     cfgScale?: number
+    denoisingStrength?: number
     seedPolicy?: 'random' | 'fixed' | 'reuse'
     seed?: number
   }
@@ -376,7 +382,8 @@ type PresetResourceRef = {
 Правила:
 
 - `payload_json` валидируется runtime-схемой при чтении и записи.
-- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`.
+- Source of truth для model/LoRA/embedding/VAE настроек находится внутри `PresetPayload`.
+- Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - `predictionType` хранит scheduler prediction mode модели. Это compatibility metadata, а не user-facing style setting.
 - Для `v_prediction`-моделей generation worker должен получить `v_prediction`; запуск такой модели как `epsilon` считается несовместимой конфигурацией.
 - `has_loras`, `primary_model_resource_id` и похожие derived-поля в MVP не добавляются.
