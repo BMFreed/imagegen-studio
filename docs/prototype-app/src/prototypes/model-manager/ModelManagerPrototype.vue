@@ -12,6 +12,19 @@ import ModelResourceList from './ModelResourceList.vue';
 
 const selectedId = ref(selectedModelId);
 const showImportModal = ref(false);
+const modelTypeFilter = ref('all');
+const statusFilter = ref('all');
+const searchFilter = ref('');
+const baseModelFilter = ref('all');
+const sortValue = ref('name');
+
+const hasActiveFilters = computed(
+  () =>
+    modelTypeFilter.value !== 'all' ||
+    statusFilter.value !== 'all' ||
+    searchFilter.value.trim() !== '' ||
+    baseModelFilter.value !== 'all',
+);
 
 function getSelectedResource(): ModelResource {
   const resource = modelResources.find((resource) => resource.id === selectedId.value);
@@ -29,6 +42,13 @@ function getSelectedResource(): ModelResource {
 }
 
 const selectedResource = computed(getSelectedResource);
+
+function resetFilters() {
+  modelTypeFilter.value = 'all';
+  statusFilter.value = 'all';
+  searchFilter.value = '';
+  baseModelFilter.value = 'all';
+}
 </script>
 
 <template>
@@ -37,12 +57,20 @@ const selectedResource = computed(getSelectedResource);
       <ModelManagerHeader @openImport="showImportModal = true" />
       <div class="manager-body">
         <aside class="manager-column manager-column--navigation">
-          <ModelManagerNavigation />
+          <ModelManagerNavigation
+            v-model:modelType="modelTypeFilter"
+            v-model:status="statusFilter"
+          />
         </aside>
         <main class="resource-content">
           <ModelResourceList
+            v-model:baseModel="baseModelFilter"
+            v-model:search="searchFilter"
+            v-model:sort="sortValue"
+            :hasActiveFilters
             :resources="modelResources"
             :selectedId
+            @resetFilters="resetFilters"
             @select="selectedId = $event"
           />
         </main>
@@ -69,8 +97,8 @@ const selectedResource = computed(getSelectedResource);
 .manager-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1280px, calc(100vw - 96px));
-  height: min(760px, calc(100vh - 140px));
+  width: min(1440px, calc(100vw - 96px));
+  height: min(860px, calc(100vh - 120px));
   min-height: 620px;
   overflow: hidden;
   border: 1px solid var(--app-border);

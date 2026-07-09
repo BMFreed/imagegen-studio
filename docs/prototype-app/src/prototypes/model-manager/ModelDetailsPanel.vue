@@ -6,7 +6,7 @@ import {
   Link as LinkIcon,
   Trash as TrashIcon,
 } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag } from 'naive-ui';
+import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag, NTooltip } from 'naive-ui';
 
 import type { ModelResource } from './model-manager.types';
 
@@ -36,9 +36,14 @@ defineProps<{
               <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
                 badge
               }}</NTag>
-              <NTag v-if="resource.predictionType" :bordered="false" size="small" type="info">{{
-                resource.predictionType
-              }}</NTag>
+              <NTooltip v-if="resource.predictionType" trigger="hover">
+                <template v-slot:trigger>
+                  <NTag :bordered="false" size="small" type="info">
+                    {{ resource.predictionType }}
+                  </NTag>
+                </template>
+                Prediction type: {{ resource.predictionType }}
+              </NTooltip>
             </div>
           </template>
         </NCard>

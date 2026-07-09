@@ -44,6 +44,15 @@ export const modelResources: ModelResource[] = [
     triggerWords: ['digital art', 'painterly', 'concept art'],
     type: 'lora',
     versionLabel: 'v0.1',
+    versions: [
+      {
+        description: 'Default for new selections',
+        id: 'digital-art-v0-1',
+        isDefault: true,
+        label: 'v0.1',
+        sizeLabel: '114 MB',
+      },
+    ],
   },
   {
     badges: ['LoRA', 'Trigger words'],
@@ -57,6 +66,15 @@ export const modelResources: ModelResource[] = [
     triggerWords: ['cedric peyravernay', 'dishonored style'],
     type: 'lora',
     versionLabel: 'v1.0',
+    versions: [
+      {
+        description: 'Default for new selections',
+        id: 'cedric-diablo-v1-0',
+        isDefault: true,
+        label: 'v1.0',
+        sizeLabel: '228 MB',
+      },
+    ],
   },
   {
     badges: ['Embedding', 'Missing file'],
@@ -70,6 +88,15 @@ export const modelResources: ModelResource[] = [
     triggerWords: ['bad-hands-xl'],
     type: 'embedding',
     versionLabel: 'v1.0',
+    versions: [
+      {
+        description: 'Default for new selections',
+        id: 'bad-hands-v1-0',
+        isDefault: true,
+        label: 'v1.0',
+        sizeLabel: '8 MB',
+      },
+    ],
   },
   {
     badges: ['Checkpoint', 'Older'],
@@ -82,6 +109,15 @@ export const modelResources: ModelResource[] = [
     thumbnailTone: 'green',
     type: 'checkpoint',
     versionLabel: 'v3',
+    versions: [
+      {
+        description: 'Default for new selections',
+        id: 'uncanny-valley-v3',
+        isDefault: true,
+        label: 'v3',
+        sizeLabel: '6.5 GB',
+      },
+    ],
   },
   {
     badges: ['Upscaler'],
@@ -94,5 +130,14 @@ export const modelResources: ModelResource[] = [
     thumbnailTone: 'blue',
     type: 'upscaler',
     versionLabel: 'v2',
+    versions: [
+      {
+        description: 'Default for new selections',
+        id: 'nmkd-v2',
+        isDefault: true,
+        label: 'v2',
+        sizeLabel: '64 MB',
+      },
+    ],
   },
 ];

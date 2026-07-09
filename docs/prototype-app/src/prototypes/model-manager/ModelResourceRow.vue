@@ -19,44 +19,48 @@ defineEmits<{
 </script>
 
 <template>
-  <div
+  <article
     class="resource-row"
     :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }"
-    role="button"
-    tabindex="0"
-    @click="$emit('select', resource.id)"
-    @keydown.enter="$emit('select', resource.id)"
   >
-    <ResourceThumbnail :tone="resource.thumbnailTone" />
-    <div class="resource-main">
-      <div class="resource-title-line">
-        <strong v-overflow-title>{{ resource.name }}</strong>
+    <button
+      :aria-pressed="selected"
+      class="resource-select"
+      type="button"
+      @click="$emit('select', resource.id)"
+    >
+      <ResourceThumbnail :tone="resource.thumbnailTone" />
+      <div class="resource-main">
+        <div class="resource-title-line">
+          <strong v-overflow-title>{{ resource.name }}</strong>
+        </div>
+        <p v-overflow-title>{{ resource.description }}</p>
+        <div class="resource-meta">
+          <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
+            badge
+          }}</NTag>
+          <span v-if="resource.versionLabel">{{ resource.versionLabel }}</span>
+          <span>{{ resource.sizeLabel }}</span>
+        </div>
       </div>
-      <p v-overflow-title>{{ resource.description }}</p>
-      <div class="resource-meta">
-        <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
-          badge
-        }}</NTag>
-        <span>{{ resource.sizeLabel }}</span>
-      </div>
-    </div>
+    </button>
     <div class="resource-state">
       <StatusBadge :status="resource.status" />
-      <NButton v-if="resource.status === 'missing'" ghost size="small" type="warning" @click.stop>
+      <NButton v-if="resource.status === 'missing'" ghost size="small" type="warning">
         <template v-slot:icon>
           <NIcon :component="ToolIcon" />
         </template>
         Repair
       </NButton>
     </div>
-  </div>
+  </article>
 </template>
 
 <style scoped>
 .resource-row {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(112px, auto);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 76px;
@@ -64,8 +68,6 @@ defineEmits<{
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
-  cursor: pointer;
-  outline: 0;
 }
 
 .resource-row:hover:not(.resource-row--selected) {
@@ -93,9 +95,27 @@ defineEmits<{
   opacity: 0.64;
 }
 
-.resource-row:focus-visible {
+.resource-row:has(.resource-select:focus-visible) {
   border-color: var(--workspace-green);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-green) 25%, transparent);
+}
+
+.resource-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.resource-select:focus-visible {
+  outline: 0;
 }
 
 .resource-main {

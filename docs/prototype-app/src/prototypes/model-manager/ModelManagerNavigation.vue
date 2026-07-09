@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Folder as FolderIcon } from '@vicons/tabler';
 import { type MenuOption, NButton, NIcon, NMenu } from 'naive-ui';
-import { h, ref } from 'vue';
+import { h } from 'vue';
 
-const activeLibraryKey = ref('all');
-const activeStatusKey = ref('');
+const modelType = defineModel<string>('modelType', { required: true });
+const status = defineModel<string>('status', { required: true });
 
 function makeMenuLabel(label: string, count: number) {
   return () =>
@@ -14,7 +14,7 @@ function makeMenuLabel(label: string, count: number) {
     ]);
 }
 
-const libraryOptions: MenuOption[] = [
+const modelTypesOptions: MenuOption[] = [
   { key: 'all', label: makeMenuLabel('All Models', 28) },
   { key: 'checkpoints', label: makeMenuLabel('Checkpoints', 7) },
   { key: 'lora', label: makeMenuLabel('LoRA', 15) },
@@ -24,6 +24,7 @@ const libraryOptions: MenuOption[] = [
 ];
 
 const statusOptions: MenuOption[] = [
+  { key: 'all', label: makeMenuLabel('All', 28) },
   { key: 'installed', label: makeMenuLabel('Installed', 25) },
   { key: 'downloading', label: makeMenuLabel('Downloading', 1) },
   { key: 'needs-attention', label: makeMenuLabel('Needs Attention', 2) },
@@ -33,18 +34,18 @@ const statusOptions: MenuOption[] = [
 <template>
   <aside class="manager-navigation">
     <section class="nav-section">
-      <h2>Library</h2>
-      <NMenu v-model:value="activeLibraryKey" :options="libraryOptions" />
+      <h2>Model Types</h2>
+      <NMenu v-model:value="modelType" :options="modelTypesOptions" />
     </section>
 
     <section class="nav-section">
       <h2>Status</h2>
-      <NMenu v-model:value="activeStatusKey" :options="statusOptions" />
+      <NMenu v-model:value="status" :options="statusOptions" />
     </section>
 
     <section class="storage-summary">
       <div>
-        <span>Storage used</span>
+        <span>Models use</span>
         <strong>84 GB</strong>
       </div>
       <NButton block ghost size="small" type="info">

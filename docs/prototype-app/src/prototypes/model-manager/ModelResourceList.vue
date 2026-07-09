@@ -1,26 +1,28 @@
 <script setup lang="ts">
-import { ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
+import { FilterOff as FilterOffIcon, ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
 import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect } from 'naive-ui';
-import { ref } from 'vue';
 
 import type { ModelResource } from './model-manager.types';
 
 import ModelResourceRow from './ModelResourceRow.vue';
 
 defineProps<{
+  hasActiveFilters: boolean;
   resources: ModelResource[];
   selectedId: string;
 }>();
 
 defineEmits<{
+  resetFilters: [];
   select: [id: string];
 }>();
 
-const searchValue = ref('Illustrious');
-const baseModelValue = ref('illustrious');
-const sortValue = ref('name');
+const searchValue = defineModel<string>('search', { required: true });
+const baseModelValue = defineModel<string>('baseModel', { required: true });
+const sortValue = defineModel<string>('sort', { required: true });
 
 const baseModelOptions = [
+  { label: 'All', value: 'all' },
   { label: 'Illustrious', value: 'illustrious' },
   { label: 'SDXL', value: 'sdxl' },
   { label: 'NoobAI', value: 'noobai' },
@@ -48,6 +50,19 @@ const sortOptions = [
         <span>Sort by</span>
         <NSelect v-model:value="sortValue" :consistentMenuWidth="false" :options="sortOptions" />
       </label>
+      <NButton
+        aria-label="Reset filters"
+        circle
+        class="reset-filters"
+        :disabled="!hasActiveFilters"
+        quaternary
+        title="Reset filters"
+        @click="$emit('resetFilters')"
+      >
+        <template v-slot:icon>
+          <NIcon :component="FilterOffIcon" />
+        </template>
+      </NButton>
     </header>
 
     <NScrollbar class="resource-scroll">
@@ -103,11 +118,15 @@ const sortOptions = [
 
 .list-toolbar {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) 145px 150px;
+  grid-template-columns: minmax(170px, 1fr) 145px 150px auto;
   gap: 8px;
   padding: 8px 14px 10px;
   border-bottom: 1px solid var(--app-border);
   align-items: end;
+}
+
+.reset-filters {
+  align-self: end;
 }
 
 .toolbar-field {
@@ -132,7 +151,8 @@ const sortOptions = [
 .resource-list {
   display: grid;
   gap: 6px;
-  padding: 12px 14px;
+  padding-block: 12px 0;
+  padding-inline: 14px;
 }
 
 .install-strip {

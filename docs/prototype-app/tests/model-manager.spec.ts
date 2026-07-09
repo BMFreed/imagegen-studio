@@ -44,6 +44,32 @@ test.describe('Model Manager prototype', () => {
     await expect(page.getByText('Remove token')).toBeVisible();
   });
 
+  test('resets visual filter state', async ({ page }) => {
+    await page.setViewportSize({ height: 1080, width: 1920 });
+    await openModelManager(page);
+
+    const resetFilters = page.getByRole('button', { name: 'Reset filters' });
+    await expect(resetFilters).toBeDisabled();
+
+    await page.getByText('Checkpoints', { exact: true }).click();
+    await expect(resetFilters).toBeEnabled();
+
+    await resetFilters.click();
+    await expect(resetFilters).toBeDisabled();
+  });
+
+  test('selects a resource with the keyboard', async ({ page }) => {
+    await page.setViewportSize({ height: 1080, width: 1920 });
+    await openModelManager(page);
+
+    const digitalArt = page.getByRole('button', { name: /Digital Art/ });
+    await digitalArt.focus();
+    await page.keyboard.press('Space');
+
+    await expect(page.locator('h2', { hasText: 'Digital Art' })).toBeVisible();
+    await expect(page.getByText('v0.1').last()).toBeVisible();
+  });
+
   test('captures import dialog', async ({ page }) => {
     await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);

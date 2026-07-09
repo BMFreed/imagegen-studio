@@ -19,6 +19,8 @@ Primary reference: InvokeAI Model Manager V2 and backend model management system
 
 Current visual prototype reference: `docs/prototype-app`. The older standalone HTML file `docs/prototypes/model-manager.html` remains historical reference only for the first Model Manager layout exploration.
 
+The Vue prototype intentionally covers the primary happy-path flow only. Empty, loading, invalid-token, invalid-URL, duplicate-install, failed-download and confirmation states remain required product behavior even when they do not have dedicated prototype screens yet.
+
 Useful InvokeAI areas:
 
 - `invokeai/backend/model_manager/README.md` — model lifecycle split into identification, loading/cache and running;
@@ -104,8 +106,8 @@ Model Manager
 │  ├─ Add from CivitAI URL
 │  └─ close
 ├─ Left Navigation
-│  ├─ Library filters: All Models, Checkpoints, LoRA, Embeddings, VAE, Upscalers
-│  ├─ Status filters: Installed, Downloading, Needs Attention
+│  ├─ Model Types: All Models, Checkpoints, LoRA, Embeddings, VAE, Upscalers
+│  ├─ Status filters: All, Installed, Downloading, Needs Attention
 │  └─ Storage/download summary with Open Folder
 ├─ Resource List Panel
 │  ├─ search
@@ -152,7 +154,7 @@ Do not add a separate always-visible `Storage` button in the header for MVP. The
 
 The left navigation owns broad filtering and compact status summaries.
 
-Library filters:
+Model type filters:
 
 - `All Models`;
 - `Checkpoints`;
@@ -163,6 +165,7 @@ Library filters:
 
 Status filters:
 
+- `All`;
 - `Installed`;
 - `Downloading`;
 - `Needs Attention`.
@@ -180,10 +183,13 @@ The side summary is not a full storage settings page. It is a compact utility ar
 The resource list toolbar owns day-to-day search and narrowing:
 
 - search input;
-- base model family filter;
+- base model family filter with `All` as the default;
 - sort select;
+- persistent `Reset filters` action, disabled when no non-default filter is active.
 
-Do not duplicate Library/Status filters in the header.
+The visual prototype does not need to apply the filters to mock resources, but filter controls must retain coherent local state. `Reset filters` clears search and restores Model Types, Status and base model filters to their `All` values; it does not reset sorting.
+
+Do not duplicate Model Types/Status filters in the header.
 
 ### Resource List
 

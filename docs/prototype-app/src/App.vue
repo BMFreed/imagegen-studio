@@ -13,23 +13,25 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
       <NMessageProvider>
         <div class="app-shell">
           <AppChrome />
-          <DocumentTabs />
-          <main class="prototype-stage">
-            <section aria-hidden="true" class="home-context">
-              <div class="workspace-sidebar">
-                <span class="sidebar-title">Workspaces</span>
-                <span class="sidebar-item sidebar-item--active">Uncategorized</span>
-                <span class="sidebar-item">Sample Project B</span>
-                <span class="sidebar-item">Sample Project A</span>
-              </div>
-              <div class="workspace-grid">
-                <div class="workspace-card" />
-                <div class="workspace-card workspace-card--wide" />
-                <div class="workspace-card" />
-              </div>
-            </section>
+          <div class="app-workspace">
+            <DocumentTabs />
+            <main class="prototype-stage">
+              <section aria-hidden="true" class="home-context">
+                <div class="workspace-sidebar">
+                  <span class="sidebar-title">Workspaces</span>
+                  <span class="sidebar-item sidebar-item--active">Uncategorized</span>
+                  <span class="sidebar-item">Sample Project B</span>
+                  <span class="sidebar-item">Sample Project A</span>
+                </div>
+                <div class="workspace-grid">
+                  <div class="workspace-card" />
+                  <div class="workspace-card workspace-card--wide" />
+                  <div class="workspace-card" />
+                </div>
+              </section>
+            </main>
             <ModelManagerPrototype />
-          </main>
+          </div>
         </div>
       </NMessageProvider>
     </NDialogProvider>
@@ -39,10 +41,17 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
 <style scoped>
 .app-shell {
   display: grid;
-  grid-template-rows: 40px 40px minmax(0, 1fr);
+  grid-template-rows: 40px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   background: var(--app-chrome);
+}
+
+.app-workspace {
+  position: relative;
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  min-height: 0;
 }
 
 .prototype-stage {

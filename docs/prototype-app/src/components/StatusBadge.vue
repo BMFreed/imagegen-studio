@@ -12,7 +12,7 @@ const props = defineProps<{
 const label = computed(() => {
   switch (props.status) {
     case 'checking': {
-      return 'Checking';
+      return 'Verifying file';
     }
     case 'downloading': {
       return 'Downloading';
