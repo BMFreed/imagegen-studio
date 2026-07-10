@@ -18,8 +18,8 @@ MVP должен доказать ценность не как “ещё одн�
 
 - импортировать модель с CivitAI по ссылке;
 - хранить локальную библиотеку моделей и metadata;
-- видеть свои проекты через `Home` screen с workspace'ами;
-- создавать и открывать project files формата `.igs`;
+- видеть свои проекты через `Home` screen с workspace'ами, `Projects`, app-managed `Trash`, search/Status filtering и preview;
+- создавать `.igs`, импортировать внешний `.igs` через Move/Copy в managed workspace и открывать project files;
 - открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
 - генерировать изображения через локальный Python worker внутри `Project`;
 - апскейлить flattened composite проекта через `Upscale` project mode;
@@ -31,8 +31,10 @@ MVP должен доказать ценность не как “ещё одн�
 
 Основная продуктовая оболочка строится как document-based editor:
 
-- `Home` tab — стартовый экран: Workspaces, `Projects`, new/open project, доступ к Model Manager;
+- `Home` tab — стартовый экран: Workspaces, cross-workspace `Projects`, app-managed `Trash`, new/import project, доступ к Model Manager и Preset Manager;
 - `Project` tab — открытый `.igs` документ: canvas, project modes, генерация, upscale, слои, маски, настройки модели, snapshots, save/dirty/recovery status.
+
+Model Manager и Preset Manager являются app-level modal overlays, а не document tabs. Apply Preset остаётся Project-scoped modal flow: он редактирует временную application-копию и не изменяет сохранённый preset.
 
 `Canvas` — не отдельная вкладка приложения, а сущность внутри `Project` tab.
 

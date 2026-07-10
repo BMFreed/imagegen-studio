@@ -7,7 +7,7 @@
 - Какие base model families поддерживает MVP: SD 1.5, SDXL, Flux, Illustrious, Pony.
 - Нужна ли поддержка LoRA в первом generation slice или её можно добавить сразу после txt2img checkpoint-only.
 - Где создаются thumbnail/previews: main process или worker.
-- Нужен ли soft delete для истории, моделей и пресетов.
+- Нужен ли soft delete для истории, моделей и пресетов. Для managed `.igs` проектов решение уже принято отдельно: app-managed `Trash` с restore и explicit `Delete Permanently`.
 
 ## Можно решить позже
 
@@ -31,10 +31,11 @@
 - Presets: плоские, без наследования и композиции в MVP.
 - Preset import/export: не планируется; отдельный portable preset bundle format не проектируем.
 - Preset storage: гибридная SQLite-модель; каталог и `workflow_type` в колонках, настройки генерации в валидируемом `payload_json`.
+- Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в generation snapshot.
 - Canvas renderer: MVP берёт Invoke-like пайплайн через Konva scene graph поверх Canvas 2D, но compositor/cache/layer lifecycle остаются логикой ImageGen Studio; WebGL/WebGPU откладываются как возможные backend'ы для тяжёлых задач.
-- Project UX: document-based shell. `Home` is a normal tab with Workspaces and the cross-workspace `Projects` view; opened `.igs` files are `Project` tabs; `Canvas` is an entity inside `Project`, not a primary tab. Отдельная `Generate` вкладка, `Launchpad`, `Viewer` и постоянный Boards sidebar не входят в целевую модель.
+- Project UX: document-based shell. `Home` is a normal tab and defaults to the cross-workspace `Projects` view, with Workspaces, app-managed `Trash`, New/Import Project and manager entry points; opened `.igs` files are `Project` tabs; `Canvas` is an entity inside `Project`, not a primary tab. Отдельная `Generate` вкладка, `Launchpad`, `Viewer` и постоянный Boards sidebar не входят в целевую модель.
 - Project modes: внутри `Project` tab есть `Generate` и `Upscale`. `Upscale` принимает immutable flattened composite input из Generate и может добавить результат как новый layer или экспортировать его.
 - Project tabs: несколько `.igs` проектов могут быть открыты одновременно, но один и тот же `.igs` нельзя открыть дважды; повторное открытие фокусирует существующую `Project` tab.
 - Electron runtime: приложение работает в single-instance режиме через `app.requestSingleInstanceLock()`. Повторный запуск или open-file/deep-link intent передаётся в уже запущенный instance, чтобы нельзя было открыть один `.igs` в двух независимых процессах.
@@ -42,6 +43,7 @@
 - `.igs` format: MVP использует переносимый ZIP-package без обязательной compression; основной save собирается во временный файл, валидируется и атомарно заменяет исходный project file.
 - Project thumbnails: source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем для быстрого UI.
 - `.igs` autosave: частое автосохранение работает через shadow project directory в app data, с debounce для JSON state и dirty-флагами для raster/mask assets. Обычная autosave activity не является Home status; только валидный незавершённый state после неожиданного завершения показывается как `Recovery available`.
+- Project deletion UX: Home использует app-managed `Trash`; `Move to Trash` обратим, открытый project сначала нужно закрыть, workspace counters исключают trashed records, а физическое удаление происходит только через `Delete Permanently` из Trash view.
 - Global engineering policy: InvokeAI-first reference, no NIH. Готовые механизмы InvokeAI заимствуются настолько, насколько возможно в рамках стека и бизнес-логики ImageGen Studio; если InvokeAI не подходит, сначала ищем другое зрелое готовое решение.
 - SDXL/Illustrious-like checkpoint loading: `.safetensors` остаётся исходным пользовательским файлом; worker использует Invoke-like Diffusers `from_single_file` path и RAM/VRAM model cache. Постоянная diffusers-конвертация допускается только как явное действие или отдельная будущая оптимизация, но не как скрытый шаг MVP.
 - Python worker tooling: BasedPyright — основной type checker/LSP, Ruff — formatter/linter, `ty` можно запускать экспериментально, mypy не является baseline. Строго типизируем собственный worker/domain-код, а Diffusers/PyTorch держим за прагматичным adapter-слоем.

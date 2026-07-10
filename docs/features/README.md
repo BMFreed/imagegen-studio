@@ -13,6 +13,8 @@ Each feature should answer:
 
 The feature catalog is a scope-control tool. It should make explicit what is included, what is deferred, and what is intentionally not part of the feature.
 
+For surfaces already implemented in `docs/prototype-app`, the Vue components, mock state and Playwright scenarios are authoritative for visible UI and interaction behavior. Feature documents describe and explain that behavior plus production-only requirements; they must label behavior that is not yet interactive instead of presenting it as prototype coverage.
+
 ## Features
 
 - [Project / Generate mode](./project/generate-mode/README.md)

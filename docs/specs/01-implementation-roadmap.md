@@ -1,8 +1,8 @@
 # Implementation Roadmap
 
-## Документационный трек перед активной разработкой
+## Документационный трек перед production-разработкой
 
-Перед стартом реализации нужно закрыть два документационных шага.
+Vue/Naive prototype уже закрыл базовую интерактивную проработку Home, Model Manager и presets. Перед стартом production renderer/main-process реализации остаётся поддерживать два документационных шага ниже в актуальном состоянии.
 
 ### Шаг 1. Закрыть open questions
 
@@ -14,7 +14,7 @@
 - входит ли LoRA в первый generation slice;
 - нужна ли очередь генераций в MVP;
 - где и как создаются thumbnails;
-- нужен ли soft delete.
+- нужен ли soft delete для history/models/presets; для managed projects уже зафиксирован app-managed Trash.
 
 Результат: открытые вопросы превращаются в зафиксированные решения или явно помечаются как `Later`.
 
@@ -68,7 +68,7 @@ docs/features/
 - Настройка CivitAI API token.
 - Импорт модели по CivitAI URL.
 - Получение metadata и preview перед скачиванием.
-- Download manager с временным файлом.
+- model install/download pipeline с временным файлом и очередью внутри Model Manager, без отдельной Download Manager surface.
 - Проверка size/hash, если данные доступны.
 - Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
@@ -94,8 +94,10 @@ docs/features/
 - Создание пресета вручную.
 - Создание пресета из generation snapshot.
 - Редактирование секций пресета.
+- Общий `PresetPayloadEditor` для manager create/edit, Apply и New Project preset customization.
 - Full apply.
 - Partial apply.
+- Editable application draft с `Current` / `Apply`, reset и guarded `Edit original`.
 - Проверка missing resources только для выбранных секций.
 - Warning при base model family mismatch.
 

@@ -218,6 +218,7 @@ function openContextMenu(event: MouseEvent) {
 .card-body strong,
 .workspace-name {
   overflow: hidden;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

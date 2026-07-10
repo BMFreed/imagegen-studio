@@ -17,9 +17,9 @@ It is not a CivitAI marketplace browser in MVP. It is the local manager for inst
 
 Primary reference: InvokeAI Model Manager V2 and backend model management system.
 
-Current visual prototype reference: `docs/prototype-app`. The older standalone HTML file `docs/prototypes/model-manager.html` remains historical reference only for the first Model Manager layout exploration.
+Current visual and interaction source of truth: `docs/prototype-app?prototype=model-manager`, plus the same manager opened from Home through `Manage Models`. The older standalone HTML file `docs/prototypes/model-manager.html` remains historical reference only for the first Model Manager layout exploration.
 
-The Vue prototype intentionally covers the primary happy-path flow only. Empty, loading, invalid-token, invalid-URL, duplicate-install, failed-download and confirmation states remain required product behavior even when they do not have dedicated prototype screens yet.
+The Vue prototype intentionally covers the manager shell and primary browse/import presentation. It implements resource selection, token popover visibility, local filter state/reset, native modal open/close behavior and pane resizing. Model-type/status/base-model filters do not yet filter the mock rows; install/repair, storage, version, queue and selected-resource actions are presentational. Empty, loading, invalid-token, invalid-URL, duplicate-install, failed-download and confirmation states remain required production behavior but do not have dedicated interactive prototype screens.
 
 Useful InvokeAI areas:
 
@@ -85,7 +85,7 @@ Model Manager is an app-level overlay, not a `Project` tab.
 
 Required entry points:
 
-- `Home` toolbar/button: opens Model Manager.
+- `Manage Models` in the Home sidebar Tools area: opens Model Manager over the mounted Home surface.
 - `Project` top menu/context menu: opens Model Manager.
 - Generate `Model` selector: `Manage Models` opens Model Manager focused on checkpoints.
 - Generate `LoRAs` selector: `Manage Models` opens Model Manager focused on LoRAs.
@@ -94,6 +94,8 @@ Required entry points:
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
 
+As demonstrated from Home, Model Manager opens as a native Naive modal overlay with restrained enter/leave transitions. The document surface underneath is inert while it is open. The explicit close action and `Esc` both close the manager; `Esc` is temporarily owned by a nested import dialog while that dialog is open.
+
 ## Information Architecture
 
 Use an app-level overlay with a three-column operational layout:
@@ -101,7 +103,7 @@ Use an app-level overlay with a three-column operational layout:
 ```text
 Model Manager
 ├─ Header
-│  ├─ title and short description
+│  ├─ title and description tooltip
 │  ├─ CivitAI token status pill
 │  ├─ Add from CivitAI URL
 │  └─ close
@@ -111,8 +113,8 @@ Model Manager
 │  └─ Models use summary with Open Folder
 ├─ Resource List Panel
 │  ├─ Name search
-│  ├─ Base Model filter
-│  ├─ Sort By select
+│  ├─ Base model filter
+│  ├─ Sort by select
 │  ├─ Reset filters
 │  ├─ installed / missing / downloading resources
 │  └─ compact install strip
@@ -135,7 +137,7 @@ The divider after Left Navigation and the divider before Details Panel are mouse
 
 The header should include:
 
-- title and short description;
+- title with a compact `About Model Manager` tooltip rather than a permanently visible subtitle;
 - compact CivitAI token status pill;
 - `Add from CivitAI URL` primary action;
 - close action.
@@ -167,7 +169,7 @@ Model type filters:
 - `VAE`;
 - `Upscalers`.
 
-Each Model Types option shows its current resource count.
+Each Model Types option shows its catalog resource count. The prototype uses fixed summary counts for a broader implied library while rendering only six representative rows; production counts must be derived from the same catalog query as the filters.
 
 Status filters:
 
@@ -176,7 +178,7 @@ Status filters:
 - `Downloading`;
 - `Needs Attention`.
 
-Each Status option shows its current resource count.
+Each Status option shows its catalog resource count under the same rule.
 
 The bottom side summary shows:
 
@@ -190,11 +192,11 @@ The side summary is not a full storage settings page. It is a compact utility ar
 The resource list toolbar owns day-to-day search and narrowing:
 
 - `Name` search input with `Search models` placeholder;
-- `Base Model` family filter with `All` as the default;
-- `Sort By` select with `Name`, `Recently installed` and `Size` options;
+- `Base model` family filter with `All` as the default;
+- `Sort by` select with `Name`, `Recently installed` and `Size` options;
 - persistent `Reset filters` action, disabled when no non-default filter is active.
 
-The visual prototype does not need to apply the filters to mock resources, but filter controls must retain coherent local state. `Reset filters` clears search and restores Model Types, Status and base model filters to their `All` values; it does not reset sorting.
+The current visual prototype intentionally does not apply these filters to mock resources, but the controls retain coherent local state. `Reset filters` clears search and restores Model Types, Status and base model filters to their `All` values; it does not reset sorting. Production filtering remains required by the list behavior below.
 
 Do not duplicate Model Types/Status filters in the header.
 
@@ -211,6 +213,8 @@ Each row should show:
 - file size;
 - missing-file warning when DB metadata exists but the local file is absent.
 
+The whole primary row surface is one Naive button for pointer and keyboard selection. A contextual action such as `Repair` is a separate sibling button, never nested inside the selection button; activating it must not change the selected resource accidentally.
+
 List-row status treatment follows the prototype:
 
 - installed resources use a bordered success `Installed` tag;
@@ -224,6 +228,8 @@ The list should support:
 - keyboard selection through the focused row with `Enter` or `Space`;
 - sorting by name, recently installed and size;
 - search by name, version, trigger phrase, CivitAI id and local filename.
+
+Only selection and filter-state/reset behavior are interactive in the current mock. Actual search/filter/sort result mutation belongs to production implementation and must follow the rules above.
 
 ### Details Panel
 
@@ -303,6 +309,7 @@ MVP includes:
 - detect duplicate already-installed resources by CivitAI version id and/or file hash;
 - show resource details;
 - show missing-file status;
+- repair a missing known CivitAI resource by re-downloading its exact version;
 - remove local resource with confirmation;
 - prevent deletion while resource is currently used by a running job;
 - keep snapshots/presets readable after deletion by storing human-readable copied metadata in snapshots;
@@ -315,7 +322,7 @@ Post-MVP:
 
 - local file import by path/hash;
 - scan folder for models;
-- repair/relink missing local files;
+- manual relink and folder-scan repair for missing local files; MVP may repair a known CivitAI resource by re-downloading the exact version;
 - one-click model update by CivitAI identity;
 - bulk actions;
 - richer model relationships;
@@ -686,7 +693,28 @@ CivitAI API token недействителен.
 
 Detailed technical errors can be available behind `Show details` for debugging and bug reports.
 
+## Vue Prototype Coverage
+
+The current Vue/Naive prototype is authoritative for the visible three-pane composition and demonstrates:
+
+- standalone `?prototype=model-manager` and Home `Manage Models` entry points;
+- default browse state with `Illustrious XL` selected, `All Models` / `All` / base model `All` filters and `Name` sort;
+- native modal enter/leave transition, explicit close, `Esc` close and inert Home backdrop;
+- `About Model Manager` tooltip and connected-token popover;
+- model-type/status navigation, search/base-model/sort controls and reset-state behavior;
+- full-row pointer/keyboard resource selection with a separate non-selecting `Repair` action;
+- bounded mouse resizing of Left Navigation and Details Panel;
+- selected-resource preview, versions, trigger words, metadata and action layout;
+- `Add from CivitAI URL` dialog with a URL field and import preview;
+- compact in-progress install strip.
+
+It does not currently mutate mock results for filters, install a model, advance the install queue, repair/remove a resource, change a default version or simulate token/error/empty states. Those remain production acceptance criteria below, not claims about current prototype interactivity.
+
+The App Chrome downloads icon is visually present but not wired to Model Manager in the prototype; `Manage Models` on Home and the standalone query are the implemented entry points.
+
 ## Acceptance Criteria
+
+The following criteria describe the production feature; prototype-only coverage is listed separately above.
 
 - User can open Model Manager from Home.
 - User can open Model Manager from Project/global menu.

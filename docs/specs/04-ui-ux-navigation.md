@@ -1,20 +1,22 @@
 # UI / UX Navigation
 
+Для Home, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом. Project / Generate пока сверяется с `docs/prototypes/project-page.html`.
+
 ## Основные зоны приложения
 
 MVP строится как document-based desktop editor, ближе к Photoshop / Affinity / Krita, а не как Invoke-like набор равноправных разделов.
 
 Основные top-level поверхности:
 
-- `Home` tab — стартовый и организационный экран приложения: Workspaces, `Projects`, new/open project и access to Model Manager.
+- `Home` tab — стартовый и организационный экран приложения: Workspaces, `Projects`, new/import project и доступ к Model Manager и Preset Manager.
 - `Project` tab — открытый `.igs` document. Таких вкладок может быть несколько одновременно.
-- app-level overlays/dialogs — Model Manager, Settings, Queue/Downloads, command palette.
+- app-level overlays/dialogs — Model Manager, Preset Manager, Apply Preset, Settings, Queue Manager и task dialogs.
 
 `Canvas` не является primary navigation item или отдельной вкладкой приложения. Canvas — это сущность внутри `Project` tab: interactive рабочая поверхность открытого `.igs` проекта.
 
 `Generate` и `Upscale` не являются top-level вкладками приложения. Это project modes внутри `Project` tab.
 
-`Model Manager`, `Presets`, settings и queue/status UI остаются важными частями приложения, но не являются равноправными primary tabs. Их можно оформить как app-level dialog/overlay, panel, menu action или dedicated management window.
+`Model Manager` и `Preset Manager` остаются важными частями приложения, но не являются primary tabs: текущий источник истины оформляет их как app-level modal overlays. Settings и queue/status UI также остаются app-level surfaces, но их точная форма определяется отдельными feature passes.
 
 Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
 
@@ -36,7 +38,7 @@ ImageGen Studio проектируется не только для технич
 
 Home screen не имеет левой и правой project/canvas-панелей. Его задача — дать пользователю спокойный стартовый экран и файловую организацию проектов:
 
-- список/сетку workspace'ов;
+- список workspace'ов в навигационной панели;
 - дефолтный workspace `Uncategorized`;
 - thumbnails и basic metadata проектов;
 - поиск проектов по имени, фильтрацию по состоянию и сортировку;
@@ -50,7 +52,9 @@ Home screen не имеет левой и правой project/canvas-панел
 - перемещение `.igs` проектов между workspace'ами;
 - preview проекта с нормальными tools для zoom/pan.
 
-Preview на Home не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions. Постоянно видимые действия текущего прототипа: открыть, открыть в новой вкладке, переместить, показать в файловом менеджере. Более редкие действия вроде переименовать, удалить или relink должны жить в overflow/context menu.
+Home по умолчанию активирует `Projects`, использует `Status` как visible label для фильтра (`All statuses`, `Open`, `Recovery available`, `Needs attention`) и не показывает отдельный `Recent`: `Last opened` остаётся дефолтной сортировкой.
+
+Preview на Home не должен показывать inactive canvas/generation controls. В нём доступны только действия просмотра и явные project actions. Постоянно видимые действия текущего прототипа: открыть, открыть в новой вкладке, переместить, показать в файловом менеджере. `Rename` и `Move to Trash` живут в card/list context menu; relink появляется только в missing-file diagnostic state.
 
 В текущем Home-прототипе допустимы две primary-кнопки, потому что они принадлежат разным контекстам: `New Project` относится к выбранному workspace, а `Open Project` в Preview / Inspector относится к выбранному проекту. Это не должно превращаться в правило “много primary-кнопок в одной зоне”: внутри одной панели главный CTA должен оставаться один.
 
@@ -161,7 +165,7 @@ Boards/gallery не показываются как постоянная бок�
 - single left click по `.igs` project card выбирает проект и обновляет Inspector, не открывая `Project` tab;
 - double click или `Enter` открывает выбранный проект в текущей вкладке. Если текущая вкладка — `Home`, она заменяется на `Project` tab;
 - middle click / Ctrl+click открывает проект в новой вкладке рядом с `Home`.
-- right click показывает меню `Open`, `Open in New Tab`, `Show in File Manager`, `Move to Workspace`, `Delete`.
+- right click показывает меню `Open`, `Open in New Tab`, `Rename`, `Move to Workspace`, `Show in Folder`, `Move to Trash`.
 - если проект уже открыт, любое действие открытия фокусирует существующую `Project` tab вместо создания дубликата.
 
 ## Навигация
@@ -182,7 +186,15 @@ Activity buttons в app chrome разделены по ownership:
 - downloads button открывает Model Manager на установках/загрузках моделей;
 - settings button открывает глобальные настройки приложения.
 
+Это production ownership. В текущем Vue playground Home logo/document tabs и Home manager actions интерактивны, а app menu, queue/download/settings icons и drawn window controls остаются presentational.
+
 Когда app-level overlay открыт, document tab strip и рабочая область под ним визуально уходят в фон: dim/blur + pointer-events disabled. Верхнее меню и native window controls могут оставаться читаемыми как часть оболочки приложения, но вкладки не должны выглядеть доступными для прямой навигации за модальным слоем.
+
+Model Manager и Preset Manager используют native Naive modal lifecycle: restrained enter/leave transition, explicit close и `Esc`. Dirty Preset Manager перехватывает закрытие своим save/discard guard; вложенный dialog получает `Esc` раньше родительского manager. Home остаётся смонтированным под overlay и восстанавливает browse state после закрытия.
+
+Prototype layer ordering централизован в `theme/app-layers.ts`, а не распределён по component-local magic numbers: content `0`, sticky chrome `10`, floating controls `100`, app overlay `1000`, nested dialog `2000`, popover `3000`, notification `4000`. Production theme может изменить значения, но должна сохранить один именованный registry и тот же ownership order.
+
+Home и обе manager-поверхности используют bounded mouse-resizable split panels. Home позволяет менять ширину Workspace Sidebar и Inspector; Model Manager — Left Navigation и Details; Preset Manager — workflow navigation и editor. Collapsed Inspector временно отключает свой resize handle.
 
 ### App chrome
 
@@ -198,7 +210,7 @@ HTML-прототип может рисовать статичные кнопк�
 
 Горизонтальный логотип находится в menu row. Высота menu row — около 40px, чтобы логотип оставался читаемым без перегруза верхнего chrome.
 
-Project tab marker использует цвет workspace. Цвет workspace можно менять вручную, а для новых workspace'ов он генерируется автоматически. `Home` tab использует home icon вместо workspace color marker.
+Project tab marker использует цвет workspace. Цвет workspace выбирается из компактной palette при создании и может меняться вручную; текущий prototype default — teal. `Home` tab использует home icon вместо workspace color marker.
 
 ## MVP-состояния, которые нужно спроектировать заранее
 

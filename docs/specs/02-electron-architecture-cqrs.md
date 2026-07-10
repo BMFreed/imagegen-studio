@@ -50,13 +50,29 @@ CQRS здесь нужен как лёгкая дисциплина, а не о�
 Commands меняют состояние:
 
 ```text
+workspaces.create
+workspaces.update
+workspaces.removeRegistration
+workspaces.rescan
+projects.create
+projects.importExternal
+projects.rename
+projects.move
+projects.moveToTrash
+projects.restore
+projects.deletePermanently
+projects.recover
+projects.locate
+projects.removeFromHome
+projects.rebuildPreview
+projects.applyPresetDraft
 models.importFromCivitaiUrl
 models.deleteLocalModel
 generation.enqueue
 generation.cancel
 presets.create
 presets.update
-presets.apply
+presets.delete
 canvas.createSmartPatchLayer
 canvas.regenerateSmartPatchLayer
 ```
@@ -64,6 +80,8 @@ canvas.regenerateSmartPatchLayer
 Queries читают состояние:
 
 ```text
+workspaces.getList
+projects.getIndex
 models.getInstalled
 models.getById
 history.getRecent
@@ -88,3 +106,7 @@ worker.statusChanged
 ## Практическое правило
 
 Command handler может вызывать сервисы, писать в SQLite и публиковать events. Query handler только читает и формирует DTO для renderer. Это упростит тестирование и не даст UI случайно превратиться в скрытый backend.
+
+Apply ownership следует preset-прототипу: `projects.applyPresetDraft` изменяет generation state конкретного открытого проекта из detached application draft. Команды `presets.create/update/delete` изменяют каталог presets; отдельной `presets.apply`, которая могла бы двусмысленно выглядеть как mutation исходного preset, нет.
+
+`presets.create` принимает валидный `PresetDefinition` без fake identity и возвращает `PresetRecord`; id и timestamps появляются только после успешной команды. Ошибка команды не закрывает renderer draft. `projects.applyPresetDraft` принимает payload + ephemeral selection mask, но mask никогда не записывается в preset storage.

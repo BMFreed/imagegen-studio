@@ -347,6 +347,7 @@ test.describe('Home prototype', () => {
     for (const label of [
       page.locator('.tab-title').filter({ hasText: 'Sample Project B.igs' }),
       page.locator('.home-sidebar .workspace-name').filter({ hasText: 'Regional guidance drafts' }),
+      page.locator('.card-body strong').filter({ hasText: 'Midnight greenhouse' }),
     ]) {
       const lineMetrics = await label.evaluate((element) => {
         const style = getComputedStyle(element);

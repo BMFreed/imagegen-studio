@@ -19,7 +19,7 @@ ImageGen Studio остаётся однопользовательским deskto
 SQLite — источник истины для:
 
 - installed resources;
-- глобального индекса generation history/recent projects;
+- глобального generation history и восстанавливаемого project index для Home;
 - Queue Manager runtime/history records: queue items, batches, status, progress, errors and serialized worker job payloads;
 - presets;
 - references на файлы изображений, масок и моделей.
@@ -34,7 +34,9 @@ Project file `.igs` — источник истины для конкретно�
 - generation settings and immutable generation snapshots, относящиеся к этому проекту;
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
-SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
+SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, optional `trashed_at`, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
+
+Project `open` state не хранится в index row: Home вычисляет его по in-memory document-tab registry. `recovery_available` отражает наличие валидированного shadow candidate, а не обычный autosave progress.
 
 Queue rows are not project source of truth. They describe runtime/history state for jobs that may read from or commit into `.igs`. Completed queue rows can be pruned without deleting committed project results.
 
@@ -57,6 +59,8 @@ Workspace — обычная папка на диске. В MVP workspace не �
 Всегда существует дефолтный workspace `Uncategorized` как реальная app-managed папка `ImageGen Studio/workspaces/Uncategorized/`. Пользователь может перемещать `.igs` project files между workspace'ами. Проект не может существовать вне workspace в пользовательской модели, но физически `.igs` остаётся обычным переносимым файлом.
 
 Новый проект без другого явно выбранного writable workspace физически создаётся в `Uncategorized`. При открытии `.igs` вне известных workspace'ов пользователь должен переместить или скопировать файл в `Uncategorized` либо другой выбранный workspace. До подтверждённого move/copy такой файл не индексируется и не открывается. Приложение не создаёт implicit workspace из родительской папки и не хранит внешние пути как виртуальные элементы `Uncategorized`.
+
+Home использует app-managed Trash lifecycle. `Move to Trash` сохраняет project index row, исходный `workspaceId` и `trashedAt`, исключает запись из `Projects` и workspace counters и показывает её только в Trash view. `Restore Project` очищает `trashedAt` и возвращает проект в прежний workspace. Физическое удаление managed `.igs` и index row происходит только после отдельного `Delete Permanently` confirmation. Открытый project нельзя переместить в Trash.
 
 `.igs` — переносимый рабочий формат ImageGen Studio. Базовый формат для MVP:
 
@@ -84,7 +88,7 @@ project.igs
 
 `preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они едут вместе с project file и являются источником истины для project preview.
 
-`ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения вкладки `Workspaces`. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
+`ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
 
 ### Generation snapshots
 
@@ -146,7 +150,7 @@ MVP-правило:
 - canonical project identity строится из нормализованного абсолютного пути к `.igs`;
 - приложение держит in-memory registry открытых project identities;
 - при попытке открыть `.igs`, identity которого уже есть в registry, приложение фокусирует существующую `Project` tab;
-- создание второй вкладки для того же `.igs` запрещено для всех entry points: `Home`, recent projects, file picker, menu action, drag/drop, deep link.
+- создание второй вкладки для того же `.igs` запрещено для всех entry points: `Home`, file picker, menu action, drag/drop, deep link.
 - приложение запускается в single-instance режиме через Electron main process, чтобы второй OS-инстанс не мог открыть тот же `.igs` параллельно с первым.
 
 Если позже понадобится поддержка symlink-heavy workflow или network paths, identity policy можно расширить через filesystem inode/file id там, где платформа это поддерживает. Для MVP достаточно canonical path + rescan/relink поведения.
@@ -341,62 +345,121 @@ UI может использовать `workflow_type`, чтобы показы�
 
 ### PresetPayload
 
-`payload_json` содержит настройки генерации как версионированный payload.
+`payload_json` содержит типизированные generation sections. Текущим доменным источником формы является `docs/prototype-app/src/prototypes/presets/presets.types.ts`; storage mapper не должен вводить другую группировку полей.
 
 Предварительная TypeScript-форма:
 
 ```ts
-type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample'
+type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
+type SeedPolicy = 'fixed' | 'random' | 'reuse'
+type PresetSectionKey =
+  | 'denoisingStrength'
+  | 'embeddings'
+  | 'guidance'
+  | 'loras'
+  | 'model'
+  | 'negativePrompt'
+  | 'prompt'
+  | 'sampling'
+  | 'seed'
+  | 'size'
+  | 'vae'
 
-type PresetPayload = {
-  schemaVersion: 1
-  prompt?: string
-  negativePrompt?: string
-  model?: PresetResourceRef
-  loras?: Array<{
-    resource: PresetResourceRef
-    weight: number
-    enabled: boolean
-    triggerWords?: string[]
-  }>
-  embeddings?: PresetResourceRef[]
-  vae?: PresetResourceRef
-  params?: {
-    width?: number
-    height?: number
-    sampler?: string
-    scheduler?: string
-    steps?: number
-    cfgScale?: number
-    denoisingStrength?: number
-    seedPolicy?: 'random' | 'fixed' | 'reuse'
-    seed?: number
-  }
+interface PresetResourceRef {
+  id: string
+  missing?: boolean
+  name: string
+  version?: string
 }
 
-type PresetResourceRef = {
-  localResourceId?: string
-  civitaiModelId?: number
-  civitaiVersionId?: number
-  fileHash?: string
-  name?: string
-  versionName?: string
-  baseModelFamily?: string
-  predictionType?: ModelPredictionType
+interface PresetModelRef extends PresetResourceRef {
+  baseModel: string
+  predictionType: 'epsilon' | 'v-pred'
+}
+
+interface PresetLora {
+  enabled: boolean
+  resource: PresetResourceRef
+  triggerWords: string[]
+  weight: number
+}
+
+interface PresetPayload {
+  denoisingStrength?: number
+  embeddings?: PresetResourceRef[]
+  guidance?: {
+    cfgScale: number
+    steps: number
+  }
+  loras?: PresetLora[]
+  model?: PresetModelRef
+  negativePrompt?: string
+  prompt?: string
+  sampling?: {
+    sampler: string
+    scheduler: string
+  }
+  seed?: {
+    policy: SeedPolicy
+    value?: number
+  }
+  size?: {
+    height: number
+    width: number
+  }
+  vae?: PresetResourceRef
+}
+
+interface PresetDefinition {
+  description: string
+  favorite: boolean
+  name: string
+  payload: PresetPayload
+  tags: string[]
+  workflow: PresetWorkflow
+}
+
+interface PresetRecord extends PresetDefinition {
+  id: string
+  updatedAt: string
+}
+
+type PresetCreateIntent =
+  | { kind: 'manual' }
+  | {
+      kind: 'project'
+      projectName: string
+      projectSummary: string
+      definition: PresetDefinition
+    }
+
+interface PresetApplicationDraft {
+  payload: PresetPayload
+  selectedSections: PresetSectionKey[]
+  sourcePresetId: string
 }
 ```
 
 Правила:
 
 - `payload_json` валидируется runtime-схемой при чтении и записи.
+- `PresetDefinition` — editable create-domain object без fake `id`/timestamp. `PresetRecord` появляется только после подтверждённого `Create Preset`; persistence layer одновременно заполняет internal `created_at`/`updated_at`, даже если UI domain record показывает только `updatedAt`.
+- `PresetCreateIntent` и source banner metadata (`projectName`, `projectSummary`) являются transient UI context и не сериализуются как preset catalog fields.
+- Catalog metadata (`name`, `description`, `workflow`, `tags`, `favorite`) живёт в `PresetDefinition` и строгих columns, но не внутри `PresetPayload`.
+- Storage mapper нормализует nullable DB `description` в доменную пустую строку и SQLite `favorite` 0/1 в boolean; UI draft не должен разносить SQL-nullability по форме.
+- `workflow_type` storage tokens маппятся на доменные значения: `txt2img` ↔ `textToImage`, `img2img` ↔ `imageToImage`, `inpaint` ↔ `smartPatch`. Storage tokens не показываются в UI.
 - Source of truth для model/LoRA/embedding/VAE настроек находится внутри `PresetPayload`.
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
-- Partial apply may use an ephemeral `selectedSections` mask inside an in-memory application draft. This mask controls which cloned payload fields are copied into the current project, is validated only for the duration of Apply, and is never serialized into `payload_json` or another preset column.
-- `predictionType` хранит scheduler prediction mode модели. Это compatibility metadata, а не user-facing style setting.
-- Для `v_prediction`-моделей generation worker должен получить `v_prediction`; запуск такой модели как `epsilon` считается несовместимой конфигурацией.
+- Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
+- `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.
+- При нормализации workflow `textToImage` удаляет `denoisingStrength`. Возврат к другому workflow не создаёт поле автоматически.
+- `predictionType` хранит scheduler prediction mode модели. Доменный label `v-pred` маппится на worker/storage token `v_prediction`; это compatibility metadata, а не user-facing style setting.
+- Optional `missing` — runtime/catalog resolution state в текущем prototype DTO. Production mapper может вычислять его по Model Manager registry, но должен сохранять human-readable `id`/`name`/`version` reference metadata, чтобы preset оставался понятным при отсутствии файла.
+- `PresetResourceRef.id` является стабильным local resource identity и разрешается через Model Manager records, где остаются CivitAI ids/hash/base-family metadata. Если preset должен копировать дополнительные identifiers для offline diagnostics, они добавляются в доменный ref и runtime schema явно, а не скрываются в несовместимой storage-only форме.
 - `has_loras`, `primary_model_resource_id` и похожие derived-поля в MVP не добавляются.
 - `engineSpecific` в MVP не добавляется, чтобы не создавать неструктурированный escape hatch заранее.
 - LoRA stack хранится внутри payload как часть цельной настройки пресета, а не в отдельной `preset_loras` таблице.
+- Если payload versioning понадобится до появления общего preset migration envelope, изменение сначала добавляется в доменные types/runtime schema и Vue prototype; storage spec не вводит скрытое `schemaVersion`, отсутствующее в текущем контракте.
 - Если позже понадобится быстрый поиск affected presets перед удалением модели или глобальная проверка missing resources, можно добавить derived/index table вроде `preset_resource_refs`, пересобираемую из `payload_json`.
 
 ### Альтернативы

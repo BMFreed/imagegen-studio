@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Последнее обновление: документ перенесён в `docs/`, зафиксированы термины **Bounding Box** и **Smart Patch Layer**, а также правило `N raster sub-layers → 1 active/visible raster sub-layer` внутри одного Smart Patch Layer.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Для Project / Generate текущим визуальным источником остаётся `docs/prototypes/project-page.html` до переноса во Vue.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -36,7 +36,7 @@ InvokeAI рассматривается как основной reference produc
 - организовывать работы через `Home` screen с workspace'ами;
 - открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
 - хранить canvas-проекты как переносимые `.igs` project files;
-- скачивать и обновлять модели;
+- скачивать модели и устанавливать несколько версий рядом;
 - хранить версии моделей и LoRA;
 - сохранять полные snapshot'ы генераций;
 - переиспользовать настройки через развитую систему пресетов;
@@ -58,6 +58,8 @@ InvokeAI рассматривается как основной reference produc
 - внутри `Project` есть project modes `Generate` и `Upscale`;
 - `Upscale` работает с immutable flattened composite input, созданным из текущего состояния `Generate`;
 - один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
+
+Model Manager и Preset Manager открываются как app-level modal overlays с native Naive transitions и `Esc` close; они не становятся document tabs. Apply Preset остаётся Project-scoped modal surface. Home, открытый под manager overlay, остаётся смонтированным и inert, поэтому browse state восстанавливается после закрытия.
 
 ---
 
@@ -115,7 +117,7 @@ Electron Main Process
   ├─ model manager
   ├─ preset manager
   ├─ generation history
-  ├─ download manager
+  ├─ model install/download service
   ├─ Python worker manager
   └─ IPC handlers
 Python ML Worker
@@ -177,9 +179,31 @@ Preload-слой предоставляет безопасный огранич�
 
 ```ts
 window.api = {
+  workspaces: {
+    getList,
+    create,
+    update,
+    removeRegistration,
+    rescan,
+    locate,
+  },
+  projects: {
+    getIndex,
+    create,
+    importExternal,
+    rename,
+    move,
+    moveToTrash,
+    restore,
+    deletePermanently,
+    recover,
+    locate,
+    removeFromHome,
+    rebuildPreview,
+    applyPresetDraft,
+  },
   models: {
     importFromCivitaiUrl,
-    checkUpdates,
     getInstalled,
     deleteLocalModel,
   },
@@ -195,7 +219,6 @@ window.api = {
     update,
     delete,
     getList,
-    apply,
   },
   history: {
     getRecent,
@@ -212,6 +235,7 @@ window.api = {
   files: {
     revealInFolder,
     chooseDirectory,
+    chooseProjectFile,
   },
 }
 ```
@@ -269,11 +293,23 @@ Commands вызываются через `invoke/handle`:
 
 ```text
 models:importFromCivitaiUrl
+workspaces:create
+workspaces:removeRegistration
+projects:create
+projects:importExternal
+projects:moveToTrash
+projects:restore
+projects:deletePermanently
+projects:locate
+projects:removeFromHome
+projects:rebuildPreview
+projects:applyPresetDraft
 generation:enqueue
 generation:cancel
 history:getRecent
 presets:create
-presets:apply
+presets:update
+presets:delete
 canvas:createSmartPatchLayer
 canvas:regenerateSmartPatchLayer
 canvas:duplicateLayer
@@ -458,7 +494,7 @@ Main process получает metadata модели/версии
 ↓
 Пользователь подтверждает скачивание
 ↓
-Download manager скачивает файл во временный путь
+Model install service скачивает файл во временный путь
 ↓
 Приложение проверяет размер/hash файла
 ↓
@@ -779,6 +815,8 @@ Preset — это редактируемый пользовательский ш
 
 Создание всегда проходит через create mode Preset Manager. Новая структура существует как transient draft без `id` и записи в SQLite, пока пользователь не нажмёт `Create Preset`. Draft из текущего проекта или snapshot полностью редактируем: пользователь может изменить не только состав секций, но и сами значения. Ручной `New Preset` начинает с минимального Text to Image draft, содержащего только пустую секцию Prompt.
 
+Project-derived draft копирует reusable generation sections, но исключает Seed по умолчанию и объясняет это в source banner/Seed section. `Cancel` закрывает manager и возвращает к project context; manual create `Cancel` возвращает ранее выбранный preset.
+
 ### 12.3. Редактирование пресета
 
 Пользователь может редактировать:
@@ -786,15 +824,20 @@ Preset — это редактируемый пользовательский ш
 - название;
 - описание;
 - теги;
+- favorite;
+- workflow;
 - prompt;
 - negative prompt;
 - модель;
 - LoRA stack;
 - веса LoRA;
-- resolution;
-- sampler/steps/CFG;
+- embeddings;
+- size;
+- sampler и scheduler;
+- steps и CFG;
+- denoising strength для Image to Image / Smart Patch;
 - seed policy;
-- другие параметры генерации.
+- VAE.
 
 ### 12.4. Типы секций пресета
 
@@ -805,14 +848,18 @@ Prompt
 Negative prompt
 Model
 LoRA stack
-Resolution
-Sampler / steps / CFG
+Embeddings
+Size
+Sampler & Scheduler
+Steps & CFG
+Denoising Strength (Image to Image / Smart Patch)
 Seed
 VAE
-Other generation params
 ```
 
-В UI `VAE` и VAE precision не становятся отдельной нижней панелью. Они находятся внутри `Generation -> Advanced Options` вместе с другими model-aware advanced generation params, например CFG rescale.
+Наличие секции в сохранённом пресете определяется наличием соответствующего поля в `PresetPayload`; отдельный persisted `includedSections` не хранится. В текущем редакторе `VAE` является явной секцией. Общего `Advanced`/`engineSpecific` bag в пресете нет: новый параметр добавляется отдельным типизированным полем и секцией только после явного продуктового решения.
+
+При переключении workflow на `Text to Image` поле `denoisingStrength` удаляется. Обратное переключение не включает его автоматически: пользователь должен явно включить секцию.
 
 ### 12.5. Full apply
 
@@ -833,15 +880,16 @@ Partial apply позволяет пользователю выбрать, как
 [ ] Negative prompt
 [x] LoRA stack
 [ ] Model
-[x] Resolution
-[ ] Sampler / steps / CFG
+[x] Size
+[ ] Sampler & Scheduler
+[ ] Steps & CFG
 ```
 
 Валидация применяется только к выбранным секциям.
 
 Если пользователь применяет только prompt, отсутствие модели/LoRA из пресета не должно блокировать применение.
 
-Перед применением создаётся отдельный application draft. Пользователь может раскрыть секцию, изменить копируемые значения и сравнить `Current` с `Apply`. Эти изменения никогда не обновляют исходный preset; `Apply` копирует в проект только выбранные секции. Selection mask существует только во время операции применения и не сохраняется в `PresetPayload`. UI постоянно называет редактируемые значения временной копией, поддерживает `Expand all` / `Collapse all` и отделяет действие `Edit original`, которое открывает исходный preset в Preset Manager после подтверждения потери изменённого application draft.
+Перед применением создаётся отдельный application draft. Пользователь может раскрыть секцию, изменить копируемые значения и сравнить `Current` с `Apply`. Эти изменения никогда не обновляют исходный preset; `Apply` копирует в проект только выбранные секции. Selection mask существует только во время операции применения и не сохраняется в `PresetPayload`. По умолчанию выбираются все секции исходного preset, кроме `Size` и `Seed`; все accordion-секции изначально свёрнуты. UI постоянно называет редактируемые значения временной копией, поддерживает `Expand all` / `Collapse all` и отделяет действие `Edit original`, которое открывает исходный preset в Preset Manager после подтверждения потери изменённого application draft.
 
 ### 12.7. Apply из старой генерации
 
@@ -1463,17 +1511,22 @@ Canvas-проект в MVP хранится как переносимый `.igs`
 
 `Uncategorized` является реальной app-managed папкой `ImageGen Studio/workspaces/Uncategorized/`. Новый проект без другого явно выбранного workspace создаётся в ней. Внешний `.igs` должен быть перемещён или скопирован в известный workspace до индексирования и открытия; виртуальные external-path entries не используются.
 
+Import Project destination flow по умолчанию предлагает `Move`, позволяет явно выбрать `Copy` и использует ту же destination policy, что New Project: current concrete writable workspace или `Uncategorized`.
+
 Home по умолчанию открывает `Projects`, а выбор workspace становится отдельным browse selection. `Move to Trash` помечает managed project как trashed и сохраняет возможность восстановления; окончательное удаление файла выполняется только отдельным `Delete Permanently` confirmation из Trash view.
+
+Home `New Project` использует текущий concrete writable workspace, а из `Projects`, `Trash` или unavailable workspace — `Uncategorized`; остальные defaults — `No preset` и canvas 1024 × 1024. Если выбран Text to Image preset, диалог клонирует его в detached editable initialization payload через общий `PresetPayloadEditor`: Size обязателен, Seed исключён по умолчанию, missing resources предупреждают, но не блокируют создание.
 
 SQLite может хранить только восстанавливаемый project index:
 
 - путь к `.igs`;
 - workspace id/path;
 - display name;
-- project thumbnail cache key/path;
+- project thumbnail cache key/path and derived preview state;
 - last opened time;
 - modified time;
 - normalized display name для поиска по имени;
+- optional `trashed_at` для app-managed Trash;
 - file health `ready`/`missing`/`corrupt`/`unsupported_schema`.
 
 Project index можно пересобрать сканированием workspace-папок.
@@ -1504,7 +1557,7 @@ project.igs
 
 `preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они являются source of truth для project preview.
 
-`ImageGen Studio/previews/project-thumbnails/` может хранить только derived cache для быстрого отображения `Workspaces`. Этот кэш можно удалить и пересобрать из `.igs`.
+`ImageGen Studio/previews/project-thumbnails/` может хранить только derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`.
 
 `project.json` хранит:
 
@@ -1727,21 +1780,19 @@ Preset Manager показывает transient Draft без записи в БД
 ### 17.4. Применение пресета частично
 
 ```text
-Пользователь открывает Preset Catalog
+Пользователь выбирает пресет в компактном Project / Generate selector
 ↓
-Выбирает пресет
+Открывается Apply Preset с временной копией значений
 ↓
-Нажимает Apply
-↓
-Редактирует application draft и выбирает секции для применения
+Пользователь редактирует application draft и выбирает секции для применения
 ↓
 Приложение валидирует только выбранные секции
 ↓
-Если ресурсов нет — показывает ошибку
+Если выбранный resource отсутствует — показывает warning и блокирует Apply
 ↓
 Если есть base family mismatch — показывает warning
 ↓
-Пользователь подтверждает
+Пользователь нажимает Apply
 ↓
 Выбранные значения применяются к текущей форме генерации, исходный preset не изменяется
 ```
@@ -2072,9 +2123,12 @@ MVP можно считать готовым, если пользователь 
 12. Отредактировать пресет.
 13. Применить пресет полностью.
 14. Применить пресет частично.
-15. Получить ошибку, если выбранный для применения ресурс отсутствует.
+15. Получить понятный warning и заблокированный Apply, если выбранный для применения resource отсутствует.
 16. Получить warning, если base model family потенциально несовместима.
 17. Увидеть fallback, если файл изображения отсутствует.
+18. Организовывать `.igs` через Home: `Projects`, workspace'ы, app-managed `Trash`, поиск, Status filter и preview.
+19. Создать новый проект с `No preset` или detached Text to Image preset payload и импортировать внешний `.igs` через явный Move/Copy в managed workspace.
+20. Открывать несколько разных `.igs` в document tabs без создания дубликата одного и того же project file.
 
 ---
 

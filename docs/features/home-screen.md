@@ -8,15 +8,16 @@ It lets the user:
 
 - see all workspaces;
 - browse all indexed projects across workspaces;
-- sort indexed projects by last opened time;
+- sort indexed projects by last opened time, name or modified time;
 - browse `.igs` projects inside a selected workspace;
 - create a new project;
-- open an existing `.igs`;
+- import an existing `.igs` into a managed workspace and open it;
 - preview a project before opening it;
 - move projects between workspaces;
 - diagnose missing/corrupt projects;
 - open Model Manager;
-- see compact generation/download activity when something is happening.
+- open Preset Manager;
+- see compact generation/download activity indicators in the app chrome.
 
 `Home` is not a marketing page, not an Invoke-like launchpad and not a reduced canvas. It is a document-management surface for a desktop creative tool.
 
@@ -28,6 +29,8 @@ Primary UX references:
 - desktop file managers for workspace/project browsing;
 - browser tabs for open-project behavior;
 - ImageGen Studio navigation decisions in `docs/specs/04-ui-ux-navigation.md`.
+
+Current visual and interaction source of truth: the Vue/Naive Home at `/` / `?prototype=home` and `docs/prototype-app/tests/home.spec.ts`. `docs/prototypes/home-screen.html` is a static historical reference and must not override the Vue behavior.
 
 Reject as primary reference:
 
@@ -72,7 +75,7 @@ Home tab
 │  ├─ Manage Models
 │  └─ Manage Presets
 ├─ Project Browser
-│  ├─ selected workspace title
+│  ├─ active browse-view title and project count
 │  ├─ refresh / workspace options
 │  ├─ search
 │  ├─ sort/view controls
@@ -134,7 +137,7 @@ The horizontal app logo lives in the menu row. The menu row should be tall enoug
 Document tab markers use the source workspace color:
 
 - each workspace has a user-editable color;
-- new workspaces get a generated default color;
+- Add Workspace offers a small named color palette and defaults the prototype draft to teal;
 - project tabs from the same workspace use the same marker color;
 - `Home` uses a home icon instead of a workspace color marker.
 
@@ -165,6 +168,8 @@ Workspace actions:
 
 Home does not delete workspace folders or their project files in MVP. `Remove Workspace` only forgets the workspace registration after confirmation. `Uncategorized` cannot be removed.
 
+`Uncategorized` also cannot be renamed, but its color can be changed and it can still be revealed/rescanned. Removing another workspace is blocked while any project from it has an open document tab; after successful removal Home switches to `Uncategorized` and removes that workspace's cached project rows from the Home index only.
+
 ## Cross-Workspace View
 
 The sidebar exposes one cross-workspace browse view above the concrete workspace list:
@@ -175,13 +180,13 @@ The sidebar exposes one cross-workspace browse view above the concrete workspace
 
 ## Project Browser
 
-The project browser shows projects from the selected workspace.
+The project browser shows the active browse selection: all active projects in `Projects`, one concrete workspace, or app-managed `Trash`.
 
 Project card/list item should show:
 
 - thumbnail from `.igs` `preview/thumbnail.webp` or derived cache;
 - project display name;
-- workspace name if shown in the `Projects` view;
+- workspace name on cross-workspace grid cards; compact list rows always include workspace and filename for orientation;
 - last opened / modified time;
 - applicable independent conditions such as `Open`;
 - a subtle `Recovery available` marker only when a validated recovery candidate exists;
@@ -194,15 +199,23 @@ Controls:
 - grid/list view toggle;
 - filter by `Open`, `Recovery available` or `Needs attention`.
 
+The filter control is labeled `Status` in the prototype, even though the underlying conditions remain independent rather than one mutually exclusive project-state enum. `All statuses` is its default value.
+
+`Reset filters` clears Name search and Status only. It preserves the chosen sort and grid/list view mode. Changing between `Projects`, `Trash` and a workspace clears project selection but keeps those browser controls for the Home session.
+
 `Last opened` is the default sort and uses `lastOpenedAt`. `Modified` uses the last modification time of the `.igs` file. Search does not promise prompt, model or generation-setting indexing in MVP.
 
 Project conditions are not a single mutually exclusive status enum. File health, runtime flags and workspace availability are independent and may be shown together. `Needs attention` matches missing, corrupt or unsupported projects and projects inside an unavailable workspace.
+
+A missing thumbnail alone does not match `Needs attention`: it is a rebuildable preview-cache state and the project remains openable. `Recovery available` also has its own dedicated Status filter rather than being folded into attention.
+
+Grid cards stack at most two opaque condition tags vertically over the preview; list rows show a compact single tag, while the Inspector can show the complete set. The tags use opaque Naive surfaces so warning text remains legible over arbitrary thumbnails.
 
 The browser should be dense enough for repeated daily use. Avoid marketing-style hero cards or large decorative sections.
 
 On desktop, the Workspace sidebar and Preview / Inspector are mouse-resizable with bounded widths. Resizing redistributes space to the Project Browser without changing browse selection or project state. The Inspector keeps its separate collapse action; while collapsed, its resize handle is unavailable.
 
-Workspace scanning should not be a prominent daily workflow. Home may expose a small refresh icon for the selected workspace and keep heavier scan/relink actions in a workspace overflow menu.
+Workspace scanning should not be a prominent daily workflow. The selected-workspace browser header exposes a compact refresh action and a workspace-options action that opens Workspace Settings. The full `Workspace Settings`, `Show in Folder`, `Rescan` and `Remove Workspace` menu remains attached to the corresponding sidebar row.
 
 ## Preview / Inspector
 
@@ -229,9 +242,9 @@ Preview actions:
 
 If the selected project is already open, the primary action is labeled `Switch to Project` and focuses its existing tab instead of implying that another copy will be opened.
 
-Less common actions such as rename, delete and relink may live in the preview overflow/context menu instead of being permanent visible buttons.
+Less common actions live in the card/row context menu. In the current prototype it contains `Open`, `Open in New Tab`, `Rename`, `Move to Workspace`, `Show in Folder` and `Move to Trash`. Trash items instead expose `Restore` and `Delete Permanently`.
 
-Crash recovery is intentionally not a permanent preview-panel action. Recovery belongs in `File -> Recover Autosaves...`, the startup flow or a project-opening decision dialog. Home cards may show a subtle `Recovery available` marker for a validated unfinished recovery candidate, but normal autosave activity is not shown on Home.
+Crash recovery is intentionally not a permanent preview-panel action. The current prototype resolves it through the project-opening decision dialog. Home cards may show a subtle `Recovery available` marker for a validated unfinished recovery candidate, but normal autosave activity is not shown on Home.
 
 ## Project Opening Behavior
 
@@ -270,6 +283,8 @@ Expected empty states:
 - no model installed;
 - CivitAI token missing.
 
+The `first-run` Vue scenario models only Home-owned state: one `Uncategorized` workspace, no projects and no installed generation model. CivitAI token setup remains Model Manager-owned and is not varied by the Home scenario query.
+
 The first-run Home should make the next useful actions obvious:
 
 - create project;
@@ -283,7 +298,7 @@ flowchart TD
   A["App starts"] --> B["Open Home tab"]
   B --> C{"Any indexed projects?"}
   C -- "No" --> D["Show empty workspace state"]
-  C -- "Yes" --> E["Show selected workspace projects"]
+  C -- "Yes" --> E["Show Projects cross-workspace view"]
   D --> F["New Project"]
   D --> G["Import Project"]
   D --> H["Manage Models"]
@@ -306,7 +321,9 @@ Creating a project from Home:
 
 New project creation should not create an untitled invisible project outside a workspace. Every project file lives in a workspace folder from the start, and a project created without another explicit destination is physically created in `Uncategorized`.
 
-The Vue prototype defaults to `No preset` and a 1024 × 1024 canvas. The optional Generation preset selector shows Text to Image presets only. Selecting a preset creates an editable temporary payload through the shared `PresetPayloadEditor`; sections can be included, edited and reset without changing the saved preset. Seed is excluded by default, Size remains the required canvas source, and missing resources warn without blocking project creation.
+The Vue prototype defaults to `No preset` and a 1024 × 1024 canvas. The optional Generation preset selector shows Text to Image presets only. Selecting a preset creates an editable temporary payload through the shared `PresetPayloadEditor`; sections can be included, edited and reset without changing the saved preset. Seed is excluded by default, Size remains the required non-toggleable canvas source, all sections start collapsed, and missing resources warn without blocking project creation. `Expand all` / `Collapse all`, per-section reset and `Reset all` reuse the same payload-editor behavior as Apply.
+
+Project-name validation is initially quiet. It becomes visible after the name field is edited or after a create attempt; opening the dialog with an untouched empty field does not immediately show an error.
 
 ```mermaid
 sequenceDiagram
@@ -342,6 +359,8 @@ Opening an existing `.igs` from file picker:
 
 The app does not create an implicit workspace from the external file's parent and does not keep a virtual external-path entry in `Uncategorized`. Cancelling the destination step leaves the external file unchanged and does not index or open it.
 
+The destination dialog defaults to `Move` and to the current concrete writable workspace; from `Projects`, `Trash` or an unavailable workspace it defaults to `Uncategorized`. The user can explicitly switch to `Copy` before confirming.
+
 ```mermaid
 flowchart TD
   A["Import Project"] --> B["OS file picker"]
@@ -362,7 +381,7 @@ flowchart TD
 
 ## App-Managed Trash
 
-`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Projects and workspace results, and appear in the dedicated Trash view.
+`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Projects and workspace results, and appear in the dedicated Trash view. Any currently open project is blocked from moving to Trash and offers `Switch to Project` instead.
 
 Trash actions are:
 
@@ -409,12 +428,16 @@ flowchart TD
   G --> H["Show workspace projects"]
 ```
 
+The prototype simulates the folder picker with editable `Workspace name` and `Folder` fields prefilled as `Environment studies`, plus a five-color select. `Add Workspace` validates duplicate name/path, selects the new workspace and clears project selection.
+
 Move project to workspace:
 
 - move the `.igs` file atomically if source and target filesystem allow it;
 - update SQLite project index after successful move;
 - keep open `Project` tab identity in sync with the new canonical path;
 - if project is open and dirty, require save or close before move unless implementation can safely coordinate autosave state.
+
+In the prototype, a dirty open project is blocked with `Switch to Project`; a clean open project can be moved and its document-tab workspace marker is updated. Rename changes both display name and `.igs` filename and updates an existing tab title. When a move removes the project from the current concrete-workspace result set, Home clears the selection instead of choosing another card.
 
 ## Status And Recovery States
 
@@ -426,17 +449,21 @@ Project conditions are represented by independent dimensions:
 - runtime flags: `open`, `recovery_available`, `thumbnail_missing`;
 - workspace availability: `available`, `missing` or `inaccessible`.
 
+`open` is derived from the runtime document-tab registry and is not persisted on the Home project record. Likewise, workspace availability is resolved from the workspace catalog rather than copied into every project.
+
 This allows conditions such as an open project with a missing thumbnail without forcing the UI to choose one synthetic status.
 
-State behavior:
+State behavior in the current prototype:
 
 - `open`: card shows open marker; opening focuses existing tab.
 - `missing`: card remains visible from SQLite index and offers locate/relink/remove-from-index.
-- `corrupt`: card offers show error details and reveal in file manager.
-- `unsupported_schema`: card explains that project was created by a newer app version.
+- `corrupt`: Inspector explains that opening is disabled and offers `Show in Folder`; technical error details are available only in the combined unavailable-workspace diagnostic path.
+- `unsupported_schema`: Inspector explains that project was created by a newer app version and offers `Show in Folder`.
 - `thumbnail_missing`: show fallback and rebuild cache if possible.
-- `recovery_available`: show a subtle `Recovery available` marker and route recovery through `File -> Recover Autosaves...` or the project-opening flow.
+- `recovery_available`: show a subtle `Recovery available` marker and route recovery through the project-opening decision dialog.
 - unavailable workspace: show a workspace-level warning and locate/remove options.
+
+Visible card/Inspector labels use human-facing copies: `Open`, `Recovery available`, `File missing`, `Corrupt project`, `Newer app required`, `Preview unavailable`, `Workspace unavailable` and `In Trash`. Internal enum tokens above are not shown directly.
 
 ### Autosave And Recovery Lifecycle
 
@@ -457,7 +484,7 @@ Recovering never overwrites the main `.igs` automatically. The user reviews the 
 Model Manager:
 
 - `Manage Models` opens Model Manager.
-- If no model is installed, Home may show a subtle, user-facing warning and an action to open Model Manager.
+- If no model is installed, Home shows `No generation model installed. You can still create, open, and organize projects.` with a `Manage Models` action.
 - Home must not duplicate Model Manager's resource list.
 
 Queue / Downloads:
@@ -471,7 +498,7 @@ Queue / Downloads:
 Autosave / Recovery:
 
 - Home marks only validated unfinished recovery candidates, not normal background autosave activity.
-- Recovery belongs to `File -> Recover Autosaves...`, startup/opening flow or a dedicated recovery modal.
+- The interactive prototype resolves recovery from the project-opening modal. A future global recovery entry point may reuse the same decision flow but is not demonstrated here.
 - The recovered document opens as a normal `Project` tab.
 
 Project Index:
@@ -482,11 +509,13 @@ Project Index:
 
 ## Prototype Coverage And Accessibility
 
-The standalone HTML prototype remains a static visual reference. Interactive selection, filtering, sorting, Inspector collapse, dialogs and recovery behavior are implemented and validated in the Vue/Naive prototype rather than simulated with ad-hoc HTML scripts.
+The standalone HTML prototype remains a static visual reference. The Vue/Naive implementation and its Playwright tests are the source of truth for Home layout, labels and interactions: document tabs, selection, filtering, sorting, Inspector collapse/resize, dialogs, app-managed Trash and recovery behavior.
 
 The prototype app opens Home at its root URL and also accepts `?prototype=home`. Initial states can be selected with `scenario=default`, `first-run`, `no-model` or `problems`.
 
-The interactive prototype should cover these switchable scenarios:
+There is no scenario selector in the user-facing Home UI; scenarios are query/test fixtures only.
+
+The interactive prototype covers these switchable and interaction-reachable scenarios:
 
 - populated workspace;
 - first run with no projects;
@@ -497,18 +526,29 @@ The interactive prototype should cover these switchable scenarios:
 - project already open;
 - recovery available;
 - missing, corrupt and unsupported project;
-- missing or inaccessible workspace;
+- missing workspace as the explicit unavailable-workspace example;
 - missing thumbnail.
+
+The query scenarios are intentionally coarse: `default` contains the regular catalog plus recovery, missing-file, missing-workspace and missing-thumbnail examples; `first-run` contains only `Uncategorized`, no projects and no installed model; `no-model` keeps the regular catalog and adds the model warning; `problems` adds corrupt and unsupported-schema projects. Empty-workspace and no-results states are reached through normal UI interactions rather than separate scenario ids.
+
+For tab-semantics demonstration, the prototype initially keeps `Home`, `Sample Project B.igs` and `Sample Project A.igs` in the document strip. Those two mock Project tabs do not imply that production always starts with projects open. If every document tab is closed, the stage shows `No document open` with `Open Home`; the Home action restores Home at the beginning of the strip and preserves its mounted session state.
+
+Prototype operations are in-memory simulations. `Import Project` starts from the fixed external `Field Notes.igs` example instead of an OS picker; add/rescan/locate/reveal/move/copy/Trash actions update mock state or show messages; creating/opening a project renders the shared Project context mock rather than a real `.igs` document. No filesystem, SQLite or Electron command is implied by the prototype implementation itself.
+
+In App Chrome, the Home logo button and document tabs are interactive. File/Edit/Project/Models/Window/Help, queue/download/settings icons and drawn window controls are presentational placeholders in the Vue prototype; their production ownership is specified below but not wired in this playground.
+
+The queue/download badges use fixed mock counts (`2` and `1`) to reserve chrome geometry; they are not live queue state.
 
 Accessibility requirements:
 
 - workspace and browse-view rows use keyboard-focusable selection semantics;
 - project cards support single-click selection, `Enter` opening, modifier-assisted opening and an accessible context menu;
+- each card/list row uses a semantic article shell with one full-surface Naive selection button and a separate non-nested actions button;
 - document tabs expose tablist/tab semantics and separate accessible close buttons;
 - search, sort, filter and view controls have visible labels or accessible names;
 - selected, pressed, expanded, disabled and recovery states are exposed semantically rather than by color alone;
 - all interactive elements have visible `focus-visible` treatment;
-- focus moves predictably when dialogs open or close and when the selected project disappears after filtering or removal.
+- Naive modals provide named dialogs and return focus to their trigger in ordinary dialog flows; when filtering, moving or removing hides the selected project, the prototype clears selection rather than silently selecting another project. Explicit nearest-card focus transfer after deletion is not modeled yet.
 
 The Vue prototype is checked at 1920×1080, 1440×900 and 1280×800 without horizontal overflow. Bounded mouse resizing and the collapsible Inspector keep the project browser useful at the narrower supported desktop size.
 
@@ -529,6 +569,8 @@ MVP does not include:
 
 - User can open and close `Home` as a normal document tab.
 - Home action focuses an existing `Home` tab or reopens it if closed.
+- Closing every document shows a neutral empty-document state with `Open Home`.
+- Closing/reopening Home within the prototype session preserves browse selection, search, Status, sort, view mode, selected project when still visible, and Inspector collapse/size state.
 - Home shows `Projects` by default with no project selected.
 - `Uncategorized` is a real app-managed workspace folder and is the default destination when no other workspace is selected.
 - Home provides `Projects` as the cross-workspace view, sorted by last opened by default.
@@ -544,13 +586,15 @@ MVP does not include:
 - Project filtering supports `Open`, `Recovery available` and `Needs attention` without treating independent conditions as one enum.
 - Project cards show thumbnail, name, basic metadata and applicable independent conditions.
 - Home preview supports zoom and pan without showing inactive generation/canvas controls, and its Inspector can be collapsed.
+- Workspace sidebar and Inspector widths are mouse-resizable within bounded ranges; the Inspector resize handle is unavailable while collapsed.
 - An already-open selected project uses `Switch to Project` and focuses its existing tab.
 - User can create and rename workspaces; refresh/reveal-style maintenance actions are available via icon or overflow menu.
 - User can remove a non-default workspace registration without deleting its folder or project files; `Uncategorized` cannot be removed.
 - Workspace scan ignores nested folders and non-`.igs` files.
-- Missing/corrupt/incompatible projects produce visible recoverable states.
+- Missing/corrupt/incompatible projects produce visible, non-opening diagnostic states with the actions demonstrated above.
 - Normal autosave activity is invisible on Home; validated unfinished recovery state is shown as `Recovery available` and resolved through a dedicated recovery flow.
-- The interactive Vue/Naive prototype covers populated, empty, recovery and file/workspace error states with keyboard-accessible controls and predictable focus behavior.
+- The interactive Vue/Naive prototype covers populated, empty, recovery and file/workspace error states with keyboard-accessible primary controls. Selection is cleared when its project leaves the result set; post-removal nearest-card focus remains future polish.
 - `Manage Models` opens Model Manager from Home.
 - `Manage Presets` opens Preset Manager from Home.
+- Both managers open as native Naive modal overlays, make Home inert underneath, close through their explicit close action or `Esc`, and preserve the mounted Home state after closing.
 - Home does not include Invoke-like `Launchpad`, `Viewer` or permanent Boards sidebar.
