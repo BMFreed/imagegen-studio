@@ -38,15 +38,15 @@ const sortOptions = [
 <template>
   <section class="resource-list-panel">
     <header class="list-toolbar">
-      <label class="toolbar-field">
+      <label class="toolbar-field toolbar-field--name">
         <NText class="toolbar-label" depth="3">Name</NText>
         <NInput v-model:value="searchValue" clearable placeholder="Search models" />
       </label>
-      <label class="toolbar-field">
+      <label class="toolbar-field toolbar-field--base-model">
         <NText class="toolbar-label" depth="3">Base model</NText>
         <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
       </label>
-      <label class="toolbar-field">
+      <label class="toolbar-field toolbar-field--sort">
         <NText class="toolbar-label" depth="3">Sort by</NText>
         <NSelect v-model:value="sortValue" :consistentMenuWidth="false" :options="sortOptions" />
       </label>
@@ -116,7 +116,10 @@ const sortOptions = [
 
 .list-toolbar {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) 145px 150px auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  grid-template-areas:
+    'name name reset'
+    'base-model sort .';
   gap: 8px;
   padding: 8px 14px 10px;
   border-bottom: 1px solid var(--app-border);
@@ -124,6 +127,7 @@ const sortOptions = [
 }
 
 .reset-filters {
+  grid-area: reset;
   align-self: end;
 }
 
@@ -131,6 +135,18 @@ const sortOptions = [
   display: grid;
   gap: 5px;
   min-width: 0;
+}
+
+.toolbar-field--name {
+  grid-area: name;
+}
+
+.toolbar-field--base-model {
+  grid-area: base-model;
+}
+
+.toolbar-field--sort {
+  grid-area: sort;
 }
 
 .toolbar-label {

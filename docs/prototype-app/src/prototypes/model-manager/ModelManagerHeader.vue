@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
+import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
+import { NButton, NIcon, NTooltip } from 'naive-ui';
 
 import CivitaiTokenPopover from './CivitaiTokenPopover.vue';
 
@@ -11,9 +11,18 @@ defineEmits<{
 
 <template>
   <header class="manager-header">
-    <div class="title-block">
+    <div class="title-line">
       <h1>Model Manager</h1>
-      <p>Install, inspect and repair the models used by your projects.</p>
+      <NTooltip trigger="hover">
+        <template v-slot:trigger>
+          <NButton aria-label="About Model Manager" circle quaternary size="tiny">
+            <template v-slot:icon>
+              <NIcon :component="InfoIcon" />
+            </template>
+          </NButton>
+        </template>
+        Install, inspect and repair the models used by your projects.
+      </NTooltip>
     </div>
     <div class="header-actions">
       <CivitaiTokenPopover />
@@ -41,25 +50,24 @@ defineEmits<{
 <style scoped>
 .manager-header {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 22px 24px 18px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--app-border);
 }
 
-.title-block {
+.title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 
 h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 20px;
   font-weight: 700;
-}
-
-p {
-  margin: 0;
 }
 
 .header-actions {

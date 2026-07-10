@@ -98,7 +98,7 @@ function resetFilters() {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(1440px, 100%);
-  height: min(870px, 100%);
+  height: min(890px, 100%);
   min-height: 620px;
   overflow: hidden;
   border: 1px solid var(--app-border);

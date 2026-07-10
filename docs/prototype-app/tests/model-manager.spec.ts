@@ -50,6 +50,16 @@ test.describe('Model Manager prototype', () => {
     await expect(page.getByText('Remove token')).toBeVisible();
   });
 
+  test('shows the Model Manager description', async ({ page }) => {
+    await page.setViewportSize({ height: 1080, width: 1920 });
+    await openModelManager(page);
+
+    await page.getByRole('button', { name: 'About Model Manager' }).hover();
+    await expect(
+      page.getByText('Install, inspect and repair the models used by your projects.'),
+    ).toBeVisible();
+  });
+
   test('resets visual filter state', async ({ page }) => {
     await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);
