@@ -22,7 +22,7 @@ defineProps<{
   <aside class="details-panel">
     <NScrollbar>
       <div class="details-scroll">
-        <NCard :bordered="true" class="details-card preview-card" size="small">
+        <NCard :bordered="true" class="preview-card" size="small">
           <template v-slot:cover>
             <ResourceThumbnail class="large-preview" :tone="resource.thumbnailTone" />
           </template>
@@ -48,7 +48,7 @@ defineProps<{
           </template>
         </NCard>
 
-        <NCard :bordered="true" class="details-card" size="small">
+        <NCard :bordered="true" size="small">
           <template v-slot:header>
             <h3>Installed Versions</h3>
           </template>
@@ -92,12 +92,7 @@ defineProps<{
           </div>
         </NCard>
 
-        <NCard
-          v-if="resource.triggerWords?.length"
-          :bordered="true"
-          class="details-card"
-          size="small"
-        >
+        <NCard v-if="resource.triggerWords?.length" :bordered="true" size="small">
           <template v-slot:header>
             <h3>Trigger Words</h3>
           </template>
@@ -112,7 +107,7 @@ defineProps<{
           </div>
         </NCard>
 
-        <NCard :bordered="true" class="details-card" size="small">
+        <NCard :bordered="true" size="small">
           <template v-slot:header>
             <h3>Metadata</h3>
           </template>
@@ -121,7 +116,7 @@ defineProps<{
               <dt>Version</dt>
               <dd v-overflow-title>{{ resource.versionLabel }}</dd>
             </div>
-            <div class="metadata-item metadata-item--wide">
+            <div>
               <dt>File</dt>
               <dd v-overflow-title>{{ resource.name.replaceAll(' ', '_') }}.safetensors</dd>
             </div>
@@ -169,11 +164,6 @@ defineProps<{
   display: grid;
   gap: 12px;
   padding: 14px;
-}
-
-.preview-card :deep(.n-card__content) {
-  display: grid;
-  gap: 12px;
 }
 
 .large-preview {
@@ -240,10 +230,6 @@ h3 {
 
 .metadata-grid div {
   min-width: 0;
-}
-
-.metadata-item--wide {
-  grid-column: 1 / -1;
 }
 
 dt {

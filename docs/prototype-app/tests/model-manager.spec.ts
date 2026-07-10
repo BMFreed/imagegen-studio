@@ -8,6 +8,7 @@ const screenshotsDir = path.resolve(__dirname, '..', 'screenshots');
 const viewports = [
   { height: 1080, name: 'desktop-1920', width: 1920 },
   { height: 900, name: 'laptop-1440', width: 1440 },
+  { height: 800, name: 'compact-1280', width: 1280 },
 ];
 
 test.beforeAll(async () => {
@@ -26,6 +27,11 @@ test.describe('Model Manager prototype', () => {
     test(`captures ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ height: viewport.height, width: viewport.width });
       await openModelManager(page);
+
+      const hasHorizontalOverflow = await page
+        .locator('.manager-body')
+        .evaluate((element) => element.scrollWidth > element.clientWidth);
+      expect(hasHorizontalOverflow).toBe(false);
 
       await page.screenshot({
         fullPage: false,

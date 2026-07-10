@@ -9,13 +9,14 @@ const toneClass = computed(() => `resource-thumbnail--${props.tone}`);
 </script>
 
 <template>
-  <div aria-hidden="true" class="resource-thumbnail" :class="toneClass">
-    <span class="thumbnail-shine" />
-  </div>
+  <div aria-hidden="true" class="resource-thumbnail" :class="toneClass" />
 </template>
 
 <style scoped>
 .resource-thumbnail {
+  --thumbnail-end: transparent;
+  --thumbnail-start: transparent;
+
   position: relative;
   flex: 0 0 auto;
   width: 44px;
@@ -24,37 +25,34 @@ const toneClass = computed(() => `resource-thumbnail--${props.tone}`);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background:
-    linear-gradient(135deg, transparent 48%, #ffffff22 49%, #ffffff22 51%, transparent 52%),
-    linear-gradient(135deg, #123 0%, #345 100%);
+    linear-gradient(135deg, transparent 48%, #ffffff1f 49%, #ffffff1f 51%, transparent 52%),
+    linear-gradient(135deg, var(--thumbnail-start) 0%, var(--thumbnail-end) 100%);
 }
 
 .resource-thumbnail--green {
-  background:
-    linear-gradient(135deg, transparent 48%, #ffffff1f 49%, #ffffff1f 51%, transparent 52%),
-    linear-gradient(135deg, #17351e 0%, #26924a 100%);
+  --thumbnail-end: #26924a;
+  --thumbnail-start: #17351e;
 }
 
 .resource-thumbnail--blue {
-  background:
-    linear-gradient(135deg, transparent 48%, #ffffff1f 49%, #ffffff1f 51%, transparent 52%),
-    linear-gradient(135deg, #18304b 0%, #5c99bd 100%);
+  --thumbnail-end: #5c99bd;
+  --thumbnail-start: #18304b;
 }
 
 .resource-thumbnail--violet {
-  background:
-    linear-gradient(135deg, transparent 48%, #ffffff1f 49%, #ffffff1f 51%, transparent 52%),
-    linear-gradient(135deg, #2d2244 0%, #8e68c5 100%);
+  --thumbnail-end: #8e68c5;
+  --thumbnail-start: #2d2244;
 }
 
 .resource-thumbnail--warning {
-  background:
-    linear-gradient(135deg, transparent 48%, #ffffff1f 49%, #ffffff1f 51%, transparent 52%),
-    linear-gradient(135deg, #3a2d18 0%, #c79d55 100%);
+  --thumbnail-end: #c79d55;
+  --thumbnail-start: #3a2d18;
 }
 
-.thumbnail-shine {
+.resource-thumbnail::after {
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, #ffffff26 0%, transparent 42%);
+  content: '';
 }
 </style>

@@ -5,14 +5,16 @@ import {
   Refresh as RefreshIcon,
   Trash as TrashIcon,
 } from '@vicons/tabler';
-import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
+import { NBadge, NButton, NDivider, NIcon, NPopover, useThemeVars } from 'naive-ui';
+
+const themeVars = useThemeVars();
 </script>
 
 <template>
-  <NPopover class="token-popover" placement="bottom-end" trigger="click" :width="270">
+  <NPopover placement="bottom-end" trigger="click" :width="270">
     <template v-slot:trigger>
       <NButton class="token-trigger" secondary size="medium">
-        <span class="status-dot" />
+        <NBadge :color="themeVars.primaryColor" dot><span class="status-anchor" /></NBadge>
         <span class="token-label">CivitAI connected</span>
         <NIcon :component="ChevronDownIcon" />
       </NButton>
@@ -47,12 +49,9 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
 <style scoped>
 .token-trigger {
   min-width: 192px;
-  justify-content: center;
 }
 
 .token-trigger :deep(.n-button__content) {
-  display: flex;
-  align-items: center;
   gap: 11px;
   width: 100%;
 }
@@ -61,12 +60,10 @@ import { NButton, NDivider, NIcon, NPopover } from 'naive-ui';
   white-space: nowrap;
 }
 
-.status-dot {
+.status-anchor {
+  display: block;
   width: 8px;
   height: 8px;
-  border-radius: 999px;
-  background: var(--workspace-green);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--workspace-green) 60%, transparent);
 }
 
 .token-menu {

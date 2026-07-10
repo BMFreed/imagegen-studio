@@ -38,24 +38,16 @@ import { NButton, NIcon } from 'naive-ui';
 
 .document-tab {
   --n-padding: 0 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
   min-width: 0;
   max-width: 260px;
   height: 35px;
-  padding: 0 12px;
   background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-bottom: 0;
   border-radius: var(--app-radius) var(--app-radius) 0 0;
-  cursor: pointer;
-  font: inherit;
 }
 
 .document-tab :deep(.n-button__content) {
-  display: flex;
-  align-items: center;
   gap: 8px;
   width: 100%;
   min-width: 0;
@@ -102,6 +94,6 @@ import { NButton, NIcon } from 'naive-ui';
 .tab-close {
   flex: 0 0 auto;
   margin-left: auto;
-  color: var(--app-text-soft);
+  opacity: 0.5;
 }
 </style>

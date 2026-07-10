@@ -89,7 +89,7 @@ function resetFilters() {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 36px;
+  padding: 36px 48px;
   background: var(--app-overlay-backdrop);
   backdrop-filter: blur(7px);
 }
@@ -97,31 +97,26 @@ function resetFilters() {
 .manager-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1440px, calc(100vw - 96px));
-  height: min(870px, calc(100vh - 120px));
+  width: min(1440px, 100%);
+  height: min(870px, 100%);
   min-height: 620px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-surface);
-  box-shadow: 0 24px 70px var(--app-shadow-shell);
 }
 
 .manager-body {
   display: grid;
-  grid-template-columns: 230px minmax(540px, 1fr) clamp(420px, 36%, 500px);
+  grid-template-columns: clamp(210px, 16%, 230px) minmax(460px, 1fr) clamp(360px, 36%, 500px);
   min-width: 0;
   min-height: 0;
-  height: 100%;
 }
 
 .manager-column,
-.resource-content,
-.manager-column--navigation,
-.manager-column--details {
+.resource-content {
   min-width: 0;
   min-height: 0;
-  height: 100%;
   overflow: hidden;
 }
 

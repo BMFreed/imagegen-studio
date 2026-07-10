@@ -7,11 +7,8 @@
   --app-border: #343437;
   --app-overlay-backdrop: #0505079a;
   --app-overlay-mask: #050507b8;
-  --app-shadow-shell: #00000073;
-  --app-shadow-dialog: #0000009c;
   --app-window-close: #e88080;
   --app-text: #dbdbdc;
-  --app-text-soft: #6f6f73;
   --workspace-green: #64e36e;
   --workspace-blue: #74a8ff;
   --status-warning: #f2c97d;
@@ -35,12 +32,6 @@ body {
   overflow: hidden;
   color: var(--app-text);
   background: var(--app-chrome);
-}
-
-button,
-input,
-textarea {
-  font: inherit;
 }
 
 body .n-modal-mask {

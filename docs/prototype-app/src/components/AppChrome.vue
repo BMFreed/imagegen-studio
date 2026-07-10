@@ -20,7 +20,7 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
     <div class="menu-left">
       <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
       <nav aria-label="Application menu" class="menu-items">
-        <NButton v-for="item of menuItems" :key="item" class="menu-item" text>{{ item }}</NButton>
+        <NButton v-for="item of menuItems" :key="item" text>{{ item }}</NButton>
       </nav>
     </div>
     <div class="menu-right">
@@ -90,10 +90,6 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   gap: 16px;
 }
 
-.menu-item {
-  cursor: pointer;
-}
-
 .menu-right {
   gap: 4px;
   height: 100%;
@@ -109,7 +105,6 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   width: 48px;
   height: 100%;
   border-radius: 0;
-  cursor: pointer;
 }
 
 .window-control--close:hover {

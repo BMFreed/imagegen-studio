@@ -35,12 +35,12 @@ const statusOptions: MenuOption[] = [
   <aside class="manager-navigation">
     <section class="nav-section">
       <h2>Model Types</h2>
-      <NMenu v-model:value="modelType" :options="modelTypesOptions" />
+      <NMenu v-model:value="modelType" :indent="16" :options="modelTypesOptions" />
     </section>
 
     <section class="nav-section">
       <h2>Status</h2>
-      <NMenu v-model:value="status" :options="statusOptions" />
+      <NMenu v-model:value="status" :indent="16" :options="statusOptions" />
     </section>
 
     <section class="storage-summary">
@@ -80,15 +80,6 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-:deep(.n-menu) {
-  --n-item-height: 32px;
-  --n-item-border-radius: var(--app-radius);
-}
-
-:deep(.n-menu-item-content) {
-  cursor: pointer;
 }
 
 :deep(.menu-label) {

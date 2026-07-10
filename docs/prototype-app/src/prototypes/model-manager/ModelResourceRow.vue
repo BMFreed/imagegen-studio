@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Tool as ToolIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTag } from 'naive-ui';
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
+import { computed } from 'vue';
 
 import type { ModelResource } from './model-manager.types';
 
@@ -16,12 +17,16 @@ defineProps<{
 defineEmits<{
   select: [id: string];
 }>();
+
+const themeVars = useThemeVars();
+const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }));
 </script>
 
 <template>
   <article
     class="resource-row"
     :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }"
+    :style="accentStyle"
   >
     <button
       :aria-pressed="selected"
@@ -31,9 +36,7 @@ defineEmits<{
     >
       <ResourceThumbnail :tone="resource.thumbnailTone" />
       <div class="resource-main">
-        <div class="resource-title-line">
-          <strong v-overflow-title>{{ resource.name }}</strong>
-        </div>
+        <strong v-overflow-title class="resource-title">{{ resource.name }}</strong>
         <p v-overflow-title>{{ resource.description }}</p>
         <div class="resource-meta">
           <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
@@ -58,6 +61,8 @@ defineEmits<{
 
 <style scoped>
 .resource-row {
+  --resource-accent: transparent;
+
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -70,11 +75,7 @@ defineEmits<{
   background: var(--app-elevated);
 }
 
-.resource-row:hover:not(.resource-row--selected) {
-  border-color: var(--app-border);
-  background: var(--app-elevated-hover);
-}
-
+.resource-row:hover:not(.resource-row--selected),
 .resource-row--selected {
   border-color: var(--app-border);
   background: var(--app-elevated-hover);
@@ -87,7 +88,7 @@ defineEmits<{
   left: 0;
   width: 2px;
   border-radius: 999px;
-  background: var(--workspace-green);
+  background: var(--resource-accent);
   content: '';
 }
 
@@ -96,8 +97,8 @@ defineEmits<{
 }
 
 .resource-row:has(.resource-select:focus-visible) {
-  border-color: var(--workspace-green);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-green) 25%, transparent);
+  border-color: var(--resource-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--resource-accent) 25%, transparent);
 }
 
 .resource-select {
@@ -111,6 +112,7 @@ defineEmits<{
   color: inherit;
   background: transparent;
   cursor: pointer;
+  font: inherit;
   text-align: left;
 }
 
@@ -122,15 +124,8 @@ defineEmits<{
   min-width: 0;
 }
 
-.resource-title-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.resource-title-line strong {
+.resource-title {
+  display: block;
   overflow: hidden;
   font-size: 13px;
   font-weight: 650;
@@ -157,6 +152,5 @@ p {
   align-items: center;
   justify-content: end;
   gap: 8px;
-  min-width: 0;
 }
 </style>

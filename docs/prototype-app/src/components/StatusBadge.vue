@@ -58,13 +58,5 @@ const bordered = computed(() => props.variant !== 'neutral');
 </script>
 
 <template>
-  <NTag
-    :bordered
-    class="status-badge"
-    :class="`status-badge--${status}`"
-    round
-    size="small"
-    :type="tagType"
-    >{{ label }}</NTag
-  >
+  <NTag :bordered round size="small" :type="tagType">{{ label }}</NTag>
 </template>

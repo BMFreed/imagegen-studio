@@ -42,9 +42,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
 .app-shell {
   display: grid;
   grid-template-rows: 40px minmax(0, 1fr);
-  width: 100vw;
   height: 100vh;
-  background: var(--app-chrome);
 }
 
 .app-workspace {
@@ -58,7 +56,6 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   position: relative;
   min-height: 0;
   overflow: hidden;
-  background: var(--app-chrome);
 }
 
 .home-context {
@@ -66,8 +63,6 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   inset: 0;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  filter: blur(2px);
-  opacity: 0.55;
 }
 
 .workspace-sidebar {
@@ -76,7 +71,6 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
   gap: 10px;
   padding: 24px;
   border-right: 1px solid var(--app-border);
-  background: var(--app-chrome);
 }
 
 .sidebar-title {

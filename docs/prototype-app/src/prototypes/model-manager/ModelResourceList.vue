@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FilterOff as FilterOffIcon, ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect } from 'naive-ui';
+import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect, NText } from 'naive-ui';
 
 import type { ModelResource } from './model-manager.types';
 
@@ -39,15 +39,15 @@ const sortOptions = [
   <section class="resource-list-panel">
     <header class="list-toolbar">
       <label class="toolbar-field">
-        <span>Name</span>
+        <NText class="toolbar-label" depth="3">Name</NText>
         <NInput v-model:value="searchValue" clearable placeholder="Search models" />
       </label>
       <label class="toolbar-field">
-        <span>Base model</span>
+        <NText class="toolbar-label" depth="3">Base model</NText>
         <NSelect v-model:value="baseModelValue" :options="baseModelOptions" />
       </label>
       <label class="toolbar-field">
-        <span>Sort by</span>
+        <NText class="toolbar-label" depth="3">Sort by</NText>
         <NSelect v-model:value="sortValue" :consistentMenuWidth="false" :options="sortOptions" />
       </label>
       <NButton
@@ -79,9 +79,7 @@ const sortOptions = [
     </NScrollbar>
 
     <footer class="install-strip">
-      <div class="install-copy">
-        <strong v-overflow-title>Installing Digital Art XL v0.2</strong>
-      </div>
+      <strong v-overflow-title class="install-title">Installing Digital Art XL v0.2</strong>
       <div class="install-progress">
         <NProgress :percentage="64" :showIndicator="false" type="line" />
       </div>
@@ -135,8 +133,7 @@ const sortOptions = [
   min-width: 0;
 }
 
-.toolbar-field span {
-  color: var(--app-text-muted);
+.toolbar-label {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -169,23 +166,17 @@ const sortOptions = [
   background: var(--app-surface);
 }
 
-.install-copy {
+.install-title {
   grid-area: title;
-  display: grid;
-  gap: 1px;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .install-progress {
   grid-area: progress;
   min-width: 0;
-  width: 100%;
-}
-
-.install-copy strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .install-subtitle {

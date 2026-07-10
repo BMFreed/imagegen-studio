@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Download as DownloadIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInput, NModal } from 'naive-ui';
+import { NButton, NCard, NIcon, NInput, NModal } from 'naive-ui';
 import { ref } from 'vue';
 
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
@@ -11,17 +11,21 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
 
 <template>
   <NModal v-model:show="show" :maskClosable="true">
-    <section
+    <NCard
       aria-labelledby="civitai-import-title"
       aria-modal="true"
+      :bordered="true"
       class="import-dialog"
       role="dialog"
+      size="small"
     >
-      <header class="dialog-header">
-        <div>
+      <template v-slot:header>
+        <div class="dialog-title">
           <h2 id="civitai-import-title">Add from CivitAI URL</h2>
           <p>Paste a model link, review what will be installed, then start the download.</p>
         </div>
+      </template>
+      <template v-slot:header-extra>
         <NButton
           aria-label="Close import dialog"
           circle
@@ -33,7 +37,7 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
             <NIcon :component="XIcon" />
           </template>
         </NButton>
-      </header>
+      </template>
 
       <div class="import-content">
         <NInput v-model:value="urlValue" />
@@ -48,21 +52,23 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
         </article>
       </div>
 
-      <div class="modal-actions">
-        <NButton class="install-button" type="primary">
-          <template v-slot:icon>
-            <NIcon :component="DownloadIcon" />
-          </template>
-          Install
-        </NButton>
-        <NButton tertiary @click="show = false">
-          <template v-slot:icon>
-            <NIcon :component="XIcon" />
-          </template>
-          Cancel
-        </NButton>
-      </div>
-    </section>
+      <template v-slot:footer>
+        <div class="modal-actions">
+          <NButton type="primary">
+            <template v-slot:icon>
+              <NIcon :component="DownloadIcon" />
+            </template>
+            Install
+          </NButton>
+          <NButton tertiary @click="show = false">
+            <template v-slot:icon>
+              <NIcon :component="XIcon" />
+            </template>
+            Cancel
+          </NButton>
+        </div>
+      </template>
+    </NCard>
   </NModal>
 </template>
 
@@ -73,29 +79,20 @@ const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
 }
 
 .import-dialog {
-  display: grid;
-  gap: 16px;
   width: 560px;
-  padding: 18px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  background: var(--app-surface);
-  box-shadow: 0 24px 70px var(--app-shadow-dialog);
 }
 
-.dialog-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 16px;
+.dialog-title {
+  display: grid;
+  gap: 5px;
 }
 
 h2 {
-  margin: 0 0 5px;
+  margin: 0;
   font-size: 17px;
 }
 
-.dialog-header p {
+.dialog-title p {
   margin: 0;
 }
 
@@ -120,9 +117,5 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-}
-
-.install-button {
-  justify-content: center;
 }
 </style>
