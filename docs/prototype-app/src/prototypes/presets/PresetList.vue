@@ -6,11 +6,14 @@ import {
 } from '@vicons/tabler';
 import { NButton, NEmpty, NIcon, NInput, NScrollbar, NSelect, NText } from 'naive-ui';
 
-import type { PresetRecord } from './presets.types';
+import type { PresetDefinition, PresetRecord } from './presets.types';
 
+import PresetDraftListRow from './PresetDraftListRow.vue';
 import PresetListRow from './PresetListRow.vue';
 
 defineProps<{
+  draft?: PresetDefinition;
+  draftSelected?: boolean;
   hasActiveFilters: boolean;
   presets: PresetRecord[];
   selectedId: string;
@@ -19,6 +22,7 @@ defineProps<{
 defineEmits<{
   resetFilters: [];
   select: [id: string];
+  selectDraft: [];
 }>();
 
 const search = defineModel<string>('search', { required: true });
@@ -33,7 +37,7 @@ const sortOptions = [
 </script>
 
 <template>
-  <section class="preset-list-panel">
+  <section class="preset-list-panel" :class="{ 'preset-list-panel--has-draft': draft }">
     <header class="list-toolbar">
       <div class="toolbar-row toolbar-row--search">
         <label class="toolbar-field">
@@ -79,6 +83,14 @@ const sortOptions = [
       </div>
     </header>
 
+    <div v-if="draft" class="draft-slot">
+      <PresetDraftListRow
+        :draft
+        :selected="draftSelected ?? false"
+        @select="$emit('selectDraft')"
+      />
+    </div>
+
     <NScrollbar class="preset-scroll">
       <div v-if="presets.length > 0" class="preset-list">
         <PresetListRow
@@ -102,6 +114,14 @@ const sortOptions = [
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.preset-list-panel--has-draft {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.draft-slot {
+  padding: 12px 14px 0;
 }
 
 .list-toolbar {

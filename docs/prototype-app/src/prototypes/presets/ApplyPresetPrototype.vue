@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { Wand as ApplyIcon, Settings as SettingsIcon, X as XIcon } from '@vicons/tabler';
 import {
+  Wand as ApplyIcon,
+  Refresh as ResetIcon,
+  Settings as SettingsIcon,
+  X as XIcon,
+} from '@vicons/tabler';
+import {
+  NAlert,
   NButton,
   NCard,
   NCheckbox,
@@ -13,77 +19,83 @@ import {
 } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import type { ApplyPresetSection } from './presets.types';
+import type { PresetPayload, PresetSectionKey } from './presets.types';
+
+import PresetPayloadEditor from './PresetPayloadEditor.vue';
+import { currentProjectPresetSource, presetEditorResources, presetResources } from './presets.mock';
+import {
+  applicationDraftIsValid,
+  clonePreset,
+  createApplicationDraft,
+  includedSections,
+  isPresetSectionEqual,
+  presetSectionHasMissingResources,
+  sectionLabels,
+  summarizePresetSection,
+  workflowLabels,
+} from './presets.utils';
 
 const message = useMessage();
 const show = ref(true);
-const sections = ref<ApplyPresetSection[]>([
-  {
-    key: 'prompt',
-    name: 'Prompt',
-    selected: true,
-    status: 'replace',
-    summary: 'cinematic shot, teal-orange grade, film grain, shallow depth of field',
-  },
-  {
-    key: 'negative',
-    name: 'Negative Prompt',
-    selected: true,
-    status: 'replace',
-    summary: 'lowres, washed out, flat lighting',
-  },
-  {
-    key: 'model',
-    name: 'Model',
-    selected: true,
-    status: 'ready',
-    summary: 'Illustrious XL · v1.1 · installed',
-  },
-  {
-    key: 'lora-soft-detailer',
-    missing: true,
-    name: 'LoRA · Soft Detailer',
-    selected: true,
-    status: 'ready',
-    summary: 'weight 0.6 · file not found in library',
-  },
-  {
-    key: 'guidance',
-    name: 'Steps & CFG',
-    selected: true,
-    status: 'replace',
-    summary: '28 steps · CFG 4.5',
-  },
-  {
-    key: 'sampling',
-    name: 'Sampler & Scheduler',
-    selected: true,
-    status: 'replace',
-    summary: 'DPM++ 2M · Karras',
-  },
-  {
-    key: 'size',
-    name: 'Size',
-    selected: false,
-    status: 'optional',
-    summary: '1024 × 1024 · current project is 832 × 1216',
-  },
-]);
+const sourcePreset = presetResources.find((preset) => preset.id === 'cinematic-img2img-pass')!;
+const sourcePayload = clonePreset(sourcePreset.payload);
+const projectPayload = ref<PresetPayload>(
+  clonePreset(currentProjectPresetSource.definition.payload),
+);
+const draft = ref(createApplicationDraft(sourcePreset));
+const sections = includedSections(sourcePayload);
 
-const selectedCount = computed(() => sections.value.filter((section) => section.selected).length);
-const allSelected = computed(() => selectedCount.value === sections.value.length);
+const selectedCount = computed(() => draft.value.selectedSections.length);
+const allSelected = computed(() => selectedCount.value === sections.length);
 const partiallySelected = computed(
-  () => selectedCount.value > 0 && selectedCount.value < sections.value.length,
+  () => selectedCount.value > 0 && selectedCount.value < sections.length,
+);
+const disabledSections = computed(() =>
+  sections.filter((section) => !draft.value.selectedSections.includes(section)),
+);
+const changedSections = computed(() =>
+  sections.filter((section) => !isPresetSectionEqual(draft.value.payload, sourcePayload, section)),
 );
 const selectedMissingResource = computed(() =>
-  sections.value.some((section) => section.selected && section.missing),
+  draft.value.selectedSections.some((section) =>
+    presetSectionHasMissingResources(draft.value.payload, section),
+  ),
 );
-const applyDisabled = computed(() => selectedCount.value === 0 || selectedMissingResource.value);
+const applyDisabled = computed(() => !applicationDraftIsValid(draft.value));
+
+function sectionSelected(section: PresetSectionKey): boolean {
+  return draft.value.selectedSections.includes(section);
+}
+
+function setSectionSelected(section: PresetSectionKey, selected: boolean) {
+  if (selected && !sectionSelected(section)) {
+    draft.value.selectedSections.push(section);
+  } else if (!selected) {
+    draft.value.selectedSections = draft.value.selectedSections.filter(
+      (candidate) => candidate !== section,
+    );
+  }
+}
 
 function setAllSections(selected: boolean) {
-  for (const section of sections.value) {
-    section.selected = selected;
+  draft.value.selectedSections = selected ? [...sections] : [];
+}
+
+function resetSection(section: PresetSectionKey) {
+  const nextPayload = clonePreset(draft.value.payload);
+  const sourceValue = sourcePayload[section];
+
+  if (sourceValue === undefined) {
+    Reflect.deleteProperty(nextPayload, section);
+  } else {
+    Reflect.set(nextPayload, section, clonePreset(sourceValue));
   }
+
+  draft.value.payload = nextPayload;
+}
+
+function resetAll() {
+  draft.value.payload = clonePreset(sourcePayload);
 }
 
 function applyPreset() {
@@ -91,6 +103,19 @@ function applyPreset() {
     return;
   }
 
+  const nextProjectPayload = clonePreset(projectPayload.value);
+
+  for (const section of draft.value.selectedSections) {
+    const value = draft.value.payload[section];
+
+    if (value === undefined) {
+      Reflect.deleteProperty(nextProjectPayload, section);
+    } else {
+      Reflect.set(nextProjectPayload, section, clonePreset(value));
+    }
+  }
+
+  projectPayload.value = nextProjectPayload;
   show.value = false;
   message.success('Preset applied');
 }
@@ -99,15 +124,19 @@ function applyPreset() {
 <template>
   <NModal v-model:show="show" :maskClosable="false">
     <NCard
-      aria-label="Apply Preset: Cinematic Img2Img Pass"
+      :aria-label="`Apply Preset: ${sourcePreset.name}`"
       class="apply-card"
       role="dialog"
       size="small"
     >
       <header class="dialog-header">
         <div>
-          <h1>Apply Preset: Cinematic Img2Img Pass</h1>
-          <NText depth="3">Choose what to copy into <strong>Sample Project B.igs</strong>.</NText>
+          <h1>Apply Preset: {{ sourcePreset.name }}</h1>
+          <NText depth="3">
+            Edit what will be copied into
+            <strong>{{ currentProjectPresetSource.projectName }}</strong
+            >.
+          </NText>
         </div>
         <NButton aria-label="Close Apply Preset" circle quaternary @click="show = false">
           <template v-slot:icon><NIcon :component="XIcon" /></template>
@@ -117,56 +146,92 @@ function applyPreset() {
       <NScrollbar class="dialog-scroll">
         <div class="dialog-content">
           <div class="preset-tags">
-            <NTag type="info">Image to Image</NTag>
-            <NTag :bordered="false">Favorite</NTag>
+            <NTag type="info">{{ workflowLabels[sourcePreset.workflow] }}</NTag>
+            <NTag v-if="sourcePreset.favorite" :bordered="false">Favorite</NTag>
           </div>
-          <p class="preset-description">
-            Teal-orange grade, low-denoise film look. Best applied to a finished portrait composite.
-          </p>
+          <p class="preset-description">{{ sourcePreset.description }}</p>
 
-          <NCheckbox
-            :checked="allSelected"
-            :indeterminate="partiallySelected"
-            @update:checked="setAllSections"
-          >
-            Select all sections
-          </NCheckbox>
-
-          <div class="section-list">
-            <article
-              v-for="section of sections"
-              :key="section.key"
-              class="apply-section"
-              :class="{ 'apply-section--warning': section.missing }"
+          <div class="apply-toolbar">
+            <NCheckbox
+              :checked="allSelected"
+              :indeterminate="partiallySelected"
+              @update:checked="setAllSections"
             >
-              <NCheckbox v-model:checked="section.selected" :aria-label="section.name" />
-              <div class="section-main">
-                <strong>{{ section.name }}</strong>
-                <NText depth="3">{{ section.summary }}</NText>
-                <NText v-if="section.missing" class="missing-copy">
-                  Missing resource. Install it or deselect this section before applying.
-                </NText>
-              </div>
-              <NButton v-if="section.missing" size="small" tertiary type="warning">
+              Select all sections
+            </NCheckbox>
+            <NButton
+              :disabled="changedSections.length === 0"
+              size="small"
+              tertiary
+              @click="resetAll"
+            >
+              <template v-slot:icon><NIcon :component="ResetIcon" /></template>
+              Reset all
+            </NButton>
+          </div>
+
+          <NAlert
+            v-if="selectedMissingResource"
+            title="Selected resource is missing"
+            type="warning"
+          >
+            <div class="missing-alert-content">
+              <span>
+                Resolve the resource, replace it in the expanded section, or deselect the section.
+              </span>
+              <NButton size="small" tertiary type="warning">
                 <template v-slot:icon><NIcon :component="SettingsIcon" /></template>
                 Open in Models
               </NButton>
-              <NTag v-else-if="section.status === 'ready'" size="small" type="success">
-                Ready
-              </NTag>
-              <NText v-else depth="3">
-                {{ section.status === 'replace' ? 'Replace' : 'Optional' }}
-              </NText>
-            </article>
-          </div>
+            </div>
+          </NAlert>
+
+          <PresetPayloadEditor
+            v-model="draft.payload"
+            :disabledSections
+            :initialExpandedSections="[]"
+            :resources="presetEditorResources"
+            :sections
+            :workflow="sourcePreset.workflow"
+          >
+            <template v-slot:section-context="{ section }">
+              <span class="section-comparison">
+                <NText depth="3"
+                  >Current: {{ summarizePresetSection(projectPayload, section) }}</NText
+                >
+                <NText depth="3">Apply: {{ summarizePresetSection(draft.payload, section) }}</NText>
+              </span>
+            </template>
+            <template v-slot:section-actions="{ section }">
+              <NButton
+                v-if="changedSections.includes(section)"
+                :aria-label="`Reset ${sectionLabels[section]}`"
+                size="tiny"
+                tertiary
+                @click="resetSection(section)"
+              >
+                Reset
+              </NButton>
+            </template>
+            <template v-slot:section-control="{ section }">
+              <NCheckbox
+                :checked="sectionSelected(section)"
+                @update:checked="setSectionSelected(section, $event)"
+              >
+                <span>Apply</span><span class="sr-only"> {{ sectionLabels[section] }}</span>
+              </NCheckbox>
+            </template>
+          </PresetPayloadEditor>
         </div>
       </NScrollbar>
 
       <footer class="dialog-actions">
-        <NText v-if="selectedMissingResource" class="blocked-note">
-          Resolve the missing LoRA, or deselect that section, to apply.
+        <NText v-if="selectedMissingResource" key="blocked" class="blocked-note">
+          Resolve or deselect missing resources to apply.
         </NText>
-        <span v-else />
+        <NText v-else key="selection" depth="3"
+          >{{ selectedCount }} of {{ sections.length }} sections selected</NText
+        >
         <NButton tertiary @click="show = false">Cancel</NButton>
         <NButton :disabled="applyDisabled" type="primary" @click="applyPreset">
           <template v-slot:icon><NIcon :component="ApplyIcon" /></template>
@@ -179,23 +244,33 @@ function applyPreset() {
 
 <style scoped>
 .apply-card {
-  width: min(640px, calc(100vw - 48px));
+  width: min(820px, calc(100vw - 48px));
+  height: min(900px, calc(100vh - 80px));
   max-height: calc(100vh - 80px);
   overflow: hidden;
 }
 
-.apply-card :deep(.n-card__content) {
+.apply-card :deep(.n-card-content) {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  height: 100%;
   min-height: 0;
 }
 
 .dialog-header,
 .dialog-actions,
 .preset-tags,
-.apply-section {
+.apply-toolbar {
   display: flex;
   align-items: center;
+}
+
+.missing-alert-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .dialog-header {
@@ -230,42 +305,22 @@ h1 {
   background: var(--app-elevated);
 }
 
-.section-list {
-  display: grid;
-  gap: 8px;
-}
-
-.apply-section {
+.apply-toolbar {
+  justify-content: space-between;
   gap: 12px;
-  min-height: 66px;
-  padding: 10px 12px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
 }
 
-.apply-section--warning {
-  border-color: color-mix(in srgb, var(--status-warning) 55%, var(--app-border));
-}
-
-.section-main {
+.section-comparison {
   display: grid;
-  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
   min-width: 0;
 }
 
-.section-main .n-text {
+.section-comparison .n-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.missing-copy,
-.blocked-note {
-  color: var(--status-warning);
-}
-
-.section-main .missing-copy {
-  white-space: normal;
 }
 
 .dialog-actions {
@@ -279,7 +334,18 @@ h1 {
 }
 
 .blocked-note {
-  max-width: 320px;
+  color: var(--status-warning);
   font-size: 12px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

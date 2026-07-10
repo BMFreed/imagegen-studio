@@ -384,6 +384,7 @@ type PresetResourceRef = {
 - `payload_json` валидируется runtime-схемой при чтении и записи.
 - Source of truth для model/LoRA/embedding/VAE настроек находится внутри `PresetPayload`.
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
+- Partial apply may use an ephemeral `selectedSections` mask inside an in-memory application draft. This mask controls which cloned payload fields are copied into the current project, is validated only for the duration of Apply, and is never serialized into `payload_json` or another preset column.
 - `predictionType` хранит scheduler prediction mode модели. Это compatibility metadata, а не user-facing style setting.
 - Для `v_prediction`-моделей generation worker должен получить `v_prediction`; запуск такой модели как `epsilon` считается несовместимой конфигурацией.
 - `has_loras`, `primary_model_resource_id` и похожие derived-поля в MVP не добавляются.

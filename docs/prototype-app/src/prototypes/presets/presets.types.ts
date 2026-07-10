@@ -60,31 +60,38 @@ export interface PresetPayload {
   vae?: PresetResourceRef;
 }
 
-export interface PresetRecord {
+export interface PresetDefinition {
   description: string;
   favorite: boolean;
-  id: string;
   name: string;
   payload: PresetPayload;
   tags: string[];
+  workflow: PresetWorkflow;
+}
+
+export interface PresetRecord extends PresetDefinition {
+  id: string;
   updatedAt: string;
-  workflow: PresetWorkflow;
 }
 
-export interface ApplyPresetSection {
-  key: string;
-  missing?: boolean;
-  name: string;
-  selected: boolean;
-  status: 'optional' | 'ready' | 'replace';
-  summary: string;
+export type PresetCreateIntent =
+  | {
+      definition: PresetDefinition;
+      kind: 'project';
+      projectName: string;
+      projectSummary: string;
+    }
+  | { kind: 'manual' };
+
+export interface PresetApplicationDraft {
+  payload: PresetPayload;
+  selectedSections: PresetSectionKey[];
+  sourcePresetId: string;
 }
 
-export interface SavePresetForm {
-  description: string;
-  favorite: boolean;
-  name: string;
-  sections: PresetSectionKey[];
-  tags: string[];
-  workflow: PresetWorkflow;
+export interface PresetEditorResources {
+  embeddings: PresetResourceRef[];
+  loras: PresetResourceRef[];
+  models: PresetModelRef[];
+  vaes: PresetResourceRef[];
 }

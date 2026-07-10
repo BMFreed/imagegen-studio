@@ -116,6 +116,57 @@ test.describe('Preset Manager prototype', () => {
     await expect(page.getByLabel('Preset name')).toHaveValue('Cinematic Img2Img Pass');
   });
 
+  test('creates a minimal manual preset from a pinned draft', async ({ page }) => {
+    await openPresetManager(page);
+    const allPresets = page.locator('.menu-label').filter({ hasText: 'All Presets' });
+    await expect(allPresets).toContainText('6');
+
+    await page.getByRole('button', { name: 'New Preset' }).click();
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeVisible();
+    await expect(page.getByLabel('Preset name')).toBeFocused();
+    await expect(page.getByLabel('Preset name')).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Create Preset' })).toBeDisabled();
+    await expect(allPresets).toContainText('6');
+
+    const promptSection = page.locator('.n-collapse-item').filter({ hasText: /^Prompt/ });
+    const negativeSection = page
+      .locator('.n-collapse-item')
+      .filter({ hasText: /^Negative Prompt/ });
+    await expect(promptSection.getByRole('checkbox', { name: 'Included' })).toBeChecked();
+    await expect(negativeSection.getByRole('checkbox', { name: 'Included' })).not.toBeChecked();
+
+    await page.getByRole('button', { name: 'Favorites' }).click();
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeVisible();
+    await page.getByLabel('Preset name').fill('Minimal Prompt');
+    await page.getByRole('button', { name: 'Create Preset' }).click();
+
+    await expect(page.getByText('Preset created')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeHidden();
+    await page.getByRole('button', { name: 'Favorites' }).click();
+    await expect(page.getByRole('button', { name: 'Select Minimal Prompt' })).toBeVisible();
+    await expect(allPresets).toContainText('7');
+  });
+
+  test('guards draft navigation and cancel returns to the previous preset', async ({ page }) => {
+    await openPresetManager(page);
+    await page.getByRole('button', { name: 'New Preset' }).click();
+    await page.getByLabel('Preset name').fill('Temporary Draft');
+    await page.getByRole('button', { name: 'Select Cinematic Img2Img Pass' }).click();
+
+    const guard = page.getByRole('dialog', { name: 'Unsaved preset changes' });
+    await expect(guard.getByRole('heading', { name: 'Unsaved preset' })).toBeVisible();
+    await guard.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByLabel('Preset name')).toHaveValue('Temporary Draft');
+    await expect(guard).toBeHidden();
+
+    await page
+      .getByLabel('Preset Manager prototype')
+      .getByRole('button', { exact: true, name: 'Cancel' })
+      .click();
+    await expect(page.getByLabel('Preset name')).toHaveValue('Studio Portrait Soft Light');
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeHidden();
+  });
+
   test('uses payload presence for Included and shows workflow-specific fields', async ({
     page,
   }) => {
@@ -155,8 +206,8 @@ test.describe('Preset Manager prototype', () => {
   });
 });
 
-test.describe('Project preset dialogs', () => {
-  test('applies only valid selected sections', async ({ page }) => {
+test.describe('Editable Apply Preset', () => {
+  test('edits, resets, validates, and applies an application draft', async ({ page }) => {
     await page.goto('/?prototype=apply-preset');
     const dialog = page.getByRole('dialog', { name: 'Apply Preset: Cinematic Img2Img Pass' });
     await expect(dialog).toBeVisible();
@@ -164,54 +215,116 @@ test.describe('Project preset dialogs', () => {
     const selectAll = dialog.getByRole('checkbox', { name: 'Select all sections' });
     await expect(selectAll).toHaveAttribute('aria-checked', 'mixed');
     await expect(dialog.getByRole('button', { exact: true, name: 'Apply' })).toBeDisabled();
+    await expect(dialog.getByText(/Current:.*CFG 5.5/)).toBeVisible();
+    await expect(dialog.getByText(/Apply:.*CFG 4.5/)).toBeVisible();
 
-    await dialog.getByRole('checkbox', { name: 'LoRA · Soft Detailer' }).uncheck();
+    const guidanceSection = dialog.locator('.n-collapse-item').filter({ hasText: /^Steps & CFG/ });
+    await guidanceSection.locator('.n-collapse-item__header').click();
+    const cfgInput = guidanceSection.getByRole('textbox', { name: 'CFG' });
+    await cfgInput.fill('6.2');
+    await expect(guidanceSection.getByText(/Apply:.*CFG 6.2/)).toBeVisible();
+    await guidanceSection.getByRole('button', { name: 'Reset Steps & CFG' }).click();
+    await expect(cfgInput).toHaveValue('4.5');
+
+    const sizeCheckbox = dialog.getByRole('checkbox', { name: 'Apply Size' });
+    await expect(sizeCheckbox).not.toBeChecked();
+    await cfgInput.fill('6.4');
+    await dialog.getByRole('button', { name: 'Reset all' }).click();
+    await expect(cfgInput).toHaveValue('4.5');
+    await expect(sizeCheckbox).not.toBeChecked();
+
+    const loraSection = dialog.locator('.n-collapse-item').filter({ hasText: /^LoRA/ });
+    await loraSection.locator('.n-collapse-item__header').click();
+    await loraSection.getByRole('button', { name: 'Remove Soft Detailer' }).click();
     await expect(dialog.getByRole('button', { exact: true, name: 'Apply' })).toBeEnabled();
     await dialog.getByRole('button', { exact: true, name: 'Apply' }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByText('Preset applied')).toBeVisible();
   });
 
-  test('captures Apply Preset', async ({ page }) => {
-    await page.setViewportSize({ height: 1080, width: 1920 });
+  test('missing resources only block selected sections', async ({ page }) => {
     await page.goto('/?prototype=apply-preset');
+    const dialog = page.getByRole('dialog', { name: 'Apply Preset: Cinematic Img2Img Pass' });
+    const apply = dialog.getByRole('button', { exact: true, name: 'Apply' });
+    await expect(apply).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'Apply LoRA' }).uncheck();
+    await expect(apply).toBeEnabled();
+    await dialog.getByRole('checkbox', { name: 'Apply LoRA' }).check();
+    await expect(apply).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'Select all sections' }).uncheck();
+    await expect(apply).toBeDisabled();
+  });
+
+  for (const viewport of viewports) {
+    test(`captures ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize({ height: viewport.height, width: viewport.width });
+      await page.goto('/?prototype=apply-preset');
+      const dialog = page.getByRole('dialog', {
+        name: 'Apply Preset: Cinematic Img2Img Pass',
+      });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText('Selected resource is missing')).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await expect(dialog.getByRole('button', { exact: true, name: 'Apply' })).toBeVisible();
+
+      const hasHorizontalOverflow = await dialog.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      );
+      expect(hasHorizontalOverflow).toBe(false);
+      await page.screenshot({
+        animations: 'disabled',
+        fullPage: false,
+        path: path.join(screenshotsDir, `apply-preset-${viewport.name}.png`),
+      });
+    });
+  }
+});
+
+test.describe('Create preset from project', () => {
+  test('opens an editable manager draft and creates only on confirmation', async ({ page }) => {
+    await page.goto('/?prototype=save-preset');
+    await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeVisible();
+    await expect(page.locator('.project-context')).toBeVisible();
     await expect(
-      page.getByRole('dialog', { name: 'Apply Preset: Cinematic Img2Img Pass' }),
+      page.getByLabel('Preset Manager prototype').getByText('Sample Project B.igs'),
     ).toBeVisible();
-    await page.screenshot({
-      fullPage: false,
-      path: path.join(screenshotsDir, 'apply-preset-desktop-1920.png'),
-    });
+    await expect(page.getByText(/Seed is not included by default/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeVisible();
+    await expect(page.getByLabel('Preset name')).toHaveValue('Sample Portrait Baseline');
+
+    const seedSection = page.locator('.n-collapse-item').filter({ hasText: /^Seed/ });
+    await expect(seedSection.getByRole('checkbox', { name: 'Included' })).not.toBeChecked();
+    await page.getByLabel('Prompt').fill('edited before preset creation');
+    await page.getByRole('button', { name: 'Create Preset' }).click();
+    await expect(page.getByText('Preset created')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeHidden();
+    await expect(
+      page.getByRole('button', { name: 'Select Sample Portrait Baseline' }),
+    ).toBeVisible();
   });
 
-  test('validates and saves the current project as a preset', async ({ page }) => {
+  test('cancel returns to the project without creating a record', async ({ page }) => {
     await page.goto('/?prototype=save-preset');
-    const dialog = page.getByRole('dialog', { name: 'Save Current as Preset' });
-    const save = dialog.getByRole('button', { exact: true, name: 'Save Preset' });
-    await expect(save).toBeEnabled();
-
-    await dialog.getByLabel('Preset name').fill('');
-    await expect(save).toBeDisabled();
-    await dialog.getByLabel('Preset name').fill('Sample Portrait Baseline');
-
-    for (const checkbox of await dialog.locator('.section-grid [role="checkbox"]').all()) {
-      await checkbox.uncheck();
-    }
-    await expect(save).toBeDisabled();
-    await dialog.getByRole('checkbox', { exact: true, name: 'Prompt' }).check();
-    await expect(save).toBeEnabled();
-    await save.click();
-    await expect(dialog).toBeHidden();
-    await expect(page.getByText('Preset saved')).toBeVisible();
+    await page.getByRole('button', { exact: true, name: 'Cancel' }).click();
+    await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeHidden();
+    await expect(page.locator('.project-context')).toBeVisible();
+    await expect(page.getByText('Preset created')).toBeHidden();
   });
 
-  test('captures Save Current as Preset', async ({ page }) => {
-    await page.setViewportSize({ height: 1080, width: 1920 });
-    await page.goto('/?prototype=save-preset');
-    await expect(page.getByRole('dialog', { name: 'Save Current as Preset' })).toBeVisible();
-    await page.screenshot({
-      fullPage: false,
-      path: path.join(screenshotsDir, 'save-preset-desktop-1920.png'),
+  for (const viewport of viewports) {
+    test(`captures ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize({ height: viewport.height, width: viewport.width });
+      await page.goto('/?prototype=save-preset');
+      await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeVisible();
+
+      const hasHorizontalOverflow = await page
+        .locator('.manager-body')
+        .evaluate((element) => element.scrollWidth > element.clientWidth);
+      expect(hasHorizontalOverflow).toBe(false);
+      await page.screenshot({
+        fullPage: false,
+        path: path.join(screenshotsDir, `save-preset-${viewport.name}.png`),
+      });
     });
-  });
+  }
 });

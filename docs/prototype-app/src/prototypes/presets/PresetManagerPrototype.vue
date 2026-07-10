@@ -1,30 +1,48 @@
 <script setup lang="ts">
 import { NButton, NCard, NModal, NText, useDialog, useMessage } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 
-import type { PresetRecord, PresetWorkflow } from './presets.types';
+import type {
+  PresetCreateIntent,
+  PresetDefinition,
+  PresetRecord,
+  PresetWorkflow,
+} from './presets.types';
 
-import PresetEditor from './PresetEditor.vue';
 import PresetList from './PresetList.vue';
+import PresetManagerEditor from './PresetManagerEditor.vue';
 import PresetManagerHeader from './PresetManagerHeader.vue';
 import PresetManagerNavigation from './PresetManagerNavigation.vue';
-import { defaultPresetId, presetResources } from './presets.mock';
+import { defaultPresetId, presetEditorResources, presetResources } from './presets.mock';
 import {
   clonePreset,
+  createManualPresetDefinition,
+  createPresetDefinitionFromProject,
+  createPresetRecord,
+  isPresetDefinitionValid,
   isPresetEqual,
   presetHasMissingResources,
   presetSearchText,
 } from './presets.utils';
 
 type WorkflowFilter = 'all' | PresetWorkflow;
-type PendingNavigation = { id: string; type: 'select' } | { type: 'close' };
+type ManagerSelection = { id: string; kind: 'record' } | { kind: 'draft' };
+type PendingNavigation = { id: string; type: 'select' } | { type: 'close' } | { type: 'new' };
+
+const props = defineProps<{
+  initialCreateIntent?: PresetCreateIntent;
+}>();
 
 const dialog = useDialog();
 const message = useMessage();
 const presets = ref(presetResources.map((preset) => clonePreset(preset)));
-const selectedId = ref(defaultPresetId);
-const draft = ref(getSelectedPreset());
 const managerOpen = ref(true);
+const createIntent = ref<PresetCreateIntent | undefined>(props.initialCreateIntent);
+const selection = ref<ManagerSelection>(
+  props.initialCreateIntent ? { kind: 'draft' } : { id: defaultPresetId, kind: 'record' },
+);
+const previousSelectedId = ref(defaultPresetId);
+const draft = ref<PresetDefinition>(getInitialDefinition());
 const workflowFilter = ref<WorkflowFilter>('all');
 const searchFilter = ref('');
 const sortValue = ref<'name' | 'recent'>('name');
@@ -33,8 +51,22 @@ const attentionOnly = ref(false);
 const pendingNavigation = ref<PendingNavigation | null>(null);
 const showUnsavedDialog = ref(false);
 
-const selectedPreset = computed(() => getSelectedPreset());
-const dirty = computed(() => !isPresetEqual(draft.value, selectedPreset.value));
+const creating = computed(() => selection.value.kind === 'draft');
+const selectedId = computed(() => (selection.value.kind === 'record' ? selection.value.id : ''));
+const selectedRecord = computed(() => {
+  const currentSelection = selection.value;
+
+  return currentSelection.kind === 'record'
+    ? presets.value.find((preset) => preset.id === currentSelection.id)
+    : undefined;
+});
+const dirty = computed(
+  () =>
+    creating.value ||
+    (selectedRecord.value
+      ? !isPresetEqual(draft.value, toDefinition(selectedRecord.value))
+      : false),
+);
 const hasActiveFilters = computed(
   () =>
     workflowFilter.value !== 'all' ||
@@ -59,19 +91,31 @@ const visiblePresets = computed(() => {
   );
 });
 
-function getSelectedPreset(): PresetRecord {
-  const preset = presets.value.find((candidate) => candidate.id === selectedId.value);
-  const fallbackPreset = presets.value[0];
+function toDefinition(record: PresetRecord): PresetDefinition {
+  const { id: _id, updatedAt: _updatedAt, ...definition } = record;
+  return clonePreset(definition);
+}
 
-  if (preset) {
-    return clonePreset(preset);
+function getRecord(id: string): PresetRecord {
+  const record = presets.value.find((candidate) => candidate.id === id) ?? presets.value[0];
+
+  if (!record) {
+    throw new Error('Preset Manager prototype requires at least one mock preset.');
   }
 
-  if (fallbackPreset) {
-    return clonePreset(fallbackPreset);
+  return record;
+}
+
+function getInitialDefinition(): PresetDefinition {
+  if (props.initialCreateIntent?.kind === 'project') {
+    return createPresetDefinitionFromProject(props.initialCreateIntent);
   }
 
-  throw new Error('Preset Manager prototype requires at least one mock preset.');
+  if (props.initialCreateIntent?.kind === 'manual') {
+    return createManualPresetDefinition();
+  }
+
+  return toDefinition(getRecord(defaultPresetId));
 }
 
 function resetFilters() {
@@ -81,13 +125,46 @@ function resetFilters() {
   attentionOnly.value = false;
 }
 
+function focusPresetName() {
+  void nextTick(() => {
+    globalThis.document.querySelector<HTMLInputElement>('[aria-label="Preset name"]')?.focus();
+  });
+}
+
 function selectPreset(id: string) {
-  selectedId.value = id;
-  draft.value = getSelectedPreset();
+  const record = getRecord(id);
+  selection.value = { id: record.id, kind: 'record' };
+  draft.value = toDefinition(record);
+}
+
+function startManualCreate() {
+  if (selection.value.kind === 'record') {
+    previousSelectedId.value = selection.value.id;
+  }
+
+  createIntent.value = { kind: 'manual' };
+  draft.value = createManualPresetDefinition();
+  selection.value = { kind: 'draft' };
+  focusPresetName();
+}
+
+function requestNewPreset() {
+  if (creating.value) {
+    focusPresetName();
+    return;
+  }
+
+  if (dirty.value) {
+    pendingNavigation.value = { type: 'new' };
+    showUnsavedDialog.value = true;
+    return;
+  }
+
+  startManualCreate();
 }
 
 function requestSelection(id: string) {
-  if (id === selectedId.value) {
+  if (selection.value.kind === 'record' && id === selection.value.id) {
     return;
   }
 
@@ -110,24 +187,50 @@ function requestClose() {
   showUnsavedDialog.value = true;
 }
 
-function saveDraft(showMessage = true) {
-  const index = presets.value.findIndex((preset) => preset.id === selectedId.value);
+function saveDraft(showMessage = true): boolean {
+  const currentSelection = selection.value;
 
-  if (
-    index < 0 ||
-    draft.value.name.trim() === '' ||
-    Object.keys(draft.value.payload).length === 0
-  ) {
-    return;
+  if (currentSelection.kind !== 'record' || !isPresetDefinitionValid(draft.value)) {
+    return false;
   }
 
-  draft.value.updatedAt = new Date().toISOString();
-  presets.value[index] = clonePreset(draft.value);
-  draft.value = getSelectedPreset();
+  const index = presets.value.findIndex((preset) => preset.id === currentSelection.id);
+
+  if (index < 0) {
+    return false;
+  }
+
+  const current = presets.value[index]!;
+  presets.value[index] = {
+    ...clonePreset(draft.value),
+    id: current.id,
+    updatedAt: new Date().toISOString(),
+  };
+  draft.value = toDefinition(presets.value[index]!);
 
   if (showMessage) {
     message.success('Preset saved');
   }
+
+  return true;
+}
+
+function createDraft(showMessage = true): PresetRecord | undefined {
+  if (!creating.value || !isPresetDefinitionValid(draft.value)) {
+    return undefined;
+  }
+
+  const record = createPresetRecord(draft.value);
+  presets.value.unshift(record);
+  createIntent.value = undefined;
+  selection.value = { id: record.id, kind: 'record' };
+  draft.value = toDefinition(record);
+
+  if (showMessage) {
+    message.success('Preset created');
+  }
+
+  return record;
 }
 
 function completePendingNavigation() {
@@ -141,33 +244,71 @@ function completePendingNavigation() {
 
   if (pending.type === 'select') {
     selectPreset(pending.id);
+  } else if (pending.type === 'new') {
+    startManualCreate();
   } else {
     managerOpen.value = false;
   }
 }
 
 function saveAndContinue() {
-  saveDraft(false);
-  completePendingNavigation();
+  const completed = creating.value ? Boolean(createDraft(false)) : saveDraft(false);
+
+  if (completed) {
+    completePendingNavigation();
+  }
 }
 
 function discardAndContinue() {
-  draft.value = getSelectedPreset();
+  if (!creating.value && selectedRecord.value) {
+    draft.value = toDefinition(selectedRecord.value);
+  }
+
+  createIntent.value = undefined;
   completePendingNavigation();
 }
 
+function cancelPendingNavigation() {
+  pendingNavigation.value = null;
+  showUnsavedDialog.value = false;
+}
+
+function cancelCreate() {
+  if (!creating.value) {
+    return;
+  }
+
+  if (createIntent.value?.kind === 'project') {
+    managerOpen.value = false;
+    return;
+  }
+
+  createIntent.value = undefined;
+  selectPreset(previousSelectedId.value);
+}
+
 function duplicatePreset() {
-  const copy = clonePreset(draft.value);
-  const selectedIndex = presets.value.findIndex((preset) => preset.id === selectedId.value);
-  copy.id = `${copy.id}-copy-${Date.now()}`;
-  copy.name = `${copy.name} Copy`;
-  copy.updatedAt = new Date().toISOString();
+  const currentSelection = selection.value;
+
+  if (currentSelection.kind !== 'record') {
+    return;
+  }
+
+  const selectedIndex = presets.value.findIndex((preset) => preset.id === currentSelection.id);
+  const copy = createPresetRecord({
+    ...clonePreset(draft.value),
+    name: `${draft.value.name} Copy`,
+  });
   presets.value.splice(selectedIndex + 1, 0, copy);
   selectPreset(copy.id);
   message.success('Preset duplicated');
 }
 
 function deletePreset() {
+  if (selection.value.kind !== 'record') {
+    return;
+  }
+
   dialog.warning({
     content: 'Delete this preset? Projects that already used it will not be changed.',
     negativeText: 'Cancel',
@@ -192,7 +333,7 @@ function deletePreset() {
 <template>
   <section v-if="managerOpen" aria-label="Preset Manager prototype" class="manager-backdrop">
     <section class="manager-shell">
-      <PresetManagerHeader @close="requestClose" />
+      <PresetManagerHeader @close="requestClose" @create="requestNewPreset" />
       <div class="manager-body">
         <aside class="manager-column manager-column--navigation">
           <PresetManagerNavigation v-model:workflow="workflowFilter" :presets />
@@ -203,17 +344,25 @@ function deletePreset() {
             v-model:favoritesOnly="favoritesOnly"
             v-model:search="searchFilter"
             v-model:sort="sortValue"
+            :draft="creating ? draft : undefined"
+            :draftSelected="creating"
             :hasActiveFilters
             :presets="visiblePresets"
             :selectedId
             @resetFilters="resetFilters"
             @select="requestSelection"
+            @selectDraft="focusPresetName"
           />
         </main>
         <aside class="manager-column manager-column--editor">
-          <PresetEditor
+          <PresetManagerEditor
             v-model="draft"
+            :createIntent
+            :creating
             :dirty
+            :resources="presetEditorResources"
+            @cancel="cancelCreate"
+            @create="createDraft"
             @delete="deletePreset"
             @duplicate="duplicatePreset"
             @save="saveDraft"
@@ -224,12 +373,26 @@ function deletePreset() {
 
     <NModal v-model:show="showUnsavedDialog" :maskClosable="false">
       <NCard aria-label="Unsaved preset changes" class="unsaved-card" role="dialog" size="small">
-        <h2>Unsaved changes</h2>
-        <NText depth="3">Save your changes before leaving this preset?</NText>
+        <h2>{{ creating ? 'Unsaved preset' : 'Unsaved changes' }}</h2>
+        <NText depth="3">
+          {{
+            creating
+              ? 'Create this preset before leaving the draft?'
+              : 'Save your changes before leaving this preset?'
+          }}
+        </NText>
         <div class="unsaved-actions">
-          <NButton tertiary @click="showUnsavedDialog = false">Cancel</NButton>
-          <NButton secondary type="error" @click="discardAndContinue">Discard</NButton>
-          <NButton type="primary" @click="saveAndContinue">Save</NButton>
+          <NButton tertiary @click="cancelPendingNavigation">Cancel</NButton>
+          <NButton secondary type="error" @click="discardAndContinue">
+            {{ creating ? 'Discard Draft' : 'Discard' }}
+          </NButton>
+          <NButton
+            :disabled="creating && !isPresetDefinitionValid(draft)"
+            type="primary"
+            @click="saveAndContinue"
+          >
+            {{ creating ? 'Create Preset' : 'Save' }}
+          </NButton>
         </div>
       </NCard>
     </NModal>

@@ -3,15 +3,18 @@ import { Trash as TrashIcon } from '@vicons/tabler';
 import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import type { PresetLora } from './presets.types';
+import type { PresetLora, PresetResourceRef } from './presets.types';
 
-import { availableLoras } from './presets.mock';
+const props = defineProps<{
+  disabled?: boolean;
+  resources: PresetResourceRef[];
+}>();
 
 const loras = defineModel<PresetLora[]>({ required: true });
 const selectedResourceId = ref<string | null>(null);
 
 const loraOptions = computed(() =>
-  availableLoras.map((resource) => ({
+  props.resources.map((resource) => ({
     disabled: loras.value.some((lora) => lora.resource.id === resource.id),
     label: `${resource.name} · ${resource.version ?? ''}`,
     value: resource.id,
@@ -19,7 +22,7 @@ const loraOptions = computed(() =>
 );
 
 function addLora(resourceId: string | null) {
-  const resource = availableLoras.find((candidate) => candidate.id === resourceId);
+  const resource = props.resources.find((candidate) => candidate.id === resourceId);
 
   if (!resource || loras.value.some((lora) => lora.resource.id === resource.id)) {
     return;
@@ -38,7 +41,7 @@ function addLora(resourceId: string | null) {
 <template>
   <div class="lora-stack">
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
-      <NSwitch v-model:value="lora.enabled" size="small" />
+      <NSwitch v-model:value="lora.enabled" :disabled size="small" />
       <div class="lora-main">
         <strong>{{ lora.resource.name }}</strong>
         <NText depth="3">
@@ -48,10 +51,11 @@ function addLora(resourceId: string | null) {
           >
         </NText>
       </div>
-      <NInputNumber v-model:value="lora.weight" :max="2" :min="-2" :step="0.05" />
+      <NInputNumber v-model:value="lora.weight" :disabled :max="2" :min="-2" :step="0.05" />
       <NButton
         :aria-label="`Remove ${lora.resource.name}`"
         circle
+        :disabled
         quaternary
         size="small"
         @click="loras.splice(index, 1)"
@@ -62,6 +66,7 @@ function addLora(resourceId: string | null) {
     <NSelect
       v-model:value="selectedResourceId"
       clearable
+      :disabled
       :options="loraOptions"
       placeholder="Add LoRA"
       @update:value="addLora"

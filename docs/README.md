@@ -15,7 +15,7 @@
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, open/new project flows и recovery states.
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
-  - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, apply preview, partial apply, save current as preset и Preset Manager.
+  - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, editable apply draft, partial apply и create/edit mode Preset Manager.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Generate` mode: prompts, bbox, Smart Patch Layer, LoRA, embeddings, dynamic prompting и regional guidance.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для generation/upscale jobs.
@@ -40,8 +40,8 @@ Tooling проекта использует `pnpm`. Основные коман�
 - [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
 - [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
 - [prototypes/preset-manager.html](./prototypes/preset-manager.html) — исторический HTML-прототип Preset Manager; актуальный визуальный источник истины живёт в `prototype-app?prototype=preset-manager`.
-- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный Vue-прототип живёт в `prototype-app?prototype=apply-preset`.
-- [prototypes/save-preset.html](./prototypes/save-preset.html) — исторический HTML-референс Save Current as Preset; актуальный Vue-прототип живёт в `prototype-app?prototype=save-preset`.
+- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный editable Vue-прототип живёт в `prototype-app?prototype=apply-preset`.
+- [prototypes/save-preset.html](./prototypes/save-preset.html) — исторический HTML-референс Save Current as Preset; актуальный Vue-flow открывает Preset Manager с project-derived draft в `prototype-app?prototype=save-preset`.
 - [prototypes/project-page.html](./prototypes/project-page.html) — текущий источник истины для рабочей вкладки `Project` / `Generate`: mode switch в левой панели, canvas-area overlays/rails, layer-driven context и правая панель слоёв.
 
 ## Правило обновления

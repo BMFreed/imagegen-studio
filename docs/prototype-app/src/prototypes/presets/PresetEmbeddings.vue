@@ -4,13 +4,16 @@ import { computed, ref } from 'vue';
 
 import type { PresetResourceRef } from './presets.types';
 
-import { availableEmbeddings } from './presets.mock';
+const props = defineProps<{
+  disabled?: boolean;
+  resources: PresetResourceRef[];
+}>();
 
 const embeddings = defineModel<PresetResourceRef[]>({ required: true });
 const selectedResourceId = ref<string | null>(null);
 
 const embeddingOptions = computed(() =>
-  availableEmbeddings.map((resource) => ({
+  props.resources.map((resource) => ({
     disabled: embeddings.value.some((embedding) => embedding.id === resource.id),
     label: resource.name,
     value: resource.id,
@@ -18,7 +21,7 @@ const embeddingOptions = computed(() =>
 );
 
 function addEmbedding(resourceId: string | null) {
-  const resource = availableEmbeddings.find((candidate) => candidate.id === resourceId);
+  const resource = props.resources.find((candidate) => candidate.id === resourceId);
 
   if (!resource || embeddings.value.some((embedding) => embedding.id === resource.id)) {
     return;
@@ -36,6 +39,7 @@ function addEmbedding(resourceId: string | null) {
         v-for="(embedding, index) of embeddings"
         :key="embedding.id"
         closable
+        :disabled
         @close="embeddings.splice(index, 1)"
       >
         {{ embedding.name }}
@@ -44,6 +48,7 @@ function addEmbedding(resourceId: string | null) {
     <NSelect
       v-model:value="selectedResourceId"
       clearable
+      :disabled
       :options="embeddingOptions"
       placeholder="Add Embedding"
       @update:value="addEmbedding"

@@ -1,12 +1,26 @@
-import type { PresetRecord, PresetResourceRef } from './presets.types';
+import type {
+  PresetCreateIntent,
+  PresetEditorResources,
+  PresetModelRef,
+  PresetRecord,
+  PresetResourceRef,
+} from './presets.types';
 
-const illustriousModel = {
+const illustriousModel: PresetModelRef = {
   baseModel: 'Illustrious',
   id: 'illustrious-xl-v1-1',
   name: 'Illustrious XL',
   predictionType: 'v-pred',
   version: 'v1.1 main',
-} as const;
+};
+
+const noobAiModel: PresetModelRef = {
+  baseModel: 'NoobAI',
+  id: 'noobai-xl-v3',
+  name: 'NoobAI XL',
+  predictionType: 'epsilon',
+  version: 'v3',
+};
 
 const builtInVae: PresetResourceRef = {
   id: 'illustrious-built-in-vae',
@@ -36,6 +50,13 @@ export const availableEmbeddings: PresetResourceRef[] = [
   { id: 'fast-negative', name: 'Fast Negative' },
   { id: 'clean-anime-negative', name: 'Clean Anime Negative' },
 ];
+
+export const presetEditorResources: PresetEditorResources = {
+  embeddings: availableEmbeddings,
+  loras: availableLoras,
+  models: [illustriousModel, noobAiModel],
+  vaes: [builtInVae, { id: 'none', name: 'None' }],
+};
 
 export const presetResources: PresetRecord[] = [
   {
@@ -83,7 +104,7 @@ export const presetResources: PresetRecord[] = [
       loras: [
         {
           enabled: true,
-          resource: availableLoras[2]!,
+          resource: { ...availableLoras[2]!, missing: true },
           triggerWords: ['soft detail'],
           weight: 0.6,
         },
@@ -186,3 +207,35 @@ export const presetResources: PresetRecord[] = [
 ];
 
 export const defaultPresetId = 'studio-portrait-soft-light';
+
+export const currentProjectPresetSource = {
+  definition: {
+    description: '',
+    favorite: true,
+    name: 'Sample Portrait Baseline',
+    payload: {
+      embeddings: [availableEmbeddings[0]!, availableEmbeddings[1]!],
+      guidance: { cfgScale: 5.5, steps: 30 },
+      loras: [
+        {
+          enabled: true,
+          resource: availableLoras[0]!,
+          triggerWords: ['digital art', 'painterly'],
+          weight: 0.7,
+        },
+      ],
+      model: illustriousModel,
+      negativePrompt: 'lowres, bad anatomy, blurry, jpeg artifacts, oversaturated',
+      prompt: 'portrait of Sample Project B, soft studio light, rim light, detailed skin, 85mm',
+      sampling: { sampler: 'Euler a', scheduler: 'Normal' },
+      seed: { policy: 'fixed', value: 184_235 },
+      size: { height: 1216, width: 832 },
+      vae: builtInVae,
+    },
+    tags: ['sample', 'portrait'],
+    workflow: 'textToImage',
+  },
+  kind: 'project',
+  projectName: 'Sample Project B.igs',
+  projectSummary: '832 × 1216 · Illustrious XL v1.1',
+} satisfies PresetCreateIntent;

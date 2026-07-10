@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { InfoCircle as InfoIcon, X as XIcon } from '@vicons/tabler';
+import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
 import { NButton, NIcon, NTooltip } from 'naive-ui';
 
 defineEmits<{
   close: [];
+  create: [];
 }>();
 </script>
 
@@ -19,21 +20,27 @@ defineEmits<{
             </template>
           </NButton>
         </template>
-        Browse and edit generation presets. Apply and save presets from Project.
+        Browse, create, and edit generation presets.
       </NTooltip>
     </div>
-    <NButton
-      aria-label="Close Preset Manager"
-      circle
-      quaternary
-      size="small"
-      title="Close Preset Manager"
-      @click="$emit('close')"
-    >
-      <template v-slot:icon>
-        <NIcon :component="XIcon" />
-      </template>
-    </NButton>
+    <div class="header-actions">
+      <NButton secondary size="small" @click="$emit('create')">
+        <template v-slot:icon><NIcon :component="PlusIcon" /></template>
+        New Preset
+      </NButton>
+      <NButton
+        aria-label="Close Preset Manager"
+        circle
+        quaternary
+        size="small"
+        title="Close Preset Manager"
+        @click="$emit('close')"
+      >
+        <template v-slot:icon>
+          <NIcon :component="XIcon" />
+        </template>
+      </NButton>
+    </div>
   </header>
 </template>
 
@@ -52,6 +59,12 @@ defineEmits<{
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 h1 {

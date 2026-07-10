@@ -8,7 +8,7 @@ import ProjectContextMock from './components/ProjectContextMock.vue';
 import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue';
 import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue';
 import PresetManagerPrototype from './prototypes/presets/PresetManagerPrototype.vue';
-import SavePresetPrototype from './prototypes/presets/SavePresetPrototype.vue';
+import { currentProjectPresetSource } from './prototypes/presets/presets.mock';
 import { imageGenNaiveTheme } from './theme/naive-theme';
 
 type PrototypeId = 'apply-preset' | 'model-manager' | 'preset-manager' | 'save-preset';
@@ -58,9 +58,16 @@ const usesProjectContext = computed(
               </section>
             </main>
             <ModelManagerPrototype v-if="activePrototype === 'model-manager'" />
-            <PresetManagerPrototype v-else-if="activePrototype === 'preset-manager'" />
+            <PresetManagerPrototype
+              v-else-if="activePrototype === 'preset-manager'"
+              key="preset-manager"
+            />
             <ApplyPresetPrototype v-else-if="activePrototype === 'apply-preset'" />
-            <SavePresetPrototype v-else />
+            <PresetManagerPrototype
+              v-else
+              key="save-preset"
+              :initialCreateIntent="currentProjectPresetSource"
+            />
           </div>
         </div>
       </NMessageProvider>
