@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { HTMLAttributes } from 'vue';
+
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
 import { NButton, NIcon, NTabPane, NTabs } from 'naive-ui';
 import { nextTick, ref } from 'vue';
@@ -60,6 +62,16 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
     focusTab(targetIndex);
   }
 }
+
+function getTabProps(tab: DocumentTabModel, index: number): HTMLAttributes {
+  return {
+    'aria-label': `${tab.title}${tab.dirty ? ' Unsaved changes' : ''}`,
+    'aria-selected': tab.id === activeId.value,
+    onKeydown: (event) => handleTabKeydown(event, index),
+    role: 'tab',
+    tabindex: tab.id === activeId.value ? 0 : -1,
+  };
+}
 </script>
 
 <template>
@@ -72,29 +84,24 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
       :tabsPadding="12"
       type="card"
     >
-      <NTabPane v-for="(tab, index) of tabs" :key="tab.id" :name="tab.id">
+      <NTabPane
+        v-for="(tab, index) of tabs"
+        :key="tab.id"
+        :name="tab.id"
+        :tabProps="getTabProps(tab, index)"
+      >
         <template v-slot:tab>
           <div class="document-tab">
-            <NButton
-              :aria-selected="tab.id === activeId"
-              class="tab-select"
-              role="tab"
-              :tabindex="tab.id === activeId ? 0 : -1"
-              text
-              @click.stop="activeId = tab.id"
-              @keydown="handleTabKeydown($event, index)"
-            >
-              <span class="tab-leading">
-                <NIcon v-if="tab.kind === 'home'" :component="HomeIcon" />
-                <span
-                  v-else
-                  class="workspace-marker"
-                  :style="{ backgroundColor: tab.workspaceColor ?? 'var(--workspace-green)' }"
-                />
-              </span>
-              <span v-overflow-title class="tab-title">{{ tab.title }}</span>
-              <span v-if="tab.dirty" aria-label="Unsaved changes" class="dirty-dot" />
-            </NButton>
+            <span class="tab-leading">
+              <NIcon v-if="tab.kind === 'home'" :component="HomeIcon" />
+              <span
+                v-else
+                class="workspace-marker"
+                :style="{ backgroundColor: tab.workspaceColor ?? 'var(--workspace-green)' }"
+              />
+            </span>
+            <span v-overflow-title class="tab-title">{{ tab.title }}</span>
+            <span v-if="tab.dirty" aria-hidden="true" class="dirty-dot" />
             <NButton
               :aria-label="`Close ${tab.title}`"
               circle
@@ -103,6 +110,7 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
               size="tiny"
               :title="`Close ${tab.title}`"
               @click.stop="emit('close', tab.id)"
+              @keydown.stop
             >
               <template v-slot:icon><NIcon :component="XIcon" /></template>
             </NButton>
@@ -145,22 +153,11 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 .document-tab {
   display: flex;
   align-items: center;
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-}
-
-.tab-select {
-  --n-padding: 0 4px 0 10px;
-  min-width: 0;
-  height: 100%;
-  flex: 1 1 auto;
-}
-
-.tab-select :deep(.n-button__content) {
   gap: 7px;
   width: 100%;
   min-width: 0;
+  height: 32px;
+  padding-left: 10px;
 }
 
 .tab-leading {
@@ -190,8 +187,10 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 }
 
 .tab-title {
+  flex: 1 1 auto;
   overflow: hidden;
   min-width: 0;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

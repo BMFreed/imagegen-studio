@@ -24,6 +24,29 @@ async function openModelManager(page: Page) {
 }
 
 test.describe('Model Manager prototype', () => {
+  test('enters through the native modal transition', async ({ page }) => {
+    await page.addInitScript(() => {
+      const state = globalThis as { managerEnteredFromScale?: boolean } & typeof globalThis;
+      new MutationObserver(() => {
+        const manager = document.querySelector('.manager-shell');
+        if (manager && getComputedStyle(manager).transform !== 'none') {
+          state.managerEnteredFromScale = true;
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+
+    await openModelManager(page);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (globalThis as { managerEnteredFromScale?: boolean } & typeof globalThis)
+              .managerEnteredFromScale,
+        ),
+      )
+      .toBe(true);
+  });
+
   for (const viewport of viewports) {
     test(`captures ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ height: viewport.height, width: viewport.width });
@@ -80,11 +103,60 @@ test.describe('Model Manager prototype', () => {
     await openModelManager(page);
 
     const digitalArt = page.getByRole('button', { name: /Digital Art/ });
+    await expect(digitalArt).toHaveClass(/n-button/);
+    await expect(digitalArt).toHaveCSS('padding-left', '12px');
+    await expect(digitalArt).toHaveCSS('padding-right', '12px');
     await digitalArt.focus();
     await page.keyboard.press('Space');
 
     await expect(page.locator('h2', { hasText: 'Digital Art' })).toBeVisible();
     await expect(page.getByText('v0.1').last()).toBeVisible();
+
+    const digitalArtRow = page.locator('article').filter({ hasText: 'Digital Art' });
+    const rowBox = await digitalArtRow.boundingBox();
+    expect(rowBox).not.toBeNull();
+    await page.mouse.click(rowBox!.x + rowBox!.width - 12, rowBox!.y + rowBox!.height / 2);
+    await expect(page.locator('h2', { hasText: 'Digital Art' })).toBeVisible();
+
+    await page
+      .locator('article')
+      .filter({ hasText: 'Bad Hands Negative' })
+      .getByRole('button', { name: 'Repair' })
+      .click();
+    await expect(page.locator('h2', { hasText: 'Digital Art' })).toBeVisible();
+  });
+
+  test('resizes navigation and resource details panes', async ({ page }) => {
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await openModelManager(page);
+
+    const navigation = page.locator('.manager-column--navigation');
+    const navigationBefore = await navigation.boundingBox();
+    const navigationHandle = page.locator('.manager-body > .n-split__resize-trigger-wrapper');
+    const navigationHandleBox = await navigationHandle.boundingBox();
+    expect(navigationBefore).not.toBeNull();
+    expect(navigationHandleBox).not.toBeNull();
+    await page.mouse.move(navigationHandleBox!.x, navigationHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(navigationHandleBox!.x + 48, navigationHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await navigation.boundingBox())!.width)
+      .toBeGreaterThan(navigationBefore!.width + 30);
+
+    const details = page.locator('.manager-column--details');
+    const detailsBefore = await details.boundingBox();
+    const detailsHandle = page.locator('.manager-content-split > .n-split__resize-trigger-wrapper');
+    const detailsHandleBox = await detailsHandle.boundingBox();
+    expect(detailsBefore).not.toBeNull();
+    expect(detailsHandleBox).not.toBeNull();
+    await page.mouse.move(detailsHandleBox!.x, detailsHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(detailsHandleBox!.x - 48, detailsHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await details.boundingBox())!.width)
+      .toBeGreaterThan(detailsBefore!.width + 30);
   });
 
   test('captures import dialog', async ({ page }) => {

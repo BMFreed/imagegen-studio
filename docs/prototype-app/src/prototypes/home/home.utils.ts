@@ -1,6 +1,6 @@
 import type {
   ExternalProjectDraft,
-  HomeBrowseMode,
+  HomeBrowseSelection,
   HomeProjectRecord,
   HomeSort,
   HomeStatusFilter,
@@ -15,23 +15,16 @@ export function projectNeedsAttention(project: HomeProjectRecord, workspaces: Ho
 
 export function getProjectsForBrowseSelection(
   projects: HomeProjectRecord[],
-  mode: HomeBrowseMode,
-  workspaceFilterId?: string,
+  selection: HomeBrowseSelection,
 ) {
-  if (mode === 'trash') {
+  if (selection.kind === 'trash') {
     return projects.filter((project) => project.trashedAt !== undefined);
   }
 
   const activeProjects = projects.filter((project) => project.trashedAt === undefined);
 
-  if (mode === 'recent') {
-    return [...activeProjects]
-      .sort((left, right) => right.lastOpenedAt.localeCompare(left.lastOpenedAt))
-      .slice(0, 12);
-  }
-
-  return workspaceFilterId
-    ? activeProjects.filter((project) => project.workspaceId === workspaceFilterId)
+  return selection.kind === 'workspace'
+    ? activeProjects.filter((project) => project.workspaceId === selection.workspaceId)
     : activeProjects;
 }
 

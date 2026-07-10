@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NModal } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { NModal, NSplit } from 'naive-ui';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 import type { ModelResource } from './model-manager.types';
 
@@ -19,7 +19,9 @@ const statusFilter = ref('all');
 const searchFilter = ref('');
 const baseModelFilter = ref('all');
 const sortValue = ref('name');
-const managerOpen = ref(true);
+const managerOpen = ref(false);
+const navigationPaneSize = ref<number | string>('220px');
+const resourcePaneSize = ref<number | string>('calc(100% - 420px)');
 
 defineEmits<{
   close: [];
@@ -66,6 +68,12 @@ function handleVisibilityChange(visible: boolean) {
     requestClose();
   }
 }
+
+onMounted(() => {
+  void nextTick(() => {
+    managerOpen.value = true;
+  });
+});
 </script>
 
 <template>
@@ -80,29 +88,44 @@ function handleVisibilityChange(visible: boolean) {
   >
     <div aria-label="Model Manager prototype" aria-modal="true" class="manager-shell" role="dialog">
       <ModelManagerHeader @close="requestClose" @openImport="showImportModal = true" />
-      <div class="manager-body">
-        <aside class="manager-column manager-column--navigation">
-          <ModelManagerNavigation
-            v-model:modelType="modelTypeFilter"
-            v-model:status="statusFilter"
-          />
-        </aside>
-        <main class="resource-content">
-          <ModelResourceList
-            v-model:baseModel="baseModelFilter"
-            v-model:search="searchFilter"
-            v-model:sort="sortValue"
-            :hasActiveFilters
-            :resources="modelResources"
-            :selectedId
-            @resetFilters="resetFilters"
-            @select="selectedId = $event"
-          />
-        </main>
-        <aside class="manager-column manager-column--details">
-          <ModelDetailsPanel :resource="selectedResource" />
-        </aside>
-      </div>
+      <NSplit v-model:size="navigationPaneSize" class="manager-body" max="320px" min="190px">
+        <template v-slot:1>
+          <aside class="manager-column manager-column--navigation">
+            <ModelManagerNavigation
+              v-model:modelType="modelTypeFilter"
+              v-model:status="statusFilter"
+            />
+          </aside>
+        </template>
+        <template v-slot:2>
+          <NSplit
+            v-model:size="resourcePaneSize"
+            class="manager-content-split"
+            :max="0.75"
+            min="460px"
+          >
+            <template v-slot:1>
+              <main class="resource-content">
+                <ModelResourceList
+                  v-model:baseModel="baseModelFilter"
+                  v-model:search="searchFilter"
+                  v-model:sort="sortValue"
+                  :hasActiveFilters
+                  :resources="modelResources"
+                  :selectedId
+                  @resetFilters="resetFilters"
+                  @select="selectedId = $event"
+                />
+              </main>
+            </template>
+            <template v-slot:2>
+              <aside class="manager-column manager-column--details">
+                <ModelDetailsPanel :resource="selectedResource" />
+              </aside>
+            </template>
+          </NSplit>
+        </template>
+      </NSplit>
     </div>
   </NModal>
   <CivitaiImportModal v-model:show="showImportModal" />
@@ -122,8 +145,11 @@ function handleVisibilityChange(visible: boolean) {
 }
 
 .manager-body {
-  display: grid;
-  grid-template-columns: clamp(210px, 16%, 230px) minmax(460px, 1fr) clamp(360px, 36%, 500px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.manager-content-split {
   min-width: 0;
   min-height: 0;
 }
@@ -133,10 +159,5 @@ function handleVisibilityChange(visible: boolean) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.manager-column--navigation,
-.resource-content {
-  border-right: 1px solid var(--app-border);
 }
 </style>

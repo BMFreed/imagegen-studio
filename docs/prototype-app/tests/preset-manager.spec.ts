@@ -25,6 +25,29 @@ async function openPresetManager(page: Page) {
 }
 
 test.describe('Preset Manager prototype', () => {
+  test('enters through the native modal transition', async ({ page }) => {
+    await page.addInitScript(() => {
+      const state = globalThis as { managerEnteredFromScale?: boolean } & typeof globalThis;
+      new MutationObserver(() => {
+        const manager = document.querySelector('.manager-shell');
+        if (manager && getComputedStyle(manager).transform !== 'none') {
+          state.managerEnteredFromScale = true;
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+
+    await openPresetManager(page);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (globalThis as { managerEnteredFromScale?: boolean } & typeof globalThis)
+              .managerEnteredFromScale,
+        ),
+      )
+      .toBe(true);
+  });
+
   for (const viewport of viewports) {
     test(`captures ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ height: viewport.height, width: viewport.width });
@@ -75,6 +98,9 @@ test.describe('Preset Manager prototype', () => {
     await openPresetManager(page);
 
     const cinematic = page.getByRole('button', { name: 'Select Cinematic Img2Img Pass' });
+    await expect(cinematic).toHaveClass(/n-button/);
+    await expect(cinematic).toHaveCSS('padding-left', '12px');
+    await expect(cinematic).toHaveCSS('padding-right', '12px');
     await cinematic.focus();
     await page.keyboard.press('Space');
     await expect(page.getByLabel('Preset name')).toHaveValue('Cinematic Img2Img Pass');
@@ -85,6 +111,39 @@ test.describe('Preset Manager prototype', () => {
     await save.click();
     await expect(save).toBeDisabled();
     await expect(page.getByText('Preset saved')).toBeVisible();
+  });
+
+  test('resizes navigation and preset editor panes', async ({ page }) => {
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await openPresetManager(page);
+
+    const navigation = page.locator('.manager-column--navigation');
+    const navigationBefore = await navigation.boundingBox();
+    const navigationHandle = page.locator('.manager-body > .n-split__resize-trigger-wrapper');
+    const navigationHandleBox = await navigationHandle.boundingBox();
+    expect(navigationBefore).not.toBeNull();
+    expect(navigationHandleBox).not.toBeNull();
+    await page.mouse.move(navigationHandleBox!.x, navigationHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(navigationHandleBox!.x + 48, navigationHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await navigation.boundingBox())!.width)
+      .toBeGreaterThan(navigationBefore!.width + 30);
+
+    const editor = page.locator('.manager-column--editor');
+    const editorBefore = await editor.boundingBox();
+    const editorHandle = page.locator('.manager-content-split > .n-split__resize-trigger-wrapper');
+    const editorHandleBox = await editorHandle.boundingBox();
+    expect(editorBefore).not.toBeNull();
+    expect(editorHandleBox).not.toBeNull();
+    await page.mouse.move(editorHandleBox!.x, editorHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(editorHandleBox!.x - 48, editorHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await editor.boundingBox())!.width)
+      .toBeGreaterThan(editorBefore!.width + 30);
   });
 
   test('guards preset switching when there are unsaved changes', async ({ page }) => {
@@ -123,7 +182,9 @@ test.describe('Preset Manager prototype', () => {
     await expect(allPresets).toContainText('6');
 
     await page.getByRole('button', { name: 'New Preset' }).click();
-    await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeVisible();
+    const draftRow = page.getByRole('button', { name: 'Select draft preset' });
+    await expect(draftRow).toBeVisible();
+    await expect(draftRow).toHaveClass(/n-button/);
     await expect(page.getByLabel('Preset name')).toBeFocused();
     await expect(page.getByLabel('Preset name')).toHaveValue('');
     await expect(page.getByRole('button', { name: 'Create Preset' })).toBeDisabled();

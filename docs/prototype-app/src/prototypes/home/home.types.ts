@@ -2,7 +2,8 @@ import type { PresetPayload } from '../presets/presets.types';
 
 export type HomeScenarioId = 'default' | 'first-run' | 'no-model' | 'problems';
 
-export type HomeBrowseMode = 'all' | 'recent' | 'trash';
+export type HomeBrowseSelection =
+  { kind: 'all' } | { kind: 'trash' } | { kind: 'workspace'; workspaceId: string };
 
 export type HomeSort = 'lastOpened' | 'modified' | 'name';
 export type HomeStatusFilter = 'all' | 'attention' | 'open' | 'recovery';

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Edit as DraftIcon } from '@vicons/tabler';
-import { NIcon, NTag, useThemeVars } from 'naive-ui';
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
 import { computed } from 'vue';
 
 import type { PresetDefinition } from './presets.types';
@@ -23,11 +23,11 @@ const sections = computed(() => includedSections(props.draft.payload));
 
 <template>
   <article class="draft-row" :class="{ 'draft-row--selected': selected }" :style="accentStyle">
-    <button
+    <NButton
       aria-label="Select draft preset"
       :aria-pressed="selected"
       class="draft-select"
-      type="button"
+      text
       @click="$emit('select')"
     >
       <span class="draft-icon"><NIcon :component="DraftIcon" size="22" /></span>
@@ -46,7 +46,7 @@ const sections = computed(() => includedSections(props.draft.payload));
           </NTag>
         </span>
       </span>
-    </button>
+    </NButton>
   </article>
 </template>
 
@@ -66,18 +66,22 @@ const sections = computed(() => includedSections(props.draft.payload));
 }
 
 .draft-select {
+  --n-padding: 10px 12px;
+  width: 100%;
+  height: auto;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.draft-select :deep(.n-button__content) {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 10px 12px;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+  min-width: 0;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .draft-select:focus-visible {

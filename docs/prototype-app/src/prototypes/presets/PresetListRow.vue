@@ -6,7 +6,7 @@ import {
   Star as StarIcon,
   FileText as TextIcon,
 } from '@vicons/tabler';
-import { NIcon, NTag, useThemeVars } from 'naive-ui';
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
 import { computed } from 'vue';
 
 import type { PresetRecord, PresetWorkflow } from './presets.types';
@@ -41,11 +41,11 @@ const hasMissingResources = computed(() => presetHasMissingResources(props.prese
 
 <template>
   <article class="preset-row" :class="{ 'preset-row--selected': selected }" :style="accentStyle">
-    <button
+    <NButton
       :aria-label="`Select ${preset.name}`"
       :aria-pressed="selected"
       class="preset-select"
-      type="button"
+      text
       @click="$emit('select', preset.id)"
     >
       <span class="workflow-icon">
@@ -74,7 +74,7 @@ const hasMissingResources = computed(() => presetHasMissingResources(props.prese
         :component="StarIcon"
         size="18"
       />
-    </button>
+    </NButton>
   </article>
 </template>
 
@@ -111,19 +111,23 @@ const hasMissingResources = computed(() => presetHasMissingResources(props.prese
 }
 
 .preset-select {
+  --n-padding: 10px 12px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.preset-select :deep(.n-button__content) {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .preset-select:focus-visible {

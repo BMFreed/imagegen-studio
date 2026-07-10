@@ -28,10 +28,10 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
     :class="{ 'resource-row--selected': selected, 'resource-row--muted': muted }"
     :style="accentStyle"
   >
-    <button
+    <NButton
       :aria-pressed="selected"
       class="resource-select"
-      type="button"
+      text
       @click="$emit('select', resource.id)"
     >
       <ResourceThumbnail :tone="resource.thumbnailTone" />
@@ -46,16 +46,20 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
           <span>{{ resource.sizeLabel }}</span>
         </div>
       </div>
-    </button>
-    <div class="resource-state">
       <StatusBadge :status="resource.status" />
-      <NButton v-if="resource.status === 'missing'" ghost size="small" type="warning">
-        <template v-slot:icon>
-          <NIcon :component="ToolIcon" />
-        </template>
-        Repair
-      </NButton>
-    </div>
+    </NButton>
+    <NButton
+      v-if="resource.status === 'missing'"
+      class="repair-action"
+      ghost
+      size="small"
+      type="warning"
+    >
+      <template v-slot:icon>
+        <NIcon :component="ToolIcon" />
+      </template>
+      Repair
+    </NButton>
   </article>
 </template>
 
@@ -67,9 +71,9 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   min-height: 76px;
-  padding: 10px 12px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
@@ -90,6 +94,8 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
   border-radius: 999px;
   background: var(--resource-accent);
   content: '';
+  pointer-events: none;
+  z-index: 1;
 }
 
 .resource-row--muted {
@@ -102,18 +108,24 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
 }
 
 .resource-select {
+  --n-padding: 10px 12px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 76px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.resource-select :deep(.n-button__content) {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-width: 0;
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .resource-select:focus-visible {
@@ -147,10 +159,7 @@ p {
   font-size: 12px;
 }
 
-.resource-state {
-  display: flex;
-  align-items: center;
-  justify-content: end;
-  gap: 8px;
+.repair-action {
+  margin-right: 12px;
 }
 </style>

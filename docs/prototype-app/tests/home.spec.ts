@@ -17,7 +17,7 @@ test.beforeAll(async () => {
 async function openHome(page: Page, query = '') {
   await page.goto(`/${query}`);
   await expect(page.getByLabel('Home prototype')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'All Projects' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
 }
 
 test.describe('Home prototype', () => {
@@ -47,7 +47,7 @@ test.describe('Home prototype', () => {
     await page.screenshot({ path: path.join(screenshotsDir, 'home-no-model.png') });
 
     await openHome(page, '?prototype=home&scenario=problems');
-    await page.getByRole('button', { name: 'All Projects' }).click();
+    await page.getByRole('button', { name: 'Projects' }).click();
     await page.screenshot({ path: path.join(screenshotsDir, 'home-problems.png') });
 
     await openHome(page);
@@ -76,16 +76,17 @@ test.describe('Home prototype', () => {
 
   test('starts without a selection and browses projects', async ({ page }) => {
     await openHome(page);
-    await expect(page.getByRole('button', { name: 'All Projects' })).toHaveAttribute(
+    await expect(page.getByRole('button', { name: 'Projects' })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
+    await expect(page.getByRole('button', { name: 'Recent' })).toBeHidden();
     await expect(page.getByText('Select a project to preview')).toBeVisible();
     await page.getByRole('button', { name: 'Select Sample Project B' }).click();
     await expect(page.getByRole('heading', { name: 'Sample Project B' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Switch to Project' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'All Projects' }).click();
+    await page.getByRole('button', { name: 'Projects' }).click();
     await expect(page.getByText('Select a project to preview')).toBeVisible();
     await expect(page.getByText('Character studies').last()).toBeVisible();
   });
@@ -126,7 +127,7 @@ test.describe('Home prototype', () => {
     await expect(page.getByRole('button', { name: 'Select Sample Project B' })).toBeHidden();
     await page.getByRole('button', { name: 'Reset filters' }).click();
 
-    await page.getByLabel('Condition').click();
+    await page.getByLabel('Status').click();
     await page.locator('.n-base-select-option').filter({ hasText: 'Recovery available' }).click();
     await expect(page.getByRole('button', { name: 'Select Midnight greenhouse' })).toBeVisible();
     await page.getByRole('button', { name: 'List view' }).click();
@@ -151,7 +152,7 @@ test.describe('Home prototype', () => {
     await noob.dblclick();
     await expect(page.getByRole('tab', { name: 'Home' })).toBeHidden();
     await page.getByRole('button', { name: 'Open Home' }).click();
-    await expect(page.getByRole('heading', { name: 'All Projects' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
   });
 
   test('creates a project with a generation preset warning', async ({ page }) => {
@@ -206,8 +207,8 @@ test.describe('Home prototype', () => {
     await expect(page.getByText('No projects in this workspace yet')).toBeVisible();
 
     await page.goto('/?prototype=home&scenario=problems');
-    await page.getByRole('button', { name: 'All Projects' }).click();
-    await page.getByLabel('Condition').click();
+    await page.getByRole('button', { name: 'Projects' }).click();
+    await page.getByLabel('Status').click();
     await page.locator('.n-base-select-option').filter({ hasText: 'Needs attention' }).click();
     await expect(page.getByRole('button', { name: 'Select Damaged portrait study' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Select Future schema concept' })).toBeVisible();
@@ -250,11 +251,13 @@ test.describe('Home prototype', () => {
     await workspaceDialog.getByRole('button', { name: 'Add Workspace' }).click();
     await expect(page.getByRole('heading', { name: 'Environment studies' })).toBeVisible();
 
-    await page.getByRole('button', { name: /Uncategorized 4/ }).click();
-    await expect(page.getByRole('button', { name: 'All Projects' })).toHaveAttribute(
+    const uncategorized = page.getByRole('button', { name: /Uncategorized 4/ });
+    await uncategorized.click();
+    await expect(page.getByRole('button', { name: 'Projects' })).toHaveAttribute(
       'aria-pressed',
-      'true',
+      'false',
     );
+    await expect(uncategorized).toHaveAttribute('aria-pressed', 'true');
     const noobCard = page.locator('article').filter({ hasText: 'NoobAI composition tests' });
     await noobCard.getByRole('button', { name: 'Project actions' }).click();
     await page.getByText('Rename', { exact: true }).click();
@@ -292,7 +295,7 @@ test.describe('Home prototype', () => {
     await page.getByRole('button', { name: 'Restore Project' }).click();
     await expect(page.getByText('Trash is empty')).toBeVisible();
 
-    await page.getByRole('button', { name: 'All Projects' }).click();
+    await page.getByRole('button', { name: 'Projects' }).click();
 
     const projectBCard = page.locator('article').filter({ hasText: 'Sample Project B' });
     await projectBCard.getByRole('button', { name: 'Project actions' }).click();
@@ -341,7 +344,21 @@ test.describe('Home prototype', () => {
     const leading = page.locator('.tab-leading').first();
     await expect(leading).toHaveCSS('width', '18px');
 
-    const titleBox = await page.getByRole('heading', { name: 'All Projects' }).boundingBox();
+    for (const label of [
+      page.locator('.tab-title').filter({ hasText: 'Sample Project B.igs' }),
+      page.locator('.home-sidebar .workspace-name').filter({ hasText: 'Regional guidance drafts' }),
+    ]) {
+      const lineMetrics = await label.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          fontSize: Number.parseFloat(style.fontSize),
+          lineHeight: Number.parseFloat(style.lineHeight),
+        };
+      });
+      expect(lineMetrics.lineHeight).toBeGreaterThan(lineMetrics.fontSize);
+    }
+
+    const titleBox = await page.getByRole('heading', { name: 'Projects' }).boundingBox();
     const countBox = await page.getByText('9 projects', { exact: true }).boundingBox();
     expect(titleBox).not.toBeNull();
     expect(countBox).not.toBeNull();
@@ -427,7 +444,37 @@ test.describe('Home prototype', () => {
     await expect(page.getByText('82%')).toBeVisible();
     await page.getByRole('button', { name: 'Reset view' }).click();
     await expect(page.getByText('100%')).toBeVisible();
+
+    const navigation = page.getByLabel('Home navigation');
+    const navigationBefore = await navigation.boundingBox();
+    const navigationHandle = page.locator('.home-shell-split > .n-split__resize-trigger-wrapper');
+    const navigationHandleBox = await navigationHandle.boundingBox();
+    expect(navigationBefore).not.toBeNull();
+    expect(navigationHandleBox).not.toBeNull();
+    await page.mouse.move(navigationHandleBox!.x, navigationHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(navigationHandleBox!.x + 40, navigationHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await navigation.boundingBox())!.width)
+      .toBeGreaterThan(navigationBefore!.width + 24);
+
+    const inspector = page.getByLabel('Project inspector');
+    const inspectorBefore = await inspector.boundingBox();
+    const inspectorHandle = page.locator('.home-content-split > .n-split__resize-trigger-wrapper');
+    const inspectorHandleBox = await inspectorHandle.boundingBox();
+    expect(inspectorBefore).not.toBeNull();
+    expect(inspectorHandleBox).not.toBeNull();
+    await page.mouse.move(inspectorHandleBox!.x, inspectorHandleBox!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(inspectorHandleBox!.x - 40, inspectorHandleBox!.y + 100);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await inspector.boundingBox())!.width)
+      .toBeGreaterThan(inspectorBefore!.width + 24);
+
     await page.getByRole('button', { name: 'Collapse inspector' }).click();
     await expect(page.getByRole('button', { name: 'Expand inspector' })).toBeVisible();
+    await expect(inspectorHandle).toBeHidden();
   });
 });

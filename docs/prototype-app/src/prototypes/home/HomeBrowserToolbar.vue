@@ -10,7 +10,6 @@ import type { HomeSort, HomeStatusFilter, HomeViewMode } from './home.types';
 
 defineProps<{
   hasActiveFilters: boolean;
-  sortDisabled: boolean;
 }>();
 
 defineEmits<{
@@ -29,7 +28,7 @@ const sortOptions = [
 ];
 
 const statusOptions = [
-  { label: 'All conditions', value: 'all' },
+  { label: 'All statuses', value: 'all' },
   { label: 'Open', value: 'open' },
   { label: 'Recovery available', value: 'recovery' },
   { label: 'Needs attention', value: 'attention' },
@@ -44,16 +43,11 @@ const statusOptions = [
     </label>
     <label class="toolbar-field">
       <NText class="toolbar-label" depth="3">Sort by</NText>
-      <NSelect
-        v-model:value="sort"
-        aria-label="Sort by"
-        :disabled="sortDisabled"
-        :options="sortOptions"
-      />
+      <NSelect v-model:value="sort" aria-label="Sort by" :options="sortOptions" />
     </label>
     <label class="toolbar-field">
-      <NText class="toolbar-label" depth="3">Condition</NText>
-      <NSelect v-model:value="status" aria-label="Condition" :options="statusOptions" />
+      <NText class="toolbar-label" depth="3">Status</NText>
+      <NSelect v-model:value="status" aria-label="Status" :options="statusOptions" />
     </label>
     <NButtonGroup aria-label="View mode" class="view-toggle">
       <NButton

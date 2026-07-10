@@ -226,6 +226,7 @@ const canOpen = computed(
   gap: 12px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   padding: 16px;
   border-left: 1px solid var(--app-border);
   background: var(--app-chrome);

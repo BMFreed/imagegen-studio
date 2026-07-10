@@ -129,6 +129,8 @@ Model Manager
    └─ install / cancel
 ```
 
+The divider after Left Navigation and the divider before Details Panel are mouse-resizable with bounded minimum and maximum widths. The resource list receives the remaining space; resizing does not change filters or the selected resource.
+
 ### Header
 
 The header should include:

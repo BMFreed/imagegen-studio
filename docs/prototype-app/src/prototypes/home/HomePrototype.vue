@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { useDialog, useMessage } from 'naive-ui';
+import { NSplit, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, toRaw, watch } from 'vue';
 
 import type {
   ExternalProjectDraft,
-  HomeBrowseMode,
+  HomeBrowseSelection,
   HomeProjectAction,
   HomeProjectOpenIntent,
   HomeProjectRecord,
@@ -60,14 +60,27 @@ const workspaces = ref(initialScenario.workspaces);
 const projects = ref(initialScenario.projects);
 const hasInstalledModel = ref(initialScenario.hasInstalledModel);
 
-const browseMode = ref<HomeBrowseMode>('all');
-const workspaceFilterId = ref<string>();
+const browseSelection = ref<HomeBrowseSelection>({ kind: 'all' });
 const search = ref('');
 const sort = ref<HomeSort>('lastOpened');
 const status = ref<HomeStatusFilter>('all');
 const viewMode = ref<HomeViewMode>('grid');
 const selectedProjectId = ref<string>();
 const inspectorCollapsed = ref(false);
+const sidebarPaneSize = ref<number | string>('clamp(232px, 18vw, 252px)');
+const expandedBrowserPaneSize = ref<number | string>('calc(100% - clamp(330px, 27vw, 360px))');
+const initialSidebarWidth = Math.min(252, Math.max(232, globalThis.innerWidth * 0.18));
+const initialWorkspaceWidth = Math.max(1, globalThis.innerWidth - initialSidebarWidth);
+const browserPaneMin = Math.min(0.6, 500 / initialWorkspaceWidth);
+const browserPaneMax = Math.max(browserPaneMin, 1 - 280 / initialWorkspaceWidth);
+const browserPaneSize = computed<number | string>({
+  get: () => (inspectorCollapsed.value ? 'calc(100% - 44px)' : expandedBrowserPaneSize.value),
+  set: (value) => {
+    if (!inspectorCollapsed.value) {
+      expandedBrowserPaneSize.value = value;
+    }
+  },
+});
 
 const showNewProject = ref(false);
 const showOpenExternal = ref(false);
@@ -81,9 +94,12 @@ const activeWorkspaceId = ref<string>();
 const activeProjectId = ref<string>();
 const pendingOpenIntent = ref<HomeProjectOpenIntent>();
 
-const selectedWorkspace = computed(() =>
-  workspaces.value.find((workspace) => workspace.id === workspaceFilterId.value),
-);
+const selectedWorkspace = computed(() => {
+  const selection = browseSelection.value;
+  return selection.kind === 'workspace'
+    ? workspaces.value.find((workspace) => workspace.id === selection.workspaceId)
+    : undefined;
+});
 const selectedProject = computed(() =>
   projects.value.find((project) => project.id === selectedProjectId.value),
 );
@@ -105,7 +121,7 @@ const defaultWorkspaceId = computed(() => {
   return workspaces.value.find((workspace) => workspace.isDefault)?.id ?? 'uncategorized';
 });
 const browseProjects = computed(() =>
-  getProjectsForBrowseSelection(projects.value, browseMode.value, workspaceFilterId.value),
+  getProjectsForBrowseSelection(projects.value, browseSelection.value),
 );
 const visibleProjects = computed(() => {
   const filtered = filterHomeProjects(
@@ -115,7 +131,7 @@ const visibleProjects = computed(() => {
     props.openProjectIds,
     workspaces.value,
   );
-  return sortHomeProjects(filtered, browseMode.value === 'recent' ? 'lastOpened' : sort.value);
+  return sortHomeProjects(filtered, sort.value);
 });
 const conditionsById = computed<Record<string, string[]>>(() =>
   Object.fromEntries(
@@ -137,16 +153,13 @@ const trashedCount = computed(
   () => projects.value.filter((project) => project.trashedAt !== undefined).length,
 );
 const browserTitle = computed(() => {
-  if (browseMode.value === 'recent') {
-    return 'Recent';
-  }
-  if (browseMode.value === 'trash') {
+  if (browseSelection.value.kind === 'trash') {
     return 'Trash';
   }
-  return selectedWorkspace.value?.name ?? 'All Projects';
+  return selectedWorkspace.value?.name ?? 'Projects';
 });
 const hasActiveFilters = computed(() => search.value.trim() !== '' || status.value !== 'all');
-const showWorkspaceOnCard = computed(() => workspaceFilterId.value === undefined);
+const showWorkspaceOnCard = computed(() => browseSelection.value.kind !== 'workspace');
 
 function cloneProject(project: HomeProjectRecord) {
   return structuredClone(toRaw(project));
@@ -164,15 +177,13 @@ watch(
   },
 );
 
-function selectBrowse(value: HomeBrowseMode) {
-  browseMode.value = value;
-  workspaceFilterId.value = undefined;
+function selectBrowse(value: 'all' | 'trash') {
+  browseSelection.value = { kind: value };
   selectedProjectId.value = undefined;
 }
 
 function selectWorkspace(workspaceId: string) {
-  browseMode.value = 'all';
-  workspaceFilterId.value = workspaceId;
+  browseSelection.value = { kind: 'workspace', workspaceId };
   selectedProjectId.value = undefined;
 }
 
@@ -470,62 +481,78 @@ function switchActiveProject() {
     class="home-prototype"
     :class="{ 'home-prototype--inspector-collapsed': inspectorCollapsed }"
   >
-    <HomeSidebar
-      :browseMode
-      :projectCounts
-      :trashedCount
-      :workspaceFilterId
-      :workspaces
-      @addWorkspace="showWorkspace = true"
-      @importProject="showOpenExternal = true"
-      @manageModels="$emit('manageModels')"
-      @managePresets="$emit('managePresets')"
-      @newProject="showNewProject = true"
-      @selectBrowse="selectBrowse"
-      @selectWorkspace="selectWorkspace"
-      @workspaceAction="handleWorkspaceAction"
-    />
-    <HomeBrowser
-      v-model:search="search"
-      v-model:sort="sort"
-      v-model:status="status"
-      v-model:viewMode="viewMode"
-      :conditionsById
-      :filtered="hasActiveFilters"
-      :hasActiveFilters
-      :hasInstalledModel
-      :projects="visibleProjects"
-      :selectedId="selectedProjectId"
-      :showWorkspace="showWorkspaceOnCard"
-      :sortDisabled="browseMode === 'recent'"
-      :title="browserTitle"
-      :trashView="browseMode === 'trash'"
-      :workspace="selectedWorkspace"
-      :workspaces
-      @action="handleProjectAction"
-      @manageModels="$emit('manageModels')"
-      @newProject="showNewProject = true"
-      @open="requestOpen"
-      @openProject="showOpenExternal = true"
-      @reset="resetFilters"
-      @select="selectedProjectId = $event"
-      @workspaceAction="handleWorkspaceAction"
-    />
-    <HomeInspector
-      v-model:collapsed="inspectorCollapsed"
-      :openProjectIds
-      :project="selectedProject"
-      :trashView="browseMode === 'trash'"
-      :workspace="selectedProjectWorkspace"
-      :workspaces
-      @action="handleProjectAction"
-      @locateProject="locateProject"
-      @open="requestOpen"
-      @rebuildPreview="rebuildPreview"
-      @removeProject="removeProject"
-      @showErrorDetails="showErrorDetails"
-      @workspaceAction="handleWorkspaceAction"
-    />
+    <NSplit v-model:size="sidebarPaneSize" class="home-shell-split" max="360px" min="210px">
+      <template v-slot:1>
+        <HomeSidebar
+          :browseSelection
+          :projectCounts
+          :trashedCount
+          :workspaces
+          @addWorkspace="showWorkspace = true"
+          @importProject="showOpenExternal = true"
+          @manageModels="$emit('manageModels')"
+          @managePresets="$emit('managePresets')"
+          @newProject="showNewProject = true"
+          @selectBrowse="selectBrowse"
+          @selectWorkspace="selectWorkspace"
+          @workspaceAction="handleWorkspaceAction"
+        />
+      </template>
+      <template v-slot:2>
+        <NSplit
+          v-model:size="browserPaneSize"
+          class="home-content-split"
+          :disabled="inspectorCollapsed"
+          :max="browserPaneMax"
+          :min="browserPaneMin"
+        >
+          <template v-slot:1>
+            <HomeBrowser
+              v-model:search="search"
+              v-model:sort="sort"
+              v-model:status="status"
+              v-model:viewMode="viewMode"
+              :conditionsById
+              :filtered="hasActiveFilters"
+              :hasActiveFilters
+              :hasInstalledModel
+              :projects="visibleProjects"
+              :selectedId="selectedProjectId"
+              :showWorkspace="showWorkspaceOnCard"
+              :title="browserTitle"
+              :trashView="browseSelection.kind === 'trash'"
+              :workspace="selectedWorkspace"
+              :workspaces
+              @action="handleProjectAction"
+              @manageModels="$emit('manageModels')"
+              @newProject="showNewProject = true"
+              @open="requestOpen"
+              @openProject="showOpenExternal = true"
+              @reset="resetFilters"
+              @select="selectedProjectId = $event"
+              @workspaceAction="handleWorkspaceAction"
+            />
+          </template>
+          <template v-slot:2>
+            <HomeInspector
+              v-model:collapsed="inspectorCollapsed"
+              :openProjectIds
+              :project="selectedProject"
+              :trashView="browseSelection.kind === 'trash'"
+              :workspace="selectedProjectWorkspace"
+              :workspaces
+              @action="handleProjectAction"
+              @locateProject="locateProject"
+              @open="requestOpen"
+              @rebuildPreview="rebuildPreview"
+              @removeProject="removeProject"
+              @showErrorDetails="showErrorDetails"
+              @workspaceAction="handleWorkspaceAction"
+            />
+          </template>
+        </NSplit>
+      </template>
+    </NSplit>
 
     <NewProjectModal
       v-model:show="showNewProject"
@@ -580,24 +607,14 @@ function switchActiveProject() {
 .home-prototype {
   position: absolute;
   inset: 0;
-  display: grid;
-  grid-template-columns: clamp(232px, 18vw, 252px) minmax(500px, 1fr) clamp(330px, 27vw, 360px);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.home-prototype--inspector-collapsed {
-  grid-template-columns: clamp(232px, 18vw, 252px) minmax(500px, 1fr) 44px;
-}
-
-@media (max-width: 1320px) {
-  .home-prototype {
-    grid-template-columns: 232px minmax(500px, 1fr) 330px;
-  }
-
-  .home-prototype--inspector-collapsed {
-    grid-template-columns: 232px minmax(500px, 1fr) 44px;
-  }
+.home-shell-split,
+.home-content-split {
+  min-width: 0;
+  min-height: 0;
 }
 </style>

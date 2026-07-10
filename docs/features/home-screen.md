@@ -7,8 +7,8 @@
 It lets the user:
 
 - see all workspaces;
-- return to recently opened projects across workspaces;
 - browse all indexed projects across workspaces;
+- sort indexed projects by last opened time;
 - browse `.igs` projects inside a selected workspace;
 - create a new project;
 - open an existing `.igs`;
@@ -64,8 +64,7 @@ Home tab
 ├─ Workspace Sidebar
 │  ├─ New Project
 │  ├─ Import Project
-│  ├─ Recent
-│  ├─ All Projects
+│  ├─ Projects
 │  ├─ Trash
 │  ├─ Uncategorized
 │  ├─ user workspaces
@@ -166,14 +165,13 @@ Workspace actions:
 
 Home does not delete workspace folders or their project files in MVP. `Remove Workspace` only forgets the workspace registration after confirmation. `Uncategorized` cannot be removed.
 
-## Cross-Workspace Views
+## Cross-Workspace View
 
-The sidebar exposes two browse views above the concrete workspace list:
+The sidebar exposes one cross-workspace browse view above the concrete workspace list:
 
-- `Recent` shows projects from all workspaces ordered by `lastOpenedAt` descending;
-- `All Projects` shows all indexed projects across workspaces using the active sort order.
+- `Projects` shows all indexed projects across workspaces using the active sort order.
 
-These are views, not workspaces. They do not receive workspace colors, cannot be renamed or removed and do not become project destinations. Project cards in both views show their source workspace.
+`Projects` is a view, not a workspace. It does not receive a workspace color, cannot be renamed or removed and does not become a project destination. Project cards in this view show their source workspace. `Last opened` is its default sort, so a separate truncated `Recent` category is not needed.
 
 ## Project Browser
 
@@ -183,7 +181,7 @@ Project card/list item should show:
 
 - thumbnail from `.igs` `preview/thumbnail.webp` or derived cache;
 - project display name;
-- workspace name if shown in all/recent views;
+- workspace name if shown in the `Projects` view;
 - last opened / modified time;
 - applicable independent conditions such as `Open`;
 - a subtle `Recovery available` marker only when a validated recovery candidate exists;
@@ -202,13 +200,15 @@ Project conditions are not a single mutually exclusive status enum. File health,
 
 The browser should be dense enough for repeated daily use. Avoid marketing-style hero cards or large decorative sections.
 
+On desktop, the Workspace sidebar and Preview / Inspector are mouse-resizable with bounded widths. Resizing redistributes space to the Project Browser without changing browse selection or project state. The Inspector keeps its separate collapse action; while collapsed, its resize handle is unavailable.
+
 Workspace scanning should not be a prominent daily workflow. Home may expose a small refresh icon for the selected workspace and keep heavier scan/relink actions in a workspace overflow menu.
 
 ## Preview / Inspector
 
 Selecting a project can show a preview without opening a `Project` tab.
 
-When no project is selected, the Inspector shows a quiet `Select a project to preview` state. The Inspector can be collapsed to give more space to the project grid or list.
+When no project is selected, the Inspector shows a quiet `Select a project to preview` state. The Inspector can be resized or collapsed to give more space to the project grid or list.
 
 Preview tools:
 
@@ -362,7 +362,7 @@ flowchart TD
 
 ## App-Managed Trash
 
-`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Recent, All Projects and workspace results, and appear in the dedicated Trash view.
+`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Projects and workspace results, and appear in the dedicated Trash view.
 
 Trash actions are:
 
@@ -510,7 +510,7 @@ Accessibility requirements:
 - all interactive elements have visible `focus-visible` treatment;
 - focus moves predictably when dialogs open or close and when the selected project disappears after filtering or removal.
 
-The Vue prototype is checked at 1920×1080, 1440×900 and 1280×800 without horizontal overflow. The Inspector is collapsible so the project browser remains useful at the narrower supported desktop size.
+The Vue prototype is checked at 1920×1080, 1440×900 and 1280×800 without horizontal overflow. Bounded mouse resizing and the collapsible Inspector keep the project browser useful at the narrower supported desktop size.
 
 ## Not In MVP
 
@@ -529,10 +529,10 @@ MVP does not include:
 
 - User can open and close `Home` as a normal document tab.
 - Home action focuses an existing `Home` tab or reopens it if closed.
-- Home shows `All Projects` by default with no project selected.
+- Home shows `Projects` by default with no project selected.
 - `Uncategorized` is a real app-managed workspace folder and is the default destination when no other workspace is selected.
-- Home provides `Recent` and `All Projects` cross-workspace views.
-- Selecting a workspace keeps `All Projects` active and applies the workspace as an additional filter.
+- Home provides `Projects` as the cross-workspace view, sorted by last opened by default.
+- `Projects`, a concrete workspace and `Trash` are mutually exclusive browse selections.
 - Home provides an app-managed Trash view with restore and permanent-delete flows.
 - User can create a new `.igs` project inside a workspace.
 - User can import an existing `.igs` from Home.

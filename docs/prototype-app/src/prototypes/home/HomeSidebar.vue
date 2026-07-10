@@ -3,7 +3,6 @@ import {
   AlertTriangle as AlertIcon,
   LayoutGrid as AllIcon,
   Bookmark as BookmarkIcon,
-  Clock as ClockIcon,
   DotsVertical as DotsIcon,
   Folder as FolderIcon,
   FolderPlus as FolderPlusIcon,
@@ -11,15 +10,14 @@ import {
   Settings as SettingsIcon,
   Trash as TrashIcon,
 } from '@vicons/tabler';
-import { NButton, NDropdown, NIcon, NScrollbar, NText } from 'naive-ui';
+import { NButton, NDropdown, NEllipsis, NIcon, NScrollbar, NText } from 'naive-ui';
 
-import type { HomeBrowseMode, HomeWorkspace } from './home.types';
+import type { HomeBrowseSelection, HomeWorkspace } from './home.types';
 
 defineProps<{
-  browseMode: HomeBrowseMode;
+  browseSelection: HomeBrowseSelection;
   projectCounts: Record<string, number>;
   trashedCount: number;
-  workspaceFilterId?: string;
   workspaces: HomeWorkspace[];
 }>();
 
@@ -29,7 +27,7 @@ defineEmits<{
   manageModels: [];
   managePresets: [];
   newProject: [];
-  selectBrowse: [value: HomeBrowseMode];
+  selectBrowse: [value: 'all' | 'trash'];
   selectWorkspace: [workspaceId: string];
   workspaceAction: [value: { action: string; workspaceId: string }];
 }>();
@@ -65,27 +63,18 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
       <div class="navigation-list">
         <NText class="group-label" depth="3">Browse</NText>
         <NButton
-          :aria-pressed="browseMode === 'recent'"
+          :aria-pressed="browseSelection.kind === 'all'"
           class="navigation-row"
-          :secondary="browseMode === 'recent'"
-          @click="$emit('selectBrowse', 'recent')"
-        >
-          <template v-slot:icon><NIcon :component="ClockIcon" /></template>
-          <span>Recent</span>
-        </NButton>
-        <NButton
-          :aria-pressed="browseMode === 'all'"
-          class="navigation-row"
-          :secondary="browseMode === 'all'"
+          :secondary="browseSelection.kind === 'all'"
           @click="$emit('selectBrowse', 'all')"
         >
           <template v-slot:icon><NIcon :component="AllIcon" /></template>
-          <span>All Projects</span>
+          <span>Projects</span>
         </NButton>
         <NButton
-          :aria-pressed="browseMode === 'trash'"
+          :aria-pressed="browseSelection.kind === 'trash'"
           class="navigation-row"
-          :secondary="browseMode === 'trash'"
+          :secondary="browseSelection.kind === 'trash'"
           @click="$emit('selectBrowse', 'trash')"
         >
           <template v-slot:icon><NIcon :component="TrashIcon" /></template>
@@ -108,9 +97,13 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
         </div>
         <div v-for="workspace of workspaces" :key="workspace.id" class="workspace-row">
           <NButton
-            :aria-pressed="browseMode === 'all' && workspaceFilterId === workspace.id"
+            :aria-pressed="
+              browseSelection.kind === 'workspace' && browseSelection.workspaceId === workspace.id
+            "
             class="navigation-row workspace-select"
-            :secondary="browseMode === 'all' && workspaceFilterId === workspace.id"
+            :secondary="
+              browseSelection.kind === 'workspace' && browseSelection.workspaceId === workspace.id
+            "
             @click="$emit('selectWorkspace', workspace.id)"
           >
             <template v-slot:icon>
@@ -121,7 +114,7 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
               />
               <NIcon v-else :component="AlertIcon" />
             </template>
-            <span v-overflow-title class="workspace-name">{{ workspace.name }}</span>
+            <NEllipsis class="workspace-name">{{ workspace.name }}</NEllipsis>
             <small>{{
               workspace.availability === 'available'
                 ? (projectCounts[workspace.id] ?? 0)
@@ -169,6 +162,7 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
   gap: 14px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   padding: 16px;
   border-right: 1px solid var(--app-border);
   background: var(--app-chrome);
@@ -237,11 +231,10 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
   border-radius: 2px;
 }
 
-.workspace-name {
-  overflow: hidden;
+.workspace-select :deep(.workspace-name) {
+  flex: 1 1 auto;
   min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
 }
 
 .workspace-menu {

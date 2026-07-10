@@ -6,7 +6,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 Основные top-level поверхности:
 
-- `Home` tab — стартовый и организационный экран приложения: Workspaces, `Recent`, `All Projects`, new/open project и access to Model Manager.
+- `Home` tab — стартовый и организационный экран приложения: Workspaces, `Projects`, new/open project и access to Model Manager.
 - `Project` tab — открытый `.igs` document. Таких вкладок может быть несколько одновременно.
 - app-level overlays/dialogs — Model Manager, Settings, Queue/Downloads, command palette.
 
@@ -40,7 +40,7 @@ Home screen не имеет левой и правой project/canvas-панел
 - дефолтный workspace `Uncategorized`;
 - thumbnails и basic metadata проектов;
 - поиск проектов по имени, фильтрацию по состоянию и сортировку;
-- cross-workspace views `Recent` и `All Projects`;
+- cross-workspace view `Projects` с сортировкой по last opened по умолчанию;
 - `New Project`;
 - `Import Project`;
 - `Manage Models`;
@@ -54,7 +54,7 @@ Preview на Home не должен показывать inactive canvas/generat
 
 В текущем Home-прототипе допустимы две primary-кнопки, потому что они принадлежат разным контекстам: `New Project` относится к выбранному workspace, а `Open Project` в Preview / Inspector относится к выбранному проекту. Это не должно превращаться в правило “много primary-кнопок в одной зоне”: внутри одной панели главный CTA должен оставаться один.
 
-Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании. `Uncategorized` является реальной app-managed папкой и используется как физическое место назначения, если пользователь не выбрал другой workspace. Home по умолчанию открывает `All Projects`; выбор workspace добавляет фильтр, не заменяя browse mode. `Recent`, `All Projects` и `Trash` являются browse views, а не workspace'ами.
+Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании. `Uncategorized` является реальной app-managed папкой и используется как физическое место назначения, если пользователь не выбрал другой workspace. Home по умолчанию открывает `Projects`. `Projects`, конкретный workspace и `Trash` являются взаимоисключающими browse selections; `Projects` и `Trash` не являются workspace'ами.
 
 Нормальный autosave не показывается как Home status. Только валидное незавершённое состояние после неожиданного завершения работы отображается как `Recovery available` и разрешается через recovery flow.
 
@@ -150,7 +150,7 @@ Undo/redo stack scoped strictly to this Project tab. Он не влияет на
 
 Страниц `Project` может быть несколько одновременно. Каждая открытая `.igs` живёт в своей вкладке.
 
-Один и тот же `.igs` категорически запрещено открывать в нескольких вкладках. Если пользователь пытается открыть уже открытый project file, приложение фокусирует существующую `Project` tab. Это правило действует для открытия из `Home`, recent projects, file picker, deep link, menu action и любых других entry points.
+Один и тот же `.igs` категорически запрещено открывать в нескольких вкладках. Если пользователь пытается открыть уже открытый project file, приложение фокусирует существующую `Project` tab. Это правило действует для открытия из `Home`, file picker, deep link, menu action и любых других entry points.
 
 Boards/gallery не показываются как постоянная боковая панель Project. Управление проектами находится на `Home`, чтобы Project tab не конкурировала за внимание с файловой организацией.
 

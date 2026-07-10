@@ -28,7 +28,6 @@ defineProps<{
   projects: HomeProjectRecord[];
   selectedId?: string;
   showWorkspace: boolean;
-  sortDisabled: boolean;
   title: string;
   trashView: boolean;
   workspace?: HomeWorkspace;
@@ -113,7 +112,6 @@ const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
       v-model:status="status"
       v-model:viewMode="viewMode"
       :hasActiveFilters
-      :sortDisabled
       @reset="$emit('reset')"
     />
 
@@ -159,6 +157,7 @@ const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
   grid-template-rows: auto auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  height: 100%;
   background: var(--app-surface-soft);
 }
 

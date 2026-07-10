@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NButton, NCard, NModal, NText, useDialog, useMessage } from 'naive-ui';
-import { computed, nextTick, ref } from 'vue';
+import { NButton, NCard, NModal, NSplit, NText, useDialog, useMessage } from 'naive-ui';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 import type {
   PresetCreateIntent,
@@ -41,7 +41,9 @@ const emit = defineEmits<{
 const dialog = useDialog();
 const message = useMessage();
 const presets = ref(presetResources.map((preset) => clonePreset(preset)));
-const managerOpen = ref(true);
+const managerOpen = ref(false);
+const navigationPaneSize = ref<number | string>('210px');
+const presetPaneSize = ref<number | string>('calc(100% - 520px)');
 const createIntent = ref<PresetCreateIntent | undefined>(props.initialCreateIntent);
 const selection = ref<ManagerSelection>(
   props.initialCreateIntent
@@ -341,6 +343,12 @@ function handleVisibilityChange(visible: boolean) {
     requestClose();
   }
 }
+
+onMounted(() => {
+  void nextTick(() => {
+    managerOpen.value = true;
+  });
+});
 </script>
 
 <template>
@@ -360,41 +368,56 @@ function handleVisibilityChange(visible: boolean) {
       role="dialog"
     >
       <PresetManagerHeader @close="requestClose" @create="requestNewPreset" />
-      <div class="manager-body">
-        <aside class="manager-column manager-column--navigation">
-          <PresetManagerNavigation v-model:workflow="workflowFilter" :presets />
-        </aside>
-        <main class="preset-content">
-          <PresetList
-            v-model:attentionOnly="attentionOnly"
-            v-model:favoritesOnly="favoritesOnly"
-            v-model:search="searchFilter"
-            v-model:sort="sortValue"
-            :draft="creating ? draft : undefined"
-            :draftSelected="creating"
-            :hasActiveFilters
-            :presets="visiblePresets"
-            :selectedId
-            @resetFilters="resetFilters"
-            @select="requestSelection"
-            @selectDraft="focusPresetName"
-          />
-        </main>
-        <aside class="manager-column manager-column--editor">
-          <PresetManagerEditor
-            v-model="draft"
-            :createIntent
-            :creating
-            :dirty
-            :resources="presetEditorResources"
-            @cancel="cancelCreate"
-            @create="createDraft"
-            @delete="deletePreset"
-            @duplicate="duplicatePreset"
-            @save="saveDraft"
-          />
-        </aside>
-      </div>
+      <NSplit v-model:size="navigationPaneSize" class="manager-body" max="300px" min="190px">
+        <template v-slot:1>
+          <aside class="manager-column manager-column--navigation">
+            <PresetManagerNavigation v-model:workflow="workflowFilter" :presets />
+          </aside>
+        </template>
+        <template v-slot:2>
+          <NSplit
+            v-model:size="presetPaneSize"
+            class="manager-content-split"
+            :max="0.7"
+            min="420px"
+          >
+            <template v-slot:1>
+              <main class="preset-content">
+                <PresetList
+                  v-model:attentionOnly="attentionOnly"
+                  v-model:favoritesOnly="favoritesOnly"
+                  v-model:search="searchFilter"
+                  v-model:sort="sortValue"
+                  :draft="creating ? draft : undefined"
+                  :draftSelected="creating"
+                  :hasActiveFilters
+                  :presets="visiblePresets"
+                  :selectedId
+                  @resetFilters="resetFilters"
+                  @select="requestSelection"
+                  @selectDraft="focusPresetName"
+                />
+              </main>
+            </template>
+            <template v-slot:2>
+              <aside class="manager-column manager-column--editor">
+                <PresetManagerEditor
+                  v-model="draft"
+                  :createIntent
+                  :creating
+                  :dirty
+                  :resources="presetEditorResources"
+                  @cancel="cancelCreate"
+                  @create="createDraft"
+                  @delete="deletePreset"
+                  @duplicate="duplicatePreset"
+                  @save="saveDraft"
+                />
+              </aside>
+            </template>
+          </NSplit>
+        </template>
+      </NSplit>
     </div>
   </NModal>
 
@@ -444,11 +467,11 @@ function handleVisibilityChange(visible: boolean) {
 }
 
 .manager-body {
-  display: grid;
-  grid-template-columns:
-    clamp(200px, 15%, 220px)
-    minmax(420px, 1fr)
-    clamp(460px, 38%, 560px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.manager-content-split {
   min-width: 0;
   min-height: 0;
 }
@@ -458,11 +481,6 @@ function handleVisibilityChange(visible: boolean) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.manager-column--navigation,
-.preset-content {
-  border-right: 1px solid var(--app-border);
 }
 
 .unsaved-card {

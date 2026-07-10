@@ -51,7 +51,7 @@ InvokeAI рассматривается как основной reference produc
 
 Основная shell-модель — document-based editor:
 
-- `Home` является обычной вкладкой со workspace'ами, cross-workspace views `Recent` / `All Projects`, app-managed `Trash`, new/import project и доступом к Model Manager и Preset Manager;
+- `Home` является обычной вкладкой со workspace'ами, cross-workspace view `Projects`, app-managed `Trash`, new/import project и доступом к Model Manager и Preset Manager;
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
@@ -1463,7 +1463,7 @@ Canvas-проект в MVP хранится как переносимый `.igs`
 
 `Uncategorized` является реальной app-managed папкой `ImageGen Studio/workspaces/Uncategorized/`. Новый проект без другого явно выбранного workspace создаётся в ней. Внешний `.igs` должен быть перемещён или скопирован в известный workspace до индексирования и открытия; виртуальные external-path entries не используются.
 
-Home по умолчанию открывает `All Projects`, а выбор workspace применяется как дополнительный фильтр. `Move to Trash` помечает managed project как trashed и сохраняет возможность восстановления; окончательное удаление файла выполняется только отдельным `Delete Permanently` confirmation из Trash view.
+Home по умолчанию открывает `Projects`, а выбор workspace становится отдельным browse selection. `Move to Trash` помечает managed project как trashed и сохраняет возможность восстановления; окончательное удаление файла выполняется только отдельным `Delete Permanently` confirmation из Trash view.
 
 SQLite может хранить только восстанавливаемый project index:
 
@@ -1478,7 +1478,7 @@ SQLite может хранить только восстанавливаемый
 
 Project index можно пересобрать сканированием workspace-папок.
 
-Runtime tab manager дополнительно держит in-memory registry открытых `.igs` identities. В MVP identity строится из нормализованного абсолютного пути к `.igs`. Если пользователь пытается открыть уже открытый project file из Home, recent projects, file picker, menu action или другого entry point, приложение фокусирует существующую `Project` tab и не создаёт дубликат.
+Runtime tab manager дополнительно держит in-memory registry открытых `.igs` identities. В MVP identity строится из нормализованного абсолютного пути к `.igs`. Если пользователь пытается открыть уже открытый project file из Home, file picker, menu action или другого entry point, приложение фокусирует существующую `Project` tab и не создаёт дубликат.
 
 ### 15.2. `.igs` package
 

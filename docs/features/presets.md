@@ -165,6 +165,8 @@ The layout mirrors the Model Manager pattern:
 - center preset list;
 - right details/edit form.
 
+The divider after workflow navigation and the divider before the editor are mouse-resizable with bounded widths. The preset list receives the remaining space, and resizing does not change filters, selection or dirty state.
+
 The right panel is an edit form, not a read-only inspector. Unlike the Model Manager (which browses installed resources), the Preset Manager is a full editor: model and version, LoRA stack with weights, enabled state and per-row removal, project size, sampler, scheduler, steps, CFG, seed policy and VAE are all editable controls.
 
 The left navigation owns the workflow filter: `All Presets`, `Text to Image`, `Image to Image` and `Smart Patch`. The center toolbar contains search, sort, `Favorites`, `Needs Attention` and an always-present reset action. Reset is disabled while all filters are at their defaults. There is no duplicate workflow select in the toolbar and no separate `Status` navigation section. Missing-resource visibility is a filter pill in the toolbar, plus an inline warning badge on affected preset rows.
