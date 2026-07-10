@@ -1,10 +1,36 @@
 <script setup lang="ts">
 import { darkTheme, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui';
+import { computed } from 'vue';
 
 import AppChrome from './components/AppChrome.vue';
 import DocumentTabs from './components/DocumentTabs.vue';
+import ProjectContextMock from './components/ProjectContextMock.vue';
 import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue';
+import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue';
+import PresetManagerPrototype from './prototypes/presets/PresetManagerPrototype.vue';
+import SavePresetPrototype from './prototypes/presets/SavePresetPrototype.vue';
 import { imageGenNaiveTheme } from './theme/naive-theme';
+
+type PrototypeId = 'apply-preset' | 'model-manager' | 'preset-manager' | 'save-preset';
+
+const prototypeIds = new Set<PrototypeId>([
+  'apply-preset',
+  'model-manager',
+  'preset-manager',
+  'save-preset',
+]);
+
+const activePrototype = computed<PrototypeId>(() => {
+  const requestedPrototype = new URLSearchParams(globalThis.location.search).get('prototype');
+
+  return prototypeIds.has(requestedPrototype as PrototypeId)
+    ? (requestedPrototype as PrototypeId)
+    : 'model-manager';
+});
+
+const usesProjectContext = computed(
+  () => activePrototype.value === 'apply-preset' || activePrototype.value === 'save-preset',
+);
 </script>
 
 <template>
@@ -16,7 +42,8 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
           <div class="app-workspace">
             <DocumentTabs />
             <main class="prototype-stage">
-              <section aria-hidden="true" class="home-context">
+              <ProjectContextMock v-if="usesProjectContext" />
+              <section v-else aria-hidden="true" class="home-context">
                 <div class="workspace-sidebar">
                   <span class="sidebar-title">Workspaces</span>
                   <span class="sidebar-item sidebar-item--active">Uncategorized</span>
@@ -30,7 +57,10 @@ import { imageGenNaiveTheme } from './theme/naive-theme';
                 </div>
               </section>
             </main>
-            <ModelManagerPrototype />
+            <ModelManagerPrototype v-if="activePrototype === 'model-manager'" />
+            <PresetManagerPrototype v-else-if="activePrototype === 'preset-manager'" />
+            <ApplyPresetPrototype v-else-if="activePrototype === 'apply-preset'" />
+            <SavePresetPrototype v-else />
           </div>
         </div>
       </NMessageProvider>

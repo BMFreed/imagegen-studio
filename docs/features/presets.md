@@ -12,6 +12,14 @@ Primary UI reference: InvokeAI prompt-template selector shape, adapted for proje
 
 Storage/reference behavior: existing ImageGen Studio preset model in `docs/specs/03-data-storage.md`.
 
+Current interactive visual references live in `docs/prototype-app`:
+
+- `?prototype=preset-manager` — app-level browse and edit surface;
+- `?prototype=apply-preset` — Project-scoped partial-apply preview;
+- `?prototype=save-preset` — Project-scoped Save Current as Preset flow.
+
+The standalone HTML preset prototypes are historical references and are no longer the visual source of truth.
+
 ## ImageGen Studio Decision
 
 Use an Invoke-like compact preset selector in `Project` / `Generate`, but do not copy Invoke's `Choose Prompt Template` behavior directly.

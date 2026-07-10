@@ -24,9 +24,9 @@
 
 ## Vue/Naive Prototype App
 
-- [prototype-app](./prototype-app/) — текущий источник истины для визуального прототипа Model Manager на реальных компонентах Naive UI.
+- [prototype-app](./prototype-app/) — текущий источник истины для визуальных прототипов Model Manager и системы пресетов на реальных компонентах Naive UI.
 
-`prototype-app` — это отдельный Vite/Vue/TypeScript playground для итераций над UI. Он не является production renderer'ом и пока не заменяет HTML-прототипы остальных экранов.
+`prototype-app` — это отдельный Vite/Vue/TypeScript playground для итераций над UI. Он не является production renderer'ом. Актуальные Vue-поверхности выбираются query-параметром `prototype`: `model-manager`, `preset-manager`, `apply-preset` или `save-preset`.
 
 Tooling проекта использует `pnpm`. Основные команды для Vue/Naive prototype app:
 
@@ -39,9 +39,9 @@ Tooling проекта использует `pnpm`. Основные коман�
 
 - [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
 - [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
-- [prototypes/preset-manager.html](./prototypes/preset-manager.html) — app-level Preset Manager (browse + edit), фон Home.
-- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — apply preview модалка, Project-scoped, фон Project / Generate.
-- [prototypes/save-preset.html](./prototypes/save-preset.html) — Save Current as Preset модалка, Project-scoped, фон Project / Generate.
+- [prototypes/preset-manager.html](./prototypes/preset-manager.html) — исторический HTML-прототип Preset Manager; актуальный визуальный источник истины живёт в `prototype-app?prototype=preset-manager`.
+- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный Vue-прототип живёт в `prototype-app?prototype=apply-preset`.
+- [prototypes/save-preset.html](./prototypes/save-preset.html) — исторический HTML-референс Save Current as Preset; актуальный Vue-прототип живёт в `prototype-app?prototype=save-preset`.
 - [prototypes/project-page.html](./prototypes/project-page.html) — текущий источник истины для рабочей вкладки `Project` / `Generate`: mode switch в левой панели, canvas-area overlays/rails, layer-driven context и правая панель слоёв.
 
 ## Правило обновления

@@ -34,7 +34,7 @@
 ## Prototypes
 
 - `docs/prototype-app` is the current Vue/Naive prototype playground.
-- Model Manager visual source of truth lives in `docs/prototype-app`.
+- Model Manager and preset-system visual sources of truth live in `docs/prototype-app`.
 - Older standalone HTML prototypes stay as historical references unless explicitly migrated.
 
 ## Design guidance
