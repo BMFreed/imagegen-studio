@@ -8,7 +8,7 @@ import {
   Trash as TrashIcon,
 } from '@vicons/tabler';
 import { NAlert, NButton, NCheckbox, NIcon, NScrollbar, NText } from 'naive-ui';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 import type {
   PresetCreateIntent,
@@ -42,6 +42,7 @@ const emit = defineEmits<{
 }>();
 
 const definition = defineModel<PresetDefinition>({ required: true });
+const expandedSections = ref<PresetSectionKey[]>(['prompt', 'model', 'loras']);
 const isValid = computed(() => isPresetDefinitionValid(definition.value));
 const hasMissingResources = computed(() => presetHasMissingResources(definition.value));
 const projectSource = computed(() =>
@@ -87,7 +88,7 @@ function setSectionIncluded(section: PresetSectionKey, included: boolean) {
 
         <PresetPayloadEditor
           v-model="definition.payload"
-          :initialExpandedSections="['prompt', 'model', 'loras']"
+          v-model:expandedSections="expandedSections"
           :resources
           :sections="[...sectionOrder]"
           :workflow="definition.workflow"

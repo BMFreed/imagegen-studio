@@ -99,6 +99,12 @@ The preview shows:
 
 Each section is an accordion row. Expanding it exposes the same generation-value controls used by the Preset Manager, but edits are made against a detached application draft. They affect only the values about to be copied into the current project; they never update the stored preset. A changed section can be reset independently, and `Reset all` restores every value from the source preset without changing the section selection.
 
+The header makes this ownership boundary explicit: its persistent subtitle says that the user is customizing a temporary copy for the current project and that the saved preset will not change. An adjacent info tooltip additionally explains that Apply copies selected settings, does not update the saved preset and does not create a live link between the project and preset. Critical ownership information must not exist only inside the tooltip.
+
+The section toolbar provides a single adaptive `Expand all` / `Collapse all` action plus `Reset all`. Expansion state is presentation-only and does not affect selected sections or edited values.
+
+`Edit original` is a tertiary action next to the preset metadata, not a competing footer action. It leaves Apply and opens the source preset in Preset Manager. If the application draft or its selection mask changed, the transition requires confirmation and explicitly discards those temporary changes; Apply edits are never transferred implicitly into the saved preset.
+
 Primary actions:
 
 - `Apply`;
@@ -253,6 +259,7 @@ Presets should store enough copied display metadata to remain understandable aft
 - Apply preview is Project-scoped and reached from the Generate selector; it is not opened from the Preset Manager.
 - User can apply all sections or a selected subset via per-section checkboxes plus a single `Select all sections` master checkbox (no separate `Apply All` button).
 - Apply values are editable in a detached application draft, show `Current` to `Apply` comparisons and support section-level and global reset without mutating the stored preset.
+- Apply clearly labels its values as a temporary copy, provides supplementary ownership help, supports `Expand all` / `Collapse all`, and offers a guarded `Edit original` path to Preset Manager.
 - User can save current settings through Preset Manager create mode; the project-derived draft is fully editable and seed is excluded by default.
 - Preset Manager supports a minimal manual `New Preset` draft and does not add it to catalog counts or filtering before `Create Preset`.
 - Full preset editing lives in the Preset Manager, not in the small Project selector; the right panel is an editable form (model, LoRA stack with removal, sampler, steps, CFG, seed, VAE, etc.).

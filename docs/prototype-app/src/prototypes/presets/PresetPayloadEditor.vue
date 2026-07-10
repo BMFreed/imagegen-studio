@@ -11,7 +11,7 @@ import {
   NText,
   NTooltip,
 } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 
 import type {
   PresetEditorResources,
@@ -28,19 +28,19 @@ import { clonePreset, sectionLabels } from './presets.utils';
 const props = withDefaults(
   defineProps<{
     disabledSections?: PresetSectionKey[];
-    initialExpandedSections?: PresetSectionKey[];
     resources: PresetEditorResources;
     sections: PresetSectionKey[];
     workflow: PresetWorkflow;
   }>(),
   {
     disabledSections: () => [],
-    initialExpandedSections: () => [],
   },
 );
 
 const payload = defineModel<PresetPayload>({ required: true });
-const expandedSections = ref<Array<number | string>>([...props.initialExpandedSections]);
+const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
+  default: () => [],
+});
 
 const visibleSections = computed(() =>
   props.sections.filter(

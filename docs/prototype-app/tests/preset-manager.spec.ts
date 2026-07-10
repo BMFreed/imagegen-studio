@@ -218,6 +218,15 @@ test.describe('Editable Apply Preset', () => {
     await expect(dialog.getByText(/Current:.*CFG 5.5/)).toBeVisible();
     await expect(dialog.getByText(/Apply:.*CFG 4.5/)).toBeVisible();
 
+    const promptInput = dialog.getByRole('textbox', { exact: true, name: 'Prompt' });
+    await expect(promptInput).toBeHidden();
+    await dialog.getByRole('button', { name: 'Expand all' }).click();
+    await expect(promptInput).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Collapse all' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Collapse all' }).click();
+    await expect(promptInput).toBeHidden();
+    await expect(dialog.getByRole('button', { name: 'Expand all' })).toBeVisible();
+
     const guidanceSection = dialog.locator('.n-collapse-item').filter({ hasText: /^Steps & CFG/ });
     await guidanceSection.locator('.n-collapse-item__header').click();
     const cfgInput = guidanceSection.getByRole('textbox', { name: 'CFG' });
@@ -253,6 +262,43 @@ test.describe('Editable Apply Preset', () => {
     await expect(apply).toBeDisabled();
     await dialog.getByRole('checkbox', { name: 'Select all sections' }).uncheck();
     await expect(apply).toBeDisabled();
+  });
+
+  test('explains temporary changes and opens the original preset', async ({ page }) => {
+    await page.goto('/?prototype=apply-preset');
+    const dialog = page.getByRole('dialog', { name: 'Apply Preset: Cinematic Img2Img Pass' });
+    await expect(dialog.getByText(/The saved preset will not change/)).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'About Apply Preset' }).hover();
+    await expect(
+      page.getByText('Apply copies selected settings into the current project.'),
+    ).toBeVisible();
+    await expect(page.getByText('Changes made here do not update the saved preset.')).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Edit original' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeVisible();
+    await expect(page.getByLabel('Preset name')).toHaveValue('Cinematic Img2Img Pass');
+  });
+
+  test('guards Edit original when the application draft changed', async ({ page }) => {
+    await page.goto('/?prototype=apply-preset');
+    const dialog = page.getByRole('dialog', { name: 'Apply Preset: Cinematic Img2Img Pass' });
+    const guidanceSection = dialog.locator('.n-collapse-item').filter({ hasText: /^Steps & CFG/ });
+    await guidanceSection.locator('.n-collapse-item__header').click();
+    await guidanceSection.getByRole('textbox', { name: 'CFG' }).fill('6.2');
+    await dialog.getByRole('button', { name: 'Edit original' }).click();
+
+    const guard = page.getByRole('dialog', { name: 'Edit saved preset' });
+    await expect(guard.getByText(/temporary Apply changes will be discarded/)).toBeVisible();
+    await guard.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeVisible();
+    await expect(guard).toBeHidden();
+
+    await dialog.getByRole('button', { name: 'Edit original' }).click();
+    await guard.getByRole('button', { name: 'Discard & Edit Original' }).click();
+    await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeVisible();
+    await expect(page.getByLabel('Preset name')).toHaveValue('Cinematic Img2Img Pass');
   });
 
   for (const viewport of viewports) {

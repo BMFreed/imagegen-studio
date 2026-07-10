@@ -31,6 +31,7 @@ type PendingNavigation = { id: string; type: 'select' } | { type: 'close' } | { 
 
 const props = defineProps<{
   initialCreateIntent?: PresetCreateIntent;
+  initialSelectedId?: string;
 }>();
 
 const dialog = useDialog();
@@ -39,9 +40,11 @@ const presets = ref(presetResources.map((preset) => clonePreset(preset)));
 const managerOpen = ref(true);
 const createIntent = ref<PresetCreateIntent | undefined>(props.initialCreateIntent);
 const selection = ref<ManagerSelection>(
-  props.initialCreateIntent ? { kind: 'draft' } : { id: defaultPresetId, kind: 'record' },
+  props.initialCreateIntent
+    ? { kind: 'draft' }
+    : { id: props.initialSelectedId ?? defaultPresetId, kind: 'record' },
 );
-const previousSelectedId = ref(defaultPresetId);
+const previousSelectedId = ref(props.initialSelectedId ?? defaultPresetId);
 const draft = ref<PresetDefinition>(getInitialDefinition());
 const workflowFilter = ref<WorkflowFilter>('all');
 const searchFilter = ref('');
@@ -115,7 +118,7 @@ function getInitialDefinition(): PresetDefinition {
     return createManualPresetDefinition();
   }
 
-  return toDefinition(getRecord(defaultPresetId));
+  return toDefinition(getRecord(props.initialSelectedId ?? defaultPresetId));
 }
 
 function resetFilters() {
