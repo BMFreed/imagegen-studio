@@ -41,7 +41,7 @@ The UI must never collapse these into one ambiguous control.
 
 There is no separate `Current Working Bounding Box` for the whole image.
 
-Normal generation targets the Project Canvas. Smart Patch generation targets the selected Smart Patch Layer's owned bbox.
+Normal generation targets the Project Canvas. Smart Patch generation targets the selected Smart Patch Layer's owned bbox. The runtime derives txt2img/img2img/outpaint/inpaint from visible raster/mask content inside that target rather than exposing those as manual Project modes.
 
 ## Project Canvas
 

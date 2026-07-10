@@ -2,15 +2,20 @@
 import {
   darkTheme,
   NButton,
+  NCard,
   NConfigProvider,
   NDialogProvider,
   NEmpty,
   NMessageProvider,
+  NModal,
+  NText,
 } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 
 import type { DocumentTabModel } from './components/app-shell.types';
 import type { HomeProjectRecord, HomeScenarioId } from './prototypes/home/home.types';
+import type { PresetCreateIntent } from './prototypes/presets/presets.types';
+import type { ProjectScenarioId, ProjectSession } from './prototypes/project/project.types';
 
 import AppChrome from './components/AppChrome.vue';
 import DocumentTabs from './components/DocumentTabs.vue';
@@ -20,19 +25,42 @@ import ModelManagerPrototype from './prototypes/model-manager/ModelManagerProtot
 import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue';
 import PresetManagerPrototype from './prototypes/presets/PresetManagerPrototype.vue';
 import { currentProjectPresetSource } from './prototypes/presets/presets.mock';
+import {
+  cloneDocument,
+  discardProjectChanges,
+  redoProject,
+  saveProjectSession,
+  undoProject,
+} from './prototypes/project/project-history';
+import {
+  createProjectScenario,
+  createProjectSessionFromHomeRecord,
+} from './prototypes/project/project.mock';
+import { createPresetIntent } from './prototypes/project/project.utils';
+import ProjectPrototype from './prototypes/project/ProjectPrototype.vue';
 import { appLayerCssVariables } from './theme/app-layers';
 import { imageGenNaiveTheme } from './theme/naive-theme';
 
-type PrototypeId = 'apply-preset' | 'home' | 'model-manager' | 'preset-manager' | 'save-preset';
+type PrototypeId =
+  'apply-preset' | 'home' | 'model-manager' | 'preset-manager' | 'project' | 'save-preset';
 
 const prototypeIds = new Set<PrototypeId>([
   'apply-preset',
   'home',
   'model-manager',
   'preset-manager',
+  'project',
   'save-preset',
 ]);
 const scenarioIds = new Set<HomeScenarioId>(['default', 'first-run', 'no-model', 'problems']);
+const projectScenarioIds = new Set<ProjectScenarioId>([
+  'default',
+  'empty-project',
+  'errors',
+  'regional-guidance',
+  'smart-patch',
+  'staging',
+]);
 const searchParameters = new URLSearchParams(globalThis.location.search);
 const requestedPrototype = searchParameters.get('prototype');
 const requestedScenario = searchParameters.get('scenario');
@@ -45,6 +73,11 @@ const activePrototype = computed<PrototypeId>(() =>
 const homeScenario = computed<HomeScenarioId>(() =>
   scenarioIds.has(requestedScenario as HomeScenarioId)
     ? (requestedScenario as HomeScenarioId)
+    : 'default',
+);
+const projectScenario = computed<ProjectScenarioId>(() =>
+  projectScenarioIds.has(requestedScenario as ProjectScenarioId)
+    ? (requestedScenario as ProjectScenarioId)
     : 'default',
 );
 const usesProjectContext = computed(
@@ -97,15 +130,49 @@ const activeDocumentId = ref(activePrototype.value === 'home' ? 'home' : 'sample
 const showHomeModelManager = ref(false);
 const showHomePresetManager = ref(false);
 const showStandaloneModelManager = ref(true);
+const managerCreateIntent = ref<PresetCreateIntent>();
+const pendingCloseId = ref<string>();
+const projectSessions = reactive<Record<string, ProjectSession>>({
+  'sample-project-a': createProjectScenario('default'),
+  'sample-project-b': createProjectScenario(
+    activePrototype.value === 'project' ? projectScenario.value : 'default',
+  ),
+});
+projectSessions['sample-project-a']!.document.id = 'sample-project-a';
+projectSessions['sample-project-a']!.document.title = 'Sample Project A.igs';
+projectSessions['sample-project-a']!.savedDocument = cloneDocument(
+  projectSessions['sample-project-a']!.document,
+);
 
-const documentTabs = computed(() =>
-  activePrototype.value === 'home' ? homeDocumentTabs.value : staticDocumentTabs,
+const documentTabs = computed(() => {
+  const tabs = activePrototype.value === 'home' ? homeDocumentTabs.value : staticDocumentTabs;
+  return tabs.map((tab) =>
+    tab.kind === 'project' && projectSessions[tab.id]
+      ? { ...tab, dirty: projectSessions[tab.id]!.dirty }
+      : tab,
+  );
+});
+const activeProjectSession = computed(() =>
+  activePrototype.value === 'home' || activePrototype.value === 'project'
+    ? projectSessions[activeDocumentId.value]
+    : undefined,
+);
+const managerOverlayOpen = computed(
+  () => showHomeModelManager.value || showHomePresetManager.value,
+);
+const activeQueueCount = computed(
+  () =>
+    activeProjectSession.value?.queueItems.filter(
+      (item) => item.status === 'pending' || item.status === 'running',
+    ).length ?? 0,
 );
 const openProjectIds = computed(() =>
   homeDocumentTabs.value.filter((tab) => tab.kind === 'project').map((tab) => tab.id),
 );
 const dirtyProjectIds = computed(() =>
-  homeDocumentTabs.value.filter((tab) => tab.kind === 'project' && tab.dirty).map((tab) => tab.id),
+  homeDocumentTabs.value
+    .filter((tab) => tab.kind === 'project' && (projectSessions[tab.id]?.dirty ?? tab.dirty))
+    .map((tab) => tab.id),
 );
 
 function requestHome() {
@@ -120,16 +187,86 @@ function requestHome() {
 }
 
 function openHomeModelManager() {
+  managerCreateIntent.value = undefined;
   showHomePresetManager.value = false;
   showHomeModelManager.value = true;
 }
 
 function openHomePresetManager() {
+  managerCreateIntent.value = undefined;
   showHomeModelManager.value = false;
   showHomePresetManager.value = true;
 }
 
+function saveActiveProject() {
+  const session = activeProjectSession.value;
+  if (!session) {
+    return false;
+  }
+  const saved = saveProjectSession(session);
+  session.ui.notice = saved
+    ? { text: 'Project saved', type: 'success' }
+    : { text: 'Project could not be saved. Your changes are still open.', type: 'error' };
+  return saved;
+}
+
+function toggleActiveProjectQueue() {
+  const session = activeProjectSession.value;
+  if (session) {
+    session.ui.queueOpen = !session.ui.queueOpen;
+  }
+}
+
+function openSavePreset() {
+  const session = activeProjectSession.value;
+  if (!session) {
+    return;
+  }
+  managerCreateIntent.value = createPresetIntent(session);
+  showHomeModelManager.value = false;
+  showHomePresetManager.value = true;
+}
+
+function requestCloseDocument(id: string) {
+  const session = projectSessions[id];
+  if (session && (session.dirty || session.staging)) {
+    pendingCloseId.value = id;
+    return;
+  }
+  closeDocument(id);
+}
+
+function confirmClose(action: 'discard' | 'save') {
+  const id = pendingCloseId.value;
+  if (!id) {
+    return;
+  }
+  const session = projectSessions[id];
+  if (session) {
+    if (action === 'save' && !saveProjectSession(session)) {
+      session.ui.notice = {
+        text: 'Project could not be saved. Your changes are still open.',
+        type: 'error',
+      };
+      pendingCloseId.value = undefined;
+      return;
+    }
+    if (action === 'discard') {
+      discardProjectChanges(session);
+    }
+    session.staging = undefined;
+  }
+  pendingCloseId.value = undefined;
+  closeDocument(id);
+}
+
 function closeDocument(id: string) {
+  if (activePrototype.value !== 'home') {
+    if (activeDocumentId.value === id) {
+      activeDocumentId.value = '';
+    }
+    return;
+  }
   const index = homeDocumentTabs.value.findIndex((tab) => tab.id === id);
   if (index < 0) {
     return;
@@ -150,6 +287,8 @@ function openHomeProject(value: {
   if (existing) {
     if (value.recovered) {
       existing.dirty = true;
+      projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project);
+      projectSessions[value.project.id]!.dirty = true;
     }
     activeDocumentId.value = existing.id;
     return;
@@ -161,6 +300,10 @@ function openHomeProject(value: {
     title: value.project.fileName,
     workspaceColor: workspaceColors[value.project.workspaceId] ?? '#64e36e',
   };
+  projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project);
+  if (value.recovered) {
+    projectSessions[value.project.id]!.dirty = true;
+  }
   const homeIndex = homeDocumentTabs.value.findIndex((candidate) => candidate.id === 'home');
   if (value.target === 'current' && homeIndex >= 0) {
     homeDocumentTabs.value.splice(homeIndex, 1, tab);
@@ -173,6 +316,28 @@ function openHomeProject(value: {
   }
   activeDocumentId.value = tab.id;
 }
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  const session = activeProjectSession.value;
+  if (!session || !(event.ctrlKey || event.metaKey)) {
+    return;
+  }
+  if (event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    saveActiveProject();
+  }
+  if (event.key.toLowerCase() === 'z') {
+    event.preventDefault();
+    event.shiftKey ? redoProject(session) : undoProject(session);
+  }
+  if (event.key.toLowerCase() === 'y') {
+    event.preventDefault();
+    redoProject(session);
+  }
+}
+
+globalThis.addEventListener('keydown', handleGlobalKeydown);
+onBeforeUnmount(() => globalThis.removeEventListener('keydown', handleGlobalKeydown));
 
 function syncProjectTab(project: HomeProjectRecord) {
   const tab = homeDocumentTabs.value.find((candidate) => candidate.id === project.id);
@@ -189,12 +354,28 @@ function syncProjectTab(project: HomeProjectRecord) {
     <NDialogProvider>
       <NMessageProvider>
         <div class="app-shell" :style="appLayerCssVariables">
-          <AppChrome @home="requestHome" />
+          <AppChrome
+            :canRedo="(activeProjectSession?.history.future.length ?? 0) > 0"
+            :canSave="activeProjectSession?.dirty ?? false"
+            :canUndo="(activeProjectSession?.history.past.length ?? 0) > 0"
+            :projectActive="Boolean(activeProjectSession)"
+            :queueBadge="activeQueueCount"
+            @applyPreset="activeProjectSession && (activeProjectSession.ui.applyPresetOpen = true)"
+            @closeProject="activeDocumentId && requestCloseDocument(activeDocumentId)"
+            @home="requestHome"
+            @manageModels="openHomeModelManager"
+            @managePresets="openHomePresetManager"
+            @queue="toggleActiveProjectQueue"
+            @redo="activeProjectSession && redoProject(activeProjectSession)"
+            @save="saveActiveProject"
+            @savePreset="openSavePreset"
+            @undo="activeProjectSession && undoProject(activeProjectSession)"
+          />
           <div class="app-workspace">
             <DocumentTabs
               v-model:activeId="activeDocumentId"
               :tabs="documentTabs"
-              @close="closeDocument"
+              @close="requestCloseDocument"
             />
             <main class="prototype-stage">
               <template v-if="activePrototype === 'home'">
@@ -210,13 +391,35 @@ function syncProjectTab(project: HomeProjectRecord) {
                   @openProject="openHomeProject"
                   @projectChanged="syncProjectTab"
                 />
-                <ProjectContextMock v-if="activeDocumentId && activeDocumentId !== 'home'" />
+                <ProjectPrototype
+                  v-for="tab of homeDocumentTabs.filter((item) => item.kind === 'project')"
+                  v-show="activeDocumentId === tab.id"
+                  :key="tab.id"
+                  :active="activeDocumentId === tab.id && !managerOverlayOpen"
+                  :session="projectSessions[tab.id]!"
+                  @manageModels="openHomeModelManager"
+                  @managePresets="openHomePresetManager"
+                  @savePreset="openSavePreset"
+                />
                 <NEmpty v-if="!activeDocumentId" description="No document open">
                   <template v-slot:extra>
                     <NButton type="primary" @click="requestHome">Open Home</NButton>
                   </template>
                 </NEmpty>
               </template>
+              <ProjectPrototype
+                v-else-if="activePrototype === 'project' && activeDocumentId"
+                :active="!managerOverlayOpen"
+                :session="projectSessions['sample-project-b']!"
+                @manageModels="openHomeModelManager"
+                @managePresets="openHomePresetManager"
+                @savePreset="openSavePreset"
+              />
+              <NEmpty v-else-if="activePrototype === 'project'" description="No document open">
+                <template v-slot:extra
+                  ><NButton type="primary" @click="requestHome">Open Home</NButton></template
+                >
+              </NEmpty>
               <ProjectContextMock v-else-if="usesProjectContext" />
               <section v-else aria-hidden="true" class="home-context">
                 <div class="workspace-sidebar">
@@ -239,6 +442,7 @@ function syncProjectTab(project: HomeProjectRecord) {
             <PresetManagerPrototype
               v-if="activePrototype === 'home' && showHomePresetManager"
               key="home-preset-manager"
+              :initialCreateIntent="managerCreateIntent"
               @close="showHomePresetManager = false"
             />
             <ModelManagerPrototype
@@ -256,6 +460,60 @@ function syncProjectTab(project: HomeProjectRecord) {
               key="save-preset"
               :initialCreateIntent="currentProjectPresetSource"
             />
+
+            <PresetManagerPrototype
+              v-if="activePrototype === 'project' && showHomePresetManager"
+              key="project-preset-manager"
+              :initialCreateIntent="managerCreateIntent"
+              @close="showHomePresetManager = false"
+            />
+            <ModelManagerPrototype
+              v-if="activePrototype === 'project' && showHomeModelManager"
+              key="project-model-manager"
+              @close="showHomeModelManager = false"
+            />
+
+            <NModal
+              :maskClosable="false"
+              :show="Boolean(pendingCloseId)"
+              @update:show="!$event && (pendingCloseId = undefined)"
+            >
+              <NCard
+                aria-label="Close Project"
+                class="close-project-card"
+                role="dialog"
+                size="small"
+              >
+                <h2>
+                  {{
+                    projectSessions[pendingCloseId ?? '']?.dirty
+                      ? 'Unsaved project changes'
+                      : 'Unaccepted generation results'
+                  }}
+                </h2>
+                <NText>
+                  {{
+                    projectSessions[pendingCloseId ?? '']?.dirty
+                      ? 'Save changes before closing this project? Unaccepted candidates will be discarded.'
+                      : 'Temporary generation candidates will be discarded when this project closes.'
+                  }}
+                </NText>
+                <div class="close-project-actions">
+                  <NButton tertiary @click="pendingCloseId = undefined">Cancel</NButton>
+                  <NButton secondary type="error" @click="confirmClose('discard')">{{
+                    projectSessions[pendingCloseId ?? '']?.dirty
+                      ? 'Discard Changes'
+                      : 'Discard Candidates and Close'
+                  }}</NButton>
+                  <NButton
+                    v-if="projectSessions[pendingCloseId ?? '']?.dirty"
+                    type="primary"
+                    @click="confirmClose('save')"
+                    >Save</NButton
+                  >
+                </div>
+              </NCard>
+            </NModal>
           </div>
         </div>
       </NMessageProvider>
@@ -286,6 +544,20 @@ function syncProjectTab(project: HomeProjectRecord) {
 
 .prototype-stage > :deep(.n-empty) {
   margin-top: 140px;
+}
+
+.close-project-card {
+  width: min(480px, calc(100vw - 48px));
+}
+.close-project-card h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+.close-project-actions {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 .home-context {

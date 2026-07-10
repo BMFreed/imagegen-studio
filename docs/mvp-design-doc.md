@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Для Project / Generate текущим визуальным источником остаётся `docs/prototypes/project-page.html` до переноса во Vue.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, stacked generation settings, DOM/CSS canvas simulation, layer architecture, staging и mock queue lifecycle. `docs/prototypes/project-page.html` остаётся только историческим layout reference.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -38,7 +38,7 @@ InvokeAI рассматривается как основной reference produc
 - хранить canvas-проекты как переносимые `.igs` project files;
 - скачивать модели и устанавливать несколько версий рядом;
 - хранить версии моделей и LoRA;
-- сохранять полные snapshot'ы генераций;
+- сохранять immutable provenance только для принятых generated results;
 - переиспользовать настройки через развитую систему пресетов;
 - применять пресеты целиком или частично;
 - быстро находить старые удачные настройки и пробовать их с другими моделями.
@@ -55,8 +55,9 @@ InvokeAI рассматривается как основной reference produc
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
-- внутри `Project` есть project modes `Generate` и `Upscale`;
-- `Upscale` работает с immutable flattened composite input, созданным из текущего состояния `Generate`;
+- внутри `Project` current domain mode `generate` имеет visible label `Create`;
+- txt2img/img2img/inpaint/outpaint определяется автоматически по target-area canvas content;
+- Upscale отложен до отдельного feature/prototype pass;
 - один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
 
 Model Manager и Preset Manager открываются как app-level modal overlays с native Naive transitions и `Esc` close; они не становятся document tabs. Apply Preset остаётся Project-scoped modal surface. Home, открытый под manager overlay, остаётся смонтированным и inert, поэтому browse state восстанавливается после закрытия.
@@ -116,7 +117,7 @@ Electron Main Process
   ├─ filesystem
   ├─ model manager
   ├─ preset manager
-  ├─ generation history
+  ├─ accepted generation result index
   ├─ model install/download service
   ├─ Python worker manager
   └─ IPC handlers
@@ -372,10 +373,10 @@ Zod v4
 
 ```ts
 type AppError = {
-  code: string
-  message: string
-  details?: unknown
-}
+  code: string;
+  message: string;
+  details?: unknown;
+};
 ```
 
 В UI на этапе MVP большинство ошибок можно показывать стандартным toast'ом.
@@ -428,8 +429,8 @@ MVP включает:
 5. Хранение модели, версии, автора и metadata в SQLite.
 6. Проверка целостности скачанного файла.
 7. Генерация изображений через Python ML worker.
-8. Сохранение истории генераций.
-9. Сохранение immutable generation snapshot для каждой генерации.
+8. Staging completed outputs without automatic Project commit.
+9. Multi-select acceptance into layers/variants with immutable generation provenance and accepted-result history.
 10. Плоские пресеты без наследования и композиции.
 11. Создание пресета вручную.
 12. Создание пресета из генерации.
@@ -439,7 +440,7 @@ MVP включает:
 16. Проверка отсутствующих моделей/LoRA при применении выбранных секций.
 17. Warning при несовместимости base model family.
 18. Fallback-состояние, если файл изображения отсутствует.
-19. Invoke-like persistent Queue Manager для generation/upscale jobs.
+19. Invoke-like persistent Queue Manager для generation jobs.
 20. Project-local undo/redo для `.igs` document mutations.
 
 ### 7.2. Что НЕ входит в MVP
@@ -558,7 +559,7 @@ Model A v2
 
 — это разные generation resources.
 
-Если пресет или snapshot использует `Model A v1`, наличие `Model A v2` не считается наличием нужного ресурса.
+Если preset или accepted-result provenance использует `Model A v1`, наличие `Model A v2` не считается наличием нужного ресурса.
 
 ### 9.2. Идентичность ресурса
 
@@ -566,12 +567,12 @@ Model A v2
 
 ```ts
 type ResourceIdentity = {
-  type: 'checkpoint' | 'lora' | 'vae' | 'controlnet' | 'other'
-  source: 'civitai' | 'local' | 'unknown'
-  civitaiModelId?: number
-  civitaiModelVersionId?: number
-  fileHash?: string
-}
+  type: 'checkpoint' | 'lora' | 'vae' | 'controlnet' | 'other';
+  source: 'civitai' | 'local' | 'unknown';
+  civitaiModelId?: number;
+  civitaiModelVersionId?: number;
+  fileHash?: string;
+};
 ```
 
 Для CivitAI-ресурса главным идентификатором является версия модели и hash файла.
@@ -580,21 +581,21 @@ type ResourceIdentity = {
 
 Даже если локальный файл модели удалён, история генераций должна оставаться читаемой.
 
-Поэтому snapshot должен хранить не только ID, но и копии human-readable данных:
+Поэтому accepted-result provenance должен хранить не только ID, но и копии human-readable данных:
 
 ```ts
-type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample'
+type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample';
 
-type SnapshotModelRef = {
-  localResourceId?: string
-  civitaiModelId?: number
-  civitaiVersionId?: number
-  name: string
-  versionName?: string
-  fileHash?: string
-  baseModelFamily?: string
-  predictionType?: ModelPredictionType
-}
+type ProvenanceModelRef = {
+  localResourceId?: string;
+  civitaiModelId?: number;
+  civitaiVersionId?: number;
+  name: string;
+  versionName?: string;
+  fileHash?: string;
+  baseModelFamily?: string;
+  predictionType?: ModelPredictionType;
+};
 ```
 
 То же правило применяется к LoRA.
@@ -619,15 +620,15 @@ Worker не должен скрыто заменять checkpoint на diffusers
 
 ---
 
-## 10. Generation Snapshot
+## 10. Generation Provenance
 
 ### 10.1. Назначение
 
-Generation snapshot — это полный неизменяемый слепок настроек, использованных при создании конкретного изображения.
+Generation provenance — immutable metadata принятого generated result: настройки, ресурсы, входы и runtime metadata, которыми был создан persistent Raster Layer или Smart Patch variant.
 
-В контексте canvas-проекта snapshot является project-local записью внутри `.igs`: он фиксирует, каким job'ом был создан конкретный raster layer или raster sub-layer, и ссылается на результат внутри того же project package.
+Provenance принадлежит принятому layer/variant и хранится project-locally внутри `.igs`. Completed staging candidate не получает provenance до explicit `Add N as Layers` / `Add N as Variants`.
 
-Snapshot нужен для:
+Provenance нужен для:
 
 - воспроизводимости;
 - восстановления настроек из истории;
@@ -635,19 +636,21 @@ Snapshot нужен для:
 - диагностики отсутствующих моделей/LoRA;
 - понимания, каким конфигом была создана картинка.
 
-### 10.2. Snapshot не равен preset
+Он не нужен для undo/redo. Undo/redo хранит project mutation, а provenance является частью добавленного layer/variant.
+
+### 10.2. Provenance не равен preset
 
 Важно различать две сущности:
 
 ```text
-GenerationSnapshot = исторический факт
+GenerationProvenance = immutable evidence accepted result'а
 Preset = редактируемый пользовательский шаблон
 ```
 
-Snapshot:
+Provenance:
 
-- создаётся автоматически;
-- привязан к конкретной генерации;
+- создаётся только при принятии candidate;
+- привязан к persistent layer/variant;
 - immutable;
 - не редактируется вручную;
 - не меняется при изменении модели;
@@ -655,17 +658,14 @@ Snapshot:
 
 Preset:
 
-- создаётся пользователем вручную или из snapshot'а;
+- создаётся пользователем вручную или из provenance принятого результата;
 - редактируется;
 - имеет имя, описание, теги;
 - применяется full/partial apply.
 
-### 10.3. Где хранить snapshot
+### 10.3. Где хранить provenance
 
-В рамках MVP есть два контекста хранения snapshot'ов:
-
-- global generation history index хранится в SQLite;
-- project-local generation snapshots, относящиеся к canvas-проекту, хранятся внутри `.igs`.
+Project-local provenance хранится внутри `.igs` и является source of truth для принятого result. SQLite хранит только derived global history index accepted results.
 
 Sidecar JSON не делается.
 
@@ -674,73 +674,76 @@ Embedded metadata в изображении не делается.
 Правило MVP:
 
 ```text
-SQLite = источник истины для глобального индекса истории генераций.
-.igs = источник истины для snapshot'ов внутри конкретного canvas-проекта.
+SQLite = derived index истории принятых результатов.
+.igs = source of truth для accepted layers/variants и их provenance.
 ```
 
-### 10.4. Иммутабельность snapshot'а
+Staging candidates хранятся во временном app-managed cache и не входят ни в `.igs`, ни в global history до принятия.
 
-Snapshot создаётся в момент успешной генерации и больше не изменяется.
+### 10.4. Иммутабельность provenance
+
+Provenance создаётся в момент acceptance и больше не изменяется. Оно объединяет frozen job inputs с actual seed/output/worker metadata.
 
 Запрещено:
 
-- изменять snapshot при редактировании пресета;
-- изменять snapshot при обновлении модели;
-- изменять snapshot при удалении модели;
-- изменять snapshot при переименовании модели;
-- изменять snapshot при partial apply.
+- изменять provenance при редактировании пресета;
+- изменять provenance при обновлении/удалении/переименовании модели;
+- изменять provenance при partial apply;
+- создавать project-local provenance для discarded candidate.
 
-### 10.5. Состав snapshot'а
+### 10.5. Состав provenance
 
-Минимальный состав snapshot'а:
+Минимальный состав:
 
 ```ts
-type GenerationSnapshot = {
-  generationId: string
-  createdAt: string
-  appVersion: string
-  workerVersion?: string
-  engineName?: string
-  engineVersion?: string
-  workflowType: 'txt2img' | 'img2img' | 'inpaint'
+type GenerationProvenance = {
+  generationId: string;
+  createdAt: string;
+  appVersion: string;
+  workerVersion?: string;
+  engineName?: string;
+  engineVersion?: string;
+  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint';
 
-  prompt: string
-  negativePrompt?: string
+  prompt: string;
+  negativePrompt?: string;
 
-  model: SnapshotModelRef
+  model: ProvenanceModelRef;
 
   loras: Array<{
-    localResourceId?: string
-    civitaiModelId?: number
-    civitaiVersionId?: number
-    name: string
-    versionName?: string
-    fileHash?: string
-    baseModelFamily?: string
-    weight: number
-    triggerWords?: string[]
-  }>
+    localResourceId?: string;
+    civitaiModelId?: number;
+    civitaiVersionId?: number;
+    name: string;
+    versionName?: string;
+    fileHash?: string;
+    baseModelFamily?: string;
+    weight: number;
+    triggerWords?: string[];
+  }>;
 
   params: {
-    width: number
-    height: number
-    steps: number
-    cfgScale?: number
-    sampler?: string
-    scheduler?: string
-    seed?: number
-    clipSkip?: number
-    vae?: SnapshotModelRef
-  }
+    width: number;
+    height: number;
+    steps: number;
+    cfgScale?: number;
+    sampler?: string;
+    scheduler?: string;
+    seed?: number;
+    clipSkip?: number;
+    vae?: ProvenanceModelRef;
+  };
 
   output: {
-    imageId: string
-    fileName: string
-    filePath: string
-    format: 'png' | 'jpg' | 'webp'
-  }
-}
+    imageId: string;
+    fileName: string;
+    filePath: string;
+    format: 'png' | 'jpg' | 'webp';
+  };
+};
 ```
+
+Для Smart Patch variant provenance дополнительно хранит source composite hash, mask hash, bbox/internal resolution, layer-owned generation draft revision and compositing inputs. Сравнение active variant provenance с current owned inputs определяет `outdated`.
 
 ---
 
@@ -758,12 +761,12 @@ f0d7c7a0-2b92-4f2f-9f91-5e8f9f7a1c6b.png
 
 ### 11.2. Привязка к БД
 
-В SQLite хранится:
+Global history indexes only accepted generated results. For each accepted result SQLite may store:
 
 - UUID изображения;
 - путь к файлу;
 - дата создания;
-- snapshot генерации для global history, либо ссылка на project-local snapshot внутри `.igs`;
+- project path plus accepted layer/variant and provenance id inside `.igs`;
 - preview/thumbnail path, если будет реализовано;
 - статус файла.
 
@@ -809,11 +812,11 @@ Preset — это редактируемый пользовательский ш
 2. Из текущей генерации.
 3. Из старой генерации в истории.
 
-При создании из генерации snapshot копируется в editable preset-структуру.
+При создании из принятого результата provenance копируется в editable preset-структуру.
 
-Исходный snapshot при этом не меняется.
+Исходный provenance при этом не меняется.
 
-Создание всегда проходит через create mode Preset Manager. Новая структура существует как transient draft без `id` и записи в SQLite, пока пользователь не нажмёт `Create Preset`. Draft из текущего проекта или snapshot полностью редактируем: пользователь может изменить не только состав секций, но и сами значения. Ручной `New Preset` начинает с минимального Text to Image draft, содержащего только пустую секцию Prompt.
+Создание всегда проходит через create mode Preset Manager. Новая структура существует как transient draft без `id` и записи в SQLite, пока пользователь не нажмёт `Create Preset`. Draft из текущего проекта или accepted-result provenance полностью редактируем: пользователь может изменить не только состав секций, но и сами значения. Ручной `New Preset` начинает с минимального Text to Image draft, содержащего только пустую секцию Prompt.
 
 Project-derived draft копирует reusable generation sections, но исключает Seed по умолчанию и объясняет это в source banner/Seed section. `Cancel` закрывает manager и возвращает к project context; manual create `Cancel` возвращает ранее выбранный preset.
 
@@ -907,11 +910,11 @@ Save preset from image
 
 ---
 
-## 13. Валидация применения пресетов и snapshot'ов
+## 13. Валидация применения пресетов и accepted-result provenance
 
 ### 13.1. Общий принцип
 
-При применении пресета или snapshot'а проверяются только те секции, которые пользователь реально выбрал для применения.
+При применении пресета или recalled accepted-result provenance проверяются только те секции, которые пользователь реально выбрал для применения.
 
 ### 13.2. Missing resource
 
@@ -989,12 +992,13 @@ ImageGen Studio должен поддерживать локальное ген�
 = 1 mask
 = 1 bounding box
 = 1 internal resolution
+= 1 layer-owned generation draft
 = N raster sub-layers
 = 1 active/visible raster sub-layer
-= 1 current generation snapshot
+= immutable provenance per accepted raster sub-layer
 ```
 
-Smart Patch Layer является самодостаточным слоем, который хранит визуальные результаты и данные, необходимые для повторной генерации patch-области.
+Smart Patch Layer является самодостаточной generative entity, которая хранит mask/bbox/internal resolution, собственный generation draft, accepted variants и данные, необходимые для повторной генерации patch-области.
 
 Зафиксированные решения по терминологии и поведению:
 
@@ -1039,6 +1043,17 @@ Selected Smart Patch Layer / Bounding Box
 
 Отдельного **current working bounding box** для всего изображения в ImageGen Studio нет. Normal generation использует Project Canvas как target bounds. Smart Patch generation использует layer-owned Bounding Box выбранного Smart Patch Layer.
 
+Project не показывает manual txt2img/img2img switch. При enqueue compositor анализирует visible raster/mask content inside frozen target area:
+
+```text
+fully transparent composite → txt2img
+partially transparent composite → outpaint
+opaque composite without effective mask → img2img
+raster content + Smart Patch mask → inpaint
+```
+
+Наличие Raster Layer вне target area не включает img2img. Denoising Strength остаётся в Generation settings, но disabled with a clear reason when current target has no applicable raster input.
+
 Правила:
 
 - изменение `Canvas Size` не должно неявно менять bounding box слоя;
@@ -1065,7 +1080,7 @@ Konva scene graph
 
 Konva используется как интерактивный 2D scene graph поверх browser Canvas 2D: stage, layers, groups, image/line/rect objects, pointer events, transforms и hit testing.
 
-Логика продукта не должна зависеть напрямую от Konva-нод. Состояние проекта хранится в собственных структурах ImageGen Studio: canvas project, layer stack, Smart Patch Layer, mask, bounding box, raster sub-layers, assets и generation snapshots.
+Логика продукта не должна зависеть напрямую от Konva-нод. Состояние проекта хранится в собственных структурах ImageGen Studio: canvas project, layer stack, Smart Patch Layer, mask, bounding box, raster sub-layers, assets и accepted-result provenance.
 
 Композиция, кэширование, rasterization для worker'а/export и lifecycle canvas-сущностей являются ответственностью приложения, а не Konva. Это позволяет позднее заменить или дополнить renderer без изменения доменной модели canvas.
 
@@ -1094,7 +1109,8 @@ Smart Patch Layer владеет:
 - собственным internal resolution внутри bounding box;
 - набором raster sub-layers с результатами генерации;
 - одним active raster sub-layer, который участвует в композиции canvas;
-- snapshot'ом настроек, использованных для генерации текущего активного результата.
+- layer-owned generation draft;
+- immutable provenance каждого accepted raster sub-layer.
 
 Это означает:
 
@@ -1148,6 +1164,8 @@ ControlNet остаётся post-MVP follow-up. Первые сценарии, �
 
 ### 14.4.2. Layer row controls
 
+Raster Layers and Smart Patch Layers share one compositing `Layers` stack and can be reordered across types. Regional Guidance remains a separate conditioning section because it does not contribute ordinary raster pixels to the visual z-order.
+
 Для Raster Layer, Smart Patch Layer и Regional Guidance Layer используется единый принцип строки слоя:
 
 ```text
@@ -1166,16 +1184,16 @@ visibility | thumbnail/preview | layer name + status | secondary actions | lock 
 Для Smart Patch Layer используется расширенная строка:
 
 ```text
-visibility | active raster thumbnail | mask thumbnail | layer name + status | switch variants | lock | delete
+visibility | mask thumbnail | active raster thumbnail | layer name + status | switch variants | lock | delete
 ```
 
 Решения:
 
 - Smart Patch Layer показывает два thumbnails: active raster result и mask;
-- первым идёт active raster thumbnail, чтобы слой было проще найти по видимому результату на canvas;
-- mask thumbnail идёт вторым и показывает область применения patch;
+- первым идёт mask thumbnail, чтобы строка читалась как Photoshop-like masked layer;
+- active raster thumbnail идёт вторым и показывает текущий видимый result;
 - saved raster variants не раскрываются вертикальным списком под слоем по умолчанию;
-- action `switch variants` использует понятную cycle/swap-style icon и открывает `GenerationResults` или compact variants browser;
+- action `switch variants` использует понятную cycle/swap-style icon и открывает compact persistent variants browser; `GenerationResults` reserved for current staging session;
 - если вариантов несколько, рядом с action можно показывать variant count.
 
 ### 14.4.3. Canvas side tools
@@ -1186,11 +1204,11 @@ visibility | active raster thumbnail | mask thumbnail | layer name + status | sw
 
 ```text
 collapse left panel
-View
+Pan Tool
 collapse right panel
 ```
 
-`View` — это navigation/inspection tool, а не отдельный Viewer mode.
+`Pan Tool` — это navigation/inspection tool, а не отдельный Viewer mode.
 
 Если выбран Smart Patch Layer, в контекстном canvas tool rail показываются:
 
@@ -1230,43 +1248,46 @@ Eraser
 
 ```ts
 type SmartPatchLayer = {
-  id: string
-  type: 'smart-patch'
+  id: string;
+  type: 'smart-patch';
 
-  name: string
-  visible: boolean
-  opacity: number
-  blendMode?: string
+  name: string;
+  visible: boolean;
+  opacity: number;
+  blendMode?: string;
 
-  maskAssetId: string
+  maskAssetId: string;
+
+  generationDraft: PresetPayload;
 
   rasterSubLayers: Array<{
-    id: string
-    name: string
-    rasterAssetId: string
-    generationSnapshot: GenerationSnapshot
-    createdAt: string
-  }>
+    id: string;
+    name: string;
+    rasterAssetId: string;
+    provenance: GenerationProvenance;
+    sourceRevisionHash: string;
+    createdAt: string;
+  }>;
 
-  activeRasterSubLayerId: string | null
+  activeRasterSubLayerId: string | null;
 
   boundingBox: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 
   internalResolution: {
-    width: number
-    height: number
-  }
+    width: number;
+    height: number;
+  };
 
-  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed'
+  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed';
 
-  createdAt: string
-  updatedAt: string
-}
+  createdAt: string;
+  updatedAt: string;
+};
 ```
 
 Где:
@@ -1276,7 +1297,8 @@ type SmartPatchLayer = {
 - `activeRasterSubLayerId` — единственный raster sub-layer, который участвует в композиции canvas;
 - `boundingBox` — область canvas, которая подаётся в генерацию;
 - `internalResolution` — разрешение, в котором содержимое bounding box обрабатывается worker'ом;
-- `generationSnapshot` внутри raster sub-layer — immutable snapshot настроек конкретного растрового результата;
+- `generationDraft` — layer-owned editable generation state, shown in the left editor when this Smart Patch is selected;
+- `provenance` внутри raster sub-layer — immutable evidence конкретного accepted result;
 - `status` — состояние слоя относительно результата генерации.
 
 Важно: `rasterSubLayers` не являются полноценными ревизиями состояния Smart Patch Layer. Они хранят только альтернативные raster results. Состояние mask/bounding box/internal resolution общее и текущее для всего Smart Patch Layer.
@@ -1294,7 +1316,7 @@ bounding box на canvas: 1536x1536
 internal generation resolution: 768x768
 ```
 
-Обе величины должны сохраняться в Smart Patch Layer и в generation snapshot активного raster sub-layer.
+Обе величины сохраняются в Smart Patch Layer и в provenance accepted raster sub-layer.
 
 ### 14.7. Статусы Smart Patch Layer
 
@@ -1362,7 +1384,7 @@ Smart Patch Layer может хранить несколько растровы�
 - одновременно активным/видимым может быть только один raster sub-layer;
 - включить два raster sub-layers одного Smart Patch Layer одновременно нельзя;
 - переключение raster sub-layer меняет видимый результат слоя;
-- каждый raster sub-layer хранит собственный immutable generation snapshot;
+- каждый accepted raster sub-layer хранит собственный immutable generation provenance;
 - mask, bounding box и internal resolution принадлежат Smart Patch Layer, а не отдельному raster sub-layer.
 
 Это даёт возможность хранить несколько вариантов результата внутри одного Smart Patch Layer, но не превращает слой во внутреннюю систему ревизий всего состояния.
@@ -1371,25 +1393,30 @@ Smart Patch Layer может хранить несколько растровы�
 
 В MVP `Regenerate` для Smart Patch Layer использует **GenerationResults**, если генерация возвращает один или несколько results.
 
-ImageGen Studio не использует философию временных preview results для completed results. Completed generation result сразу становится частью project state.
+ImageGen Studio использует Invoke-like staging, расширенный multi-selection. Completed output остаётся temporary candidate и не становится project state автоматически.
 
 ```text
 Worker completed results
 ↓
-Permanent raster sub-layer variants
+Temporary GenerationResults candidates
 ↓
-GenerationResults for review / active selection / cleanup
+Select one or more
+↓
+Add N as Variants
+↓
+Permanent raster sub-layer variants
 ```
 
 Для Smart Patch Layer:
 
-- каждый completed result создаёт постоянный raster sub-layer;
-- `GenerationResults` показывает свежесозданные variants;
-- `Set Active` выбирает active raster sub-layer;
-- `Delete Selected` удаляет соответствующий постоянный raster sub-layer;
-- `Delete All Except Active` очищает лишние variants из текущего result set.
+- focus chooses one candidate for canvas preview;
+- checkbox selection chooses one or more candidates for acceptance;
+- `Add N as Variants` creates only selected raster sub-layers;
+- accepted anchor candidate becomes active;
+- other accepted candidates and the previous active variant remain inactive;
+- unselected candidates are discarded when staging closes.
 
-Для обычной генерации внутри Project Canvas каждый completed result создаёт отдельный Raster Layer. `GenerationResults` позволяет быстро просмотреть новые Raster Layers, выбрать активный/видимый вариант и удалить ненужные.
+Для обычной генерации внутри Project Canvas `Add N as Layers` создаёт отдельный Raster Layer для каждого selected candidate. Accepted anchor candidate становится selected/visible, остальные accepted opaque alternatives начинают hidden. Existing layers never overwrite implicitly.
 
 ```text
 Smart Patch Layer
@@ -1403,11 +1430,11 @@ Smart Patch Layer
    └─ result 03
 ```
 
-После completed result:
+После explicit acceptance:
 
-- создаётся новый raster sub-layer;
-- при `Set Active` `activeRasterSubLayerId` указывает на выбранный raster sub-layer;
-- в raster sub-layer записывается новый immutable generation snapshot;
+- создаётся один или несколько raster sub-layers;
+- `activeRasterSubLayerId` указывает на accepted anchor candidate;
+- в каждый accepted raster sub-layer записывается immutable generation provenance;
 - статус слоя становится `ready`, если active raster sub-layer соответствует текущим editable inputs.
 
 Старые raster sub-layers остаются доступны для переключения, но одновременно может отображаться только один из них.
@@ -1430,7 +1457,7 @@ Smart Patch — face fix 02 [hidden]
 - internal resolution;
 - raster sub-layers;
 - active raster sub-layer;
-- generation snapshots.
+- accepted-result provenance.
 
 Пользователь может скрыть дубликат, переименовать его, изменить и регенерировать отдельно.
 
@@ -1464,29 +1491,27 @@ Smart Patch — face fix 02 [hidden]
 ### 14.14. Пользовательский сценарий Smart Patch Layer
 
 ```text
-Пользователь выбирает режим Smart Patch
+Пользователь нажимает Add Smart Patch Layer
 ↓
-Рисует маску
+Создаётся empty Smart Patch Layer со своими mask, bbox, internal resolution и generation draft
 ↓
-Настраивает bounding box
+Пользователь рисует маску и настраивает bounding box/internal resolution
 ↓
-Настраивает internal resolution
-↓
-Выбирает модель, LoRA и параметры генерации
+Редактирует layer-owned prompt/model/LoRA/parameters
 ↓
 Нажимает Generate
 ↓
-Создаётся Smart Patch Layer
-↓
 Python worker генерирует результат для bounding box
 ↓
-Результат сохраняется как raster sub-layer
+GenerationResults показывает temporary candidates
 ↓
-В raster sub-layer записывается immutable generation snapshot
+Пользователь фокусирует candidate и выбирает один или несколько checkbox'ами
 ↓
-Новый raster sub-layer становится active
+Add N as Variants
 ↓
-Слой появляется в layer stack
+Accepted anchor candidate становится active, остальные accepted variants — inactive
+↓
+В accepted variants записывается immutable generation provenance
 ```
 
 Если пользователь хочет альтернативное состояние mask/bounding box/internal resolution:
@@ -1546,10 +1571,8 @@ project.igs
 ├─ assets/
 │  ├─ layers/
 │  ├─ masks/
-│  ├─ upscale-inputs/
-│  ├─ upscale-results/
 │  └─ references/
-└─ snapshots/
+└─ provenance/
    └─ generation-*.json
 ```
 
@@ -1568,21 +1591,20 @@ layer stack
 Smart Patch Layer state
 mask references
 raster asset references
-upscale input/result asset references
 generation settings
-project-local snapshots
+accepted-result provenance references
 resource references
 ```
 
 Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family и `predictionType`.
 
-Upscale mode не работает с живой ссылкой на слои. Команды `Send Composite to Upscale` и `Use Current Composite` создают immutable flattened composite input внутри `.igs`:
+Upscale storage is deferred with the feature. Future Upscale mode should not work with a live layer-stack reference; it should create an immutable flattened composite input inside `.igs`:
 
 ```text
 assets/upscale-inputs/{id}.png
 ```
 
-Metadata input'а хранит source layer stack hash, source canvas size, source project snapshot id или timestamp, visible layers metadata и created_at. Если source composite после этого изменился, Upscale показывает состояние `Source is outdated` и предлагает refresh.
+Metadata input'а хранит source layer stack hash, source canvas size, source project revision id или timestamp, visible layers metadata и created_at. Если source composite после этого изменился, Upscale показывает состояние `Source is outdated` и предлагает refresh.
 
 Upscale result хранится как:
 
@@ -1590,7 +1612,7 @@ Upscale result хранится как:
 assets/upscale-results/{id}.png
 ```
 
-В MVP результат можно добавить как новый raster layer или экспортировать.
+Future result can be added as a new raster layer or exported.
 
 ### 15.3. Autosave
 
@@ -1603,7 +1625,7 @@ ImageGen Studio/
       ├─ manifest.json
       ├─ project.json
       ├─ assets/
-      ├─ snapshots/
+      ├─ provenance/
       └─ autosave-state.json
 ```
 
@@ -1655,21 +1677,22 @@ Electron main process:
 - запускает worker;
 - останавливает worker;
 - перезапускает worker при падении;
-- владеет SQLite-backed queue generation/upscale jobs;
+- владеет SQLite-backed queue generation jobs;
 - отправляет worker'у active job;
 - читает stdout/stderr;
 - нормализует ошибки;
 - пересылает progress events в renderer;
-- сохраняет результат в `.igs`/SQLite согласно политике queue item.
+- сохраняет worker output как temporary staging candidate и публикует candidate-ready event.
 
 Queue Manager следует InvokeAI-like модели:
 
 - queue source of truth хранится в SQLite;
-- job создаётся из frozen project/generation snapshot;
+- job содержит frozen payload from Project/Smart Patch state;
 - статусы: `pending`, `running`, `completed`, `failed`, `canceled`;
 - один active worker job одновременно допустим для MVP;
 - pending jobs могут накапливаться и выполняться по очереди;
-- completed results commit'ятся в `.igs` и появляются в `GenerationResults`;
+- completed outputs появляются как temporary candidates в `GenerationResults`;
+- only explicit multi-accept commits layers/variants, provenance and accepted-result history;
 - queue status не участвует в undo/redo.
 
 ### 16.4. Worker должен быть долгоживущим
@@ -1746,27 +1769,31 @@ Diffusers/PyTorch остаются за прагматичным adapter-сло�
 ↓
 Нажимает Generate
 ↓
-Main process отправляет job в Python worker
+Main process derives txt2img/img2img/outpaint from visible target-area composite
+↓
+Main process creates frozen Queue Manager jobs
 ↓
 Worker генерирует изображение
 ↓
-UI показывает progress
+GenerationResults показывает progress и temporary candidates
 ↓
-Изображение сохраняется с UUID-именем
+Пользователь фокусирует candidates и выбирает один или несколько
 ↓
-В SQLite сохраняется generation snapshot
+Нажимает Add N as Layers
 ↓
-Картинка появляется в истории
+Selected candidates становятся independent Raster Layers in one undo step
+↓
+Each accepted layer receives immutable provenance and derived history entry
 ```
 
 ### 17.3. Создание пресета из генерации
 
 ```text
-Пользователь открывает изображение из истории
+Пользователь открывает принятый результат из истории или layer details
 ↓
 Нажимает Save preset from image
 ↓
-Приложение копирует snapshot в editable preset
+Приложение копирует accepted-result provenance в editable preset
 ↓
 Preset Manager показывает transient Draft без записи в БД
 ↓
@@ -1812,17 +1839,15 @@ Preset Manager показывает transient Draft без записи в БД
 ↓
 Worker возвращает результат
 ↓
-Completed result автоматически сохраняется как raster sub-layer
+GenerationResults показывает temporary candidates
 ↓
-GenerationResults показывает новые variants
+Пользователь фокусирует и checkbox-selects один или несколько candidates
 ↓
-Пользователь выбирает active variant через Set Active
+Нажимает Add N as Variants
 ↓
-Пользователь удаляет ненужные variants, если нужно
+Selected candidates получают raster sub-layers и provenance
 ↓
-В raster sub-layer записывается generation snapshot
-↓
-Новый raster sub-layer становится active
+Accepted anchor candidate становится active; остальные accepted и предыдущий variant остаются inactive
 ↓
 Слой получает статус ready
 ```
@@ -1847,7 +1872,9 @@ Duplicate Smart Patch Layer
 Регенерировать другую версию отдельно
 ```
 
-### 17.6. Send Composite to Upscale
+### 17.6. Upscale follow-up
+
+Upscale is deferred to a separate Project feature/prototype pass. The following direction is retained for that future work but is not part of current Project acceptance criteria:
 
 ```text
 Пользователь находится в Project tab / Generate mode
@@ -1910,7 +1937,9 @@ UI показывает fallback "Изображение не найдено"
 
 Решение:
 
-- сохраняется полный immutable generation snapshot.
+- для каждого accepted result сохраняется immutable generation provenance;
+- discarded candidates do not enter result history;
+- provenance supports recall, preset creation and missing-resource diagnostics.
 
 Статус: закрыто для MVP.
 
@@ -1951,7 +1980,7 @@ UI показывает fallback "Изображение не найдено"
 
 - хранить `predictionType` в metadata основной модели;
 - передавать `predictionType` в Python worker вместе с generation job;
-- сохранять фактический `predictionType` в immutable generation snapshot;
+- сохранять фактический `predictionType` в immutable accepted-result provenance;
 - если prediction type неизвестен, показывать пользователю compatibility warning и не маскировать это как художественную настройку.
 
 Статус: закрыто для MVP.
@@ -1989,11 +2018,11 @@ UI показывает fallback "Изображение не найдено"
 
 - sidecar не делается;
 - embedded metadata не делается;
-- global history index хранится в SQLite;
-- project-local canvas snapshots хранятся внутри `.igs`.
+- global history indexes accepted generated results in SQLite;
+- project-local provenance belongs to accepted layers/variants inside `.igs`;
+- temporary candidates remain outside project source of truth.
 
 Статус: закрыто для MVP.
-
 
 ### 18.12. Риск: бесхозные маски и неочевидные связи mask/result
 
@@ -2010,7 +2039,6 @@ UI показывает fallback "Изображение не найдено"
 **Решение:** в MVP Smart Patch Layer может хранить несколько raster sub-layers, но не хранит полноценные внутренние ревизии всего состояния слоя и отдельный source mask snapshot.
 
 Для сохранения альтернативного состояния mask/bounding box/internal resolution пользователь дублирует слой и при необходимости скрывает копию. Одновременно видимым внутри одного Smart Patch Layer может быть только один raster sub-layer.
-
 
 ---
 
@@ -2115,9 +2143,9 @@ MVP можно считать готовым, если пользователь 
 4. Убедиться, что файл скачан корректно.
 5. Выбрать модель в UI.
 6. Запустить генерацию изображения.
-7. Получить изображение в истории.
-8. Открыть историю генераций.
-9. Увидеть snapshot настроек генерации.
+7. Увидеть completed output как temporary candidate без автоматического изменения Project.
+8. Выбрать один или несколько candidates и добавить их как independent Raster Layers / Smart Patch variants.
+9. Открыть историю принятых результатов и увидеть provenance их генерации.
 10. Создать пресет из генерации.
 11. Создать пресет вручную.
 12. Отредактировать пресет.

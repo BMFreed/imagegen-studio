@@ -8,11 +8,11 @@ Main process:
 
 - запускает worker;
 - держит его долгоживущим;
-- держит persistent queue generation/upscale jobs;
+- держит persistent queue generation jobs; future Upscale jobs may reuse it;
 - отправляет в worker только один active job за раз в MVP;
 - читает progress/done/error;
 - нормализует ошибки;
-- сохраняет результат в `.igs`/SQLite согласно политике job'а;
+- сохраняет worker output как temporary staging candidate;
 - публикует renderer events.
 
 ## Queue-first contract
@@ -24,7 +24,7 @@ Main process владеет:
 - SQLite-backed queue;
 - job lifecycle;
 - frozen job payloads;
-- project/result commit policy;
+- staging destination and temporary-output lifecycle;
 - cancel/retry/delete/prune actions;
 - renderer events.
 
@@ -34,42 +34,42 @@ Python worker выполняет только текущий job и не зна�
 
 ```ts
 type WorkerJob = {
-  id: string
-  queueItemId: string
-  operation: 'generate' | 'smart-patch-generate' | 'upscale'
-  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'upscale'
+  id: string;
+  queueItemId: string;
+  operation: 'generate' | 'smart-patch-generate' | 'upscale'; // upscale is reserved for a follow-up
+  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint' | 'upscale';
   model: {
-    localPath: string
-    resourceId: string
-    baseModelFamily?: string
-    predictionType?: 'epsilon' | 'v_prediction' | 'sample'
-  }
-  prompt: string
-  negativePrompt?: string
+    localPath: string;
+    resourceId: string;
+    baseModelFamily?: string;
+    predictionType?: 'epsilon' | 'v_prediction' | 'sample';
+  };
+  prompt: string;
+  negativePrompt?: string;
   loras?: Array<{
-    localPath: string
-    resourceId: string
-    weight: number
-  }>
+    localPath: string;
+    resourceId: string;
+    weight: number;
+  }>;
   params: {
-    width: number
-    height: number
-    steps: number
-    cfgScale?: number
-    sampler?: string
-    scheduler?: string
-    seed?: number
-  }
+    width: number;
+    height: number;
+    steps: number;
+    cfgScale?: number;
+    sampler?: string;
+    scheduler?: string;
+    seed?: number;
+  };
   output: {
-    targetPath: string
-    format: 'png' | 'jpg' | 'webp'
-  }
+    targetPath: string;
+    format: 'png' | 'jpg' | 'webp';
+  };
   metadata: {
-    projectId: string
-    generationSnapshotId: string
-    targetLayerId?: string
-  }
-}
+    projectId: string;
+    stagingSessionId: string;
+    targetLayerId?: string;
+  };
+};
 ```
 
 ## Минимальные сообщения worker'а
@@ -80,14 +80,14 @@ type WorkerMessage =
   | { type: 'progress'; jobId: string; progress: number; step?: number; totalSteps?: number }
   | { type: 'done'; jobId: string; outputPath: string; seed?: number }
   | { type: 'canceled'; jobId: string }
-  | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown }
+  | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown };
 ```
 
 ## Правила протокола
 
 - `jobId` создаёт main process.
 - `queueItemId` связывает worker job с SQLite queue item.
-- Queue item создаётся из frozen project/generation snapshot. Worker не должен читать mutable renderer state.
+- Queue item contains a frozen job payload derived from Project/Smart Patch state. Worker does not read mutable renderer state.
 - В MVP main process отправляет worker'у только один active job одновременно, но pending jobs уже хранятся в queue.
 - Worker не выбирает имена файлов финального output.
 - Worker может сообщить фактический seed, если seed был сгенерирован автоматически.
@@ -96,17 +96,13 @@ type WorkerMessage =
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Worker-код должен быть совместим с BasedPyright и Ruff. Собственные DTO/protocol/model metadata типизируются строго; прямой Diffusers/PyTorch integration изолируется в adapter-слое.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
-- Completed results commit'ятся main process'ом в `.igs` according to `targetResultPolicy` from queue item, затем renderer получает queue/result events.
+- Completed outputs are stored as temporary candidates and published to the target staging session. Worker completion does not mutate `.igs`, create generation provenance, write accepted-result history or create an undo step.
+- A separate Project command accepts one or more completed candidates and commits them as Raster Layers or Smart Patch variants.
 
 ## Queue item lifecycle
 
 ```ts
-type QueueItemStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'canceled'
+type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
 ```
 
 Startup rule:

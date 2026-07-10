@@ -33,7 +33,7 @@ MVP:
 - explicit info button on dropdown rows;
 - explicit info button on selected embedding rows;
 - metadata popover/card opened only by clicking the info button;
-- missing/incompatible resource warnings when recalled from snapshots or presets.
+- missing/incompatible resource warnings when recalled from accepted results or presets.
 
 Post-MVP:
 
@@ -86,11 +86,11 @@ The metadata popover/card should include:
 - local file size/path metadata where useful;
 - compatibility warnings for the active model.
 
-## Snapshot Behavior
+## Provenance Behavior
 
-Selected embeddings/resource refs are stored in generation snapshots.
+Selected embeddings/resource refs are stored in immutable provenance of accepted generated results.
 
-Each embedding snapshot entry should include:
+Each embedding provenance entry should include:
 
 - resource id;
 - model/version/hash metadata available at generation time;
@@ -106,4 +106,4 @@ Each embedding snapshot entry should include:
 - Selected embeddings appear below the selector.
 - Info buttons exist on both dropdown rows and selected rows.
 - Metadata popover opens only by explicit info-button click.
-- Embedding refs/tokens are stored in generation snapshots.
+- Embedding refs/tokens are stored in accepted-result provenance.

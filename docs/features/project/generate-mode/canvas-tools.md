@@ -23,8 +23,7 @@ Always-visible side controls:
 - collapse left panel;
 - `Pan Tool`;
 - `Crop / Resize Project Canvas`;
-- collapse right panel;
-- `Send Composite to Upscale` / `Send to Upscale` in the right canvas rail.
+- collapse right panel.
 
 `Pan Tool` is not a separate `Viewer` mode. It is the default navigation/inspection tool for pan, zoom, fit view and non-editing canvas interaction.
 
@@ -72,7 +71,6 @@ Side toolbars/tool rails:
 - panel collapse controls are always available at the canvas edges;
 - `Pan Tool` is always available on the left rail;
 - `Crop / Resize Project Canvas` is always available on the left rail;
-- `Send to Upscale` is always available on the right rail;
 - the Project Canvas size label and canvas context menu are `canvas-area` overlays, not children of the canvas frame;
 - layer-specific editing tools appear only when a compatible layer is selected;
 - layer selection in the right panel drives the contextual tool rail; there are no visible prototype state tabs in the product UI;
@@ -131,4 +129,4 @@ Not in MVP:
 - Smart Patch Layer selection shows `Fit Patch BBox to Mask` in its contextual toolbar.
 - Regional Guidance Layer selection shows Transform Region, Lasso, Polygon Lasso, Brush and Eraser.
 - Regional Guidance Layer selection does not show bbox actions.
-- `Send Composite to Upscale` is available from the right canvas rail in Generate.
+- Upscale handoff controls are deferred to the future Upscale feature pass.

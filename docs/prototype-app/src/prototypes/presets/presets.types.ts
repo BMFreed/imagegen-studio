@@ -1,6 +1,12 @@
-export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
+import type {
+  GenerationEditorResources,
+  GenerationLora,
+  GenerationModelRef,
+  GenerationPayload,
+  GenerationResourceRef,
+} from '../../components/generation/generation.types';
 
-export type SeedPolicy = 'fixed' | 'random' | 'reuse';
+export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
 
 export type PresetSectionKey =
   | 'denoisingStrength'
@@ -15,50 +21,10 @@ export type PresetSectionKey =
   | 'size'
   | 'vae';
 
-export interface PresetResourceRef {
-  id: string;
-  missing?: boolean;
-  name: string;
-  version?: string;
-}
-
-export interface PresetModelRef extends PresetResourceRef {
-  baseModel: string;
-  predictionType: 'epsilon' | 'v-pred';
-}
-
-export interface PresetLora {
-  enabled: boolean;
-  resource: PresetResourceRef;
-  triggerWords: string[];
-  weight: number;
-}
-
-export interface PresetPayload {
-  denoisingStrength?: number;
-  embeddings?: PresetResourceRef[];
-  guidance?: {
-    cfgScale: number;
-    steps: number;
-  };
-  loras?: PresetLora[];
-  model?: PresetModelRef;
-  negativePrompt?: string;
-  prompt?: string;
-  sampling?: {
-    sampler: string;
-    scheduler: string;
-  };
-  seed?: {
-    policy: SeedPolicy;
-    value?: number;
-  };
-  size?: {
-    height: number;
-    width: number;
-  };
-  vae?: PresetResourceRef;
-}
+export type PresetResourceRef = GenerationResourceRef;
+export type PresetModelRef = GenerationModelRef;
+export type PresetLora = GenerationLora;
+export type PresetPayload = GenerationPayload;
 
 export interface PresetDefinition {
   description: string;
@@ -89,9 +55,6 @@ export interface PresetApplicationDraft {
   sourcePresetId: string;
 }
 
-export interface PresetEditorResources {
-  embeddings: PresetResourceRef[];
-  loras: PresetResourceRef[];
-  models: PresetModelRef[];
-  vaes: PresetResourceRef[];
-}
+export type PresetEditorResources = GenerationEditorResources;
+
+export { type SeedPolicy } from '../../components/generation/generation.types';

@@ -8,15 +8,97 @@ import {
   Square as SquareIcon,
   X as XIcon,
 } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
+import { NButton, NDropdown, NIcon } from 'naive-ui';
+import { computed } from 'vue';
 
 import IconButton from './IconButton.vue';
 
-const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
+const props = withDefaults(
+  defineProps<{
+    canRedo?: boolean;
+    canSave?: boolean;
+    canUndo?: boolean;
+    projectActive?: boolean;
+    queueBadge?: number;
+  }>(),
+  { canRedo: false, canSave: false, canUndo: false, projectActive: false, queueBadge: 0 },
+);
 
-defineEmits<{
+const emit = defineEmits<{
+  applyPreset: [];
+  closeProject: [];
   home: [];
+  manageModels: [];
+  managePresets: [];
+  queue: [];
+  redo: [];
+  save: [];
+  savePreset: [];
+  undo: [];
 }>();
+
+const menus = computed(() => [
+  {
+    label: 'File',
+    options: [
+      { disabled: !props.canSave, key: 'save', label: 'Save' },
+      { disabled: !props.projectActive, key: 'closeProject', label: 'Close Project' },
+    ],
+  },
+  {
+    label: 'Edit',
+    options: [
+      { disabled: !props.canUndo, key: 'undo', label: 'Undo' },
+      { disabled: !props.canRedo, key: 'redo', label: 'Redo' },
+    ],
+  },
+  {
+    label: 'Project',
+    options: [
+      { disabled: !props.projectActive, key: 'applyPreset', label: 'Apply Preset' },
+      { disabled: !props.projectActive, key: 'savePreset', label: 'Save Current as Preset' },
+      { key: 'managePresets', label: 'Manage Presets' },
+    ],
+  },
+  { label: 'Models', options: [{ key: 'manageModels', label: 'Manage Models' }] },
+]);
+
+function handleMenuSelect(key: string) {
+  switch (key) {
+    case 'applyPreset': {
+      emit('applyPreset');
+      break;
+    }
+    case 'closeProject': {
+      emit('closeProject');
+      break;
+    }
+    case 'manageModels': {
+      emit('manageModels');
+      break;
+    }
+    case 'managePresets': {
+      emit('managePresets');
+      break;
+    }
+    case 'redo': {
+      emit('redo');
+      break;
+    }
+    case 'save': {
+      emit('save');
+      break;
+    }
+    case 'savePreset': {
+      emit('savePreset');
+      break;
+    }
+    case 'undo': {
+      emit('undo');
+      break;
+    }
+  }
+}
 </script>
 
 <template>
@@ -26,11 +108,26 @@ defineEmits<{
         <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
       </NButton>
       <nav aria-label="Application menu" class="menu-items">
-        <NButton v-for="item of menuItems" :key="item" text>{{ item }}</NButton>
+        <NDropdown
+          v-for="menu of menus"
+          :key="menu.label"
+          :options="menu.options"
+          trigger="click"
+          @select="handleMenuSelect"
+        >
+          <NButton text>{{ menu.label }}</NButton>
+        </NDropdown>
+        <NButton text>Window</NButton>
+        <NButton text>Help</NButton>
       </nav>
     </div>
     <div class="menu-right">
-      <IconButton badge="2" :icon="ListDetailsIcon" label="Generation queue" />
+      <IconButton
+        :badge="queueBadge || undefined"
+        :icon="ListDetailsIcon"
+        label="Generation queue"
+        @click="$emit('queue')"
+      />
       <IconButton badge="1" :icon="DownloadIcon" label="Downloads" />
       <IconButton :icon="SettingsIcon" label="Settings" />
       <div aria-label="Window controls" class="window-controls">

@@ -22,7 +22,7 @@ Generate must handle:
 - selected model unavailable;
 - selected model still downloading;
 - incompatible LoRA/embedding;
-- missing LoRA/embedding from snapshot/preset;
+- missing LoRA/embedding from accepted-result provenance/preset;
 - invalid prompt dynamic syntax;
 - prompt bracket mismatch warning;
 - bbox outside canvas;
@@ -43,7 +43,7 @@ Generate must handle:
 - Smart Patch `outdated` status lives on the layer row and selected-layer controls;
 - worker unavailable/failed state can appear in global status and in Generate action area;
 - regional guidance compatibility warnings live on regional guidance entity rows/settings.
-- result/job errors live in `GenerationResults`.
+- candidate/job errors live in `GenerationResults` and Queue Manager respectively.
 
 ## Blocking Rules
 

@@ -1,211 +1,207 @@
-# GenerationResults
+# GenerationResults And Staging
 
 ## Feature
 
-`GenerationResults` lets the user inspect, navigate, activate and clean up the latest generated results.
+`GenerationResults` is the canvas-adjacent staging surface for pending, running and completed generation candidates.
 
-Unlike InvokeAI `StagingArea`, ImageGen Studio does not treat completed generated results as temporary by default. A generated image is project material immediately.
+A completed candidate is not project state yet. The user previews one candidate at a time, selects one or more candidates to keep and explicitly adds the selected set to the project.
 
 This applies to:
 
-- new raster generation;
-- Smart Patch Layer regeneration with mask;
-- dynamic prompting or multi-output generation when it produces multiple results.
+- normal generation targeting Project Canvas;
+- Smart Patch Layer generation;
+- dynamic prompting and multi-output generation.
 
 ## Reference
 
-Reference: InvokeAI Canvas `StagingArea`.
+Primary reference: InvokeAI Canvas `StagingArea`.
 
 Useful Invoke source areas:
 
-- `features/controlLayers/components/StagingArea/state.ts` — queue item tracking, flattened entries, selection and auto-switch;
-- `features/controlLayers/components/StagingArea/context.tsx` — app integration;
-- `features/controlLayers/components/StagingArea/StagingAreaToolbar.tsx` — toolbar shape;
+- `features/controlLayers/components/StagingArea/state.ts` — flattened queue outputs, focused candidate, progress and auto-switch;
+- `features/controlLayers/components/StagingArea/context.tsx` — Accept/Discard lifecycle and conversion of a staged image into a Raster Layer;
+- `features/controlLayers/components/StagingArea/StagingAreaToolbar.tsx` — canvas-adjacent actions;
 - `features/controlLayers/components/StagingArea/StagingAreaItemsList.tsx` — thumbnail strip;
-- `features/controlLayers/components/StagingArea/QueueItemPreviewMini.tsx` — result thumbnail/status/progress preview.
+- `features/controlLayers/konva/CanvasStagingAreaModule.ts` — isolated preview layer over the canvas.
 
-ImageGen Studio adapts the navigation and preview UX, but changes the persistence model.
+ImageGen Studio keeps this staging model but extends it with explicit multi-selection. Invoke's primary `Accept` commits one focused candidate; ImageGen Studio can add several selected candidates in one project mutation.
 
 ## ImageGen Studio Decision
 
-Generated results are auto-committed into `.igs`.
-
-The product philosophy is:
+The product model is:
 
 ```text
-generated result = project state
+completed generation = temporary staging candidate
+selected + Add to Project = persistent Raster Layer or Smart Patch variant
 ```
 
-The user should not lose useful generation results because they forgot to press `Keep`.
+Generation completion alone must not mutate `.igs`, create an undo step or add an entry to project/global result history.
 
-`GenerationResults` is therefore not a temporary staging area. It is a recent-results tray for already saved outputs.
+`GenerationResults` is the visible UI name. The domain/session model should use a less ambiguous name such as `GenerationStagingSession`.
 
-## Prototype Placement Note
+## State Model
 
-The current first-pass Project prototype, `docs/prototypes/project-page.html`, intentionally does not render `GenerationResults`.
+```ts
+type GenerationCandidateStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
 
-The feature remains in MVP, but its exact tray/browser UI should be designed in a separate pass. The Project page prototype should not be treated as evidence that `GenerationResults` was removed from scope.
+interface GenerationCandidate {
+  assetId?: string;
+  id: string;
+  imageIndex: number;
+  queueItemId: string;
+  status: GenerationCandidateStatus;
+}
 
-## Scope
+interface GenerationStagingSession {
+  candidates: GenerationCandidate[];
+  focusedCandidateId?: string;
+  selectedCandidateIds: string[];
+  target: { kind: 'project-canvas' } | { kind: 'smart-patch'; layerId: string };
+}
+```
 
-MVP:
+The two selection concepts are intentionally separate:
 
-- generate several result images for one Generate action;
-- auto-create persistent project outputs for every completed result;
-- show those new outputs in `GenerationResults`;
-- navigate previous/next;
-- show result count;
-- show thumbnails;
-- activate/select one result;
-- show/hide selected result on canvas where relevant;
-- delete selected result;
-- delete all generated results from the current result set;
-- delete all except active/selected;
-- support auto-switch modes;
-- support Smart Patch Layer mask regeneration;
-- store generation snapshot for every generated result.
+- `focusedCandidateId` — the single candidate shown on canvas;
+- `selectedCandidateIds` — the completed candidates that will be added to Project.
 
-Post-MVP:
+Changing the focused preview must not silently change the multi-selection mask.
 
-- compare results side by side;
-- mark/favorite results;
-- group generated raster layers into named result sets;
-- cleanup assistant for old generated results.
+## Candidate Lifecycle
 
-## Persistence Model
+When generation starts:
 
-Every completed result is written to project state.
+- Queue Manager receives frozen jobs;
+- `GenerationResults` shows pending/running entries for the current staging session;
+- progress images may be shown in the isolated canvas preview layer;
+- project layers and Smart Patch variants are unchanged.
 
-For normal generation targeting Project Canvas:
+When a candidate completes:
+
+- its temporary raster asset becomes previewable;
+- the first completed candidate becomes focused and selected by default;
+- later auto-switch behavior may change focus, but never changes `selectedCandidateIds`;
+- the candidate remains outside persistent project state until explicit acceptance.
+
+Candidate assets live in application-managed temporary/cache storage. They are not placed in the main `.igs` project package merely because the worker completed successfully.
+
+## Multi-Selection UX
+
+The thumbnail strip supports:
+
+- click a thumbnail to focus/preview it;
+- checkbox a completed candidate to include/exclude it from acceptance;
+- `Select all`;
+- `Clear selection`;
+- previous/next focus navigation;
+- show/hide focused result on canvas;
+- remove/discard one candidate;
+- `Discard All`;
+- context-specific primary action with selected count.
+
+Primary labels:
 
 ```text
-Generate action
-├─ output image 0 -> Raster Layer 01
-├─ output image 1 -> Raster Layer 02
-└─ output image 2 -> Raster Layer 03
+Add 1 as Layer
+Add 3 as Layers
+Add 1 as Variant
+Add 3 as Variants
 ```
 
-For Smart Patch Layer regeneration:
+The primary action is disabled when no completed candidates are selected.
 
-```text
-Smart Patch Layer
-├─ output image 0 -> Variant 01
-├─ output image 1 -> Variant 02
-└─ output image 2 -> Variant 03
-```
+The accepted anchor candidate is resolved deterministically:
 
-Each result stores:
+- use `focusedCandidateId` when the focused candidate is selected;
+- otherwise use the first selected candidate in stable candidate order.
 
-- raster asset id;
-- generation snapshot;
-- source queue/job item id;
-- output image index;
-- result set id;
-- created-at timestamp.
+That anchor becomes the visible Raster Layer or active Smart Patch variant after acceptance. Focusing an unselected candidate for comparison therefore never changes the selection implicitly.
 
-## Result Set Model
+Acceptance does not need to wait for the full batch. If the user accepts completed candidates while sibling jobs are still pending or running, the confirmation/action copy must explain that the remaining jobs will be canceled and unselected candidates discarded. Confirming ends the staging session, requests cancellation for unfinished sibling jobs and commits only the completed selected candidates.
 
-Invoke flattens staged outputs into entries: each output image becomes navigable, even if it came from a multi-output queue item.
+## Normal Project Canvas Acceptance
 
-ImageGen Studio should follow that navigation model, but each entry points to a persistent project object:
+For a `project-canvas` target, every selected candidate becomes an independent Raster Layer.
 
-```text
-Queue item
-├─ output image 0 -> GenerationResults entry -> Raster Layer / Smart Patch Variant
-├─ output image 1 -> GenerationResults entry -> Raster Layer / Smart Patch Variant
-└─ output image 2 -> GenerationResults entry -> Raster Layer / Smart Patch Variant
-```
+Rules:
 
-Each entry tracks:
+- selected candidates are inserted as adjacent layers in deterministic candidate order;
+- the accepted anchor candidate becomes selected and visible;
+- other accepted full-canvas candidates start hidden so opaque alternatives do not cover one another;
+- all pre-existing project layers remain unchanged;
+- an existing selected Raster Layer is never overwritten implicitly;
+- unselected candidates are discarded when the staging session closes;
+- accepting `N` candidates is one grouped undo step, while the resulting layers remain independently editable afterward.
 
-- result set id;
-- queue/job item id;
-- output image index;
-- target type: `raster-layer` or `smart-patch-variant`;
-- target id;
-- status: pending, in progress, completed, failed, canceled;
-- progress event;
-- progress image if available;
-- loaded image state.
+## Smart Patch Acceptance
 
-Pending/in-progress entries may be temporary worker state until completion. Completed entries immediately create persistent project outputs.
+For a `smart-patch` target, every selected candidate becomes a raster variant inside that Smart Patch Layer, not a new top-level project layer.
 
-## Toolbar Behavior
+Rules:
 
-MVP toolbar actions:
+- the accepted anchor candidate becomes the active variant;
+- other accepted candidates become inactive variants;
+- the previously active variant remains stored but becomes inactive;
+- only one variant is active/visible at a time;
+- unselected candidates are discarded when the staging session closes;
+- accepting `N` variants is one grouped undo step.
 
-- show/hide thumbnails;
-- previous;
-- next;
-- result count;
-- set selected as active;
-- show/hide selected result on canvas where relevant;
-- delete selected;
-- delete all in result set;
-- delete all except active/selected;
-- regenerate more;
-- auto-switch mode.
-
-`Keep Variant` and `Keep All` are not needed because completion already commits results.
-
-## Activation And Deletion Behavior
-
-For Smart Patch Layer:
-
-- each completed result becomes a permanent raster sub-layer variant;
-- `Set Active` chooses which variant is active/visible;
-- only one permanent variant can be active/visible at a time;
-- `Delete Selected` deletes the corresponding permanent raster sub-layer variant;
-- `Delete All Except Active` keeps the active variant and deletes the other variants from that result set.
-
-For normal raster generation:
-
-- each completed result becomes a Raster Layer;
-- `Set Active` selects/focuses the corresponding Raster Layer and may hide/show siblings according to current UI mode;
-- `Delete Selected` deletes the corresponding Raster Layer;
-- `Delete All Except Active` keeps the active/selected Raster Layer and deletes the other layers from that result set.
-
-Because deletion affects persistent project state, it must participate in the app's undo/confirm policy. Until that policy is fully defined, destructive batch deletion should require confirmation.
+This preserves Smart Patch Layer as a self-contained generative entity.
 
 ## Auto-Switch
 
-Use Invoke-like auto-switch modes:
+Supported focus modes may follow Invoke:
 
-- `off` — do not automatically switch selected result;
-- `switch_on_start` — switch to a result entry when its job starts;
-- `switch_on_finish` — switch to a result entry when its image is loaded/completed.
+- `off`;
+- `switch_on_start`;
+- `switch_on_finish`.
 
-Default can follow Invoke's `switch_on_start` unless UX testing shows it feels too jumpy.
+Auto-switch changes only `focusedCandidateId`. It must never add or remove candidates from `selectedCandidateIds`.
 
-## Smart Patch Behavior
+`switch_on_finish` is the preferred initial default because it moves preview focus only when a real image is available.
 
-For Smart Patch Layer regeneration:
+## Undo, Queue And History Boundaries
 
-- all results are generated from the same layer-owned mask, layer-owned bbox, internal resolution and generation settings;
-- every completed result becomes a permanent raster sub-layer variant;
-- `GenerationResults` shows each new variant in patch/canvas context;
-- `Set Active` chooses which raster sub-layer becomes active;
-- deleting from `GenerationResults` deletes the saved raster sub-layer variant.
+Not undoable:
 
-This preserves the rule that only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.
+- enqueueing jobs;
+- job status/progress;
+- focusing or selecting staging candidates;
+- discarding candidates;
+- worker completion by itself.
 
-## Layer Stack Relationship
+Undoable:
 
-Layer stack should stay compact.
+- `Add N as Layers`;
+- `Add N as Variants`.
 
-For Smart Patch Layer, the layer row shows the active raster thumbnail and a variant count. It does not expand into a long column of saved variant thumbnails by default.
+Queue Manager owns job lifecycle and remains prunable operational history. It is not generation result history.
 
-`GenerationResults` is the richer browser for recently generated variants/results.
+Only accepted layers/variants receive immutable generation provenance and derived global history entries. Discarded candidates receive neither.
+
+Undo removes the accepted project mutation; it does not reconstruct the previous staging session.
+
+## Placement
+
+`GenerationResults` is a collapsible bottom tray inside the central canvas workspace:
+
+- thumbnail strip above a compact toolbar;
+- selected candidate preview rendered through a dedicated non-project canvas layer;
+- collapsed state preserves canvas space;
+- the tray is absent when no staging session exists.
+
+It is not a permanent right sidebar and does not replace Queue Manager or the layer stack.
 
 ## Acceptance Criteria
 
-- User can generate multiple results and inspect them in `GenerationResults`.
-- Completed results are automatically persisted into `.igs`.
-- Normal Project Canvas generation creates persistent Raster Layers for all completed outputs.
-- Smart Patch regeneration creates persistent raster sub-layer variants for all completed outputs.
-- `GenerationResults` supports thumbnails, previous/next, set active, delete selected and delete all except active.
-- `GenerationResults` supports show/hide selected result on canvas where relevant.
-- `GenerationResults` supports auto-switch modes.
-- Smart Patch Layer mask regeneration supports `GenerationResults`.
-- Every completed result stores an immutable generation snapshot.
-- Deleting from `GenerationResults` is documented as deletion of persistent project state, not temporary preview cleanup.
+- Completed worker outputs remain temporary candidates until explicit acceptance.
+- User can focus one candidate and independently select one or more candidates.
+- Normal acceptance creates one Raster Layer per selected candidate.
+- Smart Patch acceptance creates one variant per selected candidate.
+- The focused selected result, or otherwise the first selected result, becomes the visible/active accepted anchor; accepted alternatives remain hidden/inactive.
+- Accepting before a batch finishes explicitly cancels unfinished sibling jobs and discards unselected candidates.
+- Existing project content is never overwritten implicitly.
+- One multi-accept action creates one grouped undo step.
+- Candidate navigation, selection and discard do not create undo steps.
+- Only accepted results receive generation provenance and global history entries.
+- Queue Manager and `GenerationResults` remain distinct surfaces with distinct ownership.

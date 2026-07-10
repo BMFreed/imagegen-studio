@@ -3,31 +3,29 @@ import { Trash as TrashIcon } from '@vicons/tabler';
 import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import type { PresetLora, PresetResourceRef } from './presets.types';
+import type { GenerationLora, GenerationResourceRef } from './generation.types';
 
 const props = defineProps<{
   disabled?: boolean;
-  resources: PresetResourceRef[];
+  resources: GenerationResourceRef[];
 }>();
 
-const loras = defineModel<PresetLora[]>({ required: true });
+const loras = defineModel<GenerationLora[]>({ required: true });
 const selectedResourceId = ref<string | null>(null);
 
-const loraOptions = computed(() =>
+const options = computed(() =>
   props.resources.map((resource) => ({
     disabled: loras.value.some((lora) => lora.resource.id === resource.id),
-    label: `${resource.name} · ${resource.version ?? ''}`,
+    label: `${resource.name}${resource.version ? ` · ${resource.version}` : ''}`,
     value: resource.id,
   })),
 );
 
-function addLora(resourceId: string | null) {
+function add(resourceId: string | null) {
   const resource = props.resources.find((candidate) => candidate.id === resourceId);
-
   if (!resource || loras.value.some((lora) => lora.resource.id === resource.id)) {
     return;
   }
-
   loras.value.push({
     enabled: true,
     resource: structuredClone(resource),
@@ -41,17 +39,24 @@ function addLora(resourceId: string | null) {
 <template>
   <div class="lora-stack">
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
-      <NSwitch v-model:value="lora.enabled" :disabled size="small" />
+      <NSwitch
+        v-model:value="lora.enabled"
+        :aria-label="`Enable ${lora.resource.name}`"
+        :disabled
+        size="small"
+      />
       <div class="lora-main">
         <strong>{{ lora.resource.name }}</strong>
-        <NText depth="3">
-          {{ lora.resource.version
-          }}<template v-if="lora.triggerWords.length > 0">
-            · {{ lora.triggerWords.join(', ') }}</template
-          >
-        </NText>
+        <NText depth="3">{{ lora.resource.version ?? 'Local resource' }}</NText>
       </div>
-      <NInputNumber v-model:value="lora.weight" :disabled :max="2" :min="-2" :step="0.05" />
+      <NInputNumber
+        v-model:value="lora.weight"
+        :aria-label="`${lora.resource.name} weight`"
+        :disabled
+        :max="2"
+        :min="-2"
+        :step="0.05"
+      />
       <NButton
         :aria-label="`Remove ${lora.resource.name}`"
         circle
@@ -65,11 +70,12 @@ function addLora(resourceId: string | null) {
     </article>
     <NSelect
       v-model:value="selectedResourceId"
+      aria-label="Add LoRA"
       clearable
       :disabled
-      :options="loraOptions"
+      :options
       placeholder="Add LoRA"
-      @update:value="addLora"
+      @update:value="add"
     />
   </div>
 </template>
@@ -79,22 +85,19 @@ function addLora(resourceId: string | null) {
   display: grid;
   gap: 8px;
 }
-
 .lora-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 92px auto;
+  grid-template-columns: auto minmax(0, 1fr) 84px auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
 }
-
 .lora-main {
   display: grid;
   min-width: 0;
 }
-
 .lora-main strong,
 .lora-main .n-text {
   overflow: hidden;

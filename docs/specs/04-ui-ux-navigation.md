@@ -1,6 +1,6 @@
 # UI / UX Navigation
 
-Для Home, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом. Project / Generate пока сверяется с `docs/prototypes/project-page.html`.
+Для Home, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом. До появления Vue Project prototype его контракты задают `docs/features/project/`; `docs/prototypes/project-page.html` остаётся только ранним layout reference.
 
 ## Основные зоны приложения
 
@@ -14,11 +14,11 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Canvas` не является primary navigation item или отдельной вкладкой приложения. Canvas — это сущность внутри `Project` tab: interactive рабочая поверхность открытого `.igs` проекта.
 
-`Generate` и `Upscale` не являются top-level вкладками приложения. Это project modes внутри `Project` tab.
+`Generate` не является top-level вкладкой приложения. Это domain mode внутри `Project` tab; его visible working-mode label — `Create`, а `Generate` зарезервирован для action button. Upscale остаётся planned Project mode, но отложен до отдельного feature/prototype pass.
 
 `Model Manager` и `Preset Manager` остаются важными частями приложения, но не являются primary tabs: текущий источник истины оформляет их как app-level modal overlays. Settings и queue/status UI также остаются app-level surfaces, но их точная форма определяется отдельными feature passes.
 
-Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает generation/upscale jobs across projects. Он не является постоянной боковой панелью Project и не заменяет `GenerationResults`.
+Queue Manager является app-level surface. Он открывается из верхнего app chrome/menu/command palette и показывает jobs across projects. Он не является постоянной боковой панелью Project, result history или заменой `GenerationResults` staging tray.
 
 Загрузки моделей не получают отдельный Download Manager в MVP. Кнопка downloads в верхнем app chrome открывает Model Manager, сфокусированный на `Downloading` / install queue. Это быстрый вход в активные установки моделей, а не отдельная равноправная поверхность.
 
@@ -74,21 +74,24 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - generation settings;
 - model/LoRA/VAE controls;
 - project resource warnings;
-- project-local generation snapshots/history;
+- generation provenance attached to accepted layers/variants and derived accepted-result history;
 - save/dirty/recovery status.
 
-Внутри `Project` tab есть project modes. В MVP в них входят:
+Current Project scope contains domain mode `generate` with visible label `Create`: generation and local editing through canvas, layers, Smart Patch Layer, masks and model settings.
 
-- `Generate` — основной режим генерации и редактирования через canvas, слои, Smart Patch Layer, маски и model settings.
-- `Upscale` — режим апскейла через ESRGAN-like модели. Он работает с immutable flattened composite input, полученным из текущего состояния `Generate`.
+Upscale is deferred. Its future domain slot may remain reserved, but current Project navigation, prototype and acceptance criteria must not depend on a working `Upscale` mode.
 
 Детальная спецификация содержимого `Generate` mode: `docs/features/project/generate-mode/README.md`.
 
-Переключатель режимов должен визуально отличаться от верхнего document tab strip. В текущем Project-прототипе пользовательская надпись — `Create | Upscale`: это компактный segmented control в верхней части левой settings panel, а не отдельный широкий ряд под вкладками. `Generate` зарезервирован для кнопки запуска генерации, чтобы не смешивать режим и действие.
+Current visible working-mode label is `Create`. If/when Upscale is designed, `Create | Upscale` may become a compact segmented control in the left settings panel. It must remain visually distinct from the document tab strip.
+
+Until then, Project must not render a one-option segmented switch. `Create` may be shown as a compact context label/header, while the actual mode switch appears only after a second implemented mode exists.
 
 Project tab не показывает отдельную строку с названием файла и статусом сохранения над рабочей областью. Название проекта, dirty marker и базовый статус документа принадлежат document tab/app chrome, чтобы не дублировать информацию.
 
-`Canvas` остаётся общей сущностью Project. `Generate` использует его как основную рабочую поверхность. `Upscale` может показывать preview/input/result view, но не превращается в отдельный project document.
+`Canvas` remains the central Project entity and Create workspace.
+
+Project does not expose txt2img/img2img/inpaint/outpaint as user-selected modes. At enqueue time the runtime derives the path from visible raster/mask content inside the frozen target area. Denoising Strength remains visible but disabled with a reason when the current target has no applicable raster input.
 
 ### Canvas side controls
 
@@ -98,7 +101,6 @@ Project tab не показывает отдельную строку с наз�
 - `Pan Tool`;
 - `Crop / Resize Project Canvas`;
 - collapse right panel;
-- `Send Composite to Upscale` / `Send to Upscale` в правом canvas rail.
 
 `Pan Tool` является navigation/inspection tool, а не отдельным `Viewer` mode.
 
@@ -119,26 +121,32 @@ Project Canvas size label и `...` canvas context menu позиционирую�
 
 Generate action area находится фиксированно внизу левой settings panel. В ней находятся кнопка `Generate`, селектор количества изображений за одно нажатие, queue/context menu и отдельная кнопка отмены текущей генерации.
 
-### Generate → Upscale handoff
+Project footer does not expose `Pause Queue` or `Resume Queue` in the current scope.
 
-В режиме `Generate` должна быть команда `Send Composite to Upscale`.
+Completed outputs appear in a collapsible bottom `GenerationResults` staging tray. One candidate is focused for canvas preview; a separate checkbox selection can contain one or more completed candidates. Normal acceptance adds independent Raster Layers, Smart Patch acceptance adds variants, and generation completion alone does not mutate `.igs`.
+
+### Upscale follow-up
+
+Upscale UX is intentionally deferred from the current Project prototype pass.
+
+The previously agreed future direction remains:
 
 Команда:
 
 - берёт flattened composite видимых слоёв текущего Project;
 - создаёт immutable upscale input asset внутри `.igs`;
-- сохраняет metadata источника: source layer stack hash, canvas size, source snapshot/timestamp, visible layers metadata;
-- переключает Project в режим `Upscale`;
+- сохраняет metadata источника: source layer stack hash, canvas size, source revision/timestamp, visible layers metadata;
+- switches Project into a future `Upscale` mode;
 - делает новый input активным для upscale job.
 
 В режиме `Upscale` должна быть команда `Use Current Composite` / `Refresh Composite`, которая выполняет тот же handoff из текущего состояния Generate. Если слои или настройки композита изменились после предыдущего handoff, Upscale показывает состояние `Source is outdated` и предлагает refresh.
 
-Upscale result в MVP должен поддерживать минимум:
+Future Upscale result should support at minimum:
 
 - `Add as New Layer`;
 - `Export`.
 
-`Replace Source` можно отложить, потому что оно повышает риск destructive workflow.
+`Replace Source` remains rejected for the first Upscale pass because it creates a destructive workflow.
 
 Каждая `Project` tab имеет собственные:
 
@@ -178,7 +186,7 @@ Boards/gallery не показываются как постоянная бок�
 - compact queue/download activity buttons в верхнем app chrome;
 - центральная рабочая область;
 - правая панель параметров для выбранного объекта внутри Project;
-- project-local history/snapshots там, где она нужна работе с открытым `.igs`.
+- accepted-result history/provenance entry points там, где они нужны работе с открытым `.igs`.
 
 Activity buttons в app chrome разделены по ownership:
 

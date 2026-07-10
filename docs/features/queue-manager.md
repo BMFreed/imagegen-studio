@@ -2,7 +2,7 @@
 
 ## Feature
 
-Queue Manager lets the user enqueue multiple generation/upscale operations, monitor their status, cancel/retry failed work and inspect results/errors.
+Queue Manager lets the user enqueue generation operations, monitor their status, cancel/retry failed work and inspect outputs/errors. Upscale jobs may reuse the same queue later, but Upscale UI is outside the current Project pass.
 
 The queue is a first-class app runtime feature. ImageGen Studio should follow InvokeAI's proven queue model, adapted to a single-user desktop application and `.igs` project files.
 
@@ -26,9 +26,9 @@ Take the Invoke queue architecture, but adapt the payload and UI.
 
 ImageGen Studio is not graph-centric in MVP. Queue items should not expose Invoke-style graph/session internals as the main user-facing model. They should represent project operations:
 
-- Generate into project bbox;
-- Generate Smart Patch variants;
-- Upscale an immutable flattened composite input.
+- Generate candidates for Project Canvas;
+- Generate candidates for a Smart Patch Layer;
+- later, Upscale an immutable flattened composite input.
 
 The Queue Manager is in MVP scope as an architectural baseline. Even if the first UI is compact, the worker protocol and main process should be designed around a persistent job queue rather than a single ad-hoc active job.
 
@@ -50,7 +50,7 @@ MVP:
 - delete terminal job from queue history;
 - clear/prune terminal queue history;
 - preserve enough job payload to reproduce what was enqueued;
-- completed results commit into `.igs` and appear in `GenerationResults`;
+- completed canvas outputs are handed to the Project staging session as temporary candidates;
 - app startup marks interrupted `running` jobs as `canceled`;
 - queue events are delivered to renderer as typed app events.
 
@@ -77,62 +77,53 @@ Rejected:
 Suggested baseline:
 
 ```ts
-type QueueItemStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'canceled'
+type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
 
-type ProjectJobOperation =
-  | 'generate'
-  | 'smart-patch-generate'
-  | 'upscale'
+type ProjectJobOperation = 'generate' | 'smart-patch-generate' | 'upscale'; // reserved follow-up
 
 type ProjectQueueItem = {
-  id: string
-  batchId: string
-  status: QueueItemStatus
-  statusSequence: number
-  operation: ProjectJobOperation
+  id: string;
+  batchId: string;
+  status: QueueItemStatus;
+  statusSequence: number;
+  operation: ProjectJobOperation;
 
-  projectId: string
-  projectPath: string
-  projectDisplayName: string
+  projectId: string;
+  projectPath: string;
+  projectDisplayName: string;
 
-  targetLayerId?: string
-  targetLayerName?: string
-  targetResultPolicy:
-    | 'new-raster-layer'
-    | 'smart-patch-variant'
-    | 'upscale-result'
+  targetLayerId?: string;
+  targetLayerName?: string;
+  stagingTarget:
+    | { kind: 'project-canvas'; sessionId: string }
+    | { kind: 'smart-patch'; layerId: string; sessionId: string }
+    | { kind: 'upscale'; sessionId: string };
 
-  generationSnapshotId: string
-  jobPayload: WorkerJob
+  jobPayload: WorkerJob;
 
   progress?: {
-    value: number
-    step?: number
-    totalSteps?: number
-    message?: string
-    previewAssetId?: string
-  }
+    value: number;
+    step?: number;
+    totalSteps?: number;
+    message?: string;
+    previewAssetId?: string;
+  };
 
-  resultAssetIds: string[]
+  resultAssetIds: string[];
   error?: {
-    code: string
-    message: string
-    details?: unknown
-  }
+    code: string;
+    message: string;
+    details?: unknown;
+  };
 
-  createdAt: string
-  updatedAt: string
-  startedAt?: string
-  completedAt?: string
-}
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+};
 ```
 
-The queue item stores a frozen job payload. It must not read mutable project state at execution time except for validating that the target project/result can still be committed safely.
+The queue item stores a frozen job payload. It must not read mutable renderer/project state at execution time. Worker completion creates a temporary candidate for `stagingTarget`; it does not commit a project layer.
 
 ## Batch Model
 
@@ -143,59 +134,62 @@ Examples:
 - output count `4` creates four `generate` queue items in one batch;
 - dynamic prompting expansion creates one queue item per concrete prompt/seed combination;
 - Smart Patch regeneration with output count `N` creates `N` smart patch queue items in one batch;
-- Upscale currently creates one queue item.
+- future Upscale may create one queue item.
 
 Batch metadata:
 
 ```ts
 type QueueBatch = {
-  id: string
-  origin: 'generate' | 'smart-patch' | 'upscale'
-  destination: 'project' | 'smart-patch-layer' | 'upscale'
-  projectId: string
-  itemIds: string[]
-  createdAt: string
-}
+  id: string;
+  origin: 'generate' | 'smart-patch' | 'upscale';
+  destination: 'project-staging' | 'smart-patch-staging' | 'upscale-staging';
+  projectId: string;
+  itemIds: string[];
+  createdAt: string;
+};
 ```
 
 The batch is mostly for grouping UI actions and status summaries. Individual queue items remain independently cancelable/retryable.
 
-## Frozen Snapshot Rule
+## Frozen Job Rule
 
 Queueing freezes the operation.
 
 When the user presses `Generate`, ImageGen Studio must create:
 
 - a worker job payload;
-- a project-local generation snapshot;
 - queue item metadata;
-- result commit policy.
+- a staging destination;
+- immutable refs/hashes for the target-area composite, mask and generation settings used by the job.
 
 The queued job uses this frozen data. If the user edits prompt, model settings, layers, masks or bbox afterward, already queued jobs do not change.
 
-For Smart Patch jobs, the snapshot should include the relevant mask, bbox, internal resolution and generation settings at enqueue time.
+For Smart Patch jobs, the frozen payload includes the relevant source composite, mask, bbox, internal resolution and layer-owned generation draft at enqueue time.
 
 For Upscale jobs, the queue item should reference an immutable flattened composite input asset, not the live layer stack.
 
-## Result Commit Rules
+## Candidate Handoff Rules
 
-Completed results are not temporary candidates.
+Completed canvas outputs are temporary candidates.
 
 On completion:
 
-- `generate` commits each output as a new Raster Layer in the target project;
-- `smart-patch-generate` commits each output as a persistent Smart Patch raster variant;
-- `upscale` commits as an Upscale result asset and may be added as a new Raster Layer or exported;
-- every committed result is visible in `GenerationResults`;
-- every committed result references its generation snapshot;
-- committing a result creates an undoable project mutation.
+- `generate` exposes each output in the target Project `GenerationResults` staging session;
+- `smart-patch-generate` exposes each output as a candidate for the target Smart Patch Layer;
+- queue completion alone does not write a Raster Layer, Smart Patch variant, generation provenance or result-history row;
+- `Add N as Layers` / `Add N as Variants` is a separate Project command that commits selected candidates;
+- each accepted candidate receives immutable generation provenance derived from the frozen job plus actual result metadata;
+- one multi-accept command creates one grouped undoable project mutation.
+
+Acceptance may happen before every sibling job finishes. In that case the UI explicitly warns that the staging session will end, requests cancellation for unfinished jobs targeting that session and discards every unselected candidate. Only completed selected candidates are committed.
 
 If the target project is closed when a job completes:
 
-- main process should update the `.igs` project package if safe and possible; or
-- mark the queue item as `needs_project_open` / `commit_pending` if direct commit is unsafe.
+- do not mutate the closed `.igs` directly;
+- retain or discard the temporary output according to staging-session cleanup/recovery policy;
+- surface the completed job in Queue Manager without presenting it as accepted project history.
 
-MVP can require that jobs commit only to currently open projects if that reduces risk, but the queue item model should not make closed-project support impossible.
+The current Project scope may require an open target project for canvas staging. Closed-project staging recovery can be designed separately.
 
 ## Processor Model
 
@@ -208,7 +202,7 @@ MVP processor behavior:
 - main process sends worker job;
 - worker emits progress;
 - worker emits done or error;
-- main process commits result or records failure;
+- main process stores a temporary candidate output or records failure;
 - item becomes `completed`, `failed` or `canceled`;
 - processor continues to next pending item.
 
@@ -255,7 +249,7 @@ Queue Manager
 │  ├─ timestamps
 │  └─ actions
 └─ selected item details
-   ├─ full settings snapshot summary
+   ├─ frozen job settings summary
    ├─ result assets
    ├─ error details
    └─ retry/cancel/delete actions
@@ -286,7 +280,7 @@ MVP actions:
 - `Clear Failed/Canceled`;
 - `Clear All Terminal`;
 - `Open Project`;
-- `Show Result` when committed result exists.
+- `Open Staging Session` when the target Project session is still available.
 
 Optional MVP actions if cheap:
 
@@ -312,10 +306,15 @@ Main process normalizes worker messages and publishes typed renderer events:
 ```ts
 type QueueEvent =
   | { type: 'queue:item-created'; item: ProjectQueueItem }
-  | { type: 'queue:item-status-changed'; itemId: string; status: QueueItemStatus; statusSequence: number }
+  | {
+      type: 'queue:item-status-changed';
+      itemId: string;
+      status: QueueItemStatus;
+      statusSequence: number;
+    }
   | { type: 'queue:item-progress'; itemId: string; progress: ProjectQueueItem['progress'] }
   | { type: 'queue:item-completed'; itemId: string; resultAssetIds: string[] }
-  | { type: 'queue:item-failed'; itemId: string; error: ProjectQueueItem['error'] }
+  | { type: 'queue:item-failed'; itemId: string; error: ProjectQueueItem['error'] };
 ```
 
 Use a monotonically increasing `statusSequence` or revision number to avoid stale progress/status events overriding newer terminal states.
@@ -335,28 +334,27 @@ Queue items should store:
 - status;
 - operation;
 - project identity/path;
-- target layer/result policy;
-- generation snapshot id;
+- staging target/session;
 - serialized worker job payload;
-- result asset ids;
+- temporary output asset ids;
 - error payload;
 - timestamps.
 
-The `.igs` file remains source of truth for project state and committed results. SQLite queue rows are runtime/history records and can be pruned.
+The `.igs` file remains source of truth for accepted project state. SQLite queue rows and temporary candidate assets are operational data and can be pruned independently from accepted project results.
 
 ## Relation To GenerationResults
 
-Queue Manager shows jobs.
+Queue Manager shows jobs across projects.
 
-`GenerationResults` shows committed project results.
+`GenerationResults` shows the current Project's temporary staging candidates.
 
 They are linked but not the same:
 
-- while a job is pending/running, Queue Manager is the primary place to inspect status;
-- when a job completes, its outputs are committed into `.igs`;
-- `GenerationResults` displays those committed outputs for review, activation and cleanup;
-- deleting a queue item does not delete committed project results;
-- deleting a result from `GenerationResults` is a project mutation and participates in undo/redo.
+- while a job is pending/running, both the app-level queue and its target staging session may show contextual progress;
+- when a job completes, `GenerationResults` displays a temporary candidate;
+- focusing, selecting or discarding candidates is not a project mutation;
+- accepting candidates is the explicit boundary that creates persistent layers/variants, provenance, history rows and an undo step;
+- deleting a queue row never deletes an already accepted project result.
 
 ## Acceptance Criteria
 
@@ -365,10 +363,11 @@ They are linked but not the same:
 - Queue Manager shows pending/running/completed/failed/canceled jobs.
 - User can cancel a pending/running job.
 - User can retry failed/canceled jobs.
-- Queue jobs execute from frozen snapshots, not mutable live UI state.
-- Completed normal generation results become Raster Layers.
-- Completed Smart Patch results become Smart Patch variants.
-- Completed results appear in `GenerationResults`.
+- Queue jobs execute from frozen payloads, not mutable live UI state.
+- Completed canvas outputs become temporary `GenerationResults` candidates.
+- Only explicitly accepted normal candidates become Raster Layers.
+- Only explicitly accepted Smart Patch candidates become variants.
+- Queue Manager is not result history and queue completion is not undoable.
 - App restart does not leave stale `running` jobs.
 - Queue storage is SQLite-backed and prunable.
 - Queue status changes are not part of undo/redo.

@@ -44,7 +44,7 @@ MVP:
 - explicit info button on dropdown rows;
 - explicit info button on selected LoRA rows;
 - metadata popover/card opened only by clicking the info button;
-- missing/incompatible resource warnings when recalled from snapshots or presets.
+- missing/incompatible resource warnings when recalled from accepted results or presets.
 
 Post-MVP:
 
@@ -126,11 +126,11 @@ The metadata popover/card should include:
 
 The popover should not block normal dropdown selection. It opens by explicit click and can be dismissed without changing selection.
 
-## Snapshot Behavior
+## Provenance Behavior
 
-LoRA stack is stored in generation snapshots.
+LoRA stack is stored in immutable provenance of accepted generated results.
 
-Each LoRA snapshot entry should include:
+Each LoRA provenance entry should include:
 
 - resource id;
 - model/version/hash metadata available at generation time;
@@ -147,4 +147,4 @@ Each LoRA snapshot entry should include:
 - Metadata popover opens only by explicit info-button click.
 - Adding a LoRA in the UI applies the LoRA resource and weight without requiring the user to type `<lora:...:...>` manually.
 - Secondary trigger words are visible through the info popover and are never inserted automatically.
-- LoRA stack is stored in generation snapshots.
+- LoRA stack is stored in accepted-result provenance.

@@ -14,6 +14,10 @@ ImageGen Studio adapts Invoke's controls, but not Invoke's separate lower `Advan
 
 Use an Invoke-like model-aware settings panel, adapted to ImageGen Studio's supported model families and worker protocol.
 
+Project does not ask the user to choose Text to Image or Image to Image. The runtime generation path is derived from visible raster/mask content in the current target area when the job is frozen.
+
+Normal Project Canvas generation uses a project-owned generation draft. Each Smart Patch Layer owns its own generation draft; selecting a Smart Patch Layer binds the settings panel to that layer, so edits only affect and potentially mark that layer `outdated`.
+
 LoRAs and Embeddings are separate sections. They are not grouped under one shared `Concepts` label.
 
 All generation-related advanced controls live inside the `Generation` card's own `Advanced Options` area. Do not create a separate Invoke-like `Advanced` dropdown/accordion below `Generation`.
@@ -31,11 +35,11 @@ MVP controls:
 - sampler/scheduler;
 - steps;
 - guidance/CFG;
-- denoising strength;
+- denoising strength, visible but disabled with a reason when the current target has no raster input or the selected model does not support it;
 - seed;
 - randomize seed;
 - shuffle/advance seed;
-- output count/iterations once queue support is available;
+- images per click in the fixed Generate action area rather than duplicated inside the settings card;
 - model compatibility warnings for selected LoRAs/embeddings/presets.
 
 `Generation > Advanced Options` controls:
@@ -67,19 +71,22 @@ Rules:
 - new selections default to the latest installed/default version from Model Manager;
 - existing `.igs` projects preserve their exact selected version;
 - changing the version in Generate updates the current project settings and future jobs for that project;
-- changing Model Manager's default version must not silently rewrite open projects, presets or generation snapshots;
+- changing Model Manager's default version must not silently rewrite open projects, presets or accepted-result provenance;
 - if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager.
 
-If the user selects a v-prediction model, Generate should use the model metadata to pass the correct prediction type to the worker and store it in the snapshot. This is a model compatibility behavior, not a separate user-facing generation mode.
+If the user selects a v-prediction model, Generate should use the model metadata to pass the correct prediction type to the worker and store it in accepted-result provenance. This is a model compatibility behavior, not a separate user-facing generation mode.
 
 ## Acceptance Criteria
 
 - User can select a model and configure core sampling parameters.
+- Project derives txt2img/img2img/inpaint/outpaint from the frozen target-area composite rather than a manual workflow toggle.
+- Normal generation and each Smart Patch Layer have correctly scoped generation drafts.
 - User can select the installed version of the selected model.
 - Unsupported controls are not shown as generic always-on clutter.
-- Prediction type metadata is passed to the worker and stored in snapshots.
+- Prediction type metadata is passed to the worker and stored in accepted-result provenance.
 - LoRAs and Embeddings appear as separate sections inside Generation.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
+- Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.
 - VAE, VAE precision and CFG rescale live in `Generation > Advanced Options`.
 - A separate Invoke-like `Advanced` accordion is not implemented.
 - Seamless X/Y and generic color compensation are excluded from MVP Generate settings.

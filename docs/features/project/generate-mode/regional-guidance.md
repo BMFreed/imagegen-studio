@@ -44,7 +44,7 @@ MVP:
 - remove/reorder regional guidance images;
 - enable/disable region;
 - include enabled regional guidance in generation jobs;
-- store regional guidance state in generation snapshots;
+- store used regional guidance state in accepted-result provenance;
 - show compatibility warning if worker/model family does not support it.
 
 Post-MVP:
@@ -109,30 +109,30 @@ Suggested shape:
 
 ```ts
 type RegionalGuidanceLayer = {
-  id: string
-  type: 'regional-guidance'
+  id: string;
+  type: 'regional-guidance';
 
-  name: string
-  enabled: boolean
-  locked: boolean
-  opacity: number
+  name: string;
+  enabled: boolean;
+  locked: boolean;
+  opacity: number;
 
-  maskAssetId: string
-  regionObjects: CanvasRegionObject[]
+  maskAssetId: string;
+  regionObjects: CanvasRegionObject[];
 
-  positivePrompt: string | null
-  negativePrompt: string | null
-  autoNegative: boolean
+  positivePrompt: string | null;
+  negativePrompt: string | null;
+  autoNegative: boolean;
 
   referenceImages: Array<{
-    id: string
-    assetId: string
-    weight?: number
-    metadata?: RegionalReferenceImageMetadata
-  }>
+    id: string;
+    assetId: string;
+    weight?: number;
+    metadata?: RegionalReferenceImageMetadata;
+  }>;
 
-  compatibilityStatus: 'ok' | 'warning' | 'unsupported'
-}
+  compatibilityStatus: 'ok' | 'warning' | 'unsupported';
+};
 ```
 
 Rules:
@@ -151,7 +151,7 @@ When enabled regional guidance entities exist:
 - worker receives their region data and prompts;
 - worker receives regional guidance image asset refs and metadata;
 - region prompts influence the generation job according to the supported Invoke-like pipeline;
-- region state is stored in the generation snapshot.
+- region state is stored in accepted-result provenance when a candidate is accepted.
 
 If the worker cannot support regional guidance or regional guidance images for the selected model family, Generate must show a compatibility warning before queueing the job.
 

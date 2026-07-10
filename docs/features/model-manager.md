@@ -51,7 +51,7 @@ Already fixed project decisions:
 - SDXL/Illustrious-like `.safetensors` files remain source files; the worker loads them through the Invoke-like Diffusers single-file path and caches loaded components in RAM/VRAM.
 - Model metadata includes `baseModelFamily` and `predictionType`.
 - `predictionType` is compatibility metadata, not a creative user setting.
-- Missing model/LoRA/embedding resources must be diagnosable when applying presets or recalling generation snapshots.
+- Missing model/LoRA/embedding resources must be diagnosable when applying presets or recalling accepted-result provenance.
 
 ## ImageGen Studio Decision
 
@@ -90,7 +90,7 @@ Required entry points:
 - Generate `Model` selector: `Manage Models` opens Model Manager focused on checkpoints.
 - Generate `LoRAs` selector: `Manage Models` opens Model Manager focused on LoRAs.
 - Generate `Embeddings` selector: `Manage Models` opens Model Manager focused on embeddings.
-- Missing resource warning from a preset/snapshot: opens Model Manager filtered to the missing resource identity where possible.
+- Missing resource warning from a preset/accepted result: opens Model Manager filtered to the missing resource identity where possible.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
 
@@ -246,7 +246,7 @@ Visible MVP detail content:
 - selected/default version;
 - managed file name;
 - version/file size;
-- usage summary, for example presets and project snapshots.
+- usage summary, for example presets and accepted project results.
 
 For LoRA and embeddings, the same details area exposes trigger words / activation tokens in a dedicated `Trigger Words` card.
 
@@ -284,7 +284,7 @@ The version list in Details Panel should use explicit actions:
 - each version has a compact info action that opens its explanatory note in a popover;
 - avoid vague labels such as `Show` when the action changes default selection behavior.
 
-Default version is only a starting point for new model selections. It must not silently change existing projects, presets or generation snapshots.
+Default version is only a starting point for new model selections. It must not silently change existing projects, presets or accepted-result provenance.
 
 Project / Generate owns the actual selected version for a project. The model card in Generate must expose a `Version` select for the selected model. By default it uses the latest installed/default version, but an existing project can keep or switch to any installed version explicitly.
 
@@ -312,7 +312,7 @@ MVP includes:
 - repair a missing known CivitAI resource by re-downloading its exact version;
 - remove local resource with confirmation;
 - prevent deletion while resource is currently used by a running job;
-- keep snapshots/presets readable after deletion by storing human-readable copied metadata in snapshots;
+- keep presets/accepted-result provenance readable after deletion by storing copied human-readable resource metadata;
 - expose installed resources to Generate model, LoRA and embeddings selectors;
 - show compatibility warnings for active model family mismatch.
 
@@ -448,7 +448,7 @@ type ModelInstallStatus =
   | 'identifying'
   | 'completed'
   | 'failed'
-  | 'canceled'
+  | 'canceled';
 ```
 
 Each install queue row should show:
@@ -513,7 +513,7 @@ When the user imports a resource that appears to be already installed:
 If same CivitAI model but different version:
 
 - treat it as a different generation resource;
-- show a warning that presets/snapshots require exact version matches;
+- show a warning that presets/accepted results require exact version matches;
 - allow installing side-by-side.
 
 ```mermaid
@@ -538,8 +538,8 @@ Rules:
 
 - if the resource is used by a running generation/upscale job, deletion is blocked;
 - if used by pending jobs, warn and ask whether to cancel affected jobs first;
-- if referenced by presets or `.igs` snapshots, deletion is allowed only after confirmation;
-- snapshots remain readable because they store copied human-readable metadata;
+- if referenced by presets or `.igs` accepted-result provenance, deletion is allowed only after confirmation;
+- accepted results remain readable because provenance stores copied human-readable metadata;
 - after deletion, selectors and presets show missing-resource diagnostics.
 
 ```mermaid
@@ -548,7 +548,7 @@ flowchart TD
   B -- "Yes" --> C["Block removal and explain"]
   B -- "No" --> D{"Used by pending jobs?"}
   D -- "Yes" --> E["Warn and offer cancel affected jobs"]
-  D -- "No" --> F{"Referenced by presets/snapshots?"}
+  D -- "No" --> F{"Referenced by presets/results?"}
   E --> F
   F -- "Yes" --> G["Confirm with missing-resource warning"]
   F -- "No" --> H["Simple confirm"]
@@ -608,7 +608,7 @@ Embeddings selector:
 - opens detail popover from explicit info button;
 - opens Model Manager through `Manage Models`.
 
-Generation snapshots:
+Accepted-result provenance:
 
 - store resource ids and copied human-readable metadata;
 - are not mutated when a model is renamed, removed or updated;
@@ -626,7 +626,7 @@ flowchart LR
   GJ --> QS["Queue item"]
   QS --> W["Python worker"]
   W --> R["Generation result"]
-  R --> GS["Generation snapshot in .igs"]
+  R --> GS["Generation provenance in .igs"]
   GS --> MR["Future missing-resource diagnostics"]
   MM --> MR
 ```
@@ -730,6 +730,6 @@ The following criteria describe the production feature; prototype-only coverage 
 - Duplicate exact resource install does not download again by default.
 - Missing local file is shown as a missing resource state.
 - Remove is blocked for resources used by running jobs.
-- Remove confirmation warns when resource is referenced by presets/snapshots.
-- Generation snapshots remain readable after a resource is removed.
+- Remove confirmation warns when resource is referenced by presets/accepted results.
+- Accepted-result provenance remains readable after a resource is removed.
 - Model Manager actions are not part of project undo/redo.

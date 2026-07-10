@@ -22,19 +22,19 @@ The standalone HTML preset prototypes are historical references and are no longe
 
 ## ImageGen Studio Decision
 
-Use an Invoke-like compact preset selector in `Project` / `Generate`, but do not copy Invoke's `Choose Prompt Template` behavior directly.
+Use an Invoke-like compact preset launcher in `Project` / `Create`, but do not copy Invoke's `Choose Prompt Template` behavior directly.
 
-The selector is not just a prompt-template dropdown. It is a project preset launcher:
+The control is not a persistent "selected preset" field. It is an action launcher:
 
 - it lives near the top of the left Generate settings panel, above the prompt editor;
-- it can search and choose presets quickly;
+- it can search and choose a preset quickly;
 - it can show which sections a preset contains;
 - it opens an apply preview before mutating the project;
 - it supports partial apply as a first-class workflow.
 
 Selecting a preset must not silently overwrite current settings. The user must see what will be applied and can choose which sections to copy via a master `Select all sections` checkbox or individual section checkboxes.
 
-Applying a preset copies values into the current project state. The project does not stay linked or synchronized to the preset after apply.
+Applying a preset copies values into the current Project generation draft or selected Smart Patch Layer generation draft. The resulting mutation is a normal project undo step. The project does not retain a selected-preset identity, link or synchronization after apply.
 
 ## Project UI
 
@@ -42,7 +42,7 @@ The left Generate panel should include a compact preset block:
 
 ```text
 Preset
-[ Select preset...                         v ]
+[ Apply preset...                          v ]
 ```
 
 The dropdown should include:
@@ -78,7 +78,7 @@ Seed
 VAE
 ```
 
-Avoid technical wording like `payload`, `workflow_type`, `resource ref` or `snapshot schema` in the user-facing selector.
+Avoid technical wording like `payload`, `workflow_type`, `resource ref` or `provenance schema` in the user-facing selector.
 
 ## Apply Preview
 
@@ -175,7 +175,7 @@ Open entry points:
 - app menu / `Project > Presets`;
 - `Manage Presets` in the Project preset selector;
 - `Save Current as Preset`, which opens create mode with a project-derived draft;
-- generation result or snapshot actions like `Save Preset from Result`.
+- accepted-result actions like `Save Preset from Result`.
 
 `New Preset` in the manager creates a minimal manual draft with `Text to Image`, an empty name and only an empty Prompt section. A pinned `Draft` row remains visible above saved results regardless of active filters. `Cancel` discards the manual draft and returns to the previously selected preset.
 
@@ -277,7 +277,7 @@ The Vue/Naive prototype is authoritative for the manager/create/apply states des
 
 Normal Preset Manager opens with `Studio Portrait Soft Light` selected, `All Presets`, no search/favorite/attention filter and `Name` sorting. The Apply route demonstrates `Cinematic Img2Img Pass` against the shared `Sample Project B.igs` project state; the save route demonstrates the project-derived `Sample Portrait Baseline` Draft.
 
-It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate persistence failure, or complete the `Open in Models` missing-resource handoff. The compact Project / Generate preset dropdown itself remains specified by the Project prototype/docs; the Vue entry `?prototype=apply-preset` starts after a preset has already been chosen. Save-from-history/snapshot also remains outside the interactive prototype; the current `PresetCreateIntent` demonstrates only `manual` and current-`project` origins and must be extended explicitly when snapshot creation is implemented.
+It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate persistence failure, or complete the `Open in Models` missing-resource handoff. The compact Project / Create preset launcher itself remains specified by the Project prototype/docs; the Vue entry `?prototype=apply-preset` starts after a preset has already been chosen. Save-from-accepted-result provenance also remains outside the interactive prototype; the current `PresetCreateIntent` demonstrates only `manual` and current-`project` origins and must be extended explicitly for accepted results.
 
 ## Rejected
 
@@ -297,8 +297,9 @@ It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate 
 
 ## Acceptance Criteria
 
-- Project / Generate has a compact preset selector above the prompt editor.
+- Project / Create has a compact `Apply preset...` launcher above the prompt editor and no persistent selected-preset value.
 - Selecting a preset opens apply preview instead of mutating settings immediately.
+- Successful Apply creates an ordinary project generation-draft mutation/undo step and leaves no live preset identity on Project.
 - New Project can customize a detached Text to Image preset payload through the shared editor; Size remains required, Seed is excluded by default, and missing resources warn without blocking creation.
 - Apply preview is Project-scoped and reached from the Generate selector; it is not opened from the Preset Manager.
 - User can apply all sections or a selected subset via per-section checkboxes plus a single `Select all sections` master checkbox (no separate `Apply All` button).

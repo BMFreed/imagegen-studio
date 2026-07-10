@@ -6,12 +6,13 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 
 ## Feature Map
 
+- [Project document lifecycle](../document-lifecycle.md)
 - [Prompt editor](./prompt-editor.md)
 - [Prompt diagnostics](./prompt-diagnostics.md)
 - [Tag autocomplete](./tag-autocomplete.md)
 - [Dynamic prompting](./dynamic-prompting.md)
 - [Presets](../../presets.md)
-- [Project canvas and bounding boxes](./image-and-bounding-box.md)
+- [Project Canvas and Smart Patch bounds](./image-and-bounding-box.md)
 - [Smart Patch Layer](./smart-patch-layer.md)
 - [Generation settings](./generation-settings.md)
 - [LoRA selector](./lora-selector.md)
@@ -24,7 +25,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Layer stack](./layer-stack.md)
 - [Generate action behavior](./generation-actions.md)
 - [GenerationResults](./generation-results.md)
-- [Generation snapshots](./generation-snapshots.md)
+- [Generation provenance](./generation-provenance.md)
 - [Validation and error states](./validation-and-errors.md)
 
 ## Reference
@@ -73,16 +74,23 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Regional Guidance Layer follows Invoke's inline layer-stack controls: `+ Prompt`, `+ Negative Prompt`, `+ Reference Image`;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
 - Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
-- the UI mode switch is labeled `Create | Upscale` and sits at the top of the left settings panel; `Generate` is reserved for the action button that starts generation;
+- the domain mode remains `generate`, while the visible working-mode label is `Create`; `Generate` is reserved for the action button that starts generation;
+- txt2img/img2img/inpaint/outpaint is derived automatically from visible raster/mask content inside the frozen target area, not selected manually;
+- normal generation settings belong to Project, while each Smart Patch Layer owns its own generation draft;
 - viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
 - Project Canvas numeric resize/fit actions live in the left `Size` section, while direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail;
 - canvas-area overlays own the Project Canvas size label at top-left and the canvas context menu at top-right; these controls sit outside the canvas frame itself;
-- canvas side controls always show panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; the right rail also exposes `Send to Upscale`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- canvas side controls always show panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
-- `GenerationResults` is included for browsing and cleaning up recent generated results, but it is not part of the first `project-page.html` prototype layout and should get a separate UI pass;
-- completed generation results auto-commit into `.igs` as Raster Layers or Smart Patch raster sub-layer variants;
+- `GenerationResults` is an Invoke-like bottom staging tray with separate focused preview and multi-selection state;
+- completed outputs remain temporary candidates until the user explicitly adds one or more to Project;
+- accepted normal candidates become independent Raster Layers; accepted Smart Patch candidates become layer-owned variants;
+- only accepted results receive immutable generation provenance and global history entries;
+- Queue Manager owns jobs, not result history, and staging state is not undoable;
 - the Generate action area is fixed at the bottom of the left settings panel and contains `Generate`, images-per-click, queue menu and cancel controls;
+- Queue pause/resume is not exposed in the current Project scope;
+- Upscale is deferred to a separate Project pass and does not block the Create/Generate prototype;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
 
 ## Layout
@@ -98,7 +106,7 @@ Document tab strip
 Project: portrait.igs
 └─ Generate mode
    ├─ left settings panel
-   │  ├─ mode switch: Create | Upscale
+   │  ├─ working context: Create
    │  └─ fixed Generate action area
    ├─ center canvas
    └─ right layer/settings panel
@@ -112,29 +120,52 @@ Project: portrait.igs
 ├───────────────┬─────────────────────────────┬────────────────┤
 │ Settings      │ Canvas                      │ Layers /       │
 │               │                             │ selected item  │
-│ Generate/     │ Project Canvas frame        │                │
-│ Upscale       │ canvas-area overlays        │ layer stack    │
+│ Create        │ Project Canvas frame        │                │
+│               │ canvas-area overlays        │ layer stack    │
 │ Presets       │ masks                       │ regional       │
 │ Prompts       │ raster layers               │ guidance       │
 │ Size          │ raster layers               │ smart patch    │
 │ Generation    │ raster layers               │ smart patch    │
 │ Dynamic       │ regional guidance regions   │ sub-layers     │
-│ Compositing   │                             │ snapshots      │
+│ Compositing   │ GenerationResults tray      │ provenance     │
 └───────────────┴─────────────────────────────┴────────────────┘
 ```
 
-The left panel contains the project mode switch and settings for the current generation operation.
+The left panel contains the current generation context and settings. While `Create` is the only implemented mode, the UI must not render a useless one-option segmented switch merely to label it. `Create` may appear as a compact workspace label/header; a mode switch is introduced only when another real mode is designed.
 
 The right panel contains project structure and settings for the selected canvas entity or layer.
 
 Canvas controls should remain close to the canvas. Viewport controls and interaction hints live in the bottom canvas bar; canvas-area metadata/actions live as overlays near the canvas edges; layer ownership and object-specific settings remain in the right panel so the user can always tell whether they are editing the global generation setup or a selected layer.
 
+## Prototype Coverage
+
+The interactive Vue/Naive UI implementation is available at `?prototype=project`. It is the source of truth for current Project layout, visible labels, mock interactions and responsive behavior. The historical `docs/prototypes/project-page.html` file remains a layout reference only.
+
+Stable query scenarios are:
+
+- `default` — a populated clean project with Raster Layer selected;
+- `smart-patch` — a selected self-contained Smart Patch with mask, bbox and accepted variants;
+- `regional-guidance` — selected regional conditioning with prompt, reference image and compatibility warning;
+- `staging` — completed and running queue items with multi-selected temporary candidates;
+- `empty-project` — transparent canvas with derived Text to Image mode and disabled denoising;
+- `errors` — local model, LoRA, prompt, candidate, Smart Patch and save error states.
+
+The prototype uses a three-panel editor shell with resizable and collapsible side panels. Generation settings are stacked cards in one independently scrolling left panel; they do not reuse the modal accordion layout. The central canvas is a deterministic DOM/CSS simulation rather than a Konva or raster engine, while zoom, pan, contextual tools, bbox/canvas overlays and staging preview remain interactive enough to validate the workflow.
+
+Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shortcuts. Queue progress and temporary candidate selection are deliberately excluded from document history; accepting candidates creates one grouped persistent mutation.
+
 ## Acceptance Criteria
 
-- User can open a `.igs` Project tab and switch to `Generate`.
+- User can open a `.igs` Project tab and work in visible mode `Create` backed by domain mode `generate`.
 - Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
 - Preset actions exist through the explicit compact selector/apply preview workflow described in [Presets](../../presets.md).
-- `project-page.html` does not show a separate Project title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
-- `GenerationResults` remains an MVP feature, but its detailed UI is intentionally deferred from the first Project page prototype.
+- Project does not show a separate title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
+- `GenerationResults` supports focused preview plus explicit multi-selection and never auto-commits completed outputs.
+- left and right panels can be resized, collapsed and restored without losing Project UI state;
+- the fixed Generate footer remains visible while stacked settings scroll independently;
+- automatic Text to Image, Image to Image, Inpaint and Outpaint summaries explain the derived mode without exposing a manual mode switch;
+- accepted Project candidates become independent Raster Layers, while accepted Smart Patch candidates become variants owned by that layer;
+- Project UI state survives document-tab switching within the prototype session;
+- Upscale behavior is explicitly outside the current Project prototype pass.
 - Generate feature behavior is covered by the individual feature docs in this folder.

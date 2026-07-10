@@ -4,7 +4,7 @@
 
 The prompt editor is the primary text authoring surface in `Project` / `Generate`.
 
-It contains positive and negative prompts, prompt history, tag autocomplete entry points, dynamic-prompt preview affordances and preset/snapshot recall actions.
+It contains positive and negative prompts, prompt history, tag autocomplete entry points, dynamic-prompt preview affordances and preset/accepted-result recall actions.
 
 ## Reference
 
@@ -31,7 +31,7 @@ MVP:
 - prompt token count when tokenizer/model support is available;
 - Danbooru-style tag autocomplete integration;
 - dynamic prompt preview entry point;
-- recall prompt/settings from generation snapshot;
+- recall prompt/settings from accepted-result provenance;
 - explicit preset actions.
 
 Post-MVP:
@@ -64,7 +64,7 @@ Allowed preset-related affordances in Generate:
 - compact `Preset` selector above the prompt editor;
 - `Apply Preset` through apply preview;
 - `Save Current as Preset`;
-- `Apply Settings from Snapshot`;
+- `Recall Settings from Result`;
 - missing-resource warnings after applying a preset.
 
 These actions must be visually distinct from direct prompt editing.

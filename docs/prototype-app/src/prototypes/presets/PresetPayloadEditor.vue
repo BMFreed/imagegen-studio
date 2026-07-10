@@ -20,8 +20,8 @@ import type {
   PresetWorkflow,
 } from './presets.types';
 
-import PresetEmbeddings from './PresetEmbeddings.vue';
-import PresetLoraStack from './PresetLoraStack.vue';
+import GenerationEmbeddings from '../../components/generation/GenerationEmbeddings.vue';
+import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue';
 import PresetPayloadSection from './PresetPayloadSection.vue';
 import { clonePreset, sectionLabels } from './presets.utils';
 
@@ -186,14 +186,14 @@ function updateVae(vaeId: string) {
           </div>
         </div>
 
-        <PresetLoraStack
+        <GenerationLoraStack
           v-else-if="section === 'loras'"
           v-model="loras"
           :disabled="sectionDisabled(section)"
           :resources="resources.loras"
         />
 
-        <PresetEmbeddings
+        <GenerationEmbeddings
           v-else-if="section === 'embeddings'"
           v-model="embeddings"
           :disabled="sectionDisabled(section)"

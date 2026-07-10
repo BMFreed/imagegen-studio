@@ -22,4 +22,5 @@ For surfaces already implemented in `docs/prototype-app`, the Vue components, mo
 - [Model Manager](./model-manager.md)
 - [Presets](./presets.md)
 - [Project undo / redo](./project/undo-redo.md)
+- [Project document lifecycle](./project/document-lifecycle.md)
 - [Queue Manager](./queue-manager.md)

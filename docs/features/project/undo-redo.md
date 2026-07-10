@@ -40,7 +40,7 @@ MVP:
   - `mod+y` -> redo;
 - clear project history action in project settings/debug settings;
 - undo/redo disabled while the selected Project canvas is busy with an operation that cannot safely be rewound;
-- project load, project close, snapshot restore and crash recovery restore do not become undo steps.
+- project load, project close and crash recovery restore do not become undo steps.
 
 Post-MVP:
 
@@ -69,12 +69,12 @@ The stack is tied to the canonical open project identity:
 
 ```ts
 type ProjectUndoRedoState = {
-  projectId: string
-  projectPath: string
-  past: ProjectHistoryEntry[]
-  future: ProjectHistoryEntry[]
-  limit: number
-}
+  projectId: string;
+  projectPath: string;
+  past: ProjectHistoryEntry[];
+  future: ProjectHistoryEntry[];
+  limit: number;
+};
 ```
 
 The runtime tab manager destroys this state when the project is closed. It is not stored in `.igs`.
@@ -96,18 +96,18 @@ Undoable project mutations:
 - add/delete/edit Regional Guidance Layer;
 - edit Regional Guidance region/mask;
 - edit regional prompts/reference images;
-- change global generation bounding box;
+- resize/crop/grow Project Canvas;
 - change canvas/project-local generation settings if those settings are stored in `.igs`;
-- add generated Raster Layer from a completed generation result;
-- add generated Smart Patch raster variant from a completed generation result;
-- delete persistent results from `GenerationResults`.
+- apply selected preset sections into Project or Smart Patch generation draft as one ordinary grouped settings mutation;
+- accept one or more staging candidates as Raster Layers;
+- accept one or more staging candidates as Smart Patch variants;
+- delete already accepted Raster Layers or Smart Patch variants through their persistent project controls.
 
 Undoable generation commits must be grouped:
 
-- one generated Raster Layer from one completed queue item = one undo step;
-- multiple generated Raster Layers from one user action may be grouped as one undo step;
-- multiple Smart Patch variants produced by one user action may be grouped as one undo step;
-- deleting several results via `Delete All Except Active` is one undo step.
+- `Add N as Layers` is one grouped undo step;
+- `Add N as Variants` is one grouped undo step;
+- each resulting layer/variant remains independently editable after acceptance.
 
 ## What Is Not Undoable
 
@@ -121,6 +121,8 @@ Not undoable:
 - enqueueing a job;
 - canceling/retrying/deleting queue history;
 - worker progress;
+- worker completion;
+- focusing, checkbox-selecting or discarding staging candidates;
 - opening/closing project files;
 - autosave writes;
 - crash recovery load;
@@ -140,7 +142,7 @@ Examples:
 - if a mask brush stroke is actively being drawn, create the undo step when the stroke ends;
 - if a project is loading/recovering, do not allow undo/redo until the document reaches a valid ready state.
 
-Queue jobs themselves are not undone. Undo can remove the project mutation produced by a completed job, such as a newly added Raster Layer or Smart Patch variant.
+Queue jobs and staging sessions are not undone. Undo can remove the explicit acceptance mutation that added one or more Raster Layers or Smart Patch variants. Undo does not reconstruct the previous staging session.
 
 ## Action Filtering
 
@@ -184,15 +186,15 @@ Undo/redo mutations mark the project dirty and participate in the normal autosav
 
 Undo history is not serialized into `.igs`.
 
-Generation snapshots are serialized into `.igs` when they describe persisted results. Undo may remove the result that references a snapshot, but snapshot retention follows the project storage policy. If a snapshot becomes unreferenced, cleanup can happen during project maintenance/compaction.
+Generation provenance is serialized into `.igs` only for accepted results. Undo may remove the result that references provenance; unreferenced provenance/assets can be cleaned during project maintenance/compaction after they are no longer needed for the in-memory redo stack.
 
 ## Acceptance Criteria
 
 - Each open `.igs` Project tab has independent undo/redo.
 - Undo/redo never affects another open project.
-- Undo/redo covers layer operations, masks, Smart Patch bbox/settings, Regional Guidance edits and committed generation results.
-- Project load/snapshot restore/autosave/recovery do not create undo steps.
+- Undo/redo covers layer operations, masks, Smart Patch bbox/settings, Regional Guidance edits and explicit acceptance of generation candidates.
+- Project load/autosave/recovery do not create undo steps.
 - Rapid drag/resize operations do not flood the history stack.
 - Freehand mask gestures undo as understandable operations.
-- Queue item status changes are not undoable, but completed result commits are undoable.
+- Queue/staging state is not undoable; explicit multi-accept is one grouped undoable project mutation.
 - Undo/redo is disabled while the project is in an unsafe busy state.

@@ -14,6 +14,8 @@ Use a project-structure-first right panel.
 
 No permanent Boards/gallery sidebar is shown inside Project. Project organization belongs to Home.
 
+Raster Layers and Smart Patch Layers share one compositing `Layers` stack and one cross-type z-order. Regional Guidance is a separate conditioning section because it does not contribute ordinary raster pixels to visual compositing.
+
 ## Scope
 
 MVP layer/entity types:
@@ -34,7 +36,7 @@ Layer stack behavior:
 - add raster layer;
 - add Smart Patch Layer;
 - add Regional Guidance Layer;
-- reorder layers/entities;
+- reorder Raster and Smart Patch Layers across types inside the compositing stack;
 - rename;
 - duplicate;
 - delete;
@@ -65,6 +67,8 @@ Rules:
 - destructive delete should use the app's normal confirm/undo policy once that policy is defined;
 - right-side actions should remain compact and type-specific, while visibility remains visually tied to the thumbnail.
 
+Rows with nested controls must not be implemented as one button containing other buttons. Use a full-height selection `NButton` for thumbnail/name/status plus sibling visibility and action buttons.
+
 ## Smart Patch Layer Display
 
 Smart Patch Layer display should include:
@@ -91,7 +95,7 @@ The `switch variants` action should use a clear cycle/swap-style icon and expose
 
 The layer row should stay compact. Do not expand saved raster sub-layer variants into a vertical thumbnail list under the Smart Patch Layer by default.
 
-Use [GenerationResults](./generation-results.md) as the richer browser for newly generated Smart Patch variants. Smart Patch selected-layer controls may also expose a compact variants action/list, but the default layer stack row stays compact: mask thumbnail, active raster thumbnail and variant count/action, not a full list of variants.
+Use the compact variants browser for already accepted Smart Patch variants. [GenerationResults](./generation-results.md) is reserved for the current temporary staging session and does not become the permanent variant/history browser.
 
 Only one raster sub-layer inside a Smart Patch Layer can be active/visible at a time.
 
@@ -115,6 +119,7 @@ Regional Guidance Layer owns its region/mask. The mask is not a standalone layer
 ## Acceptance Criteria
 
 - User can manage Raster Layer, Smart Patch Layer and Regional Guidance Layer from the layer stack.
+- Raster and Smart Patch Layers share one ordered compositing stack; Regional Guidance is a separate conditioning section.
 - Standalone inpaint masks are not exposed.
 - Visibility toggle is placed left of the thumbnail/preview for all layer rows.
 - Warning/status icons, lock and delete actions are available in layer rows.
@@ -123,5 +128,6 @@ Regional Guidance Layer owns its region/mask. The mask is not a standalone layer
 - Regional Guidance Layer prompt/reference-image controls are visible inline in the layer stack.
 - Regional Guidance Layer mask ownership is explicit and non-shared.
 - Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
+- Layer selection and sibling actions use valid non-nested interactive semantics.
 - Only one raster sub-layer inside one Smart Patch Layer can be active at a time.
 - Denoising strength is not displayed above the layer stack; it belongs to Generation settings.

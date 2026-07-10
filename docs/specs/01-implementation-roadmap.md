@@ -79,20 +79,21 @@ docs/features/
 
 - Долгоживущий Python worker.
 - Python worker tooling: BasedPyright для типов, Ruff для formatting/linting.
-- Invoke-like persistent Queue Manager baseline: SQLite-backed generation/upscale jobs в main process.
+- Invoke-like persistent Queue Manager baseline: SQLite-backed generation jobs в main process.
 - Worker protocol вокруг queue item lifecycle, даже если active worker job в MVP один.
-- Минимальная форма txt2img.
+- Минимальный canvas workflow с automatic txt2img/img2img derivation from target content.
 - Progress/done/error events.
 - Сохранение изображения UUID-именем.
-- Сохранение immutable generation snapshot.
-- История генераций с fallback для отсутствующего файла.
+- Staging candidates without automatic Project commit.
+- Explicit acceptance into Raster Layers with immutable generation provenance.
+- Derived history of accepted results with fallback for a missing accepted asset.
 
 Результат: пользователь выбирает модель, генерирует изображение и видит его в истории.
 
 ## Фаза 3. Presets
 
 - Создание пресета вручную.
-- Создание пресета из generation snapshot.
+- Создание пресета из accepted-result provenance.
 - Редактирование секций пресета.
 - Общий `PresetPayloadEditor` для manager create/edit, Apply и New Project preset customization.
 - Full apply.
@@ -101,27 +102,25 @@ docs/features/
 - Проверка missing resources только для выбранных секций.
 - Warning при base model family mismatch.
 
-Результат: snapshot превращается в переиспользуемую настройку, а настройки можно применять точечно.
+Результат: provenance принятого результата превращается в переиспользуемую настройку, а настройки можно применять точечно.
 
 ## Фаза 4. Smart Patch Layer
 
 - `.igs` Project tab with embedded Canvas.
-- Project mode bar: `Generate` and `Upscale`.
+- domain mode `generate` with visible working label `Create`; Upscale is deferred.
 - Generate mode according to `docs/features/project/generate-mode/README.md`.
 - Layer stack.
 - Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
 - Smart Patch Layer с mask, bounding box, internal resolution.
-- `GenerationResults` для просмотра, выбора active result и очистки свежих multi-result generations.
+- `GenerationResults` as multi-select staging: one focused preview plus one or more candidates selected for acceptance.
 - Project-local undo/redo для `.igs` document mutations.
-- Completed results auto-commit into `.igs`.
-- Normal Project Canvas generation creates Raster Layers for every completed result.
-- Smart Patch regeneration creates raster sub-layer variants for every completed result.
-- `Set Active` chooses the active raster sub-layer/result.
+- Completed outputs remain temporary until explicit acceptance.
+- `Add N as Layers` creates independent Raster Layers and one grouped undo step.
+- `Add N as Variants` creates Smart Patch raster variants and one grouped undo step.
+- The focused candidate becomes the accepted anchor when selected; otherwise the first selected candidate becomes active. Other accepted Smart Patch variants remain inactive.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
 - Outdated status при изменении mask/bbox/settings.
 - Regional Guidance Layer with owned region/mask, inline prompt/negative/reference-image controls and regional guidance images.
-- `Send Composite to Upscale` creates immutable flattened composite input.
-- Upscale mode can add result as new raster layer or export it.
 
 Результат: появляется локальное генеративное редактирование без standalone-масок и неочевидных связей.
 
@@ -152,4 +151,4 @@ docs/features/
 
 ## Первый вертикальный срез
 
-Минимальный срез для начала разработки: Фаза 0 + импорт одной модели + одна txt2img генерация + запись snapshot в историю. Всё остальное можно наращивать поверх этого скелета.
+Минимальный срез для начала разработки: Фаза 0 + импорт одной модели + automatic canvas generation + staging одного результата + explicit Add as Layer with provenance/history. Всё остальное можно наращивать поверх этого скелета.

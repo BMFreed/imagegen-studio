@@ -23,7 +23,7 @@ MVP:
 - show parse errors near the prompt editor;
 - configure max expanded prompts;
 - configure seed behavior for expanded prompts;
-- store generated prompt expansions in the generation snapshot.
+- store the concrete expansion in accepted-result provenance.
 
 Post-MVP:
 
@@ -45,7 +45,7 @@ Supported modes should include:
 - keep the same base seed across expanded prompts where appropriate;
 - advance/new seed per expanded prompt where appropriate.
 
-The selected seed behavior is stored in the generation snapshot.
+The selected seed behavior is stored in accepted-result provenance.
 
 ## Persistence
 
@@ -68,5 +68,5 @@ Do not persist:
 - User can preview expanded prompts before generation.
 - Invalid dynamic syntax is visible before queueing a job.
 - Dynamic prompt settings affect the generated job list.
-- Concrete expanded prompts are stored in generation snapshots.
+- Concrete expanded prompts are stored in accepted-result provenance.
 - Wildcard expansion is not supported.

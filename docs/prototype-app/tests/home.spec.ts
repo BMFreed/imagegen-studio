@@ -444,7 +444,7 @@ test.describe('Home prototype', () => {
     await page.getByRole('button', { name: 'Zoom in' }).click();
     await expect(page.getByText('82%')).toBeVisible();
     await page.getByRole('button', { name: 'Reset view' }).click();
-    await expect(page.getByText('100%')).toBeVisible();
+    await expect(page.locator('.zoom-value').getByText('100%', { exact: true })).toBeVisible();
 
     const navigation = page.getByLabel('Home navigation');
     const navigationBefore = await navigation.boundingBox();

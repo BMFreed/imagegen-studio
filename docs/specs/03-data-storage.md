@@ -19,7 +19,7 @@ ImageGen Studio остаётся однопользовательским deskto
 SQLite — источник истины для:
 
 - installed resources;
-- глобального generation history и восстанавливаемого project index для Home;
+- derived global history index of accepted generated project results and recoverable project index for Home;
 - Queue Manager runtime/history records: queue items, batches, status, progress, errors and serialized worker job payloads;
 - presets;
 - references на файлы изображений, масок и моделей.
@@ -31,14 +31,14 @@ Project file `.igs` — источник истины для конкретно�
 - layer stack;
 - raster layer assets;
 - masks;
-- generation settings and immutable generation snapshots, относящиеся к этому проекту;
+- generation settings and immutable generation provenance attached to accepted Raster Layers / Smart Patch variants;
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
 SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, optional `trashed_at`, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
 
 Project `open` state не хранится в index row: Home вычисляет его по in-memory document-tab registry. `recovery_available` отражает наличие валидированного shadow candidate, а не обычный autosave progress.
 
-Queue rows are not project source of truth. They describe runtime/history state for jobs that may read from or commit into `.igs`. Completed queue rows can be pruned without deleting committed project results.
+Queue rows are not project source of truth or generation result history. They describe operational jobs that produce temporary staging candidates. Completed queue rows can be pruned without deleting accepted project results.
 
 Файловая система хранит тяжёлые артефакты:
 
@@ -48,6 +48,7 @@ Queue rows are not project source of truth. They describe runtime/history state 
 - workspace directories;
 - derived thumbnail/cache previews;
 - autosave shadow directories;
+- temporary generation staging candidates;
 - temporary exports/downloads.
 
 Sidecar JSON рядом с пользовательскими изображениями и embedded metadata не входят в MVP. Project metadata хранится внутри `.igs`.
@@ -75,10 +76,8 @@ project.igs
 ├─ assets/
 │  ├─ layers/
 │  ├─ masks/
-│  ├─ upscale-inputs/
-│  ├─ upscale-results/
 │  └─ references/
-└─ snapshots/
+└─ provenance/
    └─ generation-*.json
 ```
 
@@ -90,11 +89,13 @@ project.igs
 
 `ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
 
-### Generation snapshots
+### Generation provenance
 
-Generation snapshot — immutable запись о конкретной генерации: какие настройки, ресурсы, входные изображения/маски и технические параметры привели к конкретному результату.
+Generation provenance — immutable metadata accepted Raster Layer or Smart Patch variant: which settings, resources, inputs and runtime parameters produced that persistent result.
 
-Project-local generation snapshots хранятся внутри `.igs` и относятся к конкретному canvas-проекту. Обычно snapshot связан с raster layer или raster sub-layer и содержит:
+Provenance exists only after explicit `Add N as Layers` / `Add N as Variants`. Worker completion and a temporary staging candidate do not create a project-local provenance record.
+
+Project-local provenance is stored inside `.igs` and referenced by its accepted layer/variant. It contains:
 
 - prompt / negative prompt;
 - seed;
@@ -102,14 +103,35 @@ Project-local generation snapshots хранятся внутри `.igs` и от�
 - model, LoRA, VAE references and compatibility metadata;
 - фактический `predictionType`;
 - input image, mask, bounding box and internal resolution для img2img/inpaint;
-- reference на результат внутри `.igs`;
+- automatically derived txt2img/img2img/inpaint/outpaint mode;
+- source composite/mask revision hashes where relevant;
+- reference to the accepted result inside `.igs`;
 - created_at и worker/runtime metadata, нужные для воспроизводимости.
 
-SQLite может хранить только global history/project index для быстрых списков и поиска: project path, snapshot id, created_at, thumbnail/cache key и derived metadata. Source of truth для project-local snapshot остаётся `.igs`.
+SQLite may store a derived global history index for accepted results: project path, result/provenance id, created_at, thumbnail/cache key and searchable metadata. The accepted layer/variant plus project-local provenance in `.igs` remains source of truth.
 
-### Upscale assets
+One multi-accept may create several history rows but one grouped Project undo step. Discarded candidates never enter global history.
 
-Upscale внутри `Project` работает не с живой ссылкой на слои, а с immutable flattened composite input.
+### Temporary generation staging
+
+Queue completion writes candidate assets to application-managed temporary/cache storage, for example:
+
+```text
+ImageGen Studio/temp/generation-staging/{project-id}/{session-id}/
+```
+
+Rules:
+
+- candidates are previewed by `GenerationResults` without becoming layers;
+- focus and checkbox selection are ephemeral staging state;
+- accepting a candidate moves/copies its raster data into `.igs` and creates provenance;
+- unselected/discarded candidates can be deleted when the staging session closes;
+- Queue Manager rows may outlive candidate cleanup but never become accepted-result history;
+- crash/reopen recovery of an unfinished staging session is a separate follow-up decision.
+
+### Upscale assets follow-up
+
+Upscale is deferred from the current Project pass. Its previously agreed storage direction remains an immutable flattened composite input rather than a live layer-stack reference.
 
 При команде `Send Composite to Upscale` или `Use Current Composite` приложение создаёт внутри `.igs` отдельный upscale input asset:
 
@@ -121,7 +143,7 @@ Metadata input'а хранит:
 
 - source layer stack hash;
 - source canvas size;
-- source project snapshot id или timestamp;
+- source project revision id или timestamp;
 - visible layers metadata;
 - created_at;
 - исходный project mode/action, который создал input.
@@ -134,7 +156,7 @@ Upscale result хранится как отдельный asset:
 assets/upscale-results/{id}.png
 ```
 
-В MVP результат можно:
+In the future result can be:
 
 - добавить в Project как новый raster layer;
 - экспортировать наружу.
@@ -180,7 +202,7 @@ ImageGen Studio/
       ├─ manifest.json
       ├─ project.json
       ├─ assets/
-      ├─ snapshots/
+      ├─ provenance/
       └─ autosave-state.json
 ```
 
@@ -236,7 +258,7 @@ Renderer, preload и Python worker не должны открывать SQLite �
 - Создавать SQLite-таблицы в `STRICT` mode по умолчанию.
 - Все записи выполнять через main-process services/repositories.
 - Не хранить большие бинарные данные в SQLite.
-- JSON snapshot'ы хранить как immutable `TEXT`/JSON payload, а поля для поиска и фильтров нормализовать отдельно.
+- Immutable provenance/operational JSON payloads хранить как validated `TEXT`/JSON, а поля для поиска и фильтров нормализовать отдельно.
 - Для raw SQL использовать Kysely `sql` template только точечно и с типизированной обёрткой на уровне repository.
 
 ### SQLite STRICT tables
@@ -341,7 +363,7 @@ inpaint
 - `img2img` — пресет применим к image-to-image сценарию;
 - `inpaint` — пресет применим к inpaint/local edit сценарию.
 
-UI может использовать `workflow_type`, чтобы показывать релевантные пресеты в текущем режиме и не применять inpaint-пресет к txt2img форме без явного выбора пользователя.
+`workflow_type` classifies intended preset context; it is not a manual Project generation mode. Project derives txt2img/img2img/inpaint/outpaint from target-area content. UI can use preset workflow to rank/filter candidates and validate context, while Apply still copies only explicitly selected sections.
 
 ### PresetPayload
 
@@ -350,8 +372,8 @@ UI может использовать `workflow_type`, чтобы показы�
 Предварительная TypeScript-форма:
 
 ```ts
-type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
-type SeedPolicy = 'fixed' | 'random' | 'reuse'
+type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
+type SeedPolicy = 'fixed' | 'random' | 'reuse';
 type PresetSectionKey =
   | 'denoisingStrength'
   | 'embeddings'
@@ -363,80 +385,80 @@ type PresetSectionKey =
   | 'sampling'
   | 'seed'
   | 'size'
-  | 'vae'
+  | 'vae';
 
 interface PresetResourceRef {
-  id: string
-  missing?: boolean
-  name: string
-  version?: string
+  id: string;
+  missing?: boolean;
+  name: string;
+  version?: string;
 }
 
 interface PresetModelRef extends PresetResourceRef {
-  baseModel: string
-  predictionType: 'epsilon' | 'v-pred'
+  baseModel: string;
+  predictionType: 'epsilon' | 'v-pred';
 }
 
 interface PresetLora {
-  enabled: boolean
-  resource: PresetResourceRef
-  triggerWords: string[]
-  weight: number
+  enabled: boolean;
+  resource: PresetResourceRef;
+  triggerWords: string[];
+  weight: number;
 }
 
 interface PresetPayload {
-  denoisingStrength?: number
-  embeddings?: PresetResourceRef[]
+  denoisingStrength?: number;
+  embeddings?: PresetResourceRef[];
   guidance?: {
-    cfgScale: number
-    steps: number
-  }
-  loras?: PresetLora[]
-  model?: PresetModelRef
-  negativePrompt?: string
-  prompt?: string
+    cfgScale: number;
+    steps: number;
+  };
+  loras?: PresetLora[];
+  model?: PresetModelRef;
+  negativePrompt?: string;
+  prompt?: string;
   sampling?: {
-    sampler: string
-    scheduler: string
-  }
+    sampler: string;
+    scheduler: string;
+  };
   seed?: {
-    policy: SeedPolicy
-    value?: number
-  }
+    policy: SeedPolicy;
+    value?: number;
+  };
   size?: {
-    height: number
-    width: number
-  }
-  vae?: PresetResourceRef
+    height: number;
+    width: number;
+  };
+  vae?: PresetResourceRef;
 }
 
 interface PresetDefinition {
-  description: string
-  favorite: boolean
-  name: string
-  payload: PresetPayload
-  tags: string[]
-  workflow: PresetWorkflow
+  description: string;
+  favorite: boolean;
+  name: string;
+  payload: PresetPayload;
+  tags: string[];
+  workflow: PresetWorkflow;
 }
 
 interface PresetRecord extends PresetDefinition {
-  id: string
-  updatedAt: string
+  id: string;
+  updatedAt: string;
 }
 
 type PresetCreateIntent =
   | { kind: 'manual' }
   | {
-      kind: 'project'
-      projectName: string
-      projectSummary: string
-      definition: PresetDefinition
-    }
+      kind: 'project';
+      projectName: string;
+      projectSummary: string;
+      definition: PresetDefinition;
+    };
 
 interface PresetApplicationDraft {
-  payload: PresetPayload
-  selectedSections: PresetSectionKey[]
-  sourcePresetId: string
+  payload: PresetPayload;
+  selectedSections: PresetSectionKey[];
+  sourcePresetId: string;
 }
 ```
 
@@ -491,21 +513,23 @@ ImageGen Studio/
 ├─ autosave/
 │  └─ {project-id}/
 └─ temp/
-   └─ downloads/
+   ├─ downloads/
+   └─ generation-staging/{project-id}/{session-id}/
 ```
 
 ## Правила целостности
 
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
-- Generation snapshot создаётся после успешной генерации и больше не изменяется.
-- Generation snapshot должен сохранять фактический `predictionType` основной модели, чтобы результат можно было воспроизвести с правильным scheduler mode.
+- Worker completion creates a temporary candidate, not a persistent project result.
+- Generation provenance is created only when a candidate is accepted and never changes afterward.
+- Generation provenance stores the actual `predictionType` and actual seed so the accepted result can be reproduced with the correct scheduler mode.
 - Project thumbnail source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем.
 - Один и тот же `.igs` нельзя открыть в нескольких `Project` tabs; repeated open фокусирует уже открытую вкладку.
 - Удаление файла вне приложения не удаляет историю: UI показывает fallback.
 - Удаление или перемещение `.igs` вне приложения не должно ломать БД: UI показывает missing project и может предложить relink/rescan workspace.
 - `.igs` является источником истины проекта; SQLite project index можно пересобрать сканированием workspace'ов.
-- При применении preset/snapshot проверяются только выбранные секции.
+- При применении preset/accepted-result provenance проверяются только выбранные секции.
 - Другая версия той же CivitAI-модели не считается валидной заменой.
 
 ## Что стоит уточнить перед схемой миграций
@@ -513,4 +537,4 @@ ImageGen Studio/
 - Нужен ли soft delete для моделей, пресетов и истории.
 - Где хранить CivitAI API token: OS keychain или зашифрованная app config.
 - Нужны ли дополнительные размеры cache thumbnail'ов сверх `.igs` `preview/thumbnail.webp` и `preview/merged.png`.
-- Нужно ли хранить нормализованные поля snapshot'а отдельно от JSON для поиска и фильтров.
+- Нужно ли хранить нормализованные поля accepted-result provenance отдельно от JSON для поиска и фильтров.

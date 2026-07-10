@@ -12,15 +12,15 @@ See also: [Queue Manager](../../queue-manager.md).
 
 ## ImageGen Studio Decision
 
-Generation output is written into the open project as raster assets and immutable generation snapshots.
+Generation output first enters a project-scoped staging session. Worker completion does not mutate the open project.
 
 The generation target depends on selection/context:
 
-- no Smart Patch Layer target: create/fill a raster layer;
-- Smart Patch Layer target: regenerate that Smart Patch Layer by creating a new raster sub-layer;
+- no Smart Patch Layer target: stage normal Project Canvas candidates;
+- Smart Patch Layer target: stage candidates for that self-contained Smart Patch Layer;
 - regional guidance entities: included as conditioning data when supported.
 
-When a Generate action produces multiple results, each completed result is written into project state immediately and appears in [GenerationResults](./generation-results.md) for review, activation and cleanup.
+The user can select one or more completed candidates in [GenerationResults](./generation-results.md). Only explicit `Add N as Layers` / `Add N as Variants` writes raster assets and [generation provenance](./generation-provenance.md) into `.igs`.
 
 Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, Project Canvas or Smart Patch bbox while they are pending.
 
@@ -36,8 +36,23 @@ Rules:
 
 - `Generate` starts one batch from the current frozen project/generation state;
 - the count selector controls how many images are generated per click;
-- `...` opens queue/actions menu with queue navigation, pause/resume and cleanup/cancel actions;
+- `...` opens queue/actions menu with `Open Queue` and relevant cleanup/cancel actions;
 - `x` is the visible cancel-current-generation action and must not be hidden inside the menu.
+
+Queue pause/resume is not exposed from the Project footer in the current scope.
+
+## Automatic Canvas Workflow
+
+Project does not expose a manual txt2img/img2img mode switch. At enqueue time it derives the worker path from visible raster content in the current target area:
+
+- fully transparent composite → txt2img;
+- partially transparent composite → outpaint;
+- opaque composite without an effective mask → img2img;
+- raster content plus an effective Smart Patch mask → inpaint.
+
+For normal generation the target area is Project Canvas. For Smart Patch generation it is the selected layer-owned bbox.
+
+The mere existence of a Raster Layer elsewhere in the document does not imply img2img; only visible raster pixels inside the frozen target area matter. That frozen composite includes visible Raster Layers and the active variants of visible Smart Patch Layers according to their shared z-order.
 
 ## New Raster Generation
 
@@ -45,54 +60,51 @@ When no Smart Patch Layer is the generation target:
 
 - worker receives prompt/settings/model resources;
 - worker receives Project Canvas bounds/dimensions as the normal generation target;
-- each completed result is stored as a raster asset inside `.igs`;
-- each completed result creates a new Raster Layer or fills an explicitly selected empty target layer;
-- every result stores its own generation snapshot;
-- all new results appear in `GenerationResults`.
+- worker receives the frozen visible composite inside Project Canvas when raster content exists;
+- completed outputs remain temporary candidates;
+- selected candidates become independent new Raster Layers only after `Add N as Layers`;
+- an existing selected Raster Layer is never overwritten implicitly;
+- the accepted anchor candidate starts selected/visible, while other accepted opaque alternatives start hidden;
+- accepted layers store immutable generation provenance.
 
 ## Smart Patch Regeneration
 
 When a Smart Patch Layer is the generation target:
 
-- worker receives the flattened source composite for the layer bbox;
+- worker receives the flattened source composite beneath the target Smart Patch Layer for its bbox;
+- the target layer's current active variant is excluded from its own regeneration input;
 - worker receives the layer mask;
 - worker receives the layer-owned bounding box;
 - worker receives the layer internal resolution;
-- worker receives prompt/settings/model resources;
-- each completed result is stored as a raster asset inside `.igs`;
-- each completed result creates a new raster sub-layer variant inside the Smart Patch Layer;
-- the selected/auto-switched raster sub-layer becomes active;
-- the Smart Patch Layer status becomes `ready`;
-- previous raster sub-layers remain available but inactive.
+- worker receives the layer-owned generation draft and compositing settings;
+- completed outputs remain temporary candidates;
+- selected candidates become variants only after `Add N as Variants`;
+- the accepted anchor candidate becomes active;
+- other newly accepted candidates and the previous active variant remain inactive;
+- every accepted variant stores immutable generation provenance;
+- the Smart Patch Layer becomes `ready` when the active accepted variant matches current owned inputs.
 
-If multiple Smart Patch results are generated, all completed results become permanent Smart Patch raster sub-layer variants. `Set Active` chooses which variant becomes active. Unwanted variants are removed through `GenerationResults` or the Smart Patch variant controls.
+Unselected candidates are discarded when the staging session closes and never become Smart Patch variants.
 
 ## Dynamic Prompt Expansion
 
 Dynamic prompting can expand one visible Generate action into multiple concrete jobs.
 
-Each generated result stores the concrete expanded prompt used for that result.
+Each candidate remains associated with the concrete expanded prompt used for its frozen job. The prompt becomes persistent generation provenance only if that candidate is accepted.
 
 Every concrete prompt/seed combination becomes its own queue item, grouped by one batch id for the originating user action.
 
-## Generate To Upscale
+## Upscale Follow-Up
 
-`Send Composite to Upscale` is not a normal generation job.
-
-In the current Generate UI, this command is exposed from the right canvas rail as a compact canvas-adjacent action. It may also be available from menus/command palette, but it should not consume a wide top Project toolbar row.
-
-It:
-
-- takes flattened composite of visible layers;
-- creates immutable upscale input asset inside `.igs`;
-- stores source metadata;
-- switches Project to `Upscale`.
+Upscale and `Send Composite to Upscale` are deferred to a separate Project pass. They do not block the current Create/Generate prototype or its acceptance criteria.
 
 ## Acceptance Criteria
 
-- Generate creates raster output inside the open `.igs`.
 - Generate creates queue items from frozen project/generation state.
-- Smart Patch regeneration can create one or more raster sub-layer variants, with only one active.
-- Multi-result generation auto-commits completed outputs and shows them in `GenerationResults`.
+- Generation mode is derived from target-area raster/mask content rather than a manual txt2img/img2img switch.
+- Completed outputs appear as temporary candidates without mutating `.igs`.
+- User can accept one or more normal candidates as new Raster Layers.
+- User can accept one or more Smart Patch candidates as variants, with only one active.
+- Existing Raster Layers and Smart Patch variants are never overwritten implicitly.
+- Only accepted results store generation provenance and enter result history.
 - Dynamic prompt expansion can create multiple concrete jobs.
-- `Send Composite to Upscale` creates an immutable input and switches mode.

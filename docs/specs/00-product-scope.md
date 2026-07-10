@@ -2,7 +2,7 @@
 
 ## Что уже зафиксировано
 
-ImageGen Studio — локальное desktop-приложение для генерации изображений, вдохновлённое InvokeAI / Forge, но с главным фокусом на управлении моделями, пресетами, snapshot'ами и воспроизводимостью настроек.
+ImageGen Studio — локальное desktop-приложение для генерации изображений, вдохновлённое InvokeAI / Forge, но с главным фокусом на управлении моделями, пресетами, provenance принятых результатов и воспроизводимостью настроек.
 
 InvokeAI является основным reference product. Проектная позиция: не изобретать заново уже рабочие паттерны, а брать проверенные подходы InvokeAI и адаптировать их под логику ImageGen Studio. NIH недопустим: своё решение пишется только тогда, когда подход InvokeAI не подходит под выбранный стек, бизнес-логику, UX или архитектурные границы проекта, и нет более подходящего зрелого ready-made механизма.
 
@@ -22,9 +22,9 @@ MVP должен доказать ценность не как “ещё одн�
 - создавать `.igs`, импортировать внешний `.igs` через Move/Copy в managed workspace и открывать project files;
 - открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
 - генерировать изображения через локальный Python worker внутри `Project`;
-- апскейлить flattened composite проекта через `Upscale` project mode;
-- видеть историю генераций;
-- открывать immutable snapshot каждой генерации;
+- просматривать несколько временных generation candidates и принимать один или несколько;
+- видеть историю только принятых generated results;
+- открывать immutable provenance принятого результата;
 - создавать пресеты вручную и из старых генераций;
 - применять пресеты полностью или по секциям;
 - получать понятные ошибки по отсутствующим моделям/LoRA.
@@ -32,22 +32,17 @@ MVP должен доказать ценность не как “ещё одн�
 Основная продуктовая оболочка строится как document-based editor:
 
 - `Home` tab — стартовый экран: Workspaces, cross-workspace `Projects`, app-managed `Trash`, new/import project, доступ к Model Manager и Preset Manager;
-- `Project` tab — открытый `.igs` документ: canvas, project modes, генерация, upscale, слои, маски, настройки модели, snapshots, save/dirty/recovery status.
+- `Project` tab — открытый `.igs` документ: canvas, Create/generate workflow, staging candidates, слои, маски, настройки модели, accepted-result provenance, save/dirty/recovery status.
 
 Model Manager и Preset Manager являются app-level modal overlays, а не document tabs. Apply Preset остаётся Project-scoped modal flow: он редактирует временную application-копию и не изменяет сохранённый preset.
 
 `Canvas` — не отдельная вкладка приложения, а сущность внутри `Project` tab.
 
-Внутри `Project` tab есть project modes:
-
-- `Generate` — генерация и локальное редактирование на canvas;
-- `Upscale` — ESRGAN-like upscale flattened composite input'а.
-
-`Upscale` получает вход через immutable flattened composite snapshot из `Generate`, а не через живую ссылку на текущие слои.
+Current Project scope uses domain mode `generate` with visible label `Create`. Txt2img/img2img/inpaint/outpaint is derived automatically from target-area canvas content. Upscale remains a planned follow-up and does not block the current Project prototype or first implementation slice.
 
 Один и тот же `.igs` нельзя открыть дважды. Повторное открытие уже открытого project file фокусирует существующую `Project` tab.
 
-Отдельная top-level вкладка `Generate`, режимы `Launchpad`/`Viewer` и постоянный mini-gallery/boards sidebar не входят в целевую UX-модель ImageGen Studio. Быстрая генерация с нуля реализуется как создание нового `.igs` проекта и работа с ним в `Project` / `Generate` mode.
+Отдельная top-level вкладка `Generate`, режимы `Launchpad`/`Viewer` и постоянный mini-gallery/boards sidebar не входят в целевую UX-модель ImageGen Studio. Быстрая генерация с нуля реализуется как создание нового `.igs` проекта и работа с ним в `Project` / `Create`.
 
 ## Продуктовые нецели MVP
 

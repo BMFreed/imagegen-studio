@@ -64,7 +64,7 @@ Preferred direction:
 - keep controls compact by default, with advanced controls available per ControlNet entry;
 - support multiple ControlNet entries only when the selected workflow needs it;
 - show generated/preprocessed control images clearly before generation;
-- keep ControlNet results reproducible in generation snapshots and `.igs` project state.
+- keep accepted ControlNet results reproducible through generation provenance and `.igs` project state.
 
 ## Priority Workflows
 
@@ -79,7 +79,7 @@ Expected capabilities:
 - choose an upscale model/workflow;
 - configure strength/denoise and tile-related controls;
 - preview enough information to understand what will be sent to generation;
-- save outputs through `GenerationResults` as persistent project results.
+- stage outputs through `GenerationResults` and persist only explicitly accepted candidates.
 
 This is the highest-priority ControlNet follow-up because it connects directly to the `Upscale` project mode.
 
@@ -142,7 +142,7 @@ Post-MVP implementation is acceptable when:
 
 - each supported workflow has a clear source image/control image relationship;
 - the user can preview or inspect the generated control image before generation;
-- ControlNet settings are saved in `.igs` and generation snapshots;
+- ControlNet settings are saved in `.igs` and accepted-result provenance;
 - unsupported model-family combinations show clear warnings;
 - ControlNet does not require the user to use a node editor for the basic workflows above;
 - additional ControlNet types are not added without a concrete workflow need.

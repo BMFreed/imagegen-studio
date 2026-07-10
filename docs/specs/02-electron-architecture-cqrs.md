@@ -70,6 +70,9 @@ models.importFromCivitaiUrl
 models.deleteLocalModel
 generation.enqueue
 generation.cancel
+generation.discardCandidate
+generation.discardStagingSession
+projects.acceptGenerationCandidates
 presets.create
 presets.update
 presets.delete
@@ -97,6 +100,7 @@ Events сообщают об изменениях и прогрессе:
 generation.progress
 generation.done
 generation.error
+generation.candidateReady
 models.downloadProgress
 models.downloadDone
 models.downloadError
@@ -110,3 +114,5 @@ Command handler может вызывать сервисы, писать в SQLi
 Apply ownership следует preset-прототипу: `projects.applyPresetDraft` изменяет generation state конкретного открытого проекта из detached application draft. Команды `presets.create/update/delete` изменяют каталог presets; отдельной `presets.apply`, которая могла бы двусмысленно выглядеть как mutation исходного preset, нет.
 
 `presets.create` принимает валидный `PresetDefinition` без fake identity и возвращает `PresetRecord`; id и timestamps появляются только после успешной команды. Ошибка команды не закрывает renderer draft. `projects.applyPresetDraft` принимает payload + ephemeral selection mask, но mask никогда не записывается в preset storage.
+
+Generation ownership also has an explicit boundary: `generation.enqueue/cancel` and candidate-discard commands change queue/staging state, while `projects.acceptGenerationCandidates` is the only command that turns selected candidates into persistent Raster Layers or Smart Patch variants. It creates generation provenance and derived accepted-result history rows as part of one grouped project mutation. Worker completion itself does not mutate the Project document.

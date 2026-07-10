@@ -11,9 +11,10 @@ It replaces standalone inpaint masks with a layer-owned model:
 = 1 mask
 = 1 layer-owned bounding box
 = 1 internal resolution
+= 1 layer-owned generation draft
 = N raster sub-layers
 = 1 active/visible raster sub-layer
-= 1 current generation snapshot
+= immutable provenance per accepted raster sub-layer
 ```
 
 ## Reference
@@ -24,7 +25,7 @@ ImageGen Studio adapts these ideas, but does not copy Invoke's standalone inpain
 
 ## ImageGen Studio Decision
 
-Smart Patch Layer is a self-contained layer. The mask, bounding box, internal resolution, compositing settings and generated raster results belong to the layer.
+Smart Patch Layer is a self-contained generative entity. The mask, bounding box, internal resolution, generation draft, compositing settings and accepted raster results belong to the layer.
 
 This is intentionally separate from:
 
@@ -48,7 +49,7 @@ MVP:
 - edit layer-owned bounding box;
 - edit layer-owned internal resolution;
 - regenerate layer;
-- generate multiple results and store each completed result as a raster sub-layer variant;
+- stage multiple candidates and explicitly add one or more selected candidates as raster sub-layer variants;
 - store multiple raster sub-layers as result alternatives;
 - keep exactly one active/visible raster sub-layer;
 - mark layer `outdated` when editable inputs change after generation;
@@ -76,54 +77,75 @@ Smart Patch Layer owns:
 - `maskAssetId`;
 - `boundingBox`;
 - `internalResolution`;
+- layer-owned generation draft;
 - compositing settings that affect regeneration;
 - `rasterSubLayers`;
 - `activeRasterSubLayerId`;
 - current status;
-- generation snapshot for each raster sub-layer.
+- generation provenance for each accepted raster sub-layer.
 
 Suggested shape:
 
 ```ts
 type SmartPatchLayer = {
-  id: string
-  type: 'smart-patch'
+  id: string;
+  type: 'smart-patch';
 
-  name: string
-  visible: boolean
-  opacity: number
-  blendMode?: string
+  name: string;
+  visible: boolean;
+  opacity: number;
+  blendMode?: string;
 
-  maskAssetId: string
+  maskAssetId: string;
 
   boundingBox: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 
   internalResolution: {
-    width: number
-    height: number
-  }
+    width: number;
+    height: number;
+  };
+
+  generationDraft: PresetPayload;
 
   rasterSubLayers: Array<{
-    id: string
-    name: string
-    rasterAssetId: string
-    generationSnapshot: GenerationSnapshot
-    createdAt: string
-  }>
+    id: string;
+    name: string;
+    rasterAssetId: string;
+    provenance: GenerationProvenance;
+    sourceRevisionHash: string;
+    createdAt: string;
+  }>;
 
-  activeRasterSubLayerId: string | null
+  activeRasterSubLayerId: string | null;
 
-  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed'
+  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed';
 
-  createdAt: string
-  updatedAt: string
-}
+  createdAt: string;
+  updatedAt: string;
+};
 ```
+
+Selecting a Smart Patch Layer binds the left generation editor to `generationDraft`. Editing normal Project generation settings must not make unrelated Smart Patch Layers outdated.
+
+## Creation And Regeneration Flow
+
+The layer exists before the first generation:
+
+```text
+Add Smart Patch Layer
+→ create empty layer-owned mask, bbox, internal resolution and generation draft
+→ edit mask/bbox/settings
+→ Generate temporary candidates
+→ Add N as Variants
+→ accepted anchor candidate becomes active
+```
+
+Regeneration freezes a source composite from compositing layers beneath the target Smart Patch Layer inside its bbox. The target layer's current active variant is excluded from its own generation input, preventing cumulative self-regeneration artifacts. Layers above remain visible in final Project preview but are not part of the patch source input.
 
 ## Layer-Owned Bounding Box
 
@@ -173,7 +195,7 @@ Rules:
 
 - only one raster sub-layer can be active/visible at a time;
 - switching active raster sub-layer changes the visible result;
-- each raster sub-layer stores its own immutable generation snapshot;
+- each accepted raster sub-layer stores its own immutable generation provenance;
 - mask/bbox/internal resolution are current layer-owned state, not separate per-sub-layer editable revisions.
 
 If the user needs to preserve an alternate mask/bbox/internal-resolution state, they duplicate the whole Smart Patch Layer.
@@ -194,7 +216,7 @@ Rules:
 - active raster thumbnail shows the currently visible generated result;
 - mask thumbnail comes before active raster thumbnail to match the Photoshop-like mental model where the mask is visually tied to the layer's visible pixels;
 - `status` shows whether the active raster result matches current mask/bbox/internal resolution/settings;
-- `switch variants` opens `GenerationResults` or a compact variants browser for this Smart Patch Layer;
+- `switch variants` opens a compact persistent variants browser for this Smart Patch Layer;
 - saved variants are not expanded into a vertical thumbnail list under the layer row by default.
 
 ## GenerationResults
@@ -203,12 +225,16 @@ Smart Patch regeneration can produce several results in one action.
 
 Rules:
 
-- every completed result becomes a permanent raster sub-layer variant inside `.igs`;
-- `GenerationResults` shows the newest generated variants for review, activation and cleanup;
-- the user may `Set Active` on one result as the active visible variant;
+- every completed result first remains a temporary staging candidate;
+- focus controls canvas preview while checkbox selection controls which candidates will be kept;
+- `Add N as Variants` commits only selected candidates into `.igs`;
+- the accepted anchor candidate becomes the active visible variant;
+- other accepted candidates become inactive variants;
+- the previous active variant remains stored but becomes inactive;
 - only one permanent raster sub-layer can be active/visible at a time;
-- unwanted variants can be deleted from `GenerationResults` or Smart Patch variant controls;
-- each raster sub-layer stores its immutable generation snapshot.
+- unselected candidates are discarded when staging closes;
+- accepted variants can be managed later through Smart Patch variant controls;
+- each accepted raster sub-layer stores immutable generation provenance.
 
 See [GenerationResults](./generation-results.md).
 
@@ -228,14 +254,16 @@ Inputs that mark a layer `outdated`:
 - bounding box;
 - internal resolution;
 - compositing settings that affect regeneration;
-- prompt/settings/model resources used by regeneration.
+- layer-owned prompt/settings/model resources used by regeneration;
+- source composite revision/hash beneath the Smart Patch Layer.
 
 ## Acceptance Criteria
 
 - Smart Patch Layer is documented as its own Generate feature.
 - Project Canvas, Raster Layer transform and Smart Patch Layer bbox are explicitly separate.
 - Smart Patch Layer owns its mask, bbox, internal resolution, compositing settings and raster sub-layers.
+- Smart Patch Layer owns the generation draft used by its regeneration workflow.
 - Standalone inpaint mask layers are not part of MVP.
 - Only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.
-- Smart Patch regeneration can generate multiple results and persist them as permanent variants.
+- Smart Patch regeneration can generate several temporary candidates and explicitly persist one or more selected candidates as variants.
 - Changing layer-owned editable inputs marks existing generated output `outdated`.
