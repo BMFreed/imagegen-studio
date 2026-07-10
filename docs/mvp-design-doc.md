@@ -51,7 +51,7 @@ InvokeAI рассматривается как основной reference produc
 
 Основная shell-модель — document-based editor:
 
-- `Home` является обычной вкладкой со workspace'ами, recent projects, new/open project и доступом к Model Manager;
+- `Home` является обычной вкладкой со workspace'ами, cross-workspace views `Recent` / `All Projects`, new/open project и доступом к Model Manager;
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
@@ -1461,6 +1461,8 @@ Regenerate duplicate
 
 Canvas-проект в MVP хранится как переносимый `.igs` project file. SQLite не является источником истины для canvas-проекта, слоёв и raster/mask assets.
 
+`Uncategorized` является реальной app-managed папкой `ImageGen Studio/workspaces/Uncategorized/`. Новый проект без другого явно выбранного workspace создаётся в ней. Внешний `.igs` должен быть перемещён или скопирован в известный workspace до индексирования и открытия; виртуальные external-path entries не используются.
+
 SQLite может хранить только восстанавливаемый project index:
 
 - путь к `.igs`;
@@ -1468,8 +1470,9 @@ SQLite может хранить только восстанавливаемый
 - display name;
 - project thumbnail cache key/path;
 - last opened time;
-- derived search fields;
-- статус missing/corrupt.
+- modified time;
+- normalized display name для поиска по имени;
+- file health `ready`/`missing`/`corrupt`/`unsupported_schema`.
 
 Project index можно пересобрать сканированием workspace-папок.
 
@@ -1554,8 +1557,12 @@ ImageGen Studio/
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
 - Raster assets, masks и previews пишутся только по dirty-флагам.
 - Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
-- После краша приложение предлагает восстановление из autosave.
+- Нормальная shadow autosave activity не показывается на Home как статус проекта.
+- После неожиданного завершения валидный незавершённый shadow state становится recovery candidate и показывается как `Recovery available`.
 - После успешного обычного save autosave state помечается clean или удаляется.
+- Graceful `Discard Changes` удаляет соответствующий shadow state.
+- `Recover` открывает восстановленное состояние как dirty document без автоматической перезаписи основного `.igs`.
+- `Discard Recovery and Open Saved` удаляет recovery candidate и открывает сохранённый `.igs`; `Cancel` не меняет ни одно состояние.
 - Запись autosave-файлов выполняется через temp file + atomic rename.
 
 ### 15.4. Валидация

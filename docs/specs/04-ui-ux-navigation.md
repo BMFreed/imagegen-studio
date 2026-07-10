@@ -6,7 +6,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 Основные top-level поверхности:
 
-- `Home` tab — стартовый и организационный экран приложения: Workspaces, recent projects, new/open project, access to Model Manager.
+- `Home` tab — стартовый и организационный экран приложения: Workspaces, `Recent`, `All Projects`, new/open project и access to Model Manager.
 - `Project` tab — открытый `.igs` document. Таких вкладок может быть несколько одновременно.
 - app-level overlays/dialogs — Model Manager, Settings, Queue/Downloads, command palette.
 
@@ -39,12 +39,12 @@ Home screen не имеет левой и правой project/canvas-панел
 - список/сетку workspace'ов;
 - дефолтный workspace `Uncategorized`;
 - thumbnails и basic metadata проектов;
-- поиск/сортировку;
-- recent projects;
+- поиск проектов по имени, фильтрацию по состоянию и сортировку;
+- cross-workspace views `Recent` и `All Projects`;
 - `New Project`;
 - `Open Project`;
 - `Manage Models`;
-- создание, переименование и удаление workspace'ов;
+- создание, переименование и удаление регистрации workspace'ов без удаления папок и project files;
 - перемещение `.igs` проектов между workspace'ами;
 - preview проекта с нормальными tools для zoom/pan.
 
@@ -52,7 +52,9 @@ Preview на Home не должен показывать inactive canvas/generat
 
 В текущем Home-прототипе допустимы две primary-кнопки, потому что они принадлежат разным контекстам: `New Project` относится к выбранному workspace, а `Open Project` в Preview / Inspector относится к выбранному проекту. Это не должно превращаться в правило “много primary-кнопок в одной зоне”: внутри одной панели главный CTA должен оставаться один.
 
-Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании.
+Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании. `Uncategorized` является реальной app-managed папкой и используется как физическое место назначения, если пользователь не выбрал другой workspace. `Recent` и `All Projects` являются browse views, а не workspace'ами.
+
+Нормальный autosave не показывается как Home status. Только валидное незавершённое состояние после неожиданного завершения работы отображается как `Recovery available` и разрешается через recovery flow.
 
 Детальная спецификация Home screen: `docs/features/home-screen.md`.
 
@@ -67,7 +69,7 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - model/LoRA/VAE controls;
 - project resource warnings;
 - project-local generation snapshots/history;
-- save/autosave/recovery status.
+- save/dirty/recovery status.
 
 Внутри `Project` tab есть project modes. В MVP в них входят:
 
@@ -152,9 +154,10 @@ Boards/gallery не показываются как постоянная бок�
 
 ### Opening behavior
 
-Открытие проекта из `Home` работает как браузерная ссылка:
+Выбор и открытие проекта из `Home` используют list-detail semantics с browser-like modifier behavior:
 
-- left click по `.igs` project card открывает проект в текущей вкладке. Если текущая вкладка — `Home`, она заменяется на `Project` tab.
+- single left click по `.igs` project card выбирает проект и обновляет Inspector, не открывая `Project` tab;
+- double click или `Enter` открывает выбранный проект в текущей вкладке. Если текущая вкладка — `Home`, она заменяется на `Project` tab;
 - middle click / Ctrl+click открывает проект в новой вкладке рядом с `Home`.
 - right click показывает меню `Open`, `Open in New Tab`, `Show in File Manager`, `Move to Workspace`, `Delete`.
 - если проект уже открыт, любое действие открытия фокусирует существующую `Project` tab вместо создания дубликата.
@@ -205,7 +208,7 @@ Project tab marker использует цвет workspace. Цвет workspace �
 - Generation failed.
 - Missing output file in history.
 - Missing/corrupt `.igs` project.
-- Autosave available / recoverable project state.
+- Recovery available after an interrupted autosave session.
 - Workspace path missing or inaccessible.
 - Preset resource missing.
 - Base model family warning.

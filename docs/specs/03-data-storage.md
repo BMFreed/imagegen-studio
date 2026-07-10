@@ -34,7 +34,7 @@ Project file `.igs` — источник истины для конкретно�
 - generation settings and immutable generation snapshots, относящиеся к этому проекту;
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
-SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, display name, derived search fields, статус missing/corrupt и похожую служебную информацию.
+SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
 
 Queue rows are not project source of truth. They describe runtime/history state for jobs that may read from or commit into `.igs`. Completed queue rows can be pruned without deleting committed project results.
 
@@ -54,7 +54,9 @@ Sidecar JSON рядом с пользовательскими изображен
 
 Workspace — обычная папка на диске. В MVP workspace не может быть вложенным workspace'ом: приложение сканирует только прямые `.igs` файлы в выбранной папке, а вложенные папки и файлы других форматов игнорирует.
 
-Всегда существует дефолтный workspace `Uncategorized`. Пользователь может перемещать `.igs` project files между workspace'ами. Проект не может существовать вне workspace в пользовательской модели, но физически `.igs` остаётся обычным переносимым файлом.
+Всегда существует дефолтный workspace `Uncategorized` как реальная app-managed папка `ImageGen Studio/workspaces/Uncategorized/`. Пользователь может перемещать `.igs` project files между workspace'ами. Проект не может существовать вне workspace в пользовательской модели, но физически `.igs` остаётся обычным переносимым файлом.
+
+Новый проект без другого явно выбранного writable workspace физически создаётся в `Uncategorized`. При открытии `.igs` вне известных workspace'ов пользователь должен переместить или скопировать файл в `Uncategorized` либо другой выбранный workspace. До подтверждённого move/copy такой файл не индексируется и не открывается. Приложение не создаёт implicit workspace из родительской папки и не хранит внешние пути как виртуальные элементы `Uncategorized`.
 
 `.igs` — переносимый рабочий формат ImageGen Studio. Базовый формат для MVP:
 
@@ -185,8 +187,13 @@ ImageGen Studio/
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
 - Raster assets, masks и previews пишутся только по dirty-флагам.
 - Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
-- При запуске приложение проверяет незавершённые autosave directories и предлагает восстановление.
+- Обычная запись в shadow directory является внутренним механизмом защиты и не создаёт пользовательский Home status.
+- При запуске приложение проверяет незавершённые autosave directories. Валидный unclean state, оставшийся после неожиданного завершения работы, становится recovery candidate и отображается как `Recovery available`.
 - После успешного обычного save autosave state для проекта помечается clean или удаляется.
+- После graceful `Discard Changes` соответствующий shadow state удаляется.
+- `Recover` открывает shadow state как dirty `Project` document и не перезаписывает основной `.igs` до явного Save.
+- `Discard Recovery and Open Saved` удаляет recovery candidate и открывает основной `.igs`.
+- `Cancel` не изменяет ни recovery candidate, ни основной `.igs`.
 - Запись autosave-файлов выполняется через temp file + atomic rename.
 - Main `.igs` save выполняется отдельно: собрать archive во временный файл, провалидировать, затем атомарно заменить исходный project file.
 

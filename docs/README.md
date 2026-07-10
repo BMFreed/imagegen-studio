@@ -37,7 +37,7 @@ Tooling проекта использует `pnpm`. Основные коман�
 
 ## HTML-прототипы
 
-- [prototypes/home-screen.html](./prototypes/home-screen.html) — текущий источник истины для Home UI.
+- [prototypes/home-screen.html](./prototypes/home-screen.html) — статический визуальный референс Home UI; интерактивные selection, filtering, recovery и error states будут проверяться в будущем Vue/Naive-прототипе.
 - [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
 - [prototypes/preset-manager.html](./prototypes/preset-manager.html) — исторический HTML-прототип Preset Manager; актуальный визуальный источник истины живёт в `prototype-app?prototype=preset-manager`.
 - [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный editable Vue-прототип живёт в `prototype-app?prototype=apply-preset`.

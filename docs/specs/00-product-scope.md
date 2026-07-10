@@ -31,8 +31,8 @@ MVP должен доказать ценность не как “ещё одн�
 
 Основная продуктовая оболочка строится как document-based editor:
 
-- `Home` tab — стартовый экран: Workspaces, recent projects, new/open project, доступ к Model Manager;
-- `Project` tab — открытый `.igs` документ: canvas, project modes, генерация, upscale, слои, маски, настройки модели, snapshots, autosave status.
+- `Home` tab — стартовый экран: Workspaces, `Recent`, `All Projects`, new/open project, доступ к Model Manager;
+- `Project` tab — открытый `.igs` документ: canvas, project modes, генерация, upscale, слои, маски, настройки модели, snapshots, save/dirty/recovery status.
 
 `Canvas` — не отдельная вкладка приложения, а сущность внутри `Project` tab.
 
