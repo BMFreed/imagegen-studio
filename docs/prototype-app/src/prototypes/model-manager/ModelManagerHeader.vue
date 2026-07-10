@@ -5,6 +5,7 @@ import { NButton, NIcon, NTooltip } from 'naive-ui';
 import CivitaiTokenPopover from './CivitaiTokenPopover.vue';
 
 defineEmits<{
+  close: [];
   openImport: [];
 }>();
 </script>
@@ -38,6 +39,7 @@ defineEmits<{
         quaternary
         size="small"
         title="Close Model Manager"
+        @click="$emit('close')"
       >
         <template v-slot:icon>
           <NIcon :component="XIcon" />

@@ -164,7 +164,11 @@ function applyPreset() {
 </script>
 
 <template>
-  <PresetManagerPrototype v-if="showManager" :initialSelectedId="sourcePreset.id" />
+  <PresetManagerPrototype
+    v-if="showManager"
+    :initialSelectedId="sourcePreset.id"
+    @close="showManager = false"
+  />
 
   <NModal v-model:show="show" :maskClosable="false">
     <NCard

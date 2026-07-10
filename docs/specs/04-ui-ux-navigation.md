@@ -42,8 +42,10 @@ Home screen не имеет левой и правой project/canvas-панел
 - поиск проектов по имени, фильтрацию по состоянию и сортировку;
 - cross-workspace views `Recent` и `All Projects`;
 - `New Project`;
-- `Open Project`;
+- `Import Project`;
 - `Manage Models`;
+- `Manage Presets`;
+- app-managed `Trash` с восстановлением и отдельным permanent-delete confirmation;
 - создание, переименование и удаление регистрации workspace'ов без удаления папок и project files;
 - перемещение `.igs` проектов между workspace'ами;
 - preview проекта с нормальными tools для zoom/pan.
@@ -52,7 +54,7 @@ Preview на Home не должен показывать inactive canvas/generat
 
 В текущем Home-прототипе допустимы две primary-кнопки, потому что они принадлежат разным контекстам: `New Project` относится к выбранному workspace, а `Open Project` в Preview / Inspector относится к выбранному проекту. Это не должно превращаться в правило “много primary-кнопок в одной зоне”: внутри одной панели главный CTA должен оставаться один.
 
-Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании. `Uncategorized` является реальной app-managed папкой и используется как физическое место назначения, если пользователь не выбрал другой workspace. `Recent` и `All Projects` являются browse views, а не workspace'ами.
+Workspace — плоская папка с `.igs` project files. Вложенные workspace'ы не поддерживаются. Вложенные папки и файлы не нашего формата игнорируются при сканировании. `Uncategorized` является реальной app-managed папкой и используется как физическое место назначения, если пользователь не выбрал другой workspace. Home по умолчанию открывает `All Projects`; выбор workspace добавляет фильтр, не заменяя browse mode. `Recent`, `All Projects` и `Trash` являются browse views, а не workspace'ами.
 
 Нормальный autosave не показывается как Home status. Только валидное незавершённое состояние после неожиданного завершения работы отображается как `Recovery available` и разрешается через recovery flow.
 

@@ -16,8 +16,9 @@ test.beforeAll(async () => {
 });
 
 async function openModelManager(page: Page) {
-  await page.goto('/');
+  await page.goto('/?prototype=model-manager');
   await expect(page.getByRole('heading', { name: 'Model Manager' })).toBeVisible();
+  await expect(page.locator('.manager-shell')).toHaveCSS('transform', 'none');
   await expect(page.getByRole('button', { name: 'Add from CivitAI URL' })).toBeVisible();
   await expect(page.getByText('Illustrious XL').first()).toBeVisible();
 }

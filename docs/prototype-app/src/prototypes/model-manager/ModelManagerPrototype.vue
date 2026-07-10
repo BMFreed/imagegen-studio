@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { NModal } from 'naive-ui';
 import { computed, ref } from 'vue';
 
 import type { ModelResource } from './model-manager.types';
 
+import { AppLayer } from '../../theme/app-layers';
 import CivitaiImportModal from './CivitaiImportModal.vue';
 import { modelResources, selectedModelId } from './model-manager.mock';
 import ModelDetailsPanel from './ModelDetailsPanel.vue';
@@ -17,6 +19,11 @@ const statusFilter = ref('all');
 const searchFilter = ref('');
 const baseModelFilter = ref('all');
 const sortValue = ref('name');
+const managerOpen = ref(true);
+
+defineEmits<{
+  close: [];
+}>();
 
 const hasActiveFilters = computed(
   () =>
@@ -49,12 +56,30 @@ function resetFilters() {
   searchFilter.value = '';
   baseModelFilter.value = 'all';
 }
+
+function requestClose() {
+  managerOpen.value = false;
+}
+
+function handleVisibilityChange(visible: boolean) {
+  if (!visible) {
+    requestClose();
+  }
+}
 </script>
 
 <template>
-  <section aria-label="Model Manager prototype" class="manager-backdrop">
-    <section class="manager-shell">
-      <ModelManagerHeader @openImport="showImportModal = true" />
+  <NModal
+    :closeOnEsc="!showImportModal"
+    :maskClosable="false"
+    :show="managerOpen"
+    transformOrigin="center"
+    :zIndex="AppLayer.appOverlay"
+    @afterLeave="$emit('close')"
+    @update:show="handleVisibilityChange"
+  >
+    <div aria-label="Model Manager prototype" aria-modal="true" class="manager-shell" role="dialog">
+      <ModelManagerHeader @close="requestClose" @openImport="showImportModal = true" />
       <div class="manager-body">
         <aside class="manager-column manager-column--navigation">
           <ModelManagerNavigation
@@ -78,29 +103,19 @@ function resetFilters() {
           <ModelDetailsPanel :resource="selectedResource" />
         </aside>
       </div>
-    </section>
-    <CivitaiImportModal v-model:show="showImportModal" />
-  </section>
+    </div>
+  </NModal>
+  <CivitaiImportModal v-model:show="showImportModal" />
 </template>
 
 <style scoped>
-.manager-backdrop {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 36px 48px;
-  background: var(--app-overlay-backdrop);
-  backdrop-filter: blur(7px);
-}
-
 .manager-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1440px, 100%);
-  height: min(890px, 100%);
+  width: min(1440px, calc(100vw - 96px));
+  height: min(890px, calc(100vh - 72px));
   min-height: 620px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-surface);

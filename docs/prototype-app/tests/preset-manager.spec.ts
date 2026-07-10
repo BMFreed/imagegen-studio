@@ -18,6 +18,7 @@ test.beforeAll(async () => {
 async function openPresetManager(page: Page) {
   await page.goto('/?prototype=preset-manager');
   await expect(page.getByRole('heading', { name: 'Preset Manager' })).toBeVisible();
+  await expect(page.locator('.manager-shell')).toHaveCSS('transform', 'none');
   await expect(
     page.getByRole('button', { name: 'Select Studio Portrait Soft Light' }),
   ).toBeVisible();

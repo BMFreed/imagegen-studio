@@ -1,83 +1,188 @@
 <script setup lang="ts">
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
+import { NButton, NIcon, NTabPane, NTabs } from 'naive-ui';
+import { nextTick, ref } from 'vue';
+
+import type { DocumentTabModel } from './app-shell.types';
+
+const props = defineProps<{
+  tabs: DocumentTabModel[];
+}>();
+
+const emit = defineEmits<{
+  close: [id: string];
+}>();
+
+const activeId = defineModel<string>('activeId', { required: true });
+const tablist = ref<HTMLElement>();
+
+function focusTab(index: number) {
+  nextTick(() => {
+    tablist.value?.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus();
+  });
+}
+
+function handleTabKeydown(event: KeyboardEvent, index: number) {
+  let targetIndex: number | undefined;
+
+  switch (event.key) {
+    case 'ArrowLeft': {
+      targetIndex = (index - 1 + props.tabs.length) % props.tabs.length;
+
+      break;
+    }
+    case 'ArrowRight': {
+      targetIndex = (index + 1) % props.tabs.length;
+
+      break;
+    }
+    case 'End': {
+      targetIndex = props.tabs.length - 1;
+
+      break;
+    }
+    case 'Home': {
+      targetIndex = 0;
+
+      break;
+    }
+    // No default
+  }
+
+  if (targetIndex === undefined) {
+    return;
+  }
+
+  event.preventDefault();
+  const target = props.tabs[targetIndex];
+  if (target) {
+    activeId.value = target.id;
+    focusTab(targetIndex);
+  }
+}
 </script>
 
 <template>
-  <nav aria-label="Open documents" class="document-tabs">
-    <NButton class="document-tab" text>
-      <NIcon :component="HomeIcon" />
-      <span v-overflow-title class="tab-title">Home</span>
-      <NIcon class="tab-close" :component="XIcon" />
-    </NButton>
-    <NButton class="document-tab document-tab--active" text>
-      <span class="workspace-marker workspace-marker--green" />
-      <span v-overflow-title class="tab-title">Sample Project B.igs</span>
-      <span aria-label="Unsaved changes" class="dirty-dot" />
-      <NIcon class="tab-close" :component="XIcon" />
-    </NButton>
-    <NButton class="document-tab" text>
-      <span class="workspace-marker workspace-marker--blue" />
-      <span v-overflow-title class="tab-title">Sample Project A.igs</span>
-      <NIcon class="tab-close" :component="XIcon" />
-    </NButton>
+  <nav ref="tablist" aria-label="Open documents" class="document-tabs" role="tablist">
+    <NTabs
+      v-model:value="activeId"
+      class="document-tabs-control"
+      :paneWrapperStyle="{ display: 'none' }"
+      size="small"
+      :tabsPadding="12"
+      type="card"
+    >
+      <NTabPane v-for="(tab, index) of tabs" :key="tab.id" :name="tab.id">
+        <template v-slot:tab>
+          <div class="document-tab">
+            <NButton
+              :aria-selected="tab.id === activeId"
+              class="tab-select"
+              role="tab"
+              :tabindex="tab.id === activeId ? 0 : -1"
+              text
+              @click.stop="activeId = tab.id"
+              @keydown="handleTabKeydown($event, index)"
+            >
+              <span class="tab-leading">
+                <NIcon v-if="tab.kind === 'home'" :component="HomeIcon" />
+                <span
+                  v-else
+                  class="workspace-marker"
+                  :style="{ backgroundColor: tab.workspaceColor ?? 'var(--workspace-green)' }"
+                />
+              </span>
+              <span v-overflow-title class="tab-title">{{ tab.title }}</span>
+              <span v-if="tab.dirty" aria-label="Unsaved changes" class="dirty-dot" />
+            </NButton>
+            <NButton
+              :aria-label="`Close ${tab.title}`"
+              circle
+              class="tab-close"
+              quaternary
+              size="tiny"
+              :title="`Close ${tab.title}`"
+              @click.stop="emit('close', tab.id)"
+            >
+              <template v-slot:icon><NIcon :component="XIcon" /></template>
+            </NButton>
+          </div>
+        </template>
+      </NTabPane>
+    </NTabs>
   </nav>
 </template>
 
 <style scoped>
 .document-tabs {
-  display: flex;
-  align-items: end;
   min-width: 0;
   height: 40px;
-  padding: 5px 12px 0;
+  overflow: hidden;
   background: var(--app-chrome);
   border-bottom: 1px solid var(--app-border);
   user-select: none;
 }
 
-.document-tab {
-  --n-padding: 0 12px;
-  min-width: 0;
-  max-width: 260px;
-  height: 35px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-border);
-  border-bottom: 0;
-  border-radius: var(--app-radius) var(--app-radius) 0 0;
+.document-tabs-control {
+  height: 40px;
 }
 
-.document-tab :deep(.n-button__content) {
-  gap: 8px;
+.document-tabs-control :deep(.n-tabs-nav) {
+  height: 40px;
+}
+
+.document-tabs-control :deep(.n-tabs-tab) {
+  min-width: 156px;
+  max-width: 270px;
+  padding: 0;
+}
+
+.document-tabs-control :deep(.n-tabs-tab__label) {
   width: 100%;
   min-width: 0;
 }
 
-.document-tab + .document-tab {
-  margin-left: 2px;
+.document-tab {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
 }
 
-.document-tab--active {
-  background: var(--app-elevated-hover);
+.tab-select {
+  --n-padding: 0 4px 0 10px;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
 }
 
-.workspace-marker,
-.dirty-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+.tab-select :deep(.n-button__content) {
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tab-leading {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.tab-leading :deep(.n-icon) {
+  font-size: 15px;
+}
+
+.workspace-marker {
+  width: 9px;
+  height: 9px;
   border-radius: 2px;
 }
 
-.workspace-marker--green {
-  background: var(--workspace-green);
-}
-
-.workspace-marker--blue {
-  background: var(--workspace-blue);
-}
-
 .dirty-dot {
+  flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 999px;
@@ -93,7 +198,7 @@ import { NButton, NIcon } from 'naive-ui';
 
 .tab-close {
   flex: 0 0 auto;
-  margin-left: auto;
-  opacity: 0.5;
+  margin-right: 3px;
+  opacity: 0.58;
 }
 </style>

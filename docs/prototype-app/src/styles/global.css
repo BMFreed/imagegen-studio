@@ -9,9 +9,12 @@
   --app-overlay-mask: #050507b8;
   --app-window-close: #e88080;
   --app-text: #dbdbdc;
+  --app-text-muted: #9b9ba0;
+  --app-surface-soft: #111115;
   --workspace-green: #64e36e;
   --workspace-blue: #74a8ff;
   --status-warning: #f2c97d;
+  --status-warning-soft: #f2c97d12;
   --app-radius: 3px;
 }
 

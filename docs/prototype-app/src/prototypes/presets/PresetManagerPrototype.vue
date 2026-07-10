@@ -9,6 +9,7 @@ import type {
   PresetWorkflow,
 } from './presets.types';
 
+import { AppLayer } from '../../theme/app-layers';
 import PresetList from './PresetList.vue';
 import PresetManagerEditor from './PresetManagerEditor.vue';
 import PresetManagerHeader from './PresetManagerHeader.vue';
@@ -32,6 +33,9 @@ type PendingNavigation = { id: string; type: 'select' } | { type: 'close' } | { 
 const props = defineProps<{
   initialCreateIntent?: PresetCreateIntent;
   initialSelectedId?: string;
+}>();
+const emit = defineEmits<{
+  close: [];
 }>();
 
 const dialog = useDialog();
@@ -331,11 +335,30 @@ function deletePreset() {
     title: 'Delete preset',
   });
 }
+
+function handleVisibilityChange(visible: boolean) {
+  if (!visible) {
+    requestClose();
+  }
+}
 </script>
 
 <template>
-  <section v-if="managerOpen" aria-label="Preset Manager prototype" class="manager-backdrop">
-    <section class="manager-shell">
+  <NModal
+    :closeOnEsc="!showUnsavedDialog"
+    :maskClosable="false"
+    :show="managerOpen"
+    transformOrigin="center"
+    :zIndex="AppLayer.appOverlay"
+    @afterLeave="$emit('close')"
+    @update:show="handleVisibilityChange"
+  >
+    <div
+      aria-label="Preset Manager prototype"
+      aria-modal="true"
+      class="manager-shell"
+      role="dialog"
+    >
       <PresetManagerHeader @close="requestClose" @create="requestNewPreset" />
       <div class="manager-body">
         <aside class="manager-column manager-column--navigation">
@@ -372,54 +395,49 @@ function deletePreset() {
           />
         </aside>
       </div>
-    </section>
+    </div>
+  </NModal>
 
-    <NModal v-model:show="showUnsavedDialog" :maskClosable="false">
-      <NCard aria-label="Unsaved preset changes" class="unsaved-card" role="dialog" size="small">
-        <h2>{{ creating ? 'Unsaved preset' : 'Unsaved changes' }}</h2>
-        <NText depth="3">
-          {{
-            creating
-              ? 'Create this preset before leaving the draft?'
-              : 'Save your changes before leaving this preset?'
-          }}
-        </NText>
-        <div class="unsaved-actions">
-          <NButton tertiary @click="cancelPendingNavigation">Cancel</NButton>
-          <NButton secondary type="error" @click="discardAndContinue">
-            {{ creating ? 'Discard Draft' : 'Discard' }}
-          </NButton>
-          <NButton
-            :disabled="creating && !isPresetDefinitionValid(draft)"
-            type="primary"
-            @click="saveAndContinue"
-          >
-            {{ creating ? 'Create Preset' : 'Save' }}
-          </NButton>
-        </div>
-      </NCard>
-    </NModal>
-  </section>
+  <NModal
+    v-model:show="showUnsavedDialog"
+    :maskClosable="false"
+    transformOrigin="center"
+    :zIndex="AppLayer.dialog"
+  >
+    <NCard aria-label="Unsaved preset changes" class="unsaved-card" role="dialog" size="small">
+      <h2>{{ creating ? 'Unsaved preset' : 'Unsaved changes' }}</h2>
+      <NText depth="3">
+        {{
+          creating
+            ? 'Create this preset before leaving the draft?'
+            : 'Save your changes before leaving this preset?'
+        }}
+      </NText>
+      <div class="unsaved-actions">
+        <NButton tertiary @click="cancelPendingNavigation">Cancel</NButton>
+        <NButton secondary type="error" @click="discardAndContinue">
+          {{ creating ? 'Discard Draft' : 'Discard' }}
+        </NButton>
+        <NButton
+          :disabled="creating && !isPresetDefinitionValid(draft)"
+          type="primary"
+          @click="saveAndContinue"
+        >
+          {{ creating ? 'Create Preset' : 'Save' }}
+        </NButton>
+      </div>
+    </NCard>
+  </NModal>
 </template>
 
 <style scoped>
-.manager-backdrop {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 36px 48px;
-  background: var(--app-overlay-backdrop);
-  backdrop-filter: blur(7px);
-}
-
 .manager-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1500px, 100%);
-  height: min(890px, 100%);
+  width: min(1500px, calc(100vw - 96px));
+  height: min(890px, calc(100vh - 72px));
   min-height: 620px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-surface);

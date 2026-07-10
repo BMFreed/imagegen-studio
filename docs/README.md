@@ -24,9 +24,11 @@
 
 ## Vue/Naive Prototype App
 
-- [prototype-app](./prototype-app/) — текущий источник истины для визуальных прототипов Model Manager и системы пресетов на реальных компонентах Naive UI.
+- [prototype-app](./prototype-app/) — текущий источник истины для интерактивных Home, Model Manager и preset-system прототипов на реальных компонентах Naive UI.
 
-`prototype-app` — это отдельный Vite/Vue/TypeScript playground для итераций над UI. Он не является production renderer'ом. Актуальные Vue-поверхности выбираются query-параметром `prototype`: `model-manager`, `preset-manager`, `apply-preset` или `save-preset`.
+`prototype-app` — это отдельный Vite/Vue/TypeScript playground для итераций над UI. Он не является production renderer'ом. Корневой URL открывает Home. Остальные Vue-поверхности выбираются query-параметром `prototype`: `home`, `model-manager`, `preset-manager`, `apply-preset` или `save-preset`.
+
+Home mock-сценарии выбираются через `?prototype=home&scenario=default|first-run|no-model|problems`.
 
 Tooling проекта использует `pnpm`. Основные команды для Vue/Naive prototype app:
 
@@ -37,7 +39,7 @@ Tooling проекта использует `pnpm`. Основные коман�
 
 ## HTML-прототипы
 
-- [prototypes/home-screen.html](./prototypes/home-screen.html) — статический визуальный референс Home UI; интерактивные selection, filtering, recovery и error states будут проверяться в будущем Vue/Naive-прототипе.
+- [prototypes/home-screen.html](./prototypes/home-screen.html) — статический визуальный референс Home UI; актуальный интерактивный source of truth живёт в корневом `prototype-app` / `?prototype=home`.
 - [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
 - [prototypes/preset-manager.html](./prototypes/preset-manager.html) — исторический HTML-прототип Preset Manager; актуальный визуальный источник истины живёт в `prototype-app?prototype=preset-manager`.
 - [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный editable Vue-прототип живёт в `prototype-app?prototype=apply-preset`.

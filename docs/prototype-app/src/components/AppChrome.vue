@@ -13,12 +13,18 @@ import { NButton, NIcon } from 'naive-ui';
 import IconButton from './IconButton.vue';
 
 const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
+
+defineEmits<{
+  home: [];
+}>();
 </script>
 
 <template>
   <header class="app-chrome">
     <div class="menu-left">
-      <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
+      <NButton aria-label="Open Home" class="brand-button" text @click="$emit('home')">
+        <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
+      </NButton>
       <nav aria-label="Application menu" class="menu-items">
         <NButton v-for="item of menuItems" :key="item" text>{{ item }}</NButton>
       </nav>
@@ -84,6 +90,14 @@ const menuItems = ['File', 'Edit', 'Project', 'Models', 'Window', 'Help'];
   width: 78px;
   height: 30px;
   object-fit: contain;
+}
+
+.brand-button {
+  flex: 0 0 auto;
+}
+
+.brand-button :deep(.n-button__content) {
+  height: 30px;
 }
 
 .menu-items {

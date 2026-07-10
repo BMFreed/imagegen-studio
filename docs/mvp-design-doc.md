@@ -51,7 +51,7 @@ InvokeAI рассматривается как основной reference produc
 
 Основная shell-модель — document-based editor:
 
-- `Home` является обычной вкладкой со workspace'ами, cross-workspace views `Recent` / `All Projects`, new/open project и доступом к Model Manager;
+- `Home` является обычной вкладкой со workspace'ами, cross-workspace views `Recent` / `All Projects`, app-managed `Trash`, new/import project и доступом к Model Manager и Preset Manager;
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
@@ -1462,6 +1462,8 @@ Regenerate duplicate
 Canvas-проект в MVP хранится как переносимый `.igs` project file. SQLite не является источником истины для canvas-проекта, слоёв и raster/mask assets.
 
 `Uncategorized` является реальной app-managed папкой `ImageGen Studio/workspaces/Uncategorized/`. Новый проект без другого явно выбранного workspace создаётся в ней. Внешний `.igs` должен быть перемещён или скопирован в известный workspace до индексирования и открытия; виртуальные external-path entries не используются.
+
+Home по умолчанию открывает `All Projects`, а выбор workspace применяется как дополнительный фильтр. `Move to Trash` помечает managed project как trashed и сохраняет возможность восстановления; окончательное удаление файла выполняется только отдельным `Delete Permanently` confirmation из Trash view.
 
 SQLite может хранить только восстанавливаемый project index:
 

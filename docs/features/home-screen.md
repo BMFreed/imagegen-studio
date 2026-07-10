@@ -63,13 +63,15 @@ Home tab
 │  └─ document tabs
 ├─ Workspace Sidebar
 │  ├─ New Project
-│  ├─ Open Project
+│  ├─ Import Project
 │  ├─ Recent
 │  ├─ All Projects
+│  ├─ Trash
 │  ├─ Uncategorized
 │  ├─ user workspaces
 │  ├─ add workspace
-│  └─ Manage Models
+│  ├─ Manage Models
+│  └─ Manage Presets
 ├─ Project Browser
 │  ├─ selected workspace title
 │  ├─ refresh / workspace options
@@ -95,9 +97,9 @@ The exact visual split can change during prototyping, but the functional zones s
 The primary Home actions live at the top of the Workspace Sidebar:
 
 - `New Project`;
-- `Open Project`.
+- `Import Project`.
 
-`Manage Models` remains reachable from Home but is visually separated from workspace-scoped actions because it opens an app-level surface rather than changing the selected workspace.
+`Manage Models` and `Manage Presets` remain reachable from a visually separated Tools group because they open app-level surfaces rather than changing the selected workspace.
 
 `New Project` is the primary action for the Home/workspace context. The selected-project preview may also show a primary `Open Project` action, because it belongs to a separate selected-project context. This is allowed in the current prototype: the two primary buttons answer different user questions.
 
@@ -111,7 +113,7 @@ Home is for people who want to generate and manage images, not necessarily for p
 
 Rules:
 
-- prefer human-facing terms like `Preview`, `Size`, `Open Project`, `Show in Folder`;
+- prefer human-facing terms like `Preview`, `Size`, `Import Project`, `Open Project`, `Show in Folder`;
 - avoid persistent labels like `Worker ready`, `readonly`, `runtime`, `direct .igs files only`, `last scan`;
 - technical diagnostics may exist behind `Show details`, logs, recovery dialogs or developer views;
 - when a technical state blocks work, explain the user impact first and the technical cause second.
@@ -271,7 +273,7 @@ Expected empty states:
 The first-run Home should make the next useful actions obvious:
 
 - create project;
-- open existing `.igs`;
+- import existing `.igs`;
 - manage models.
 
 It should not force model installation before the user can organize projects, but it should clearly show that generation requires installed models.
@@ -283,7 +285,7 @@ flowchart TD
   C -- "No" --> D["Show empty workspace state"]
   C -- "Yes" --> E["Show selected workspace projects"]
   D --> F["New Project"]
-  D --> G["Open Project"]
+  D --> G["Import Project"]
   D --> H["Manage Models"]
   H --> I["Model Manager"]
   F --> J["Create .igs in selected workspace"]
@@ -304,6 +306,8 @@ Creating a project from Home:
 
 New project creation should not create an untitled invisible project outside a workspace. Every project file lives in a workspace folder from the start, and a project created without another explicit destination is physically created in `Uncategorized`.
 
+The Vue prototype defaults to `No preset` and a 1024 × 1024 canvas. The optional Generation preset selector shows Text to Image presets only. Selecting a preset creates an editable temporary payload through the shared `PresetPayloadEditor`; sections can be included, edited and reset without changing the saved preset. Seed is excluded by default, Size remains the required canvas source, and missing resources warn without blocking project creation.
+
 ```mermaid
 sequenceDiagram
   actor User
@@ -323,11 +327,11 @@ sequenceDiagram
   Tabs-->>UI: Focus new Project
 ```
 
-## Open Existing Project Flow
+## Import Existing Project Flow
 
 Opening an existing `.igs` from file picker:
 
-1. User clicks `Open Project`.
+1. User clicks `Import Project`.
 2. App shows OS file picker filtered to `.igs`.
 3. Main process validates the selected file.
 4. If valid, app checks the open-project registry.
@@ -340,7 +344,7 @@ The app does not create an implicit workspace from the external file's parent an
 
 ```mermaid
 flowchart TD
-  A["Open Project"] --> B["OS file picker"]
+  A["Import Project"] --> B["OS file picker"]
   B --> C["User selects .igs"]
   C --> D["Validate .igs package"]
   D --> E{"Valid?"}
@@ -355,6 +359,17 @@ flowchart TD
   M -- "Yes" --> L
   M -- "No" --> N["Leave file unchanged and cancel"]
 ```
+
+## App-Managed Trash
+
+`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Recent, All Projects and workspace results, and appear in the dedicated Trash view.
+
+Trash actions are:
+
+- `Restore Project`, which returns the project to its previous workspace;
+- `Delete Permanently`, which removes the indexed project and its managed file after destructive confirmation.
+
+Open projects must still be closed before moving them to Trash. Workspace counters exclude trashed projects.
 
 ## Read-Only Preview Flow
 
@@ -467,7 +482,9 @@ Project Index:
 
 ## Prototype Coverage And Accessibility
 
-The standalone HTML prototype remains a static visual reference. Interactive selection, filtering, sorting, Inspector collapse, dialogs and recovery behavior should be implemented and validated in the Vue/Naive prototype rather than simulated with ad-hoc HTML scripts.
+The standalone HTML prototype remains a static visual reference. Interactive selection, filtering, sorting, Inspector collapse, dialogs and recovery behavior are implemented and validated in the Vue/Naive prototype rather than simulated with ad-hoc HTML scripts.
+
+The prototype app opens Home at its root URL and also accepts `?prototype=home`. Initial states can be selected with `scenario=default`, `first-run`, `no-model` or `problems`.
 
 The interactive prototype should cover these switchable scenarios:
 
@@ -493,7 +510,7 @@ Accessibility requirements:
 - all interactive elements have visible `focus-visible` treatment;
 - focus moves predictably when dialogs open or close and when the selected project disappears after filtering or removal.
 
-The Vue prototype should be checked at 1920×1080, 1440×900 and 1280×800 without horizontal overflow. The Inspector is collapsible so the project browser remains useful at the narrower supported desktop size.
+The Vue prototype is checked at 1920×1080, 1440×900 and 1280×800 without horizontal overflow. The Inspector is collapsible so the project browser remains useful at the narrower supported desktop size.
 
 ## Not In MVP
 
@@ -512,13 +529,15 @@ MVP does not include:
 
 - User can open and close `Home` as a normal document tab.
 - Home action focuses an existing `Home` tab or reopens it if closed.
-- Home shows `Uncategorized` by default.
+- Home shows `All Projects` by default with no project selected.
 - `Uncategorized` is a real app-managed workspace folder and is the default destination when no other workspace is selected.
 - Home provides `Recent` and `All Projects` cross-workspace views.
+- Selecting a workspace keeps `All Projects` active and applies the workspace as an additional filter.
+- Home provides an app-managed Trash view with restore and permanent-delete flows.
 - User can create a new `.igs` project inside a workspace.
-- User can open an existing `.igs` from Home.
+- User can import an existing `.igs` from Home.
 - An external `.igs` must be moved or copied into a workspace before it is indexed and opened.
-- Home may show `New Project` as the workspace primary action and `Open Project` as the selected-project primary action.
+- Home may show `New Project` as the Home primary action and `Open Project` as the selected-project primary action.
 - Opening an already-open `.igs` focuses the existing `Project` tab.
 - Single click selects a project for preview; double click / Enter opens it in the current tab; middle click / Ctrl-click opens it in a new tab.
 - Search matches project display names only; sorting supports last opened, name and modified date.
@@ -533,4 +552,5 @@ MVP does not include:
 - Normal autosave activity is invisible on Home; validated unfinished recovery state is shown as `Recovery available` and resolved through a dedicated recovery flow.
 - The interactive Vue/Naive prototype covers populated, empty, recovery and file/workspace error states with keyboard-accessible controls and predictable focus behavior.
 - `Manage Models` opens Model Manager from Home.
+- `Manage Presets` opens Preset Manager from Home.
 - Home does not include Invoke-like `Launchpad`, `Viewer` or permanent Boards sidebar.
