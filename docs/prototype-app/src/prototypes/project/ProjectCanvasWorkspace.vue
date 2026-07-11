@@ -173,6 +173,7 @@ function zoom(delta: number) {
               :aria-expanded="!session.ui.leftCollapsed"
               circle
               quaternary
+              size="small"
               @click="session.ui.leftCollapsed = !session.ui.leftCollapsed"
               ><NIcon
                 :component="
@@ -186,6 +187,7 @@ function zoom(delta: number) {
           aria-label="Pan tool"
           circle
           quaternary
+          size="small"
           :type="session.ui.activeTool === 'pan' ? 'primary' : 'default'"
           @click="setTool('pan')"
           ><NIcon :component="HandMove"
@@ -194,27 +196,44 @@ function zoom(delta: number) {
           aria-label="Crop or resize Project Canvas"
           circle
           quaternary
+          size="small"
           :type="session.ui.activeTool === 'crop-canvas' ? 'primary' : 'default'"
           @click="setTool('crop-canvas')"
           ><NIcon :component="Crop"
         /></NButton>
         <template v-if="selectedPatch">
-          <NButton aria-label="Transform Mask" circle quaternary @click="setTool('transform-mask')"
+          <NButton
+            aria-label="Transform Mask"
+            circle
+            quaternary
+            size="small"
+            @click="setTool('transform-mask')"
             ><NIcon :component="HandMove" /></NButton
-          ><NButton aria-label="Lasso" circle quaternary @click="setTool('lasso')"
+          ><NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')"
             ><NIcon :component="Lasso" /></NButton
-          ><NButton aria-label="Polygon Lasso" circle quaternary @click="setTool('polygon-lasso')"
+          ><NButton
+            aria-label="Polygon Lasso"
+            circle
+            quaternary
+            size="small"
+            @click="setTool('polygon-lasso')"
             ><NIcon :component="Polygon" /></NButton
-          ><NButton aria-label="Brush" circle quaternary @click="setTool('brush')"
+          ><NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')"
             ><NIcon :component="Brush" /></NButton
-          ><NButton aria-label="Eraser" circle quaternary @click="setTool('eraser')"
+          ><NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')"
             ><NIcon :component="Eraser" /></NButton
-          ><NButton aria-label="Bounding Box" circle quaternary @click="setTool('bbox')"
+          ><NButton
+            aria-label="Bounding Box"
+            circle
+            quaternary
+            size="small"
+            @click="setTool('bbox')"
             ><NIcon :component="Box" /></NButton
           ><NButton
             aria-label="Fit Patch BBox to Mask"
             circle
             secondary
+            size="small"
             type="primary"
             @click="fitPatch"
             ><NIcon :component="ArrowsMaximize"
@@ -225,15 +244,21 @@ function zoom(delta: number) {
             aria-label="Transform Region"
             circle
             quaternary
+            size="small"
             @click="setTool('transform-region')"
             ><NIcon :component="HandMove" /></NButton
-          ><NButton aria-label="Lasso" circle quaternary @click="setTool('lasso')"
+          ><NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')"
             ><NIcon :component="Lasso" /></NButton
-          ><NButton aria-label="Polygon Lasso" circle quaternary @click="setTool('polygon-lasso')"
+          ><NButton
+            aria-label="Polygon Lasso"
+            circle
+            quaternary
+            size="small"
+            @click="setTool('polygon-lasso')"
             ><NIcon :component="Polygon" /></NButton
-          ><NButton aria-label="Brush" circle quaternary @click="setTool('brush')"
+          ><NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')"
             ><NIcon :component="Brush" /></NButton
-          ><NButton aria-label="Eraser" circle quaternary @click="setTool('eraser')"
+          ><NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')"
             ><NIcon :component="Eraser"
           /></NButton>
         </template>
@@ -244,6 +269,7 @@ function zoom(delta: number) {
           :aria-label="session.ui.rightCollapsed ? 'Expand layers panel' : 'Collapse layers panel'"
           circle
           quaternary
+          size="small"
           @click="session.ui.rightCollapsed = !session.ui.rightCollapsed"
           ><NIcon :component="session.ui.rightCollapsed ? ChevronLeft : ChevronRight"
         /></NButton>

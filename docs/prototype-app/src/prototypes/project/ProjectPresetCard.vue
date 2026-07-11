@@ -77,7 +77,7 @@ function choose(id: string) {
             aria-label="Manage Presets"
             circle
             quaternary
-            size="small"
+            size="tiny"
             @click="emit('manage')"
             ><template v-slot:icon><NIcon :component="Settings" /></template></NButton></template
         >Manage presets</NTooltip
@@ -88,7 +88,7 @@ function choose(id: string) {
             aria-label="Save Current as Preset"
             circle
             quaternary
-            size="small"
+            size="tiny"
             @click="emit('save')"
             ><template v-slot:icon><NIcon :component="FilePlus" /></template></NButton></template
         >Save current settings as a new preset</NTooltip

@@ -132,7 +132,7 @@ function hotkey(event: KeyboardEvent) {
       class="prompt-input"
       :inputProps="{ 'aria-label': title }"
       :resizable="false"
-      :rows="field === 'prompt' ? 9 : 6"
+      :rows="6"
       size="small"
       :themeOverrides="promptInputTheme"
       type="textarea"

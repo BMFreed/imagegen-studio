@@ -45,6 +45,7 @@ function add(resourceId: string | null) {
       :disabled
       :options
       placeholder="Add LoRA"
+      :resetMenuOnOptionsChange="false"
       @update:value="add"
     />
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
@@ -71,7 +72,7 @@ function add(resourceId: string | null) {
         circle
         :disabled
         quaternary
-        size="small"
+        size="tiny"
         @click="loras.splice(index, 1)"
       >
         <template v-slot:icon><NIcon :component="TrashIcon" /></template>

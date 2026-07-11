@@ -224,16 +224,15 @@ function normalizeCount(value: number | null) {
         <NCard size="small">
           <template v-slot:header
             ><div class="card-title-line">
-              <strong>Generation</strong
-              ><NTooltip
-                ><template v-slot:trigger
-                  ><NButton aria-label="Manage Models" quaternary @click="emit('manageModels')"
-                    >Manage models<template v-slot:icon
-                      ><NIcon :component="ListDetails" /></template></NButton></template
-                >Manage generation models</NTooltip
-              >
-            </div></template
-          >
+              <strong>Generation</strong>
+              <NButton
+                aria-label="Manage Models"
+                quaternary
+                size="tiny"
+                @click="emit('manageModels')"
+                >Manage models<template v-slot:icon><NIcon :component="ListDetails" /></template
+              ></NButton></div
+          ></template>
           <NAlert v-if="payload.model?.missing" title="Selected model is missing" type="error"
             >Choose an installed model before generating.</NAlert
           >

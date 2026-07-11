@@ -43,7 +43,7 @@ function layerTone(layer: ProjectCompositingLayer) {
       :aria-label="`${layer.visible ? 'Hide' : 'Show'} ${layer.name}`"
       circle
       quaternary
-      size="small"
+      size="tiny"
       @click="$emit('toggleVisible')"
       ><template v-slot:icon><NIcon :component="layer.visible ? Eye : EyeOff" /></template
     ></NButton>
@@ -71,7 +71,7 @@ function layerTone(layer: ProjectCompositingLayer) {
       :aria-label="`Switch variant for ${layer.name}`"
       circle
       quaternary
-      size="small"
+      size="tiny"
       @click="$emit('variants')"
       ><template v-slot:icon><NIcon :component="Refresh" /></template
     ></NButton>
@@ -79,7 +79,7 @@ function layerTone(layer: ProjectCompositingLayer) {
       :aria-label="`${layer.locked ? 'Unlock' : 'Lock'} ${layer.name}`"
       circle
       quaternary
-      size="small"
+      size="tiny"
       @click="$emit('toggleLock')"
       ><template v-slot:icon><NIcon :component="layer.locked ? Lock : LockOpen" /></template
     ></NButton>
@@ -87,7 +87,7 @@ function layerTone(layer: ProjectCompositingLayer) {
       :aria-label="`Duplicate ${layer.name}`"
       circle
       quaternary
-      size="small"
+      size="tiny"
       @click="$emit('duplicate')"
       ><template v-slot:icon><NIcon :component="Copy" /></template
     ></NButton>
@@ -95,12 +95,12 @@ function layerTone(layer: ProjectCompositingLayer) {
       :aria-label="`Delete ${layer.name}`"
       circle
       quaternary
-      size="small"
+      size="tiny"
       @click="$emit('remove')"
       ><template v-slot:icon><NIcon :component="Trash" /></template
     ></NButton>
     <NDropdown :options="moveOptions" trigger="click" @select="move">
-      <NButton :aria-label="`Layer actions for ${layer.name}`" circle quaternary size="small"
+      <NButton :aria-label="`Layer actions for ${layer.name}`" circle quaternary size="tiny"
         ><template v-slot:icon><NIcon :component="DotsVertical" /></template
       ></NButton>
     </NDropdown>
