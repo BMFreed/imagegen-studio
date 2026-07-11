@@ -396,6 +396,9 @@ function zoom(delta: number) {
   color: #111116;
   background: #a7a7ae;
 }
+.tool-rail :deep(.n-icon) {
+  font-size: 18px;
+}
 .tool-rail :deep(.n-button:hover) {
   background: #bebec4;
 }

@@ -71,6 +71,8 @@ These actions must be visually distinct from direct prompt editing.
 
 Positive and negative prompts expose the same helper actions: increase/decrease attention, tag insertion, dynamic preview, copy and clear. Attention uses Invoke-like `+` / `-` suffixes, wraps multi-word selections, recognizes numeric weights and supports `Ctrl/Cmd+Up` and `Ctrl/Cmd+Down`.
 
+The Vue prototype uses a compact prompt-specific card shell instead of the generic card header/content/footer composition. The title and token count share the top-left metadata line, diagnostics use a compact adjacent warning, and the helper actions form a vertical rail on the right. The Naive textarea remains the editing control, uses native vertical resizing and starts at nine rows for the positive prompt and four rows for the negative prompt. Removing the redundant nested card/input padding leaves the editor room on its left and bottom edges without replacing Naive focus, tooltip or popover behavior.
+
 Prompt typing is grouped as one undo transaction from focus to blur. Helper actions are separate named undo operations rather than generating history entries for each character.
 
 ## Acceptance Criteria

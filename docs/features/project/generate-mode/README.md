@@ -88,7 +88,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - accepted normal candidates become independent Raster Layers; accepted Smart Patch candidates become layer-owned variants;
 - only accepted results receive immutable generation provenance and global history entries;
 - Queue Manager owns jobs, not result history, and staging state is not undoable;
-- the Generate action area is fixed at the bottom of the left settings panel and contains `Generate`, images-per-click, queue menu and cancel controls;
+- the Generate action area is fixed directly below the `Create` tab and above the scrolling settings stack; its grid keeps `Generate` plus images-per-click on the left and icon-only queue plus cancel actions on the right;
 - Queue pause/resume is not exposed in the current Project scope;
 - Upscale is deferred to a separate Project pass and does not block the Create/Generate prototype;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
@@ -107,7 +107,8 @@ Project: portrait.igs
 └─ Generate mode
    ├─ left settings panel
    │  ├─ working context: Create
-   │  └─ fixed Generate action area
+   │  ├─ fixed Generate action area
+   │  └─ scrolling settings stack
    ├─ center canvas
    └─ right layer/settings panel
 ```
@@ -150,7 +151,7 @@ Stable query scenarios are:
 - `empty-project` — transparent canvas with no raster input and disabled denoising;
 - `errors` — local model, LoRA, prompt, candidate, Smart Patch and save error states.
 
-The prototype uses a three-panel editor shell with resizable and collapsible side panels. Generation settings are stacked cards in one independently scrolling left panel; they do not reuse the modal accordion layout. Project follows the app-wide 12px density foundation, uses consistent semibold card headings and keeps the compact viewport bar flush with the bottom of the canvas workspace. The central canvas is a deterministic DOM/CSS simulation rather than a Konva or raster engine, while zoom, pan, contextual tools, bbox/canvas overlays and staging preview remain interactive enough to validate the workflow.
+The prototype uses a three-panel editor shell with resizable and collapsible side panels. Generation settings are stacked cards in one independently scrolling left panel; they do not reuse the modal accordion layout. Project follows the app-wide 13px density foundation, uses 12px metadata, consistent semibold card headings and keeps the compact viewport bar flush with the bottom of the canvas workspace. Project tool rails, layer actions and Regional Guidance actions use a consistent 18px icon scale. The central canvas is a deterministic DOM/CSS simulation rather than a Konva or raster engine, while zoom, pan, contextual tools, bbox/canvas overlays and staging preview remain interactive enough to validate the workflow.
 
 Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shortcuts. Queue progress and temporary candidate selection are deliberately excluded from document history; accepting candidates creates one grouped persistent mutation.
 
@@ -163,7 +164,7 @@ Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shor
 - Project does not show a separate title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
 - `GenerationResults` supports focused preview plus explicit multi-selection and never auto-commits completed outputs.
 - left and right panels can be resized, collapsed and restored without losing Project UI state;
-- the fixed Generate footer remains visible while stacked settings scroll independently;
+- the fixed Generate action bar remains visible below `Create` while stacked settings scroll independently;
 - txt2img/img2img/inpaint/outpaint remain internal request-building states; the UI explains only control availability and never asks the user to choose or monitor a workflow label;
 - accepted Project candidates become independent Raster Layers, while accepted Smart Patch candidates become variants owned by that layer;
 - Project UI state survives document-tab switching within the prototype session;

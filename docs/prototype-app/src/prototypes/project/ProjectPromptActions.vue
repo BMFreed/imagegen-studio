@@ -26,7 +26,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="prompt-actions">
-    <NTooltip
+    <NTooltip placement="right"
       ><template v-slot:trigger
         ><NButton
           aria-label="Increase prompt attention"
@@ -38,7 +38,7 @@ const emit = defineEmits<{
           ><template v-slot:icon><NIcon :component="ArrowUp" /></template></NButton></template
       >Increase attention (Ctrl/Cmd+Up)</NTooltip
     >
-    <NTooltip
+    <NTooltip placement="right"
       ><template v-slot:trigger
         ><NButton
           aria-label="Decrease prompt attention"
@@ -52,7 +52,7 @@ const emit = defineEmits<{
     >
     <NPopover v-model:show="tagOpen" placement="bottom-end" trigger="click">
       <template v-slot:trigger
-        ><NTooltip
+        ><NTooltip placement="right"
           ><template v-slot:trigger
             ><NButton aria-label="Insert prompt tag" circle quaternary size="tiny"
               ><template v-slot:icon><NIcon :component="Hash" /></template></NButton></template
@@ -69,7 +69,7 @@ const emit = defineEmits<{
         /><NButton size="small" type="primary" @click="insert">Insert</NButton>
       </div>
     </NPopover>
-    <NTooltip
+    <NTooltip placement="right"
       ><template v-slot:trigger
         ><NButton
           aria-label="Preview dynamic prompt"
@@ -80,13 +80,13 @@ const emit = defineEmits<{
           ><template v-slot:icon><NIcon :component="Braces" /></template></NButton></template
       >Preview dynamic prompt</NTooltip
     >
-    <NTooltip
+    <NTooltip placement="right"
       ><template v-slot:trigger
         ><NButton aria-label="Copy prompt" circle quaternary size="tiny" @click="emit('copy')"
           ><template v-slot:icon><NIcon :component="Copy" /></template></NButton></template
       >Copy prompt</NTooltip
     >
-    <NTooltip
+    <NTooltip placement="right"
       ><template v-slot:trigger
         ><NButton aria-label="Clear prompt" circle quaternary size="tiny" @click="emit('clear')"
           ><template v-slot:icon><NIcon :component="Eraser" /></template></NButton></template
@@ -98,6 +98,7 @@ const emit = defineEmits<{
 <style scoped>
 .prompt-actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 1px;
 }

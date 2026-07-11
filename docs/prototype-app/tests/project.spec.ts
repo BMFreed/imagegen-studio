@@ -50,7 +50,7 @@ test.describe('Project prototype', () => {
 
     await expect(page.locator('.app-chrome')).toHaveCSS('height', '32px');
     await expect(page.locator('.document-tabs')).toHaveCSS('height', '34px');
-    await expect(page.getByRole('button', { name: 'File' })).toHaveCSS('font-size', '12px');
+    await expect(page.getByRole('button', { name: 'File' })).toHaveCSS('font-size', '13px');
 
     const workspace = await page.getByLabel('Project canvas workspace').boundingBox();
     const footer = await page.locator('.viewport-bar').boundingBox();
@@ -77,6 +77,52 @@ test.describe('Project prototype', () => {
       'background-color',
       'rgba(0, 0, 0, 0)',
     );
+    await expect(page.locator('.tool-rail .n-icon').first()).toHaveCSS('font-size', '18px');
+    await expect(
+      page.getByRole('button', { name: 'Delete Face lighting' }).locator('.n-icon'),
+    ).toHaveCSS('font-size', '18px');
+  });
+
+  test('keeps generation actions below Create and gives prompts dedicated editor space', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await openProject(page);
+
+    const settings = page.getByLabel('Generate settings');
+    const create = await settings.locator('.create-label').boundingBox();
+    const actionBar = await settings.locator('.generation-footer').boundingBox();
+    const settingsScroll = await settings.locator('.settings-scroll').boundingBox();
+    expect(create!.y + create!.height).toBeCloseTo(actionBar!.y, 0);
+    expect(actionBar!.y + actionBar!.height).toBeCloseTo(settingsScroll!.y, 0);
+    await expect(settings.locator('.generation-footer')).toHaveCSS('display', 'grid');
+
+    const generate = settings.getByRole('button', { name: 'Generate' });
+    const queue = settings.getByRole('button', { name: 'Generation queue' });
+    const cancel = settings.getByRole('button', { name: 'Cancel current generation' });
+    await expect(generate.locator('.n-button__icon')).toBeVisible();
+    await expect(queue).toHaveText('');
+    await expect(cancel).toHaveText('');
+    await expect(queue).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(cancel).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
+    const prompt = settings.getByRole('textbox', { exact: true, name: 'Prompt' });
+    const negative = settings.getByRole('textbox', { exact: true, name: 'Negative Prompt' });
+    await expect(prompt).toHaveAttribute('rows', '9');
+    await expect(negative).toHaveAttribute('rows', '4');
+    await expect(settings.locator('.prompt-input .n-input-wrapper').nth(0)).toHaveCSS(
+      'resize',
+      'vertical',
+    );
+    await expect(settings.locator('.prompt-input .n-input-wrapper').nth(1)).toHaveCSS(
+      'resize',
+      'vertical',
+    );
+    await expect(settings.locator('.prompt-meta').first()).toContainText('12 tokens');
+
+    const promptBox = await prompt.boundingBox();
+    const actionRail = await settings.locator('.prompt-actions').first().boundingBox();
+    expect(actionRail!.x).toBeGreaterThanOrEqual(promptBox!.x + promptBox!.width);
   });
 
   test('switches contextual tools for Smart Patch and Regional Guidance', async ({ page }) => {
@@ -126,6 +172,11 @@ test.describe('Project prototype', () => {
   test('simulates queue lifecycle without immediately creating layers', async ({ page }) => {
     await openProject(page, 'empty-project');
     await page.getByRole('button', { name: 'Generate' }).click();
+    const settings = page.getByLabel('Generate settings');
+    await expect(
+      settings.getByRole('button', { name: /Generation queue, 4 active jobs/ }),
+    ).toBeVisible();
+    await expect(settings.locator('.generation-queue-badge .n-badge-sup')).toContainText('4');
     await expect(page.getByRole('region', { name: 'Generation Results' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Select Generated Result 1' })).toBeHidden();
     await expect(page.getByLabel('Select candidate 1')).toBeEnabled({ timeout: 3000 });
@@ -183,7 +234,7 @@ test.describe('Project prototype', () => {
     await page.mouse.up();
     const leftAfter = await leftPanel.boundingBox();
     expect(leftAfter!.width).toBeGreaterThan(leftBefore!.width + 40);
-    expect(leftAfter!.width).toBeLessThanOrEqual(425);
+    expect(leftAfter!.width).toBeLessThanOrEqual(545);
 
     const rightBefore = await rightPanel.boundingBox();
     const rightHandle = await panels.nth(1).boundingBox();
@@ -193,7 +244,7 @@ test.describe('Project prototype', () => {
     await page.mouse.up();
     const rightAfter = await rightPanel.boundingBox();
     expect(rightAfter!.width).toBeGreaterThan(rightBefore!.width + 35);
-    expect(rightAfter!.width).toBeLessThanOrEqual(445);
+    expect(rightAfter!.width).toBeLessThanOrEqual(545);
   });
 
   test('accepts arbitrary generation counts within the prototype limit', async ({ page }) => {

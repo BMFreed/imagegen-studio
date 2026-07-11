@@ -147,6 +147,7 @@ function addRegional() {
             ><NButton
               aria-label="Add Regional Guidance"
               circle
+              class="regional-icon-button"
               quaternary
               size="small"
               @click="addRegional"
@@ -162,6 +163,7 @@ function addRegional() {
             <NButton
               :aria-label="`${entity.enabled ? 'Hide' : 'Show'} ${entity.name}`"
               circle
+              class="regional-icon-button"
               quaternary
               size="small"
               @click="
@@ -188,6 +190,7 @@ function addRegional() {
             <NButton
               :aria-label="`Delete ${entity.name}`"
               circle
+              class="regional-icon-button"
               quaternary
               size="small"
               @click="
@@ -370,6 +373,9 @@ function addRegional() {
 }
 .regional-row--selected {
   border-color: #b58cff;
+}
+.regional-icon-button :deep(.n-icon) {
+  font-size: 18px;
 }
 .regional-select {
   width: 100%;

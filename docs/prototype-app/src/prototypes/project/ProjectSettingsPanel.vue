@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Settings } from '@vicons/tabler';
+import { ListCheck, ListDetails, Wand, X } from '@vicons/tabler';
 import {
   NAlert,
+  NBadge,
   NButton,
   NCard,
   NIcon,
@@ -74,6 +75,12 @@ const expandedPrompts = computed(() =>
   ),
 );
 const totalJobs = computed(() => expandedPrompts.value.pairs.length * imagesPerClick.value);
+const activeQueueCount = computed(
+  () =>
+    props.session.queueItems.filter(
+      (item) => item.status === 'pending' || item.status === 'running',
+    ).length,
+);
 const blockingReason = computed(() => {
   if (projectHasBlockingGenerationErrors(props.session)) {
     return 'Choose an installed model before generating.';
@@ -121,10 +128,61 @@ function normalizeCount(value: number | null) {
 
 <template>
   <aside aria-label="Generate settings" class="settings-panel">
+    <div class="create-label"><strong>Create</strong></div>
+
+    <footer class="generation-footer">
+      <div class="generation-primary-actions">
+        <NButton
+          :disabled="Boolean(blockingReason)"
+          type="primary"
+          @click="emit('generate', imagesPerClick)"
+        >
+          <template v-slot:icon><NIcon :component="Wand" /></template>
+          <strong>Generate</strong>
+        </NButton>
+        <NInputNumber
+          aria-label="Images per click"
+          class="count-input"
+          :max="100"
+          :min="1"
+          :step="1"
+          :value="imagesPerClick"
+          @update:value="normalizeCount"
+        />
+      </div>
+      <div class="generation-secondary-actions">
+        <NBadge
+          class="generation-queue-badge"
+          :max="99"
+          :offset="[-3, 3]"
+          :show="activeQueueCount > 0"
+          type="success"
+          :value="activeQueueCount"
+        >
+          <NButton
+            :aria-label="`Generation queue${activeQueueCount ? `, ${activeQueueCount} active jobs` : ''}`"
+            circle
+            secondary
+            @click="emit('toggleQueue')"
+          >
+            <template v-slot:icon><NIcon :component="ListCheck" /></template>
+          </NButton>
+        </NBadge>
+        <NButton
+          aria-label="Cancel current generation"
+          circle
+          :disabled="!session.queueItems.some((item) => item.status === 'running')"
+          secondary
+          @click="emit('cancelGeneration')"
+        >
+          <template v-slot:icon><NIcon :component="X" /></template>
+        </NButton>
+      </div>
+      <NText v-if="blockingReason" class="blocking-reason" type="error">{{ blockingReason }}</NText>
+    </footer>
+
     <NScrollbar class="settings-scroll">
       <div class="settings-stack">
-        <div class="create-label"><strong>Create</strong></div>
-
         <ProjectPresetCard
           @apply="emit('applyPreset', $event)"
           @manage="emit('managePresets')"
@@ -169,14 +227,9 @@ function normalizeCount(value: number | null) {
               <strong>Generation</strong
               ><NTooltip
                 ><template v-slot:trigger
-                  ><NButton
-                    aria-label="Manage Models"
-                    circle
-                    quaternary
-                    size="tiny"
-                    @click="emit('manageModels')"
-                    ><template v-slot:icon
-                      ><NIcon :component="Settings" /></template></NButton></template
+                  ><NButton aria-label="Manage Models" quaternary @click="emit('manageModels')"
+                    >Manage models<template v-slot:icon
+                      ><NIcon :component="ListDetails" /></template></NButton></template
                 >Manage generation models</NTooltip
               >
             </div></template
@@ -296,39 +349,6 @@ function normalizeCount(value: number | null) {
       </div>
     </NScrollbar>
 
-    <footer class="generation-footer">
-      <NText v-if="blockingReason" class="blocking-reason" type="error">{{ blockingReason }}</NText>
-      <NButton
-        :disabled="Boolean(blockingReason)"
-        size="small"
-        type="primary"
-        @click="emit('generate', imagesPerClick)"
-        >Generate</NButton
-      >
-      <NInputNumber
-        aria-label="Images per click"
-        class="count-input"
-        :max="100"
-        :min="1"
-        size="small"
-        :step="1"
-        :value="imagesPerClick"
-        @update:value="normalizeCount"
-      />
-      <NButton aria-label="Generation queue" quaternary size="small" @click="emit('toggleQueue')"
-        >Queue</NButton
-      >
-      <NButton
-        aria-label="Cancel current generation"
-        circle
-        :disabled="!session.queueItems.some((item) => item.status === 'running')"
-        quaternary
-        size="small"
-        @click="emit('cancelGeneration')"
-        >×</NButton
-      >
-    </footer>
-
     <DynamicPromptsModal
       v-model:show="dynamicPreviewOpen"
       :negativePrompt="payload.negativePrompt ?? ''"
@@ -342,7 +362,7 @@ function normalizeCount(value: number | null) {
 <style scoped>
 .settings-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   height: 100%;
   font-size: var(--app-font-size);
@@ -358,6 +378,7 @@ function normalizeCount(value: number | null) {
   padding: 8px;
 }
 .create-label {
+  margin: 8px 8px 0;
   padding: 5px 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
@@ -396,15 +417,30 @@ summary {
 }
 .generation-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 70px auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   padding: 7px 8px;
   background: var(--app-elevated);
-  border-top: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
+}
+.generation-primary-actions,
+.generation-secondary-actions {
+  display: grid;
+  align-items: center;
+  gap: 5px;
+}
+.generation-primary-actions {
+  grid-template-columns: auto 70px;
+  grid-column: 1;
+}
+.generation-secondary-actions {
+  grid-template-columns: repeat(2, auto);
+  grid-column: 3;
 }
 .blocking-reason {
   grid-column: 1 / -1;
+  grid-row: 2;
   font-size: 11px;
 }
 .count-input {

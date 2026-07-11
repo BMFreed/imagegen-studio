@@ -39,7 +39,7 @@ MVP controls:
 - seed;
 - randomize seed;
 - shuffle/advance seed;
-- images per click in the fixed Generate action area rather than duplicated inside the settings card;
+- images per click beside `Generate` in the fixed action bar immediately below the `Create` tab rather than duplicated inside the settings card;
 - model compatibility warnings for selected LoRAs/embeddings/presets.
 
 `Generation > Advanced Options` controls:

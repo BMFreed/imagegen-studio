@@ -26,20 +26,20 @@ Pressing `Generate` does not call the worker directly. It creates one or more Qu
 
 ## Generate Action Area
 
-In the current Project UI, generation commands live in a fixed footer at the bottom of the left settings panel:
+In the current Project UI, generation commands live in a fixed action bar directly below the `Create` tab and above the independently scrolling settings stack:
 
 ```text
-[ Generate ] [ 1 ] [ Queue ] [ x ]
+[ wand Generate ] [ 1 ]                         [ queue badge ] [ x ]
 ```
 
 Rules:
 
 - `Generate` starts one batch from the current frozen project/generation state;
 - the integer count input accepts any value from 1 through 100 and controls iterations per concrete prompt;
-- `...` opens queue/actions menu with `Open Queue` and relevant cleanup/cancel actions;
+- the icon-only queue action opens the project queue and shows the current non-terminal job count in a badge;
 - `x` is the visible cancel-current-generation action and must not be hidden inside the menu.
 
-Queue pause/resume is not exposed from the Project footer in the current scope.
+The bar uses a grid so the primary action and count remain content-sized on the left while queue and cancel stay grouped on the right. Queue and cancel use visible secondary surfaces. Queue pause/resume is not exposed from the Project action bar in the current scope.
 
 ## Automatic Canvas Workflow
 

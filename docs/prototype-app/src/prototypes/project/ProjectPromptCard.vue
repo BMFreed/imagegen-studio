@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { NCard, NInput, NText, useMessage } from 'naive-ui';
+import { AlertTriangle } from '@vicons/tabler';
+import { NIcon, NInput, NText, NTooltip, useMessage } from 'naive-ui';
 import { computed, nextTick, ref } from 'vue';
 
 import type { ProjectDocumentModel, ProjectSession } from './project.types';
@@ -24,7 +25,13 @@ const root = ref<HTMLElement | null>(null);
 const lastSelection = ref({ end: 0, start: 0 });
 let baseline: ProjectDocumentModel | undefined;
 const value = computed(() => getActiveGenerationDraft(props.session).payload[props.field] ?? '');
+const tokenCount = computed(() => value.value.split(/\s+/).filter(Boolean).length);
 const warning = computed(() => value.value.includes('(broken'));
+const promptInputTheme = {
+  color: 'transparent',
+  colorFocus: 'transparent',
+  paddingSmall: '0',
+} as const;
 
 function beginEdit() {
   baseline ??= cloneDocument(props.session.document);
@@ -104,54 +111,100 @@ function hotkey(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div ref="root">
-    <NCard size="small">
-      <template v-slot:header
-        ><div class="prompt-header">
-          <strong>{{ title }}</strong
-          ><ProjectPromptActions
-            @clear="clear"
-            @copy="copy"
-            @decrease="attention(-1)"
-            @dynamicPreview="emit('dynamicPreview')"
-            @increase="attention(1)"
-            @insertTag="insertTag"
-          /></div
-      ></template>
-      <NInput
-        :aria-label="title"
-        :autosize="{ minRows: field === 'prompt' ? 3 : 2, maxRows: 6 }"
-        :inputProps="{ 'aria-label': title }"
-        size="small"
-        type="textarea"
-        :value
-        @blur="finishEdit"
-        @focus="beginEdit"
-        @keydown="hotkey"
-        @select="rememberSelection"
-        @update:value="update"
-      />
-      <div class="prompt-footer">
-        <NText depth="3">{{ value.split(/\s+/).filter(Boolean).length }} tokens</NText
-        ><NText v-if="warning" type="warning">Check prompt weights</NText>
-      </div>
-    </NCard>
-  </div>
+  <section ref="root" class="prompt-card">
+    <header class="prompt-meta">
+      <strong>{{ title }}</strong>
+      <NText depth="3">{{ tokenCount }} tokens</NText>
+      <NTooltip v-if="warning">
+        <template v-slot:trigger>
+          <NIcon
+            aria-label="Check prompt weights"
+            class="prompt-warning"
+            :component="AlertTriangle"
+          />
+        </template>
+        Check prompt weights
+      </NTooltip>
+    </header>
+    <NInput
+      :aria-label="title"
+      :bordered="false"
+      class="prompt-input"
+      :inputProps="{ 'aria-label': title }"
+      :resizable="false"
+      :rows="field === 'prompt' ? 9 : 6"
+      size="small"
+      :themeOverrides="promptInputTheme"
+      type="textarea"
+      :value
+      @blur="finishEdit"
+      @focus="beginEdit"
+      @keydown="hotkey"
+      @select="rememberSelection"
+      @update:value="update"
+    />
+    <ProjectPromptActions
+      class="prompt-actions-rail"
+      @clear="clear"
+      @copy="copy"
+      @decrease="attention(-1)"
+      @dynamicPreview="emit('dynamicPreview')"
+      @increase="attention(1)"
+      @insertTag="insertTag"
+    />
+  </section>
 </template>
 
 <style scoped>
-.prompt-header,
-.prompt-footer {
+.prompt-card {
+  padding: 7px 5px 7px 9px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+  position: relative;
+  resize: vertical;
+  overflow: hidden;
+  min-height: 150px;
+}
+.prompt-card:focus-within {
+  border-color: var(--workspace-green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-green) 18%, transparent);
+}
+.prompt-meta {
+  grid-area: meta;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
+  min-width: 0;
+  line-height: 1.2;
+  position: absolute;
+  top: 5px;
+  left: 7px;
 }
-.prompt-header {
-  width: 100%;
+.prompt-meta strong {
+  font-weight: 600;
 }
-.prompt-footer {
-  margin-top: 4px;
-  font-size: 11px;
+.prompt-meta .n-text {
+  font-size: var(--app-font-size-meta);
+}
+.prompt-warning {
+  flex: 0 0 auto;
+  color: var(--status-warning);
+}
+.prompt-input {
+  grid-area: input;
+  min-width: 0;
+  padding-top: 12px;
+  padding-right: 18px;
+}
+.prompt-actions-rail {
+  grid-area: actions;
+  align-self: start;
+  position: absolute;
+  top: 7px;
+  right: 5px;
 }
 </style>
