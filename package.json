@@ -19,6 +19,7 @@
     "prototype:screenshots": "playwright test --config docs/prototype-app/playwright.config.ts"
   },
   "dependencies": {
+    "@vue-dnd-kit/core": "2.4.6",
     "naive-ui": "^2.44.1"
   },
   "devDependencies": {

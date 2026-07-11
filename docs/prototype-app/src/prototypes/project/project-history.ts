@@ -21,6 +21,23 @@ export function commitProjectMutation(
   session.dirty = true;
 }
 
+export function commitProjectEditFromBaseline(
+  session: ProjectSession,
+  label: string,
+  baseline: ProjectDocumentModel,
+) {
+  if (JSON.stringify(baseline) === JSON.stringify(session.document)) {
+    return;
+  }
+  session.history.past.push({ document: cloneDocument(baseline), label });
+  if (session.history.past.length > 64) {
+    session.history.past.shift();
+  }
+  session.history.future = [];
+  session.document.updatedAt = new Date().toISOString();
+  session.dirty = true;
+}
+
 export function undoProject(session: ProjectSession) {
   const entry = session.history.past.pop();
   if (!entry) {

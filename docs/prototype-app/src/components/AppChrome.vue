@@ -162,8 +162,8 @@ function handleMenuSelect(key: string) {
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  height: 40px;
-  padding-left: 12px;
+  height: var(--app-chrome-height);
+  padding-left: 8px;
   background: var(--app-chrome);
   border-bottom: 1px solid var(--app-elevated);
   user-select: none;
@@ -178,14 +178,14 @@ function handleMenuSelect(key: string) {
 }
 
 .menu-left {
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
 .brand-logo {
   display: block;
-  width: 78px;
-  height: 30px;
+  width: 70px;
+  height: 24px;
   object-fit: contain;
 }
 
@@ -194,11 +194,11 @@ function handleMenuSelect(key: string) {
 }
 
 .brand-button :deep(.n-button__content) {
-  height: 30px;
+  height: 24px;
 }
 
 .menu-items {
-  gap: 16px;
+  gap: 14px;
 }
 
 .menu-right {
@@ -213,7 +213,7 @@ function handleMenuSelect(key: string) {
 }
 
 .window-control {
-  width: 48px;
+  width: 44px;
   height: 100%;
   border-radius: 0;
 }

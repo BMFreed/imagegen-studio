@@ -147,7 +147,7 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
 
 p {
   overflow: hidden;
-  margin: 2px 0 6px;
+  margin: 4px 0 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

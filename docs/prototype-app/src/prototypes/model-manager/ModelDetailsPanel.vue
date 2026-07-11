@@ -159,6 +159,9 @@ defineProps<{
   height: 100%;
   overflow: hidden;
 }
+.details-panel :deep(.n-scrollbar) {
+  height: 100%;
+}
 
 .details-scroll {
   display: grid;

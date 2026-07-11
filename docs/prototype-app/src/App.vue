@@ -524,7 +524,7 @@ function syncProjectTab(project: HomeProjectRecord) {
 <style scoped>
 .app-shell {
   display: grid;
-  grid-template-rows: 40px minmax(0, 1fr);
+  grid-template-rows: var(--app-chrome-height) minmax(0, 1fr);
   height: 100vh;
   isolation: isolate;
 }
@@ -532,7 +532,7 @@ function syncProjectTab(project: HomeProjectRecord) {
 .app-workspace {
   position: relative;
   display: grid;
-  grid-template-rows: 40px minmax(0, 1fr);
+  grid-template-rows: var(--app-tabs-height) minmax(0, 1fr);
   min-height: 0;
 }
 

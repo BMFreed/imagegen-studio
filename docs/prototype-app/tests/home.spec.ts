@@ -342,7 +342,7 @@ test.describe('Home prototype', () => {
     await openHome(page);
 
     const leading = page.locator('.tab-leading').first();
-    await expect(leading).toHaveCSS('width', '18px');
+    await expect(leading).toHaveCSS('width', '16px');
 
     for (const label of [
       page.locator('.tab-title').filter({ hasText: 'Sample Project B.igs' }),

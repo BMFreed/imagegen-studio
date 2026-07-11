@@ -11,7 +11,7 @@ import { cloneDocument } from './project-history';
 
 const baseDraft: ProjectGenerationDraft = {
   cfgRescale: 0,
-  dynamicPrompting: false,
+  dynamicPrompt: { maxPrompts: 100, seedBehavior: 'per-iteration' },
   payload: structuredClone(currentProjectPresetSource.definition.payload),
   vaePrecision: 'Auto',
 };
@@ -29,11 +29,12 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
     ui: {
       activeTool: 'pan',
       applyPresetOpen: false,
+      aspectRatio: { id: 'free', locked: false, value: 888 / 1184 },
       leftCollapsed: false,
-      leftSize: '340px',
+      leftWidth: 320,
       queueOpen: false,
       rightCollapsed: false,
-      rightSize: '350px',
+      rightWidth: 330,
       selection: { id: 'raster-main', kind: 'compositing-layer' },
       viewport: { offsetX: 0, offsetY: 0, scale: 0.62 },
     },
@@ -48,10 +49,10 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
   if (id === 'staging') {
     session.staging = stagingSession();
     session.queueItems = [
-      { id: 'queue-1', label: 'Image 1', progress: 100, status: 'completed' },
-      { id: 'queue-2', label: 'Image 2', progress: 100, status: 'completed' },
-      { id: 'queue-3', label: 'Image 3', progress: 100, status: 'completed' },
-      { id: 'queue-4', label: 'Image 4', progress: 58, status: 'running' },
+      queueItem('queue-1', 1, 100, 'completed'),
+      queueItem('queue-2', 2, 100, 'completed'),
+      queueItem('queue-3', 3, 100, 'completed'),
+      queueItem('queue-4', 4, 58, 'running'),
     ];
   }
   if (id === 'empty-project') {
@@ -90,9 +91,7 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
       selectedCandidateIds: [],
       target: { kind: 'project-canvas' },
     };
-    session.queueItems = [
-      { id: 'queue-failed', label: 'Portrait generation', progress: 72, status: 'failed' },
-    ];
+    session.queueItems = [queueItem('queue-failed', 1, 72, 'failed', 'Portrait generation')];
     session.saveShouldFail = true;
     session.dirty = true;
   }
@@ -124,6 +123,7 @@ function baseDocument(): ProjectDocumentModel {
         id: 'raster-highlight',
         kind: 'raster',
         locked: false,
+        mockCoverage: 'partial',
         name: 'Highlight Pass',
         opacity: 78,
         tone: 'blue',
@@ -156,6 +156,7 @@ function baseDocument(): ProjectDocumentModel {
         id: 'raster-main',
         kind: 'raster',
         locked: false,
+        mockCoverage: 'opaque',
         name: 'Portrait Base',
         opacity: 100,
         tone: 'emerald',
@@ -166,6 +167,7 @@ function baseDocument(): ProjectDocumentModel {
         id: 'background',
         kind: 'raster',
         locked: true,
+        mockCoverage: 'opaque',
         name: 'Background Plate',
         opacity: 100,
         tone: 'rose',
@@ -188,6 +190,25 @@ function baseDocument(): ProjectDocumentModel {
     ],
     title: 'Sample Project B.igs',
     updatedAt: '2026-07-10T13:42:00.000Z',
+  };
+}
+
+function queueItem(
+  id: string,
+  iteration: number,
+  progress: number,
+  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running',
+  label = `Image ${iteration}`,
+) {
+  return {
+    derivedMode: 'img2img' as const,
+    id,
+    iteration,
+    label,
+    negativePrompt: baseDraft.payload.negativePrompt ?? '',
+    progress,
+    prompt: baseDraft.payload.prompt ?? '',
+    status,
   };
 }
 

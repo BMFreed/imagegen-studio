@@ -12,7 +12,17 @@ export const imageGenNaiveTheme = {
   Badge: {
     colorSuccess: imageGenColors.primaryPressed,
   },
+  Card: {
+    titleFontWeight: '600',
+  },
   common: {
+    fontSize: '12px',
+    fontSizeMedium: '12px',
+    fontSizeSmall: '12px',
+    fontSizeTiny: '11px',
+    heightMedium: '30px',
+    heightSmall: '26px',
+    lineHeight: '1.5',
     popoverColor: imageGenColors.floatingSurface,
     primaryColor: imageGenColors.primary,
     primaryColorHover: imageGenColors.primaryHover,

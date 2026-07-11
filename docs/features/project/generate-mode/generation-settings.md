@@ -56,6 +56,12 @@ Rejected for MVP:
 - seamless X/Y toggles as generic Generate controls;
 - generic color correction/compensation as a Generate control.
 
+## Project Settings Order
+
+The compact Project panel uses this stable order: Preset actions, Size, Prompt, Negative Prompt, LoRAs, Embeddings, Generation and contextual Smart Patch compositing. Add LoRA and Add Embedding controls stay above their selected rows so they do not move as stacks grow.
+
+The UI does not display a persistent txt2img/img2img label such as `Canvas content`. The derived request type is frozen into queue/provenance data; only contextual reasons such as disabled denoising are exposed to the user.
+
 If color matching is needed later, design it as a Smart Patch/compositing behavior such as `Match source colors`, not as an always-visible global generation toggle.
 
 ## Model-Aware Visibility

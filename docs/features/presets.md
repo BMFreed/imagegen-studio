@@ -42,17 +42,17 @@ The left Generate panel should include a compact preset block:
 
 ```text
 Preset
-[ Apply preset...                          v ]
+[ Apply preset... ] [ Manage ] [ Save current ]
 ```
 
-The dropdown should include:
+The teleported chooser opened by `Apply preset...` should include:
 
 - search input;
 - preset rows with name and short section badges;
 - workflow/type badge when useful, for example `Text to Image`, `Image to Image`, `Smart Patch`;
 - warning badge when required resources are missing;
-- `Manage Presets`;
-- `Save Current as Preset`.
+
+`Manage Presets` and `Save Current as Preset` remain visible sibling actions with explicit tooltips; they are not entries hidden in the chooser.
 
 Workflow labels use plain, human-facing wording in Title Case as standalone labels:
 
@@ -78,15 +78,15 @@ Seed
 VAE
 ```
 
-Avoid technical wording like `payload`, `workflow_type`, `resource ref` or `provenance schema` in the user-facing selector.
+Avoid technical wording like `payload`, `workflow_type`, `resource ref` or `provenance schema` in the user-facing chooser.
 
 ## Apply Preview
 
-Clicking a preset row in the Project / Generate selector opens the dedicated `Apply Preset` modal.
+Clicking a preset row in the Project / Generate chooser opens the dedicated `Apply Preset` modal.
 
-Apply preview is a Project-scoped surface. It is reached from the Project / Generate compact preset selector after the user has already chosen a preset. It is not opened from the Preset Manager. The preview must show the current project as its backdrop so the user can see what they are applying into.
+Apply preview is a Project-scoped surface. It is reached from the Project / Generate preset action after the user has already chosen a preset. It is not opened from the Preset Manager. The preview must show the current project as its backdrop so the user can see what they are applying into.
 
-The preset selector itself is not repeated inside the apply preview. By the time the preview opens, the preset is already chosen and its name is shown in the preview header. Re-showing the selector would duplicate the selection step.
+The preset chooser itself is not repeated inside the apply preview. By the time the preview opens, the preset is already chosen and its name is shown in the preview header. Re-showing the chooser would duplicate the selection step.
 
 The preview shows:
 
@@ -173,7 +173,7 @@ Open entry points:
 
 - `Manage Presets` in the Home sidebar Tools area;
 - app menu / `Project > Presets`;
-- `Manage Presets` in the Project preset selector;
+- `Manage Presets` beside the Project preset action;
 - `Save Current as Preset`, which opens create mode with a project-derived draft;
 - accepted-result actions like `Save Preset from Result`.
 
@@ -252,7 +252,7 @@ Preset import and export are not planned for MVP. The manager does not show impo
 Preset surfaces split by ownership so the user always has the right context for the action:
 
 - App-level (`Preset Manager`): browse, manually create and edit presets. In its normal mode it has no current-project context.
-- Project-level (`Project` / `Generate`): the compact preset selector and editable `Apply Preset` preview. `Save Current as Preset` is launched here and opens the shared Preset Manager editor in project-derived create mode, with the project retained as its backdrop.
+- Project-level (`Project` / `Generate`): the compact preset action launcher and editable `Apply Preset` preview. `Save Current as Preset` is launched here and opens the shared Preset Manager editor in project-derived create mode, with the project retained as its backdrop.
 - Home project creation: `New Project` may clone a Text to Image preset into a detached initialization payload through the same `PresetPayloadEditor`; this does not turn Home into a preset-editing surface.
 
 A preset action must not require the user to jump from the project surface to the app surface (or back) just to complete it. Saving and applying happen where the settings are visible.

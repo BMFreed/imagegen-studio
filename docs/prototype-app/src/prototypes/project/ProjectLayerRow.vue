@@ -1,20 +1,34 @@
 <script setup lang="ts">
-import { Copy, Eye, EyeOff, Lock, LockOpen, Refresh, Trash } from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
+import { Copy, DotsVertical, Eye, EyeOff, Lock, LockOpen, Refresh, Trash } from '@vicons/tabler';
+import { NButton, NDropdown, NIcon } from 'naive-ui';
 
 import type { ProjectCompositingLayer } from './project.types';
 
 import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue';
 
 defineProps<{ layer: ProjectCompositingLayer; selected: boolean }>();
-defineEmits<{
+const emit = defineEmits<{
   duplicate: [];
+  moveDown: [];
+  moveUp: [];
   remove: [];
   select: [];
   toggleLock: [];
   toggleVisible: [];
   variants: [];
 }>();
+
+const moveOptions = [
+  { key: 'up', label: 'Move up' },
+  { key: 'down', label: 'Move down' },
+];
+function move(key: number | string) {
+  if (key === 'up') {
+    emit('moveUp');
+  } else {
+    emit('moveDown');
+  }
+}
 
 function layerTone(layer: ProjectCompositingLayer) {
   return layer.kind === 'raster'
@@ -36,7 +50,7 @@ function layerTone(layer: ProjectCompositingLayer) {
     <NButton
       :aria-label="`Select ${layer.name}`"
       class="selection-button"
-      quaternary
+      text
       @click="$emit('select')"
     >
       <span
@@ -85,18 +99,30 @@ function layerTone(layer: ProjectCompositingLayer) {
       @click="$emit('remove')"
       ><template v-slot:icon><NIcon :component="Trash" /></template
     ></NButton>
+    <NDropdown :options="moveOptions" trigger="click" @select="move">
+      <NButton :aria-label="`Layer actions for ${layer.name}`" circle quaternary size="small"
+        ><template v-slot:icon><NIcon :component="DotsVertical" /></template
+      ></NButton>
+    </NDropdown>
   </article>
 </template>
 
 <style scoped>
 .layer-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) repeat(4, auto);
+  grid-template-columns: auto minmax(0, 1fr) repeat(5, auto);
   align-items: center;
   min-width: 0;
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+.layer-row:hover {
+  border-color: color-mix(in srgb, var(--app-text-muted) 35%, transparent);
+  background: var(--app-surface-soft);
 }
 .layer-row--selected {
   border-color: color-mix(in srgb, var(--workspace-green) 75%, transparent);
@@ -104,7 +130,7 @@ function layerTone(layer: ProjectCompositingLayer) {
 .selection-button {
   min-width: 0;
   width: 100%;
-  height: 54px;
+  height: 48px;
   justify-content: start;
   padding: 4px 6px;
 }
@@ -117,9 +143,9 @@ function layerTone(layer: ProjectCompositingLayer) {
 }
 .layer-thumb {
   position: relative;
-  flex: 0 0 36px;
-  width: 36px;
-  height: 36px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 2px;
@@ -130,6 +156,7 @@ function layerTone(layer: ProjectCompositingLayer) {
 }
 .layer-info {
   display: grid;
+  gap: 2px;
   flex: 1 1 auto;
   min-width: 0;
   text-align: left;
@@ -142,5 +169,9 @@ function layerTone(layer: ProjectCompositingLayer) {
 }
 .layer-info small {
   color: var(--app-text-muted);
+  line-height: 1.25;
+}
+.layer-info strong {
+  line-height: 1.2;
 }
 </style>

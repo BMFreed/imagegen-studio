@@ -124,7 +124,7 @@ function getTabProps(tab: DocumentTabModel, index: number): HTMLAttributes {
 <style scoped>
 .document-tabs {
   min-width: 0;
-  height: 40px;
+  height: var(--app-tabs-height);
   overflow: hidden;
   background: var(--app-chrome);
   border-bottom: 1px solid var(--app-border);
@@ -132,16 +132,16 @@ function getTabProps(tab: DocumentTabModel, index: number): HTMLAttributes {
 }
 
 .document-tabs-control {
-  height: 40px;
+  height: var(--app-tabs-height);
 }
 
 .document-tabs-control :deep(.n-tabs-nav) {
-  height: 40px;
+  height: var(--app-tabs-height);
 }
 
 .document-tabs-control :deep(.n-tabs-tab) {
-  min-width: 156px;
-  max-width: 270px;
+  min-width: 144px;
+  max-width: 250px;
   padding: 0;
 }
 
@@ -156,20 +156,20 @@ function getTabProps(tab: DocumentTabModel, index: number): HTMLAttributes {
   gap: 7px;
   width: 100%;
   min-width: 0;
-  height: 32px;
-  padding-left: 10px;
+  height: 28px;
+  padding-left: 8px;
 }
 
 .tab-leading {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .tab-leading :deep(.n-icon) {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .workspace-marker {

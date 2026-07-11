@@ -159,6 +159,42 @@ test.describe('Model Manager prototype', () => {
       .toBeGreaterThan(detailsBefore!.width + 30);
   });
 
+  test('keeps list, details and install progress inside a short manager viewport', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ height: 600, width: 1280 });
+    await openModelManager(page);
+
+    const shell = await page.locator('.manager-shell').boundingBox();
+    expect(shell!.y).toBeGreaterThanOrEqual(15);
+    expect(shell!.y + shell!.height).toBeLessThanOrEqual(585);
+
+    const body = await page.locator('.manager-body').boundingBox();
+    const resourceContent = await page.locator('.resource-content').boundingBox();
+    const details = await page.locator('.manager-column--details').boundingBox();
+    const install = await page.locator('.install-strip').boundingBox();
+    expect(resourceContent!.y + resourceContent!.height).toBeCloseTo(body!.y + body!.height, 0);
+    expect(details!.y + details!.height).toBeCloseTo(body!.y + body!.height, 0);
+    expect(install!.y + install!.height).toBeCloseTo(
+      resourceContent!.y + resourceContent!.height,
+      0,
+    );
+    expect(install!.height).toBeLessThanOrEqual(58);
+
+    const resourceScrolls = await page
+      .locator('.resource-scroll .n-scrollbar-container')
+      .evaluateAll((containers) =>
+        containers.map((container) => container.scrollHeight > container.clientHeight),
+      );
+    expect(resourceScrolls.some(Boolean)).toBe(true);
+    const detailsScrolls = await page
+      .locator('.details-panel .n-scrollbar-container')
+      .evaluateAll((containers) =>
+        containers.map((container) => container.scrollHeight > container.clientHeight),
+      );
+    expect(detailsScrolls.some(Boolean)).toBe(true);
+  });
+
   test('captures import dialog', async ({ page }) => {
     await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);

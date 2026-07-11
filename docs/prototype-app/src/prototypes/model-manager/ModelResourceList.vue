@@ -159,6 +159,7 @@ const sortOptions = [
 
 .resource-scroll {
   min-height: 0;
+  height: 100%;
 }
 
 .resource-list {
@@ -176,8 +177,8 @@ const sortOptions = [
     'subtitle actions';
   align-items: center;
   gap: 2px 12px;
-  min-height: 70px;
-  padding: 8px 14px;
+  min-height: 56px;
+  padding: 4px 14px;
   border-top: 1px solid var(--app-border);
   background: var(--app-surface);
 }
@@ -188,6 +189,7 @@ const sortOptions = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .install-progress {
@@ -201,6 +203,7 @@ const sortOptions = [
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .install-actions {

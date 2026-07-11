@@ -44,6 +44,41 @@ test.describe('Project prototype', () => {
     await expect(page.getByRole('button', { name: 'Bounding Box' })).toBeHidden();
   });
 
+  test('uses the compact global density and unified Project surfaces', async ({ page }) => {
+    await page.setViewportSize({ height: 800, width: 1280 });
+    await openProject(page);
+
+    await expect(page.locator('.app-chrome')).toHaveCSS('height', '32px');
+    await expect(page.locator('.document-tabs')).toHaveCSS('height', '34px');
+    await expect(page.getByRole('button', { name: 'File' })).toHaveCSS('font-size', '12px');
+
+    const workspace = await page.getByLabel('Project canvas workspace').boundingBox();
+    const footer = await page.locator('.viewport-bar').boundingBox();
+    expect(footer!.y + footer!.height).toBeCloseTo(workspace!.y + workspace!.height, 0);
+    expect(footer!.height).toBeLessThanOrEqual(32);
+
+    const cardWeights = await page
+      .locator('.settings-stack .n-card-header__main')
+      .evaluateAll((headers) =>
+        headers.map((header) => Number(getComputedStyle(header).fontWeight)),
+      );
+    expect(cardWeights.length).toBeGreaterThan(4);
+    expect(cardWeights.every((weight) => weight >= 600)).toBe(true);
+
+    const layer = page.locator('.layer-row').filter({ hasText: 'Portrait Base' });
+    const selection = page.getByRole('button', { name: 'Select Portrait Base' });
+    await layer.hover();
+    await expect(selection).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(page.locator('.tool-rail').first()).toHaveCSS(
+      'background-color',
+      'rgba(0, 0, 0, 0)',
+    );
+    await expect(page.locator('.tool-rail .n-button').first()).not.toHaveCSS(
+      'background-color',
+      'rgba(0, 0, 0, 0)',
+    );
+  });
+
   test('switches contextual tools for Smart Patch and Regional Guidance', async ({ page }) => {
     await openProject(page, 'smart-patch');
     await expect(page.getByRole('button', { name: 'Bounding Box' })).toBeVisible();
@@ -58,10 +93,13 @@ test.describe('Project prototype', () => {
 
   test('shows empty and error generation states', async ({ page }) => {
     await openProject(page, 'empty-project');
-    await expect(page.getByText('Text to Image · Empty canvas').first()).toBeVisible();
+    await expect(page.getByText(/Text to Image|Image to Image|Canvas content/)).toHaveCount(0);
     await expect(
       page.getByLabel('Denoising Strength', { exact: true }).locator('input'),
     ).toBeDisabled();
+    await expect(
+      page.getByText('Available when the generation area contains visible raster content.').first(),
+    ).toBeVisible();
 
     await openProject(page, 'errors');
     await expect(page.getByText('Selected model is missing')).toBeVisible();
@@ -118,10 +156,7 @@ test.describe('Project prototype', () => {
   test('opens preset and model flows over the mounted Project', async ({ page }) => {
     await openProject(page);
     await page.getByLabel('Apply preset').click();
-    await page
-      .locator('.n-base-select-option')
-      .filter({ hasText: 'Studio Portrait Soft Light' })
-      .click();
+    await page.getByRole('button', { name: /Studio Portrait Soft Light/ }).click();
     await expect(page.getByRole('dialog', { name: /Apply Preset/ })).toBeVisible();
     await page.getByRole('button', { name: 'Close Apply Preset' }).click();
 
@@ -130,6 +165,94 @@ test.describe('Project prototype', () => {
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Manage Models' }).click();
     await expect(page.getByRole('heading', { name: 'Model Manager' })).toBeVisible();
+  });
+
+  test('resizes both side panels without losing their bounds', async ({ page }) => {
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await openProject(page);
+    const panels = page.locator('.project-prototype .n-split__resize-trigger');
+    await expect(panels).toHaveCount(2);
+    const leftPanel = page.getByLabel('Generate settings');
+    const rightPanel = page.getByLabel('Layers and selected item');
+    const leftBefore = await leftPanel.boundingBox();
+    const leftHandle = await panels.nth(0).boundingBox();
+    expect(leftBefore && leftHandle).toBeTruthy();
+    await page.mouse.move(leftHandle!.x + 2, leftHandle!.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(leftHandle!.x + 70, leftHandle!.y + 20, { steps: 8 });
+    await page.mouse.up();
+    const leftAfter = await leftPanel.boundingBox();
+    expect(leftAfter!.width).toBeGreaterThan(leftBefore!.width + 40);
+    expect(leftAfter!.width).toBeLessThanOrEqual(425);
+
+    const rightBefore = await rightPanel.boundingBox();
+    const rightHandle = await panels.nth(1).boundingBox();
+    await page.mouse.move(rightHandle!.x + 2, rightHandle!.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(rightHandle!.x - 60, rightHandle!.y + 20, { steps: 8 });
+    await page.mouse.up();
+    const rightAfter = await rightPanel.boundingBox();
+    expect(rightAfter!.width).toBeGreaterThan(rightBefore!.width + 35);
+    expect(rightAfter!.width).toBeLessThanOrEqual(445);
+  });
+
+  test('accepts arbitrary generation counts within the prototype limit', async ({ page }) => {
+    await openProject(page, 'empty-project');
+    const count = page.getByLabel('Images per click').locator('input');
+    await count.fill('7');
+    await count.press('Enter');
+    await page.getByRole('button', { name: 'Generate' }).click();
+    await page.getByLabel('Project prototype').getByLabel('Generation queue').click();
+    await expect(page.getByLabel('Project generation queue').locator('.queue-item')).toHaveCount(7);
+  });
+
+  test('edits prompt attention and previews dynamic prompt pairs', async ({ page }) => {
+    await openProject(page);
+    const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' });
+    await prompt.fill('portrait with {red|blue} light');
+    await prompt.evaluate((element: HTMLTextAreaElement) => {
+      element.setSelectionRange(0, 8);
+      element.dispatchEvent(new Event('select', { bubbles: true }));
+    });
+    await page.getByLabel('Increase prompt attention').first().click();
+    await expect(prompt).toHaveValue('(portrait)+ with {red|blue} light');
+    await page.getByLabel('Preview dynamic prompt').first().click();
+    const preview = page.getByRole('dialog', { name: 'Dynamic Prompt Preview' });
+    await expect(preview).toContainText('2 concrete prompt pairs');
+    await preview.getByRole('button', { name: 'Close' }).click();
+  });
+
+  test('supports aspect presets, locking and compact size actions', async ({ page }) => {
+    await openProject(page);
+    await page.getByLabel('Aspect ratio', { exact: true }).click();
+    await page.locator('.n-base-select-option').filter({ hasText: '16:9' }).click();
+    await expect(page.getByLabel('Aspect ratio preview')).toBeVisible();
+    await expect(page.getByLabel('Unlock aspect ratio')).toBeVisible();
+    await page.getByLabel('Swap canvas dimensions').click();
+    await expect(page.getByLabel('Aspect ratio', { exact: true })).toContainText('9:16');
+    await page.getByLabel('Fit canvas to visible layers').click();
+    await expect(page.getByLabel('Aspect ratio', { exact: true })).toContainText('Free');
+  });
+
+  test('reorders layers with pointer drag and keeps move actions in the menu', async ({ page }) => {
+    await openProject(page);
+    const source = page.getByRole('button', { name: 'Select Highlight Pass' });
+    const target = page.getByRole('button', { name: 'Select Portrait Base' });
+    const sourceBox = await source.boundingBox();
+    const targetBox = await target.boundingBox();
+    await page.mouse.move(sourceBox!.x + 60, sourceBox!.y + sourceBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(targetBox!.x + 60, targetBox!.y + targetBox!.height - 2, { steps: 12 });
+    await page.mouse.up();
+    const labels = await page
+      .getByLabel('Compositing Layers')
+      .locator('button[aria-label^="Select "]')
+      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')));
+    expect(labels.indexOf('Select Highlight Pass')).toBeGreaterThan(
+      labels.indexOf('Select Portrait Base'),
+    );
+    await page.getByLabel('Layer actions for Highlight Pass').click();
+    await expect(page.getByText('Move up', { exact: true })).toBeVisible();
   });
 
   test('opens a real Project from Home and preserves tab state', async ({ page }) => {

@@ -61,7 +61,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - no `Launchpad`, `Viewer` or permanent Boards sidebar inside Generate;
 - no `Choose Prompt Template` dropdown copied from Invoke;
 - prompt templates/settings templates are handled by the Presets feature;
-- Generate uses a compact Invoke-like preset selector above the prompt editor, but selecting a preset opens apply preview and supports partial apply instead of silently overwriting settings;
+- Generate uses a compact `Apply preset...` action launcher above the settings stack; choosing a preset opens apply preview, copies selected values and does not persist a preset identity in Project;
 - no standalone inpaint mask layers;
 - Smart Patch Layer owns its mask, layer-owned bounding box, internal resolution and raster sub-layers;
 - LoRAs and Embeddings are separate Generation sections, not one shared `Concepts` menu;
@@ -122,11 +122,11 @@ Project: portrait.igs
 │               │                             │ selected item  │
 │ Create        │ Project Canvas frame        │                │
 │               │ canvas-area overlays        │ layer stack    │
-│ Presets       │ masks                       │ regional       │
-│ Prompts       │ raster layers               │ guidance       │
-│ Size          │ raster layers               │ smart patch    │
-│ Generation    │ raster layers               │ smart patch    │
-│ Dynamic       │ regional guidance regions   │ sub-layers     │
+│ Preset action │ masks                       │ regional       │
+│ Size          │ raster layers               │ guidance       │
+│ Prompts       │ raster layers               │ smart patch    │
+│ LoRA/embed.   │ raster layers               │ smart patch    │
+│ Generation    │ regional guidance regions   │ sub-layers     │
 │ Compositing   │ GenerationResults tray      │ provenance     │
 └───────────────┴─────────────────────────────┴────────────────┘
 ```
@@ -147,10 +147,10 @@ Stable query scenarios are:
 - `smart-patch` — a selected self-contained Smart Patch with mask, bbox and accepted variants;
 - `regional-guidance` — selected regional conditioning with prompt, reference image and compatibility warning;
 - `staging` — completed and running queue items with multi-selected temporary candidates;
-- `empty-project` — transparent canvas with derived Text to Image mode and disabled denoising;
+- `empty-project` — transparent canvas with no raster input and disabled denoising;
 - `errors` — local model, LoRA, prompt, candidate, Smart Patch and save error states.
 
-The prototype uses a three-panel editor shell with resizable and collapsible side panels. Generation settings are stacked cards in one independently scrolling left panel; they do not reuse the modal accordion layout. The central canvas is a deterministic DOM/CSS simulation rather than a Konva or raster engine, while zoom, pan, contextual tools, bbox/canvas overlays and staging preview remain interactive enough to validate the workflow.
+The prototype uses a three-panel editor shell with resizable and collapsible side panels. Generation settings are stacked cards in one independently scrolling left panel; they do not reuse the modal accordion layout. Project follows the app-wide 12px density foundation, uses consistent semibold card headings and keeps the compact viewport bar flush with the bottom of the canvas workspace. The central canvas is a deterministic DOM/CSS simulation rather than a Konva or raster engine, while zoom, pan, contextual tools, bbox/canvas overlays and staging preview remain interactive enough to validate the workflow.
 
 Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shortcuts. Queue progress and temporary candidate selection are deliberately excluded from document history; accepting candidates creates one grouped persistent mutation.
 
@@ -159,12 +159,12 @@ Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shor
 - User can open a `.igs` Project tab and work in visible mode `Create` backed by domain mode `generate`.
 - Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
-- Preset actions exist through the explicit compact selector/apply preview workflow described in [Presets](../../presets.md).
+- Preset actions exist through the explicit action launcher/apply-preview workflow described in [Presets](../../presets.md), and Project never retains a selected preset identity.
 - Project does not show a separate title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
 - `GenerationResults` supports focused preview plus explicit multi-selection and never auto-commits completed outputs.
 - left and right panels can be resized, collapsed and restored without losing Project UI state;
 - the fixed Generate footer remains visible while stacked settings scroll independently;
-- automatic Text to Image, Image to Image, Inpaint and Outpaint summaries explain the derived mode without exposing a manual mode switch;
+- txt2img/img2img/inpaint/outpaint remain internal request-building states; the UI explains only control availability and never asks the user to choose or monitor a workflow label;
 - accepted Project candidates become independent Raster Layers, while accepted Smart Patch candidates become variants owned by that layer;
 - Project UI state survives document-tab switching within the prototype session;
 - Upscale behavior is explicitly outside the current Project prototype pass.

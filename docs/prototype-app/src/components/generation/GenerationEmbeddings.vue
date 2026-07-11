@@ -25,6 +25,15 @@ function add(id: string | null) {
 
 <template>
   <div class="embedding-editor">
+    <NSelect
+      v-model:value="selectedId"
+      aria-label="Add Embedding"
+      clearable
+      :disabled
+      :options
+      placeholder="Add Embedding"
+      @update:value="add"
+    />
     <div class="embedding-list">
       <NTag
         v-for="(embedding, index) of embeddings"
@@ -35,15 +44,6 @@ function add(id: string | null) {
         >{{ embedding.name }}</NTag
       >
     </div>
-    <NSelect
-      v-model:value="selectedId"
-      aria-label="Add Embedding"
-      clearable
-      :disabled
-      :options
-      placeholder="Add Embedding"
-      @update:value="add"
-    />
   </div>
 </template>
 

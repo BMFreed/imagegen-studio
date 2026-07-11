@@ -16,7 +16,7 @@ Secondary reference: Forge prompt toolbar ideas, limited to useful actions such 
 
 Use an ImageGen Studio-native prompt editor. Do not copy Invoke's `Choose Prompt Template` dropdown.
 
-Prompt templates/settings templates belong to [Presets](../../presets.md). Generate exposes presets through a compact selector above the prompt editor, while direct prompt writing remains the main UI.
+Prompt templates/settings templates belong to [Presets](../../presets.md). Generate exposes presets through an `Apply preset...` action above the settings stack, while direct prompt writing remains the main UI.
 
 ## Scope
 
@@ -61,13 +61,17 @@ Prompt editor status area should contain:
 
 Allowed preset-related affordances in Generate:
 
-- compact `Preset` selector above the prompt editor;
+- compact `Apply preset...` action launcher;
 - `Apply Preset` through apply preview;
 - `Save Current as Preset`;
 - `Recall Settings from Result`;
 - missing-resource warnings after applying a preset.
 
 These actions must be visually distinct from direct prompt editing.
+
+Positive and negative prompts expose the same helper actions: increase/decrease attention, tag insertion, dynamic preview, copy and clear. Attention uses Invoke-like `+` / `-` suffixes, wraps multi-word selections, recognizes numeric weights and supports `Ctrl/Cmd+Up` and `Ctrl/Cmd+Down`.
+
+Prompt typing is grouped as one undo transaction from focus to blur. Helper actions are separate named undo operations rather than generating history entries for each character.
 
 ## Acceptance Criteria
 

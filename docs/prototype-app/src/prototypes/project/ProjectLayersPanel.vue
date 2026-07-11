@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronUp, Eye, EyeOff, Plus, Trash } from '@vicons/tabler';
+import { Eye, EyeOff, Plus, Trash } from '@vicons/tabler';
+import { DnDProvider } from '@vue-dnd-kit/core';
 import {
   NAlert,
   NButton,
@@ -7,7 +8,6 @@ import {
   NIcon,
   NInput,
   NInputNumber,
-  NScrollbar,
   NSelect,
   NSwitch,
   NTag,
@@ -18,9 +18,10 @@ import type { ProjectCompositingLayer, ProjectSession } from './project.types';
 
 import { commitProjectMutation } from './project-history';
 import { getSelectedEntity } from './project.utils';
-import ProjectLayerRow from './ProjectLayerRow.vue';
+import ProjectLayerStack from './ProjectLayerStack.vue';
 
 const props = defineProps<{ session: ProjectSession }>();
+const panelScroll = ref<HTMLElement | null>(null);
 const variantLayerId = ref<string>();
 const selected = computed(() => getSelectedEntity(props.session));
 const selectedLayer = computed(() =>
@@ -61,6 +62,7 @@ function addLayer(kind: 'raster' | 'smart-patch') {
             id,
             kind,
             locked: false,
+            mockCoverage: 'partial',
             name: 'New Raster Layer',
             opacity: 100,
             tone: 'blue',
@@ -137,7 +139,7 @@ function addRegional() {
 
 <template>
   <aside aria-label="Layers and selected item" class="layers-panel">
-    <NScrollbar>
+    <div ref="panelScroll" class="panel-scroll">
       <div class="panel-stack">
         <section aria-label="Regional Guidance">
           <header class="section-header">
@@ -223,50 +225,26 @@ function addRegional() {
               ></span
             >
           </header>
-          <div class="layer-list">
-            <div
-              v-for="(layer, index) of session.document.layers"
-              :key="layer.id"
-              class="layer-with-order"
-            >
-              <ProjectLayerRow
-                :layer
-                :selected="session.ui.selection?.id === layer.id"
-                @duplicate="duplicate(layer)"
-                @remove="remove(layer)"
-                @select="session.ui.selection = { id: layer.id, kind: 'compositing-layer' }"
-                @toggleLock="
-                  mutateLayer(layer, 'Toggle lock', (target) => (target.locked = !target.locked))
-                "
-                @toggleVisible="
-                  mutateLayer(
-                    layer,
-                    'Toggle visibility',
-                    (target) => (target.visible = !target.visible),
-                  )
-                "
-                @variants="variantLayerId = layer.id"
-              />
-              <span class="order-actions"
-                ><NButton
-                  :aria-label="`Move ${layer.name} up`"
-                  circle
-                  :disabled="index === 0"
-                  quaternary
-                  size="tiny"
-                  @click="move(layer, -1)"
-                  ><NIcon :component="ChevronUp" /></NButton
-                ><NButton
-                  :aria-label="`Move ${layer.name} down`"
-                  circle
-                  :disabled="index === session.document.layers.length - 1"
-                  quaternary
-                  size="tiny"
-                  @click="move(layer, 1)"
-                  ><NIcon :component="ChevronDown" /></NButton
-              ></span>
-            </div>
-          </div>
+          <DnDProvider :autoScrollViewport="false">
+            <ProjectLayerStack
+              :scrollContainer="panelScroll"
+              :session
+              @duplicate="duplicate"
+              @move="move"
+              @remove="remove"
+              @toggleLock="
+                mutateLayer($event, 'Toggle lock', (target) => (target.locked = !target.locked))
+              "
+              @toggleVisible="
+                mutateLayer(
+                  $event,
+                  'Toggle visibility',
+                  (target) => (target.visible = !target.visible),
+                )
+              "
+              @variants="variantLayerId = $event.id"
+            />
+          </DnDProvider>
         </section>
 
         <NCard v-if="selectedLayer" size="small" :title="selectedLayer.name">
@@ -331,7 +309,7 @@ function addRegional() {
           </div>
         </NCard>
       </div>
-    </NScrollbar>
+    </div>
 
     <div v-if="variantLayer?.kind === 'smart-patch'" class="variant-popover">
       <header>
@@ -365,10 +343,14 @@ function addRegional() {
   background: var(--app-surface);
   border-left: 1px solid var(--app-border);
 }
+.panel-scroll {
+  height: 100%;
+  overflow: auto;
+}
 .panel-stack {
   display: grid;
-  gap: 14px;
-  padding: 12px;
+  gap: 10px;
+  padding: 8px;
 }
 .section-header,
 .section-header span,
@@ -378,25 +360,6 @@ function addRegional() {
   justify-content: space-between;
   gap: 5px;
   min-height: 30px;
-}
-.layer-list {
-  display: grid;
-  gap: 5px;
-}
-.layer-with-order {
-  position: relative;
-  min-width: 0;
-}
-.order-actions {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  display: none;
-  padding: 1px;
-  background: var(--app-elevated);
-}
-.layer-with-order:hover .order-actions {
-  display: flex;
 }
 .regional-row {
   display: grid;

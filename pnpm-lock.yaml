@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@vue-dnd-kit/core':
+        specifier: 2.4.6
+        version: 2.4.6(vue@3.5.39(typescript@6.0.3))
       naive-ui:
         specifier: ^2.44.1
         version: 2.44.1(vue@3.5.39(typescript@6.0.3))
@@ -550,6 +553,11 @@ packages:
 
   '@volar/typescript@2.4.28':
     resolution: {integrity: sha512-Ja6yvWrbis2QtN4ClAKreeUZPVYMARDYZl9LMEv1iQ1QdepB6wn0jTRxA9MftYmYa4DQ4k/DaSZpFPUfxl8giw==}
+
+  '@vue-dnd-kit/core@2.4.6':
+    resolution: {integrity: sha512-MnfO05RTGyhxq0d0VmkPHoBbwa7U1Yt8MtE1s8ngnu9uyI3RC1t0IIi4/ULABDuTr6957IueYWHSdAt9hRZXqQ==}
+    peerDependencies:
+      vue: ^3.5.13
 
   '@vue/compiler-core@3.5.39':
     resolution: {integrity: sha512-16KBTEXAJCpDr0mwlw+AZyhu8iyC7R3S2vBwsI7QnWJU6X3WKc9VKeNEZpiMdZ569qWhz9574L3vV55qRL0Vtw==}
@@ -2684,6 +2692,10 @@ snapshots:
       '@volar/language-core': 2.4.28
       path-browserify: 1.0.1
       vscode-uri: 3.1.0
+
+  '@vue-dnd-kit/core@2.4.6(vue@3.5.39(typescript@6.0.3))':
+    dependencies:
+      vue: 3.5.39(typescript@6.0.3)
 
   '@vue/compiler-core@3.5.39':
     dependencies:

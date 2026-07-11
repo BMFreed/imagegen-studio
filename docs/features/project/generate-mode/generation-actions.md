@@ -29,13 +29,13 @@ Pressing `Generate` does not call the worker directly. It creates one or more Qu
 In the current Project UI, generation commands live in a fixed footer at the bottom of the left settings panel:
 
 ```text
-[ Generate ] [ 1 v ] [ ... ] [ x ]
+[ Generate ] [ 1 ] [ Queue ] [ x ]
 ```
 
 Rules:
 
 - `Generate` starts one batch from the current frozen project/generation state;
-- the count selector controls how many images are generated per click;
+- the integer count input accepts any value from 1 through 100 and controls iterations per concrete prompt;
 - `...` opens queue/actions menu with `Open Queue` and relevant cleanup/cancel actions;
 - `x` is the visible cancel-current-generation action and must not be hidden inside the menu.
 

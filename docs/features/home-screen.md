@@ -132,7 +132,9 @@ ImageGen Studio should use a custom Electron titlebar/chrome similar to T3Code:
 
 The HTML prototype may draw static window-control buttons so the layout communicates the intended chrome. That visual placeholder does not override the Electron implementation rule above.
 
-The horizontal app logo lives in the menu row. The menu row should be tall enough, around 40px, for the logo to stay legible without making the chrome feel heavy.
+The horizontal app logo lives in the menu row. The current desktop density uses a 32px menu row and a 34px document-tab row. The logo is scaled to remain legible inside that compact chrome instead of reserving editor space for a 40px toolbar.
+
+The Vue prototype uses a global 12px body/control foundation, 11px metadata and larger explicit section/dialog headings. This density applies across Home, Project and manager overlays so switching surfaces does not change the apparent UI scale.
 
 Document tab markers use the source workspace color:
 

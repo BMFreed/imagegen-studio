@@ -38,6 +38,15 @@ function add(resourceId: string | null) {
 
 <template>
   <div class="lora-stack">
+    <NSelect
+      v-model:value="selectedResourceId"
+      aria-label="Add LoRA"
+      clearable
+      :disabled
+      :options
+      placeholder="Add LoRA"
+      @update:value="add"
+    />
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
       <NSwitch
         v-model:value="lora.enabled"
@@ -68,15 +77,6 @@ function add(resourceId: string | null) {
         <template v-slot:icon><NIcon :component="TrashIcon" /></template>
       </NButton>
     </article>
-    <NSelect
-      v-model:value="selectedResourceId"
-      aria-label="Add LoRA"
-      clearable
-      :disabled
-      :options
-      placeholder="Add LoRA"
-      @update:value="add"
-    />
   </div>
 </template>
 

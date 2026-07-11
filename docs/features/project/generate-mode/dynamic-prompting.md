@@ -14,6 +14,8 @@ Include Invoke-like dynamic prompting in Generate. Do not include wildcard files
 
 Dynamic prompting is prompt expansion logic. It does not imply A1111 wildcard packs, external wildcard folders or wildcard autocomplete.
 
+Dynamic prompting is reached from the positive or negative prompt toolbar. It is not a permanent settings card. The preview modal expands positive and negative prompts into concrete pairs before queueing.
+
 ## Scope
 
 MVP:
@@ -35,6 +37,9 @@ Rejected:
 - wildcard file expansion;
 - wildcard database management;
 - external wildcard pack import.
+- nested brace expressions in the current prototype.
+
+The current prototype supports non-nested brace alternatives such as `{red|green|blue}`. Multiple groups use deterministic Cartesian expansion. `maxPrompts` defaults to 100 and the combined expanded-prompts × iterations batch is capped at 100 prototype jobs.
 
 ## Seed Behavior
 

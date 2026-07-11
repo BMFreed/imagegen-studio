@@ -5,6 +5,23 @@ export type ProjectScenarioId =
 
 export type ProjectArtworkTone = 'blue' | 'emerald' | 'rose' | 'violet';
 export type DerivedGenerationMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img';
+export type ProjectAspectRatioId =
+  | '1:1'
+  | '1:4'
+  | '1:8'
+  | '16:9'
+  | '2:3'
+  | '21:9'
+  | '3:2'
+  | '3:4'
+  | '4:1'
+  | '4:3'
+  | '4:5'
+  | '5:4'
+  | '8:1'
+  | '9:16'
+  | '9:21'
+  | 'free';
 export type ProjectTool =
   | 'bbox'
   | 'brush'
@@ -25,9 +42,20 @@ export interface ProjectRect {
 
 export interface ProjectGenerationDraft {
   cfgRescale: number;
-  dynamicPrompting: boolean;
+  dynamicPrompt: ProjectDynamicPromptSettings;
   payload: GenerationPayload;
   vaePrecision: 'Auto' | 'FP16' | 'FP32';
+}
+
+export interface ProjectDynamicPromptSettings {
+  maxPrompts: number;
+  seedBehavior: 'per-iteration' | 'per-prompt';
+}
+
+export interface ProjectAspectRatioState {
+  id: ProjectAspectRatioId;
+  locked: boolean;
+  value: number;
 }
 
 export interface ProjectRasterLayer {
@@ -35,6 +63,8 @@ export interface ProjectRasterLayer {
   id: string;
   kind: 'raster';
   locked: boolean;
+  /** Prototype-only approximation of real compositor alpha coverage. */
+  mockCoverage: 'opaque' | 'partial';
   name: string;
   opacity: number;
   tone: ProjectArtworkTone;
@@ -110,9 +140,13 @@ export interface GenerationStagingSession {
 }
 
 export interface ProjectQueueItem {
+  derivedMode: DerivedGenerationMode;
   id: string;
+  iteration: number;
   label: string;
+  negativePrompt: string;
   progress: number;
+  prompt: string;
   status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running';
 }
 
@@ -128,12 +162,13 @@ export interface ProjectHistoryState {
 export interface ProjectUiState {
   activeTool: ProjectTool;
   applyPresetOpen: boolean;
+  aspectRatio: ProjectAspectRatioState;
   leftCollapsed: boolean;
-  leftSize: number | string;
+  leftWidth: number;
   notice?: { text: string; type: 'error' | 'success' };
   queueOpen: boolean;
   rightCollapsed: boolean;
-  rightSize: number | string;
+  rightWidth: number;
   selection: ProjectEntitySelection;
   viewport: { offsetX: number; offsetY: number; scale: number };
 }

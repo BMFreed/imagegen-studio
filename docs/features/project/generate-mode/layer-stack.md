@@ -46,6 +46,10 @@ Layer stack behavior:
 - blend mode;
 - selected-entity action bar.
 
+Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the full layer selection surface after a small movement threshold; visibility and row action buttons are sibling controls and never start a drag. The insertion line and drag preview communicate the target, and the right panel auto-scrolls near its edges.
+
+One completed drop creates one grouped `Reorder layers` undo entry. No document mutation occurs during hover. `Move up` and `Move down` remain in the row overflow menu as a keyboard fallback; permanent hover arrows are not shown.
+
 ## Layer Row Controls
 
 Use the same row-control layout for Raster Layer, Smart Patch Layer and Regional Guidance Layer unless a layer type has a strong reason to differ.
@@ -129,5 +133,6 @@ Regional Guidance Layer owns its region/mask. The mask is not a standalone layer
 - Regional Guidance Layer mask ownership is explicit and non-shared.
 - Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
 - Layer selection and sibling actions use valid non-nested interactive semantics.
+- Raster and Smart Patch Layers can be reordered by pointer DnD, with overflow move actions as the keyboard fallback.
 - Only one raster sub-layer inside one Smart Patch Layer can be active at a time.
 - Denoising strength is not displayed above the layer stack; it belongs to Generation settings.

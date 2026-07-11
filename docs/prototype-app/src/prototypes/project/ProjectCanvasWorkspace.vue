@@ -296,6 +296,7 @@ function zoom(delta: number) {
           circle
           :disabled="session.history.past.length === 0"
           quaternary
+          size="small"
           @click="emit('undo')"
           ><NIcon :component="ArrowBackUp" /></NButton
         ><NButton
@@ -303,22 +304,24 @@ function zoom(delta: number) {
           circle
           :disabled="session.history.future.length === 0"
           quaternary
+          size="small"
           @click="emit('redo')"
           ><NIcon :component="ArrowForwardUp"
         /></NButton>
       </div>
       <div class="viewport-group">
-        <NButton aria-label="Zoom out" circle quaternary @click="zoom(-0.1)"
+        <NButton aria-label="Zoom out" circle quaternary size="small" @click="zoom(-0.1)"
           ><NIcon :component="ZoomOut" /></NButton
         ><NSelect
           aria-label="Zoom"
           class="zoom-select"
           :options="zoomOptions"
+          size="small"
           :value="session.ui.viewport.scale"
           @update:value="session.ui.viewport.scale = $event"
-        /><NButton aria-label="Zoom in" circle quaternary @click="zoom(0.1)"
+        /><NButton aria-label="Zoom in" circle quaternary size="small" @click="zoom(0.1)"
           ><NIcon :component="ZoomIn" /></NButton
-        ><NButton aria-label="Fit View" circle quaternary @click="fitView"
+        ><NButton aria-label="Fit View" circle quaternary size="small" @click="fitView"
           ><NIcon :component="Refresh"
         /></NButton>
       </div>
@@ -330,7 +333,7 @@ function zoom(delta: number) {
 <style scoped>
 .canvas-workspace {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto 38px;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -388,12 +391,13 @@ function zoom(delta: number) {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 4px;
-  background: #a7a7ae;
-  border-radius: var(--app-radius);
 }
 .tool-rail :deep(.n-button) {
   color: #111116;
+  background: #a7a7ae;
+}
+.tool-rail :deep(.n-button:hover) {
+  background: #bebec4;
 }
 .left-rail {
   left: 8px;
@@ -462,9 +466,10 @@ function zoom(delta: number) {
 .viewport-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  padding: 4px 9px;
+  min-height: 31px;
+  padding: 2px 7px;
   background: var(--app-elevated);
   border-top: 1px solid var(--app-border);
 }

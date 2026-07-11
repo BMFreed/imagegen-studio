@@ -8,21 +8,24 @@ import type { ProjectSession } from './project.types';
 import ApplyPresetModal from '../presets/ApplyPresetModal.vue';
 import { presetResources } from '../presets/presets.mock';
 import { redoProject, undoProject } from './project-history';
+import { expandPromptPairs } from './project-prompt.utils';
 import {
   acceptStagingCandidates,
   applyPresetSections,
+  deriveGenerationMode,
   discardStagingSession,
   getActiveGenerationDraft,
 } from './project.utils';
 import ProjectCanvasWorkspace from './ProjectCanvasWorkspace.vue';
 import ProjectLayersPanel from './ProjectLayersPanel.vue';
 import ProjectSettingsPanel from './ProjectSettingsPanel.vue';
+import { useProjectPanelSizes } from './useProjectPanelSizes';
 
 const props = defineProps<{ active?: boolean; session: ProjectSession }>();
 const emit = defineEmits<{ manageModels: []; managePresets: []; save: []; savePreset: [] }>();
 const message = useMessage();
 const imagesPerClick = ref(4);
-const selectedPresetId = ref('studio-portrait-soft-light');
+const pendingPresetId = ref<string>();
 const showApplyPreset = computed({
   get: () => props.session.ui.applyPresetOpen,
   set: (value: boolean) => {
@@ -31,27 +34,12 @@ const showApplyPreset = computed({
 });
 const showEarlyAccept = ref(false);
 const timers = new Set<ReturnType<typeof globalThis.setTimeout>>();
-const leftSize = computed<number | string>({
-  get: () => (props.session.ui.leftCollapsed ? '44px' : props.session.ui.leftSize),
-  set: (value) => {
-    if (!props.session.ui.leftCollapsed) {
-      props.session.ui.leftSize = value;
-    }
-  },
-});
-const centerSize = computed<number | string>({
-  get: () =>
-    props.session.ui.rightCollapsed
-      ? 'calc(100% - 44px)'
-      : `calc(100% - ${typeof props.session.ui.rightSize === 'string' ? props.session.ui.rightSize : `${(1 - Number(props.session.ui.rightSize)) * 100}%`})`,
-  set: (value) => {
-    if (!props.session.ui.rightCollapsed) {
-      props.session.ui.rightSize = typeof value === 'number' ? 1 - value : '350px';
-    }
-  },
-});
+const { centerMax, centerMin, centerSize, innerHost, leftMax, leftMin, leftSize, outerHost } =
+  useProjectPanelSizes(props.session);
+void innerHost;
+void outerHost;
 const selectedPreset = computed(
-  () => presetResources.find((item) => item.id === selectedPresetId.value) ?? presetResources[0]!,
+  () => presetResources.find((item) => item.id === pendingPresetId.value) ?? presetResources[0]!,
 );
 const currentPayload = computed(() => getActiveGenerationDraft(props.session).payload);
 
@@ -100,10 +88,24 @@ function generate(count: number) {
   }
   timers.clear();
   const id = Date.now();
-  props.session.queueItems = Array.from({ length: count }, (_, index) => ({
+  const draft = getActiveGenerationDraft(props.session);
+  const expansion = expandPromptPairs(
+    draft.payload.prompt ?? '',
+    draft.payload.negativePrompt ?? '',
+    draft.dynamicPrompt.maxPrompts,
+  );
+  const jobs = expansion.pairs.flatMap((pair) =>
+    Array.from({ length: count }, (_, iteration) => ({ iteration: iteration + 1, ...pair })),
+  );
+  const mode = deriveGenerationMode(props.session);
+  props.session.queueItems = jobs.map((job, index) => ({
+    derivedMode: mode,
     id: `queue-${id}-${index}`,
+    iteration: job.iteration,
     label: `Image ${index + 1}`,
+    negativePrompt: job.negativePrompt,
     progress: 0,
+    prompt: job.prompt,
     status: 'pending' as const,
   }));
   const selected = props.session.ui.selection;
@@ -168,14 +170,20 @@ function accept() {
   message.success('Selected results added to project');
 }
 function openPreset(id: string) {
-  selectedPresetId.value = id;
+  pendingPresetId.value = id;
   showApplyPreset.value = true;
 }
 function applyPreset(value: {
   payload: typeof currentPayload.value;
   selectedSections: PresetSectionKey[];
 }) {
-  applyPresetSections(props.session, value.payload, value.selectedSections);
+  applyPresetSections(
+    props.session,
+    value.payload,
+    value.selectedSections,
+    selectedPreset.value.name,
+  );
+  pendingPresetId.value = undefined;
   message.success('Preset applied');
 }
 onBeforeUnmount(() => {
@@ -200,56 +208,55 @@ onBeforeUnmount(() => {
       :type="session.ui.notice.type"
       @close="session.ui.notice = undefined"
     />
-    <NSplit
-      v-model:size="leftSize"
-      class="project-left-split"
-      :max="440"
-      :min="session.ui.leftCollapsed ? 44 : 290"
-    >
-      <template v-slot:1
-        ><ProjectSettingsPanel
-          v-if="!session.ui.leftCollapsed"
-          v-model:imagesPerClick="imagesPerClick"
-          :session
-          @applyPreset="openPreset"
-          @cancelGeneration="cancelCurrent"
-          @generate="generate"
-          @manageModels="emit('manageModels')"
-          @managePresets="emit('managePresets')"
-          @savePreset="emit('savePreset')"
-          @toggleQueue="session.ui.queueOpen = !session.ui.queueOpen" />
-        <div v-else class="collapsed-panel"
-      /></template>
-      <template v-slot:2>
-        <NSplit
-          v-model:size="centerSize"
-          class="project-right-split"
-          :disabled="session.ui.rightCollapsed"
-          :max="session.ui.rightCollapsed ? 1 : 0.78"
-          :min="0.45"
-        >
-          <template v-slot:1
-            ><ProjectCanvasWorkspace
-              :session
-              @acceptCandidates="requestAccept"
-              @cancelCurrent="cancelCurrent"
-              @cancelPending="cancelPending"
-              @clearQueue="
-                session.queueItems = session.queueItems.filter(
-                  (item) => item.status === 'pending' || item.status === 'running',
-                )
-              "
-              @discardCandidates="discardStagingSession(session)"
-              @redo="redoProject(session)"
-              @undo="undoProject(session)"
-          /></template>
-          <template v-slot:2
-            ><ProjectLayersPanel v-if="!session.ui.rightCollapsed" :session />
-            <div v-else class="collapsed-panel"
-          /></template>
-        </NSplit>
-      </template>
-    </NSplit>
+    <div ref="outerHost" class="project-split-host">
+      <NSplit v-model:size="leftSize" class="project-left-split" :max="leftMax" :min="leftMin">
+        <template v-slot:1
+          ><ProjectSettingsPanel
+            v-if="!session.ui.leftCollapsed"
+            v-model:imagesPerClick="imagesPerClick"
+            :session
+            @applyPreset="openPreset"
+            @cancelGeneration="cancelCurrent"
+            @generate="generate"
+            @manageModels="emit('manageModels')"
+            @managePresets="emit('managePresets')"
+            @savePreset="emit('savePreset')"
+            @toggleQueue="session.ui.queueOpen = !session.ui.queueOpen" />
+          <div v-else class="collapsed-panel"
+        /></template>
+        <template v-slot:2>
+          <div ref="innerHost" class="project-split-host">
+            <NSplit
+              v-model:size="centerSize"
+              class="project-right-split"
+              :disabled="session.ui.rightCollapsed"
+              :max="centerMax"
+              :min="centerMin"
+            >
+              <template v-slot:1
+                ><ProjectCanvasWorkspace
+                  :session
+                  @acceptCandidates="requestAccept"
+                  @cancelCurrent="cancelCurrent"
+                  @cancelPending="cancelPending"
+                  @clearQueue="
+                    session.queueItems = session.queueItems.filter(
+                      (item) => item.status === 'pending' || item.status === 'running',
+                    )
+                  "
+                  @discardCandidates="discardStagingSession(session)"
+                  @redo="redoProject(session)"
+                  @undo="undoProject(session)"
+              /></template>
+              <template v-slot:2
+                ><ProjectLayersPanel v-if="!session.ui.rightCollapsed" :session />
+                <div v-else class="collapsed-panel"
+              /></template>
+            </NSplit>
+          </div>
+        </template>
+      </NSplit>
+    </div>
 
     <ApplyPresetModal
       v-model:show="showApplyPreset"
@@ -261,6 +268,7 @@ onBeforeUnmount(() => {
         showApplyPreset = false;
         emit('managePresets');
       "
+      @update:show="!$event && (pendingPresetId = undefined)"
     />
     <NModal v-model:show="showEarlyAccept" :maskClosable="false"
       ><NCard aria-label="Accept generation results" class="confirm-card" role="dialog" size="small"
@@ -297,6 +305,12 @@ onBeforeUnmount(() => {
 .project-right-split {
   min-width: 0;
   min-height: 0;
+  height: 100%;
+}
+.project-split-host {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
   height: 100%;
 }
 .collapsed-panel {

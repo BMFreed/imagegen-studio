@@ -22,31 +22,20 @@ export function getActiveGenerationDraft(session: ProjectSession): ProjectGenera
 
 export function deriveGenerationMode(session: ProjectSession) {
   const entity = getSelectedEntity(session);
-  if (entity && 'kind' in entity && entity.kind === 'smart-patch') {
+  if (entity && 'kind' in entity && entity.kind === 'smart-patch' && entity.maskRevision > 0) {
     return 'inpaint' as const;
   }
-  const visibleLayers = session.document.layers.filter((layer) => layer.visible);
-  if (visibleLayers.length === 0) {
+  const visibleLayers = session.document.layers.filter(
+    (layer) =>
+      layer.visible &&
+      (layer.kind === 'raster' || Boolean(layer.activeVariantId && layer.variants.length)),
+  );
+  if (!visibleLayers.length) {
     return 'txt2img' as const;
   }
-  return session.document.canvas.width > 1200 || session.document.canvas.height > 1400
-    ? ('outpaint' as const)
-    : ('img2img' as const);
-}
-
-export function generationModeLabel(session: ProjectSession) {
-  const mode = deriveGenerationMode(session);
-  const entity = getSelectedEntity(session);
-  if (mode === 'inpaint' && entity && 'name' in entity) {
-    return `Inpaint · ${entity.name}`;
-  }
-  if (mode === 'txt2img') {
-    return 'Text to Image · Empty canvas';
-  }
-  if (mode === 'outpaint') {
-    return 'Outpaint · Extended canvas';
-  }
-  return 'Image to Image · Canvas content';
+  return visibleLayers.some((layer) => layer.kind === 'raster' && layer.mockCoverage === 'opaque')
+    ? ('img2img' as const)
+    : ('outpaint' as const);
 }
 
 export function projectHasBlockingGenerationErrors(session: ProjectSession) {
@@ -105,6 +94,7 @@ export function acceptStagingCandidates(session: ProjectSession) {
         id: `accepted-${candidate.id}`,
         kind: 'raster' as const,
         locked: false,
+        mockCoverage: 'partial' as const,
         name: `Generated Result ${candidate.imageIndex}`,
         opacity: 100,
         tone: candidate.tone,
@@ -152,16 +142,21 @@ export function applyPresetSections(
   session: ProjectSession,
   payload: PresetPayload,
   selectedSections: PresetSectionKey[],
+  presetName?: string,
 ) {
-  commitProjectMutation(session, 'Apply preset', () => {
-    const target = getActiveGenerationDraft(session).payload;
-    for (const section of selectedSections) {
-      const value = payload[section];
-      if (value === undefined) {
-        Reflect.deleteProperty(target, section);
-      } else {
-        Reflect.set(target, section, structuredClone(value));
+  commitProjectMutation(
+    session,
+    presetName ? `Apply preset: ${presetName}` : 'Apply preset',
+    () => {
+      const target = getActiveGenerationDraft(session).payload;
+      for (const section of selectedSections) {
+        const value = payload[section];
+        if (value === undefined) {
+          Reflect.deleteProperty(target, section);
+        } else {
+          Reflect.set(target, section, structuredClone(value));
+        }
       }
-    }
-  });
+    },
+  );
 }

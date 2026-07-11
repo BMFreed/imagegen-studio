@@ -75,6 +75,8 @@ Controls:
 - fit canvas to selection where relevant;
 - output/export size metadata where applicable.
 
+The `Size` card exposes `Free` plus `8:1`, `4:1`, `21:9`, `16:9`, `3:2`, `5:4`, `4:3`, `1:1`, `3:4`, `4:5`, `2:3`, `9:16`, `1:4`, `9:21` and `1:8`. It includes a compact CSS aspect preview, ratio lock, swap and fit-to-visible-layers actions. Automatic calculations preserve approximate area, snap to the model grid and clamp the prototype canvas to 64–4096 pixels. No separate aspect-preview dependency is needed.
+
 Changing Project Canvas size must not silently resize Raster Layers or Smart Patch Layer bounding boxes.
 
 In the current Project prototype, Project Canvas numeric size controls live in the left `Size` section. Direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail. The canvas area may show a compact `Project Canvas W x H` label at the top-left edge as readout/context, but that label is not the primary editing control and must not cover important image content.
