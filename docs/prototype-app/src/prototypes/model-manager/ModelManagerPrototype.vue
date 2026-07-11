@@ -21,7 +21,7 @@ const baseModelFilter = ref('all');
 const sortValue = ref('name');
 const managerOpen = ref(false);
 const navigationPaneSize = ref<number | string>('220px');
-const resourcePaneSize = ref<number | string>('calc(100% - 420px)');
+const resourcePaneSize = ref<number | string>('calc(100% - 520px)');
 
 defineEmits<{
   close: [];

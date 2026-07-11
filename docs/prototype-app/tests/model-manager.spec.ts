@@ -74,6 +74,19 @@ test.describe('Model Manager prototype', () => {
     await expect(page.getByText('Remove token')).toBeVisible();
   });
 
+  test('sizes the CivitAI connection action from its content', async ({ page }) => {
+    await page.setViewportSize({ height: 800, width: 1280 });
+    await openModelManager(page);
+
+    const trigger = page.getByRole('button', { name: /CivitAI connected/ });
+    const triggerBox = await trigger.boundingBox();
+    const contentBox = await trigger.locator('.n-button__content').boundingBox();
+    expect(triggerBox).not.toBeNull();
+    expect(contentBox).not.toBeNull();
+    expect(triggerBox!.width).toBeLessThan(192);
+    expect(triggerBox!.width - contentBox!.width).toBeLessThanOrEqual(30);
+  });
+
   test('shows the Model Manager description', async ({ page }) => {
     await page.setViewportSize({ height: 1080, width: 1920 });
     await openModelManager(page);

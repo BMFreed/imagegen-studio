@@ -146,6 +146,33 @@ test.describe('Preset Manager prototype', () => {
       .toBeGreaterThan(editorBefore!.width + 30);
   });
 
+  test('keeps the preset list and editor scrollable in a short viewport', async ({ page }) => {
+    await page.setViewportSize({ height: 600, width: 1280 });
+    await openPresetManager(page);
+
+    const shell = await page.locator('.manager-shell').boundingBox();
+    const body = await page.locator('.manager-body').boundingBox();
+    const presetContent = await page.locator('.preset-content').boundingBox();
+    const editor = await page.locator('.manager-column--editor').boundingBox();
+    expect(shell!.y).toBeGreaterThanOrEqual(15);
+    expect(shell!.y + shell!.height).toBeLessThanOrEqual(585);
+    expect(presetContent!.y + presetContent!.height).toBeCloseTo(body!.y + body!.height, 0);
+    expect(editor!.y + editor!.height).toBeCloseTo(body!.y + body!.height, 0);
+
+    const listScrolls = await page
+      .locator('.preset-scroll .n-scrollbar-container')
+      .evaluateAll((containers) =>
+        containers.map((container) => container.scrollHeight > container.clientHeight),
+      );
+    expect(listScrolls.some(Boolean)).toBe(true);
+    const editorScrolls = await page
+      .locator('.editor-scroll .n-scrollbar-container')
+      .evaluateAll((containers) =>
+        containers.map((container) => container.scrollHeight > container.clientHeight),
+      );
+    expect(editorScrolls.some(Boolean)).toBe(true);
+  });
+
   test('guards preset switching when there are unsaved changes', async ({ page }) => {
     await openPresetManager(page);
     await page.getByLabel('Preset description').fill('Unsaved description');

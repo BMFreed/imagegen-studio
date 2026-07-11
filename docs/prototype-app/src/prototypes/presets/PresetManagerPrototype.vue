@@ -458,8 +458,8 @@ onMounted(() => {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(1500px, calc(100vw - 96px));
-  height: min(890px, calc(100vh - 72px));
-  min-height: 620px;
+  height: min(890px, calc(100vh - 32px));
+  min-height: 0;
   overflow: visible;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
@@ -469,17 +469,20 @@ onMounted(() => {
 .manager-body {
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .manager-content-split {
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .manager-column,
 .preset-content {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 

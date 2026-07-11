@@ -166,6 +166,7 @@ function setSectionIncluded(section: PresetSectionKey, included: boolean) {
 
 .editor-scroll {
   min-height: 0;
+  height: 100%;
 }
 
 .editor-content {

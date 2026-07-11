@@ -123,12 +123,12 @@ function handleMenuSelect(key: string) {
     </div>
     <div class="menu-right">
       <IconButton
-        :badge="queueBadge || undefined"
+        :badge="{ value: queueBadge || undefined, dot: true }"
         :icon="ListDetailsIcon"
         label="Generation queue"
         @click="$emit('queue')"
       />
-      <IconButton badge="1" :icon="DownloadIcon" label="Downloads" />
+      <IconButton :badge="{ value: 1, dot: true }" :icon="DownloadIcon" label="Downloads" />
       <IconButton :icon="SettingsIcon" label="Settings" />
       <div aria-label="Window controls" class="window-controls">
         <NButton aria-label="Minimize" class="window-control" quaternary title="Minimize">

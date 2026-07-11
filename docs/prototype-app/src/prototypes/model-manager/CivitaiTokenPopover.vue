@@ -14,7 +14,7 @@ const themeVars = useThemeVars();
   <NPopover placement="bottom-end" trigger="click" :width="270">
     <template v-slot:trigger>
       <NButton class="token-trigger" secondary size="medium">
-        <NBadge :color="themeVars.primaryColor" dot><span class="status-anchor" /></NBadge>
+        <NBadge :color="themeVars.primaryColor" dot />
         <span class="token-label">CivitAI connected</span>
         <NIcon :component="ChevronDownIcon" />
       </NButton>
@@ -48,12 +48,12 @@ const themeVars = useThemeVars();
 
 <style scoped>
 .token-trigger {
-  min-width: 192px;
+  flex: 0 0 auto;
+  width: fit-content;
 }
 
 .token-trigger :deep(.n-button__content) {
-  gap: 11px;
-  width: 100%;
+  gap: 8px;
 }
 
 .token-label {

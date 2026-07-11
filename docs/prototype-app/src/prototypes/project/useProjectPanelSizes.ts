@@ -4,9 +4,9 @@ import type { ProjectSession } from './project.types';
 
 const COLLAPSED_WIDTH = 44;
 const LEFT_MIN = 290;
-const LEFT_MAX = 420;
+const LEFT_MAX = 540;
 const RIGHT_MIN = 300;
-const RIGHT_MAX = 440;
+const RIGHT_MAX = 540;
 
 export function useProjectPanelSizes(session: ProjectSession) {
   const outerHost = ref<HTMLElement | null>(null);

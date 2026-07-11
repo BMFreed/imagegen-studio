@@ -159,6 +159,7 @@ const sortOptions = [
 
 .preset-scroll {
   min-height: 0;
+  height: 100%;
 }
 
 .preset-list {
