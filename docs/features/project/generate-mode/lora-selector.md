@@ -12,20 +12,23 @@ Secondary reference: Forge extra-network metadata cards.
 
 ## ImageGen Studio Decision
 
-LoRAs get their own subsection inside `Generation`.
+LoRAs get their own stacked card before `Generation` in the compact Project settings panel.
 
 Do not use a shared `Concepts` section name.
 
 ```text
-Generation
-├─ Model
+Project settings
+├─ Prompt
+├─ Negative Prompt
 ├─ LoRAs
 │  ├─ Add LoRA select
 │  └─ selected LoRA list
-├─ Embeddings
-├─ Sampling
-└─ Seed
+└─ Generation
+   ├─ Model
+   └─ Sampling
 ```
+
+Embeddings are not a sibling stack: they are resource-bearing tokens inside Positive or Negative Prompt.
 
 ## Scope
 
@@ -142,13 +145,20 @@ Each LoRA provenance entry should include:
 - enabled state;
 - compatibility metadata/warnings where useful.
 
+## Vue Prototype Coverage
+
+The shared prototype component currently provides a stable Add LoRA select above selected rows, duplicate prevention, enable/disable, numeric weight from -2 through 2 and remove. It is reused by Project and preset/apply flows.
+
+Enabled non-missing LoRAs contribute resource-owned trigger phrases to both prompt autocompletes. Disabling immediately removes those phrases from new suggestions but keeps existing linked tokens without interruption. Only removing a LoRA that would orphan an existing trigger token opens the constrained `Keep as Prompt Text` / `Remove Trigger Phrases` / `Cancel` dialog; the LoRA change and token resolution are one Project undo entry.
+
+Thumbnail-rich dropdown rows, active-model filtering, Manage Models inside the dropdown, explicit resource info buttons/popovers and full compatibility metadata are not present in the current component. The current Add control is a normal Naive select and closes after selection.
+
 ## Acceptance Criteria
 
-- User can search and add LoRAs from a thumbnail dropdown.
-- Dropdown includes `Manage Models` and excludes `Full View`.
+- Product picker supports search and rich resource metadata; the current prototype uses a compact text select.
+- `Manage Models` remains available from the Generation card rather than inside the current LoRA dropdown.
 - Selected LoRAs appear below the selector.
-- Info buttons exist on both dropdown rows and selected rows.
-- Metadata popover opens only by explicit info-button click.
+- Resource info buttons/popovers remain product scope and are not current prototype behavior.
 - Adding a LoRA in the UI applies the LoRA resource and weight without requiring the user to type `<lora:...:...>` manually.
 - Secondary trigger phrases are visible through metadata and unified autocomplete and are never inserted automatically.
 - LoRA stack is stored in accepted-result provenance.

@@ -20,6 +20,12 @@ The unified autocomplete searches installed compatible embeddings by display nam
 - a missing embedding blocks Apply only when its owning Prompt or Negative Prompt section is selected;
 - accepted-result provenance freezes both the serialized prompt and structured resource-bearing tokens.
 
+## Vue Prototype Coverage
+
+Installed mock embeddings appear in the local browse dropdown opened by the prompt editor's `+` action and in filtered autocomplete results. The same catalog is available in both prompt polarities; Negative Prompt uses `negativeToken` when supplied. Missing recalled embedding tokens remain visible with a warning style and are part of the Project Generate blocking reason.
+
+The prototype uses in-memory resource metadata only. It does not implement installation, compatibility resolution, production provenance persistence or an embedding browser outside the prompt editor.
+
 ## Acceptance Criteria
 
 - Installed embeddings are suggested in both prompt editors.

@@ -112,7 +112,7 @@ When a Smart Patch Layer is selected, bbox editing targets the selected layer's 
 
 This bbox is part of Smart Patch Layer state. It is not a global project setting.
 
-The selected Smart Patch Layer row/action bar shows a compact `Bounding Box` button or badge. Clicking it opens a popover with precision settings for that layer's bbox.
+The product design calls for a compact `Bounding Box` precision action/popover for the selected Smart Patch Layer. The current Vue prototype shows bbox dimensions in selected-layer details and exposes `Bounding Box` plus `Fit Patch BBox to Mask` in the contextual canvas rail; it does not yet implement the numeric precision popover.
 
 Popover controls:
 
@@ -127,7 +127,7 @@ Popover controls:
 - fit to canvas;
 - scale before processing.
 
-Canvas handles remain the primary way to move/resize the bbox. The popover is for exact values and less common actions.
+In the production interaction, canvas handles remain the primary way to move/resize the bbox and the popover is for exact values and less common actions. Current prototype handles are visual coverage only.
 
 Changing layer bbox or internal resolution marks the Smart Patch Layer as `outdated` if it already has an active raster sub-layer.
 
@@ -150,6 +150,12 @@ Rules:
 
 This behavior follows the creative-editor mental model: the canvas grows to provide more work area, while layer pixels and local patch state remain their own objects.
 
+## Vue Prototype Coverage
+
+The Size card currently implements numeric dimensions, the full documented aspect catalog, lock/unlock, a CSS ratio preview, swap and deterministic fit-to-visible-layer bounds. Automatic ratio calculations use the documented 64–4096 clamp and grid-8 rounding.
+
+The canvas renders separate Project Canvas, Smart Patch bbox and mask overlays. `Fit Patch BBox to Mask` writes deterministic owned bbox values and marks an existing patch outdated. Arbitrary bbox handle dragging, numeric x/y/width/height editing, Crop/Resize commit/cancel and outpainting auto-expansion are not implemented in the Vue prototype yet.
+
 ## Acceptance Criteria
 
 - Project Canvas, Raster Layer transform and Smart Patch Layer bbox are visually separate.
@@ -160,9 +166,9 @@ This behavior follows the creative-editor mental model: the canvas grows to prov
 - Direct Project Canvas crop/resize is available from the left canvas rail as `Crop / Resize Project Canvas`.
 - The canvas area shows a compact size readout, not a primary editing control.
 - Raster Layers may be smaller, larger or partially outside Project Canvas.
-- User can edit Smart Patch bbox via canvas handles and numeric controls.
-- Selected Smart Patch Layer exposes bbox precision editing through a compact popover.
+- Product implementation lets the user edit Smart Patch bbox through canvas handles and numeric controls; current prototype coverage is limited to visual handles, read-only dimensions and deterministic fit-to-mask.
+- A compact bbox precision popover remains unimplemented in the current prototype.
 - Selected Smart Patch Layer exposes `Fit Patch BBox to Mask` from its contextual toolbar.
 - Regional Guidance Layer does not expose bbox controls.
-- Smart Patch outpainting auto-expands Project Canvas when the layer bbox exceeds current canvas bounds.
+- Smart Patch outpainting auto-expansion remains product behavior and is not simulated by the current prototype.
 - Changing Smart Patch bbox/internal resolution marks an existing result as `outdated`.

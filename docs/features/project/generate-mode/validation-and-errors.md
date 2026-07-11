@@ -61,6 +61,12 @@ Warn but allow generation when:
 - LoRA/embedding compatibility is uncertain but resource exists;
 - dynamic prompt expansion is large but within configured limits.
 
+## Vue Prototype Coverage
+
+The `errors` scenario currently demonstrates a missing selected model, missing/incompatible LoRA warning, missing embedding token, mock prompt warning, outdated Smart Patch, failed candidate and mock Save failure. Generate is disabled for a missing model, a missing embedding in either active prompt or a dynamic batch above 100 jobs, and the fixed action area shows the blocking reason as text rather than relying on a tooltip.
+
+The prototype does not yet validate real worker availability, bbox ranges, internal-resolution compatibility, missing Smart Patch source assets or model-family support. Regional and LoRA compatibility are deterministic warnings. Failed queue/candidate state is mock operational state rather than a transported worker error.
+
 ## Acceptance Criteria
 
 - Warnings are local to the affected control/entity.

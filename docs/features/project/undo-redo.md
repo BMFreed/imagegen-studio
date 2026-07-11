@@ -77,7 +77,7 @@ type ProjectUndoRedoState = {
 };
 ```
 
-The runtime tab manager destroys this state when the project is closed. It is not stored in `.igs`.
+Production undo history is not stored in `.igs` and does not survive an application restart. The Vue prototype keeps the in-memory `ProjectSession` registry after a tab is closed, so reopening the same mock project within the current browser session also restores its history. This prototype behavior must not be interpreted as persisted undo history.
 
 ## What Is Undoable
 
@@ -128,9 +128,8 @@ Not undoable:
 - crash recovery load;
 - project file validation;
 - global settings;
-- prompt text editing while the prompt textarea has focus, if the native text editor undo stack handles it.
 
-Prompt editor behavior can use the browser/native text undo stack for text editing. Programmatic prompt actions may keep a small local "undo last prompt replacement" affordance, but they do not belong to Project document undo unless the prompt is part of persisted project state.
+Structured prompt token drafts are not written into history before commit. Creating, editing, removing or changing attention on a committed token is a normal Project document mutation and creates one named undo entry. The prototype does not use a separate native textarea undo stack for prompt content.
 
 ## Busy / Running Rules
 
@@ -172,9 +171,17 @@ Menu:
 
 - `Edit > Undo`;
 - `Edit > Redo`;
-- `Edit > Clear Project History` can live behind project settings/debug settings rather than primary menu.
+- `Clear Project History` may later live behind project settings/debug settings; the current Vue prototype does not expose it.
 
-The action labels may be generic in MVP (`Undo`, `Redo`). Named labels (`Undo Mask Stroke`, `Undo Add Layer`) are post-MVP.
+The visible actions remain generic (`Undo`, `Redo`). The current prototype already stores named internal history entries for diagnostics and tests; it does not expose a History panel or named Undo label in the toolbar.
+
+## Vue Prototype Coverage
+
+The current prototype implements a 64-entry per-project document snapshot history. Undo and Redo are available from the bottom viewport bar, the `Edit` menu and `mod+z` / `mod+shift+z` / `mod+y` shortcuts.
+
+Covered mutations include generation settings, structured prompt token commits, layer add/delete/duplicate/reorder/state changes, preset application and multi-candidate acceptance. Queue progress, candidate focus/selection and discard remain outside history. Acceptance is one grouped mutation and undoing it does not recreate the previous staging session.
+
+Canvas paint/transform fidelity remains mocked: tool selection and deterministic mask/bbox revision changes can produce history entries, but the prototype does not yet prove production gesture grouping, brush-stroke coalescing or busy-state arbitration against a real canvas/worker pipeline.
 
 ## Autosave Interaction
 

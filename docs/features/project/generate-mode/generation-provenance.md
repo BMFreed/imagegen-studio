@@ -88,6 +88,10 @@ Global generation history is a derived index of accepted project results.
 - discarded staging candidates never appear in history;
 - Queue Manager rows remain operational job records and are independently prunable.
 
+## Vue Prototype Coverage
+
+Queue items freeze serialized prompts, structured source tokens, iteration and derived request mode, and accepted layers/variants carry enough mock identity to validate the acceptance workflow. The prototype does not construct or persist the full `GenerationProvenance` object, hash source composites/masks, write `.igs` references or update a global accepted-result history index. Consequently, Recall Settings and Create Preset from accepted provenance remain product behavior rather than current interactive coverage.
+
 ## Acceptance Criteria
 
 - Every accepted generated Raster Layer or Smart Patch variant has immutable provenance.

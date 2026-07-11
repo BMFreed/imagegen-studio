@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, stacked generation settings, DOM/CSS canvas simulation, layer architecture, staging и mock queue lifecycle. `docs/prototypes/project-page.html` остаётся только историческим layout reference.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, structured prompt tokens с embedding/LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts. `docs/prototypes/project-page.html` остаётся только историческим layout reference.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -1069,7 +1069,7 @@ raster content + Smart Patch mask → inpaint
 
 ### 14.2.1. Canvas rendering pipeline
 
-В MVP canvas строится по Invoke-like пайплайну:
+Production-направление canvas строится по Invoke-like пайплайну:
 
 ```text
 Konva scene graph
@@ -1080,6 +1080,8 @@ Konva scene graph
 ```
 
 Konva используется как интерактивный 2D scene graph поверх browser Canvas 2D: stage, layers, groups, image/line/rect objects, pointer events, transforms и hit testing.
+
+Текущий Vue-прототип намеренно не доказывает этот renderer: он использует deterministic DOM/CSS composition, CSS transforms и mock coverage metadata. В нём работают viewport pan/zoom, tool/context switching, layer visibility/order, staging preview и отдельные deterministic geometry transitions. Pixel painting, real alpha coverage, general bbox/crop handle manipulation, compositor/cache и rasterization отсутствуют. Поэтому выбор Konva здесь остаётся production architecture direction, а не описанием уже реализованного prototype pipeline.
 
 Логика продукта не должна зависеть напрямую от Konva-нод. Состояние проекта хранится в собственных структурах ImageGen Studio: canvas project, layer stack, Smart Patch Layer, mask, bounding box, raster sub-layers, assets и accepted-result provenance.
 
@@ -1149,6 +1151,8 @@ Regional Guidance
    ├─ + Negative Prompt
    └─ + Reference Image
 ```
+
+В текущем Vue-прототипе реализована более узкая проверка структуры: отдельная conditioning-секция, add/select/enable/delete, compatibility warning, selected prompt/global-negative details и контекстный tool rail без bbox. Inline prompt/reference blocks, редактирование и reorder reference images пока не реализованы.
 
 Правила ownership:
 

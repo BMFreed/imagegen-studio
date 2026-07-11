@@ -51,6 +51,10 @@ Severity:
 
 Diagnostics must not appear as global app errors. They belong to the prompt field that contains the issue.
 
+## Vue Prototype Coverage
+
+The prototype places token count and a local warning icon in the prompt header. The `errors` scenario triggers a deterministic `Check prompt weights` tooltip when serialized prompt text contains the mock `(broken` marker. It does not yet implement a general parser, range underlines, severity levels, quick fixes or a production tokenizer. Missing embedding resources are a separate token-local warning and block Generate through prompt validation.
+
 ## Acceptance Criteria
 
 - Prompt editor shows token count and diagnostics in the same local status area.

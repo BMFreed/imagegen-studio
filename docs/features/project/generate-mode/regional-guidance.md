@@ -155,9 +155,23 @@ When enabled regional guidance entities exist:
 
 If the worker cannot support regional guidance or regional guidance images for the selected model family, Generate must show a compatibility warning before queueing the job.
 
+## Vue Prototype Coverage
+
+The `regional-guidance` scenario validates ownership and placement rather than the full authoring workflow. It includes a Regional Guidance entity with an owned mock region, positive prompt, automatic global-negative setting, one reference-image record and a compatibility warning.
+
+The right panel currently supports add, select, enable/disable and delete. Selected details show the regional prompt, the global-negative switch and a compatibility warning, but those form controls are currently presentational. The canvas exposes Transform Region, Lasso, Polygon Lasso, Brush and Eraser as contextual tools and correctly omits Bounding Box actions; region painting/transforms are deterministic mock state, not a production mask editor.
+
+Not yet implemented in the Vue prototype:
+
+- inline `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` blocks;
+- editing/persisting regional prompts from the details form;
+- reference-image add/remove/reorder;
+- Regional duplicate/lock controls;
+- worker request construction and accepted-result provenance for regional inputs.
+
 ## Acceptance Criteria
 
-- User can add and edit a Regional Guidance Layer.
+- User can add/select/toggle/delete a Regional Guidance Layer in the prototype; full prompt/reference/region editing remains product scope.
 - Regional Guidance Layer owns its region/mask, prompts and reference images.
 - Regional guidance masks are not standalone or shared.
 - User can attach regional guidance images to a Regional Guidance Layer.

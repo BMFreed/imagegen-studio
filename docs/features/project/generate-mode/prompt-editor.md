@@ -78,10 +78,16 @@ Attention helpers reuse at most one outer pair of parentheses. When repeated inc
 
 The editor's unused surface has no text cursor or hover treatment. Tooltips are limited to resource-bearing embedding and LoRA-trigger tokens, where they explain source identity; ordinary custom, Danbooru and dynamic tokens do not repeat their kind in a tooltip.
 
+## Vue Prototype Coverage
+
+The structured token surface is current behavior, not a future textarea design. It supports custom, Danbooru, dynamic, embedding and LoRA-trigger chips; compact `+` creation; top-level comma paste; in-place adaptive-width edit; Enter/blur commit; Escape cancel; per-token close; Backspace/Delete; click selection that clears on unrelated editor clicks; and selection-preserving attention actions.
+
+Token count is currently a deterministic whitespace approximation over the serialized prompt. Prompt diagnostics are limited to a mock `(broken` warning in the `errors` scenario. Prompt history and accepted-result recall are not implemented in the Vue prototype yet.
+
 ## Acceptance Criteria
 
 - User can edit positive and negative prompts in Generate.
-- Prompt fields support multiline editing and expansion.
-- Prompt history can recall previous prompt text.
+- Prompt tokens wrap in a vertically resizable multi-line surface.
+- Prompt history/accepted-result recall remain product scope and are not current prototype behavior.
 - Preset actions are explicit and do not appear as a copied template dropdown.
 - [Tag autocomplete](./tag-autocomplete.md) and [dynamic prompt preview](./dynamic-prompting.md) can be reached from the prompt editor.

@@ -6,13 +6,13 @@ Generate canvas tools provide direct manipulation for masks, regional guidance r
 
 ## Reference
 
-Reference: InvokeAI canvas interaction patterns, adapted to ImageGen Studio's Konva-based canvas pipeline.
+Reference: InvokeAI canvas interaction patterns, adapted to ImageGen Studio's document-owned canvas entities. The current Vue prototype uses DOM/CSS; the production renderer remains a separate implementation decision.
 
 ## ImageGen Studio Decision
 
 Canvas is the central working surface inside `Project` / `Generate`.
 
-Panels and popovers provide precision editing, but direct canvas manipulation remains the primary interaction path.
+For the product, panels and popovers provide precision editing while direct canvas manipulation remains the primary interaction path. The Vue prototype currently validates tool availability, selection and deterministic state transitions rather than production pixel manipulation.
 
 MVP canvas tools are scoped to generative editing primitives. ImageGen Studio does not try to become a raster editor in MVP.
 
@@ -71,7 +71,7 @@ Side toolbars/tool rails:
 - panel collapse controls are always available at the canvas edges;
 - `Pan Tool` is always available on the left rail;
 - `Crop / Resize Project Canvas` is always available on the left rail;
-- the Project Canvas size label and canvas context menu are `canvas-area` overlays, not children of the canvas frame;
+- the Project Canvas size label is a `canvas-area` overlay, not a child of the canvas frame; a separate canvas context menu is not present in the current prototype;
 - layer-specific editing tools appear only when a compatible layer is selected;
 - layer selection in the right panel drives the contextual tool rail; there are no visible prototype state tabs in the product UI;
 - Smart Patch mask/bbox tools appear in the Smart Patch contextual tool rail when Smart Patch Layer is selected;
@@ -117,9 +117,27 @@ Not in MVP:
 - raster filters;
 - full image editor behavior for ordinary Raster Layers.
 
+## Vue Prototype Coverage
+
+Implemented:
+
+- always-visible panel collapse, Pan and Crop/Resize buttons;
+- context-specific Smart Patch and Regional Guidance tool rails;
+- active/pressed tool state, accessible names and contextual viewport hints;
+- pointer pan and viewport zoom;
+- deterministic Smart Patch mask-revision/outdated transitions;
+- deterministic `Fit Patch BBox to Mask` geometry update.
+
+Simulated or not implemented:
+
+- Brush, Eraser, Lasso, Polygon Lasso, Transform Mask and Transform Region do not create production raster/vector masks;
+- bbox and crop handles are visual overlays rather than general pointer-resize implementations;
+- there is no precision bbox popover, snapping engine, rotation transform or production compositor;
+- Raster Layer pixel/transform editing remains absent.
+
 ## Acceptance Criteria
 
-- User can manipulate masks, regional guidance regions and Smart Patch bounding boxes directly on canvas.
+- Product canvas supports direct mask/region/bbox manipulation; the Vue prototype currently validates tool selection and deterministic revision/fit transitions only.
 - Precision controls exist in panels/popovers where needed.
 - Generate does not expose inactive Launchpad/Viewer controls.
 - Pan Tool is available as the neutral canvas navigation tool.

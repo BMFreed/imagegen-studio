@@ -192,6 +192,14 @@ Undo removes the accepted project mutation; it does not reconstruct the previous
 
 It is not a permanent right sidebar and does not replace Queue Manager or the layer stack.
 
+## Vue Prototype Coverage
+
+The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The bottom tray supports focus, checkbox selection, Select all/Clear selection, previous/next, preview visibility, single-candidate discard, Discard All and context-specific multi-accept labels.
+
+Normal acceptance creates one independent Raster Layer per selected candidate. Smart Patch acceptance creates variants owned by the selected Smart Patch. The focused selected candidate, or otherwise the first selected candidate in stable order, becomes the accepted anchor. If unfinished sibling jobs exist, acceptance uses a confirmation before canceling them and discarding unselected candidates. One acceptance produces one Project history entry and undo does not recreate staging.
+
+Candidate imagery, progress and temporary assets are deterministic CSS/in-memory mocks. The prototype does not write cache files, `.igs` assets, global result-history rows or production provenance records.
+
 ## Acceptance Criteria
 
 - Completed worker outputs remain temporary candidates until explicit acceptance.

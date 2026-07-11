@@ -98,9 +98,17 @@ Every concrete prompt/seed combination becomes its own queue item, grouped by on
 
 Upscale and `Send Composite to Upscale` are deferred to a separate Project pass. They do not block the current Create/Generate prototype or its acceptance criteria.
 
+## Vue Prototype Coverage
+
+`Generate` creates deterministic in-memory queue items. The images-per-click input accepts integers from 1 through 100; dynamic prompt pairs multiply that value and the prototype blocks a combined batch above 100 jobs. Each item freezes serialized positive/negative prompts, structured source tokens, iteration and an internally derived request mode.
+
+One item runs at a time and the remaining items stay pending. Deterministic completion creates temporary candidates in the Project staging session; it does not add layers. The compact queue panel shows current, pending and terminal jobs, and the action bar can cancel the current job. This is a project-scoped mock lifecycle, not the production Queue Manager, worker transport or filesystem asset pipeline.
+
+Automatic mode derivation uses prototype-only deterministic layer coverage metadata rather than real alpha analysis. Smart Patch selection with an effective mask takes the inpaint path. The derived mode is frozen technical data and is intentionally not shown as a user-facing txt2img/img2img switch or status label.
+
 ## Acceptance Criteria
 
-- Generate creates queue items from frozen project/generation state.
+- The prototype creates in-memory queue items from frozen project/generation state; production Queue Manager/worker integration remains separate.
 - Generation mode is derived from target-area raster/mask content rather than a manual txt2img/img2img switch.
 - Completed outputs appear as temporary candidates without mutating `.igs`.
 - User can accept one or more normal candidates as new Raster Layers.

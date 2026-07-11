@@ -153,7 +153,7 @@ Smart Patch Layer Bounding Box is not the same thing as Project Canvas or Raster
 
 It defines the project-space area sent to the worker for this layer's local generation.
 
-Layer bbox controls:
+Product bbox controls:
 
 - direct canvas handles;
 - compact `Bounding Box` button/badge in selected-layer controls;
@@ -256,6 +256,14 @@ Inputs that mark a layer `outdated`:
 - compositing settings that affect regeneration;
 - layer-owned prompt/settings/model resources used by regeneration;
 - source composite revision/hash beneath the Smart Patch Layer.
+
+## Vue Prototype Coverage
+
+The `smart-patch` scenario contains a self-contained Smart Patch with owned bbox, internal size, generation draft, mask revision, three accepted variants and one active variant. The mixed compositing stack displays mask before active raster, exposes variant switching and keeps only the active variant in the visual composite.
+
+The prototype supports adding an empty Smart Patch, selecting its layer-owned generation draft, deterministic mask revision/outdated transitions, deterministic fit-to-mask, generating temporary candidates, multi-accepting them as variants and switching the active accepted variant. These persistent actions participate in Project undo/redo.
+
+The current details card only reads mask revision, bbox size, internal size and active variant. General bbox dragging, numeric precision editing, internal-size editing, mask painting, compositing controls, source-composite hashing and outpainting auto-expand are not implemented. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
 
 ## Acceptance Criteria
 

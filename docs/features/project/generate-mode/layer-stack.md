@@ -46,7 +46,7 @@ Layer stack behavior:
 - blend mode;
 - selected-entity action bar.
 
-Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the full layer selection surface after a small movement threshold; visibility and row action buttons are sibling controls and never start a drag. The insertion line and drag preview communicate the target, and the right panel auto-scrolls near its edges.
+Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the full layer selection surface after a small movement threshold; visibility and row action buttons are sibling controls and never start a drag. The insertion line and reduced-opacity source row communicate the target, and the right panel uses its own scroll container for edge auto-scroll.
 
 One completed drop creates one grouped `Reorder layers` undo entry. No document mutation occurs during hover. `Move up` and `Move down` remain in the row overflow menu as a keyboard fallback; permanent hover arrows are not shown.
 
@@ -75,7 +75,7 @@ Rows with nested controls must not be implemented as one button containing other
 
 ## Smart Patch Layer Display
 
-Smart Patch Layer display should include:
+The full product Smart Patch Layer display should include:
 
 - layer status: `empty`, `ready`, `outdated`, `generating`, `failed`;
 - mask thumbnail;
@@ -107,7 +107,7 @@ The detailed Smart Patch Layer ownership model is documented in [Smart Patch Lay
 
 ## Regional Guidance Layer Display
 
-Regional Guidance Layer display should follow Invoke's Regional Guidance entity layout closely:
+The full product Regional Guidance Layer display should follow Invoke's Regional Guidance entity layout closely:
 
 - grouped `Regional Guidance` section in the layer stack;
 - layer row with preview, name, status badges and common actions;
@@ -120,6 +120,29 @@ Regional Guidance Layer display should follow Invoke's Regional Guidance entity 
 
 Regional Guidance Layer owns its region/mask. The mask is not a standalone layer and is not shared with Smart Patch Layer or other Regional Guidance Layers.
 
+## Vue Prototype Coverage
+
+The current right panel implements:
+
+- a separate Regional Guidance conditioning section;
+- one flat compositing stack shared by Raster and Smart Patch layers;
+- selection surfaces implemented as full-height `NButton` siblings beside visibility/actions, without nested controls;
+- add Raster, add Smart Patch and add Regional Guidance;
+- Raster/Smart Patch visibility, lock, duplicate and delete;
+- pointer DnD with a 6px activation distance, insertion indicator, source opacity and overflow `Move up` / `Move down` fallback;
+- Smart Patch mask thumbnail before active-raster thumbnail, status text, variant count and a compact variant chooser;
+- selected Raster readouts for opacity/blend and selected Smart Patch readouts for mask revision, bbox, internal size and active variant;
+- Regional Guidance select/enable/delete and a compatibility warning.
+
+Current limitations:
+
+- layer rename is not exposed;
+- Raster opacity and blend controls are present but not wired;
+- locked state is visual/state coverage and does not yet prevent every destructive action;
+- Smart Patch bbox/internal resolution/compositing precision controls are read-only or absent;
+- Regional Guidance prompt/reference authoring is not inline, and reference-image add/remove/reorder is not implemented;
+- destructive delete has no confirmation policy in this mock.
+
 ## Acceptance Criteria
 
 - User can manage Raster Layer, Smart Patch Layer and Regional Guidance Layer from the layer stack.
@@ -129,7 +152,7 @@ Regional Guidance Layer owns its region/mask. The mask is not a standalone layer
 - Warning/status icons, lock and delete actions are available in layer rows.
 - Smart Patch Layer status and active raster sub-layer are visible.
 - Smart Patch Layer row shows both mask thumbnail and active raster thumbnail, in that order.
-- Regional Guidance Layer prompt/reference-image controls are visible inline in the layer stack.
+- Inline Regional Guidance prompt/reference-image authoring remains product scope; the current prototype shows compact entity rows plus selected-item details.
 - Regional Guidance Layer mask ownership is explicit and non-shared.
 - Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
 - Layer selection and sibling actions use valid non-nested interactive semantics.

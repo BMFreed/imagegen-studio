@@ -55,9 +55,9 @@ When fitting Project Canvas to layers:
 Canvas-area overlays:
 
 - Project Canvas size label sits at the top-left edge of the `canvas-area`;
-- the canvas context menu button sits at the top-right edge of the `canvas-area`;
-- both overlays are outside the canvas frame/wrapper so they do not cover the image content itself;
-- contextual menus may include canvas/layer actions, but primary save/load/export/reset commands remain outside this control.
+- panel-collapse controls stay on the side rails rather than covering the canvas frame;
+- a future canvas context menu may live at the top-right edge of the `canvas-area`, but it is not part of the current Vue prototype;
+- primary save/load/export/reset commands remain outside canvas overlays.
 
 ## Smart Patch Fit-To-Mask
 
@@ -115,13 +115,21 @@ Document separately:
 - snapping rules for Project Canvas resize/grow and Smart Patch Layer bbox;
 - exact design of the canvas context menu.
 
+## Vue Prototype Coverage
+
+The bottom bar currently provides Undo, Redo, zoom out, a percentage select, zoom in, `Fit View` and contextual hints. Pointer pan and wheel zoom update a local DOM/CSS viewport transform.
+
+`Fit View` resets the deterministic prototype camera; it does not yet calculate production bounds from real composited pixels. The left Size card has a separate deterministic `Fit to visible layers` mutation. The Crop/Resize rail tool and canvas handles are visual workflow coverage only: the current prototype does not yet commit arbitrary pointer-resized Project Canvas geometry.
+
+The Smart Patch rail includes a working deterministic `Fit Patch BBox to Mask` command. A numeric bbox popover and a canvas context menu are not implemented.
+
 ## Acceptance Criteria
 
 - User can zoom with explicit controls and a percentage readout.
 - User can fit the viewport to visible layers/content.
 - User can fit Project Canvas to visible/selected Raster Layers from the left `Size` section.
 - User can directly crop/resize Project Canvas from the left canvas rail without destructive Raster Layer crop.
-- Project Canvas size label and canvas context menu are positioned as `canvas-area` overlays, not inside the image/canvas frame.
+- Project Canvas size label is positioned as a `canvas-area` overlay; the future context-menu placement remains undecided by the prototype.
 - Smart Patch Layer exposes `Fit Patch BBox to Mask` in its contextual left toolbar.
 - Regional Guidance Layer does not expose any bbox fit-to-mask action.
 - Project save/load/export/snapshot/reset actions are not presented as primary canvas toolbar controls.

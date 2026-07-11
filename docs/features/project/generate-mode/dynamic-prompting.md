@@ -68,6 +68,12 @@ Do not persist:
 - parse error UI state beyond normal project/session diagnostics;
 - full transient preview list unless it is tied to an actual generated result.
 
+## Vue Prototype Coverage
+
+The shared preview modal parses non-nested brace alternatives in serialized positive and negative structured prompts, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.
+
+Generate multiplies expanded pairs by images-per-click and blocks the action when the result exceeds 100 mock jobs. Queue items freeze the concrete serialized prompts and original structured tokens. The prototype does not execute a production seed scheduler or write accepted-result provenance.
+
 ## Acceptance Criteria
 
 - User can preview expanded prompts before generation.

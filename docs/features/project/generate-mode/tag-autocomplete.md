@@ -178,6 +178,19 @@ Manual update is still useful because:
 - automatic updates can remain disabled;
 - settings can show `lastUpdatedAt`, source, row count, and error state.
 
+## Vue Prototype Coverage
+
+The current implementation is intentionally local and deterministic:
+
+- a small in-memory Danbooru-style catalog supplies canonical name, aliases, category and post count;
+- matching starts after two normalized characters, treats spaces and underscores as equivalent and ranks prefix/exact matches above contains matches;
+- Active LoRA triggers and installed Embeddings are browsable immediately when `+` opens, even before a Danbooru query exists;
+- create and double-click edit use the same teleported Naive autocomplete menu;
+- results are capped at five per group and twelve overall;
+- keyboard navigation and `Ctrl/Cmd+Space` use the same add flow.
+
+SQLite tables, local usage ranking, model-family enablement, bundled database installation and manual update status are production requirements and are not implemented by the Vue prototype.
+
 ## Dependencies
 
 - SQLite storage.
@@ -193,6 +206,5 @@ Manual update is still useful because:
 - Searching by alias returns the canonical tag.
 - Selecting a suggestion inserts the canonical tag.
 - Positive and negative prompts track usage separately.
-- A user can manually update the installed tag database.
-- The UI shows the installed tag set status, row count, and last update time.
+- Production settings allow manual tag-database update and show its status; the current prototype uses mock in-memory data and has no update UI.
 - Rule34, custom CSV import, translation search, chants/styles, wildcard expansion and production network-backed suggestions are not part of the Vue prototype.

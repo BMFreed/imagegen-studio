@@ -56,6 +56,10 @@ Current-operation compositing settings can be used before a Smart Patch Layer ex
 
 `Denoising strength` is intentionally not placed here. It is a Generation setting and should appear in the Generation card, not above the layer stack or inside selected-layer controls.
 
+## Vue Prototype Coverage
+
+The prototype preserves the ownership boundary and keeps Denoising Strength in the Generation card. It can mark a Smart Patch outdated when deterministic mask/bbox/generation inputs change. A dedicated Smart Patch compositing form for blur, coherence, infill, overlay color/opacity and related controls is not currently rendered; those settings remain product scope.
+
 ## Acceptance Criteria
 
 - Compositing settings are not attached to standalone mask layers.

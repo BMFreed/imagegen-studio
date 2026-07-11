@@ -76,6 +76,30 @@ After an unexpected shutdown:
 
 Recovery of unfinished generation staging sessions is deferred. Current recovery guarantees cover persistent Project document edits, not unaccepted candidate outputs.
 
+## Vue Prototype Coverage
+
+The interactive source of truth is `?prototype=project` and Project tabs opened from Home.
+
+The prototype keeps one app-owned `ProjectSession` per project id for the lifetime of the browser session. Switching tabs preserves the document, saved baseline, history, queue/staging state and Project UI state. Closing and reopening a mock project preserves the retained session, but a confirmed close explicitly discards staging; `Discard Changes` also restores the saved baseline and clears history before closing. This is an in-memory prototype convenience, not persisted undo history or a recovery implementation.
+
+Implemented lifecycle behavior:
+
+- dirty is computed by comparing `document` with `savedDocument`;
+- persistent settings/layer/canvas/acceptance mutations can make the tab dirty, while queue progress and staging selection do not;
+- mock `Save` updates the saved baseline and clears dirty;
+- the `errors` scenario keeps the project open and dirty after a simulated Save failure;
+- closing a dirty project offers `Save`, `Discard Changes` and `Cancel`;
+- closing a clean project with staging warns that temporary candidates will be discarded;
+- Project metadata can be reflected back into the in-memory Home catalog.
+
+Not implemented by the Vue prototype:
+
+- filesystem `.igs` package assembly or atomic replacement;
+- autosave shadow writes and crash-startup recovery of Project document state;
+- real file validation, asset cleanup or Home index persistence.
+
+Home's `Recovery available` scenario is a separate mock of the intended recovery decision flow. It must not be read as evidence that the Project prototype writes or restores recovery shadows.
+
 ## Acceptance Criteria
 
 - Dirty state represents divergence from the explicit saved `.igs` revision.
