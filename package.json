@@ -10,8 +10,6 @@
     "format": "prettier AGENTS.md eslint.config.ts prettier.config.ts pnpm-workspace.yaml package.json tsconfig.json 'docs/prototype-app/**/*.{css,json,ts,vue}' 'scripts/*.js' --write",
     "format:check": "prettier AGENTS.md eslint.config.ts prettier.config.ts pnpm-workspace.yaml package.json tsconfig.json 'docs/prototype-app/**/*.{css,json,ts,vue}' 'scripts/*.js' --check",
     "typecheck": "pnpm run prototype:typecheck",
-    "screenshots": "node scripts/capture-prototype-screenshots.js",
-    "screenshots:project": "node scripts/capture-prototype-screenshots.js project-page",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
     "prototype:typecheck": "vue-tsc --project docs/prototype-app/tsconfig.json --noEmit",

@@ -140,7 +140,7 @@ Canvas controls should remain close to the canvas. Viewport controls and interac
 
 ## Prototype Coverage
 
-The interactive Vue/Naive UI implementation is available at `?prototype=project`. It is the source of truth for current Project layout, visible labels, mock interactions and responsive behavior. The historical `docs/prototypes/project-page.html` file remains a layout reference only.
+The interactive Vue/Naive UI implementation is available at `?prototype=project`. It is the source of truth for current Project layout, visible labels, mock interactions and responsive behavior.
 
 Stable query scenarios are:
 

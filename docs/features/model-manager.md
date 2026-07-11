@@ -17,7 +17,7 @@ It is not a CivitAI marketplace browser in MVP. It is the local manager for inst
 
 Primary reference: InvokeAI Model Manager V2 and backend model management system.
 
-Current visual and interaction source of truth: `docs/prototype-app?prototype=model-manager`, plus the same manager opened from Home through `Manage Models`. The older standalone HTML file `docs/prototypes/model-manager.html` remains historical reference only for the first Model Manager layout exploration.
+Current visual and interaction source of truth: `docs/prototype-app?prototype=model-manager`, plus the same manager opened from Home through `Manage Models`.
 
 The Vue prototype intentionally covers the manager shell and primary browse/import presentation. It implements resource selection, token popover visibility, local filter state/reset, native modal open/close behavior and pane resizing. The resource list, compact install strip and right details pane remain bounded by the manager body and scroll independently even on a short desktop viewport. Model-type/status/base-model filters do not yet filter the mock rows; install/repair, storage, version, queue and selected-resource actions are presentational. Empty, loading, invalid-token, invalid-URL, duplicate-install, failed-download and confirmation states remain required production behavior but do not have dedicated interactive prototype screens.
 

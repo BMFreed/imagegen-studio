@@ -6,7 +6,6 @@ export default createConfig({
     'docs/prototype-app/playwright-report/**',
     'docs/prototype-app/screenshots/**',
     'docs/prototype-app/test-results/**',
-    'docs/prototypes/screenshots/**',
   ],
   preset: Preset.AUTO_FIXABLE,
   rxjs: false,

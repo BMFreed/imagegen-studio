@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, structured prompt tokens с embedding/LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts. `docs/prototypes/project-page.html` остаётся только историческим layout reference.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, structured prompt tokens с embedding/LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  

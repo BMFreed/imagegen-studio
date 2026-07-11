@@ -30,7 +30,7 @@ Primary UX references:
 - browser tabs for open-project behavior;
 - ImageGen Studio navigation decisions in `docs/specs/04-ui-ux-navigation.md`.
 
-Current visual and interaction source of truth: the Vue/Naive Home at `/` / `?prototype=home` and `docs/prototype-app/tests/home.spec.ts`. `docs/prototypes/home-screen.html` is a static historical reference and must not override the Vue behavior.
+Current visual and interaction source of truth: the Vue/Naive Home at `/` / `?prototype=home` and `docs/prototype-app/tests/home.spec.ts`.
 
 Reject as primary reference:
 
@@ -130,7 +130,7 @@ ImageGen Studio should use a custom Electron titlebar/chrome similar to T3Code:
 - mark buttons, tabs, inputs and menus as no-drag regions;
 - reserve the native window-controls area with `env(titlebar-area-*)` when the Window Controls Overlay is visible.
 
-The HTML prototype may draw static window-control buttons so the layout communicates the intended chrome. That visual placeholder does not override the Electron implementation rule above.
+The Vue prototype draws presentational window controls so the shell communicates the intended chrome. Those controls do not override the Electron implementation rule above.
 
 The horizontal app logo lives in the menu row. The current desktop density uses a 32px menu row and a 34px document-tab row. The logo is scaled to remain legible inside that compact chrome instead of reserving editor space for a 40px toolbar.
 
@@ -511,7 +511,7 @@ Project Index:
 
 ## Prototype Coverage And Accessibility
 
-The standalone HTML prototype remains a static visual reference. The Vue/Naive implementation and its Playwright tests are the source of truth for Home layout, labels and interactions: document tabs, selection, filtering, sorting, Inspector collapse/resize, dialogs, app-managed Trash and recovery behavior.
+The Vue/Naive implementation and its Playwright tests are the source of truth for Home layout, labels and interactions: document tabs, selection, filtering, sorting, Inspector collapse/resize, dialogs, app-managed Trash and recovery behavior.
 
 The prototype app opens Home at its root URL and also accepts `?prototype=home`. Initial states can be selected with `scenario=default`, `first-run`, `no-model` or `problems`.
 

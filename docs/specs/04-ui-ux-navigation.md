@@ -1,6 +1,6 @@
 # UI / UX Navigation
 
-Для Home, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом. До появления Vue Project prototype его контракты задают `docs/features/project/`; `docs/prototypes/project-page.html` остаётся только ранним layout reference.
+Для Home, Project, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом.
 
 ## Основные зоны приложения
 

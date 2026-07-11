@@ -42,18 +42,9 @@ Tooling проекта использует `pnpm`. Основные коман�
 - `pnpm run prototype:build`;
 - `pnpm run prototype:test` / `pnpm run prototype:screenshots` — Playwright-сценарии Vue-прототипов.
 
-## HTML-прототипы
-
-- [prototypes/home-screen.html](./prototypes/home-screen.html) — статический визуальный референс Home UI; актуальный интерактивный source of truth живёт в корневом `prototype-app` / `?prototype=home`.
-- [prototypes/model-manager.html](./prototypes/model-manager.html) — исторический HTML-прототип Model Manager; актуальный визуальный источник истины теперь живёт в `docs/prototype-app`.
-- [prototypes/preset-manager.html](./prototypes/preset-manager.html) — исторический HTML-прототип Preset Manager; актуальный визуальный источник истины живёт в `prototype-app?prototype=preset-manager`.
-- [prototypes/apply-preset.html](./prototypes/apply-preset.html) — исторический HTML-референс apply preview; актуальный editable Vue-прототип живёт в `prototype-app?prototype=apply-preset`.
-- [prototypes/save-preset.html](./prototypes/save-preset.html) — исторический HTML-референс Save Current as Preset; актуальный Vue-flow открывает Preset Manager с project-derived draft в `prototype-app?prototype=save-preset`.
-- [prototypes/project-page.html](./prototypes/project-page.html) — исторический статический layout reference для `Project` / `Create`; актуальный интерактивный source of truth живёт в `prototype-app?prototype=project`.
-
 ## Правило обновления
 
-Если решение меняет scope, архитектуру или пользовательское поведение, его нужно записать в один из документов выше. `mvp-design-doc.md` остаётся каноническим обзором, а `specs/` содержит рабочие уточнения для production-реализации. Для Home, Project, Model Manager и preset-system визуальное/интерактивное поведение сверяется с `prototype-app`; его компоненты, mock state и Playwright-сценарии являются источником истины для реализованных UI-переходов. HTML-файлы используются только как исторические визуальные референсы.
+Если решение меняет scope, архитектуру или пользовательское поведение, его нужно записать в один из документов выше. `mvp-design-doc.md` остаётся каноническим обзором, а `specs/` содержит рабочие уточнения для production-реализации. Для Home, Project, Model Manager и preset-system визуальное/интерактивное поведение сверяется с `prototype-app`; его компоненты, mock state и Playwright-сценарии являются источником истины для реализованных UI-переходов.
 
 ## Глобальный инженерный принцип
 

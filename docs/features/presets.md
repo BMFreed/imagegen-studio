@@ -18,8 +18,6 @@ Current visual and interaction sources of truth live in `docs/prototype-app`:
 - `?prototype=apply-preset` — Project-scoped editable partial-apply preview;
 - `?prototype=save-preset` — Preset Manager opened with a transient draft from the current project.
 
-The standalone HTML preset prototypes are historical references and are no longer the visual source of truth.
-
 ## ImageGen Studio Decision
 
 Use an Invoke-like compact preset launcher in `Project` / `Create`, but do not copy Invoke's `Choose Prompt Template` behavior directly.
@@ -238,7 +236,7 @@ Create mode uses the same explicit lifecycle with `Cancel`, `Not saved` and `Cre
 
 In production, a failed create/update command must leave the same draft and dirty state open so the user can retry. The current prototype does not simulate persistence failures.
 
-The Vue/Naive prototype owns interaction states; the historical HTML prototype is not expected to implement form state, validation or confirmations. Preset Manager uses a native Naive modal transition, closes through its explicit close action or `Esc`, and protects dirty state before completing that close. When opened over Home or Apply, the underlying surface is not interactive.
+The Vue/Naive prototype owns interaction states. Preset Manager uses a native Naive modal transition, closes through its explicit close action or `Esc`, and protects dirty state before completing that close. When opened over Home or Apply, the underlying surface is not interactive.
 
 Preset import and export are not planned for MVP. The manager does not show import/export actions, and no portable preset bundle format is defined yet.
 
