@@ -307,7 +307,7 @@ test.describe('Editable Apply Preset', () => {
     await expect(dialog.getByText(/Current:.*CFG 5.5/)).toBeVisible();
     await expect(dialog.getByText(/Apply:.*CFG 4.5/)).toBeVisible();
 
-    const promptInput = dialog.getByRole('textbox', { exact: true, name: 'Prompt' });
+    const promptInput = dialog.getByRole('listbox', { exact: true, name: 'Prompt' });
     await expect(promptInput).toBeHidden();
     await dialog.getByRole('button', { name: 'Expand all' }).click();
     await expect(promptInput).toBeVisible();
@@ -429,7 +429,10 @@ test.describe('Create preset from project', () => {
 
     const seedSection = page.locator('.n-collapse-item').filter({ hasText: /^Seed/ });
     await expect(seedSection.getByRole('checkbox', { name: 'Included' })).not.toBeChecked();
-    await page.getByLabel('Prompt').fill('edited before preset creation');
+    await page.getByRole('button', { name: 'Add Prompt token' }).click();
+    const prompt = page.getByRole('textbox', { name: 'Add Prompt token' });
+    await prompt.fill('edited before preset creation');
+    await prompt.press('Enter');
     await page.getByRole('button', { name: 'Create Preset' }).click();
     await expect(page.getByText('Preset created')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Select draft preset' })).toBeHidden();

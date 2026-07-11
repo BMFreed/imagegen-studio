@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { AlertTriangle } from '@vicons/tabler';
-import { NIcon, NInput, NText, NTooltip, useMessage } from 'naive-ui';
-import { computed, nextTick, ref } from 'vue';
+import { NIcon, NText, NTooltip, useMessage } from 'naive-ui';
+import { computed, ref } from 'vue';
 
-import type { ProjectDocumentModel, ProjectSession } from './project.types';
+import type { GenerationPrompt } from '../../components/generation/generation.types';
+import type { ProjectSession } from './project.types';
 
 import {
-  cloneDocument,
-  commitProjectEditFromBaseline,
-  commitProjectMutation,
-} from './project-history';
-import { adjustPromptAttention } from './project-prompt.utils';
+  adjustPromptTokenAttention,
+  cloneGenerationPrompt,
+  createGenerationPrompt,
+  serializeGenerationPrompt,
+} from '../../components/generation/generation-prompt.utils';
+import { mockDanbooruTags } from '../../components/generation/generation.mock';
+import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue';
+import { presetEditorResources } from '../presets/presets.mock';
+import { commitProjectMutation } from './project-history';
 import { getActiveGenerationDraft } from './project.utils';
 import ProjectPromptActions from './ProjectPromptActions.vue';
 
@@ -21,85 +26,36 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ dynamicPreview: [] }>();
 const message = useMessage();
-const root = ref<HTMLElement | null>(null);
-const lastSelection = ref({ end: 0, start: 0 });
-let baseline: ProjectDocumentModel | undefined;
-const value = computed(() => getActiveGenerationDraft(props.session).payload[props.field] ?? '');
-const tokenCount = computed(() => value.value.split(/\s+/).filter(Boolean).length);
-const warning = computed(() => value.value.includes('(broken'));
-const promptInputTheme = {
-  color: 'transparent',
-  colorFocus: 'transparent',
-  paddingSmall: '0',
-} as const;
+const selectedTokenId = ref<string>();
+const value = computed(
+  () => getActiveGenerationDraft(props.session).payload[props.field] ?? createGenerationPrompt(),
+);
+const serialized = computed(() => serializeGenerationPrompt(value.value));
+const tokenCount = computed(() => serialized.value.split(/\s+/).filter(Boolean).length);
+const warning = computed(() => serialized.value.includes('(broken'));
+const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? []);
 
-function beginEdit() {
-  baseline ??= cloneDocument(props.session.document);
-}
-function update(next: string) {
-  beginEdit();
-  getActiveGenerationDraft(props.session).payload[props.field] = next;
-}
-function finishEdit() {
-  if (!baseline) {
-    return;
-  }
-  commitProjectEditFromBaseline(props.session, `Edit ${props.title.toLowerCase()}`, baseline);
-  baseline = undefined;
-}
-function textarea() {
-  return root.value?.querySelector('textarea') ?? undefined;
-}
-function rememberSelection(event: Event) {
-  const input = event.target as HTMLTextAreaElement;
-  lastSelection.value = { end: input.selectionEnd, start: input.selectionStart };
+function update(next: GenerationPrompt, label = `Edit ${props.title.toLowerCase()}`) {
+  commitProjectMutation(props.session, label, () => {
+    getActiveGenerationDraft(props.session).payload[props.field] = cloneGenerationPrompt(next);
+  });
 }
 function attention(direction: -1 | 1) {
-  finishEdit();
-  const input = textarea();
-  if (!input) {
+  if (!selectedTokenId.value) {
     return;
   }
-  const selection =
-    input.selectionStart === input.selectionEnd &&
-    lastSelection.value.start !== lastSelection.value.end
-      ? lastSelection.value
-      : { end: input.selectionEnd, start: input.selectionStart };
-  const result = adjustPromptAttention(value.value, selection.start, selection.end, direction);
-  if (result.value === value.value) {
-    return;
-  }
-  commitProjectMutation(
-    props.session,
+  update(
+    adjustPromptTokenAttention(value.value, selectedTokenId.value, direction),
     `${direction > 0 ? 'Increase' : 'Decrease'} prompt attention`,
-    () => {
-      getActiveGenerationDraft(props.session).payload[props.field] = result.value;
-    },
   );
-  void nextTick(() => {
-    input.focus();
-    input.setSelectionRange(result.selectionStart, result.selectionEnd);
-  });
-}
-function insertTag(tag: string) {
-  finishEdit();
-  const input = textarea();
-  const start = input?.selectionStart ?? value.value.length;
-  const spacer = start > 0 && !/[\s,]$/.test(value.value.slice(0, start)) ? ', ' : '';
-  const next = `${value.value.slice(0, start)}${spacer}${tag}${value.value.slice(start)}`;
-  commitProjectMutation(props.session, 'Insert prompt tag', () => {
-    getActiveGenerationDraft(props.session).payload[props.field] = next;
-  });
 }
 async function copy() {
-  await navigator.clipboard.writeText(value.value);
+  await navigator.clipboard.writeText(serialized.value);
   message.success(`${props.title} copied`);
 }
 function clear() {
-  finishEdit();
-  commitProjectMutation(props.session, `Clear ${props.title.toLowerCase()}`, () => {
-    getActiveGenerationDraft(props.session).payload[props.field] = '';
-  });
+  update(createGenerationPrompt(), `Clear ${props.title.toLowerCase()}`);
+  selectedTokenId.value = undefined;
 }
 function hotkey(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) {
@@ -111,7 +67,7 @@ function hotkey(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section ref="root" class="prompt-card">
+  <section class="prompt-card" @keydown.capture="hotkey">
     <header class="prompt-meta">
       <strong>{{ title }}</strong>
       <NText depth="3">{{ tokenCount }} tokens</NText>
@@ -126,63 +82,49 @@ function hotkey(event: KeyboardEvent) {
         Check prompt weights
       </NTooltip>
     </header>
-    <NInput
-      :aria-label="title"
-      :bordered="false"
-      class="prompt-input"
-      :inputProps="{ 'aria-label': title }"
-      :resizable="false"
-      :rows="6"
-      size="small"
-      :themeOverrides="promptInputTheme"
-      type="textarea"
-      :value
-      @blur="finishEdit"
-      @focus="beginEdit"
-      @keydown="hotkey"
-      @select="rememberSelection"
-      @update:value="update"
+    <GenerationPromptTokenEditor
+      v-model:selectedTokenId="selectedTokenId"
+      :ariaLabel="title"
+      :danbooruTags="mockDanbooruTags"
+      :embeddings="presetEditorResources.embeddings"
+      :loras
+      :minimumLines="field === 'prompt' ? 9 : 4"
+      :modelValue="value"
+      :polarity="field === 'prompt' ? 'positive' : 'negative'"
+      @update:modelValue="update($event)"
     />
     <ProjectPromptActions
       class="prompt-actions-rail"
+      :tokenSelected="Boolean(selectedTokenId)"
       @clear="clear"
       @copy="copy"
       @decrease="attention(-1)"
       @dynamicPreview="emit('dynamicPreview')"
       @increase="attention(1)"
-      @insertTag="insertTag"
     />
   </section>
 </template>
 
 <style scoped>
 .prompt-card {
-  padding: 7px 5px 7px 9px;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
   background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
-  position: relative;
-  resize: vertical;
-  overflow: hidden;
-  min-height: 150px;
-}
-.prompt-card:focus-within {
-  border-color: var(--workspace-green);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-green) 18%, transparent);
 }
 .prompt-meta {
-  grid-area: meta;
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: 8px;
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 6px;
-  min-width: 0;
   line-height: 1.2;
-  position: absolute;
-  top: 5px;
-  left: 7px;
+  pointer-events: none;
 }
 .prompt-meta strong {
   font-weight: 600;
@@ -193,17 +135,11 @@ function hotkey(event: KeyboardEvent) {
 .prompt-warning {
   flex: 0 0 auto;
   color: var(--status-warning);
-}
-.prompt-input {
-  grid-area: input;
-  min-width: 0;
-  padding-top: 12px;
-  padding-right: 18px;
+  pointer-events: auto;
 }
 .prompt-actions-rail {
-  grid-area: actions;
-  align-self: start;
   position: absolute;
+  z-index: 2;
   top: 7px;
   right: 5px;
 }

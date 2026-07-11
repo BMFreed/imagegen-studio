@@ -11,7 +11,7 @@ import {
   NText,
   NTooltip,
 } from 'naive-ui';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 import type {
   PresetEditorResources,
@@ -20,8 +20,14 @@ import type {
   PresetWorkflow,
 } from './presets.types';
 
-import GenerationEmbeddings from '../../components/generation/GenerationEmbeddings.vue';
+import {
+  findOrphanedLoraTriggers,
+  reconcileLoraTriggerSources,
+} from '../../components/generation/generation-prompt.utils';
+import { mockDanbooruTags } from '../../components/generation/generation.mock';
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue';
+import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue';
+import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue';
 import PresetPayloadSection from './PresetPayloadSection.vue';
 import { clonePreset, sectionLabels } from './presets.utils';
 
@@ -38,6 +44,10 @@ const props = withDefaults(
 );
 
 const payload = defineModel<PresetPayload>({ required: true });
+const loraTriggerDialogOpen = ref(false);
+const affectedNegativeTriggerCount = ref(0);
+const affectedPositiveTriggerCount = ref(0);
+const pendingLoras = ref<NonNullable<PresetPayload['loras']>>();
 const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
   default: () => [],
 });
@@ -72,15 +82,36 @@ const seedPolicyOptions = [
 const loras = computed({
   get: () => payload.value.loras ?? [],
   set: (value) => {
+    const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
+    const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
+    if (positiveOrphans.length || negativeOrphans.length) {
+      pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>;
+      affectedPositiveTriggerCount.value = positiveOrphans.length;
+      affectedNegativeTriggerCount.value = negativeOrphans.length;
+      loraTriggerDialogOpen.value = true;
+      return;
+    }
     payload.value.loras = value;
   },
 });
-const embeddings = computed({
-  get: () => payload.value.embeddings ?? [],
-  set: (value) => {
-    payload.value.embeddings = value;
-  },
-});
+
+function resolveLoraTriggers(resolution: 'keep' | 'remove') {
+  const nextLoras = pendingLoras.value;
+  if (!nextLoras) {
+    return;
+  }
+  payload.value.loras = JSON.parse(JSON.stringify(nextLoras)) as NonNullable<
+    PresetPayload['loras']
+  >;
+  payload.value.prompt = reconcileLoraTriggerSources(payload.value.prompt, nextLoras, resolution);
+  payload.value.negativePrompt = reconcileLoraTriggerSources(
+    payload.value.negativePrompt,
+    nextLoras,
+    resolution,
+  );
+  pendingLoras.value = undefined;
+  loraTriggerDialogOpen.value = false;
+}
 
 function sectionDisabled(section: PresetSectionKey): boolean {
   return props.disabledSections.includes(section);
@@ -130,26 +161,32 @@ function updateVae(vaeId: string) {
           <slot name="section-empty" :section />
         </template>
 
-        <NInput
+        <GenerationPromptTokenEditor
           v-if="section === 'prompt'"
           key="prompt"
-          :autosize="{ minRows: 3, maxRows: 6 }"
+          ariaLabel="Prompt"
+          :danbooruTags="mockDanbooruTags"
           :disabled="sectionDisabled(section)"
-          :inputProps="{ 'aria-label': 'Prompt' }"
-          type="textarea"
-          :value="payload.prompt"
-          @update:value="payload.prompt = $event"
+          :embeddings="resources.embeddings"
+          :loras="payload.loras ?? []"
+          :minimumLines="3"
+          :modelValue="payload.prompt ?? { tokens: [] }"
+          polarity="positive"
+          @update:modelValue="payload.prompt = $event"
         />
 
-        <NInput
+        <GenerationPromptTokenEditor
           v-else-if="section === 'negativePrompt'"
           key="negative-prompt"
-          :autosize="{ minRows: 3, maxRows: 6 }"
+          ariaLabel="Negative Prompt"
+          :danbooruTags="mockDanbooruTags"
           :disabled="sectionDisabled(section)"
-          :inputProps="{ 'aria-label': 'Negative Prompt' }"
-          type="textarea"
-          :value="payload.negativePrompt"
-          @update:value="payload.negativePrompt = $event"
+          :embeddings="resources.embeddings"
+          :loras="payload.loras ?? []"
+          :minimumLines="3"
+          :modelValue="payload.negativePrompt ?? { tokens: [] }"
+          polarity="negative"
+          @update:modelValue="payload.negativePrompt = $event"
         />
 
         <div v-else-if="section === 'model' && payload.model" class="field-stack">
@@ -191,13 +228,6 @@ function updateVae(vaeId: string) {
           v-model="loras"
           :disabled="sectionDisabled(section)"
           :resources="resources.loras"
-        />
-
-        <GenerationEmbeddings
-          v-else-if="section === 'embeddings'"
-          v-model="embeddings"
-          :disabled="sectionDisabled(section)"
-          :resources="resources.embeddings"
         />
 
         <div v-else-if="section === 'size' && payload.size" class="two-column-fields">
@@ -317,6 +347,12 @@ function updateVae(vaeId: string) {
       </PresetPayloadSection>
     </NCollapse>
   </NCard>
+  <LoraTriggerChangeDialog
+    v-model:show="loraTriggerDialogOpen"
+    :negativeCount="affectedNegativeTriggerCount"
+    :positiveCount="affectedPositiveTriggerCount"
+    @resolve="resolveLoraTriggers"
+  />
 </template>
 
 <style scoped>

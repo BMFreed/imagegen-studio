@@ -3,11 +3,11 @@ import { Trash as TrashIcon } from '@vicons/tabler';
 import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import type { GenerationLora, GenerationResourceRef } from './generation.types';
+import type { GenerationLora, GenerationLoraResourceRef } from './generation.types';
 
 const props = defineProps<{
   disabled?: boolean;
-  resources: GenerationResourceRef[];
+  resources: GenerationLoraResourceRef[];
 }>();
 
 const loras = defineModel<GenerationLora[]>({ required: true });
@@ -26,13 +26,28 @@ function add(resourceId: string | null) {
   if (!resource || loras.value.some((lora) => lora.resource.id === resource.id)) {
     return;
   }
-  loras.value.push({
-    enabled: true,
-    resource: structuredClone(resource),
-    triggerWords: [],
-    weight: 0.7,
-  });
+  loras.value = [
+    ...loras.value,
+    {
+      enabled: true,
+      resource: structuredClone(resource),
+      weight: 0.7,
+    },
+  ];
   selectedResourceId.value = null;
+}
+function updateEnabled(index: number, enabled: boolean) {
+  loras.value = loras.value.map((lora, current) =>
+    current === index ? { ...lora, enabled } : lora,
+  );
+}
+function updateWeight(index: number, weight: number | null) {
+  loras.value = loras.value.map((lora, current) =>
+    current === index ? { ...lora, weight: weight ?? 0.7 } : lora,
+  );
+}
+function remove(index: number) {
+  loras.value = loras.value.filter((_, current) => current !== index);
 }
 </script>
 
@@ -50,22 +65,24 @@ function add(resourceId: string | null) {
     />
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
       <NSwitch
-        v-model:value="lora.enabled"
         :aria-label="`Enable ${lora.resource.name}`"
         :disabled
         size="small"
+        :value="lora.enabled"
+        @update:value="updateEnabled(index, $event)"
       />
       <div class="lora-main">
         <strong>{{ lora.resource.name }}</strong>
         <NText depth="3">{{ lora.resource.version ?? 'Local resource' }}</NText>
       </div>
       <NInputNumber
-        v-model:value="lora.weight"
         :aria-label="`${lora.resource.name} weight`"
         :disabled
         :max="2"
         :min="-2"
         :step="0.05"
+        :value="lora.weight"
+        @update:value="updateWeight(index, $event)"
       />
       <NButton
         :aria-label="`Remove ${lora.resource.name}`"
@@ -73,7 +90,7 @@ function add(resourceId: string | null) {
         :disabled
         quaternary
         size="tiny"
-        @click="loras.splice(index, 1)"
+        @click="remove(index)"
       >
         <template v-slot:icon><NIcon :component="TrashIcon" /></template>
       </NButton>

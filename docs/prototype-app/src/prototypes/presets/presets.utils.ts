@@ -8,6 +8,13 @@ import type {
   PresetWorkflow,
 } from './presets.types';
 
+import {
+  createGenerationPrompt,
+  getPromptEmbeddingRefs,
+  promptHasMissingEmbedding,
+  serializeGenerationPrompt,
+} from '../../components/generation/generation-prompt.utils';
+
 export const workflowLabels: Record<PresetWorkflow, string> = {
   imageToImage: 'Image to Image',
   smartPatch: 'Smart Patch',
@@ -16,7 +23,6 @@ export const workflowLabels: Record<PresetWorkflow, string> = {
 
 export const sectionLabels: Record<PresetSectionKey, string> = {
   denoisingStrength: 'Denoising Strength',
-  embeddings: 'Embeddings',
   guidance: 'Steps & CFG',
   loras: 'LoRA',
   model: 'Model',
@@ -33,7 +39,6 @@ export const sectionOrder = [
   'negativePrompt',
   'model',
   'loras',
-  'embeddings',
   'size',
   'sampling',
   'guidance',
@@ -51,7 +56,7 @@ export function createManualPresetDefinition(): PresetDefinition {
     description: '',
     favorite: false,
     name: '',
-    payload: { prompt: '' },
+    payload: { prompt: createGenerationPrompt() },
     tags: [],
     workflow: 'textToImage',
   };
@@ -93,9 +98,6 @@ export function createDefaultSectionValue(
     case 'denoisingStrength': {
       return workflow === 'textToImage' ? undefined : 0.5;
     }
-    case 'embeddings': {
-      return [];
-    }
     case 'guidance': {
       return { cfgScale: 5, steps: 28 };
     }
@@ -113,7 +115,7 @@ export function createDefaultSectionValue(
     }
     case 'negativePrompt':
     case 'prompt': {
-      return '';
+      return createGenerationPrompt();
     }
     case 'sampling': {
       return { sampler: 'DPM++ 2M', scheduler: 'Karras' };
@@ -152,10 +154,6 @@ export function setPresetSectionIncluded(
       payload.denoisingStrength = value as number;
       break;
     }
-    case 'embeddings': {
-      payload.embeddings = value as NonNullable<PresetPayload['embeddings']>;
-      break;
-    }
     case 'guidance': {
       payload.guidance = value as NonNullable<PresetPayload['guidance']>;
       break;
@@ -169,11 +167,11 @@ export function setPresetSectionIncluded(
       break;
     }
     case 'negativePrompt': {
-      payload.negativePrompt = value as string;
+      payload.negativePrompt = value as NonNullable<PresetPayload['negativePrompt']>;
       break;
     }
     case 'prompt': {
-      payload.prompt = value as string;
+      payload.prompt = value as NonNullable<PresetPayload['prompt']>;
       break;
     }
     case 'sampling': {
@@ -213,14 +211,15 @@ export function presetSectionHasMissingResources(
   section: PresetSectionKey,
 ): boolean {
   switch (section) {
-    case 'embeddings': {
-      return payload.embeddings?.some((resource) => resource.missing) ?? false;
-    }
     case 'loras': {
       return payload.loras?.some((lora) => lora.resource.missing) ?? false;
     }
     case 'model': {
       return payload.model?.missing ?? false;
+    }
+    case 'negativePrompt':
+    case 'prompt': {
+      return promptHasMissingEmbedding(payload[section]);
     }
     case 'vae': {
       return payload.vae?.missing ?? false;
@@ -253,9 +252,6 @@ export function summarizePresetSection(payload: PresetPayload, section: PresetSe
         ? 'Not set'
         : payload.denoisingStrength.toFixed(2);
     }
-    case 'embeddings': {
-      return payload.embeddings?.map((embedding) => embedding.name).join(', ') || 'None';
-    }
     case 'guidance': {
       return payload.guidance
         ? `${payload.guidance.steps} steps · CFG ${payload.guidance.cfgScale}`
@@ -272,10 +268,10 @@ export function summarizePresetSection(payload: PresetPayload, section: PresetSe
         : 'Not set';
     }
     case 'negativePrompt': {
-      return payload.negativePrompt || 'Empty';
+      return serializeGenerationPrompt(payload.negativePrompt) || 'Empty';
     }
     case 'prompt': {
-      return payload.prompt || 'Empty';
+      return serializeGenerationPrompt(payload.prompt) || 'Empty';
     }
     case 'sampling': {
       return payload.sampling
@@ -313,14 +309,15 @@ export function presetSearchText(preset: PresetRecord): string {
     preset.payload.model?.name,
     preset.payload.vae?.name,
     ...(preset.payload.loras?.map((lora) => lora.resource.name) ?? []),
-    ...(preset.payload.embeddings?.map((embedding) => embedding.name) ?? []),
+    ...getPromptEmbeddingRefs(preset.payload.prompt).map((embedding) => embedding.name),
+    ...getPromptEmbeddingRefs(preset.payload.negativePrompt).map((embedding) => embedding.name),
   ];
 
   return [
     preset.name,
     preset.description,
-    preset.payload.prompt,
-    preset.payload.negativePrompt,
+    serializeGenerationPrompt(preset.payload.prompt),
+    serializeGenerationPrompt(preset.payload.negativePrompt),
     ...resourceNames,
   ]
     .filter(Boolean)

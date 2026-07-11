@@ -1,6 +1,7 @@
 import type { PresetCreateIntent, PresetPayload, PresetSectionKey } from '../presets/presets.types';
 import type { GenerationCandidate, ProjectGenerationDraft, ProjectSession } from './project.types';
 
+import { promptHasMissingEmbedding } from '../../components/generation/generation-prompt.utils';
 import { commitProjectMutation } from './project-history';
 
 export function getSelectedEntity(session: ProjectSession) {
@@ -39,7 +40,12 @@ export function deriveGenerationMode(session: ProjectSession) {
 }
 
 export function projectHasBlockingGenerationErrors(session: ProjectSession) {
-  return getActiveGenerationDraft(session).payload.model?.missing === true;
+  const payload = getActiveGenerationDraft(session).payload;
+  return (
+    payload.model?.missing === true ||
+    promptHasMissingEmbedding(payload.prompt) ||
+    promptHasMissingEmbedding(payload.negativePrompt)
+  );
 }
 
 export function resolveAcceptedAnchor(session: ProjectSession): GenerationCandidate | undefined {

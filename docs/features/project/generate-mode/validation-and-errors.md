@@ -38,7 +38,7 @@ Generate must handle:
 
 - prompt diagnostics live in the prompt editor status area;
 - missing/incompatible LoRA warnings live on LoRA rows and selector rows;
-- missing/incompatible embedding warnings live on embedding rows and selector rows;
+- missing/incompatible embedding warnings live on the affected embedding token inside the Positive or Negative Prompt editor;
 - bbox validity warnings live near bbox controls and canvas handles;
 - Smart Patch `outdated` status lives on the layer row and selected-layer controls;
 - worker unavailable/failed state can appear in global status and in Generate action area;
@@ -53,6 +53,7 @@ Block generation when:
 - worker is unavailable;
 - bbox/internal resolution cannot produce a valid worker request;
 - required source assets for Smart Patch regeneration are missing.
+- an active prompt contains a missing embedding resource.
 
 Warn but allow generation when:
 

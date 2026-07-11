@@ -172,9 +172,11 @@ test.describe('Home prototype', () => {
       .locator('strong')
       .filter({ hasText: /^Prompt$/ })
       .click();
-    const prompt = dialog.getByRole('textbox', { exact: true, name: 'Prompt' });
+    await dialog.getByRole('button', { name: 'Add Prompt token' }).click();
+    const prompt = dialog.getByRole('textbox', { name: 'Add Prompt token' });
     await expect(prompt).toBeVisible();
     await prompt.fill('customized for this project only');
+    await prompt.press('Enter');
     await dialog.getByRole('button', { name: 'Create Project' }).click();
     await expect(page.getByText('Project created')).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Prototype Project.igs' })).toBeVisible();
@@ -425,7 +427,7 @@ test.describe('Home prototype', () => {
     await expect(dialog.getByRole('textbox', { exact: true, name: 'Prompt' })).toBeHidden();
 
     await dialog.getByRole('button', { name: 'Expand all' }).click();
-    const contentScroller = dialog.locator('.n-card__content-scrollbar .n-scrollbar-container');
+    const contentScroller = dialog.locator('.modal-scroll .n-scrollbar-container');
     await expect
       .poll(() =>
         contentScroller.evaluate((element) => element.scrollHeight > element.clientHeight),

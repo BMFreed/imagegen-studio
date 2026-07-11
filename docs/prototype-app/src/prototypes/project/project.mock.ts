@@ -6,6 +6,14 @@ import type {
   ProjectSession,
 } from './project.types';
 
+import {
+  parseLegacyPromptString,
+  serializeGenerationPrompt,
+} from '../../components/generation/generation-prompt.utils';
+import {
+  generationEmbeddings,
+  mockDanbooruTags,
+} from '../../components/generation/generation.mock';
 import { currentProjectPresetSource } from '../presets/presets.mock';
 import { cloneDocument } from './project-history';
 
@@ -70,7 +78,17 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
     if (session.document.generationDraft.payload.loras?.[0]) {
       session.document.generationDraft.payload.loras[0].resource.missing = true;
     }
-    session.document.generationDraft.payload.prompt = 'portrait, dramatic light, (broken attention';
+    session.document.generationDraft.payload.prompt = parseLegacyPromptString(
+      'portrait, dramatic light, (broken attention',
+      generationEmbeddings,
+      mockDanbooruTags,
+    );
+    session.document.generationDraft.payload.negativePrompt?.tokens.push({
+      id: 'missing-embedding-token',
+      kind: 'embedding',
+      resource: { ...generationEmbeddings[0]!, missing: true },
+      text: generationEmbeddings[0]!.negativeToken!,
+    });
     const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch');
     if (patch?.kind === 'smart-patch') {
       patch.status = 'outdated';
@@ -205,9 +223,11 @@ function queueItem(
     id,
     iteration,
     label,
-    negativePrompt: baseDraft.payload.negativePrompt ?? '',
+    negativePrompt: serializeGenerationPrompt(baseDraft.payload.negativePrompt),
+    negativePromptTokens: structuredClone(baseDraft.payload.negativePrompt?.tokens ?? []),
     progress,
-    prompt: baseDraft.payload.prompt ?? '',
+    prompt: serializeGenerationPrompt(baseDraft.payload.prompt),
+    promptTokens: structuredClone(baseDraft.payload.prompt?.tokens ?? []),
     status,
   };
 }

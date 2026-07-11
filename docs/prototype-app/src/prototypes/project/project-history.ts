@@ -1,9 +1,10 @@
-import { toRaw } from 'vue';
-
 import type { ProjectDocumentModel, ProjectSession } from './project.types';
 
 export function cloneDocument(document: ProjectDocumentModel): ProjectDocumentModel {
-  return structuredClone(toRaw(document));
+  // Project documents are JSON-shaped prototype state. Serializing here unwraps
+  // nested Vue proxies as well as the top-level proxy, which structuredClone
+  // cannot do reliably after an editor writes reactive token arrays.
+  return JSON.parse(JSON.stringify(document)) as ProjectDocumentModel;
 }
 
 export function commitProjectMutation(

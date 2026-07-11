@@ -2,7 +2,7 @@
 
 ## Feature
 
-Tag autocomplete helps users write prompts for Danbooru-trained anime/illustration models by suggesting canonical Danbooru-style tags while typing.
+Unified prompt autocomplete helps users write prompts by combining canonical Danbooru-style tags with local resource-aware suggestions.
 
 The feature is aimed at SDXL/Illustrious-like models where Danbooru tags are a meaningful part of the model's training vocabulary.
 
@@ -33,7 +33,8 @@ MVP source policy:
 - Custom extra CSV import is not supported in MVP.
 - Translation search is not supported in MVP.
 - Chants/styles are not supported.
-- Embeddings are handled by a separate resource-selection feature, not prompt text autocomplete.
+- Installed textual-inversion embeddings are offered as resource-bearing prompt tokens.
+- Trigger phrases from enabled selected LoRAs are offered as contextual prompt tokens.
 - Wildcards are not needed for the current product direction and are not supported.
 
 Manual tag database update is supported. Automatic scheduled update can be added later.
@@ -46,6 +47,8 @@ MVP:
 - manually update the tag set from an app-managed source;
 - search by canonical tag and aliases;
 - insert canonical tags into positive/negative prompt fields;
+- insert installed embeddings into the specific positive/negative prompt being edited;
+- include trigger phrases only from enabled, non-missing LoRAs in the active generation draft;
 - show category/type and post count in suggestions;
 - track local tag usage and use it as a sorting signal;
 - show last update status and update errors in settings.
@@ -63,7 +66,6 @@ Rejected for this feature:
 
 - Rule34 source;
 - custom extra CSV import;
-- embedding token autocomplete;
 - wildcard expansion;
 - chants/styles.
 
@@ -155,6 +157,14 @@ Ranking uses:
 - local `tag_usage`;
 - active prompt polarity, so positive and negative usage can diverge.
 
+Clicking the prompt editor's `+` opens a compact input and immediately exposes a local browse view containing `Active LoRA triggers` and `Embeddings`. Double-click editing opens the same dropdown rather than a reduced plain-input mode. This makes the finite contextual resources discoverable without a separate selector or onboarding tooltip. A disabled instruction row at the top explains that Danbooru search begins after two normalized characters; after that threshold the same dropdown filters all sources and adds the `Danbooru tags` group.
+
+When focus is already inside the prompt token editor, `Ctrl/Cmd+Space` opens the same add/autocomplete flow. It is a keyboard accelerator, not the only discoverability mechanism.
+
+The Vue prototype treats spaces and underscores as equivalent, returns at most five items per group and twelve overall, and orders groups as `Active LoRA triggers`, `Embeddings`, then `Danbooru tags`. The menu has a usable width independent of the deliberately tiny inline input. LoRA triggers are available in both prompt polarities. Negative embedding metadata affects ranking and the inserted token, but the user still chooses the destination prompt.
+
+Autocomplete never inserts LoRA trigger phrases automatically when a LoRA is selected. If disabling/removing a LoRA would orphan linked trigger tokens, the user explicitly keeps them as ordinary prompt text, removes them, or cancels the LoRA change.
+
 ## Manual Update
 
 Manual update means "download and install the newest app-supported tag database now".
@@ -185,4 +195,4 @@ Manual update is still useful because:
 - Positive and negative prompts track usage separately.
 - A user can manually update the installed tag database.
 - The UI shows the installed tag set status, row count, and last update time.
-- Rule34, custom CSV import, translation search, chants/styles, embeddings autocomplete, and wildcard expansion are not part of this feature.
+- Rule34, custom CSV import, translation search, chants/styles, wildcard expansion and production network-backed suggestions are not part of the Vue prototype.

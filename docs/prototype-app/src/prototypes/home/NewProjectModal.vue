@@ -13,6 +13,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NScrollbar,
   NSelect,
   NText,
 } from 'naive-ui';
@@ -252,123 +253,127 @@ function createProject() {
       aria-label="New Project"
       class="home-modal"
       :class="{ 'home-modal--preset': presetDraft !== undefined }"
-      contentScrollable
       role="dialog"
       size="small"
       title="New Project"
     >
-      <NForm ref="formRef" :model="draft" :rules="formRules" @submit.prevent="createProject">
-        <div class="modal-form">
-          <div class="project-fields">
-            <NFormItem class="project-name-field" label="Project name" path="name">
-              <NInput
-                v-model:value="draft.name"
-                autofocus
-                :inputProps="{ 'aria-label': 'Project name' }"
-                placeholder="Untitled project"
-              />
-            </NFormItem>
-            <NFormItem label="Workspace">
-              <NSelect
-                v-model:value="draft.workspaceId"
-                aria-label="Workspace"
-                :options="workspaceOptions"
-              />
-            </NFormItem>
-            <NFormItem label="Generation preset">
-              <NSelect
-                aria-label="Generation preset"
-                :options="presetOptions"
-                :value="draft.generationPresetId ?? 'none'"
-                @update:value="selectPreset"
-              />
-            </NFormItem>
-          </div>
-
-          <template v-if="presetDraft && selectedPreset">
-            <NAlert type="default">
-              Customize a temporary copy for this project. The saved preset will not change.
-            </NAlert>
-            <NAlert v-if="selectedPresetHasMissingResource" type="warning">
-              <template v-slot:icon><NIcon :component="AlertIcon" /></template>
-              Selected settings reference a missing resource. The project can still be created, but
-              generation requires replacing it.
-            </NAlert>
-            <div class="preset-toolbar">
-              <NText depth="3">
-                {{ presetDraft.selectedSections.length }} of {{ sections.length }} settings used
-              </NText>
-              <NButton size="tiny" tertiary @click="toggleAllSectionsExpanded">
-                {{ allSectionsExpanded ? 'Collapse all' : 'Expand all' }}
-              </NButton>
-              <NButton
-                :disabled="changedSections.length === 0"
-                size="tiny"
-                tertiary
-                @click="resetAll"
-              >
-                Reset all
-              </NButton>
+      <NScrollbar
+        class="modal-scroll"
+        :class="{ 'modal-scroll--preset': presetDraft !== undefined }"
+      >
+        <NForm ref="formRef" :model="draft" :rules="formRules" @submit.prevent="createProject">
+          <div class="modal-form">
+            <div class="project-fields">
+              <NFormItem class="project-name-field" label="Project name" path="name">
+                <NInput
+                  v-model:value="draft.name"
+                  autofocus
+                  :inputProps="{ 'aria-label': 'Project name' }"
+                  placeholder="Untitled project"
+                />
+              </NFormItem>
+              <NFormItem label="Workspace">
+                <NSelect
+                  v-model:value="draft.workspaceId"
+                  aria-label="Workspace"
+                  :options="workspaceOptions"
+                />
+              </NFormItem>
+              <NFormItem label="Generation preset">
+                <NSelect
+                  aria-label="Generation preset"
+                  :options="presetOptions"
+                  :value="draft.generationPresetId ?? 'none'"
+                  @update:value="selectPreset"
+                />
+              </NFormItem>
             </div>
-            <PresetPayloadEditor
-              v-model="presetDraft.payload"
-              v-model:expandedSections="expandedSections"
-              :disabledSections
-              :resources="presetEditorResources"
-              :sections
-              :workflow="selectedPreset.workflow"
-            >
-              <template v-slot:section-context="{ section }">
-                <NText depth="3"
-                  >Project: {{ summarizePresetSection(presetDraft.payload, section) }}</NText
-                >
-              </template>
-              <template v-slot:section-actions="{ section }">
+
+            <template v-if="presetDraft && selectedPreset">
+              <NAlert type="default">
+                Customize a temporary copy for this project. The saved preset will not change.
+              </NAlert>
+              <NAlert v-if="selectedPresetHasMissingResource" type="warning">
+                <template v-slot:icon><NIcon :component="AlertIcon" /></template>
+                Selected settings reference a missing resource. The project can still be created,
+                but generation requires replacing it.
+              </NAlert>
+              <div class="preset-toolbar">
+                <NText depth="3">
+                  {{ presetDraft.selectedSections.length }} of {{ sections.length }} settings used
+                </NText>
+                <NButton size="tiny" tertiary @click="toggleAllSectionsExpanded">
+                  {{ allSectionsExpanded ? 'Collapse all' : 'Expand all' }}
+                </NButton>
                 <NButton
-                  v-if="changedSections.includes(section)"
-                  :aria-label="`Reset ${sectionLabels[section]}`"
+                  :disabled="changedSections.length === 0"
                   size="tiny"
                   tertiary
-                  @click="resetSection(section)"
+                  @click="resetAll"
                 >
-                  Reset
+                  Reset all
                 </NButton>
-              </template>
-              <template v-slot:section-control="{ section }">
-                <NText v-if="section === 'size'" depth="3">Canvas</NText>
-                <NCheckbox
-                  v-else
-                  :checked="sectionSelected(section)"
-                  @update:checked="setSectionSelected(section, $event)"
-                >
-                  Use <span class="sr-only">{{ sectionLabels[section] }}</span>
-                </NCheckbox>
-              </template>
-            </PresetPayloadEditor>
-          </template>
+              </div>
+              <PresetPayloadEditor
+                v-model="presetDraft.payload"
+                v-model:expandedSections="expandedSections"
+                :disabledSections
+                :resources="presetEditorResources"
+                :sections
+                :workflow="selectedPreset.workflow"
+              >
+                <template v-slot:section-context="{ section }">
+                  <NText depth="3"
+                    >Project: {{ summarizePresetSection(presetDraft.payload, section) }}</NText
+                  >
+                </template>
+                <template v-slot:section-actions="{ section }">
+                  <NButton
+                    v-if="changedSections.includes(section)"
+                    :aria-label="`Reset ${sectionLabels[section]}`"
+                    size="tiny"
+                    tertiary
+                    @click="resetSection(section)"
+                  >
+                    Reset
+                  </NButton>
+                </template>
+                <template v-slot:section-control="{ section }">
+                  <NText v-if="section === 'size'" depth="3">Canvas</NText>
+                  <NCheckbox
+                    v-else
+                    :checked="sectionSelected(section)"
+                    @update:checked="setSectionSelected(section, $event)"
+                  >
+                    Use <span class="sr-only">{{ sectionLabels[section] }}</span>
+                  </NCheckbox>
+                </template>
+              </PresetPayloadEditor>
+            </template>
 
-          <div v-else class="size-fields">
-            <NFormItem label="Canvas width">
-              <NInputNumber
-                v-model:value="draft.width"
-                :inputProps="{ 'aria-label': 'Canvas width' }"
-                :max="4096"
-                :min="256"
-                :step="64"
-              />
-            </NFormItem>
-            <NFormItem label="Canvas height">
-              <NInputNumber
-                v-model:value="draft.height"
-                :inputProps="{ 'aria-label': 'Canvas height' }"
-                :max="4096"
-                :min="256"
-                :step="64"
-              />
-            </NFormItem>
+            <div v-else class="size-fields">
+              <NFormItem label="Canvas width">
+                <NInputNumber
+                  v-model:value="draft.width"
+                  :inputProps="{ 'aria-label': 'Canvas width' }"
+                  :max="4096"
+                  :min="256"
+                  :step="64"
+                />
+              </NFormItem>
+              <NFormItem label="Canvas height">
+                <NInputNumber
+                  v-model:value="draft.height"
+                  :inputProps="{ 'aria-label': 'Canvas height' }"
+                  :max="4096"
+                  :min="256"
+                  :step="64"
+                />
+              </NFormItem>
+            </div>
           </div>
-        </div>
-      </NForm>
+        </NForm>
+      </NScrollbar>
       <template v-slot:footer>
         <div class="modal-actions">
           <NButton @click="show = false">Cancel</NButton>
@@ -391,11 +396,18 @@ function createProject() {
   height: min(760px, calc(100vh - 80px));
 }
 
-.home-modal :deep(.n-card__content-scrollbar) {
+.home-modal--preset :deep(.n-card__content) {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:deep(.modal-scroll) {
   max-height: calc(100vh - 210px);
 }
 
-.home-modal--preset :deep(.n-card__content-scrollbar) {
+:deep(.modal-scroll--preset) {
+  height: min(620px, calc(100vh - 220px));
   min-height: 0;
   max-height: none;
 }

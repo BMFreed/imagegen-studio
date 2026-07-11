@@ -1,62 +1,31 @@
-import type {
-  PresetCreateIntent,
-  PresetEditorResources,
-  PresetModelRef,
-  PresetRecord,
-  PresetResourceRef,
-} from './presets.types';
+import type { PresetCreateIntent, PresetEditorResources, PresetRecord } from './presets.types';
 
-const illustriousModel: PresetModelRef = {
-  baseModel: 'Illustrious',
-  id: 'illustrious-xl-v1-1',
-  name: 'Illustrious XL',
-  predictionType: 'v-pred',
-  version: 'v1.1 main',
-};
+import { parseLegacyPromptString } from '../../components/generation/generation-prompt.utils';
+import {
+  generationEditorResources,
+  generationEmbeddings,
+  generationLoras,
+  generationModels,
+  generationVaes,
+  mockDanbooruTags,
+} from '../../components/generation/generation.mock';
 
-const noobAiModel: PresetModelRef = {
-  baseModel: 'NoobAI',
-  id: 'noobai-xl-v3',
-  name: 'NoobAI XL',
-  predictionType: 'epsilon',
-  version: 'v3',
-};
+const illustriousModel = generationModels[0]!;
+const builtInVae = generationVaes[0]!;
+export const availableLoras = generationLoras;
+export const availableEmbeddings = generationEmbeddings;
+export const presetEditorResources: PresetEditorResources = generationEditorResources;
 
-const builtInVae: PresetResourceRef = {
-  id: 'illustrious-built-in-vae',
-  name: 'Illustrious built-in',
-};
-
-export const availableLoras = [
-  {
-    id: 'digital-art',
-    name: 'Digital Art',
-    version: 'v0.1',
-  },
-  {
-    id: 'detail-tweaker',
-    name: 'Detail Tweaker',
-    version: 'v1.0',
-  },
-  {
-    id: 'soft-detailer',
-    name: 'Soft Detailer',
-    version: 'v0.2',
-  },
-];
-
-export const availableEmbeddings: PresetResourceRef[] = [
-  { id: 'bad-hands-negative', name: 'Bad Hands Negative' },
-  { id: 'fast-negative', name: 'Fast Negative' },
-  { id: 'clean-anime-negative', name: 'Clean Anime Negative' },
-];
-
-export const presetEditorResources: PresetEditorResources = {
-  embeddings: availableEmbeddings,
-  loras: availableLoras,
-  models: [illustriousModel, noobAiModel],
-  vaes: [builtInVae, { id: 'none', name: 'None' }],
-};
+function prompt(value: string, triggerLinks: Record<string, string[]> = {}) {
+  const parsed = parseLegacyPromptString(value, availableEmbeddings, mockDanbooruTags);
+  parsed.tokens = parsed.tokens.map((token) => {
+    const sourceLoraIds = triggerLinks[token.text];
+    return sourceLoraIds
+      ? { id: token.id, kind: 'lora-trigger' as const, sourceLoraIds, text: token.text }
+      : token;
+  });
+  return parsed;
+}
 
 export const presetResources: PresetRecord[] = [
   {
@@ -65,26 +34,27 @@ export const presetResources: PresetRecord[] = [
     id: 'studio-portrait-soft-light',
     name: 'Studio Portrait Soft Light',
     payload: {
-      embeddings: [availableEmbeddings[0]!, availableEmbeddings[1]!],
       guidance: { cfgScale: 5.5, steps: 30 },
       loras: [
         {
           enabled: true,
           resource: availableLoras[0]!,
-          triggerWords: ['digital art', 'painterly'],
           weight: 0.7,
         },
         {
           enabled: false,
           resource: availableLoras[1]!,
-          triggerWords: ['detail'],
           weight: 0.4,
         },
       ],
       model: illustriousModel,
-      negativePrompt: 'lowres, bad anatomy, blurry, jpeg artifacts, oversaturated',
-      prompt:
-        'portrait of a woman, soft studio light, rim light, detailed skin, 85mm, shallow depth of field',
+      negativePrompt: prompt(
+        'blurred lines, incomplete composition, <bad-hands-negative>, <fast-negative>',
+      ),
+      prompt: prompt(
+        'portrait of a woman, digital art, soft studio light, rim light, detailed skin, 85mm, shallow depth of field',
+        { 'digital art': ['digital-art'] },
+      ),
       sampling: { sampler: 'DPM++ 2M', scheduler: 'Karras' },
       size: { height: 1216, width: 832 },
       vae: builtInVae,
@@ -105,13 +75,12 @@ export const presetResources: PresetRecord[] = [
         {
           enabled: true,
           resource: { ...availableLoras[2]!, missing: true },
-          triggerWords: ['soft detail'],
           weight: 0.6,
         },
       ],
       model: illustriousModel,
-      negativePrompt: 'lowres, washed out, flat lighting',
-      prompt: 'cinematic shot, teal-orange grade, film grain, shallow depth of field',
+      negativePrompt: prompt('lowres, washed out, flat lighting'),
+      prompt: prompt('cinematic shot, teal-orange grade, film grain, shallow depth of field'),
       sampling: { sampler: 'DPM++ 2M', scheduler: 'Karras' },
       size: { height: 1024, width: 1024 },
     },
@@ -126,19 +95,17 @@ export const presetResources: PresetRecord[] = [
     name: 'Hand Repair Smart Patch',
     payload: {
       denoisingStrength: 0.62,
-      embeddings: [availableEmbeddings[0]!],
       guidance: { cfgScale: 5, steps: 24 },
       loras: [
         {
           enabled: true,
           resource: availableLoras[1]!,
-          triggerWords: ['detail'],
           weight: 0.45,
         },
       ],
       model: illustriousModel,
-      negativePrompt: 'bad hands, extra fingers, fused fingers',
-      prompt: 'detailed hands, natural fingers, correct anatomy',
+      negativePrompt: prompt('bad hands, extra fingers, fused fingers, <bad-hands-negative>'),
+      prompt: prompt('detailed hands, natural fingers, correct anatomy'),
       sampling: { sampler: 'DPM++ 2M', scheduler: 'Karras' },
       seed: { policy: 'reuse' },
     },
@@ -152,7 +119,6 @@ export const presetResources: PresetRecord[] = [
     id: 'texture-detailer',
     name: 'Texture Detailer',
     payload: {
-      embeddings: [availableEmbeddings[0]!],
       loras: [
         {
           enabled: true,
@@ -160,13 +126,13 @@ export const presetResources: PresetRecord[] = [
             id: 'texture-detailer-missing',
             missing: true,
             name: 'Texture Detailer',
+            triggerPhrases: ['texture detail'],
             version: 'v0.4',
           },
-          triggerWords: ['texture detail'],
           weight: 0.8,
         },
       ],
-      prompt: 'woven fabric texture, soft light, simple material study',
+      prompt: prompt('woven fabric texture, soft light, simple material study'),
     },
     tags: ['texture', 'example'],
     updatedAt: '2026-07-06T09:00:00.000Z',
@@ -180,8 +146,8 @@ export const presetResources: PresetRecord[] = [
     payload: {
       guidance: { cfgScale: 5.2, steps: 26 },
       model: illustriousModel,
-      negativePrompt: 'sketch, rough lines, blurry',
-      prompt: 'clean anime line art, precise contours, flat colors',
+      negativePrompt: prompt('sketch, rough lines, blurry'),
+      prompt: prompt('clean anime line art, precise contours, flat colors'),
       sampling: { sampler: 'Euler a', scheduler: 'Normal' },
       vae: builtInVae,
     },
@@ -214,19 +180,22 @@ export const currentProjectPresetSource = {
     favorite: true,
     name: 'Sample Portrait Baseline',
     payload: {
-      embeddings: [availableEmbeddings[0]!, availableEmbeddings[1]!],
       guidance: { cfgScale: 5.5, steps: 30 },
       loras: [
         {
           enabled: true,
           resource: availableLoras[0]!,
-          triggerWords: ['digital art', 'painterly'],
           weight: 0.7,
         },
       ],
       model: illustriousModel,
-      negativePrompt: 'lowres, bad anatomy, blurry, jpeg artifacts, oversaturated',
-      prompt: 'portrait of Sample Project B, soft studio light, rim light, detailed skin, 85mm',
+      negativePrompt: prompt(
+        'blurred lines, incomplete composition, <bad-hands-negative>, <fast-negative>',
+      ),
+      prompt: prompt(
+        'portrait illustration of a person, digital art, simple background, soft light',
+        { 'digital art': ['digital-art'] },
+      ),
       sampling: { sampler: 'Euler a', scheduler: 'Normal' },
       seed: { policy: 'fixed', value: 184_235 },
       size: { height: 1216, width: 832 },

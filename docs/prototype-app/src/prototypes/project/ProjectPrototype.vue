@@ -5,6 +5,11 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import type { PresetSectionKey } from '../presets/presets.types';
 import type { ProjectSession } from './project.types';
 
+import {
+  cloneGenerationPrompt,
+  createGenerationPrompt,
+  serializeGenerationPrompt,
+} from '../../components/generation/generation-prompt.utils';
 import ApplyPresetModal from '../presets/ApplyPresetModal.vue';
 import { presetResources } from '../presets/presets.mock';
 import { redoProject, undoProject } from './project-history';
@@ -90,8 +95,8 @@ function generate(count: number) {
   const id = Date.now();
   const draft = getActiveGenerationDraft(props.session);
   const expansion = expandPromptPairs(
-    draft.payload.prompt ?? '',
-    draft.payload.negativePrompt ?? '',
+    serializeGenerationPrompt(draft.payload.prompt),
+    serializeGenerationPrompt(draft.payload.negativePrompt),
     draft.dynamicPrompt.maxPrompts,
   );
   const jobs = expansion.pairs.flatMap((pair) =>
@@ -104,8 +109,12 @@ function generate(count: number) {
     iteration: job.iteration,
     label: `Image ${index + 1}`,
     negativePrompt: job.negativePrompt,
+    negativePromptTokens: cloneGenerationPrompt(
+      draft.payload.negativePrompt ?? createGenerationPrompt(),
+    ).tokens,
     progress: 0,
     prompt: job.prompt,
+    promptTokens: cloneGenerationPrompt(draft.payload.prompt ?? createGenerationPrompt()).tokens,
     status: 'pending' as const,
   }));
   const selected = props.session.ui.selection;

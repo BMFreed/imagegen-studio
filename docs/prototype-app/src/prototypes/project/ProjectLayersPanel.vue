@@ -374,6 +374,9 @@ function addRegional() {
 .regional-row--selected {
   border-color: #b58cff;
 }
+.regional-icon-button :deep(.n-icon) {
+  font-size: 18px;
+}
 
 .regional-select {
   width: 100%;

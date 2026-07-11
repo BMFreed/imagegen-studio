@@ -10,7 +10,6 @@ export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
 
 export type PresetSectionKey =
   | 'denoisingStrength'
-  | 'embeddings'
   | 'guidance'
   | 'loras'
   | 'model'

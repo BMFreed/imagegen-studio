@@ -4,7 +4,7 @@
 
 Presets let the user save and reuse generation settings without treating them as a hidden workflow graph.
 
-A preset is an editable user template made from explicit sections of generation state: prompt, negative prompt, model, LoRAs, embeddings, project size, sampler and scheduler, steps and CFG, denoising strength when applicable, seed policy and VAE.
+A preset is an editable user template made from explicit sections of generation state: structured positive and negative prompts, model, LoRAs, project size, sampler and scheduler, steps and CFG, denoising strength when applicable, seed policy and VAE. Embedding references live inside the prompt tokens where they are actually used; they are not a separate preset section.
 
 ## Reference
 
@@ -71,7 +71,6 @@ Prompt
 Negative
 Model
 LoRA
-Embeddings
 Size
 Steps
 Seed
@@ -158,7 +157,6 @@ Suggested default:
 - negative prompt;
 - model and version;
 - LoRAs and weights;
-- embeddings;
 - size;
 - Sampler & Scheduler;
 - steps & CFG;
@@ -202,10 +200,9 @@ Editable fields:
 - tags/favorite;
 - workflow type;
 - included sections;
-- prompt and negative prompt;
+- structured prompt and negative-prompt tokens, including embedding tokens;
 - model and exact version;
 - LoRAs, weights, enabled state and removal;
-- embeddings;
 - project size;
 - sampler and scheduler;
 - steps and CFG;
@@ -259,7 +256,7 @@ A preset action must not require the user to jump from the project surface to th
 
 ## Missing Resources
 
-If a preset references a missing model, LoRA, embedding or VAE, the UI should show the warning before apply.
+If a preset references a missing model, LoRA, embedding token or VAE, the UI should show the warning before apply. A missing embedding belongs to its containing Prompt or Negative Prompt section and blocks Apply only while that section is selected.
 
 Behavior:
 

@@ -1,4 +1,7 @@
-import type { GenerationPayload } from '../../components/generation/generation.types';
+import type {
+  GenerationPayload,
+  GenerationPromptToken,
+} from '../../components/generation/generation.types';
 
 export type ProjectScenarioId =
   'default' | 'empty-project' | 'errors' | 'regional-guidance' | 'smart-patch' | 'staging';
@@ -145,8 +148,10 @@ export interface ProjectQueueItem {
   iteration: number;
   label: string;
   negativePrompt: string;
+  negativePromptTokens: GenerationPromptToken[];
   progress: number;
   prompt: string;
+  promptTokens: GenerationPromptToken[];
   status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running';
 }
 

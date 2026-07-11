@@ -15,14 +15,17 @@ import {
 } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import type {
-  GenerationLora,
-  GenerationResourceRef,
-} from '../../components/generation/generation.types';
+import type { GenerationLora } from '../../components/generation/generation.types';
 import type { ProjectDynamicPromptSettings, ProjectSession } from './project.types';
 
-import GenerationEmbeddings from '../../components/generation/GenerationEmbeddings.vue';
+import {
+  findOrphanedLoraTriggers,
+  promptHasMissingEmbedding,
+  reconcileLoraTriggerSources,
+  serializeGenerationPrompt,
+} from '../../components/generation/generation-prompt.utils';
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue';
+import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue';
 import { presetEditorResources } from '../presets/presets.mock';
 import DynamicPromptsModal from './DynamicPromptsModal.vue';
 import { commitProjectMutation } from './project-history';
@@ -51,6 +54,10 @@ const activeDraft = computed(() => getActiveGenerationDraft(props.session));
 const payload = computed(() => activeDraft.value.payload);
 const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 });
 const dynamicPreviewOpen = ref(false);
+const loraTriggerDialogOpen = ref(false);
+const pendingLoras = ref<GenerationLora[]>();
+const affectedNegativeTriggerCount = ref(0);
+const affectedPositiveTriggerCount = ref(0);
 const modelOptions = presetEditorResources.models.map((model) => ({
   label: model.name,
   value: model.id,
@@ -69,8 +76,8 @@ const vaeOptions = presetEditorResources.vaes.map((value) => ({
 }));
 const expandedPrompts = computed(() =>
   expandPromptPairs(
-    payload.value.prompt ?? '',
-    payload.value.negativePrompt ?? '',
+    serializeGenerationPrompt(payload.value.prompt),
+    serializeGenerationPrompt(payload.value.negativePrompt),
     activeDraft.value.dynamicPrompt.maxPrompts,
   ),
 );
@@ -82,6 +89,12 @@ const activeQueueCount = computed(
     ).length,
 );
 const blockingReason = computed(() => {
+  if (
+    promptHasMissingEmbedding(payload.value.prompt) ||
+    promptHasMissingEmbedding(payload.value.negativePrompt)
+  ) {
+    return 'Replace the missing embedding in the prompt before generating.';
+  }
   if (projectHasBlockingGenerationErrors(props.session)) {
     return 'Choose an installed model before generating.';
   }
@@ -110,10 +123,35 @@ function updateModel(id: string) {
   }
 }
 function updateLoras(value: GenerationLora[]) {
-  updatePayload('Edit LoRAs', (draft) => (draft.payload.loras = structuredClone(value)));
+  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
+  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
+  if (positiveOrphans.length || negativeOrphans.length) {
+    pendingLoras.value = JSON.parse(JSON.stringify(value)) as GenerationLora[];
+    affectedPositiveTriggerCount.value = positiveOrphans.length;
+    affectedNegativeTriggerCount.value = negativeOrphans.length;
+    loraTriggerDialogOpen.value = true;
+    return;
+  }
+  updatePayload('Edit LoRAs', (draft) => {
+    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[];
+  });
 }
-function updateEmbeddings(value: GenerationResourceRef[]) {
-  updatePayload('Edit embeddings', (draft) => (draft.payload.embeddings = structuredClone(value)));
+function resolveLoraTriggers(resolution: 'keep' | 'remove') {
+  const nextLoras = pendingLoras.value;
+  if (!nextLoras) {
+    return;
+  }
+  updatePayload('Edit LoRAs and trigger phrases', (draft) => {
+    draft.payload.loras = JSON.parse(JSON.stringify(nextLoras)) as GenerationLora[];
+    draft.payload.prompt = reconcileLoraTriggerSources(draft.payload.prompt, nextLoras, resolution);
+    draft.payload.negativePrompt = reconcileLoraTriggerSources(
+      draft.payload.negativePrompt,
+      nextLoras,
+      resolution,
+    );
+  });
+  pendingLoras.value = undefined;
+  loraTriggerDialogOpen.value = false;
 }
 function updateDynamicSettings(value: ProjectDynamicPromptSettings) {
   updatePayload('Change dynamic prompt settings', (draft) => (draft.dynamicPrompt = value));
@@ -210,14 +248,6 @@ function normalizeCount(value: number | null) {
             :modelValue="payload.loras ?? []"
             :resources="presetEditorResources.loras"
             @update:modelValue="updateLoras"
-          />
-        </NCard>
-
-        <NCard size="small" title="Embeddings">
-          <GenerationEmbeddings
-            :modelValue="payload.embeddings ?? []"
-            :resources="presetEditorResources.embeddings"
-            @update:modelValue="updateEmbeddings"
           />
         </NCard>
 
@@ -350,10 +380,16 @@ function normalizeCount(value: number | null) {
 
     <DynamicPromptsModal
       v-model:show="dynamicPreviewOpen"
-      :negativePrompt="payload.negativePrompt ?? ''"
-      :prompt="payload.prompt ?? ''"
+      :negativePrompt="serializeGenerationPrompt(payload.negativePrompt)"
+      :prompt="serializeGenerationPrompt(payload.prompt)"
       :settings="activeDraft.dynamicPrompt"
       @updateSettings="updateDynamicSettings"
+    />
+    <LoraTriggerChangeDialog
+      v-model:show="loraTriggerDialogOpen"
+      :negativeCount="affectedNegativeTriggerCount"
+      :positiveCount="affectedPositiveTriggerCount"
+      @resolve="resolveLoraTriggers"
     />
   </aside>
 </template>

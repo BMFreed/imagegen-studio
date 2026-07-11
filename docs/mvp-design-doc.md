@@ -705,8 +705,10 @@ type GenerationProvenance = {
   engineVersion?: string;
   workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint';
 
-  prompt: string;
+  prompt: string; // serialized frozen form sent to the worker
   negativePrompt?: string;
+  promptTokens: GenerationPromptToken[];
+  negativePromptTokens: GenerationPromptToken[];
 
   model: ProvenanceModelRef;
 
@@ -719,7 +721,7 @@ type GenerationProvenance = {
     fileHash?: string;
     baseModelFamily?: string;
     weight: number;
-    triggerWords?: string[];
+    triggerPhrases?: string[];
   }>;
 
   params: {
@@ -834,7 +836,7 @@ Project-derived draft копирует reusable generation sections, но иск
 - модель;
 - LoRA stack;
 - веса LoRA;
-- embeddings;
+- embedding tokens inside positive/negative prompts;
 - size;
 - sampler и scheduler;
 - steps и CFG;
@@ -851,7 +853,6 @@ Prompt
 Negative prompt
 Model
 LoRA stack
-Embeddings
 Size
 Sampler & Scheduler
 Steps & CFG
@@ -860,7 +861,7 @@ Seed
 VAE
 ```
 
-Наличие секции в сохранённом пресете определяется наличием соответствующего поля в `PresetPayload`; отдельный persisted `includedSections` не хранится. В текущем редакторе `VAE` является явной секцией. Общего `Advanced`/`engineSpecific` bag в пресете нет: новый параметр добавляется отдельным типизированным полем и секцией только после явного продуктового решения.
+Наличие секции в сохранённом пресете определяется наличием соответствующего поля в `PresetPayload`; отдельный persisted `includedSections` не хранится. Embedding refs являются токенами внутри Prompt или Negative Prompt и не имеют собственной секции. В текущем редакторе `VAE` является явной секцией. Общего `Advanced`/`engineSpecific` bag в пресете нет: новый параметр добавляется отдельным типизированным полем и секцией только после явного продуктового решения.
 
 При переключении workflow на `Text to Image` поле `denoisingStrength` удаляется. Обратное переключение не включает его автоматически: пользователь должен явно включить секцию.
 

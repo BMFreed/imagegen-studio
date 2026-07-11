@@ -89,7 +89,7 @@ Required entry points:
 - `Project` top menu/context menu: opens Model Manager.
 - Generate `Model` selector: `Manage Models` opens Model Manager focused on checkpoints.
 - Generate `LoRAs` selector: `Manage Models` opens Model Manager focused on LoRAs.
-- Generate `Embeddings` selector: `Manage Models` opens Model Manager focused on embeddings.
+- An embedding token or unified prompt autocomplete action can open Model Manager focused on embeddings.
 - Missing resource warning from a preset/accepted result: opens Model Manager filtered to the missing resource identity where possible.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
@@ -313,7 +313,7 @@ MVP includes:
 - remove local resource with confirmation;
 - prevent deletion while resource is currently used by a running job;
 - keep presets/accepted-result provenance readable after deletion by storing copied human-readable resource metadata;
-- expose installed resources to Generate model, LoRA and embeddings selectors;
+- expose installed resources to the Generate model and LoRA selectors and unified prompt autocomplete;
 - show compatibility warnings for active model family mismatch.
 
 ## Post-MVP / Later
@@ -601,10 +601,10 @@ LoRA selector:
 - opens detail popover from explicit info button;
 - opens Model Manager through `Manage Models`.
 
-Embeddings selector:
+Embedding prompt tokens:
 
-- reads installed embeddings from Model Manager;
-- shows activation/negative tokens;
+- unified prompt autocomplete reads installed embeddings from Model Manager;
+- embedding token metadata shows activation/negative tokens;
 - opens detail popover from explicit info button;
 - opens Model Manager through `Manage Models`.
 
@@ -619,7 +619,7 @@ Accepted-result provenance:
 flowchart LR
   MM["Model Manager / SQLite resources"] --> MS["Generate model selector"]
   MM --> LS["LoRA selector"]
-  MM --> ES["Embeddings selector"]
+  MM --> ES["Prompt embedding autocomplete"]
   MS --> GJ["Frozen generation job"]
   LS --> GJ
   ES --> GJ
@@ -718,7 +718,7 @@ The following criteria describe the production feature; prototype-only coverage 
 
 - User can open Model Manager from Home.
 - User can open Model Manager from Project/global menu.
-- User can open Model Manager from Generate model, LoRA and embeddings selectors.
+- User can open Model Manager from Generate model/LoRA controls and embedding-token diagnostics.
 - User can paste a CivitAI URL and see import preview before downloading.
 - Import is blocked until CivitAI token is configured.
 - User can start model install and see it in an install queue.
@@ -726,7 +726,7 @@ The following criteria describe the production feature; prototype-only coverage 
 - Completed install creates SQLite resource records and a managed local file.
 - Installed checkpoint appears in Generate model selector.
 - Installed LoRA appears in LoRA selector with thumbnail metadata when available.
-- Installed embedding appears in Embeddings selector with token metadata when available.
+- Installed embedding appears in unified prompt autocomplete with token metadata when available.
 - Duplicate exact resource install does not download again by default.
 - Missing local file is shown as a missing resource state.
 - Remove is blocked for resources used by running jobs.

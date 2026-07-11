@@ -376,7 +376,6 @@ type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
 type SeedPolicy = 'fixed' | 'random' | 'reuse';
 type PresetSectionKey =
   | 'denoisingStrength'
-  | 'embeddings'
   | 'guidance'
   | 'loras'
   | 'model'
@@ -401,22 +400,30 @@ interface PresetModelRef extends PresetResourceRef {
 
 interface PresetLora {
   enabled: boolean;
-  resource: PresetResourceRef;
-  triggerWords: string[];
+  resource: PresetResourceRef & { triggerPhrases: string[] };
   weight: number;
 }
 
+interface GenerationPrompt {
+  tokens: GenerationPromptToken[];
+}
+
+type GenerationPromptToken =
+  | { id: string; kind: 'custom' | 'dynamic'; text: string }
+  | { id: string; kind: 'danbooru'; text: string; canonicalName: string; aliases: string[]; category: string; postCount: number }
+  | { id: string; kind: 'embedding'; text: string; resource: PresetResourceRef & { activationToken: string; negativeToken?: string } }
+  | { id: string; kind: 'lora-trigger'; text: string; sourceLoraIds: string[] };
+
 interface PresetPayload {
   denoisingStrength?: number;
-  embeddings?: PresetResourceRef[];
   guidance?: {
     cfgScale: number;
     steps: number;
   };
   loras?: PresetLora[];
   model?: PresetModelRef;
-  negativePrompt?: string;
-  prompt?: string;
+  negativePrompt?: GenerationPrompt;
+  prompt?: GenerationPrompt;
   sampling?: {
     sampler: string;
     scheduler: string;
@@ -470,10 +477,11 @@ interface PresetApplicationDraft {
 - Catalog metadata (`name`, `description`, `workflow`, `tags`, `favorite`) живёт в `PresetDefinition` и строгих columns, но не внутри `PresetPayload`.
 - Storage mapper нормализует nullable DB `description` в доменную пустую строку и SQLite `favorite` 0/1 в boolean; UI draft не должен разносить SQL-nullability по форме.
 - `workflow_type` storage tokens маппятся на доменные значения: `txt2img` ↔ `textToImage`, `img2img` ↔ `imageToImage`, `inpaint` ↔ `smartPatch`. Storage tokens не показываются в UI.
-- Source of truth для model/LoRA/embedding/VAE настроек находится внутри `PresetPayload`.
+- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`; embedding refs находятся внутри structured tokens соответствующего `prompt`/`negativePrompt`.
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.
+- Embeddings не образуют отдельную section/inclusion mask. Наличие `prompt` или `negativePrompt` включает всю соответствующую structured prompt-секцию вместе с embedding refs внутри её tokens.
 - При нормализации workflow `textToImage` удаляет `denoisingStrength`. Возврат к другому workflow не создаёт поле автоматически.
 - `predictionType` хранит scheduler prediction mode модели. Доменный label `v-pred` маппится на worker/storage token `v_prediction`; это compatibility metadata, а не user-facing style setting.
 - Optional `missing` — runtime/catalog resolution state в текущем prototype DTO. Production mapper может вычислять его по Model Manager registry, но должен сохранять human-readable `id`/`name`/`version` reference metadata, чтобы preset оставался понятным при отсутствии файла.

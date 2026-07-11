@@ -1,109 +1,28 @@
-# Embeddings Selector
+# Embedding Prompt Tokens
 
 ## Feature
 
-The Embeddings selector lets the user select textual inversion embeddings and insert their tokens into prompts.
-
-## Reference
-
-Primary reference: InvokeAI resource selector pattern.
-
-Secondary reference: Forge textual inversion extra-network cards.
+Textual-inversion embeddings are resource-bearing tokens inserted directly into Positive or Negative Prompt. They are not a separate generation stack or preset section.
 
 ## ImageGen Studio Decision
 
-Embeddings are a separate resource-selection feature, not tag autocomplete.
+The prompt containing the token determines its polarity and exact position. Positive Prompt uses the embedding activation token. Negative Prompt uses `negativeToken` when available and otherwise falls back to the activation token.
 
-Embeddings get their own subsection inside `Generation`, separate from LoRAs.
+The unified autocomplete searches installed compatible embeddings by display name and token. Negative metadata raises an embedding in Negative Prompt results but never silently moves it between prompts.
 
-## Scope
+## Behavior
 
-MVP:
-
-- searchable embeddings picker;
-- thumbnails directly in dropdown rows when available;
-- search field inside dropdown;
-- `Manage Models` action inside dropdown;
-- no `Full View` action inside dropdown;
-- active model family filtering where possible;
-- activation token display;
-- negative token display when available;
-- insertion target: positive, negative or both;
-- selected embedding rows below the selector;
-- explicit info button on dropdown rows;
-- explicit info button on selected embedding rows;
-- metadata popover/card opened only by clicking the info button;
-- missing/incompatible resource warnings when recalled from accepted results or presets.
-
-Post-MVP:
-
-- explicit embedding weight UI if the worker/prompt syntax supports it reliably for the active pipeline;
-- richer token insertion modes;
-- embedding preview comparison.
-
-## Dropdown Row
-
-Each dropdown row should show:
-
-- thumbnail if available;
-- display name;
-- activation token;
-- negative token marker if available;
-- base model family badge;
-- local status / missing status;
-- compatibility warning badge if needed;
-- compact info button.
-
-Large metadata should not open on plain hover.
-
-## Selected Embedding Row
-
-Selected embeddings are displayed as cards/rows below the selector, not inside the collapsed select field.
-
-Each selected row should include:
-
-- name;
-- activation token;
-- selected insertion target;
-- enable/disable toggle if useful;
-- remove action;
-- compatibility warning if applicable;
-- info button.
-
-Only the info button opens the metadata popover/card.
-
-## Metadata Popover
-
-The metadata popover/card should include:
-
-- preview thumbnail/image when available;
-- description;
-- activation token;
-- negative token when available;
-- suggested insertion target: positive, negative or both;
-- base model family;
-- version/hash metadata;
-- local file size/path metadata where useful;
-- compatibility warnings for the active model.
-
-## Provenance Behavior
-
-Selected embeddings/resource refs are stored in immutable provenance of accepted generated results.
-
-Each embedding provenance entry should include:
-
-- resource id;
-- model/version/hash metadata available at generation time;
-- activation token used;
-- negative token used if applicable;
-- insertion target;
-- compatibility metadata/warnings where useful.
+- embedding chips use a distinct resource icon and metadata tooltip;
+- selecting an autocomplete result records the resource ref in the prompt token;
+- manually typing embedding-like text creates a custom token unless the user selects the resource suggestion;
+- manually editing an embedding token converts it to custom text because the resource link can no longer be guaranteed;
+- missing recalled embeddings remain visible and block generation locally;
+- a missing embedding blocks Apply only when its owning Prompt or Negative Prompt section is selected;
+- accepted-result provenance freezes both the serialized prompt and structured resource-bearing tokens.
 
 ## Acceptance Criteria
 
-- User can search and add embeddings from a thumbnail dropdown.
-- Dropdown includes `Manage Models` and excludes `Full View`.
-- Selected embeddings appear below the selector.
-- Info buttons exist on both dropdown rows and selected rows.
-- Metadata popover opens only by explicit info-button click.
-- Embedding refs/tokens are stored in accepted-result provenance.
+- Installed embeddings are suggested in both prompt editors.
+- Negative Prompt uses an explicit negative token when metadata provides one.
+- There is no standalone Embeddings card or preset section.
+- Resource identity and exact prompt placement have one source of truth.

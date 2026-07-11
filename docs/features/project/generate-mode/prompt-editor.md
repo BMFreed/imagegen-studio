@@ -4,7 +4,7 @@
 
 The prompt editor is the primary text authoring surface in `Project` / `Generate`.
 
-It contains positive and negative prompts, prompt history, tag autocomplete entry points, dynamic-prompt preview affordances and preset/accepted-result recall actions.
+It contains positive and negative structured prompt tokens, unified autocomplete, dynamic-prompt preview affordances and preset/accepted-result recall actions.
 
 ## Reference
 
@@ -24,12 +24,11 @@ MVP:
 
 - positive prompt editor;
 - negative prompt editor;
-- multiline editing;
-- resize/expand affordance;
+- wrapping token editing with a vertically resizable surface;
 - prompt history;
 - prompt attention syntax editing;
 - prompt token count when tokenizer/model support is available;
-- Danbooru-style tag autocomplete integration;
+- unified autocomplete for Danbooru tags, installed embeddings and active LoRA trigger phrases;
 - dynamic prompt preview entry point;
 - recall prompt/settings from accepted-result provenance;
 - explicit preset actions.
@@ -69,11 +68,15 @@ Allowed preset-related affordances in Generate:
 
 These actions must be visually distinct from direct prompt editing.
 
-Positive and negative prompts expose the same helper actions: increase/decrease attention, tag insertion, dynamic preview, copy and clear. Attention uses Invoke-like `+` / `-` suffixes, wraps multi-word selections, recognizes numeric weights and supports `Ctrl/Cmd+Up` and `Ctrl/Cmd+Down`.
+Positive and negative prompts expose the same helper actions: increase/decrease attention for the selected token, dynamic preview, copy and clear. Creating a token starts from a compact dashed `+` action, which becomes a three-character-wide inline autocomplete input and expands with its content. There is no separate `Insert Tag` action. Attention uses Invoke-like `+` / `-` suffixes and supports `Ctrl/Cmd+Up` and `Ctrl/Cmd+Down` when a token is selected.
 
-The Vue prototype uses a compact prompt-specific card shell instead of the generic card header/content/footer composition. The title and token count share the top-left metadata line, diagnostics use a compact adjacent warning, and the helper actions form a vertical rail on the right. The Naive textarea remains the editing control, uses native vertical resizing and starts at nine rows for the positive prompt and four rows for the negative prompt. Removing the redundant nested card/input padding leaves the editor room on its left and bottom edges without replacing Naive focus, tooltip or popover behavior.
+The Vue prototype uses a compact prompt-specific card shell instead of the generic card header/content/footer composition. The title and token count share the top-left metadata line, diagnostics use a compact adjacent warning, and helper actions form a vertical rail on the right. `GenerationPromptTokenEditor` is built from Naive `NTag`, `NAutoComplete`, tooltip and popover primitives. The surface uses ordinary CSS vertical resizing and starts at approximately nine lines for positive and four for negative.
 
-Prompt typing is grouped as one undo transaction from focus to blur. Helper actions are separate named undo operations rather than generating history entries for each character.
+Single click selects a token and adds an input-like outline without replacing its neutral background. Clicking outside the editor clears selection. Double click replaces the chip in place with an input of the same measured initial width; the input then expands or contracts with the edited text without jumping to a generic full-row width. The same autocomplete dropdown is available during create and edit. Enter or blur commits, Escape cancels the draft, every chip has a close action, and Backspace remains a keyboard deletion path. Paste can create several top-level comma-separated tokens. A create, edit, delete or attention operation produces one named undo entry; uncommitted inline text does not mutate the document.
+
+Attention helpers reuse at most one outer pair of parentheses. When repeated increase/decrease actions return a token to neutral attention, the helper removes both the suffix and its helper-added outer parentheses.
+
+The editor's unused surface has no text cursor or hover treatment. Tooltips are limited to resource-bearing embedding and LoRA-trigger tokens, where they explain source identity; ordinary custom, Danbooru and dynamic tokens do not repeat their kind in a tooltip.
 
 ## Acceptance Criteria
 

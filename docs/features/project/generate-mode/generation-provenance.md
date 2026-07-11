@@ -31,7 +31,7 @@ Provenance should include:
 
 - model identity and exact version/hash metadata;
 - prediction type metadata;
-- positive and negative prompts;
+- serialized positive and negative prompts plus frozen structured source tokens;
 - concrete expanded dynamic prompt where relevant;
 - actual seed and seed behavior;
 - automatically derived generation mode: txt2img, img2img, inpaint or outpaint;
@@ -42,7 +42,7 @@ Provenance should include:
 - guidance/CFG;
 - denoising strength when it affected the job;
 - LoRA stack;
-- embedding refs/tokens;
+- embedding resource refs nested in the prompt tokens where they were used;
 - VAE and other active model-aware options;
 - enabled Regional Guidance state and image refs used by the job;
 - Smart Patch compositing/infill/mask settings;
@@ -93,6 +93,6 @@ Global generation history is a derived index of accepted project results.
 - Every accepted generated Raster Layer or Smart Patch variant has immutable provenance.
 - Completed but unaccepted candidates have no project-local provenance record.
 - Provenance can recall settings and create a preset draft.
-- Missing model/LoRA/embedding resources can be detected from provenance.
+- Missing model/LoRA resources and prompt-owned embedding resources can be detected from provenance.
 - Smart Patch outdated state can be derived from active variant provenance versus current layer-owned inputs.
 - Provenance is not presented or implemented as an undo snapshot.

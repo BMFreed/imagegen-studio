@@ -18,7 +18,7 @@ Project does not ask the user to choose Text to Image or Image to Image. The run
 
 Normal Project Canvas generation uses a project-owned generation draft. Each Smart Patch Layer owns its own generation draft; selecting a Smart Patch Layer binds the settings panel to that layer, so edits only affect and potentially mark that layer `outdated`.
 
-LoRAs and Embeddings are separate sections. They are not grouped under one shared `Concepts` label.
+LoRAs remain structured generation resources. Embeddings live inside the positive or negative structured prompt as resource-bearing tokens.
 
 All generation-related advanced controls live inside the `Generation` card's own `Advanced Options` area. Do not create a separate Invoke-like `Advanced` dropdown/accordion below `Generation`.
 
@@ -31,7 +31,7 @@ MVP controls:
 - base model family badge;
 - prediction type badge/warning where useful, such as `epsilon` or `v_prediction`;
 - separate LoRAs selector and selected LoRA stack;
-- separate Embeddings selector and selected embeddings stack;
+- unified prompt autocomplete for embeddings and active LoRA trigger phrases;
 - sampler/scheduler;
 - steps;
 - guidance/CFG;
@@ -58,7 +58,7 @@ Rejected for MVP:
 
 ## Project Settings Order
 
-The compact Project panel uses this stable order: Preset actions, Size, Prompt, Negative Prompt, LoRAs, Embeddings, Generation and contextual Smart Patch compositing. Add LoRA and Add Embedding controls stay above their selected rows so they do not move as stacks grow.
+The compact Project panel uses this stable order: Preset actions, Size, Prompt, Negative Prompt, LoRAs, Generation and contextual Smart Patch compositing. The Add LoRA control stays above selected rows; embeddings are inserted through each prompt's inline autocomplete.
 
 The UI does not display a persistent txt2img/img2img label such as `Canvas content`. The derived request type is frozen into queue/provenance data; only contextual reasons such as disabled denoising are exposed to the user.
 
@@ -90,7 +90,7 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - User can select the installed version of the selected model.
 - Unsupported controls are not shown as generic always-on clutter.
 - Prediction type metadata is passed to the worker and stored in accepted-result provenance.
-- LoRAs and Embeddings appear as separate sections inside Generation.
+- LoRAs have a structured stack; embeddings are prompt tokens and have no standalone section.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
 - Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.
 - VAE, VAE precision and CFG rescale live in `Generation > Advanced Options`.

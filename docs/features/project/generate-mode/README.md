@@ -9,14 +9,14 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Project document lifecycle](../document-lifecycle.md)
 - [Prompt editor](./prompt-editor.md)
 - [Prompt diagnostics](./prompt-diagnostics.md)
-- [Tag autocomplete](./tag-autocomplete.md)
+- [Unified prompt autocomplete](./tag-autocomplete.md)
 - [Dynamic prompting](./dynamic-prompting.md)
 - [Presets](../../presets.md)
 - [Project Canvas and Smart Patch bounds](./image-and-bounding-box.md)
 - [Smart Patch Layer](./smart-patch-layer.md)
 - [Generation settings](./generation-settings.md)
 - [LoRA selector](./lora-selector.md)
-- [Embeddings selector](./embeddings-selector.md)
+- [Embedding prompt tokens](./embeddings-selector.md)
 - [Regional guidance](./regional-guidance.md)
 - [ControlNet follow-up](./controlnet-follow-up.md)
 - [Smart Patch compositing settings](./smart-patch-compositing.md)
@@ -64,7 +64,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Generate uses a compact `Apply preset...` action launcher above the settings stack; choosing a preset opens apply preview, copies selected values and does not persist a preset identity in Project;
 - no standalone inpaint mask layers;
 - Smart Patch Layer owns its mask, layer-owned bounding box, internal resolution and raster sub-layers;
-- LoRAs and Embeddings are separate Generation sections, not one shared `Concepts` menu;
+- LoRAs remain a structured stack, while embeddings and enabled LoRA trigger phrases are source-aware prompt tokens;
 - VAE, VAE precision and CFG rescale live in `Generation > Advanced Options`;
 - no separate Invoke-like `Advanced` accordion/dropdown below `Generation`;
 - tag autocomplete is included for Danbooru-style prompt authoring;
@@ -126,7 +126,7 @@ Project: portrait.igs
 │ Preset action │ masks                       │ regional       │
 │ Size          │ raster layers               │ guidance       │
 │ Prompts       │ raster layers               │ smart patch    │
-│ LoRA/embed.   │ raster layers               │ smart patch    │
+│ LoRA/settings │ raster layers               │ smart patch    │
 │ Generation    │ regional guidance regions   │ sub-layers     │
 │ Compositing   │ GenerationResults tray      │ provenance     │
 └───────────────┴─────────────────────────────┴────────────────┘
@@ -158,7 +158,7 @@ Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shor
 ## Acceptance Criteria
 
 - User can open a `.igs` Project tab and work in visible mode `Create` backed by domain mode `generate`.
-- Generate shows prompt, model, LoRA, embeddings, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
+- Generate shows structured prompts, model, LoRA, Project Canvas controls, Smart Patch bbox controls, dynamic prompt and advanced settings without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
 - Preset actions exist through the explicit action launcher/apply-preview workflow described in [Presets](../../presets.md), and Project never retains a selected preset identity.
 - Project does not show a separate title/status toolbar above the workspace; project identity and dirty state belong to the document tab.

@@ -106,9 +106,11 @@ Secondary trigger words are different. They are normal prompt words/phrases supp
 
 Rules for secondary trigger words:
 
-- trigger words must be visible from the selected LoRA row through the explicit info button;
+- trigger phrases must be visible from the selected LoRA row through the explicit info button;
 - trigger words should also be available from the dropdown row's info button;
-- metadata popover should offer copy/insert affordances when practical, but must not insert secondary trigger words automatically;
+- enabled, non-missing selected LoRAs contribute their trigger phrases to unified autocomplete in both prompt fields;
+- selecting a suggestion creates a source-linked LoRA trigger token, but selecting the LoRA itself never inserts prompt text;
+- disabling or removing the final source of an inserted trigger asks whether to keep it as prompt text, remove it, or cancel;
 - the UI should make clear that these words are optional prompt guidance, not the LoRA attachment itself.
 
 ## Metadata Popover
@@ -146,5 +148,5 @@ Each LoRA provenance entry should include:
 - Info buttons exist on both dropdown rows and selected rows.
 - Metadata popover opens only by explicit info-button click.
 - Adding a LoRA in the UI applies the LoRA resource and weight without requiring the user to type `<lora:...:...>` manually.
-- Secondary trigger words are visible through the info popover and are never inserted automatically.
+- Secondary trigger phrases are visible through metadata and unified autocomplete and are never inserted automatically.
 - LoRA stack is stored in accepted-result provenance.
