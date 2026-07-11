@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { Folder as FolderIcon } from '@vicons/tabler';
-import { type MenuOption, NButton, NIcon, NMenu } from 'naive-ui';
-import { h } from 'vue';
+import { Folder as FolderIcon } from '@vicons/tabler'
+import { type MenuOption, NButton, NIcon, NMenu } from 'naive-ui'
+import { h } from 'vue'
 
-const modelType = defineModel<string>('modelType', { required: true });
-const status = defineModel<string>('status', { required: true });
+const modelType = defineModel<string>('modelType', { required: true })
+const status = defineModel<string>('status', { required: true })
 
 function makeMenuLabel(label: string, count: number) {
   return () =>
     h('div', { class: 'menu-label' }, [
       h('span', label),
       h('span', { class: 'menu-count' }, String(count)),
-    ]);
+    ])
 }
 
 const modelTypesOptions: MenuOption[] = [
@@ -21,14 +21,14 @@ const modelTypesOptions: MenuOption[] = [
   { key: 'embeddings', label: makeMenuLabel('Embeddings', 4) },
   { key: 'vae', label: makeMenuLabel('VAE', 1) },
   { key: 'upscalers', label: makeMenuLabel('Upscalers', 1) },
-];
+]
 
 const statusOptions: MenuOption[] = [
   { key: 'all', label: makeMenuLabel('All', 28) },
   { key: 'installed', label: makeMenuLabel('Installed', 25) },
   { key: 'downloading', label: makeMenuLabel('Downloading', 1) },
   { key: 'needs-attention', label: makeMenuLabel('Needs Attention', 2) },
-];
+]
 </script>
 
 <template>

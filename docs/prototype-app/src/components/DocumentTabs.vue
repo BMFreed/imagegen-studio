@@ -1,65 +1,65 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from 'vue';
+import type { HTMLAttributes } from 'vue'
 
-import { Home as HomeIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTabPane, NTabs } from 'naive-ui';
-import { nextTick, ref } from 'vue';
+import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
+import { NButton, NIcon, NTabPane, NTabs } from 'naive-ui'
+import { nextTick, ref } from 'vue'
 
-import type { DocumentTabModel } from './app-shell.types';
+import type { DocumentTabModel } from './app-shell.types'
 
 const props = defineProps<{
-  tabs: DocumentTabModel[];
-}>();
+  tabs: DocumentTabModel[]
+}>()
 
 const emit = defineEmits<{
-  close: [id: string];
-}>();
+  close: [id: string]
+}>()
 
-const activeId = defineModel<string>('activeId', { required: true });
-const tablist = ref<HTMLElement>();
+const activeId = defineModel<string>('activeId', { required: true })
+const tablist = ref<HTMLElement>()
 
 function focusTab(index: number) {
   nextTick(() => {
-    tablist.value?.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus();
-  });
+    tablist.value?.querySelectorAll<HTMLElement>('[role="tab"]')[index]?.focus()
+  })
 }
 
 function handleTabKeydown(event: KeyboardEvent, index: number) {
-  let targetIndex: number | undefined;
+  let targetIndex: number | undefined
 
   switch (event.key) {
     case 'ArrowLeft': {
-      targetIndex = (index - 1 + props.tabs.length) % props.tabs.length;
+      targetIndex = (index - 1 + props.tabs.length) % props.tabs.length
 
-      break;
+      break
     }
     case 'ArrowRight': {
-      targetIndex = (index + 1) % props.tabs.length;
+      targetIndex = (index + 1) % props.tabs.length
 
-      break;
+      break
     }
     case 'End': {
-      targetIndex = props.tabs.length - 1;
+      targetIndex = props.tabs.length - 1
 
-      break;
+      break
     }
     case 'Home': {
-      targetIndex = 0;
+      targetIndex = 0
 
-      break;
+      break
     }
     // No default
   }
 
   if (targetIndex === undefined) {
-    return;
+    return
   }
 
-  event.preventDefault();
-  const target = props.tabs[targetIndex];
+  event.preventDefault()
+  const target = props.tabs[targetIndex]
   if (target) {
-    activeId.value = target.id;
-    focusTab(targetIndex);
+    activeId.value = target.id
+    focusTab(targetIndex)
   }
 }
 
@@ -70,7 +70,7 @@ function getTabProps(tab: DocumentTabModel, index: number): HTMLAttributes {
     onKeydown: (event) => handleTabKeydown(event, index),
     role: 'tab',
     tabindex: tab.id === activeId.value ? 0 : -1,
-  };
+  }
 }
 </script>
 

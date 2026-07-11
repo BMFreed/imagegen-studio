@@ -3,37 +3,37 @@ import {
   AlertTriangle as AlertIcon,
   FilterOff as FilterOffIcon,
   Star as StarIcon,
-} from '@vicons/tabler';
-import { NButton, NEmpty, NIcon, NInput, NScrollbar, NSelect, NText } from 'naive-ui';
+} from '@vicons/tabler'
+import { NButton, NEmpty, NIcon, NInput, NScrollbar, NSelect, NText } from 'naive-ui'
 
-import type { PresetDefinition, PresetRecord } from './presets.types';
+import type { PresetDefinition, PresetRecord } from './presets.types'
 
-import PresetDraftListRow from './PresetDraftListRow.vue';
-import PresetListRow from './PresetListRow.vue';
+import PresetDraftListRow from './PresetDraftListRow.vue'
+import PresetListRow from './PresetListRow.vue'
 
 defineProps<{
-  draft?: PresetDefinition;
-  draftSelected?: boolean;
-  hasActiveFilters: boolean;
-  presets: PresetRecord[];
-  selectedId: string;
-}>();
+  draft?: PresetDefinition
+  draftSelected?: boolean
+  hasActiveFilters: boolean
+  presets: PresetRecord[]
+  selectedId: string
+}>()
 
 defineEmits<{
-  resetFilters: [];
-  select: [id: string];
-  selectDraft: [];
-}>();
+  resetFilters: []
+  select: [id: string]
+  selectDraft: []
+}>()
 
-const search = defineModel<string>('search', { required: true });
-const sort = defineModel<'name' | 'recent'>('sort', { required: true });
-const favoritesOnly = defineModel<boolean>('favoritesOnly', { required: true });
-const attentionOnly = defineModel<boolean>('attentionOnly', { required: true });
+const search = defineModel<string>('search', { required: true })
+const sort = defineModel<'name' | 'recent'>('sort', { required: true })
+const favoritesOnly = defineModel<boolean>('favoritesOnly', { required: true })
+const attentionOnly = defineModel<boolean>('attentionOnly', { required: true })
 
 const sortOptions = [
   { label: 'Name', value: 'name' },
   { label: 'Recently updated', value: 'recent' },
-];
+]
 </script>
 
 <template>

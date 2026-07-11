@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from 'vue'
 
-const props = defineProps<{ height: number; width: number }>();
-const ratio = computed(() => Math.max(0.05, Math.min(20, props.width / props.height)));
+const props = defineProps<{ height: number; width: number }>()
+const ratio = computed(() => Math.max(0.05, Math.min(20, props.width / props.height)))
 const frameStyle = computed(() =>
   ratio.value >= 1
     ? { height: `${52 / ratio.value}px`, width: '52px' }
     : { height: '40px', width: `${40 * ratio.value}px` },
-);
+)
 </script>
 
 <template>

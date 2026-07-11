@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ListCheck, ListDetails, Wand, X } from '@vicons/tabler';
+import { ListCheck, ListDetails, Wand, X } from '@vicons/tabler'
 import {
   NAlert,
   NBadge,
@@ -12,161 +12,159 @@ import {
   NSelect,
   NText,
   NTooltip,
-} from 'naive-ui';
-import { computed, ref } from 'vue';
+} from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { GenerationLora } from '../../components/generation/generation.types';
-import type { ProjectDynamicPromptSettings, ProjectSession } from './project.types';
+import type { GenerationLora } from '../../components/generation/generation.types'
+import type { ProjectDynamicPromptSettings, ProjectSession } from './project.types'
 
 import {
   findOrphanedLoraTriggers,
   promptHasMissingEmbedding,
   reconcileLoraTriggerSources,
   serializeGenerationPrompt,
-} from '../../components/generation/generation-prompt.utils';
-import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue';
-import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue';
-import { presetEditorResources } from '../presets/presets.mock';
-import DynamicPromptsModal from './DynamicPromptsModal.vue';
-import { commitProjectMutation } from './project-history';
-import { expandPromptPairs } from './project-prompt.utils';
+} from '../../components/generation/generation-prompt.utils'
+import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
+import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue'
+import { presetEditorResources } from '../presets/presets.mock'
+import DynamicPromptsModal from './DynamicPromptsModal.vue'
+import { commitProjectMutation } from './project-history'
+import { expandPromptPairs } from './project-prompt.utils'
 import {
   deriveGenerationMode,
   getActiveGenerationDraft,
   projectHasBlockingGenerationErrors,
-} from './project.utils';
-import ProjectPresetCard from './ProjectPresetCard.vue';
-import ProjectPromptCard from './ProjectPromptCard.vue';
-import ProjectSizeCard from './ProjectSizeCard.vue';
+} from './project.utils'
+import ProjectPresetCard from './ProjectPresetCard.vue'
+import ProjectPromptCard from './ProjectPromptCard.vue'
+import ProjectSizeCard from './ProjectSizeCard.vue'
 
-const props = defineProps<{ session: ProjectSession }>();
+const props = defineProps<{ session: ProjectSession }>()
 const emit = defineEmits<{
-  applyPreset: [presetId: string];
-  cancelGeneration: [];
-  generate: [count: number];
-  manageModels: [];
-  managePresets: [];
-  savePreset: [];
-  toggleQueue: [];
-}>();
+  applyPreset: [presetId: string]
+  cancelGeneration: []
+  generate: [count: number]
+  manageModels: []
+  managePresets: []
+  savePreset: []
+  toggleQueue: []
+}>()
 
-const activeDraft = computed(() => getActiveGenerationDraft(props.session));
-const payload = computed(() => activeDraft.value.payload);
-const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 });
-const dynamicPreviewOpen = ref(false);
-const loraTriggerDialogOpen = ref(false);
-const pendingLoras = ref<GenerationLora[]>();
-const affectedNegativeTriggerCount = ref(0);
-const affectedPositiveTriggerCount = ref(0);
+const activeDraft = computed(() => getActiveGenerationDraft(props.session))
+const payload = computed(() => activeDraft.value.payload)
+const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 })
+const dynamicPreviewOpen = ref(false)
+const loraTriggerDialogOpen = ref(false)
+const pendingLoras = ref<GenerationLora[]>()
+const affectedNegativeTriggerCount = ref(0)
+const affectedPositiveTriggerCount = ref(0)
 const modelOptions = presetEditorResources.models.map((model) => ({
   label: model.name,
   value: model.id,
-}));
+}))
 const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
-}));
+}))
 const schedulerOptions = ['Karras', 'Normal', 'Exponential'].map((value) => ({
   label: value,
   value,
-}));
+}))
 const vaeOptions = presetEditorResources.vaes.map((value) => ({
   label: value.name,
   value: value.id,
-}));
+}))
 const expandedPrompts = computed(() =>
   expandPromptPairs(
     serializeGenerationPrompt(payload.value.prompt),
     serializeGenerationPrompt(payload.value.negativePrompt),
     activeDraft.value.dynamicPrompt.maxPrompts,
   ),
-);
-const totalJobs = computed(() => expandedPrompts.value.pairs.length * imagesPerClick.value);
+)
+const totalJobs = computed(() => expandedPrompts.value.pairs.length * imagesPerClick.value)
 const activeQueueCount = computed(
   () =>
     props.session.queueItems.filter(
       (item) => item.status === 'pending' || item.status === 'running',
     ).length,
-);
+)
 const blockingReason = computed(() => {
   if (
     promptHasMissingEmbedding(payload.value.prompt) ||
     promptHasMissingEmbedding(payload.value.negativePrompt)
   ) {
-    return 'Replace the missing embedding in the prompt before generating.';
+    return 'Replace the missing embedding in the prompt before generating.'
   }
   if (projectHasBlockingGenerationErrors(props.session)) {
-    return 'Choose an installed model before generating.';
+    return 'Choose an installed model before generating.'
   }
   if (expandedPrompts.value.error) {
-    return expandedPrompts.value.error;
+    return expandedPrompts.value.error
   }
   if (totalJobs.value > 100) {
-    return `This batch would create ${totalJobs.value} jobs. The prototype limit is 100.`;
+    return `This batch would create ${totalJobs.value} jobs. The prototype limit is 100.`
   }
-  return undefined;
-});
-const denoisingDisabled = computed(() => deriveGenerationMode(props.session) === 'txt2img');
+  return undefined
+})
+const denoisingDisabled = computed(() => deriveGenerationMode(props.session) === 'txt2img')
 
 function updatePayload(
   label: string,
   mutate: (draft: ReturnType<typeof getActiveGenerationDraft>) => void,
 ) {
-  commitProjectMutation(props.session, label, () =>
-    mutate(getActiveGenerationDraft(props.session)),
-  );
+  commitProjectMutation(props.session, label, () => mutate(getActiveGenerationDraft(props.session)))
 }
 function updateModel(id: string) {
-  const model = presetEditorResources.models.find((item) => item.id === id);
+  const model = presetEditorResources.models.find((item) => item.id === id)
   if (model) {
-    updatePayload('Change model', (draft) => (draft.payload.model = structuredClone(model)));
+    updatePayload('Change model', (draft) => (draft.payload.model = structuredClone(model)))
   }
 }
 function updateLoras(value: GenerationLora[]) {
   updatePayload('Edit LoRAs', (draft) => {
-    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[];
-  });
+    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[]
+  })
 }
 function removeLora(resourceId: string) {
-  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId);
-  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
-  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
+  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId)
+  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value)
+  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value)
   if (positiveOrphans.length || negativeOrphans.length) {
-    pendingLoras.value = JSON.parse(JSON.stringify(value)) as GenerationLora[];
-    affectedPositiveTriggerCount.value = positiveOrphans.length;
-    affectedNegativeTriggerCount.value = negativeOrphans.length;
-    loraTriggerDialogOpen.value = true;
-    return;
+    pendingLoras.value = JSON.parse(JSON.stringify(value)) as GenerationLora[]
+    affectedPositiveTriggerCount.value = positiveOrphans.length
+    affectedNegativeTriggerCount.value = negativeOrphans.length
+    loraTriggerDialogOpen.value = true
+    return
   }
   updatePayload('Remove LoRA', (draft) => {
-    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[];
-  });
+    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[]
+  })
 }
 function resolveLoraTriggers(resolution: 'keep' | 'remove') {
-  const nextLoras = pendingLoras.value;
+  const nextLoras = pendingLoras.value
   if (!nextLoras) {
-    return;
+    return
   }
   updatePayload('Edit LoRAs and trigger phrases', (draft) => {
-    draft.payload.loras = JSON.parse(JSON.stringify(nextLoras)) as GenerationLora[];
-    draft.payload.prompt = reconcileLoraTriggerSources(draft.payload.prompt, nextLoras, resolution);
+    draft.payload.loras = JSON.parse(JSON.stringify(nextLoras)) as GenerationLora[]
+    draft.payload.prompt = reconcileLoraTriggerSources(draft.payload.prompt, nextLoras, resolution)
     draft.payload.negativePrompt = reconcileLoraTriggerSources(
       draft.payload.negativePrompt,
       nextLoras,
       resolution,
-    );
-  });
-  pendingLoras.value = undefined;
-  loraTriggerDialogOpen.value = false;
+    )
+  })
+  pendingLoras.value = undefined
+  loraTriggerDialogOpen.value = false
 }
 function updateDynamicSettings(value: ProjectDynamicPromptSettings) {
-  updatePayload('Change dynamic prompt settings', (draft) => (draft.dynamicPrompt = value));
+  updatePayload('Change dynamic prompt settings', (draft) => (draft.dynamicPrompt = value))
 }
 function normalizeCount(value: number | null) {
   if (value === null || !Number.isFinite(value)) {
-    return;
+    return
   }
-  imagesPerClick.value = Math.min(100, Math.max(1, Math.round(value)));
+  imagesPerClick.value = Math.min(100, Math.max(1, Math.round(value)))
 }
 </script>
 
@@ -247,9 +245,9 @@ function normalizeCount(value: number | null) {
         />
 
         <NCard size="small" title="LoRAs">
-          <NAlert v-if="payload.loras?.some((lora) => lora.resource.missing)" type="warning"
-            >One selected LoRA is missing or incompatible.</NAlert
-          >
+          <NAlert v-if="payload.loras?.some((lora) => lora.resource.missing)" type="warning">
+            One selected LoRA is missing or incompatible.
+          </NAlert>
           <GenerationLoraStack
             :modelValue="payload.loras ?? []"
             :resources="presetEditorResources.loras"
@@ -259,92 +257,108 @@ function normalizeCount(value: number | null) {
         </NCard>
 
         <NCard size="small">
-          <template v-slot:header
-            ><div class="card-title-line">
+          <template v-slot:header>
+            <div class="card-title-line">
               <strong>Generation</strong>
               <NButton
                 aria-label="Manage Models"
                 quaternary
                 size="tiny"
                 @click="emit('manageModels')"
-                >Manage models<template v-slot:icon><NIcon :component="ListDetails" /></template
-              ></NButton></div
-          ></template>
-          <NAlert v-if="payload.model?.missing" title="Selected model is missing" type="error"
-            >Choose an installed model before generating.</NAlert
-          >
+              >
+                Manage models
+                <template v-slot:icon><NIcon :component="ListDetails" /></template>
+              </NButton>
+            </div>
+          </template>
+          <NAlert v-if="payload.model?.missing" title="Selected model is missing" type="error">
+            Choose an installed model before generating.
+          </NAlert>
           <div class="field-stack">
-            <label
-              >Model<NSelect
+            <label>
+              Model
+              <NSelect
                 aria-label="Generation model"
                 :options="modelOptions"
                 size="small"
                 :value="payload.model?.id"
                 @update:value="updateModel"
-            /></label>
-            <label
-              >Version<NInput
+              />
+            </label>
+            <label>
+              Version
+              <NInput
                 aria-label="Model version"
                 disabled
                 size="small"
                 :value="payload.model?.version"
-            /></label>
+              />
+            </label>
             <div class="two-fields">
-              <label
-                >Sampler<NSelect
+              <label>
+                Sampler
+                <NSelect
                   aria-label="Sampler"
                   :options="samplerOptions"
                   size="small"
                   :value="payload.sampling?.sampler"
                   @update:value="
                     updatePayload('Change sampler', (draft) => {
-                      if (draft.payload.sampling) draft.payload.sampling.sampler = $event;
+                      if (draft.payload.sampling) draft.payload.sampling.sampler = $event
                     })
                   "
-              /></label>
-              <label
-                >Scheduler<NSelect
+                />
+              </label>
+              <label>
+                Scheduler
+                <NSelect
                   aria-label="Scheduler"
                   :options="schedulerOptions"
                   size="small"
                   :value="payload.sampling?.scheduler"
                   @update:value="
                     updatePayload('Change scheduler', (draft) => {
-                      if (draft.payload.sampling) draft.payload.sampling.scheduler = $event;
+                      if (draft.payload.sampling) draft.payload.sampling.scheduler = $event
                     })
                   "
-              /></label>
+                />
+              </label>
             </div>
             <div class="two-fields">
-              <label
-                >Steps<NInputNumber
+              <label>
+                Steps
+                <NInputNumber
                   aria-label="Steps"
                   :min="1"
                   size="small"
                   :value="payload.guidance?.steps"
                   @update:value="
                     updatePayload('Change steps', (draft) => {
-                      if (draft.payload.guidance) draft.payload.guidance.steps = $event ?? 1;
+                      if (draft.payload.guidance) draft.payload.guidance.steps = $event ?? 1
                     })
                   "
-              /></label>
-              <label
-                >CFG<NInputNumber
+                />
+              </label>
+              <label>
+                CFG
+                <NInputNumber
                   aria-label="CFG"
                   size="small"
                   :step="0.1"
                   :value="payload.guidance?.cfgScale"
                   @update:value="
                     updatePayload('Change CFG', (draft) => {
-                      if (draft.payload.guidance) draft.payload.guidance.cfgScale = $event ?? 0;
+                      if (draft.payload.guidance) draft.payload.guidance.cfgScale = $event ?? 0
                     })
                   "
-              /></label>
+                />
+              </label>
             </div>
-            <label
-              >Denoising Strength<NTooltip :disabled="!denoisingDisabled"
-                ><template v-slot:trigger
-                  ><NInputNumber
+            <label>
+              Denoising Strength
+              <NTooltip :disabled="!denoisingDisabled">
+                <template v-slot:trigger>
+                  <NInputNumber
                     aria-label="Denoising Strength"
                     :disabled="denoisingDisabled"
                     :max="1"
@@ -354,30 +368,38 @@ function normalizeCount(value: number | null) {
                     :value="payload.denoisingStrength ?? 0.75"
                     @update:value="
                       updatePayload('Change denoising', (draft) => {
-                        draft.payload.denoisingStrength = $event ?? 0;
+                        draft.payload.denoisingStrength = $event ?? 0
                       })
-                    " /></template
-                >Available when the generation area contains visible raster content.</NTooltip
-              ><NText v-if="denoisingDisabled" depth="3"
-                >Available when the generation area contains visible raster content.</NText
-              ></label
-            >
+                    "
+                  />
+                </template>
+                Available when the generation area contains visible raster content.
+              </NTooltip>
+              <NText v-if="denoisingDisabled" depth="3">
+                Available when the generation area contains visible raster content.
+              </NText>
+            </label>
             <details>
               <summary>Advanced Options</summary>
               <div class="field-stack advanced">
-                <label
-                  >VAE<NSelect
+                <label>
+                  VAE
+                  <NSelect
                     aria-label="VAE"
                     :options="vaeOptions"
                     size="small"
-                    :value="payload.vae?.id" /></label
-                ><label
-                  >VAE precision<NSelect
+                    :value="payload.vae?.id"
+                  />
+                </label>
+                <label>
+                  VAE precision
+                  <NSelect
                     aria-label="VAE precision"
                     :options="['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))"
                     size="small"
                     :value="activeDraft.vaePrecision"
-                /></label>
+                  />
+                </label>
               </div>
             </details>
           </div>

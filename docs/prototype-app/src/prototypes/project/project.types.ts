@@ -1,13 +1,13 @@
 import type {
   GenerationPayload,
   GenerationPromptToken,
-} from '../../components/generation/generation.types';
+} from '../../components/generation/generation.types'
 
 export type ProjectScenarioId =
-  'default' | 'empty-project' | 'errors' | 'regional-guidance' | 'smart-patch' | 'staging';
+  'default' | 'empty-project' | 'errors' | 'regional-guidance' | 'smart-patch' | 'staging'
 
-export type ProjectArtworkTone = 'blue' | 'emerald' | 'rose' | 'violet';
-export type DerivedGenerationMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img';
+export type ProjectArtworkTone = 'blue' | 'emerald' | 'rose' | 'violet'
+export type DerivedGenerationMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img'
 export type ProjectAspectRatioId =
   | '1:1'
   | '1:4'
@@ -24,7 +24,7 @@ export type ProjectAspectRatioId =
   | '8:1'
   | '9:16'
   | '9:21'
-  | 'free';
+  | 'free'
 export type ProjectTool =
   | 'bbox'
   | 'brush'
@@ -34,158 +34,158 @@ export type ProjectTool =
   | 'pan'
   | 'polygon-lasso'
   | 'transform-mask'
-  | 'transform-region';
+  | 'transform-region'
 
 export interface ProjectRect {
-  height: number;
-  width: number;
-  x: number;
-  y: number;
+  height: number
+  width: number
+  x: number
+  y: number
 }
 
 export interface ProjectGenerationDraft {
-  cfgRescale: number;
-  dynamicPrompt: ProjectDynamicPromptSettings;
-  payload: GenerationPayload;
-  vaePrecision: 'Auto' | 'FP16' | 'FP32';
+  cfgRescale: number
+  dynamicPrompt: ProjectDynamicPromptSettings
+  payload: GenerationPayload
+  vaePrecision: 'Auto' | 'FP16' | 'FP32'
 }
 
 export interface ProjectDynamicPromptSettings {
-  maxPrompts: number;
-  seedBehavior: 'per-iteration' | 'per-prompt';
+  maxPrompts: number
+  seedBehavior: 'per-iteration' | 'per-prompt'
 }
 
 export interface ProjectAspectRatioState {
-  id: ProjectAspectRatioId;
-  locked: boolean;
-  value: number;
+  id: ProjectAspectRatioId
+  locked: boolean
+  value: number
 }
 
 export interface ProjectRasterLayer {
-  blendMode: 'multiply' | 'normal' | 'overlay' | 'screen';
-  id: string;
-  kind: 'raster';
-  locked: boolean;
+  blendMode: 'multiply' | 'normal' | 'overlay' | 'screen'
+  id: string
+  kind: 'raster'
+  locked: boolean
   /** Prototype-only approximation of real compositor alpha coverage. */
-  mockCoverage: 'opaque' | 'partial';
-  name: string;
-  opacity: number;
-  tone: ProjectArtworkTone;
-  visible: boolean;
+  mockCoverage: 'opaque' | 'partial'
+  name: string
+  opacity: number
+  tone: ProjectArtworkTone
+  visible: boolean
 }
 
 export interface SmartPatchVariant {
-  id: string;
-  name: string;
-  tone: ProjectArtworkTone;
+  id: string
+  name: string
+  tone: ProjectArtworkTone
 }
 
 export interface ProjectSmartPatchLayer {
-  activeVariantId?: string;
-  bbox: ProjectRect;
-  generationDraft: ProjectGenerationDraft;
-  id: string;
-  internalHeight: number;
-  internalWidth: number;
-  kind: 'smart-patch';
-  locked: boolean;
-  maskRevision: number;
-  name: string;
-  status: 'empty' | 'failed' | 'generating' | 'outdated' | 'ready';
-  variants: SmartPatchVariant[];
-  visible: boolean;
+  activeVariantId?: string
+  bbox: ProjectRect
+  generationDraft: ProjectGenerationDraft
+  id: string
+  internalHeight: number
+  internalWidth: number
+  kind: 'smart-patch'
+  locked: boolean
+  maskRevision: number
+  name: string
+  status: 'empty' | 'failed' | 'generating' | 'outdated' | 'ready'
+  variants: SmartPatchVariant[]
+  visible: boolean
 }
 
-export type ProjectCompositingLayer = ProjectRasterLayer | ProjectSmartPatchLayer;
+export type ProjectCompositingLayer = ProjectRasterLayer | ProjectSmartPatchLayer
 
 export interface RegionalGuidanceLayerModel {
-  autoNegative: boolean;
-  compatibilityStatus: 'ok' | 'unsupported' | 'warning';
-  enabled: boolean;
-  id: string;
-  locked: boolean;
-  name: string;
-  negativePrompt: string;
-  positivePrompt: string;
-  referenceImages: { id: string; name: string; tone: ProjectArtworkTone }[];
-  regionRevision: number;
+  autoNegative: boolean
+  compatibilityStatus: 'ok' | 'unsupported' | 'warning'
+  enabled: boolean
+  id: string
+  locked: boolean
+  name: string
+  negativePrompt: string
+  positivePrompt: string
+  referenceImages: { id: string; name: string; tone: ProjectArtworkTone }[]
+  regionRevision: number
 }
 
 export type ProjectEntitySelection =
-  { id: string; kind: 'compositing-layer' } | { id: string; kind: 'regional-guidance' } | undefined;
+  { id: string; kind: 'compositing-layer' } | { id: string; kind: 'regional-guidance' } | undefined
 
 export interface ProjectDocumentModel {
-  canvas: { height: number; width: number };
-  generationDraft: ProjectGenerationDraft;
-  id: string;
-  layers: ProjectCompositingLayer[];
-  regionalGuidance: RegionalGuidanceLayerModel[];
-  title: string;
-  updatedAt: string;
+  canvas: { height: number; width: number }
+  generationDraft: ProjectGenerationDraft
+  id: string
+  layers: ProjectCompositingLayer[]
+  regionalGuidance: RegionalGuidanceLayerModel[]
+  title: string
+  updatedAt: string
 }
 
 export interface GenerationCandidate {
-  error?: string;
-  id: string;
-  imageIndex: number;
-  queueItemId: string;
-  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running';
-  tone: ProjectArtworkTone;
+  error?: string
+  id: string
+  imageIndex: number
+  queueItemId: string
+  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running'
+  tone: ProjectArtworkTone
 }
 
 export interface GenerationStagingSession {
-  candidates: GenerationCandidate[];
-  collapsed: boolean;
-  focusedCandidateId?: string;
-  previewVisible: boolean;
-  selectedCandidateIds: string[];
-  target: { kind: 'project-canvas' } | { kind: 'smart-patch'; layerId: string };
+  candidates: GenerationCandidate[]
+  collapsed: boolean
+  focusedCandidateId?: string
+  previewVisible: boolean
+  selectedCandidateIds: string[]
+  target: { kind: 'project-canvas' } | { kind: 'smart-patch'; layerId: string }
 }
 
 export interface ProjectQueueItem {
-  derivedMode: DerivedGenerationMode;
-  id: string;
-  iteration: number;
-  label: string;
-  negativePrompt: string;
-  negativePromptTokens: GenerationPromptToken[];
-  progress: number;
-  prompt: string;
-  promptTokens: GenerationPromptToken[];
-  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running';
+  derivedMode: DerivedGenerationMode
+  id: string
+  iteration: number
+  label: string
+  negativePrompt: string
+  negativePromptTokens: GenerationPromptToken[]
+  progress: number
+  prompt: string
+  promptTokens: GenerationPromptToken[]
+  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running'
 }
 
 export interface ProjectHistoryEntry {
-  document: ProjectDocumentModel;
-  label: string;
+  document: ProjectDocumentModel
+  label: string
 }
 export interface ProjectHistoryState {
-  future: ProjectHistoryEntry[];
-  past: ProjectHistoryEntry[];
+  future: ProjectHistoryEntry[]
+  past: ProjectHistoryEntry[]
 }
 
 export interface ProjectUiState {
-  activeTool: ProjectTool;
-  applyPresetOpen: boolean;
-  aspectRatio: ProjectAspectRatioState;
-  leftCollapsed: boolean;
-  leftWidth: number;
-  notice?: { text: string; type: 'error' | 'success' };
-  queueOpen: boolean;
-  rightCollapsed: boolean;
-  rightWidth: number;
-  selection: ProjectEntitySelection;
-  viewport: { offsetX: number; offsetY: number; scale: number };
+  activeTool: ProjectTool
+  applyPresetOpen: boolean
+  aspectRatio: ProjectAspectRatioState
+  leftCollapsed: boolean
+  leftWidth: number
+  notice?: { text: string; type: 'error' | 'success' }
+  queueOpen: boolean
+  rightCollapsed: boolean
+  rightWidth: number
+  selection: ProjectEntitySelection
+  viewport: { offsetX: number; offsetY: number; scale: number }
 }
 
 export interface ProjectSession {
-  dirty: boolean;
-  document: ProjectDocumentModel;
-  history: ProjectHistoryState;
-  queueItems: ProjectQueueItem[];
-  savedDocument: ProjectDocumentModel;
-  saveShouldFail: boolean;
-  scenario: ProjectScenarioId;
-  staging?: GenerationStagingSession;
-  ui: ProjectUiState;
+  dirty: boolean
+  document: ProjectDocumentModel
+  history: ProjectHistoryState
+  queueItems: ProjectQueueItem[]
+  savedDocument: ProjectDocumentModel
+  saveShouldFail: boolean
+  scenario: ProjectScenarioId
+  staging?: GenerationStagingSession
+  ui: ProjectUiState
 }

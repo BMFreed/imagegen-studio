@@ -1,6 +1,6 @@
-import type { PresetCreateIntent, PresetEditorResources, PresetRecord } from './presets.types';
+import type { PresetCreateIntent, PresetEditorResources, PresetRecord } from './presets.types'
 
-import { parseLegacyPromptString } from '../../components/generation/generation-prompt.utils';
+import { parseLegacyPromptString } from '../../components/generation/generation-prompt.utils'
 import {
   generationEditorResources,
   generationEmbeddings,
@@ -8,23 +8,23 @@ import {
   generationModels,
   generationVaes,
   mockDanbooruTags,
-} from '../../components/generation/generation.mock';
+} from '../../components/generation/generation.mock'
 
-const illustriousModel = generationModels[0]!;
-const builtInVae = generationVaes[0]!;
-export const availableLoras = generationLoras;
-export const availableEmbeddings = generationEmbeddings;
-export const presetEditorResources: PresetEditorResources = generationEditorResources;
+const illustriousModel = generationModels[0]!
+const builtInVae = generationVaes[0]!
+export const availableLoras = generationLoras
+export const availableEmbeddings = generationEmbeddings
+export const presetEditorResources: PresetEditorResources = generationEditorResources
 
 function prompt(value: string, triggerLinks: Record<string, string[]> = {}) {
-  const parsed = parseLegacyPromptString(value, availableEmbeddings, mockDanbooruTags);
+  const parsed = parseLegacyPromptString(value, availableEmbeddings, mockDanbooruTags)
   parsed.tokens = parsed.tokens.map((token) => {
-    const sourceLoraIds = triggerLinks[token.text];
+    const sourceLoraIds = triggerLinks[token.text]
     return sourceLoraIds
       ? { id: token.id, kind: 'lora-trigger' as const, sourceLoraIds, text: token.text }
-      : token;
-  });
-  return parsed;
+      : token
+  })
+  return parsed
 }
 
 export const presetResources: PresetRecord[] = [
@@ -170,9 +170,9 @@ export const presetResources: PresetRecord[] = [
     updatedAt: '2026-07-04T12:00:00.000Z',
     workflow: 'imageToImage',
   },
-];
+]
 
-export const defaultPresetId = 'studio-portrait-soft-light';
+export const defaultPresetId = 'studio-portrait-soft-light'
 
 export const currentProjectPresetSource = {
   definition: {
@@ -207,4 +207,4 @@ export const currentProjectPresetSource = {
   kind: 'project',
   projectName: 'Sample Project B.igs',
   projectSummary: '832 × 1216 · Illustrious XL v1.1',
-} satisfies PresetCreateIntent;
+} satisfies PresetCreateIntent

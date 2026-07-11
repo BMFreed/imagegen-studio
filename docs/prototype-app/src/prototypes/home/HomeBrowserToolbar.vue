@@ -3,36 +3,36 @@ import {
   LayoutGrid as GridIcon,
   ListDetails as ListIcon,
   FilterOff as ResetIcon,
-} from '@vicons/tabler';
-import { NButton, NButtonGroup, NIcon, NInput, NSelect, NText } from 'naive-ui';
+} from '@vicons/tabler'
+import { NButton, NButtonGroup, NIcon, NInput, NSelect, NText } from 'naive-ui'
 
-import type { HomeSort, HomeStatusFilter, HomeViewMode } from './home.types';
+import type { HomeSort, HomeStatusFilter, HomeViewMode } from './home.types'
 
 defineProps<{
-  hasActiveFilters: boolean;
-}>();
+  hasActiveFilters: boolean
+}>()
 
 defineEmits<{
-  reset: [];
-}>();
+  reset: []
+}>()
 
-const search = defineModel<string>('search', { required: true });
-const sort = defineModel<HomeSort>('sort', { required: true });
-const status = defineModel<HomeStatusFilter>('status', { required: true });
-const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
+const search = defineModel<string>('search', { required: true })
+const sort = defineModel<HomeSort>('sort', { required: true })
+const status = defineModel<HomeStatusFilter>('status', { required: true })
+const viewMode = defineModel<HomeViewMode>('viewMode', { required: true })
 
 const sortOptions = [
   { label: 'Last opened', value: 'lastOpened' },
   { label: 'Name', value: 'name' },
   { label: 'Modified', value: 'modified' },
-];
+]
 
 const statusOptions = [
   { label: 'All statuses', value: 'all' },
   { label: 'Open', value: 'open' },
   { label: 'Recovery available', value: 'recovery' },
   { label: 'Needs attention', value: 'attention' },
-];
+]
 </script>
 
 <template>

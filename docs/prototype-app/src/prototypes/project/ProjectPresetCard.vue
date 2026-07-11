@@ -1,22 +1,22 @@
 <script setup lang="ts">
-import { FilePlus, Settings } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NInput, NPopover, NTag, NTooltip } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { FilePlus, Settings } from '@vicons/tabler'
+import { NButton, NCard, NIcon, NInput, NPopover, NTag, NTooltip } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import { presetResources } from '../presets/presets.mock';
+import { presetResources } from '../presets/presets.mock'
 
-const emit = defineEmits<{ apply: [id: string]; manage: []; save: [] }>();
-const open = ref(false);
-const search = ref('');
+const emit = defineEmits<{ apply: [id: string]; manage: []; save: [] }>()
+const open = ref(false)
+const search = ref('')
 const presets = computed(() =>
   presetResources.filter((preset) =>
     preset.name.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()),
   ),
-);
+)
 function choose(id: string) {
-  open.value = false;
-  search.value = '';
-  emit('apply', id);
+  open.value = false
+  search.value = ''
+  emit('apply', id)
 }
 </script>
 
@@ -24,15 +24,16 @@ function choose(id: string) {
   <NCard size="small" title="Preset">
     <div class="preset-actions">
       <NPopover v-model:show="open" placement="bottom-start" trigger="click">
-        <template v-slot:trigger
-          ><NTooltip
-            ><template v-slot:trigger
-              ><NButton aria-label="Apply preset" class="apply-button" secondary size="small"
-                >Apply preset...</NButton
-              ></template
-            >Apply a temporary copy of preset settings</NTooltip
-          ></template
-        >
+        <template v-slot:trigger>
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton aria-label="Apply preset" class="apply-button" secondary size="small">
+                Apply preset...
+              </NButton>
+            </template>
+            Apply a temporary copy of preset settings
+          </NTooltip>
+        </template>
         <div class="preset-picker">
           <NInput
             v-model:value="search"
@@ -50,12 +51,12 @@ function choose(id: string) {
               quaternary
               @click="choose(preset.id)"
             >
-              <span
-                ><strong>{{ preset.name }}</strong
-                ><small>{{
-                  preset.workflow === 'textToImage' ? 'Text to Image' : preset.workflow
-                }}</small></span
-              >
+              <span>
+                <strong>{{ preset.name }}</strong>
+                <small>
+                  {{ preset.workflow === 'textToImage' ? 'Text to Image' : preset.workflow }}
+                </small>
+              </span>
               <NTag
                 v-if="
                   Object.values(preset.payload).some(
@@ -65,34 +66,41 @@ function choose(id: string) {
                 "
                 size="small"
                 type="warning"
-                >Missing resource</NTag
               >
+                Missing resource
+              </NTag>
             </NButton>
           </div>
         </div>
       </NPopover>
-      <NTooltip
-        ><template v-slot:trigger
-          ><NButton
+      <NTooltip>
+        <template v-slot:trigger>
+          <NButton
             aria-label="Manage Presets"
             circle
             quaternary
             size="tiny"
             @click="emit('manage')"
-            ><template v-slot:icon><NIcon :component="Settings" /></template></NButton></template
-        >Manage presets</NTooltip
-      >
-      <NTooltip
-        ><template v-slot:trigger
-          ><NButton
+          >
+            <template v-slot:icon><NIcon :component="Settings" /></template>
+          </NButton>
+        </template>
+        Manage presets
+      </NTooltip>
+      <NTooltip>
+        <template v-slot:trigger>
+          <NButton
             aria-label="Save Current as Preset"
             circle
             quaternary
             size="tiny"
             @click="emit('save')"
-            ><template v-slot:icon><NIcon :component="FilePlus" /></template></NButton></template
-        >Save current settings as a new preset</NTooltip
-      >
+          >
+            <template v-slot:icon><NIcon :component="FilePlus" /></template>
+          </NButton>
+        </template>
+        Save current settings as a new preset
+      </NTooltip>
     </div>
   </NCard>
 </template>

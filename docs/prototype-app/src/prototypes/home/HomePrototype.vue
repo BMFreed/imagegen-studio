@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NSplit, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, toRaw, watch } from 'vue';
+import { NSplit, useDialog, useMessage } from 'naive-ui'
+import { computed, ref, toRaw, watch } from 'vue'
 
 import type {
   ExternalProjectDraft,
@@ -14,9 +14,9 @@ import type {
   HomeViewMode,
   HomeWorkspace,
   NewProjectDraft,
-} from './home.types';
+} from './home.types'
 
-import { createHomeScenario } from './home.mock';
+import { createHomeScenario } from './home.mock'
 import {
   createProjectFromDraft,
   createProjectFromExternalDraft,
@@ -25,104 +25,104 @@ import {
   getProjectsForBrowseSelection,
   getWorkspaceProjectCount,
   sortHomeProjects,
-} from './home.utils';
-import HomeBrowser from './HomeBrowser.vue';
-import HomeInspector from './HomeInspector.vue';
-import HomeSidebar from './HomeSidebar.vue';
-import MoveProjectModal from './MoveProjectModal.vue';
-import MoveToTrashModal from './MoveToTrashModal.vue';
-import NewProjectModal from './NewProjectModal.vue';
-import OpenExternalProjectModal from './OpenExternalProjectModal.vue';
-import RecoveryModal from './RecoveryModal.vue';
-import RenameProjectModal from './RenameProjectModal.vue';
-import WorkspaceModal from './WorkspaceModal.vue';
-import WorkspaceSettingsModal from './WorkspaceSettingsModal.vue';
+} from './home.utils'
+import HomeBrowser from './HomeBrowser.vue'
+import HomeInspector from './HomeInspector.vue'
+import HomeSidebar from './HomeSidebar.vue'
+import MoveProjectModal from './MoveProjectModal.vue'
+import MoveToTrashModal from './MoveToTrashModal.vue'
+import NewProjectModal from './NewProjectModal.vue'
+import OpenExternalProjectModal from './OpenExternalProjectModal.vue'
+import RecoveryModal from './RecoveryModal.vue'
+import RenameProjectModal from './RenameProjectModal.vue'
+import WorkspaceModal from './WorkspaceModal.vue'
+import WorkspaceSettingsModal from './WorkspaceSettingsModal.vue'
 
 const props = defineProps<{
-  dirtyProjectIds: string[];
-  openProjectIds: string[];
-  scenario: HomeScenarioId;
-}>();
+  dirtyProjectIds: string[]
+  openProjectIds: string[]
+  scenario: HomeScenarioId
+}>()
 
 const emit = defineEmits<{
-  manageModels: [];
-  managePresets: [];
+  manageModels: []
+  managePresets: []
   openProject: [
     value: { project: HomeProjectRecord; recovered?: boolean; target: 'current' | 'new' },
-  ];
-  projectChanged: [project: HomeProjectRecord];
-}>();
+  ]
+  projectChanged: [project: HomeProjectRecord]
+}>()
 
-const dialog = useDialog();
-const message = useMessage();
-const initialScenario = createHomeScenario(props.scenario);
-const workspaces = ref(initialScenario.workspaces);
-const projects = ref(initialScenario.projects);
-const hasInstalledModel = ref(initialScenario.hasInstalledModel);
+const dialog = useDialog()
+const message = useMessage()
+const initialScenario = createHomeScenario(props.scenario)
+const workspaces = ref(initialScenario.workspaces)
+const projects = ref(initialScenario.projects)
+const hasInstalledModel = ref(initialScenario.hasInstalledModel)
 
-const browseSelection = ref<HomeBrowseSelection>({ kind: 'all' });
-const search = ref('');
-const sort = ref<HomeSort>('lastOpened');
-const status = ref<HomeStatusFilter>('all');
-const viewMode = ref<HomeViewMode>('grid');
-const selectedProjectId = ref<string>();
-const inspectorCollapsed = ref(false);
-const sidebarPaneSize = ref<number | string>('clamp(232px, 18vw, 252px)');
-const expandedBrowserPaneSize = ref<number | string>('calc(100% - clamp(330px, 28vw, 400px))');
-const initialSidebarWidth = Math.min(252, Math.max(232, globalThis.innerWidth * 0.18));
-const initialWorkspaceWidth = Math.max(1, globalThis.innerWidth - initialSidebarWidth);
-const browserPaneMin = Math.min(0.6, 500 / initialWorkspaceWidth);
-const browserPaneMax = Math.max(browserPaneMin, 1 - 280 / initialWorkspaceWidth);
+const browseSelection = ref<HomeBrowseSelection>({ kind: 'all' })
+const search = ref('')
+const sort = ref<HomeSort>('lastOpened')
+const status = ref<HomeStatusFilter>('all')
+const viewMode = ref<HomeViewMode>('grid')
+const selectedProjectId = ref<string>()
+const inspectorCollapsed = ref(false)
+const sidebarPaneSize = ref<number | string>('clamp(232px, 18vw, 252px)')
+const expandedBrowserPaneSize = ref<number | string>('calc(100% - clamp(330px, 28vw, 400px))')
+const initialSidebarWidth = Math.min(252, Math.max(232, globalThis.innerWidth * 0.18))
+const initialWorkspaceWidth = Math.max(1, globalThis.innerWidth - initialSidebarWidth)
+const browserPaneMin = Math.min(0.6, 500 / initialWorkspaceWidth)
+const browserPaneMax = Math.max(browserPaneMin, 1 - 280 / initialWorkspaceWidth)
 const browserPaneSize = computed<number | string>({
   get: () => (inspectorCollapsed.value ? 'calc(100% - 44px)' : expandedBrowserPaneSize.value),
   set: (value) => {
     if (!inspectorCollapsed.value) {
-      expandedBrowserPaneSize.value = value;
+      expandedBrowserPaneSize.value = value
     }
   },
-});
+})
 
-const showNewProject = ref(false);
-const showOpenExternal = ref(false);
-const showWorkspace = ref(false);
-const showWorkspaceSettings = ref(false);
-const showMove = ref(false);
-const showRename = ref(false);
-const showRecovery = ref(false);
-const showTrash = ref(false);
-const activeWorkspaceId = ref<string>();
-const activeProjectId = ref<string>();
-const pendingOpenIntent = ref<HomeProjectOpenIntent>();
+const showNewProject = ref(false)
+const showOpenExternal = ref(false)
+const showWorkspace = ref(false)
+const showWorkspaceSettings = ref(false)
+const showMove = ref(false)
+const showRename = ref(false)
+const showRecovery = ref(false)
+const showTrash = ref(false)
+const activeWorkspaceId = ref<string>()
+const activeProjectId = ref<string>()
+const pendingOpenIntent = ref<HomeProjectOpenIntent>()
 
 const selectedWorkspace = computed(() => {
-  const selection = browseSelection.value;
+  const selection = browseSelection.value
   return selection.kind === 'workspace'
     ? workspaces.value.find((workspace) => workspace.id === selection.workspaceId)
-    : undefined;
-});
+    : undefined
+})
 const selectedProject = computed(() =>
   projects.value.find((project) => project.id === selectedProjectId.value),
-);
+)
 const activeProject = computed(() =>
   projects.value.find((project) => project.id === activeProjectId.value),
-);
+)
 const activeWorkspace = computed(() =>
   workspaces.value.find((workspace) => workspace.id === activeWorkspaceId.value),
-);
+)
 const selectedProjectWorkspace = computed(() =>
   selectedProject.value
     ? workspaces.value.find((workspace) => workspace.id === selectedProject.value?.workspaceId)
     : undefined,
-);
+)
 const defaultWorkspaceId = computed(() => {
   if (selectedWorkspace.value?.availability === 'available') {
-    return selectedWorkspace.value.id;
+    return selectedWorkspace.value.id
   }
-  return workspaces.value.find((workspace) => workspace.isDefault)?.id ?? 'uncategorized';
-});
+  return workspaces.value.find((workspace) => workspace.isDefault)?.id ?? 'uncategorized'
+})
 const browseProjects = computed(() =>
   getProjectsForBrowseSelection(projects.value, browseSelection.value),
-);
+)
 const visibleProjects = computed(() => {
   const filtered = filterHomeProjects(
     browseProjects.value,
@@ -130,9 +130,9 @@ const visibleProjects = computed(() => {
     status.value,
     props.openProjectIds,
     workspaces.value,
-  );
-  return sortHomeProjects(filtered, sort.value);
-});
+  )
+  return sortHomeProjects(filtered, sort.value)
+})
 const conditionsById = computed<Record<string, string[]>>(() =>
   Object.fromEntries(
     visibleProjects.value.map((project) => [
@@ -140,7 +140,7 @@ const conditionsById = computed<Record<string, string[]>>(() =>
       getProjectConditionLabels(project, props.openProjectIds, workspaces.value),
     ]),
   ),
-);
+)
 const projectCounts = computed<Record<string, number>>(() =>
   Object.fromEntries(
     workspaces.value.map((workspace) => [
@@ -148,21 +148,21 @@ const projectCounts = computed<Record<string, number>>(() =>
       getWorkspaceProjectCount(projects.value, workspace.id),
     ]),
   ),
-);
+)
 const trashedCount = computed(
   () => projects.value.filter((project) => project.trashedAt !== undefined).length,
-);
+)
 const browserTitle = computed(() => {
   if (browseSelection.value.kind === 'trash') {
-    return 'Trash';
+    return 'Trash'
   }
-  return selectedWorkspace.value?.name ?? 'Projects';
-});
-const hasActiveFilters = computed(() => search.value.trim() !== '' || status.value !== 'all');
-const showWorkspaceOnCard = computed(() => browseSelection.value.kind !== 'workspace');
+  return selectedWorkspace.value?.name ?? 'Projects'
+})
+const hasActiveFilters = computed(() => search.value.trim() !== '' || status.value !== 'all')
+const showWorkspaceOnCard = computed(() => browseSelection.value.kind !== 'workspace')
 
 function cloneProject(project: HomeProjectRecord) {
-  return structuredClone(toRaw(project));
+  return structuredClone(toRaw(project))
 }
 
 watch(
@@ -172,183 +172,183 @@ watch(
       selectedProjectId.value &&
       !visibleProjects.value.some((project) => project.id === selectedProjectId.value)
     ) {
-      selectedProjectId.value = undefined;
+      selectedProjectId.value = undefined
     }
   },
-);
+)
 
 function selectBrowse(value: 'all' | 'trash') {
-  browseSelection.value = { kind: value };
-  selectedProjectId.value = undefined;
+  browseSelection.value = { kind: value }
+  selectedProjectId.value = undefined
 }
 
 function selectWorkspace(workspaceId: string) {
-  browseSelection.value = { kind: 'workspace', workspaceId };
-  selectedProjectId.value = undefined;
+  browseSelection.value = { kind: 'workspace', workspaceId }
+  selectedProjectId.value = undefined
 }
 
 function resetFilters() {
-  search.value = '';
-  status.value = 'all';
+  search.value = ''
+  status.value = 'all'
 }
 
 function requestOpen(intent: HomeProjectOpenIntent) {
-  const project = projects.value.find((candidate) => candidate.id === intent.projectId);
+  const project = projects.value.find((candidate) => candidate.id === intent.projectId)
   const workspace = project
     ? workspaces.value.find((candidate) => candidate.id === project.workspaceId)
-    : undefined;
+    : undefined
   if (
     !project ||
     project.trashedAt ||
     project.health !== 'ready' ||
     workspace?.availability !== 'available'
   ) {
-    return;
+    return
   }
   if (project.recoveryAvailable) {
-    pendingOpenIntent.value = intent;
-    activeProjectId.value = project.id;
-    showRecovery.value = true;
-    return;
+    pendingOpenIntent.value = intent
+    activeProjectId.value = project.id
+    showRecovery.value = true
+    return
   }
-  emit('openProject', { project: cloneProject(project), target: intent.target });
+  emit('openProject', { project: cloneProject(project), target: intent.target })
 }
 
 function resolveRecovery(recovered: boolean) {
-  const project = activeProject.value;
-  const intent = pendingOpenIntent.value;
+  const project = activeProject.value
+  const intent = pendingOpenIntent.value
   if (!project || !intent) {
-    return;
+    return
   }
-  project.recoveryAvailable = false;
-  emit('projectChanged', cloneProject(project));
-  emit('openProject', { project: cloneProject(project), recovered, target: intent.target });
-  pendingOpenIntent.value = undefined;
+  project.recoveryAvailable = false
+  emit('projectChanged', cloneProject(project))
+  emit('openProject', { project: cloneProject(project), recovered, target: intent.target })
+  pendingOpenIntent.value = undefined
 }
 
 function createProject(value: NewProjectDraft) {
-  const project = createProjectFromDraft(value);
-  projects.value.push(project);
-  message.success('Project created');
-  emit('openProject', { project: cloneProject(project), target: 'current' });
+  const project = createProjectFromDraft(value)
+  projects.value.push(project)
+  message.success('Project created')
+  emit('openProject', { project: cloneProject(project), target: 'current' })
 }
 
 function openExternal(draft: ExternalProjectDraft) {
-  const project = createProjectFromExternalDraft(draft);
-  projects.value.push(project);
+  const project = createProjectFromExternalDraft(draft)
+  projects.value.push(project)
   message.success(
     draft.operation === 'move' ? 'Project moved and imported' : 'Project copied and imported',
-  );
-  emit('openProject', { project: cloneProject(project), target: 'current' });
+  )
+  emit('openProject', { project: cloneProject(project), target: 'current' })
 }
 
 function addWorkspace(workspace: HomeWorkspace) {
-  workspaces.value.push(workspace);
-  selectWorkspace(workspace.id);
-  message.success('Workspace added');
+  workspaces.value.push(workspace)
+  selectWorkspace(workspace.id)
+  message.success('Workspace added')
 }
 
 function saveWorkspace(workspace: HomeWorkspace) {
-  const index = workspaces.value.findIndex((candidate) => candidate.id === workspace.id);
+  const index = workspaces.value.findIndex((candidate) => candidate.id === workspace.id)
   if (index >= 0) {
-    workspaces.value[index] = workspace;
+    workspaces.value[index] = workspace
   }
   projects.value
     .filter((project) => project.workspaceId === workspace.id)
-    .forEach((project) => emit('projectChanged', cloneProject(project)));
-  message.success('Workspace updated');
+    .forEach((project) => emit('projectChanged', cloneProject(project)))
+  message.success('Workspace updated')
 }
 
 function requestRemoveWorkspace(workspaceId: string) {
-  const workspace = workspaces.value.find((candidate) => candidate.id === workspaceId);
+  const workspace = workspaces.value.find((candidate) => candidate.id === workspaceId)
   if (!workspace || workspace.isDefault) {
-    return;
+    return
   }
   const containsOpenProject = projects.value.some(
     (project) => project.workspaceId === workspaceId && props.openProjectIds.includes(project.id),
-  );
+  )
   if (containsOpenProject) {
     dialog.warning({
       content: 'Close projects from this workspace before removing its registration.',
       positiveText: 'OK',
       title: 'Workspace contains open projects',
-    });
-    return;
+    })
+    return
   }
-  showWorkspaceSettings.value = false;
+  showWorkspaceSettings.value = false
   dialog.warning({
     content: `Remove ${workspace.name} from Home? Its folder and .igs files will stay on disk.`,
     negativeText: 'Cancel',
     onPositiveClick: () => {
-      workspaces.value = workspaces.value.filter((candidate) => candidate.id !== workspaceId);
-      projects.value = projects.value.filter((project) => project.workspaceId !== workspaceId);
-      selectWorkspace('uncategorized');
-      message.success('Workspace removed from Home');
+      workspaces.value = workspaces.value.filter((candidate) => candidate.id !== workspaceId)
+      projects.value = projects.value.filter((project) => project.workspaceId !== workspaceId)
+      selectWorkspace('uncategorized')
+      message.success('Workspace removed from Home')
     },
     positiveText: 'Remove Workspace',
     title: 'Remove Workspace',
-  });
+  })
 }
 
 function handleWorkspaceAction(value: { action: string; workspaceId: string }) {
-  const workspace = workspaces.value.find((candidate) => candidate.id === value.workspaceId);
+  const workspace = workspaces.value.find((candidate) => candidate.id === value.workspaceId)
   if (!workspace) {
-    return;
+    return
   }
   switch (value.action) {
     case 'locate': {
-      workspace.availability = 'available';
-      message.success('Workspace folder located and rescanned');
+      workspace.availability = 'available'
+      message.success('Workspace folder located and rescanned')
 
-      break;
+      break
     }
     case 'remove': {
-      requestRemoveWorkspace(workspace.id);
+      requestRemoveWorkspace(workspace.id)
 
-      break;
+      break
     }
     case 'rescan': {
-      message.success(`${workspace.name} rescanned`);
+      message.success(`${workspace.name} rescanned`)
 
-      break;
+      break
     }
     case 'reveal': {
-      message.info(`Showing ${workspace.path}`);
+      message.info(`Showing ${workspace.path}`)
 
-      break;
+      break
     }
     case 'settings': {
-      activeWorkspaceId.value = workspace.id;
-      showWorkspaceSettings.value = true;
+      activeWorkspaceId.value = workspace.id
+      showWorkspaceSettings.value = true
 
-      break;
+      break
     }
     // No default
   }
 }
 
 function handleProjectAction(value: HomeProjectAction) {
-  const project = projects.value.find((candidate) => candidate.id === value.projectId);
+  const project = projects.value.find((candidate) => candidate.id === value.projectId)
   if (!project) {
-    return;
+    return
   }
-  activeProjectId.value = project.id;
-  selectedProjectId.value = project.id;
+  activeProjectId.value = project.id
+  selectedProjectId.value = project.id
   switch (value.action) {
     case 'delete-permanently': {
       dialog.error({
         content: `Permanently delete ${project.fileName}? This mock action cannot be undone.`,
         negativeText: 'Cancel',
         onPositiveClick: () => {
-          projects.value = projects.value.filter((candidate) => candidate.id !== project.id);
-          selectedProjectId.value = undefined;
-          message.success('Project permanently deleted');
+          projects.value = projects.value.filter((candidate) => candidate.id !== project.id)
+          selectedProjectId.value = undefined
+          message.success('Project permanently deleted')
         },
         positiveText: 'Delete Permanently',
         title: 'Delete Project Permanently',
-      });
+      })
 
-      break;
+      break
     }
     case 'move': {
       if (props.dirtyProjectIds.includes(project.id)) {
@@ -357,120 +357,120 @@ function handleProjectAction(value: HomeProjectAction) {
           onPositiveClick: () => requestOpen({ projectId: project.id, target: 'current' }),
           positiveText: 'Switch to Project',
           title: 'Project has unsaved changes',
-        });
+        })
       } else {
-        showMove.value = true;
+        showMove.value = true
       }
 
-      break;
+      break
     }
     case 'open':
     case 'open-new': {
-      requestOpen({ projectId: project.id, target: value.action === 'open' ? 'current' : 'new' });
+      requestOpen({ projectId: project.id, target: value.action === 'open' ? 'current' : 'new' })
 
-      break;
+      break
     }
     case 'rename': {
-      showRename.value = true;
+      showRename.value = true
 
-      break;
+      break
     }
     case 'restore': {
-      project.trashedAt = undefined;
-      selectedProjectId.value = undefined;
-      message.success('Project restored');
+      project.trashedAt = undefined
+      selectedProjectId.value = undefined
+      message.success('Project restored')
 
-      break;
+      break
     }
     case 'reveal': {
       message.info(
         `Showing ${project.fileName} in ${workspaces.value.find((workspace) => workspace.id === project.workspaceId)?.name ?? 'workspace'}`,
-      );
+      )
 
-      break;
+      break
     }
     case 'trash': {
-      showTrash.value = true;
+      showTrash.value = true
 
-      break;
+      break
     }
     // No default
   }
 }
 
 function renameProject(value: { name: string; projectId: string }) {
-  const project = projects.value.find((candidate) => candidate.id === value.projectId);
+  const project = projects.value.find((candidate) => candidate.id === value.projectId)
   if (!project) {
-    return;
+    return
   }
-  project.displayName = value.name;
-  project.fileName = `${value.name}.igs`;
-  emit('projectChanged', cloneProject(project));
-  message.success('Project renamed');
+  project.displayName = value.name
+  project.fileName = `${value.name}.igs`
+  emit('projectChanged', cloneProject(project))
+  message.success('Project renamed')
 }
 
 function moveProject(value: { projectId: string; workspaceId: string }) {
-  const project = projects.value.find((candidate) => candidate.id === value.projectId);
+  const project = projects.value.find((candidate) => candidate.id === value.projectId)
   if (!project) {
-    return;
+    return
   }
-  project.workspaceId = value.workspaceId;
-  selectedProjectId.value = undefined;
-  emit('projectChanged', cloneProject(project));
-  message.success('Project moved');
+  project.workspaceId = value.workspaceId
+  selectedProjectId.value = undefined
+  emit('projectChanged', cloneProject(project))
+  message.success('Project moved')
 }
 
 function moveToTrash() {
-  const project = activeProject.value;
+  const project = activeProject.value
   if (!project) {
-    return;
+    return
   }
-  project.trashedAt = new Date().toISOString();
-  selectedProjectId.value = undefined;
-  message.success('Project moved to Trash');
+  project.trashedAt = new Date().toISOString()
+  selectedProjectId.value = undefined
+  message.success('Project moved to Trash')
 }
 
 function locateProject(projectId: string) {
-  const project = projects.value.find((candidate) => candidate.id === projectId);
+  const project = projects.value.find((candidate) => candidate.id === projectId)
   if (!project) {
-    return;
+    return
   }
-  project.health = 'ready';
-  project.thumbnailState = 'missing';
-  message.success('Project file located');
+  project.health = 'ready'
+  project.thumbnailState = 'missing'
+  message.success('Project file located')
 }
 
 function removeProject(projectId: string) {
-  projects.value = projects.value.filter((project) => project.id !== projectId);
-  selectedProjectId.value = undefined;
-  message.success('Project removed from Home');
+  projects.value = projects.value.filter((project) => project.id !== projectId)
+  selectedProjectId.value = undefined
+  message.success('Project removed from Home')
 }
 
 function rebuildPreview(projectId: string) {
-  const project = projects.value.find((candidate) => candidate.id === projectId);
+  const project = projects.value.find((candidate) => candidate.id === projectId)
   if (!project) {
-    return;
+    return
   }
-  project.thumbnailState = 'ready';
-  message.success('Preview rebuilt');
+  project.thumbnailState = 'ready'
+  message.success('Preview rebuilt')
 }
 
 function showErrorDetails(projectId: string) {
-  const project = projects.value.find((candidate) => candidate.id === projectId);
+  const project = projects.value.find((candidate) => candidate.id === projectId)
   if (!project) {
-    return;
+    return
   }
   dialog.error({
     content: `${project.fileName} could not be parsed. Mock error: invalid layer index at offset 0x4A2. The file was not modified.`,
     positiveText: 'Close',
     title: 'Project Error Details',
-  });
+  })
 }
 
 function switchActiveProject() {
-  const project = activeProject.value;
+  const project = activeProject.value
   if (project) {
-    requestOpen({ projectId: project.id, target: 'current' });
+    requestOpen({ projectId: project.id, target: 'current' })
   }
 }
 </script>

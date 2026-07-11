@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { NCheckbox, NProgress, NTag } from 'naive-ui';
+import { NCheckbox, NProgress, NTag } from 'naive-ui'
 
-import type { GenerationCandidate } from './project.types';
+import type { GenerationCandidate } from './project.types'
 
-import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue';
+import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
 
-defineProps<{ candidate: GenerationCandidate; focused: boolean; selected: boolean }>();
-defineEmits<{ focus: []; select: [value: boolean] }>();
+defineProps<{ candidate: GenerationCandidate; focused: boolean; selected: boolean }>()
+defineEmits<{ focus: []; select: [value: boolean] }>()
 </script>
 
 <template>
@@ -28,8 +28,9 @@ defineEmits<{ focus: []; select: [value: boolean] }>();
               ? 'success'
               : 'default'
         "
-        >{{ candidate.status }}</NTag
       >
+        {{ candidate.status }}
+      </NTag>
     </button>
     <NProgress
       v-if="candidate.status === 'running'"
@@ -43,7 +44,8 @@ defineEmits<{ focus: []; select: [value: boolean] }>();
         :checked="selected"
         :disabled="candidate.status !== 'completed'"
         @update:checked="$emit('select', $event)"
-      /><span>#{{ candidate.imageIndex }}</span>
+      />
+      <span>#{{ candidate.imageIndex }}</span>
     </div>
     <small v-if="candidate.error">{{ candidate.error }}</small>
   </article>

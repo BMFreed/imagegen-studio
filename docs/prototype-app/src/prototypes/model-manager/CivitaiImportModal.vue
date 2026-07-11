@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { Download as DownloadIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NInput, NModal } from 'naive-ui';
-import { ref } from 'vue';
+import { Download as DownloadIcon, X as XIcon } from '@vicons/tabler'
+import { NButton, NCard, NIcon, NInput, NModal } from 'naive-ui'
+import { ref } from 'vue'
 
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue'
 
-const show = defineModel<boolean>('show', { required: true });
-const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566');
+const show = defineModel<boolean>('show', { required: true })
+const urlValue = ref('https://civitai.com/models/112233?modelVersionId=445566')
 </script>
 
 <template>

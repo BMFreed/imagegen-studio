@@ -6,11 +6,11 @@ export const AppLayer = {
   notification: 4000,
   popover: 3000,
   stickyChrome: 10,
-} as const;
+} as const
 
 export const appLayerCssVariables = {
   '--z-app-overlay': String(AppLayer.appOverlay),
   '--z-content': String(AppLayer.content),
   '--z-floating-control': String(AppLayer.floatingControl),
   '--z-sticky-chrome': String(AppLayer.stickyChrome),
-};
+}

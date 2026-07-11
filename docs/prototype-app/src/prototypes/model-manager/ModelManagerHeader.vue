@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTooltip } from 'naive-ui';
+import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler'
+import { NButton, NIcon, NTooltip } from 'naive-ui'
 
-import CivitaiTokenPopover from './CivitaiTokenPopover.vue';
+import CivitaiTokenPopover from './CivitaiTokenPopover.vue'
 
 defineEmits<{
-  close: [];
-  openImport: [];
-}>();
+  close: []
+  openImport: []
+}>()
 </script>
 
 <template>

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import type { Component } from 'vue';
+import type { Component } from 'vue'
 
-import { NBadge, NButton, NIcon } from 'naive-ui';
+import { NBadge, NButton, NIcon } from 'naive-ui'
 
 defineProps<{
-  badge?: { dot?: boolean; value: number | string | undefined };
-  icon: Component;
-  label: string;
-}>();
+  badge?: { dot?: boolean; value: number | string | undefined }
+  icon: Component
+  label: string
+}>()
 
-defineEmits<{ click: [] }>();
+defineEmits<{ click: [] }>()
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { InfoCircle as InfoIcon } from '@vicons/tabler';
+import { InfoCircle as InfoIcon } from '@vicons/tabler'
 import {
   NButton,
   NCard,
@@ -10,133 +10,131 @@ import {
   NSelect,
   NText,
   NTooltip,
-} from 'naive-ui';
-import { computed, ref } from 'vue';
+} from 'naive-ui'
+import { computed, ref } from 'vue'
 
 import type {
   PresetEditorResources,
   PresetPayload,
   PresetSectionKey,
   PresetWorkflow,
-} from './presets.types';
+} from './presets.types'
 
 import {
   findOrphanedLoraTriggers,
   reconcileLoraTriggerSources,
-} from '../../components/generation/generation-prompt.utils';
-import { mockDanbooruTags } from '../../components/generation/generation.mock';
-import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue';
-import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue';
-import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue';
-import PresetPayloadSection from './PresetPayloadSection.vue';
-import { clonePreset, sectionLabels } from './presets.utils';
+} from '../../components/generation/generation-prompt.utils'
+import { mockDanbooruTags } from '../../components/generation/generation.mock'
+import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
+import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue'
+import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue'
+import PresetPayloadSection from './PresetPayloadSection.vue'
+import { clonePreset, sectionLabels } from './presets.utils'
 
 const props = withDefaults(
   defineProps<{
-    disabledSections?: PresetSectionKey[];
-    resources: PresetEditorResources;
-    sections: PresetSectionKey[];
-    workflow: PresetWorkflow;
+    disabledSections?: PresetSectionKey[]
+    resources: PresetEditorResources
+    sections: PresetSectionKey[]
+    workflow: PresetWorkflow
   }>(),
   {
     disabledSections: () => [],
   },
-);
+)
 
-const payload = defineModel<PresetPayload>({ required: true });
-const loraTriggerDialogOpen = ref(false);
-const affectedNegativeTriggerCount = ref(0);
-const affectedPositiveTriggerCount = ref(0);
-const pendingLoras = ref<NonNullable<PresetPayload['loras']>>();
+const payload = defineModel<PresetPayload>({ required: true })
+const loraTriggerDialogOpen = ref(false)
+const affectedNegativeTriggerCount = ref(0)
+const affectedPositiveTriggerCount = ref(0)
+const pendingLoras = ref<NonNullable<PresetPayload['loras']>>()
 const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
   default: () => [],
-});
+})
 
 const visibleSections = computed(() =>
   props.sections.filter(
     (section) => section !== 'denoisingStrength' || props.workflow !== 'textToImage',
   ),
-);
+)
 const modelOptions = computed(() =>
   props.resources.models.map((model) => ({
     label: `${model.name}${model.version ? ` · ${model.version}` : ''}`,
     value: model.id,
   })),
-);
+)
 const vaeOptions = computed(() =>
   props.resources.vaes.map((vae) => ({ label: vae.name, value: vae.id })),
-);
+)
 const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
-}));
+}))
 const schedulerOptions = ['Karras', 'Normal', 'Exponential'].map((value) => ({
   label: value,
   value,
-}));
+}))
 const seedPolicyOptions = [
   { label: 'Random', value: 'random' },
   { label: 'Fixed', value: 'fixed' },
   { label: 'Reuse', value: 'reuse' },
-];
+]
 const loras = computed({
   get: () => payload.value.loras ?? [],
   set: (value) => (payload.value.loras = value),
-});
+})
 
 function removeLora(resourceId: string) {
-  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId);
-  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
-  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
+  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId)
+  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value)
+  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value)
   if (positiveOrphans.length || negativeOrphans.length) {
-    pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>;
-    affectedPositiveTriggerCount.value = positiveOrphans.length;
-    affectedNegativeTriggerCount.value = negativeOrphans.length;
-    loraTriggerDialogOpen.value = true;
-    return;
+    pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>
+    affectedPositiveTriggerCount.value = positiveOrphans.length
+    affectedNegativeTriggerCount.value = negativeOrphans.length
+    loraTriggerDialogOpen.value = true
+    return
   }
-  payload.value.loras = value;
+  payload.value.loras = value
 }
 
 function resolveLoraTriggers(resolution: 'keep' | 'remove') {
-  const nextLoras = pendingLoras.value;
+  const nextLoras = pendingLoras.value
   if (!nextLoras) {
-    return;
+    return
   }
-  payload.value.loras = JSON.parse(JSON.stringify(nextLoras)) as NonNullable<
-    PresetPayload['loras']
-  >;
-  payload.value.prompt = reconcileLoraTriggerSources(payload.value.prompt, nextLoras, resolution);
+  payload.value.loras = JSON.parse(JSON.stringify(nextLoras)) as NonNullable<PresetPayload['loras']>
+  payload.value.prompt = reconcileLoraTriggerSources(payload.value.prompt, nextLoras, resolution)
   payload.value.negativePrompt = reconcileLoraTriggerSources(
     payload.value.negativePrompt,
     nextLoras,
     resolution,
-  );
-  pendingLoras.value = undefined;
-  loraTriggerDialogOpen.value = false;
+  )
+  pendingLoras.value = undefined
+  loraTriggerDialogOpen.value = false
 }
 
 function sectionDisabled(section: PresetSectionKey): boolean {
-  return props.disabledSections.includes(section);
+  return props.disabledSections.includes(section)
 }
 
 function sectionPresent(section: PresetSectionKey): boolean {
-  return payload.value[section] !== undefined;
+  return payload.value[section] !== undefined
 }
 
 function updateModel(modelId: string) {
-  const model = props.resources.models.find((candidate) => candidate.id === modelId);
+  const model = props.resources.models.find((candidate) => candidate.id === modelId)
 
   if (model) {
-    payload.value.model = clonePreset(model);
+    payload.value.model = clonePreset(model)
   }
 }
 
 function updateVae(vaeId: string) {
-  const vae = props.resources.vaes.find((candidate) => candidate.id === vaeId);
+  const vae = props.resources.vaes.find((candidate) => candidate.id === vaeId)
 
   if (vae) {
-    payload.value.vae = clonePreset(vae);
+    payload.value.vae = clonePreset(vae)
   }
 }
 </script>

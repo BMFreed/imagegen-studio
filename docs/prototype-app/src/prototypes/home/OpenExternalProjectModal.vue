@@ -8,43 +8,43 @@ import {
   NRadioButton,
   NRadioGroup,
   NSelect,
-} from 'naive-ui';
-import { computed, reactive, watch } from 'vue';
+} from 'naive-ui'
+import { computed, reactive, watch } from 'vue'
 
-import type { ExternalProjectDraft, HomeWorkspace } from './home.types';
+import type { ExternalProjectDraft, HomeWorkspace } from './home.types'
 
 const props = defineProps<{
-  defaultWorkspaceId: string;
-  workspaces: HomeWorkspace[];
-}>();
+  defaultWorkspaceId: string
+  workspaces: HomeWorkspace[]
+}>()
 
 const emit = defineEmits<{
-  confirm: [draft: ExternalProjectDraft];
-}>();
+  confirm: [draft: ExternalProjectDraft]
+}>()
 
-const show = defineModel<boolean>('show', { required: true });
+const show = defineModel<boolean>('show', { required: true })
 const draft = reactive<ExternalProjectDraft>({
   destinationWorkspaceId: props.defaultWorkspaceId,
   fileName: 'Field Notes.igs',
   operation: 'move',
   sourcePath: '~/Downloads/Field Notes.igs',
-});
+})
 const workspaceOptions = computed(() =>
   props.workspaces
     .filter((workspace) => workspace.availability === 'available')
     .map((workspace) => ({ label: workspace.name, value: workspace.id })),
-);
+)
 
 watch(show, (visible) => {
   if (visible) {
-    draft.destinationWorkspaceId = props.defaultWorkspaceId;
-    draft.operation = 'move';
+    draft.destinationWorkspaceId = props.defaultWorkspaceId
+    draft.operation = 'move'
   }
-});
+})
 
 function confirmExternalProject() {
-  emit('confirm', { ...draft });
-  show.value = false;
+  emit('confirm', { ...draft })
+  show.value = false
 }
 </script>
 
@@ -61,18 +61,19 @@ function confirmExternalProject() {
         The selected file is outside known workspaces. Choose where ImageGen Studio should manage
         it.
       </p>
-      <NFormItem label="Selected project"
-        ><NInput aria-label="Selected project" readonly :value="draft.fileName"
-      /></NFormItem>
-      <NFormItem label="Source"
-        ><NInput aria-label="Source" readonly :value="draft.sourcePath"
-      /></NFormItem>
-      <NFormItem label="Destination workspace"
-        ><NSelect
+      <NFormItem label="Selected project">
+        <NInput aria-label="Selected project" readonly :value="draft.fileName" />
+      </NFormItem>
+      <NFormItem label="Source">
+        <NInput aria-label="Source" readonly :value="draft.sourcePath" />
+      </NFormItem>
+      <NFormItem label="Destination workspace">
+        <NSelect
           v-model:value="draft.destinationWorkspaceId"
           aria-label="Destination workspace"
           :options="workspaceOptions"
-      /></NFormItem>
+        />
+      </NFormItem>
       <NFormItem label="File operation">
         <NRadioGroup v-model:value="draft.operation">
           <NRadioButton value="move">Move</NRadioButton>
@@ -81,10 +82,10 @@ function confirmExternalProject() {
       </NFormItem>
       <template v-slot:footer>
         <div class="modal-actions">
-          <NButton @click="show = false">Cancel</NButton
-          ><NButton type="primary" @click="confirmExternalProject">{{
-            draft.operation === 'move' ? 'Move & Import' : 'Copy & Import'
-          }}</NButton>
+          <NButton @click="show = false">Cancel</NButton>
+          <NButton type="primary" @click="confirmExternalProject">
+            {{ draft.operation === 'move' ? 'Move & Import' : 'Copy & Import' }}
+          </NButton>
         </div>
       </template>
     </NCard>

@@ -4,10 +4,10 @@ import {
   Key as KeyIcon,
   Refresh as RefreshIcon,
   Trash as TrashIcon,
-} from '@vicons/tabler';
-import { NBadge, NButton, NDivider, NIcon, NPopover, useThemeVars } from 'naive-ui';
+} from '@vicons/tabler'
+import { NBadge, NButton, NDivider, NIcon, NPopover, useThemeVars } from 'naive-ui'
 
-const themeVars = useThemeVars();
+const themeVars = useThemeVars()
 </script>
 
 <template>

@@ -1,61 +1,61 @@
 <script setup lang="ts">
-import { Link, Plus, Puzzle } from '@vicons/tabler';
-import { NAutoComplete, NButton, NIcon, NTag, NTooltip } from 'naive-ui';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { Link, Plus, Puzzle } from '@vicons/tabler'
+import { NAutoComplete, NButton, NIcon, NTag, NTooltip } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import type { DanbooruTagMock } from './generation-prompt.utils';
+import type { DanbooruTagMock } from './generation-prompt.utils'
 import type {
   GenerationEmbeddingResourceRef,
   GenerationLora,
   GenerationPrompt,
   GenerationPromptPolarity,
   GenerationPromptToken,
-} from './generation.types';
+} from './generation.types'
 
-import { getPromptAutocompleteSuggestions } from './generation-autocomplete.utils';
+import { getPromptAutocompleteSuggestions } from './generation-autocomplete.utils'
 import {
   classifyPromptToken,
   createGenerationPrompt,
   removePromptToken,
   replacePromptToken,
   splitPromptText,
-} from './generation-prompt.utils';
+} from './generation-prompt.utils'
 
 const props = withDefaults(
   defineProps<{
-    ariaLabel: string;
-    danbooruTags: DanbooruTagMock[];
-    disabled?: boolean;
-    embeddings: GenerationEmbeddingResourceRef[];
-    loras: GenerationLora[];
-    minimumLines?: number;
-    polarity: GenerationPromptPolarity;
+    ariaLabel: string
+    danbooruTags: DanbooruTagMock[]
+    disabled?: boolean
+    embeddings: GenerationEmbeddingResourceRef[]
+    loras: GenerationLora[]
+    minimumLines?: number
+    polarity: GenerationPromptPolarity
   }>(),
   { minimumLines: 4 },
-);
-const prompt = defineModel<GenerationPrompt>({ required: true });
-const selectedTokenId = defineModel<string | undefined>('selectedTokenId');
-const draft = ref('');
-const creating = ref(false);
-const editingBaseTextWidth = ref(0);
-const editingBaseWidth = ref(0);
-const editingFont = ref('');
-const editingTokenId = ref<string>();
-const root = ref<HTMLElement>();
+)
+const prompt = defineModel<GenerationPrompt>({ required: true })
+const selectedTokenId = defineModel<string | undefined>('selectedTokenId')
+const draft = ref('')
+const creating = ref(false)
+const editingBaseTextWidth = ref(0)
+const editingBaseWidth = ref(0)
+const editingFont = ref('')
+const editingTokenId = ref<string>()
+const root = ref<HTMLElement>()
 const autocompleteMenuProps = {
   style: { maxWidth: 'min(360px, calc(100vw - 32px))', minWidth: '260px' },
-};
+}
 
 const createInputWidth = computed(() => {
-  const characters = Math.max(3, Math.min(28, [...String(draft.value ?? '')].length + 1));
-  return `calc(${characters}ch + 20px)`;
-});
+  const characters = Math.max(3, Math.min(28, [...String(draft.value ?? '')].length + 1))
+  return `calc(${characters}ch + 20px)`
+})
 const editInputWidth = computed(() => {
   const widthDelta =
-    measureTextWidth(String(draft.value ?? ''), editingFont.value) - editingBaseTextWidth.value;
-  const availableWidth = Math.max(42, (root.value?.clientWidth ?? 360) - 12);
-  return Math.min(availableWidth, Math.max(42, editingBaseWidth.value + widthDelta));
-});
+    measureTextWidth(String(draft.value ?? ''), editingFont.value) - editingBaseTextWidth.value
+  const availableWidth = Math.max(42, (root.value?.clientWidth ?? 360) - 12)
+  return Math.min(availableWidth, Math.max(42, editingBaseWidth.value + widthDelta))
+})
 
 const suggestions = computed(() =>
   getPromptAutocompleteSuggestions({
@@ -65,20 +65,20 @@ const suggestions = computed(() =>
     polarity: props.polarity,
     query: draft.value,
   }),
-);
-const suggestionById = computed(() => new Map(suggestions.value.map((item) => [item.id, item])));
+)
+const suggestionById = computed(() => new Map(suggestions.value.map((item) => [item.id, item])))
 const options = computed(() => {
   const groupNames = {
     danbooru: 'Danbooru tags',
     embeddings: 'Embeddings',
     loras: 'Active LoRA triggers',
-  } as const;
+  } as const
   const groupedOptions = (['loras', 'embeddings', 'danbooru'] as const).flatMap((group) => {
     const children = suggestions.value
       .filter((item) => item.group === group)
-      .map((item) => ({ label: `${item.label} · ${item.detail}`, value: item.id }));
-    return children.length ? [{ children, label: groupNames[group], type: 'group' as const }] : [];
-  });
+      .map((item) => ({ label: `${item.label} · ${item.detail}`, value: item.id }))
+    return children.length ? [{ children, label: groupNames[group], type: 'group' as const }] : []
+  })
   const danbooruHint =
     String(draft.value ?? '').trim().length < 2
       ? [
@@ -88,171 +88,171 @@ const options = computed(() => {
             value: 'danbooru-search-hint',
           },
         ]
-      : [];
+      : []
   const emptyHint =
     groupedOptions.length === 0 && danbooruHint.length === 0
       ? [{ disabled: true, label: 'No matching suggestions', value: 'no-matches-hint' }]
-      : [];
-  return [...danbooruHint, ...groupedOptions, ...emptyHint];
-});
+      : []
+  return [...danbooruHint, ...groupedOptions, ...emptyHint]
+})
 
 function emitPrompt(tokens: GenerationPromptToken[]) {
-  prompt.value = createGenerationPrompt(tokens);
+  prompt.value = createGenerationPrompt(tokens)
 }
 function selectToken(id: string) {
-  selectedTokenId.value = id;
+  selectedTokenId.value = id
 }
 function editToken(token: GenerationPromptToken, event: MouseEvent) {
-  selectedTokenId.value = token.id;
-  const tokenElement = event.currentTarget as HTMLElement;
-  const textElement = tokenElement.querySelector<HTMLElement>('.prompt-token-text') ?? tokenElement;
-  const textStyle = getComputedStyle(textElement);
-  editingFont.value = `${textStyle.fontWeight} ${textStyle.fontSize} ${textStyle.fontFamily}`;
-  editingBaseTextWidth.value = measureTextWidth(token.text, editingFont.value);
-  editingBaseWidth.value = Math.ceil(tokenElement.getBoundingClientRect().width);
-  editingTokenId.value = token.id;
-  creating.value = false;
-  draft.value = token.text;
-  void nextTick(focusInput);
+  selectedTokenId.value = token.id
+  const tokenElement = event.currentTarget as HTMLElement
+  const textElement = tokenElement.querySelector<HTMLElement>('.prompt-token-text') ?? tokenElement
+  const textStyle = getComputedStyle(textElement)
+  editingFont.value = `${textStyle.fontWeight} ${textStyle.fontSize} ${textStyle.fontFamily}`
+  editingBaseTextWidth.value = measureTextWidth(token.text, editingFont.value)
+  editingBaseWidth.value = Math.ceil(tokenElement.getBoundingClientRect().width)
+  editingTokenId.value = token.id
+  creating.value = false
+  draft.value = token.text
+  void nextTick(focusInput)
 }
 function removeToken(id: string, event?: MouseEvent) {
-  event?.stopPropagation();
-  prompt.value = removePromptToken(prompt.value, id);
+  event?.stopPropagation()
+  prompt.value = removePromptToken(prompt.value, id)
   if (selectedTokenId.value === id) {
-    selectedTokenId.value = undefined;
+    selectedTokenId.value = undefined
   }
   if (editingTokenId.value === id) {
-    cancelDraft();
+    cancelDraft()
   }
 }
 function commitToken(token?: GenerationPromptToken) {
-  const text = String(draft.value ?? '').trim();
+  const text = String(draft.value ?? '').trim()
   if (!text && !token) {
-    cancelDraft();
-    return;
+    cancelDraft()
+    return
   }
   // Resource identity is created only through an explicit autocomplete choice.
   // A manually typed activation token remains ordinary prompt text.
-  const next = token ?? classifyPromptToken(text, [], props.danbooruTags);
+  const next = token ?? classifyPromptToken(text, [], props.danbooruTags)
   if (editingTokenId.value) {
     const replacement = token
       ? { ...next, id: editingTokenId.value }
-      : { id: editingTokenId.value, kind: 'custom' as const, text };
-    prompt.value = replacePromptToken(prompt.value, editingTokenId.value, replacement);
-    selectedTokenId.value = editingTokenId.value;
+      : { id: editingTokenId.value, kind: 'custom' as const, text }
+    prompt.value = replacePromptToken(prompt.value, editingTokenId.value, replacement)
+    selectedTokenId.value = editingTokenId.value
   } else {
-    emitPrompt([...prompt.value.tokens, next]);
-    selectedTokenId.value = undefined;
+    emitPrompt([...prompt.value.tokens, next])
+    selectedTokenId.value = undefined
   }
-  draft.value = '';
-  creating.value = false;
-  editingTokenId.value = undefined;
-  resetEditingMeasurement();
+  draft.value = ''
+  creating.value = false
+  editingTokenId.value = undefined
+  resetEditingMeasurement()
 }
 function chooseSuggestion(value: string) {
-  const suggestion = suggestionById.value.get(value);
+  const suggestion = suggestionById.value.get(value)
   if (suggestion) {
-    commitToken(JSON.parse(JSON.stringify(suggestion.token)) as GenerationPromptToken);
+    commitToken(JSON.parse(JSON.stringify(suggestion.token)) as GenerationPromptToken)
   }
 }
 function cancelDraft() {
-  draft.value = '';
-  creating.value = false;
-  editingTokenId.value = undefined;
-  resetEditingMeasurement();
+  draft.value = ''
+  creating.value = false
+  editingTokenId.value = undefined
+  resetEditingMeasurement()
 }
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
-    event.preventDefault();
-    cancelDraft();
-    return;
+    event.preventDefault()
+    cancelDraft()
+    return
   }
   if (event.key === 'Backspace' && !draft.value && !editingTokenId.value) {
-    const last = prompt.value.tokens.at(-1);
+    const last = prompt.value.tokens.at(-1)
     if (!last) {
-      return;
+      return
     }
     if (selectedTokenId.value === last.id) {
-      removeToken(last.id);
+      removeToken(last.id)
     } else {
-      selectedTokenId.value = last.id;
+      selectedTokenId.value = last.id
     }
   }
 }
 function handleEditorKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.code === 'Space' && !props.disabled) {
-    event.preventDefault();
+    event.preventDefault()
     if (creating.value || editingTokenId.value) {
-      focusInput();
+      focusInput()
     } else {
-      beginCreate();
+      beginCreate()
     }
   }
 }
 function handlePaste(event: ClipboardEvent) {
-  const text = event.clipboardData?.getData('text') ?? '';
-  const parts = splitPromptText(text);
+  const text = event.clipboardData?.getData('text') ?? ''
+  const parts = splitPromptText(text)
   if (parts.length < 2) {
-    return;
+    return
   }
-  event.preventDefault();
+  event.preventDefault()
   emitPrompt([
     ...prompt.value.tokens,
     ...parts.map((part) => classifyPromptToken(part, [], props.danbooruTags)),
-  ]);
-  draft.value = '';
+  ])
+  draft.value = ''
 }
 function tokenKeydown(event: KeyboardEvent, token: GenerationPromptToken) {
   if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault();
-    selectToken(token.id);
+    event.preventDefault()
+    selectToken(token.id)
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
-    event.preventDefault();
-    removeToken(token.id);
+    event.preventDefault()
+    removeToken(token.id)
   }
 }
 function focusInput() {
-  root.value?.querySelector<HTMLInputElement>('input')?.focus();
+  root.value?.querySelector<HTMLInputElement>('input')?.focus()
 }
 function measureTextWidth(text: string, font: string) {
-  const context = document.createElement('canvas').getContext('2d');
+  const context = document.createElement('canvas').getContext('2d')
   if (!context) {
-    return text.length * 7;
+    return text.length * 7
   }
-  context.font = font;
-  return context.measureText(text || ' ').width;
+  context.font = font
+  return context.measureText(text || ' ').width
 }
 function resetEditingMeasurement() {
-  editingBaseTextWidth.value = 0;
-  editingBaseWidth.value = 0;
-  editingFont.value = '';
+  editingBaseTextWidth.value = 0
+  editingBaseWidth.value = 0
+  editingFont.value = ''
 }
 function beginCreate() {
-  selectedTokenId.value = undefined;
-  editingTokenId.value = undefined;
-  draft.value = '';
-  creating.value = true;
-  void nextTick(focusInput);
+  selectedTokenId.value = undefined
+  editingTokenId.value = undefined
+  draft.value = ''
+  creating.value = true
+  void nextTick(focusInput)
 }
 function handleOutsideClick(event: MouseEvent) {
   if (!root.value?.contains(event.target as Node)) {
-    selectedTokenId.value = undefined;
+    selectedTokenId.value = undefined
   }
 }
 function handleEditorClick(event: MouseEvent) {
-  const target = event.target as HTMLElement;
+  const target = event.target as HTMLElement
   if (
     target.closest('[role="option"]') ||
     target.closest('.prompt-token-input') ||
     target.closest('.prompt-token-add')
   ) {
-    return;
+    return
   }
-  selectedTokenId.value = undefined;
+  selectedTokenId.value = undefined
 }
 
-onMounted(() => document.addEventListener('click', handleOutsideClick));
-onBeforeUnmount(() => document.removeEventListener('click', handleOutsideClick));
+onMounted(() => document.addEventListener('click', handleOutsideClick))
+onBeforeUnmount(() => document.removeEventListener('click', handleOutsideClick))
 </script>
 
 <template>
@@ -306,8 +306,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleOutsideClick))
           </NTag>
         </template>
         <template v-if="token.kind === 'embedding'">
-          Embedding: {{ token.resource.name
-          }}<span v-if="token.resource.missing"> · Missing resource</span>
+          Embedding: {{ token.resource.name }}
+          <span v-if="token.resource.missing">· Missing resource</span>
         </template>
         <template v-else-if="token.kind === 'lora-trigger'">Trigger from active LoRA</template>
       </NTooltip>

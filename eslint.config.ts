@@ -1,4 +1,4 @@
-import { createConfig, Preset } from 'productive-eslint';
+import { createConfig, Preset } from 'productive-eslint'
 
 export default createConfig({
   ignores: [
@@ -11,4 +11,4 @@ export default createConfig({
   preset: Preset.AUTO_FIXABLE,
   rxjs: false,
   vue: true,
-});
+})

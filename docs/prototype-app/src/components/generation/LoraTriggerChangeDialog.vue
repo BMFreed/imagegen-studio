@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { NButton, NModal } from 'naive-ui';
+import { NButton, NModal } from 'naive-ui'
 
-defineProps<{ negativeCount: number; positiveCount: number }>();
-const show = defineModel<boolean>('show', { default: false });
-const emit = defineEmits<{ resolve: [resolution: 'keep' | 'remove'] }>();
+defineProps<{ negativeCount: number; positiveCount: number }>()
+const show = defineModel<boolean>('show', { default: false })
+const emit = defineEmits<{ resolve: [resolution: 'keep' | 'remove'] }>()
 </script>
 
 <template>

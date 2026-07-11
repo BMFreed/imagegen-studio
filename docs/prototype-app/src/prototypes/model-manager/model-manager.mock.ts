@@ -1,6 +1,6 @@
-import type { ModelResource } from './model-manager.types';
+import type { ModelResource } from './model-manager.types'
 
-export const selectedModelId = 'illustrious-xl';
+export const selectedModelId = 'illustrious-xl'
 
 export const modelResources: ModelResource[] = [
   {
@@ -140,4 +140,4 @@ export const modelResources: ModelResource[] = [
       },
     ],
   },
-];
+]

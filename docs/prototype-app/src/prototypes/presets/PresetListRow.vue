@@ -5,38 +5,38 @@ import {
   Bandage as SmartPatchIcon,
   Star as StarIcon,
   FileText as TextIcon,
-} from '@vicons/tabler';
-import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
-import { computed } from 'vue';
+} from '@vicons/tabler'
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { PresetRecord, PresetWorkflow } from './presets.types';
+import type { PresetRecord, PresetWorkflow } from './presets.types'
 
 import {
   includedSections,
   presetHasMissingResources,
   sectionLabels,
   workflowLabels,
-} from './presets.utils';
+} from './presets.utils'
 
 const props = defineProps<{
-  preset: PresetRecord;
-  selected: boolean;
-}>();
+  preset: PresetRecord
+  selected: boolean
+}>()
 
 defineEmits<{
-  select: [id: string];
-}>();
+  select: [id: string]
+}>()
 
 const workflowIcons: Record<PresetWorkflow, typeof TextIcon> = {
   imageToImage: ImageIcon,
   smartPatch: SmartPatchIcon,
   textToImage: TextIcon,
-};
+}
 
-const themeVars = useThemeVars();
-const accentStyle = computed(() => ({ '--preset-accent': themeVars.value.primaryColor }));
-const sections = computed(() => includedSections(props.preset.payload));
-const hasMissingResources = computed(() => presetHasMissingResources(props.preset));
+const themeVars = useThemeVars()
+const accentStyle = computed(() => ({ '--preset-accent': themeVars.value.primaryColor }))
+const sections = computed(() => includedSections(props.preset.payload))
+const hasMissingResources = computed(() => presetHasMissingResources(props.preset))
 </script>
 
 <template>

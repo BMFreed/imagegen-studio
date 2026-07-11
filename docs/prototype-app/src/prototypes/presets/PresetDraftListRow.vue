@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { Edit as DraftIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
-import { computed } from 'vue';
+import { Edit as DraftIcon } from '@vicons/tabler'
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { PresetDefinition } from './presets.types';
+import type { PresetDefinition } from './presets.types'
 
-import { includedSections, sectionLabels, workflowLabels } from './presets.utils';
+import { includedSections, sectionLabels, workflowLabels } from './presets.utils'
 
 const props = defineProps<{
-  draft: PresetDefinition;
-  selected: boolean;
-}>();
+  draft: PresetDefinition
+  selected: boolean
+}>()
 
 defineEmits<{
-  select: [];
-}>();
+  select: []
+}>()
 
-const themeVars = useThemeVars();
-const accentStyle = computed(() => ({ '--preset-accent': themeVars.value.primaryColor }));
-const sections = computed(() => includedSections(props.draft.payload));
+const themeVars = useThemeVars()
+const accentStyle = computed(() => ({ '--preset-accent': themeVars.value.primaryColor }))
+const sections = computed(() => includedSections(props.draft.payload))
 </script>
 
 <template>

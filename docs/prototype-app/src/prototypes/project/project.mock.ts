@@ -1,31 +1,28 @@
-import type { HomeProjectRecord } from '../home/home.types';
+import type { HomeProjectRecord } from '../home/home.types'
 import type {
   ProjectDocumentModel,
   ProjectGenerationDraft,
   ProjectScenarioId,
   ProjectSession,
-} from './project.types';
+} from './project.types'
 
 import {
   parseLegacyPromptString,
   serializeGenerationPrompt,
-} from '../../components/generation/generation-prompt.utils';
-import {
-  generationEmbeddings,
-  mockDanbooruTags,
-} from '../../components/generation/generation.mock';
-import { currentProjectPresetSource } from '../presets/presets.mock';
-import { cloneDocument } from './project-history';
+} from '../../components/generation/generation-prompt.utils'
+import { generationEmbeddings, mockDanbooruTags } from '../../components/generation/generation.mock'
+import { currentProjectPresetSource } from '../presets/presets.mock'
+import { cloneDocument } from './project-history'
 
 const baseDraft: ProjectGenerationDraft = {
   cfgRescale: 0,
   dynamicPrompt: { maxPrompts: 100, seedBehavior: 'per-iteration' },
   payload: structuredClone(currentProjectPresetSource.definition.payload),
   vaePrecision: 'Auto',
-};
+}
 
 export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
-  const document = baseDocument();
+  const document = baseDocument()
   const session: ProjectSession = {
     dirty: false,
     document,
@@ -46,52 +43,52 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
       selection: { id: 'raster-main', kind: 'compositing-layer' },
       viewport: { offsetX: 0, offsetY: 0, scale: 0.62 },
     },
-  };
+  }
 
   if (id === 'smart-patch') {
-    session.ui.selection = { id: 'hand-repair', kind: 'compositing-layer' };
+    session.ui.selection = { id: 'hand-repair', kind: 'compositing-layer' }
   }
   if (id === 'regional-guidance') {
-    session.ui.selection = { id: 'face-light', kind: 'regional-guidance' };
+    session.ui.selection = { id: 'face-light', kind: 'regional-guidance' }
   }
   if (id === 'staging') {
-    session.staging = stagingSession();
+    session.staging = stagingSession()
     session.queueItems = [
       queueItem('queue-1', 1, 100, 'completed'),
       queueItem('queue-2', 2, 100, 'completed'),
       queueItem('queue-3', 3, 100, 'completed'),
       queueItem('queue-4', 4, 58, 'running'),
-    ];
+    ]
   }
   if (id === 'empty-project') {
-    session.document.canvas = { height: 1024, width: 1024 };
-    session.document.layers = [];
-    session.document.regionalGuidance = [];
-    session.document.generationDraft.payload.size = { height: 1024, width: 1024 };
-    session.ui.selection = undefined;
-    session.savedDocument = cloneDocument(session.document);
+    session.document.canvas = { height: 1024, width: 1024 }
+    session.document.layers = []
+    session.document.regionalGuidance = []
+    session.document.generationDraft.payload.size = { height: 1024, width: 1024 }
+    session.ui.selection = undefined
+    session.savedDocument = cloneDocument(session.document)
   }
   if (id === 'errors') {
     if (session.document.generationDraft.payload.model) {
-      session.document.generationDraft.payload.model.missing = true;
+      session.document.generationDraft.payload.model.missing = true
     }
     if (session.document.generationDraft.payload.loras?.[0]) {
-      session.document.generationDraft.payload.loras[0].resource.missing = true;
+      session.document.generationDraft.payload.loras[0].resource.missing = true
     }
     session.document.generationDraft.payload.prompt = parseLegacyPromptString(
       'portrait, dramatic light, (broken attention',
       generationEmbeddings,
       mockDanbooruTags,
-    );
+    )
     session.document.generationDraft.payload.negativePrompt?.tokens.push({
       id: 'missing-embedding-token',
       kind: 'embedding',
       resource: { ...generationEmbeddings[0]!, missing: true },
       text: generationEmbeddings[0]!.negativeToken!,
-    });
-    const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch');
+    })
+    const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch')
     if (patch?.kind === 'smart-patch') {
-      patch.status = 'outdated';
+      patch.status = 'outdated'
     }
     session.staging = {
       candidates: [
@@ -108,26 +105,26 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
       previewVisible: true,
       selectedCandidateIds: [],
       target: { kind: 'project-canvas' },
-    };
-    session.queueItems = [queueItem('queue-failed', 1, 72, 'failed', 'Portrait generation')];
-    session.saveShouldFail = true;
-    session.dirty = true;
+    }
+    session.queueItems = [queueItem('queue-failed', 1, 72, 'failed', 'Portrait generation')]
+    session.saveShouldFail = true
+    session.dirty = true
   }
-  return session;
+  return session
 }
 
 export function createProjectSessionFromHomeRecord(project: HomeProjectRecord): ProjectSession {
   const session = createProjectScenario(
     project.id === 'smart-patch-costume' ? 'smart-patch' : 'default',
-  );
-  session.document.id = project.id;
-  session.document.title = project.fileName;
-  session.document.canvas = { height: project.height, width: project.width };
+  )
+  session.document.id = project.id
+  session.document.title = project.fileName
+  session.document.canvas = { height: project.height, width: project.width }
   if (project.generationPayload) {
-    session.document.generationDraft.payload = structuredClone(project.generationPayload);
+    session.document.generationDraft.payload = structuredClone(project.generationPayload)
   }
-  session.savedDocument = cloneDocument(session.document);
-  return session;
+  session.savedDocument = cloneDocument(session.document)
+  return session
 }
 
 function baseDocument(): ProjectDocumentModel {
@@ -208,7 +205,7 @@ function baseDocument(): ProjectDocumentModel {
     ],
     title: 'Sample Project B.igs',
     updatedAt: '2026-07-10T13:42:00.000Z',
-  };
+  }
 }
 
 function queueItem(
@@ -229,7 +226,7 @@ function queueItem(
     prompt: serializeGenerationPrompt(baseDraft.payload.prompt),
     promptTokens: structuredClone(baseDraft.payload.prompt?.tokens ?? []),
     status,
-  };
+  }
 }
 
 function stagingSession() {
@@ -269,5 +266,5 @@ function stagingSession() {
     previewVisible: true,
     selectedCandidateIds: ['candidate-1', 'candidate-2'],
     target: { kind: 'project-canvas' as const },
-  };
+  }
 }

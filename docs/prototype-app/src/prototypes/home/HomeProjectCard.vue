@@ -1,27 +1,27 @@
 <script setup lang="ts">
-import { NButton, NDropdown, NTag } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { NButton, NDropdown, NTag } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { HomeProjectAction, HomeProjectRecord } from './home.types';
+import type { HomeProjectAction, HomeProjectRecord } from './home.types'
 
-import { projectStatusTagTheme } from '../../theme/naive-theme';
-import HomeProjectActions from './HomeProjectActions.vue';
-import ProjectArtwork from './ProjectArtwork.vue';
+import { projectStatusTagTheme } from '../../theme/naive-theme'
+import HomeProjectActions from './HomeProjectActions.vue'
+import ProjectArtwork from './ProjectArtwork.vue'
 
 const props = defineProps<{
-  conditions: string[];
-  project: HomeProjectRecord;
-  selected: boolean;
-  showWorkspace: boolean;
-  trashView: boolean;
-  workspaceName: string;
-}>();
+  conditions: string[]
+  project: HomeProjectRecord
+  selected: boolean
+  showWorkspace: boolean
+  trashView: boolean
+  workspaceName: string
+}>()
 
 const emit = defineEmits<{
-  action: [value: HomeProjectAction];
-  open: [value: { projectId: string; target: 'current' | 'new' }];
-  select: [id: string];
-}>();
+  action: [value: HomeProjectAction]
+  open: [value: { projectId: string; target: 'current' | 'new' }]
+  select: [id: string]
+}>()
 
 const contextOptions = computed(() =>
   props.trashView
@@ -37,50 +37,50 @@ const contextOptions = computed(() =>
         { key: 'reveal', label: 'Show in Folder' },
         { key: 'trash', label: 'Move to Trash' },
       ],
-);
+)
 
-const contextMenuVisible = ref(false);
-const contextMenuX = ref(0);
-const contextMenuY = ref(0);
+const contextMenuVisible = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
 
 function handleClick(event: MouseEvent) {
   if (props.trashView) {
-    emit('select', props.project.id);
-    return;
+    emit('select', props.project.id)
+    return
   }
   if (event.ctrlKey || event.metaKey) {
-    emit('open', { projectId: props.project.id, target: 'new' });
-    return;
+    emit('open', { projectId: props.project.id, target: 'new' })
+    return
   }
-  emit('select', props.project.id);
+  emit('select', props.project.id)
 }
 
 function handleAuxClick(event: MouseEvent) {
   if (event.button === 1) {
-    event.preventDefault();
-    emit('open', { projectId: props.project.id, target: 'new' });
+    event.preventDefault()
+    emit('open', { projectId: props.project.id, target: 'new' })
   }
 }
 
 function handleDoubleClick() {
   if (!props.trashView) {
-    emit('open', { projectId: props.project.id, target: 'current' });
+    emit('open', { projectId: props.project.id, target: 'current' })
   }
 }
 
 function handleContextAction(key: string) {
-  contextMenuVisible.value = false;
+  contextMenuVisible.value = false
   emit('action', {
     action: key as HomeProjectAction['action'],
     projectId: props.project.id,
-  });
+  })
 }
 
 function openContextMenu(event: MouseEvent) {
-  emit('select', props.project.id);
-  contextMenuX.value = event.clientX;
-  contextMenuY.value = event.clientY;
-  contextMenuVisible.value = true;
+  emit('select', props.project.id)
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  contextMenuVisible.value = true
 }
 </script>
 
@@ -121,9 +121,9 @@ function openContextMenu(event: MouseEvent) {
       </div>
       <div class="card-body">
         <strong v-overflow-title>{{ project.displayName }}</strong>
-        <span v-if="showWorkspace" v-overflow-title class="workspace-name">{{
-          workspaceName
-        }}</span>
+        <span v-if="showWorkspace" v-overflow-title class="workspace-name">
+          {{ workspaceName }}
+        </span>
         <div class="card-meta">
           <span>{{ project.width }} × {{ project.height }}</span>
           <span>{{ new Date(project.lastOpenedAt).toLocaleDateString() }}</span>

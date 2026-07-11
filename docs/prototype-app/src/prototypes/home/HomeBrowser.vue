@@ -3,8 +3,8 @@ import {
   AlertTriangle as AlertIcon,
   DotsVertical as DotsIcon,
   Refresh as RefreshIcon,
-} from '@vicons/tabler';
-import { NAlert, NButton, NIcon, NScrollbar } from 'naive-ui';
+} from '@vicons/tabler'
+import { NAlert, NButton, NIcon, NScrollbar } from 'naive-ui'
 
 import type {
   HomeProjectAction,
@@ -13,42 +13,42 @@ import type {
   HomeStatusFilter,
   HomeViewMode,
   HomeWorkspace,
-} from './home.types';
+} from './home.types'
 
-import HomeBrowserToolbar from './HomeBrowserToolbar.vue';
-import HomeEmptyState from './HomeEmptyState.vue';
-import HomeProjectGrid from './HomeProjectGrid.vue';
-import HomeProjectList from './HomeProjectList.vue';
+import HomeBrowserToolbar from './HomeBrowserToolbar.vue'
+import HomeEmptyState from './HomeEmptyState.vue'
+import HomeProjectGrid from './HomeProjectGrid.vue'
+import HomeProjectList from './HomeProjectList.vue'
 
 defineProps<{
-  conditionsById: Record<string, string[]>;
-  filtered: boolean;
-  hasActiveFilters: boolean;
-  hasInstalledModel: boolean;
-  projects: HomeProjectRecord[];
-  selectedId?: string;
-  showWorkspace: boolean;
-  title: string;
-  trashView: boolean;
-  workspace?: HomeWorkspace;
-  workspaces: HomeWorkspace[];
-}>();
+  conditionsById: Record<string, string[]>
+  filtered: boolean
+  hasActiveFilters: boolean
+  hasInstalledModel: boolean
+  projects: HomeProjectRecord[]
+  selectedId?: string
+  showWorkspace: boolean
+  title: string
+  trashView: boolean
+  workspace?: HomeWorkspace
+  workspaces: HomeWorkspace[]
+}>()
 
 defineEmits<{
-  action: [value: HomeProjectAction];
-  manageModels: [];
-  newProject: [];
-  open: [value: { projectId: string; target: 'current' | 'new' }];
-  openProject: [];
-  reset: [];
-  select: [id: string];
-  workspaceAction: [value: { action: string; workspaceId: string }];
-}>();
+  action: [value: HomeProjectAction]
+  manageModels: []
+  newProject: []
+  open: [value: { projectId: string; target: 'current' | 'new' }]
+  openProject: []
+  reset: []
+  select: [id: string]
+  workspaceAction: [value: { action: string; workspaceId: string }]
+}>()
 
-const search = defineModel<string>('search', { required: true });
-const sort = defineModel<HomeSort>('sort', { required: true });
-const status = defineModel<HomeStatusFilter>('status', { required: true });
-const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
+const search = defineModel<string>('search', { required: true })
+const sort = defineModel<HomeSort>('sort', { required: true })
+const status = defineModel<HomeStatusFilter>('status', { required: true })
+const viewMode = defineModel<HomeViewMode>('viewMode', { required: true })
 </script>
 
 <template>
@@ -84,9 +84,9 @@ const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
       <template v-slot:icon><NIcon :component="AlertIcon" /></template>
       <strong>No generation model installed.</strong>
       You can still create, open, and organize projects.
-      <NButton size="tiny" text type="primary" @click="$emit('manageModels')"
-        >Manage Models</NButton
-      >
+      <NButton size="tiny" text type="primary" @click="$emit('manageModels')">
+        Manage Models
+      </NButton>
     </NAlert>
 
     <NAlert
@@ -102,8 +102,9 @@ const viewMode = defineModel<HomeViewMode>('viewMode', { required: true });
         text
         type="primary"
         @click="$emit('workspaceAction', { action: 'locate', workspaceId: workspace.id })"
-        >Locate Folder</NButton
       >
+        Locate Folder
+      </NButton>
     </NAlert>
 
     <HomeBrowserToolbar

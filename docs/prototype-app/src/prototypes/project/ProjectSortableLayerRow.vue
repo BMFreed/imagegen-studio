@@ -1,28 +1,28 @@
 <script setup lang="ts">
-import { makeDraggable } from '@vue-dnd-kit/core';
-import { computed, ref } from 'vue';
+import { makeDraggable } from '@vue-dnd-kit/core'
+import { computed, ref } from 'vue'
 
-import type { ProjectCompositingLayer } from './project.types';
+import type { ProjectCompositingLayer } from './project.types'
 
-import ProjectLayerRow from './ProjectLayerRow.vue';
+import ProjectLayerRow from './ProjectLayerRow.vue'
 
 const props = defineProps<{
-  index: number;
-  layer: ProjectCompositingLayer;
-  layers: ProjectCompositingLayer[];
-  selected: boolean;
-}>();
+  index: number
+  layer: ProjectCompositingLayer
+  layers: ProjectCompositingLayer[]
+  selected: boolean
+}>()
 const emit = defineEmits<{
-  duplicate: [];
-  moveDown: [];
-  moveUp: [];
-  remove: [];
-  select: [];
-  toggleLock: [];
-  toggleVisible: [];
-  variants: [];
-}>();
-const row = ref<HTMLElement | null>(null);
+  duplicate: []
+  moveDown: []
+  moveUp: []
+  remove: []
+  select: []
+  toggleLock: []
+  toggleVisible: []
+  variants: []
+}>()
+const row = ref<HTMLElement | null>(null)
 const { isDragging, isDragOver } = makeDraggable(
   row,
   {
@@ -33,12 +33,12 @@ const { isDragging, isDragOver } = makeDraggable(
     placementMargins: { bottom: 0.5, top: 0.5 },
   },
   () => [props.index, props.layers],
-);
+)
 const placementClass = computed(() => ({
   'sortable-layer--after': isDragOver.value?.bottom,
   'sortable-layer--before': isDragOver.value?.top,
   'sortable-layer--dragging': isDragging.value,
-}));
+}))
 </script>
 
 <template>

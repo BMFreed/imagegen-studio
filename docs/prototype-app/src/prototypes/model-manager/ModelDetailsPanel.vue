@@ -5,17 +5,17 @@ import {
   InfoCircle as InfoIcon,
   Link as LinkIcon,
   Trash as TrashIcon,
-} from '@vicons/tabler';
-import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag, NTooltip } from 'naive-ui';
+} from '@vicons/tabler'
+import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag, NTooltip } from 'naive-ui'
 
-import type { ModelResource } from './model-manager.types';
+import type { ModelResource } from './model-manager.types'
 
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
-import StatusBadge from '../../components/StatusBadge.vue';
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue'
+import StatusBadge from '../../components/StatusBadge.vue'
 
 defineProps<{
-  resource: ModelResource;
-}>();
+  resource: ModelResource
+}>()
 </script>
 
 <template>
@@ -33,9 +33,9 @@ defineProps<{
           <template v-slot:footer>
             <div class="badge-row">
               <StatusBadge :status="resource.status" variant="neutral" />
-              <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
-                badge
-              }}</NTag>
+              <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">
+                {{ badge }}
+              </NTag>
               <NTooltip v-if="resource.predictionType" trigger="hover">
                 <template v-slot:trigger>
                   <NTag :bordered="false" size="small" type="info">
@@ -97,13 +97,9 @@ defineProps<{
             <h3>Trigger Words</h3>
           </template>
           <div class="trigger-list">
-            <NTag
-              v-for="word of resource.triggerWords"
-              :key="word"
-              :bordered="false"
-              size="small"
-              >{{ word }}</NTag
-            >
+            <NTag v-for="word of resource.triggerWords" :key="word" :bordered="false" size="small">
+              {{ word }}
+            </NTag>
           </div>
         </NCard>
 

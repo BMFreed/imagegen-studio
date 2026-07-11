@@ -1,10 +1,10 @@
-import type { ProjectDocumentModel, ProjectSession } from './project.types';
+import type { ProjectDocumentModel, ProjectSession } from './project.types'
 
 export function cloneDocument(document: ProjectDocumentModel): ProjectDocumentModel {
   // Project documents are JSON-shaped prototype state. Serializing here unwraps
   // nested Vue proxies as well as the top-level proxy, which structuredClone
   // cannot do reliably after an editor writes reactive token arrays.
-  return JSON.parse(JSON.stringify(document)) as ProjectDocumentModel;
+  return JSON.parse(JSON.stringify(document)) as ProjectDocumentModel
 }
 
 export function commitProjectMutation(
@@ -12,14 +12,14 @@ export function commitProjectMutation(
   label: string,
   mutate: (document: ProjectDocumentModel) => void,
 ) {
-  session.history.past.push({ document: cloneDocument(session.document), label });
+  session.history.past.push({ document: cloneDocument(session.document), label })
   if (session.history.past.length > 64) {
-    session.history.past.shift();
+    session.history.past.shift()
   }
-  session.history.future = [];
-  mutate(session.document);
-  session.document.updatedAt = new Date().toISOString();
-  session.dirty = true;
+  session.history.future = []
+  mutate(session.document)
+  session.document.updatedAt = new Date().toISOString()
+  session.dirty = true
 }
 
 export function commitProjectEditFromBaseline(
@@ -28,50 +28,50 @@ export function commitProjectEditFromBaseline(
   baseline: ProjectDocumentModel,
 ) {
   if (JSON.stringify(baseline) === JSON.stringify(session.document)) {
-    return;
+    return
   }
-  session.history.past.push({ document: cloneDocument(baseline), label });
+  session.history.past.push({ document: cloneDocument(baseline), label })
   if (session.history.past.length > 64) {
-    session.history.past.shift();
+    session.history.past.shift()
   }
-  session.history.future = [];
-  session.document.updatedAt = new Date().toISOString();
-  session.dirty = true;
+  session.history.future = []
+  session.document.updatedAt = new Date().toISOString()
+  session.dirty = true
 }
 
 export function undoProject(session: ProjectSession) {
-  const entry = session.history.past.pop();
+  const entry = session.history.past.pop()
   if (!entry) {
-    return;
+    return
   }
-  session.history.future.push({ document: cloneDocument(session.document), label: entry.label });
-  session.document = cloneDocument(entry.document);
-  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument);
+  session.history.future.push({ document: cloneDocument(session.document), label: entry.label })
+  session.document = cloneDocument(entry.document)
+  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
 }
 
 export function redoProject(session: ProjectSession) {
-  const entry = session.history.future.pop();
+  const entry = session.history.future.pop()
   if (!entry) {
-    return;
+    return
   }
-  session.history.past.push({ document: cloneDocument(session.document), label: entry.label });
-  session.document = cloneDocument(entry.document);
-  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument);
+  session.history.past.push({ document: cloneDocument(session.document), label: entry.label })
+  session.document = cloneDocument(entry.document)
+  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
 }
 
 export function saveProjectSession(session: ProjectSession) {
   if (session.saveShouldFail) {
-    return false;
+    return false
   }
-  session.savedDocument = cloneDocument(session.document);
-  session.dirty = false;
-  return true;
+  session.savedDocument = cloneDocument(session.document)
+  session.dirty = false
+  return true
 }
 
 export function discardProjectChanges(session: ProjectSession) {
-  session.document = cloneDocument(session.savedDocument);
-  session.history = { future: [], past: [] };
-  session.staging = undefined;
-  session.queueItems = [];
-  session.dirty = false;
+  session.document = cloneDocument(session.savedDocument)
+  session.history = { future: [], past: [] }
+  session.staging = undefined
+  session.queueItems = []
+  session.dirty = false
 }

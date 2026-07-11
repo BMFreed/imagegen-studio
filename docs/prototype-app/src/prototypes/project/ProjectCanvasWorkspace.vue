@@ -15,66 +15,66 @@ import {
   Refresh,
   ZoomIn,
   ZoomOut,
-} from '@vicons/tabler';
-import { NButton, NIcon, NSelect, NText, NTooltip } from 'naive-ui';
-import { computed, ref } from 'vue';
+} from '@vicons/tabler'
+import { NButton, NIcon, NSelect, NText, NTooltip } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { ProjectSession, ProjectTool } from './project.types';
+import type { ProjectSession, ProjectTool } from './project.types'
 
-import GenerationResultsTray from './GenerationResultsTray.vue';
-import { commitProjectMutation } from './project-history';
-import { getSelectedEntity } from './project.utils';
-import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue';
-import ProjectQueuePanel from './ProjectQueuePanel.vue';
+import GenerationResultsTray from './GenerationResultsTray.vue'
+import { commitProjectMutation } from './project-history'
+import { getSelectedEntity } from './project.utils'
+import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
+import ProjectQueuePanel from './ProjectQueuePanel.vue'
 
-const props = defineProps<{ session: ProjectSession }>();
+const props = defineProps<{ session: ProjectSession }>()
 const emit = defineEmits<{
-  acceptCandidates: [];
-  cancelCurrent: [];
-  cancelPending: [];
-  clearQueue: [];
-  discardCandidates: [];
-  redo: [];
-  undo: [];
-}>();
+  acceptCandidates: []
+  cancelCurrent: []
+  cancelPending: []
+  clearQueue: []
+  discardCandidates: []
+  redo: []
+  undo: []
+}>()
 
-const dragging = ref(false);
-const lastPoint = ref({ x: 0, y: 0 });
-const selected = computed(() => getSelectedEntity(props.session));
+const dragging = ref(false)
+const lastPoint = ref({ x: 0, y: 0 })
+const selected = computed(() => getSelectedEntity(props.session))
 const selectedPatch = computed(() =>
   selected.value && 'kind' in selected.value && selected.value.kind === 'smart-patch'
     ? selected.value
     : undefined,
-);
+)
 const selectedRegional = computed(() =>
   selected.value && !('kind' in selected.value) ? selected.value : undefined,
-);
+)
 const topArtwork = computed(() => {
   const candidate = props.session.staging?.candidates.find(
     (item) => item.id === props.session.staging?.focusedCandidateId && item.status === 'completed',
-  );
+  )
   if (candidate && props.session.staging?.previewVisible) {
-    return candidate.tone;
+    return candidate.tone
   }
   const layer = [...props.session.document.layers].find(
     (item) => item.visible && (item.kind === 'raster' || item.activeVariantId),
-  );
+  )
   if (layer?.kind === 'raster') {
-    return layer.tone;
+    return layer.tone
   }
   if (layer?.kind === 'smart-patch') {
-    return layer.variants.find((item) => item.id === layer.activeVariantId)?.tone ?? 'emerald';
+    return layer.variants.find((item) => item.id === layer.activeVariantId)?.tone ?? 'emerald'
   }
-  return undefined;
-});
+  return undefined
+})
 const canvasStyle = computed(() => ({
   aspectRatio: `${props.session.document.canvas.width} / ${props.session.document.canvas.height}`,
   transform: `translate(${props.session.ui.viewport.offsetX}px, ${props.session.ui.viewport.offsetY}px) scale(${props.session.ui.viewport.scale})`,
-}));
+}))
 const zoomOptions = [25, 50, 62, 75, 100, 125].map((value) => ({
   label: `${value}%`,
   value: value / 100,
-}));
+}))
 const toolHints: Record<ProjectTool, string> = {
   bbox: 'Drag handles to resize · Shift keeps ratio',
   brush: 'Drag to edit mask · [ ] changes size',
@@ -85,70 +85,70 @@ const toolHints: Record<ProjectTool, string> = {
   'polygon-lasso': 'Click points · Enter closes',
   'transform-mask': 'Drag mask to transform',
   'transform-region': 'Drag region to transform',
-};
+}
 function setTool(tool: ProjectTool) {
-  props.session.ui.activeTool = tool;
+  props.session.ui.activeTool = tool
 }
 function startPan(event: PointerEvent) {
   if (
     props.session.ui.activeTool !== 'pan' ||
     (event.target as Element).closest('button, input, .tool-rail')
   ) {
-    return;
+    return
   }
-  dragging.value = true;
-  lastPoint.value = { x: event.clientX, y: event.clientY };
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  dragging.value = true
+  lastPoint.value = { x: event.clientX, y: event.clientY }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 function movePan(event: PointerEvent) {
   if (!dragging.value) {
-    return;
+    return
   }
-  props.session.ui.viewport.offsetX += event.clientX - lastPoint.value.x;
-  props.session.ui.viewport.offsetY += event.clientY - lastPoint.value.y;
-  lastPoint.value = { x: event.clientX, y: event.clientY };
+  props.session.ui.viewport.offsetX += event.clientX - lastPoint.value.x
+  props.session.ui.viewport.offsetY += event.clientY - lastPoint.value.y
+  lastPoint.value = { x: event.clientX, y: event.clientY }
 }
 function stopPan() {
-  dragging.value = false;
+  dragging.value = false
 }
 function editContextualSurface() {
   if (props.session.ui.activeTool === 'pan') {
-    return;
+    return
   }
-  const entity = selected.value;
+  const entity = selected.value
   if (entity && 'kind' in entity && entity.kind === 'smart-patch') {
     commitProjectMutation(props.session, 'Edit Smart Patch mask', () => {
-      entity.maskRevision += 1;
-      entity.status = 'outdated';
-    });
+      entity.maskRevision += 1
+      entity.status = 'outdated'
+    })
   } else if (entity && !('kind' in entity)) {
     commitProjectMutation(props.session, 'Edit regional guidance', () => {
-      entity.regionRevision += 1;
-    });
+      entity.regionRevision += 1
+    })
   }
 }
 function fitPatch() {
-  const patch = selectedPatch.value;
+  const patch = selectedPatch.value
   if (!patch) {
-    return;
+    return
   }
-  const patchId = patch.id;
+  const patchId = patch.id
   commitProjectMutation(props.session, 'Fit Patch BBox to Mask', (document) => {
-    const target = document.layers.find((layer) => layer.id === patchId);
+    const target = document.layers.find((layer) => layer.id === patchId)
     if (target?.kind === 'smart-patch') {
-      target.bbox = { height: 384, width: 448, x: 284, y: 296 };
-      target.status = 'outdated';
+      target.bbox = { height: 384, width: 448, x: 284, y: 296 }
+      target.status = 'outdated'
     }
-  });
+  })
 }
 function fitView() {
-  props.session.ui.viewport = { offsetX: 0, offsetY: 0, scale: 0.62 };
+  props.session.ui.viewport = { offsetX: 0, offsetY: 0, scale: 0.62 }
 }
 function zoom(delta: number) {
   props.session.ui.viewport.scale = Math.min(
     1.5,
     Math.max(0.2, props.session.ui.viewport.scale + delta),
-  );
+  )
 }
 </script>
 
@@ -167,22 +167,20 @@ function zoom(delta: number) {
         Project Canvas {{ session.document.canvas.width }} × {{ session.document.canvas.height }}
       </div>
       <div class="left-rail tool-rail">
-        <NTooltip
-          ><template v-slot:trigger
-            ><NButton
+        <NTooltip>
+          <template v-slot:trigger>
+            <NButton
               :aria-expanded="!session.ui.leftCollapsed"
               circle
               quaternary
               size="small"
               @click="session.ui.leftCollapsed = !session.ui.leftCollapsed"
-              ><NIcon
-                :component="
-                  session.ui.leftCollapsed ? ChevronRight : ChevronLeft
-                " /></NButton></template
-          >{{
-            session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel'
-          }}</NTooltip
-        >
+            >
+              <NIcon :component="session.ui.leftCollapsed ? ChevronRight : ChevronLeft" />
+            </NButton>
+          </template>
+          {{ session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel' }}
+        </NTooltip>
         <NButton
           aria-label="Pan tool"
           circle
@@ -190,8 +188,9 @@ function zoom(delta: number) {
           size="small"
           :type="session.ui.activeTool === 'pan' ? 'primary' : 'default'"
           @click="setTool('pan')"
-          ><NIcon :component="HandMove"
-        /></NButton>
+        >
+          <NIcon :component="HandMove" />
+        </NButton>
         <NButton
           aria-label="Crop or resize Project Canvas"
           circle
@@ -199,8 +198,9 @@ function zoom(delta: number) {
           size="small"
           :type="session.ui.activeTool === 'crop-canvas' ? 'primary' : 'default'"
           @click="setTool('crop-canvas')"
-          ><NIcon :component="Crop"
-        /></NButton>
+        >
+          <NIcon :component="Crop" />
+        </NButton>
         <template v-if="selectedPatch">
           <NButton
             aria-label="Transform Mask"
@@ -208,36 +208,46 @@ function zoom(delta: number) {
             quaternary
             size="small"
             @click="setTool('transform-mask')"
-            ><NIcon :component="HandMove" /></NButton
-          ><NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')"
-            ><NIcon :component="Lasso" /></NButton
-          ><NButton
+          >
+            <NIcon :component="HandMove" />
+          </NButton>
+          <NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')">
+            <NIcon :component="Lasso" />
+          </NButton>
+          <NButton
             aria-label="Polygon Lasso"
             circle
             quaternary
             size="small"
             @click="setTool('polygon-lasso')"
-            ><NIcon :component="Polygon" /></NButton
-          ><NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')"
-            ><NIcon :component="Brush" /></NButton
-          ><NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')"
-            ><NIcon :component="Eraser" /></NButton
-          ><NButton
+          >
+            <NIcon :component="Polygon" />
+          </NButton>
+          <NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')">
+            <NIcon :component="Brush" />
+          </NButton>
+          <NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')">
+            <NIcon :component="Eraser" />
+          </NButton>
+          <NButton
             aria-label="Bounding Box"
             circle
             quaternary
             size="small"
             @click="setTool('bbox')"
-            ><NIcon :component="Box" /></NButton
-          ><NButton
+          >
+            <NIcon :component="Box" />
+          </NButton>
+          <NButton
             aria-label="Fit Patch BBox to Mask"
             circle
             secondary
             size="small"
             type="primary"
             @click="fitPatch"
-            ><NIcon :component="ArrowsMaximize"
-          /></NButton>
+          >
+            <NIcon :component="ArrowsMaximize" />
+          </NButton>
         </template>
         <template v-else-if="selectedRegional">
           <NButton
@@ -246,21 +256,27 @@ function zoom(delta: number) {
             quaternary
             size="small"
             @click="setTool('transform-region')"
-            ><NIcon :component="HandMove" /></NButton
-          ><NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')"
-            ><NIcon :component="Lasso" /></NButton
-          ><NButton
+          >
+            <NIcon :component="HandMove" />
+          </NButton>
+          <NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')">
+            <NIcon :component="Lasso" />
+          </NButton>
+          <NButton
             aria-label="Polygon Lasso"
             circle
             quaternary
             size="small"
             @click="setTool('polygon-lasso')"
-            ><NIcon :component="Polygon" /></NButton
-          ><NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')"
-            ><NIcon :component="Brush" /></NButton
-          ><NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')"
-            ><NIcon :component="Eraser"
-          /></NButton>
+          >
+            <NIcon :component="Polygon" />
+          </NButton>
+          <NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')">
+            <NIcon :component="Brush" />
+          </NButton>
+          <NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')">
+            <NIcon :component="Eraser" />
+          </NButton>
         </template>
       </div>
       <div class="right-rail tool-rail">
@@ -271,8 +287,9 @@ function zoom(delta: number) {
           quaternary
           size="small"
           @click="session.ui.rightCollapsed = !session.ui.rightCollapsed"
-          ><NIcon :component="session.ui.rightCollapsed ? ChevronLeft : ChevronRight"
-        /></NButton>
+        >
+          <NIcon :component="session.ui.rightCollapsed ? ChevronLeft : ChevronRight" />
+        </NButton>
       </div>
 
       <div class="canvas-frame" :style="canvasStyle" @click="editContextualSurface">
@@ -324,32 +341,38 @@ function zoom(delta: number) {
           quaternary
           size="small"
           @click="emit('undo')"
-          ><NIcon :component="ArrowBackUp" /></NButton
-        ><NButton
+        >
+          <NIcon :component="ArrowBackUp" />
+        </NButton>
+        <NButton
           aria-label="Redo"
           circle
           :disabled="session.history.future.length === 0"
           quaternary
           size="small"
           @click="emit('redo')"
-          ><NIcon :component="ArrowForwardUp"
-        /></NButton>
+        >
+          <NIcon :component="ArrowForwardUp" />
+        </NButton>
       </div>
       <div class="viewport-group">
-        <NButton aria-label="Zoom out" circle quaternary size="small" @click="zoom(-0.1)"
-          ><NIcon :component="ZoomOut" /></NButton
-        ><NSelect
+        <NButton aria-label="Zoom out" circle quaternary size="small" @click="zoom(-0.1)">
+          <NIcon :component="ZoomOut" />
+        </NButton>
+        <NSelect
           aria-label="Zoom"
           class="zoom-select"
           :options="zoomOptions"
           size="small"
           :value="session.ui.viewport.scale"
           @update:value="session.ui.viewport.scale = $event"
-        /><NButton aria-label="Zoom in" circle quaternary size="small" @click="zoom(0.1)"
-          ><NIcon :component="ZoomIn" /></NButton
-        ><NButton aria-label="Fit View" circle quaternary size="small" @click="fitView"
-          ><NIcon :component="Refresh"
-        /></NButton>
+        />
+        <NButton aria-label="Zoom in" circle quaternary size="small" @click="zoom(0.1)">
+          <NIcon :component="ZoomIn" />
+        </NButton>
+        <NButton aria-label="Fit View" circle quaternary size="small" @click="fitView">
+          <NIcon :component="Refresh" />
+        </NButton>
       </div>
       <NText class="tool-hint" depth="3">{{ toolHints[session.ui.activeTool] }}</NText>
     </footer>

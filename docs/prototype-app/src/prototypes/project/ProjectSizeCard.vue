@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ArrowsLeftRight, AspectRatio, Lock, LockOpen } from '@vicons/tabler';
-import { NButton, NCard, NIcon, NInputNumber, NSelect, NTooltip } from 'naive-ui';
+import { ArrowsLeftRight, AspectRatio, Lock, LockOpen } from '@vicons/tabler'
+import { NButton, NCard, NIcon, NInputNumber, NSelect, NTooltip } from 'naive-ui'
 
-import type { ProjectAspectRatioId, ProjectSession } from './project.types';
+import type { ProjectAspectRatioId, ProjectSession } from './project.types'
 
 import {
   aspectRatioOptions,
@@ -12,82 +12,82 @@ import {
   ratioValue,
   sizeForRatio,
   swapAspectRatio,
-} from './project-aspect-ratio';
-import { commitProjectMutation } from './project-history';
-import ProjectAspectRatioPreview from './ProjectAspectRatioPreview.vue';
+} from './project-aspect-ratio'
+import { commitProjectMutation } from './project-history'
+import ProjectAspectRatioPreview from './ProjectAspectRatioPreview.vue'
 
-const props = defineProps<{ session: ProjectSession }>();
+const props = defineProps<{ session: ProjectSession }>()
 
 function syncSize() {
-  props.session.document.generationDraft.payload.size = { ...props.session.document.canvas };
+  props.session.document.generationDraft.payload.size = { ...props.session.document.canvas }
 }
 
 function selectRatio(id: ProjectAspectRatioId) {
-  const state = props.session.ui.aspectRatio;
+  const state = props.session.ui.aspectRatio
   if (id === 'free') {
-    state.id = 'free';
-    state.locked = false;
-    state.value = props.session.document.canvas.width / props.session.document.canvas.height;
-    return;
+    state.id = 'free'
+    state.locked = false
+    state.value = props.session.document.canvas.width / props.session.document.canvas.height
+    return
   }
-  const nextRatio = ratioValue(id, state.value);
-  const area = props.session.document.canvas.width * props.session.document.canvas.height;
+  const nextRatio = ratioValue(id, state.value)
+  const area = props.session.document.canvas.width * props.session.document.canvas.height
   commitProjectMutation(props.session, `Set aspect ratio ${id}`, (document) => {
-    document.canvas = sizeForRatio(nextRatio, area);
-    syncSize();
-  });
-  state.id = id;
-  state.locked = true;
-  state.value = nextRatio;
+    document.canvas = sizeForRatio(nextRatio, area)
+    syncSize()
+  })
+  state.id = id
+  state.locked = true
+  state.value = nextRatio
 }
 
 function toggleLock() {
-  const state = props.session.ui.aspectRatio;
-  state.locked = !state.locked;
-  state.value = props.session.document.canvas.width / props.session.document.canvas.height;
+  const state = props.session.ui.aspectRatio
+  state.locked = !state.locked
+  state.value = props.session.document.canvas.width / props.session.document.canvas.height
 }
 
 function updateDimension(key: 'height' | 'width', raw: number | null) {
   if (raw === null) {
-    return;
+    return
   }
-  const value = constrainedDimension(raw);
-  const state = props.session.ui.aspectRatio;
+  const value = constrainedDimension(raw)
+  const state = props.session.ui.aspectRatio
   commitProjectMutation(props.session, 'Resize Project Canvas', (document) => {
-    document.canvas[key] = value;
+    document.canvas[key] = value
     if (state.locked) {
       if (key === 'width') {
-        document.canvas.height = constrainedDimension(value / state.value);
+        document.canvas.height = constrainedDimension(value / state.value)
       } else {
-        document.canvas.width = constrainedDimension(value * state.value);
+        document.canvas.width = constrainedDimension(value * state.value)
       }
     } else {
-      state.id = 'free';
-      state.value = document.canvas.width / document.canvas.height;
+      state.id = 'free'
+      state.value = document.canvas.width / document.canvas.height
     }
-    syncSize();
-  });
+    syncSize()
+  })
 }
 
 function swap() {
   commitProjectMutation(props.session, 'Swap canvas dimensions', (document) => {
-    [document.canvas.width, document.canvas.height] = [
+    ;[document.canvas.width, document.canvas.height] = [
       document.canvas.height,
       document.canvas.width,
-    ];
-    syncSize();
-  });
-  swapAspectRatio(props.session.ui.aspectRatio);
+    ]
+    syncSize()
+  })
+  swapAspectRatio(props.session.ui.aspectRatio)
 }
 
 function fitToLayers() {
-  const hasVisible = props.session.document.layers.some((layer) => layer.visible);
-  const next = hasVisible ? { height: 1184, width: 888 } : { height: 1024, width: 1024 };
+  const hasVisible = props.session.document.layers.some((layer) => layer.visible)
+  const next = hasVisible ? { height: 1184, width: 888 } : { height: 1024, width: 1024 }
   commitProjectMutation(props.session, 'Fit canvas to visible layers', (document) => {
-    document.canvas = next;
-    syncSize();
-  });
-  props.session.ui.aspectRatio = { id: 'free', locked: false, value: next.width / next.height };
+    document.canvas = next
+    syncSize()
+  })
+  props.session.ui.aspectRatio = { id: 'free', locked: false, value: next.width / next.height }
 }
 </script>
 
@@ -138,9 +138,9 @@ function fitToLayers() {
           :width="session.document.canvas.width"
         />
         <div class="preview-actions">
-          <NTooltip
-            ><template v-slot:trigger
-              ><NButton
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
                 :aria-label="
                   session.ui.aspectRatio.locked ? 'Unlock aspect ratio' : 'Lock aspect ratio'
                 "
@@ -148,39 +148,44 @@ function fitToLayers() {
                 quaternary
                 size="tiny"
                 @click="toggleLock"
-                ><template v-slot:icon
-                  ><NIcon
-                    :component="
-                      session.ui.aspectRatio.locked ? Lock : LockOpen
-                    " /></template></NButton></template
-            >{{
+              >
+                <template v-slot:icon>
+                  <NIcon :component="session.ui.aspectRatio.locked ? Lock : LockOpen" />
+                </template>
+              </NButton>
+            </template>
+            {{
               session.ui.aspectRatio.locked ? 'Unlock aspect ratio' : 'Lock current aspect ratio'
-            }}</NTooltip
-          >
-          <NTooltip
-            ><template v-slot:trigger
-              ><NButton
+            }}
+          </NTooltip>
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
                 aria-label="Swap canvas dimensions"
                 circle
                 quaternary
                 size="tiny"
                 @click="swap"
-                ><template v-slot:icon
-                  ><NIcon :component="ArrowsLeftRight" /></template></NButton></template
-            >Swap width and height</NTooltip
-          >
-          <NTooltip
-            ><template v-slot:trigger
-              ><NButton
+              >
+                <template v-slot:icon><NIcon :component="ArrowsLeftRight" /></template>
+              </NButton>
+            </template>
+            Swap width and height
+          </NTooltip>
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
                 aria-label="Fit canvas to visible layers"
                 circle
                 quaternary
                 size="tiny"
                 @click="fitToLayers"
-                ><template v-slot:icon
-                  ><NIcon :component="AspectRatio" /></template></NButton></template
-            >Fit canvas to visible layers</NTooltip
-          >
+              >
+                <template v-slot:icon><NIcon :component="AspectRatio" /></template>
+              </NButton>
+            </template>
+            Fit canvas to visible layers
+          </NTooltip>
         </div>
       </div>
     </div>

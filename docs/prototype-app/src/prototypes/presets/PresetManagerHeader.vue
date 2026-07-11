@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTooltip } from 'naive-ui';
+import { InfoCircle as InfoIcon, Plus as PlusIcon, X as XIcon } from '@vicons/tabler'
+import { NButton, NIcon, NTooltip } from 'naive-ui'
 
 defineEmits<{
-  close: [];
-  create: [];
-}>();
+  close: []
+  create: []
+}>()
 </script>
 
 <template>

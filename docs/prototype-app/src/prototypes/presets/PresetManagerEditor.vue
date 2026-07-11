@@ -6,55 +6,55 @@ import {
   DeviceFloppy as SaveIcon,
   Settings as SettingsIcon,
   Trash as TrashIcon,
-} from '@vicons/tabler';
-import { NAlert, NButton, NCheckbox, NIcon, NScrollbar, NText } from 'naive-ui';
-import { computed, ref } from 'vue';
+} from '@vicons/tabler'
+import { NAlert, NButton, NCheckbox, NIcon, NScrollbar, NText } from 'naive-ui'
+import { computed, ref } from 'vue'
 
 import type {
   PresetCreateIntent,
   PresetDefinition,
   PresetEditorResources,
   PresetSectionKey,
-} from './presets.types';
+} from './presets.types'
 
-import PresetMetadataForm from './PresetMetadataForm.vue';
-import PresetPayloadEditor from './PresetPayloadEditor.vue';
+import PresetMetadataForm from './PresetMetadataForm.vue'
+import PresetPayloadEditor from './PresetPayloadEditor.vue'
 import {
   isPresetDefinitionValid,
   presetHasMissingResources,
   sectionOrder,
   setPresetSectionIncluded,
-} from './presets.utils';
+} from './presets.utils'
 
 const props = defineProps<{
-  createIntent?: PresetCreateIntent;
-  creating: boolean;
-  dirty: boolean;
-  resources: PresetEditorResources;
-}>();
+  createIntent?: PresetCreateIntent
+  creating: boolean
+  dirty: boolean
+  resources: PresetEditorResources
+}>()
 
 const emit = defineEmits<{
-  cancel: [];
-  create: [];
-  delete: [];
-  duplicate: [];
-  save: [];
-}>();
+  cancel: []
+  create: []
+  delete: []
+  duplicate: []
+  save: []
+}>()
 
-const definition = defineModel<PresetDefinition>({ required: true });
-const expandedSections = ref<PresetSectionKey[]>(['prompt', 'model', 'loras']);
-const isValid = computed(() => isPresetDefinitionValid(definition.value));
-const hasMissingResources = computed(() => presetHasMissingResources(definition.value));
+const definition = defineModel<PresetDefinition>({ required: true })
+const expandedSections = ref<PresetSectionKey[]>(['prompt', 'model', 'loras'])
+const isValid = computed(() => isPresetDefinitionValid(definition.value))
+const hasMissingResources = computed(() => presetHasMissingResources(definition.value))
 const projectSource = computed(() =>
   props.createIntent?.kind === 'project' ? props.createIntent : undefined,
-);
+)
 
 function sectionIncluded(section: PresetSectionKey): boolean {
-  return definition.value.payload[section] !== undefined;
+  return definition.value.payload[section] !== undefined
 }
 
 function setSectionIncluded(section: PresetSectionKey, included: boolean) {
-  setPresetSectionIncluded(definition.value.payload, section, included, definition.value.workflow);
+  setPresetSectionIncluded(definition.value.payload, section, included, definition.value.workflow)
 }
 </script>
 
@@ -70,7 +70,7 @@ function setSectionIncluded(section: PresetSectionKey, included: boolean) {
           type="info"
         >
           <strong>{{ projectSource.projectName }}</strong>
-          <span> · {{ projectSource.projectSummary }}</span>
+          <span>· {{ projectSource.projectSummary }}</span>
           <p>Seed is not included by default to avoid accidentally repeating generations.</p>
         </NAlert>
 

@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { Trash as TrashIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { Trash as TrashIcon } from '@vicons/tabler'
+import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { GenerationLora, GenerationLoraResourceRef } from './generation.types';
+import type { GenerationLora, GenerationLoraResourceRef } from './generation.types'
 
 const props = defineProps<{
-  disabled?: boolean;
-  resources: GenerationLoraResourceRef[];
-}>();
-const emit = defineEmits<{ remove: [resourceId: string] }>();
+  disabled?: boolean
+  resources: GenerationLoraResourceRef[]
+}>()
+const emit = defineEmits<{ remove: [resourceId: string] }>()
 
-const loras = defineModel<GenerationLora[]>({ required: true });
-const selectedResourceId = ref<string | null>(null);
+const loras = defineModel<GenerationLora[]>({ required: true })
+const selectedResourceId = ref<string | null>(null)
 
 const options = computed(() =>
   props.resources.map((resource) => ({
@@ -20,12 +20,12 @@ const options = computed(() =>
     label: `${resource.name}${resource.version ? ` · ${resource.version}` : ''}`,
     value: resource.id,
   })),
-);
+)
 
 function add(resourceId: string | null) {
-  const resource = props.resources.find((candidate) => candidate.id === resourceId);
+  const resource = props.resources.find((candidate) => candidate.id === resourceId)
   if (!resource || loras.value.some((lora) => lora.resource.id === resource.id)) {
-    return;
+    return
   }
   loras.value = [
     ...loras.value,
@@ -34,23 +34,23 @@ function add(resourceId: string | null) {
       resource: structuredClone(resource),
       weight: 0.7,
     },
-  ];
-  selectedResourceId.value = null;
+  ]
+  selectedResourceId.value = null
 }
 function updateEnabled(index: number, enabled: boolean) {
   loras.value = loras.value.map((lora, current) =>
     current === index ? { ...lora, enabled } : lora,
-  );
+  )
 }
 function updateWeight(index: number, weight: number | null) {
   loras.value = loras.value.map((lora, current) =>
     current === index ? { ...lora, weight: weight ?? 0.7 } : lora,
-  );
+  )
 }
 function remove(index: number) {
-  const lora = loras.value[index];
+  const lora = loras.value[index]
   if (lora) {
-    emit('remove', lora.resource.id);
+    emit('remove', lora.resource.id)
   }
 }
 </script>

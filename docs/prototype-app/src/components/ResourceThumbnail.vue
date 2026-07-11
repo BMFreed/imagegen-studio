@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from 'vue'
 
 const props = defineProps<{
-  tone: 'blue' | 'green' | 'violet' | 'warning';
-}>();
+  tone: 'blue' | 'green' | 'violet' | 'warning'
+}>()
 
-const toneClass = computed(() => `resource-thumbnail--${props.tone}`);
+const toneClass = computed(() => `resource-thumbnail--${props.tone}`)
 </script>
 
 <template>

@@ -8,7 +8,7 @@ import {
   Refresh as ResetIcon,
   Settings as SettingsIcon,
   X as XIcon,
-} from '@vicons/tabler';
+} from '@vicons/tabler'
 import {
   NAlert,
   NButton,
@@ -21,14 +21,14 @@ import {
   NText,
   NTooltip,
   useMessage,
-} from 'naive-ui';
-import { computed, ref } from 'vue';
+} from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { PresetPayload, PresetSectionKey } from './presets.types';
+import type { PresetPayload, PresetSectionKey } from './presets.types'
 
-import PresetManagerPrototype from './PresetManagerPrototype.vue';
-import PresetPayloadEditor from './PresetPayloadEditor.vue';
-import { currentProjectPresetSource, presetEditorResources, presetResources } from './presets.mock';
+import PresetManagerPrototype from './PresetManagerPrototype.vue'
+import PresetPayloadEditor from './PresetPayloadEditor.vue'
+import { currentProjectPresetSource, presetEditorResources, presetResources } from './presets.mock'
 import {
   applicationDraftIsValid,
   clonePreset,
@@ -39,127 +39,127 @@ import {
   sectionLabels,
   summarizePresetSection,
   workflowLabels,
-} from './presets.utils';
+} from './presets.utils'
 
-const message = useMessage();
-const show = ref(true);
-const showManager = ref(false);
-const showEditOriginalDialog = ref(false);
-const sourcePreset = presetResources.find((preset) => preset.id === 'cinematic-img2img-pass')!;
-const sourcePayload = clonePreset(sourcePreset.payload);
+const message = useMessage()
+const show = ref(true)
+const showManager = ref(false)
+const showEditOriginalDialog = ref(false)
+const sourcePreset = presetResources.find((preset) => preset.id === 'cinematic-img2img-pass')!
+const sourcePayload = clonePreset(sourcePreset.payload)
 const projectPayload = ref<PresetPayload>(
   clonePreset(currentProjectPresetSource.definition.payload),
-);
-const initialDraft = createApplicationDraft(sourcePreset);
-const draft = ref(clonePreset(initialDraft));
-const sections = includedSections(sourcePayload);
-const expandedSections = ref<PresetSectionKey[]>([]);
+)
+const initialDraft = createApplicationDraft(sourcePreset)
+const draft = ref(clonePreset(initialDraft))
+const sections = includedSections(sourcePayload)
+const expandedSections = ref<PresetSectionKey[]>([])
 
-const selectedCount = computed(() => draft.value.selectedSections.length);
-const allSelected = computed(() => selectedCount.value === sections.length);
+const selectedCount = computed(() => draft.value.selectedSections.length)
+const allSelected = computed(() => selectedCount.value === sections.length)
 const partiallySelected = computed(
   () => selectedCount.value > 0 && selectedCount.value < sections.length,
-);
+)
 const disabledSections = computed(() =>
   sections.filter((section) => !draft.value.selectedSections.includes(section)),
-);
+)
 const changedSections = computed(() =>
   sections.filter((section) => !isPresetSectionEqual(draft.value.payload, sourcePayload, section)),
-);
+)
 const allSectionsExpanded = computed(() =>
   sections.every((section) => expandedSections.value.includes(section)),
-);
+)
 const selectionChanged = computed(() =>
   sections.some(
     (section) =>
       draft.value.selectedSections.includes(section) !==
       initialDraft.selectedSections.includes(section),
   ),
-);
+)
 const applicationDraftDirty = computed(
   () => changedSections.value.length > 0 || selectionChanged.value,
-);
+)
 const selectedMissingResource = computed(() =>
   draft.value.selectedSections.some((section) =>
     presetSectionHasMissingResources(draft.value.payload, section),
   ),
-);
-const applyDisabled = computed(() => !applicationDraftIsValid(draft.value));
+)
+const applyDisabled = computed(() => !applicationDraftIsValid(draft.value))
 
 function sectionSelected(section: PresetSectionKey): boolean {
-  return draft.value.selectedSections.includes(section);
+  return draft.value.selectedSections.includes(section)
 }
 
 function setSectionSelected(section: PresetSectionKey, selected: boolean) {
   if (selected && !sectionSelected(section)) {
-    draft.value.selectedSections.push(section);
+    draft.value.selectedSections.push(section)
   } else if (!selected) {
     draft.value.selectedSections = draft.value.selectedSections.filter(
       (candidate) => candidate !== section,
-    );
+    )
   }
 }
 
 function setAllSections(selected: boolean) {
-  draft.value.selectedSections = selected ? [...sections] : [];
+  draft.value.selectedSections = selected ? [...sections] : []
 }
 
 function toggleAllSectionsExpanded() {
-  expandedSections.value = allSectionsExpanded.value ? [] : [...sections];
+  expandedSections.value = allSectionsExpanded.value ? [] : [...sections]
 }
 
 function resetSection(section: PresetSectionKey) {
-  const nextPayload = clonePreset(draft.value.payload);
-  const sourceValue = sourcePayload[section];
+  const nextPayload = clonePreset(draft.value.payload)
+  const sourceValue = sourcePayload[section]
 
   if (sourceValue === undefined) {
-    Reflect.deleteProperty(nextPayload, section);
+    Reflect.deleteProperty(nextPayload, section)
   } else {
-    Reflect.set(nextPayload, section, clonePreset(sourceValue));
+    Reflect.set(nextPayload, section, clonePreset(sourceValue))
   }
 
-  draft.value.payload = nextPayload;
+  draft.value.payload = nextPayload
 }
 
 function resetAll() {
-  draft.value.payload = clonePreset(sourcePayload);
+  draft.value.payload = clonePreset(sourcePayload)
 }
 
 function openOriginalPreset() {
-  showEditOriginalDialog.value = false;
-  show.value = false;
-  showManager.value = true;
+  showEditOriginalDialog.value = false
+  show.value = false
+  showManager.value = true
 }
 
 function requestEditOriginal() {
   if (applicationDraftDirty.value) {
-    showEditOriginalDialog.value = true;
-    return;
+    showEditOriginalDialog.value = true
+    return
   }
 
-  openOriginalPreset();
+  openOriginalPreset()
 }
 
 function applyPreset() {
   if (applyDisabled.value) {
-    return;
+    return
   }
 
-  const nextProjectPayload = clonePreset(projectPayload.value);
+  const nextProjectPayload = clonePreset(projectPayload.value)
 
   for (const section of draft.value.selectedSections) {
-    const value = draft.value.payload[section];
+    const value = draft.value.payload[section]
 
     if (value === undefined) {
-      Reflect.deleteProperty(nextProjectPayload, section);
+      Reflect.deleteProperty(nextProjectPayload, section)
     } else {
-      Reflect.set(nextProjectPayload, section, clonePreset(value));
+      Reflect.set(nextProjectPayload, section, clonePreset(value))
     }
   }
 
-  projectPayload.value = nextProjectPayload;
-  show.value = false;
-  message.success('Preset applied');
+  projectPayload.value = nextProjectPayload
+  show.value = false
+  message.success('Preset applied')
 }
 </script>
 
@@ -196,8 +196,8 @@ function applyPreset() {
           </div>
           <NText depth="3">
             Customize a temporary copy for
-            <strong>{{ currentProjectPresetSource.projectName }}</strong
-            >. The saved preset will not change.
+            <strong>{{ currentProjectPresetSource.projectName }}</strong>
+            . The saved preset will not change.
           </NText>
         </div>
         <NButton aria-label="Close Apply Preset" circle quaternary @click="show = false">
@@ -272,9 +272,9 @@ function applyPreset() {
           >
             <template v-slot:section-context="{ section }">
               <span class="section-comparison">
-                <NText depth="3"
-                  >Current: {{ summarizePresetSection(projectPayload, section) }}</NText
-                >
+                <NText depth="3">
+                  Current: {{ summarizePresetSection(projectPayload, section) }}
+                </NText>
                 <NText depth="3">Apply: {{ summarizePresetSection(draft.payload, section) }}</NText>
               </span>
             </template>
@@ -294,7 +294,8 @@ function applyPreset() {
                 :checked="sectionSelected(section)"
                 @update:checked="setSectionSelected(section, $event)"
               >
-                <span>Apply</span><span class="sr-only"> {{ sectionLabels[section] }}</span>
+                <span>Apply</span>
+                <span class="sr-only">{{ sectionLabels[section] }}</span>
               </NCheckbox>
             </template>
           </PresetPayloadEditor>
@@ -305,9 +306,9 @@ function applyPreset() {
         <NText v-if="selectedMissingResource" key="blocked" class="blocked-note">
           Resolve or deselect missing resources to apply.
         </NText>
-        <NText v-else key="selection" depth="3"
-          >{{ selectedCount }} of {{ sections.length }} sections selected</NText
-        >
+        <NText v-else key="selection" depth="3">
+          {{ selectedCount }} of {{ sections.length }} sections selected
+        </NText>
         <NButton tertiary @click="show = false">Cancel</NButton>
         <NButton :disabled="applyDisabled" type="primary" @click="applyPreset">
           <template v-slot:icon><NIcon :component="ApplyIcon" /></template>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Plus, Trash } from '@vicons/tabler';
-import { DnDProvider } from '@vue-dnd-kit/core';
+import { Eye, EyeOff, Plus, Trash } from '@vicons/tabler'
+import { DnDProvider } from '@vue-dnd-kit/core'
 import {
   NAlert,
   NButton,
@@ -11,34 +11,34 @@ import {
   NSelect,
   NSwitch,
   NTag,
-} from 'naive-ui';
-import { computed, ref } from 'vue';
+} from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { ProjectCompositingLayer, ProjectSession } from './project.types';
+import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
-import { commitProjectMutation } from './project-history';
-import { getSelectedEntity } from './project.utils';
-import ProjectLayerStack from './ProjectLayerStack.vue';
+import { commitProjectMutation } from './project-history'
+import { getSelectedEntity } from './project.utils'
+import ProjectLayerStack from './ProjectLayerStack.vue'
 
-const props = defineProps<{ session: ProjectSession }>();
-const panelScroll = ref<HTMLElement | null>(null);
-const variantLayerId = ref<string>();
-const selected = computed(() => getSelectedEntity(props.session));
+const props = defineProps<{ session: ProjectSession }>()
+const panelScroll = ref<HTMLElement | null>(null)
+const variantLayerId = ref<string>()
+const selected = computed(() => getSelectedEntity(props.session))
 const selectedLayer = computed(() =>
   selected.value && 'kind' in selected.value ? selected.value : undefined,
-);
+)
 const selectedRegional = computed(() =>
   selected.value && !('kind' in selected.value) ? selected.value : undefined,
-);
+)
 const variantLayer = computed(() =>
   props.session.document.layers.find(
     (layer) => layer.id === variantLayerId.value && layer.kind === 'smart-patch',
   ),
-);
+)
 function activeVariantName(layer: ProjectCompositingLayer) {
   return layer.kind === 'smart-patch'
     ? (layer.variants.find((item) => item.id === layer.activeVariantId)?.name ?? 'None')
-    : '';
+    : ''
 }
 function mutateLayer(
   layer: ProjectCompositingLayer,
@@ -46,15 +46,15 @@ function mutateLayer(
   mutate: (target: ProjectCompositingLayer) => void,
 ) {
   commitProjectMutation(props.session, label, (document) => {
-    const target = document.layers.find((item) => item.id === layer.id);
+    const target = document.layers.find((item) => item.id === layer.id)
     if (target) {
-      mutate(target);
+      mutate(target)
     }
-  });
+  })
 }
 function addLayer(kind: 'raster' | 'smart-patch') {
   commitProjectMutation(props.session, `Add ${kind} layer`, (document) => {
-    const id = `${kind}-${Date.now()}`;
+    const id = `${kind}-${Date.now()}`
     const layer: ProjectCompositingLayer =
       kind === 'raster'
         ? {
@@ -81,45 +81,45 @@ function addLayer(kind: 'raster' | 'smart-patch') {
             status: 'empty',
             variants: [],
             visible: true,
-          };
-    document.layers.unshift(layer);
-    props.session.ui.selection = { id, kind: 'compositing-layer' };
-  });
+          }
+    document.layers.unshift(layer)
+    props.session.ui.selection = { id, kind: 'compositing-layer' }
+  })
 }
 function duplicate(layer: ProjectCompositingLayer) {
   commitProjectMutation(props.session, 'Duplicate layer', (document) => {
-    const index = document.layers.findIndex((item) => item.id === layer.id);
-    const copy = structuredClone(layer);
-    copy.id = `${layer.id}-copy-${Date.now()}`;
-    copy.name = `${layer.name} copy`;
-    document.layers.splice(index, 0, copy);
-    props.session.ui.selection = { id: copy.id, kind: 'compositing-layer' };
-  });
+    const index = document.layers.findIndex((item) => item.id === layer.id)
+    const copy = structuredClone(layer)
+    copy.id = `${layer.id}-copy-${Date.now()}`
+    copy.name = `${layer.name} copy`
+    document.layers.splice(index, 0, copy)
+    props.session.ui.selection = { id: copy.id, kind: 'compositing-layer' }
+  })
 }
 function remove(layer: ProjectCompositingLayer) {
   commitProjectMutation(props.session, 'Delete layer', (document) => {
-    const index = document.layers.findIndex((item) => item.id === layer.id);
-    document.layers.splice(index, 1);
-    const next = document.layers[index] ?? document.layers[index - 1];
-    props.session.ui.selection = next ? { id: next.id, kind: 'compositing-layer' } : undefined;
-  });
+    const index = document.layers.findIndex((item) => item.id === layer.id)
+    document.layers.splice(index, 1)
+    const next = document.layers[index] ?? document.layers[index - 1]
+    props.session.ui.selection = next ? { id: next.id, kind: 'compositing-layer' } : undefined
+  })
 }
 function move(layer: ProjectCompositingLayer, delta: number) {
   commitProjectMutation(props.session, 'Reorder layer', (document) => {
-    const index = document.layers.findIndex((item) => item.id === layer.id);
-    const next = index + delta;
+    const index = document.layers.findIndex((item) => item.id === layer.id)
+    const next = index + delta
     if (next < 0 || next >= document.layers.length) {
-      return;
+      return
     }
-    const [item] = document.layers.splice(index, 1);
+    const [item] = document.layers.splice(index, 1)
     if (item) {
-      document.layers.splice(next, 0, item);
+      document.layers.splice(next, 0, item)
     }
-  });
+  })
 }
 function addRegional() {
   commitProjectMutation(props.session, 'Add Regional Guidance', (document) => {
-    const id = `regional-${Date.now()}`;
+    const id = `regional-${Date.now()}`
     document.regionalGuidance.push({
       autoNegative: true,
       compatibilityStatus: 'ok',
@@ -131,9 +131,9 @@ function addRegional() {
       positivePrompt: '',
       referenceImages: [],
       regionRevision: 0,
-    });
-    props.session.ui.selection = { id, kind: 'regional-guidance' };
-  });
+    })
+    props.session.ui.selection = { id, kind: 'regional-guidance' }
+  })
 }
 </script>
 
@@ -143,16 +143,17 @@ function addRegional() {
       <div class="panel-stack">
         <section aria-label="Regional Guidance">
           <header class="section-header">
-            <strong>Regional Guidance ({{ session.document.regionalGuidance.length }})</strong
-            ><NButton
+            <strong>Regional Guidance ({{ session.document.regionalGuidance.length }})</strong>
+            <NButton
               aria-label="Add Regional Guidance"
               circle
               class="regional-icon-button"
               quaternary
               size="small"
               @click="addRegional"
-              ><NIcon :component="Plus"
-            /></NButton>
+            >
+              <NIcon :component="Plus" />
+            </NButton>
           </header>
           <article
             v-for="entity of session.document.regionalGuidance"
@@ -173,20 +174,24 @@ function addRegional() {
                   () => (entity.enabled = !entity.enabled),
                 )
               "
-              ><NIcon :component="entity.enabled ? Eye : EyeOff"
-            /></NButton>
+            >
+              <NIcon :component="entity.enabled ? Eye : EyeOff" />
+            </NButton>
             <NButton
               :aria-label="`Select ${entity.name}`"
               class="regional-select"
               quaternary
               @click="session.ui.selection = { id: entity.id, kind: 'regional-guidance' }"
-              ><span class="regional-thumb" /><span
-                ><strong>{{ entity.name }}</strong
-                ><small>{{ entity.referenceImages.length }} reference image</small></span
-              ><NTag v-if="entity.compatibilityStatus !== 'ok'" size="small" type="warning"
-                >Check</NTag
-              ></NButton
             >
+              <span class="regional-thumb" />
+              <span>
+                <strong>{{ entity.name }}</strong>
+                <small>{{ entity.referenceImages.length }} reference image</small>
+              </span>
+              <NTag v-if="entity.compatibilityStatus !== 'ok'" size="small" type="warning">
+                Check
+              </NTag>
+            </NButton>
             <NButton
               :aria-label="`Delete ${entity.name}`"
               circle
@@ -203,30 +208,34 @@ function addRegional() {
                     )),
                 )
               "
-              ><NIcon :component="Trash"
-            /></NButton>
+            >
+              <NIcon :component="Trash" />
+            </NButton>
           </article>
         </section>
 
         <section aria-label="Compositing Layers">
           <header class="section-header">
-            <strong>Layers ({{ session.document.layers.length }})</strong
-            ><span
-              ><NButton
+            <strong>Layers ({{ session.document.layers.length }})</strong>
+            <span>
+              <NButton
                 aria-label="Add Raster Layer"
                 circle
                 quaternary
                 size="small"
                 @click="addLayer('raster')"
-                ><NIcon :component="Plus" /></NButton
-              ><NButton
+              >
+                <NIcon :component="Plus" />
+              </NButton>
+              <NButton
                 aria-label="Add Smart Patch Layer"
                 size="tiny"
                 tertiary
                 @click="addLayer('smart-patch')"
-                >+ Patch</NButton
-              ></span
-            >
+              >
+                + Patch
+              </NButton>
+            </span>
           </header>
           <DnDProvider :autoScrollViewport="false">
             <ProjectLayerStack
@@ -251,16 +260,20 @@ function addRegional() {
         </section>
 
         <NCard v-if="selectedLayer" size="small" :title="selectedLayer.name">
-          <template v-if="selectedLayer.kind === 'raster'"
-            ><div class="two-fields">
-              <label
-                >Opacity<NInputNumber
+          <template v-if="selectedLayer.kind === 'raster'">
+            <div class="two-fields">
+              <label>
+                Opacity
+                <NInputNumber
                   aria-label="Layer opacity"
                   :max="100"
                   :min="0"
-                  :value="selectedLayer.opacity" /></label
-              ><label
-                >Blend<NSelect
+                  :value="selectedLayer.opacity"
+                />
+              </label>
+              <label>
+                Blend
+                <NSelect
                   aria-label="Layer blend mode"
                   :options="
                     ['normal', 'multiply', 'screen', 'overlay'].map((value) => ({
@@ -269,46 +282,53 @@ function addRegional() {
                     }))
                   "
                   :value="selectedLayer.blendMode"
-              /></label>
+                />
+              </label>
             </div>
-            <p>Raster editing tools are outside the MVP canvas.</p></template
-          >
-          <template v-else
-            ><NAlert v-if="selectedLayer.status === 'outdated'" type="warning"
-              >Mask, bounds or generation settings changed. Regenerate to refresh this
-              patch.</NAlert
-            >
+            <p>Raster editing tools are outside the MVP canvas.</p>
+          </template>
+          <template v-else>
+            <NAlert v-if="selectedLayer.status === 'outdated'" type="warning">
+              Mask, bounds or generation settings changed. Regenerate to refresh this patch.
+            </NAlert>
             <div class="detail-grid">
-              <span
-                >Mask<strong>Revision {{ selectedLayer.maskRevision }}</strong></span
-              ><span
-                >Bounding Box<strong
-                  >{{ selectedLayer.bbox.width }} × {{ selectedLayer.bbox.height }}</strong
-                ></span
-              ><span
-                >Internal Size<strong
-                  >{{ selectedLayer.internalWidth }} × {{ selectedLayer.internalHeight }}</strong
-                ></span
-              ><span
-                >Active Variant<strong>{{ activeVariantName(selectedLayer) }}</strong></span
-              >
-            </div></template
-          >
+              <span>
+                Mask
+                <strong>Revision {{ selectedLayer.maskRevision }}</strong>
+              </span>
+              <span>
+                Bounding Box
+                <strong>{{ selectedLayer.bbox.width }} × {{ selectedLayer.bbox.height }}</strong>
+              </span>
+              <span>
+                Internal Size
+                <strong>
+                  {{ selectedLayer.internalWidth }} × {{ selectedLayer.internalHeight }}
+                </strong>
+              </span>
+              <span>
+                Active Variant
+                <strong>{{ activeVariantName(selectedLayer) }}</strong>
+              </span>
+            </div>
+          </template>
         </NCard>
 
         <NCard v-if="selectedRegional" key="n-card-2" size="small" :title="selectedRegional.name">
-          <NAlert v-if="selectedRegional.compatibilityStatus !== 'ok'" type="warning"
-            >The current model may ignore regional reference images.</NAlert
-          >
-          <label
-            >Prompt<NInput
+          <NAlert v-if="selectedRegional.compatibilityStatus !== 'ok'" type="warning">
+            The current model may ignore regional reference images.
+          </NAlert>
+          <label>
+            Prompt
+            <NInput
               aria-label="Regional prompt"
               type="textarea"
               :value="selectedRegional.positivePrompt"
-          /></label>
+            />
+          </label>
           <div class="switch-line">
-            <span>Use global negative prompt</span
-            ><NSwitch :value="selectedRegional.autoNegative" />
+            <span>Use global negative prompt</span>
+            <NSwitch :value="selectedRegional.autoNegative" />
           </div>
         </NCard>
       </div>
@@ -316,8 +336,8 @@ function addRegional() {
 
     <div v-if="variantLayer?.kind === 'smart-patch'" class="variant-popover">
       <header>
-        <strong>{{ variantLayer.name }} variants</strong
-        ><NButton circle quaternary size="tiny" @click="variantLayerId = undefined">×</NButton>
+        <strong>{{ variantLayer.name }} variants</strong>
+        <NButton circle quaternary size="tiny" @click="variantLayerId = undefined">×</NButton>
       </header>
       <NButton
         v-for="variant of variantLayer.variants"
@@ -326,13 +346,16 @@ function addRegional() {
         secondary
         :type="variant.id === variantLayer.activeVariantId ? 'primary' : 'default'"
         @click="
-          commitProjectMutation(session, 'Switch variant', () => {
-            if (variantLayer?.kind === 'smart-patch') variantLayer.activeVariantId = variant.id;
-          });
-          variantLayerId = undefined;
+          () => {
+            commitProjectMutation(session, 'Switch variant', () => {
+              if (variantLayer?.kind === 'smart-patch') variantLayer.activeVariantId = variant.id
+            })
+            variantLayerId = undefined
+          }
         "
-        >{{ variant.name }}</NButton
       >
+        {{ variant.name }}
+      </NButton>
     </div>
   </aside>
 </template>

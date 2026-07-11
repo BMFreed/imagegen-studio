@@ -4,9 +4,9 @@ import type {
   GenerationModelRef,
   GenerationPayload,
   GenerationResourceRef,
-} from '../../components/generation/generation.types';
+} from '../../components/generation/generation.types'
 
-export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
+export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
 
 export type PresetSectionKey =
   | 'denoisingStrength'
@@ -18,42 +18,42 @@ export type PresetSectionKey =
   | 'sampling'
   | 'seed'
   | 'size'
-  | 'vae';
+  | 'vae'
 
-export type PresetResourceRef = GenerationResourceRef;
-export type PresetModelRef = GenerationModelRef;
-export type PresetLora = GenerationLora;
-export type PresetPayload = GenerationPayload;
+export type PresetResourceRef = GenerationResourceRef
+export type PresetModelRef = GenerationModelRef
+export type PresetLora = GenerationLora
+export type PresetPayload = GenerationPayload
 
 export interface PresetDefinition {
-  description: string;
-  favorite: boolean;
-  name: string;
-  payload: PresetPayload;
-  tags: string[];
-  workflow: PresetWorkflow;
+  description: string
+  favorite: boolean
+  name: string
+  payload: PresetPayload
+  tags: string[]
+  workflow: PresetWorkflow
 }
 
 export interface PresetRecord extends PresetDefinition {
-  id: string;
-  updatedAt: string;
+  id: string
+  updatedAt: string
 }
 
 export type PresetCreateIntent =
   | {
-      definition: PresetDefinition;
-      kind: 'project';
-      projectName: string;
-      projectSummary: string;
+      definition: PresetDefinition
+      kind: 'project'
+      projectName: string
+      projectSummary: string
     }
-  | { kind: 'manual' };
+  | { kind: 'manual' }
 
 export interface PresetApplicationDraft {
-  payload: PresetPayload;
-  selectedSections: PresetSectionKey[];
-  sourcePresetId: string;
+  payload: PresetPayload
+  selectedSections: PresetSectionKey[]
+  sourcePresetId: string
 }
 
-export type PresetEditorResources = GenerationEditorResources;
+export type PresetEditorResources = GenerationEditorResources
 
-export { type SeedPolicy } from '../../components/generation/generation.types';
+export { type SeedPolicy } from '../../components/generation/generation.types'

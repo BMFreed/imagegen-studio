@@ -1,23 +1,23 @@
 <script setup lang="ts">
-import { NAlert, NButton, NCard, NInputNumber, NModal, NSelect, NText } from 'naive-ui';
-import { computed } from 'vue';
+import { NAlert, NButton, NCard, NInputNumber, NModal, NSelect, NText } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { ProjectDynamicPromptSettings } from './project.types';
+import type { ProjectDynamicPromptSettings } from './project.types'
 
-import { expandPromptPairs } from './project-prompt.utils';
+import { expandPromptPairs } from './project-prompt.utils'
 
 const props = defineProps<{
-  negativePrompt: string;
-  prompt: string;
-  settings: ProjectDynamicPromptSettings;
-}>();
-const emit = defineEmits<{ updateSettings: [value: ProjectDynamicPromptSettings] }>();
-const show = defineModel<boolean>('show', { default: false });
+  negativePrompt: string
+  prompt: string
+  settings: ProjectDynamicPromptSettings
+}>()
+const emit = defineEmits<{ updateSettings: [value: ProjectDynamicPromptSettings] }>()
+const show = defineModel<boolean>('show', { default: false })
 const result = computed(() =>
   expandPromptPairs(props.prompt, props.negativePrompt, props.settings.maxPrompts),
-);
+)
 function update(value: Partial<ProjectDynamicPromptSettings>) {
-  emit('updateSettings', { ...props.settings, ...value });
+  emit('updateSettings', { ...props.settings, ...value })
 }
 </script>
 
@@ -38,17 +38,20 @@ function update(value: Partial<ProjectDynamicPromptSettings>) {
         type="warning"
       />
       <div class="dynamic-settings">
-        <label
-          >Max prompts<NInputNumber
+        <label>
+          Max prompts
+          <NInputNumber
             aria-label="Maximum dynamic prompts"
             :max="100"
             :min="1"
             size="small"
             :value="settings.maxPrompts"
             @update:value="update({ maxPrompts: $event ?? 1 })"
-        /></label>
-        <label
-          >Seed behavior<NSelect
+          />
+        </label>
+        <label>
+          Seed behavior
+          <NSelect
             aria-label="Dynamic prompt seed behavior"
             :options="[
               { label: 'Per iteration', value: 'per-iteration' },
@@ -57,26 +60,25 @@ function update(value: Partial<ProjectDynamicPromptSettings>) {
             size="small"
             :value="settings.seedBehavior"
             @update:value="update({ seedBehavior: $event })"
-        /></label>
+          />
+        </label>
       </div>
-      <NText depth="3"
-        >{{ result.pairs.length }} concrete prompt pair{{
-          result.pairs.length === 1 ? '' : 's'
-        }}</NText
-      >
+      <NText depth="3">
+        {{ result.pairs.length }} concrete prompt pair{{ result.pairs.length === 1 ? '' : 's' }}
+      </NText>
       <div v-if="!result.error" class="prompt-pairs">
         <article
           v-for="(pair, index) of result.pairs"
           :key="`${pair.prompt}-${pair.negativePrompt}-${index}`"
         >
-          <strong>{{ index + 1 }}</strong
-          ><span>{{ pair.prompt || 'Empty positive prompt' }}</span
-          ><small>{{ pair.negativePrompt || 'Empty negative prompt' }}</small>
+          <strong>{{ index + 1 }}</strong>
+          <span>{{ pair.prompt || 'Empty positive prompt' }}</span>
+          <small>{{ pair.negativePrompt || 'Empty negative prompt' }}</small>
         </article>
       </div>
-      <template v-slot:footer
-        ><div class="modal-footer"><NButton @click="show = false">Close</NButton></div></template
-      >
+      <template v-slot:footer>
+        <div class="modal-footer"><NButton @click="show = false">Close</NButton></div>
+      </template>
     </NCard>
   </NModal>
 </template>

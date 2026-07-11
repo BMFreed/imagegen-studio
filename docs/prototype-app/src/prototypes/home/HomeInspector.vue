@@ -5,49 +5,49 @@ import {
   Folder as FolderIcon,
   FileSearch as LocateIcon,
   Refresh as RefreshIcon,
-} from '@vicons/tabler';
-import { NButton, NEmpty, NIcon, NTag } from 'naive-ui';
-import { computed } from 'vue';
+} from '@vicons/tabler'
+import { NButton, NEmpty, NIcon, NTag } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types';
+import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types'
 
-import { getProjectConditionLabels } from './home.utils';
-import HomePreviewViewport from './HomePreviewViewport.vue';
+import { getProjectConditionLabels } from './home.utils'
+import HomePreviewViewport from './HomePreviewViewport.vue'
 
 const props = defineProps<{
-  openProjectIds: string[];
-  project?: HomeProjectRecord;
-  trashView: boolean;
-  workspace?: HomeWorkspace;
-  workspaces: HomeWorkspace[];
-}>();
+  openProjectIds: string[]
+  project?: HomeProjectRecord
+  trashView: boolean
+  workspace?: HomeWorkspace
+  workspaces: HomeWorkspace[]
+}>()
 
 defineEmits<{
-  action: [value: HomeProjectAction];
-  locateProject: [id: string];
-  open: [value: { projectId: string; target: 'current' | 'new' }];
-  rebuildPreview: [id: string];
-  removeProject: [id: string];
-  showErrorDetails: [id: string];
-  workspaceAction: [value: { action: string; workspaceId: string }];
-}>();
+  action: [value: HomeProjectAction]
+  locateProject: [id: string]
+  open: [value: { projectId: string; target: 'current' | 'new' }]
+  rebuildPreview: [id: string]
+  removeProject: [id: string]
+  showErrorDetails: [id: string]
+  workspaceAction: [value: { action: string; workspaceId: string }]
+}>()
 
-const collapsed = defineModel<boolean>('collapsed', { required: true });
+const collapsed = defineModel<boolean>('collapsed', { required: true })
 
 const isOpen = computed(() =>
   props.project ? props.openProjectIds.includes(props.project.id) : false,
-);
+)
 const conditions = computed(() =>
   props.project
     ? getProjectConditionLabels(props.project, props.openProjectIds, props.workspaces)
     : [],
-);
+)
 const canOpen = computed(
   () =>
     !props.trashView &&
     props.project?.health === 'ready' &&
     props.workspace?.availability === 'available',
-);
+)
 </script>
 
 <template>
@@ -87,8 +87,9 @@ const canOpen = computed(
             :key="condition"
             size="small"
             :type="condition === 'Open' ? 'success' : 'warning'"
-            >{{ condition }}</NTag
           >
+            {{ condition }}
+          </NTag>
         </div>
 
         <div v-if="workspace?.availability !== 'available'" class="inspector-problem">
@@ -100,19 +101,22 @@ const canOpen = computed(
               size="small"
               type="primary"
               @click="$emit('showErrorDetails', project.id)"
-              >Show Error Details</NButton
             >
+              Show Error Details
+            </NButton>
             <NButton
               size="small"
               type="primary"
               @click="$emit('workspaceAction', { action: 'locate', workspaceId: workspace!.id })"
-              >Locate Folder</NButton
             >
+              Locate Folder
+            </NButton>
             <NButton
               size="small"
               @click="$emit('workspaceAction', { action: 'remove', workspaceId: workspace!.id })"
-              >Remove Workspace</NButton
             >
+              Remove Workspace
+            </NButton>
           </div>
         </div>
 
@@ -120,9 +124,9 @@ const canOpen = computed(
           <strong v-if="project.health === 'missing'">Project file is missing</strong>
           <strong v-else-if="project.health === 'corrupt'">Project file is corrupt</strong>
           <strong v-else>This project was created by a newer app version</strong>
-          <span v-if="project.health === 'missing'"
-            >Locate the .igs file or remove this stale entry.</span
-          >
+          <span v-if="project.health === 'missing'">
+            Locate the .igs file or remove this stale entry.
+          </span>
           <span v-else>Opening is disabled to avoid damaging the project.</span>
           <div class="problem-actions">
             <NButton
@@ -131,32 +135,35 @@ const canOpen = computed(
               size="small"
               type="primary"
               @click="$emit('locateProject', project.id)"
-              ><template v-slot:icon><NIcon :component="LocateIcon" /></template>Locate
-              Project</NButton
             >
+              <template v-slot:icon><NIcon :component="LocateIcon" /></template>
+              Locate Project
+            </NButton>
             <NButton
               v-if="project.health === 'missing'"
               key="n-button-2"
               size="small"
               @click="$emit('removeProject', project.id)"
-              >Remove from Home</NButton
             >
+              Remove from Home
+            </NButton>
             <NButton
               v-else
               key="n-button-3"
               size="small"
               @click="$emit('action', { action: 'reveal', projectId: project.id })"
-              >Show in Folder</NButton
             >
+              Show in Folder
+            </NButton>
           </div>
         </div>
 
         <HomePreviewViewport v-else-if="project.thumbnailState === 'ready'" :project />
         <div v-else class="inspector-problem inspector-problem--preview">
           <strong>Preview unavailable</strong>
-          <span
-            >The project can still be opened. Rebuild its derived thumbnail when convenient.</span
-          >
+          <span>
+            The project can still be opened. Rebuild its derived thumbnail when convenient.
+          </span>
           <NButton size="small" @click="$emit('rebuildPreview', project.id)">
             <template v-slot:icon><NIcon :component="RefreshIcon" /></template>
             Rebuild Preview
@@ -165,17 +172,20 @@ const canOpen = computed(
 
         <div class="detail-grid">
           <div>
-            <span>Size</span><strong>{{ project.width }} × {{ project.height }}</strong>
+            <span>Size</span>
+            <strong>{{ project.width }} × {{ project.height }}</strong>
           </div>
           <div>
-            <span>Layers</span><strong>{{ project.layerCount }} layers</strong>
+            <span>Layers</span>
+            <strong>{{ project.layerCount }} layers</strong>
           </div>
           <div>
-            <span>Model</span><strong>{{ project.modelName ?? 'Not set' }}</strong>
+            <span>Model</span>
+            <strong>{{ project.modelName ?? 'Not set' }}</strong>
           </div>
           <div>
-            <span>Modified</span
-            ><strong>{{ new Date(project.modifiedAt).toLocaleString() }}</strong>
+            <span>Modified</span>
+            <strong>{{ new Date(project.modifiedAt).toLocaleString() }}</strong>
           </div>
         </div>
 
@@ -183,13 +193,15 @@ const canOpen = computed(
           <NButton
             type="primary"
             @click="$emit('action', { action: 'restore', projectId: project.id })"
-            >Restore Project</NButton
           >
+            Restore Project
+          </NButton>
           <NButton
             type="error"
             @click="$emit('action', { action: 'delete-permanently', projectId: project.id })"
-            >Delete Permanently</NButton
           >
+            Delete Permanently
+          </NButton>
         </div>
         <div v-else class="inspector-actions">
           <NButton
@@ -203,14 +215,15 @@ const canOpen = computed(
           <NButton
             :disabled="!canOpen"
             @click="$emit('open', { projectId: project.id, target: 'new' })"
-            >Open in New Tab</NButton
           >
-          <NButton @click="$emit('action', { action: 'move', projectId: project.id })"
-            >Move</NButton
-          >
-          <NButton @click="$emit('action', { action: 'reveal', projectId: project.id })"
-            >Show in Folder</NButton
-          >
+            Open in New Tab
+          </NButton>
+          <NButton @click="$emit('action', { action: 'move', projectId: project.id })">
+            Move
+          </NButton>
+          <NButton @click="$emit('action', { action: 'reveal', projectId: project.id })">
+            Show in Folder
+          </NButton>
         </div>
       </template>
     </template>

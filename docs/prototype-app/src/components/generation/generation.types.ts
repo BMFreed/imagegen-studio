@@ -1,54 +1,54 @@
-export type SeedPolicy = 'fixed' | 'random' | 'reuse';
+export type SeedPolicy = 'fixed' | 'random' | 'reuse'
 
 export interface GenerationResourceRef {
-  id: string;
-  missing?: boolean;
-  name: string;
-  version?: string;
+  id: string
+  missing?: boolean
+  name: string
+  version?: string
 }
 
-export type DanbooruTagCategory = 'artist' | 'character' | 'copyright' | 'general' | 'meta';
-export type GenerationPromptPolarity = 'negative' | 'positive';
+export type DanbooruTagCategory = 'artist' | 'character' | 'copyright' | 'general' | 'meta'
+export type GenerationPromptPolarity = 'negative' | 'positive'
 
 export interface GenerationEmbeddingResourceRef extends GenerationResourceRef {
-  activationToken: string;
-  baseModel?: string;
-  negativeToken?: string;
-  suggestedPolarity?: GenerationPromptPolarity;
+  activationToken: string
+  baseModel?: string
+  negativeToken?: string
+  suggestedPolarity?: GenerationPromptPolarity
 }
 
 export interface GenerationLoraResourceRef extends GenerationResourceRef {
-  triggerPhrases: string[];
+  triggerPhrases: string[]
 }
 
 export interface GenerationPrompt {
-  tokens: GenerationPromptToken[];
+  tokens: GenerationPromptToken[]
 }
 
 export interface GenerationCustomPromptToken extends GenerationPromptTokenBase {
-  kind: 'custom';
+  kind: 'custom'
 }
 
 export interface GenerationDanbooruPromptToken extends GenerationPromptTokenBase {
-  aliases: string[];
-  canonicalName: string;
-  category: DanbooruTagCategory;
-  kind: 'danbooru';
-  postCount: number;
+  aliases: string[]
+  canonicalName: string
+  category: DanbooruTagCategory
+  kind: 'danbooru'
+  postCount: number
 }
 
 export interface GenerationDynamicPromptToken extends GenerationPromptTokenBase {
-  kind: 'dynamic';
+  kind: 'dynamic'
 }
 
 export interface GenerationEmbeddingPromptToken extends GenerationPromptTokenBase {
-  kind: 'embedding';
-  resource: GenerationEmbeddingResourceRef;
+  kind: 'embedding'
+  resource: GenerationEmbeddingResourceRef
 }
 
 export interface GenerationLoraTriggerPromptToken extends GenerationPromptTokenBase {
-  kind: 'lora-trigger';
-  sourceLoraIds: string[];
+  kind: 'lora-trigger'
+  sourceLoraIds: string[]
 }
 
 export type GenerationPromptToken =
@@ -56,52 +56,52 @@ export type GenerationPromptToken =
   | GenerationDanbooruPromptToken
   | GenerationDynamicPromptToken
   | GenerationEmbeddingPromptToken
-  | GenerationLoraTriggerPromptToken;
+  | GenerationLoraTriggerPromptToken
 
 export interface GenerationModelRef extends GenerationResourceRef {
-  baseModel: string;
-  predictionType: 'epsilon' | 'v-pred';
+  baseModel: string
+  predictionType: 'epsilon' | 'v-pred'
 }
 
 export interface GenerationLora {
-  enabled: boolean;
-  resource: GenerationLoraResourceRef;
-  weight: number;
+  enabled: boolean
+  resource: GenerationLoraResourceRef
+  weight: number
 }
 
 export interface GenerationPayload {
-  denoisingStrength?: number;
+  denoisingStrength?: number
   guidance?: {
-    cfgScale: number;
-    steps: number;
-  };
-  loras?: GenerationLora[];
-  model?: GenerationModelRef;
-  negativePrompt?: GenerationPrompt;
-  prompt?: GenerationPrompt;
+    cfgScale: number
+    steps: number
+  }
+  loras?: GenerationLora[]
+  model?: GenerationModelRef
+  negativePrompt?: GenerationPrompt
+  prompt?: GenerationPrompt
   sampling?: {
-    sampler: string;
-    scheduler: string;
-  };
+    sampler: string
+    scheduler: string
+  }
   seed?: {
-    policy: SeedPolicy;
-    value?: number;
-  };
+    policy: SeedPolicy
+    value?: number
+  }
   size?: {
-    height: number;
-    width: number;
-  };
-  vae?: GenerationResourceRef;
+    height: number
+    width: number
+  }
+  vae?: GenerationResourceRef
 }
 
 export interface GenerationEditorResources {
-  embeddings: GenerationEmbeddingResourceRef[];
-  loras: GenerationLoraResourceRef[];
-  models: GenerationModelRef[];
-  vaes: GenerationResourceRef[];
+  embeddings: GenerationEmbeddingResourceRef[]
+  loras: GenerationLoraResourceRef[]
+  models: GenerationModelRef[]
+  vaes: GenerationResourceRef[]
 }
 
 interface GenerationPromptTokenBase {
-  id: string;
-  text: string;
+  id: string
+  text: string
 }

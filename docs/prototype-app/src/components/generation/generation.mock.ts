@@ -1,11 +1,11 @@
-import type { DanbooruTagMock } from './generation-prompt.utils';
+import type { DanbooruTagMock } from './generation-prompt.utils'
 import type {
   GenerationEditorResources,
   GenerationEmbeddingResourceRef,
   GenerationLoraResourceRef,
   GenerationModelRef,
   GenerationResourceRef,
-} from './generation.types';
+} from './generation.types'
 
 export const generationModels: GenerationModelRef[] = [
   {
@@ -22,7 +22,7 @@ export const generationModels: GenerationModelRef[] = [
     predictionType: 'epsilon',
     version: 'v3',
   },
-];
+]
 
 export const generationLoras: GenerationLoraResourceRef[] = [
   {
@@ -43,7 +43,7 @@ export const generationLoras: GenerationLoraResourceRef[] = [
     triggerPhrases: ['soft detail', 'delicate texture'],
     version: 'v0.2',
   },
-];
+]
 
 export const generationEmbeddings: GenerationEmbeddingResourceRef[] = [
   {
@@ -70,12 +70,12 @@ export const generationEmbeddings: GenerationEmbeddingResourceRef[] = [
     negativeToken: '<clean-anime-negative>',
     suggestedPolarity: 'negative',
   },
-];
+]
 
 export const generationVaes: GenerationResourceRef[] = [
   { id: 'illustrious-built-in-vae', name: 'Illustrious built-in' },
   { id: 'none', name: 'None' },
-];
+]
 
 export const mockDanbooruTags: DanbooruTagMock[] = [
   { aliases: ['1girls', 'solo female'], category: 'general', name: '1girl', postCount: 6_008_644 },
@@ -90,11 +90,11 @@ export const mockDanbooruTags: DanbooruTagMock[] = [
   { aliases: ['concept art'], category: 'meta', name: 'concept_art', postCount: 210_000 },
   { aliases: ['bad anatomy'], category: 'meta', name: 'bad_anatomy', postCount: 145_000 },
   { aliases: ['low res'], category: 'meta', name: 'lowres', postCount: 1_990_000 },
-];
+]
 
 export const generationEditorResources: GenerationEditorResources = {
   embeddings: generationEmbeddings,
   loras: generationLoras,
   models: generationModels,
   vaes: generationVaes,
-};
+}

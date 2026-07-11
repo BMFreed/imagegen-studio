@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { NButton, NCard, NModal, NSplit, NText, useDialog, useMessage } from 'naive-ui';
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { NButton, NCard, NModal, NSplit, NText, useDialog, useMessage } from 'naive-ui'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 import type {
   PresetCreateIntent,
   PresetDefinition,
   PresetRecord,
   PresetWorkflow,
-} from './presets.types';
+} from './presets.types'
 
-import { AppLayer } from '../../theme/app-layers';
-import PresetList from './PresetList.vue';
-import PresetManagerEditor from './PresetManagerEditor.vue';
-import PresetManagerHeader from './PresetManagerHeader.vue';
-import PresetManagerNavigation from './PresetManagerNavigation.vue';
-import { defaultPresetId, presetEditorResources, presetResources } from './presets.mock';
+import { AppLayer } from '../../theme/app-layers'
+import PresetList from './PresetList.vue'
+import PresetManagerEditor from './PresetManagerEditor.vue'
+import PresetManagerHeader from './PresetManagerHeader.vue'
+import PresetManagerNavigation from './PresetManagerNavigation.vue'
+import { defaultPresetId, presetEditorResources, presetResources } from './presets.mock'
 import {
   clonePreset,
   createManualPresetDefinition,
@@ -24,331 +24,331 @@ import {
   isPresetEqual,
   presetHasMissingResources,
   presetSearchText,
-} from './presets.utils';
+} from './presets.utils'
 
-type WorkflowFilter = 'all' | PresetWorkflow;
-type ManagerSelection = { id: string; kind: 'record' } | { kind: 'draft' };
-type PendingNavigation = { id: string; type: 'select' } | { type: 'close' } | { type: 'new' };
+type WorkflowFilter = 'all' | PresetWorkflow
+type ManagerSelection = { id: string; kind: 'record' } | { kind: 'draft' }
+type PendingNavigation = { id: string; type: 'select' } | { type: 'close' } | { type: 'new' }
 
 const props = defineProps<{
-  initialCreateIntent?: PresetCreateIntent;
-  initialSelectedId?: string;
-}>();
+  initialCreateIntent?: PresetCreateIntent
+  initialSelectedId?: string
+}>()
 const emit = defineEmits<{
-  close: [];
-}>();
+  close: []
+}>()
 
-const dialog = useDialog();
-const message = useMessage();
-const presets = ref(presetResources.map((preset) => clonePreset(preset)));
-const managerOpen = ref(false);
-const navigationPaneSize = ref<number | string>('210px');
-const presetPaneSize = ref<number | string>('calc(100% - 520px)');
-const createIntent = ref<PresetCreateIntent | undefined>(props.initialCreateIntent);
+const dialog = useDialog()
+const message = useMessage()
+const presets = ref(presetResources.map((preset) => clonePreset(preset)))
+const managerOpen = ref(false)
+const navigationPaneSize = ref<number | string>('210px')
+const presetPaneSize = ref<number | string>('calc(100% - 520px)')
+const createIntent = ref<PresetCreateIntent | undefined>(props.initialCreateIntent)
 const selection = ref<ManagerSelection>(
   props.initialCreateIntent
     ? { kind: 'draft' }
     : { id: props.initialSelectedId ?? defaultPresetId, kind: 'record' },
-);
-const previousSelectedId = ref(props.initialSelectedId ?? defaultPresetId);
-const draft = ref<PresetDefinition>(getInitialDefinition());
-const workflowFilter = ref<WorkflowFilter>('all');
-const searchFilter = ref('');
-const sortValue = ref<'name' | 'recent'>('name');
-const favoritesOnly = ref(false);
-const attentionOnly = ref(false);
-const pendingNavigation = ref<PendingNavigation | null>(null);
-const showUnsavedDialog = ref(false);
+)
+const previousSelectedId = ref(props.initialSelectedId ?? defaultPresetId)
+const draft = ref<PresetDefinition>(getInitialDefinition())
+const workflowFilter = ref<WorkflowFilter>('all')
+const searchFilter = ref('')
+const sortValue = ref<'name' | 'recent'>('name')
+const favoritesOnly = ref(false)
+const attentionOnly = ref(false)
+const pendingNavigation = ref<PendingNavigation | null>(null)
+const showUnsavedDialog = ref(false)
 
-const creating = computed(() => selection.value.kind === 'draft');
-const selectedId = computed(() => (selection.value.kind === 'record' ? selection.value.id : ''));
+const creating = computed(() => selection.value.kind === 'draft')
+const selectedId = computed(() => (selection.value.kind === 'record' ? selection.value.id : ''))
 const selectedRecord = computed(() => {
-  const currentSelection = selection.value;
+  const currentSelection = selection.value
 
   return currentSelection.kind === 'record'
     ? presets.value.find((preset) => preset.id === currentSelection.id)
-    : undefined;
-});
+    : undefined
+})
 const dirty = computed(
   () =>
     creating.value ||
     (selectedRecord.value
       ? !isPresetEqual(draft.value, toDefinition(selectedRecord.value))
       : false),
-);
+)
 const hasActiveFilters = computed(
   () =>
     workflowFilter.value !== 'all' ||
     searchFilter.value.trim() !== '' ||
     favoritesOnly.value ||
     attentionOnly.value,
-);
+)
 const visiblePresets = computed(() => {
-  const query = searchFilter.value.trim().toLocaleLowerCase();
+  const query = searchFilter.value.trim().toLocaleLowerCase()
   const filtered = presets.value.filter(
     (preset) =>
       (workflowFilter.value === 'all' || preset.workflow === workflowFilter.value) &&
       (!favoritesOnly.value || preset.favorite) &&
       (!attentionOnly.value || presetHasMissingResources(preset)) &&
       (query === '' || presetSearchText(preset).includes(query)),
-  );
+  )
 
   return filtered.toSorted((left, right) =>
     sortValue.value === 'name'
       ? left.name.localeCompare(right.name)
       : Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-  );
-});
+  )
+})
 
 function toDefinition(record: PresetRecord): PresetDefinition {
-  const { id: _id, updatedAt: _updatedAt, ...definition } = record;
-  return clonePreset(definition);
+  const { id: _id, updatedAt: _updatedAt, ...definition } = record
+  return clonePreset(definition)
 }
 
 function getRecord(id: string): PresetRecord {
-  const record = presets.value.find((candidate) => candidate.id === id) ?? presets.value[0];
+  const record = presets.value.find((candidate) => candidate.id === id) ?? presets.value[0]
 
   if (!record) {
-    throw new Error('Preset Manager prototype requires at least one mock preset.');
+    throw new Error('Preset Manager prototype requires at least one mock preset.')
   }
 
-  return record;
+  return record
 }
 
 function getInitialDefinition(): PresetDefinition {
   if (props.initialCreateIntent?.kind === 'project') {
-    return createPresetDefinitionFromProject(props.initialCreateIntent);
+    return createPresetDefinitionFromProject(props.initialCreateIntent)
   }
 
   if (props.initialCreateIntent?.kind === 'manual') {
-    return createManualPresetDefinition();
+    return createManualPresetDefinition()
   }
 
-  return toDefinition(getRecord(props.initialSelectedId ?? defaultPresetId));
+  return toDefinition(getRecord(props.initialSelectedId ?? defaultPresetId))
 }
 
 function resetFilters() {
-  workflowFilter.value = 'all';
-  searchFilter.value = '';
-  favoritesOnly.value = false;
-  attentionOnly.value = false;
+  workflowFilter.value = 'all'
+  searchFilter.value = ''
+  favoritesOnly.value = false
+  attentionOnly.value = false
 }
 
 function focusPresetName() {
   void nextTick(() => {
-    globalThis.document.querySelector<HTMLInputElement>('[aria-label="Preset name"]')?.focus();
-  });
+    globalThis.document.querySelector<HTMLInputElement>('[aria-label="Preset name"]')?.focus()
+  })
 }
 
 function selectPreset(id: string) {
-  const record = getRecord(id);
-  selection.value = { id: record.id, kind: 'record' };
-  draft.value = toDefinition(record);
+  const record = getRecord(id)
+  selection.value = { id: record.id, kind: 'record' }
+  draft.value = toDefinition(record)
 }
 
 function startManualCreate() {
   if (selection.value.kind === 'record') {
-    previousSelectedId.value = selection.value.id;
+    previousSelectedId.value = selection.value.id
   }
 
-  createIntent.value = { kind: 'manual' };
-  draft.value = createManualPresetDefinition();
-  selection.value = { kind: 'draft' };
-  focusPresetName();
+  createIntent.value = { kind: 'manual' }
+  draft.value = createManualPresetDefinition()
+  selection.value = { kind: 'draft' }
+  focusPresetName()
 }
 
 function requestNewPreset() {
   if (creating.value) {
-    focusPresetName();
-    return;
+    focusPresetName()
+    return
   }
 
   if (dirty.value) {
-    pendingNavigation.value = { type: 'new' };
-    showUnsavedDialog.value = true;
-    return;
+    pendingNavigation.value = { type: 'new' }
+    showUnsavedDialog.value = true
+    return
   }
 
-  startManualCreate();
+  startManualCreate()
 }
 
 function requestSelection(id: string) {
   if (selection.value.kind === 'record' && id === selection.value.id) {
-    return;
+    return
   }
 
   if (!dirty.value) {
-    selectPreset(id);
-    return;
+    selectPreset(id)
+    return
   }
 
-  pendingNavigation.value = { id, type: 'select' };
-  showUnsavedDialog.value = true;
+  pendingNavigation.value = { id, type: 'select' }
+  showUnsavedDialog.value = true
 }
 
 function requestClose() {
   if (!dirty.value) {
-    managerOpen.value = false;
-    return;
+    managerOpen.value = false
+    return
   }
 
-  pendingNavigation.value = { type: 'close' };
-  showUnsavedDialog.value = true;
+  pendingNavigation.value = { type: 'close' }
+  showUnsavedDialog.value = true
 }
 
 function saveDraft(showMessage = true): boolean {
-  const currentSelection = selection.value;
+  const currentSelection = selection.value
 
   if (currentSelection.kind !== 'record' || !isPresetDefinitionValid(draft.value)) {
-    return false;
+    return false
   }
 
-  const index = presets.value.findIndex((preset) => preset.id === currentSelection.id);
+  const index = presets.value.findIndex((preset) => preset.id === currentSelection.id)
 
   if (index < 0) {
-    return false;
+    return false
   }
 
-  const current = presets.value[index]!;
+  const current = presets.value[index]!
   presets.value[index] = {
     ...clonePreset(draft.value),
     id: current.id,
     updatedAt: new Date().toISOString(),
-  };
-  draft.value = toDefinition(presets.value[index]!);
+  }
+  draft.value = toDefinition(presets.value[index]!)
 
   if (showMessage) {
-    message.success('Preset saved');
+    message.success('Preset saved')
   }
 
-  return true;
+  return true
 }
 
 function createDraft(showMessage = true): PresetRecord | undefined {
   if (!creating.value || !isPresetDefinitionValid(draft.value)) {
-    return undefined;
+    return undefined
   }
 
-  const record = createPresetRecord(draft.value);
-  presets.value.unshift(record);
-  createIntent.value = undefined;
-  selection.value = { id: record.id, kind: 'record' };
-  draft.value = toDefinition(record);
+  const record = createPresetRecord(draft.value)
+  presets.value.unshift(record)
+  createIntent.value = undefined
+  selection.value = { id: record.id, kind: 'record' }
+  draft.value = toDefinition(record)
 
   if (showMessage) {
-    message.success('Preset created');
+    message.success('Preset created')
   }
 
-  return record;
+  return record
 }
 
 function completePendingNavigation() {
-  const pending = pendingNavigation.value;
-  pendingNavigation.value = null;
-  showUnsavedDialog.value = false;
+  const pending = pendingNavigation.value
+  pendingNavigation.value = null
+  showUnsavedDialog.value = false
 
   if (!pending) {
-    return;
+    return
   }
 
   if (pending.type === 'select') {
-    selectPreset(pending.id);
+    selectPreset(pending.id)
   } else if (pending.type === 'new') {
-    startManualCreate();
+    startManualCreate()
   } else {
-    managerOpen.value = false;
+    managerOpen.value = false
   }
 }
 
 function saveAndContinue() {
-  const completed = creating.value ? Boolean(createDraft(false)) : saveDraft(false);
+  const completed = creating.value ? Boolean(createDraft(false)) : saveDraft(false)
 
   if (completed) {
-    completePendingNavigation();
+    completePendingNavigation()
   }
 }
 
 function discardAndContinue() {
   if (!creating.value && selectedRecord.value) {
-    draft.value = toDefinition(selectedRecord.value);
+    draft.value = toDefinition(selectedRecord.value)
   }
 
-  createIntent.value = undefined;
-  completePendingNavigation();
+  createIntent.value = undefined
+  completePendingNavigation()
 }
 
 function cancelPendingNavigation() {
-  pendingNavigation.value = null;
-  showUnsavedDialog.value = false;
+  pendingNavigation.value = null
+  showUnsavedDialog.value = false
 }
 
 function cancelCreate() {
   if (!creating.value) {
-    return;
+    return
   }
 
   if (createIntent.value?.kind === 'project') {
-    managerOpen.value = false;
-    return;
+    managerOpen.value = false
+    return
   }
 
-  createIntent.value = undefined;
-  selectPreset(previousSelectedId.value);
+  createIntent.value = undefined
+  selectPreset(previousSelectedId.value)
 }
 
 function duplicatePreset() {
-  const currentSelection = selection.value;
+  const currentSelection = selection.value
 
   if (currentSelection.kind !== 'record') {
-    return;
+    return
   }
 
-  const selectedIndex = presets.value.findIndex((preset) => preset.id === currentSelection.id);
+  const selectedIndex = presets.value.findIndex((preset) => preset.id === currentSelection.id)
   const copy = createPresetRecord({
     ...clonePreset(draft.value),
     name: `${draft.value.name} Copy`,
-  });
-  presets.value.splice(selectedIndex + 1, 0, copy);
-  selectPreset(copy.id);
-  message.success('Preset duplicated');
+  })
+  presets.value.splice(selectedIndex + 1, 0, copy)
+  selectPreset(copy.id)
+  message.success('Preset duplicated')
 }
 
 function deletePreset() {
   if (selection.value.kind !== 'record') {
-    return;
+    return
   }
 
   dialog.warning({
     content: 'Delete this preset? Projects that already used it will not be changed.',
     negativeText: 'Cancel',
     onPositiveClick: () => {
-      const selectedIndex = presets.value.findIndex((preset) => preset.id === selectedId.value);
-      presets.value.splice(selectedIndex, 1);
-      const nextPreset = presets.value[Math.min(selectedIndex, presets.value.length - 1)];
+      const selectedIndex = presets.value.findIndex((preset) => preset.id === selectedId.value)
+      presets.value.splice(selectedIndex, 1)
+      const nextPreset = presets.value[Math.min(selectedIndex, presets.value.length - 1)]
 
       if (nextPreset) {
-        selectPreset(nextPreset.id);
+        selectPreset(nextPreset.id)
       }
 
-      message.success('Preset deleted');
+      message.success('Preset deleted')
     },
     positiveButtonProps: { type: 'error' },
     positiveText: 'Delete',
     title: 'Delete preset',
-  });
+  })
 }
 
 function handleVisibilityChange(visible: boolean) {
   if (!visible) {
-    requestClose();
+    requestClose()
   }
 }
 
 onMounted(() => {
   void nextTick(() => {
-    managerOpen.value = true;
-  });
-});
+    managerOpen.value = true
+  })
+})
 </script>
 
 <template>

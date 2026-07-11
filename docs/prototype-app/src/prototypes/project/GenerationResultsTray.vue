@@ -1,38 +1,38 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronUp, Eye, EyeOff, Trash } from '@vicons/tabler';
-import { NButton, NIcon, NText } from 'naive-ui';
-import { computed } from 'vue';
+import { ChevronDown, ChevronUp, Eye, EyeOff, Trash } from '@vicons/tabler'
+import { NButton, NIcon, NText } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { ProjectSession } from './project.types';
+import type { ProjectSession } from './project.types'
 
-import GenerationCandidateCard from './GenerationCandidateCard.vue';
+import GenerationCandidateCard from './GenerationCandidateCard.vue'
 
-const props = defineProps<{ session: ProjectSession }>();
-const emit = defineEmits<{ accept: []; discard: [] }>();
-const staging = computed(() => props.session.staging);
+const props = defineProps<{ session: ProjectSession }>()
+const emit = defineEmits<{ accept: []; discard: [] }>()
+const staging = computed(() => props.session.staging)
 const completed = computed(
   () => staging.value?.candidates.filter((item) => item.status === 'completed') ?? [],
-);
-const selectedCount = computed(() => staging.value?.selectedCandidateIds.length ?? 0);
+)
+const selectedCount = computed(() => staging.value?.selectedCandidateIds.length ?? 0)
 const hasUnfinished = computed(() =>
   staging.value?.candidates.some((item) => item.status === 'pending' || item.status === 'running'),
-);
+)
 const label = computed(() => {
-  const variants = staging.value?.target.kind === 'smart-patch';
-  return `Add ${selectedCount.value} as ${variants ? (selectedCount.value === 1 ? 'Variant' : 'Variants') : selectedCount.value === 1 ? 'Layer' : 'Layers'}`;
-});
+  const variants = staging.value?.target.kind === 'smart-patch'
+  return `Add ${selectedCount.value} as ${variants ? (selectedCount.value === 1 ? 'Variant' : 'Variants') : selectedCount.value === 1 ? 'Layer' : 'Layers'}`
+})
 function setSelected(id: string, selected: boolean) {
-  const value = staging.value;
+  const value = staging.value
   if (!value) {
-    return;
+    return
   }
   value.selectedCandidateIds = selected
     ? [...new Set([...value.selectedCandidateIds, id])]
-    : value.selectedCandidateIds.filter((item) => item !== id);
+    : value.selectedCandidateIds.filter((item) => item !== id)
 }
 function selectAll() {
   if (staging.value) {
-    staging.value.selectedCandidateIds = completed.value.map((item) => item.id);
+    staging.value.selectedCandidateIds = completed.value.map((item) => item.id)
   }
 }
 </script>
@@ -46,12 +46,11 @@ function selectAll() {
   >
     <header class="tray-header">
       <div>
-        <strong>Generation Results</strong
-        ><NText depth="3"
-          >{{ selectedCount }} selected<span v-if="hasUnfinished">
-            · generation running</span
-          ></NText
-        >
+        <strong>Generation Results</strong>
+        <NText depth="3">
+          {{ selectedCount }} selected
+          <span v-if="hasUnfinished">· generation running</span>
+        </NText>
       </div>
       <div class="tray-actions">
         <NButton size="tiny" tertiary @click="selectAll">Select all</NButton>
@@ -62,17 +61,20 @@ function selectAll() {
           quaternary
           size="tiny"
           @click="staging.previewVisible = !staging.previewVisible"
-          ><template v-slot:icon
-            ><NIcon :component="staging.previewVisible ? Eye : EyeOff" /></template
-        ></NButton>
+        >
+          <template v-slot:icon>
+            <NIcon :component="staging.previewVisible ? Eye : EyeOff" />
+          </template>
+        </NButton>
         <NButton
           aria-label="Discard all candidates"
           circle
           quaternary
           size="tiny"
           @click="emit('discard')"
-          ><template v-slot:icon><NIcon :component="Trash" /></template
-        ></NButton>
+        >
+          <template v-slot:icon><NIcon :component="Trash" /></template>
+        </NButton>
         <NButton
           :aria-label="
             staging.collapsed ? 'Expand Generation Results' : 'Collapse Generation Results'
@@ -81,9 +83,11 @@ function selectAll() {
           quaternary
           size="tiny"
           @click="staging.collapsed = !staging.collapsed"
-          ><template v-slot:icon
-            ><NIcon :component="staging.collapsed ? ChevronUp : ChevronDown" /></template
-        ></NButton>
+        >
+          <template v-slot:icon>
+            <NIcon :component="staging.collapsed ? ChevronUp : ChevronDown" />
+          </template>
+        </NButton>
       </div>
     </header>
     <template v-if="!staging.collapsed">
@@ -99,10 +103,10 @@ function selectAll() {
         />
       </div>
       <footer class="tray-footer">
-        <NText depth="3">Temporary candidates are not project layers until added.</NText
-        ><NButton :disabled="selectedCount === 0" type="primary" @click="emit('accept')">{{
-          label
-        }}</NButton>
+        <NText depth="3">Temporary candidates are not project layers until added.</NText>
+        <NButton :disabled="selectedCount === 0" type="primary" @click="emit('accept')">
+          {{ label }}
+        </NButton>
       </footer>
     </template>
   </section>

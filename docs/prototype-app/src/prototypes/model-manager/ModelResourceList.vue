@@ -1,38 +1,38 @@
 <script setup lang="ts">
-import { FilterOff as FilterOffIcon, ListDetails as ListIcon, X as XIcon } from '@vicons/tabler';
-import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect, NText } from 'naive-ui';
+import { FilterOff as FilterOffIcon, ListDetails as ListIcon, X as XIcon } from '@vicons/tabler'
+import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect, NText } from 'naive-ui'
 
-import type { ModelResource } from './model-manager.types';
+import type { ModelResource } from './model-manager.types'
 
-import ModelResourceRow from './ModelResourceRow.vue';
+import ModelResourceRow from './ModelResourceRow.vue'
 
 defineProps<{
-  hasActiveFilters: boolean;
-  resources: ModelResource[];
-  selectedId: string;
-}>();
+  hasActiveFilters: boolean
+  resources: ModelResource[]
+  selectedId: string
+}>()
 
 defineEmits<{
-  resetFilters: [];
-  select: [id: string];
-}>();
+  resetFilters: []
+  select: [id: string]
+}>()
 
-const searchValue = defineModel<string>('search', { required: true });
-const baseModelValue = defineModel<string>('baseModel', { required: true });
-const sortValue = defineModel<string>('sort', { required: true });
+const searchValue = defineModel<string>('search', { required: true })
+const baseModelValue = defineModel<string>('baseModel', { required: true })
+const sortValue = defineModel<string>('sort', { required: true })
 
 const baseModelOptions = [
   { label: 'All', value: 'all' },
   { label: 'Illustrious', value: 'illustrious' },
   { label: 'SDXL', value: 'sdxl' },
   { label: 'NoobAI', value: 'noobai' },
-];
+]
 
 const sortOptions = [
   { label: 'Name', value: 'name' },
   { label: 'Recently installed', value: 'recent' },
   { label: 'Size', value: 'size' },
-];
+]
 </script>
 
 <template>
@@ -83,9 +83,9 @@ const sortOptions = [
       <div class="install-progress">
         <NProgress :percentage="64" :showIndicator="false" type="line" />
       </div>
-      <span v-overflow-title class="install-subtitle"
-        >Downloading from CivitAI · 1.4 GB of 2.2 GB</span
-      >
+      <span v-overflow-title class="install-subtitle">
+        Downloading from CivitAI · 1.4 GB of 2.2 GB
+      </span>
       <div class="install-actions">
         <NButton size="small" tertiary type="error">
           <template v-slot:icon>

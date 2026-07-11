@@ -1,11 +1,11 @@
-import { defineConfig } from '@playwright/test';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
+import { defineConfig } from '@playwright/test'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 
-const __dirname = import.meta.dirname;
-const rootDir = path.resolve(__dirname, '..', '..');
-const port = 5174;
-const chromiumPath = process.env['CHROMIUM_PATH'];
+const __dirname = import.meta.dirname
+const rootDir = path.resolve(__dirname, '..', '..')
+const port = 5174
+const chromiumPath = process.env['CHROMIUM_PATH']
 
 const chromiumCandidates = [
   ...(chromiumPath ? [chromiumPath] : []),
@@ -13,13 +13,13 @@ const chromiumCandidates = [
   '/usr/bin/chromium-browser',
   '/usr/bin/google-chrome-stable',
   '/usr/bin/google-chrome',
-];
+]
 
 function findChromiumExecutable() {
-  return chromiumCandidates.find((candidate) => existsSync(candidate));
+  return chromiumCandidates.find((candidate) => existsSync(candidate))
 }
 
-const executablePath = findChromiumExecutable();
+const executablePath = findChromiumExecutable()
 
 export default defineConfig({
   expect: {
@@ -47,4 +47,4 @@ export default defineConfig({
     timeout: 20_000,
     url: `http://127.0.0.1:${port}/`,
   },
-});
+})

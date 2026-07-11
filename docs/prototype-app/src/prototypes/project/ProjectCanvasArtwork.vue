@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import type { ProjectArtworkTone } from './project.types';
+import type { ProjectArtworkTone } from './project.types'
 
-withDefaults(defineProps<{ tone?: ProjectArtworkTone }>(), { tone: 'emerald' });
+withDefaults(defineProps<{ tone?: ProjectArtworkTone }>(), { tone: 'emerald' })
 </script>
 
 <template>
   <div aria-hidden="true" class="canvas-art" :class="`canvas-art--${tone}`">
-    <span class="portrait-face" /><span class="portrait-body" />
+    <span class="portrait-face" />
+    <span class="portrait-body" />
   </div>
 </template>
 

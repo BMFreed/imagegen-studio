@@ -1,4 +1,4 @@
-import type { HomeProjectRecord, HomeScenario, HomeScenarioId, HomeWorkspace } from './home.types';
+import type { HomeProjectRecord, HomeScenario, HomeScenarioId, HomeWorkspace } from './home.types'
 
 const workspaces: HomeWorkspace[] = [
   {
@@ -49,7 +49,7 @@ const workspaces: HomeWorkspace[] = [
     name: 'Archive drive',
     path: '/media/archive/ImageGen',
   },
-];
+]
 
 const projects: HomeProjectRecord[] = [
   {
@@ -195,7 +195,7 @@ const projects: HomeProjectRecord[] = [
     width: 1024,
     workspaceId: 'character-studies',
   },
-];
+]
 
 export function createHomeScenario(id: HomeScenarioId): HomeScenario {
   if (id === 'first-run') {
@@ -203,11 +203,11 @@ export function createHomeScenario(id: HomeScenarioId): HomeScenario {
       hasInstalledModel: false,
       projects: [],
       workspaces: cloneWorkspaces().filter((workspace) => workspace.id === 'uncategorized'),
-    };
+    }
   }
 
   if (id === 'problems') {
-    const problemProjects = cloneProjects();
+    const problemProjects = cloneProjects()
     problemProjects.push(
       {
         ...problemProjects[0]!,
@@ -229,21 +229,21 @@ export function createHomeScenario(id: HomeScenarioId): HomeScenario {
         modifiedAt: '2026-06-26T09:00:00.000Z',
         thumbnailTone: 'violet',
       },
-    );
-    return { hasInstalledModel: true, projects: problemProjects, workspaces: cloneWorkspaces() };
+    )
+    return { hasInstalledModel: true, projects: problemProjects, workspaces: cloneWorkspaces() }
   }
 
   return {
     hasInstalledModel: id !== 'no-model',
     projects: cloneProjects(),
     workspaces: cloneWorkspaces(),
-  };
+  }
 }
 
 function cloneWorkspaces() {
-  return structuredClone(workspaces);
+  return structuredClone(workspaces)
 }
 
 function cloneProjects() {
-  return structuredClone(projects);
+  return structuredClone(projects)
 }

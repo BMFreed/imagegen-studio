@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { FolderOff as EmptyIcon } from '@vicons/tabler';
-import { NButton, NEmpty, NIcon } from 'naive-ui';
+import { FolderOff as EmptyIcon } from '@vicons/tabler'
+import { NButton, NEmpty, NIcon } from 'naive-ui'
 
 defineProps<{
-  filtered: boolean;
-  trashView: boolean;
-}>();
+  filtered: boolean
+  trashView: boolean
+}>()
 
 defineEmits<{
-  newProject: [];
-  openProject: [];
-  reset: [];
-}>();
+  newProject: []
+  openProject: []
+  reset: []
+}>()
 </script>
 
 <template>

@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import { type MenuOption, NMenu } from 'naive-ui';
-import { computed, h } from 'vue';
+import { type MenuOption, NMenu } from 'naive-ui'
+import { computed, h } from 'vue'
 
-import type { PresetRecord, PresetWorkflow } from './presets.types';
+import type { PresetRecord, PresetWorkflow } from './presets.types'
 
-import { workflowLabels } from './presets.utils';
+import { workflowLabels } from './presets.utils'
 
-type WorkflowFilter = 'all' | PresetWorkflow;
+type WorkflowFilter = 'all' | PresetWorkflow
 
 const props = defineProps<{
-  presets: PresetRecord[];
-}>();
+  presets: PresetRecord[]
+}>()
 
-const workflow = defineModel<WorkflowFilter>('workflow', { required: true });
+const workflow = defineModel<WorkflowFilter>('workflow', { required: true })
 
 function makeMenuLabel(label: string, count: number) {
   return () =>
     h('div', { class: 'menu-label' }, [
       h('span', label),
       h('span', { class: 'menu-count' }, String(count)),
-    ]);
+    ])
 }
 
 const workflowOptions = computed<MenuOption[]>(() => [
@@ -31,7 +31,7 @@ const workflowOptions = computed<MenuOption[]>(() => [
       props.presets.filter((preset) => preset.workflow === value).length,
     ),
   })),
-]);
+])
 </script>
 
 <template>

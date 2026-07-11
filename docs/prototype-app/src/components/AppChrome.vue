@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import logoUrl from '@docs-assets/brand/imagegen-studio-logo-horizontal-no-bg.svg';
+import logoUrl from '@docs-assets/brand/imagegen-studio-logo-horizontal-no-bg.svg'
 import {
   Download as DownloadIcon,
   ListDetails as ListDetailsIcon,
@@ -7,35 +7,35 @@ import {
   Settings as SettingsIcon,
   Square as SquareIcon,
   X as XIcon,
-} from '@vicons/tabler';
-import { NButton, NDropdown, NIcon } from 'naive-ui';
-import { computed } from 'vue';
+} from '@vicons/tabler'
+import { NButton, NDropdown, NIcon } from 'naive-ui'
+import { computed } from 'vue'
 
-import IconButton from './IconButton.vue';
+import IconButton from './IconButton.vue'
 
 const props = withDefaults(
   defineProps<{
-    canRedo?: boolean;
-    canSave?: boolean;
-    canUndo?: boolean;
-    projectActive?: boolean;
-    queueBadge?: number;
+    canRedo?: boolean
+    canSave?: boolean
+    canUndo?: boolean
+    projectActive?: boolean
+    queueBadge?: number
   }>(),
   { canRedo: false, canSave: false, canUndo: false, projectActive: false, queueBadge: 0 },
-);
+)
 
 const emit = defineEmits<{
-  applyPreset: [];
-  closeProject: [];
-  home: [];
-  manageModels: [];
-  managePresets: [];
-  queue: [];
-  redo: [];
-  save: [];
-  savePreset: [];
-  undo: [];
-}>();
+  applyPreset: []
+  closeProject: []
+  home: []
+  manageModels: []
+  managePresets: []
+  queue: []
+  redo: []
+  save: []
+  savePreset: []
+  undo: []
+}>()
 
 const menus = computed(() => [
   {
@@ -61,41 +61,41 @@ const menus = computed(() => [
     ],
   },
   { label: 'Models', options: [{ key: 'manageModels', label: 'Manage Models' }] },
-]);
+])
 
 function handleMenuSelect(key: string) {
   switch (key) {
     case 'applyPreset': {
-      emit('applyPreset');
-      break;
+      emit('applyPreset')
+      break
     }
     case 'closeProject': {
-      emit('closeProject');
-      break;
+      emit('closeProject')
+      break
     }
     case 'manageModels': {
-      emit('manageModels');
-      break;
+      emit('manageModels')
+      break
     }
     case 'managePresets': {
-      emit('managePresets');
-      break;
+      emit('managePresets')
+      break
     }
     case 'redo': {
-      emit('redo');
-      break;
+      emit('redo')
+      break
     }
     case 'save': {
-      emit('save');
-      break;
+      emit('save')
+      break
     }
     case 'savePreset': {
-      emit('savePreset');
-      break;
+      emit('savePreset')
+      break
     }
     case 'undo': {
-      emit('undo');
-      break;
+      emit('undo')
+      break
     }
   }
 }

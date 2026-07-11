@@ -1,31 +1,31 @@
 <script setup lang="ts">
-import { NModal, NSplit } from 'naive-ui';
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { NModal, NSplit } from 'naive-ui'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
-import type { ModelResource } from './model-manager.types';
+import type { ModelResource } from './model-manager.types'
 
-import { AppLayer } from '../../theme/app-layers';
-import CivitaiImportModal from './CivitaiImportModal.vue';
-import { modelResources, selectedModelId } from './model-manager.mock';
-import ModelDetailsPanel from './ModelDetailsPanel.vue';
-import ModelManagerHeader from './ModelManagerHeader.vue';
-import ModelManagerNavigation from './ModelManagerNavigation.vue';
-import ModelResourceList from './ModelResourceList.vue';
+import { AppLayer } from '../../theme/app-layers'
+import CivitaiImportModal from './CivitaiImportModal.vue'
+import { modelResources, selectedModelId } from './model-manager.mock'
+import ModelDetailsPanel from './ModelDetailsPanel.vue'
+import ModelManagerHeader from './ModelManagerHeader.vue'
+import ModelManagerNavigation from './ModelManagerNavigation.vue'
+import ModelResourceList from './ModelResourceList.vue'
 
-const selectedId = ref(selectedModelId);
-const showImportModal = ref(false);
-const modelTypeFilter = ref('all');
-const statusFilter = ref('all');
-const searchFilter = ref('');
-const baseModelFilter = ref('all');
-const sortValue = ref('name');
-const managerOpen = ref(false);
-const navigationPaneSize = ref<number | string>('220px');
-const resourcePaneSize = ref<number | string>('calc(100% - 520px)');
+const selectedId = ref(selectedModelId)
+const showImportModal = ref(false)
+const modelTypeFilter = ref('all')
+const statusFilter = ref('all')
+const searchFilter = ref('')
+const baseModelFilter = ref('all')
+const sortValue = ref('name')
+const managerOpen = ref(false)
+const navigationPaneSize = ref<number | string>('220px')
+const resourcePaneSize = ref<number | string>('calc(100% - 520px)')
 
 defineEmits<{
-  close: [];
-}>();
+  close: []
+}>()
 
 const hasActiveFilters = computed(
   () =>
@@ -33,47 +33,47 @@ const hasActiveFilters = computed(
     statusFilter.value !== 'all' ||
     searchFilter.value.trim() !== '' ||
     baseModelFilter.value !== 'all',
-);
+)
 
 function getSelectedResource(): ModelResource {
-  const resource = modelResources.find((resource) => resource.id === selectedId.value);
-  const fallbackResource = modelResources[0];
+  const resource = modelResources.find((resource) => resource.id === selectedId.value)
+  const fallbackResource = modelResources[0]
 
   if (resource) {
-    return resource;
+    return resource
   }
 
   if (fallbackResource) {
-    return fallbackResource;
+    return fallbackResource
   }
 
-  throw new Error('Model Manager prototype requires at least one mock resource.');
+  throw new Error('Model Manager prototype requires at least one mock resource.')
 }
 
-const selectedResource = computed(getSelectedResource);
+const selectedResource = computed(getSelectedResource)
 
 function resetFilters() {
-  modelTypeFilter.value = 'all';
-  statusFilter.value = 'all';
-  searchFilter.value = '';
-  baseModelFilter.value = 'all';
+  modelTypeFilter.value = 'all'
+  statusFilter.value = 'all'
+  searchFilter.value = ''
+  baseModelFilter.value = 'all'
 }
 
 function requestClose() {
-  managerOpen.value = false;
+  managerOpen.value = false
 }
 
 function handleVisibilityChange(visible: boolean) {
   if (!visible) {
-    requestClose();
+    requestClose()
   }
 }
 
 onMounted(() => {
   void nextTick(() => {
-    managerOpen.value = true;
-  });
-});
+    managerOpen.value = true
+  })
+})
 </script>
 
 <template>

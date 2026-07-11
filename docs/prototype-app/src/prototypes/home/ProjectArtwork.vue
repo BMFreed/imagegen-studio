@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ProjectThumbnailTone } from './home.types';
+import type { ProjectThumbnailTone } from './home.types'
 
 defineProps<{
-  tone: ProjectThumbnailTone;
-}>();
+  tone: ProjectThumbnailTone
+}>()
 </script>
 
 <template>

@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { NCard, NDynamicTags, NForm, NFormItem, NInput, NSelect, NSwitch } from 'naive-ui';
+import { NCard, NDynamicTags, NForm, NFormItem, NInput, NSelect, NSwitch } from 'naive-ui'
 
-import type { PresetDefinition, PresetWorkflow } from './presets.types';
+import type { PresetDefinition, PresetWorkflow } from './presets.types'
 
-import { normalizePayloadForWorkflow, workflowLabels } from './presets.utils';
+import { normalizePayloadForWorkflow, workflowLabels } from './presets.utils'
 
-const definition = defineModel<PresetDefinition>({ required: true });
+const definition = defineModel<PresetDefinition>({ required: true })
 
 const workflowOptions = Object.entries(workflowLabels).map(([value, label]) => ({
   label,
   value,
-}));
+}))
 
 function updateWorkflow(workflow: PresetWorkflow) {
-  definition.value.workflow = workflow;
-  definition.value.payload = normalizePayloadForWorkflow(definition.value.payload, workflow);
+  definition.value.workflow = workflow
+  definition.value.payload = normalizePayloadForWorkflow(definition.value.payload, workflow)
 }
 </script>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { FormInst, FormRules } from 'naive-ui';
+import type { FormInst, FormRules } from 'naive-ui'
 
-import { AlertTriangle as AlertIcon } from '@vicons/tabler';
+import { AlertTriangle as AlertIcon } from '@vicons/tabler'
 import {
   NAlert,
   NButton,
@@ -16,18 +16,18 @@ import {
   NScrollbar,
   NSelect,
   NText,
-} from 'naive-ui';
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+} from 'naive-ui'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import type {
   PresetApplicationDraft,
   PresetPayload,
   PresetSectionKey,
-} from '../presets/presets.types';
-import type { HomeProjectRecord, HomeWorkspace, NewProjectDraft } from './home.types';
+} from '../presets/presets.types'
+import type { HomeProjectRecord, HomeWorkspace, NewProjectDraft } from './home.types'
 
-import PresetPayloadEditor from '../presets/PresetPayloadEditor.vue';
-import { presetEditorResources, presetResources } from '../presets/presets.mock';
+import PresetPayloadEditor from '../presets/PresetPayloadEditor.vue'
+import { presetEditorResources, presetResources } from '../presets/presets.mock'
 import {
   clonePreset,
   includedSections,
@@ -35,51 +35,51 @@ import {
   presetSectionHasMissingResources,
   sectionLabels,
   summarizePresetSection,
-} from '../presets/presets.utils';
-import { validateProjectName } from './home.utils';
+} from '../presets/presets.utils'
+import { validateProjectName } from './home.utils'
 
 const props = defineProps<{
-  defaultWorkspaceId: string;
-  projects: HomeProjectRecord[];
-  workspaces: HomeWorkspace[];
-}>();
+  defaultWorkspaceId: string
+  projects: HomeProjectRecord[]
+  workspaces: HomeWorkspace[]
+}>()
 
 const emit = defineEmits<{
-  create: [draft: NewProjectDraft];
-}>();
+  create: [draft: NewProjectDraft]
+}>()
 
-const show = defineModel<boolean>('show', { required: true });
+const show = defineModel<boolean>('show', { required: true })
 
 const draft = reactive<NewProjectDraft>({
   height: 1024,
   name: '',
   width: 1024,
   workspaceId: props.defaultWorkspaceId,
-});
-const presetDraft = ref<PresetApplicationDraft>();
-const sourcePayload = ref<PresetPayload>();
-const expandedSections = ref<PresetSectionKey[]>([]);
-const formRef = ref<FormInst>();
+})
+const presetDraft = ref<PresetApplicationDraft>()
+const sourcePayload = ref<PresetPayload>()
+const expandedSections = ref<PresetSectionKey[]>([])
+const formRef = ref<FormInst>()
 
-const textToImagePresets = presetResources.filter((preset) => preset.workflow === 'textToImage');
+const textToImagePresets = presetResources.filter((preset) => preset.workflow === 'textToImage')
 const presetOptions = [
   { label: 'No preset', value: 'none' },
   ...textToImagePresets.map((preset) => ({ label: preset.name, value: preset.id })),
-];
+]
 const workspaceOptions = computed(() =>
   props.workspaces
     .filter((workspace) => workspace.availability === 'available')
     .map((workspace) => ({ label: workspace.name, value: workspace.id })),
-);
+)
 const selectedPreset = computed(() =>
   textToImagePresets.find((preset) => preset.id === draft.generationPresetId),
-);
+)
 const sections = computed(() =>
   presetDraft.value ? includedSections(presetDraft.value.payload) : [],
-);
+)
 const disabledSections = computed(() =>
   sections.value.filter((section) => !presetDraft.value?.selectedSections.includes(section)),
-);
+)
 const changedSections = computed(() =>
   sourcePayload.value && presetDraft.value
     ? sections.value.filter(
@@ -87,29 +87,27 @@ const changedSections = computed(() =>
           !isPresetSectionEqual(presetDraft.value!.payload, sourcePayload.value!, section),
       )
     : [],
-);
+)
 const selectedPresetHasMissingResource = computed(() =>
   Boolean(
     presetDraft.value?.selectedSections.some((section) =>
       presetSectionHasMissingResources(presetDraft.value!.payload, section),
     ),
   ),
-);
+)
 const canvasSize = computed(
   () => presetDraft.value?.payload.size ?? { height: draft.height, width: draft.width },
-);
-const nameError = computed(() =>
-  validateProjectName(draft.name, draft.workspaceId, props.projects),
-);
+)
+const nameError = computed(() => validateProjectName(draft.name, draft.workspaceId, props.projects))
 const formRules: FormRules = {
   name: {
     trigger: 'input',
     validator: () => {
-      const error = nameError.value;
-      return error ? new Error(error) : undefined;
+      const error = nameError.value
+      return error ? new Error(error) : undefined
     },
   },
-};
+}
 const valid = computed(
   () =>
     !nameError.value &&
@@ -117,16 +115,16 @@ const valid = computed(
     canvasSize.value.height >= 256 &&
     canvasSize.value.width <= 4096 &&
     canvasSize.value.height <= 4096,
-);
+)
 const allSectionsExpanded = computed(
   () =>
     sections.value.length > 0 &&
     sections.value.every((section) => expandedSections.value.includes(section)),
-);
+)
 
 watch(show, (visible) => {
   if (!visible) {
-    return;
+    return
   }
   Object.assign(draft, {
     generationPresetId: undefined,
@@ -134,98 +132,96 @@ watch(show, (visible) => {
     name: '',
     width: 1024,
     workspaceId: props.defaultWorkspaceId,
-  });
-  presetDraft.value = undefined;
-  sourcePayload.value = undefined;
-  expandedSections.value = [];
-  void nextTick(() => formRef.value?.restoreValidation());
-});
+  })
+  presetDraft.value = undefined
+  sourcePayload.value = undefined
+  expandedSections.value = []
+  void nextTick(() => formRef.value?.restoreValidation())
+})
 
 function selectPreset(presetId: string) {
   if (presetId === 'none') {
-    draft.generationPresetId = undefined;
-    draft.width = 1024;
-    draft.height = 1024;
-    presetDraft.value = undefined;
-    sourcePayload.value = undefined;
-    expandedSections.value = [];
-    return;
+    draft.generationPresetId = undefined
+    draft.width = 1024
+    draft.height = 1024
+    presetDraft.value = undefined
+    sourcePayload.value = undefined
+    expandedSections.value = []
+    return
   }
 
-  const preset = textToImagePresets.find((candidate) => candidate.id === presetId);
+  const preset = textToImagePresets.find((candidate) => candidate.id === presetId)
   if (!preset) {
-    return;
+    return
   }
 
-  const payload = clonePreset(preset.payload);
-  payload.size ??= { height: 1024, width: 1024 };
-  const nextSections = includedSections(payload);
-  draft.generationPresetId = preset.id;
-  sourcePayload.value = clonePreset(payload);
+  const payload = clonePreset(preset.payload)
+  payload.size ??= { height: 1024, width: 1024 }
+  const nextSections = includedSections(payload)
+  draft.generationPresetId = preset.id
+  sourcePayload.value = clonePreset(payload)
   presetDraft.value = {
     payload,
     selectedSections: nextSections.filter((section) => section !== 'seed'),
     sourcePresetId: preset.id,
-  };
-  expandedSections.value = [];
+  }
+  expandedSections.value = []
 }
 
 function sectionSelected(section: PresetSectionKey) {
-  return presetDraft.value?.selectedSections.includes(section) ?? false;
+  return presetDraft.value?.selectedSections.includes(section) ?? false
 }
 
 function setSectionSelected(section: PresetSectionKey, selected: boolean) {
-  const current = presetDraft.value;
+  const current = presetDraft.value
   if (!current || section === 'size') {
-    return;
+    return
   }
   if (selected && !current.selectedSections.includes(section)) {
-    current.selectedSections.push(section);
+    current.selectedSections.push(section)
   } else if (!selected) {
-    current.selectedSections = current.selectedSections.filter(
-      (candidate) => candidate !== section,
-    );
+    current.selectedSections = current.selectedSections.filter((candidate) => candidate !== section)
   }
 }
 
 function resetSection(section: PresetSectionKey) {
   if (!presetDraft.value || !sourcePayload.value) {
-    return;
+    return
   }
-  const sourceValue = sourcePayload.value[section];
+  const sourceValue = sourcePayload.value[section]
   if (sourceValue !== undefined) {
-    Reflect.set(presetDraft.value.payload, section, clonePreset(sourceValue));
+    Reflect.set(presetDraft.value.payload, section, clonePreset(sourceValue))
   }
 }
 
 function resetAll() {
   if (presetDraft.value && sourcePayload.value) {
-    presetDraft.value.payload = clonePreset(sourcePayload.value);
+    presetDraft.value.payload = clonePreset(sourcePayload.value)
   }
 }
 
 function toggleAllSectionsExpanded() {
-  expandedSections.value = allSectionsExpanded.value ? [] : [...sections.value];
+  expandedSections.value = allSectionsExpanded.value ? [] : [...sections.value]
 }
 
 function selectedPayload(): PresetPayload | undefined {
-  const current = presetDraft.value;
+  const current = presetDraft.value
   if (!current) {
-    return undefined;
+    return undefined
   }
-  const payload: PresetPayload = {};
+  const payload: PresetPayload = {}
   for (const section of current.selectedSections) {
-    const value = current.payload[section];
+    const value = current.payload[section]
     if (value !== undefined) {
-      Reflect.set(payload, section, clonePreset(value));
+      Reflect.set(payload, section, clonePreset(value))
     }
   }
-  return payload;
+  return payload
 }
 
 function submitProject() {
   if (!valid.value) {
-    return;
+    return
   }
   emit('create', {
     generationPayload: selectedPayload(),
@@ -234,16 +230,16 @@ function submitProject() {
     name: draft.name,
     width: canvasSize.value.width,
     workspaceId: draft.workspaceId,
-  });
-  show.value = false;
+  })
+  show.value = false
 }
 
 function createProject() {
   void formRef.value?.validate((errors) => {
     if (!errors) {
-      submitProject();
+      submitProject()
     }
-  });
+  })
 }
 </script>
 
@@ -323,9 +319,9 @@ function createProject() {
                 :workflow="selectedPreset.workflow"
               >
                 <template v-slot:section-context="{ section }">
-                  <NText depth="3"
-                    >Project: {{ summarizePresetSection(presetDraft.payload, section) }}</NText
-                  >
+                  <NText depth="3">
+                    Project: {{ summarizePresetSection(presetDraft.payload, section) }}
+                  </NText>
                 </template>
                 <template v-slot:section-actions="{ section }">
                   <NButton
@@ -345,7 +341,8 @@ function createProject() {
                     :checked="sectionSelected(section)"
                     @update:checked="setSectionSelected(section, $event)"
                   >
-                    Use <span class="sr-only">{{ sectionLabels[section] }}</span>
+                    Use
+                    <span class="sr-only">{{ sectionLabels[section] }}</span>
                   </NCheckbox>
                 </template>
               </PresetPayloadEditor>

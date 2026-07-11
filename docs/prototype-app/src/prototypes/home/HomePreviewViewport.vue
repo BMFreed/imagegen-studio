@@ -4,61 +4,61 @@ import {
   Refresh as ResetIcon,
   ZoomIn as ZoomInIcon,
   ZoomOut as ZoomOutIcon,
-} from '@vicons/tabler';
-import { NButton, NIcon } from 'naive-ui';
-import { computed, ref, watch } from 'vue';
+} from '@vicons/tabler'
+import { NButton, NIcon } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
 
-import type { HomeProjectRecord } from './home.types';
+import type { HomeProjectRecord } from './home.types'
 
-import ProjectArtwork from './ProjectArtwork.vue';
+import ProjectArtwork from './ProjectArtwork.vue'
 
 const props = defineProps<{
-  project: HomeProjectRecord;
-}>();
+  project: HomeProjectRecord
+}>()
 
-const scale = ref(0.72);
-const offsetX = ref(0);
-const offsetY = ref(0);
-const dragging = ref(false);
-let dragOrigin = { x: 0, y: 0 };
+const scale = ref(0.72)
+const offsetX = ref(0)
+const offsetY = ref(0)
+const dragging = ref(false)
+let dragOrigin = { x: 0, y: 0 }
 
 const transform = computed(
   () => `translate(${offsetX.value}px, ${offsetY.value}px) scale(${scale.value})`,
-);
+)
 
 watch(
   () => props.project.id,
   () => fitView(),
-);
+)
 
 function zoom(delta: number) {
-  scale.value = Math.min(1.5, Math.max(0.4, Number((scale.value + delta).toFixed(2))));
+  scale.value = Math.min(1.5, Math.max(0.4, Number((scale.value + delta).toFixed(2))))
 }
 
 function fitView() {
-  scale.value = 0.72;
-  offsetX.value = 0;
-  offsetY.value = 0;
+  scale.value = 0.72
+  offsetX.value = 0
+  offsetY.value = 0
 }
 
 function resetView() {
-  scale.value = 1;
-  offsetX.value = 0;
-  offsetY.value = 0;
+  scale.value = 1
+  offsetX.value = 0
+  offsetY.value = 0
 }
 
 function startDrag(event: PointerEvent) {
-  dragging.value = true;
-  dragOrigin = { x: event.clientX - offsetX.value, y: event.clientY - offsetY.value };
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  dragging.value = true
+  dragOrigin = { x: event.clientX - offsetX.value, y: event.clientY - offsetY.value }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
 function moveDrag(event: PointerEvent) {
   if (!dragging.value) {
-    return;
+    return
   }
-  offsetX.value = event.clientX - dragOrigin.x;
-  offsetY.value = event.clientY - dragOrigin.y;
+  offsetX.value = event.clientX - dragOrigin.x
+  offsetY.value = event.clientY - dragOrigin.y
 }
 </script>
 

@@ -1,9 +1,9 @@
-import vue from '@vitejs/plugin-vue';
-import path from 'node:path';
-import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue'
+import path from 'node:path'
+import { defineConfig } from 'vite'
 
-const __dirname = import.meta.dirname;
-const docsDir = path.resolve(__dirname, '..');
+const __dirname = import.meta.dirname
+const docsDir = path.resolve(__dirname, '..')
 
 export default defineConfig({
   build: {
@@ -23,4 +23,4 @@ export default defineConfig({
       allow: [__dirname, docsDir],
     },
   },
-});
+})

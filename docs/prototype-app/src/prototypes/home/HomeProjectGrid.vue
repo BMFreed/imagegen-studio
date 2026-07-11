@@ -1,22 +1,22 @@
 <script setup lang="ts">
-import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types';
+import type { HomeProjectAction, HomeProjectRecord, HomeWorkspace } from './home.types'
 
-import HomeProjectCard from './HomeProjectCard.vue';
+import HomeProjectCard from './HomeProjectCard.vue'
 
 defineProps<{
-  conditionsById: Record<string, string[]>;
-  projects: HomeProjectRecord[];
-  selectedId?: string;
-  showWorkspace: boolean;
-  trashView: boolean;
-  workspaces: HomeWorkspace[];
-}>();
+  conditionsById: Record<string, string[]>
+  projects: HomeProjectRecord[]
+  selectedId?: string
+  showWorkspace: boolean
+  trashView: boolean
+  workspaces: HomeWorkspace[]
+}>()
 
 defineEmits<{
-  action: [value: HomeProjectAction];
-  open: [value: { projectId: string; target: 'current' | 'new' }];
-  select: [id: string];
-}>();
+  action: [value: HomeProjectAction]
+  open: [value: { projectId: string; target: 'current' | 'new' }]
+  select: [id: string]
+}>()
 </script>
 
 <template>

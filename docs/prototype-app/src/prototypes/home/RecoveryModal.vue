@@ -1,50 +1,59 @@
 <script setup lang="ts">
-import { NButton, NCard, NModal } from 'naive-ui';
+import { NButton, NCard, NModal } from 'naive-ui'
 
-import type { HomeProjectRecord } from './home.types';
+import type { HomeProjectRecord } from './home.types'
 
-defineProps<{ project?: HomeProjectRecord }>();
-defineEmits<{ discard: []; recover: [] }>();
-const show = defineModel<boolean>('show', { required: true });
+defineProps<{ project?: HomeProjectRecord }>()
+defineEmits<{ discard: []; recover: [] }>()
+const show = defineModel<boolean>('show', { required: true })
 </script>
 
 <template>
-  <NModal v-model:show="show" :maskClosable="false"
-    ><NCard
+  <NModal v-model:show="show" :maskClosable="false">
+    <NCard
       aria-label="Recover Project"
       class="recovery-modal"
       role="dialog"
       size="small"
       title="Recovery available"
-      ><p>
+    >
+      <p>
         ImageGen Studio found unfinished changes for
-        <strong>{{ project?.displayName }}</strong> after an interrupted session.
+        <strong>{{ project?.displayName }}</strong>
+        after an interrupted session.
       </p>
       <p>
         Recovering opens those changes as an unsaved document. The saved .igs will not be
         overwritten until you explicitly save.
       </p>
-      <template v-slot:footer
-        ><div class="modal-actions">
-          <NButton @click="show = false">Cancel</NButton
-          ><NButton
+      <template v-slot:footer>
+        <div class="modal-actions">
+          <NButton @click="show = false">Cancel</NButton>
+          <NButton
             @click="
-              $emit('discard');
-              show = false;
+              () => {
+                $emit('discard')
+                show = false
+              }
             "
-            >Discard Recovery and Open Saved</NButton
-          ><NButton
+          >
+            Discard Recovery and Open Saved
+          </NButton>
+          <NButton
             type="primary"
             @click="
-              $emit('recover');
-              show = false;
+              () => {
+                $emit('recover')
+                show = false
+              }
             "
-            >Recover</NButton
           >
-        </div></template
-      ></NCard
-    ></NModal
-  >
+            Recover
+          </NButton>
+        </div>
+      </template>
+    </NCard>
+  </NModal>
 </template>
 
 <style scoped>

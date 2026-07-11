@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { NCollapseItem } from 'naive-ui';
+import { NCollapseItem } from 'naive-ui'
 
 withDefaults(
   defineProps<{
-    contentVisible?: boolean;
-    name: string;
-    title: string;
+    contentVisible?: boolean
+    name: string
+    title: string
   }>(),
   { contentVisible: true },
-);
+)
 </script>
 
 <template>

@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { DotsVertical as DotsIcon } from '@vicons/tabler';
-import { NButton, NDropdown, NIcon } from 'naive-ui';
-import { computed } from 'vue';
+import { DotsVertical as DotsIcon } from '@vicons/tabler'
+import { NButton, NDropdown, NIcon } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { HomeProjectAction } from './home.types';
+import type { HomeProjectAction } from './home.types'
 
 const props = defineProps<{
-  projectId: string;
-  trashView: boolean;
-}>();
+  projectId: string
+  trashView: boolean
+}>()
 
 const emit = defineEmits<{
-  action: [value: HomeProjectAction];
-  select: [id: string];
-}>();
+  action: [value: HomeProjectAction]
+  select: [id: string]
+}>()
 
 const options = computed(() =>
   props.trashView
@@ -29,13 +29,13 @@ const options = computed(() =>
         { key: 'reveal', label: 'Show in Folder' },
         { key: 'trash', label: 'Move to Trash' },
       ],
-);
+)
 
 function selectAction(key: string) {
   emit('action', {
     action: key as HomeProjectAction['action'],
     projectId: props.projectId,
-  });
+  })
 }
 </script>
 

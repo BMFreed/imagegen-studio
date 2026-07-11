@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, Braces, Copy, Eraser } from '@vicons/tabler';
-import { NButton, NIcon, NTooltip } from 'naive-ui';
+import { ArrowDown, ArrowUp, Braces, Copy, Eraser } from '@vicons/tabler'
+import { NButton, NIcon, NTooltip } from 'naive-ui'
 
-defineProps<{ tokenSelected: boolean }>();
+defineProps<{ tokenSelected: boolean }>()
 const emit = defineEmits<{
-  clear: [];
-  copy: [];
-  decrease: [];
-  dynamicPreview: [];
-  increase: [];
-}>();
+  clear: []
+  copy: []
+  decrease: []
+  dynamicPreview: []
+  increase: []
+}>()
 </script>
 
 <template>
@@ -24,8 +24,9 @@ const emit = defineEmits<{
           size="tiny"
           @click.stop="emit('increase')"
           @mousedown.prevent
-          ><template v-slot:icon><NIcon :component="ArrowUp" /></template
-        ></NButton>
+        >
+          <template v-slot:icon><NIcon :component="ArrowUp" /></template>
+        </NButton>
       </template>
       {{ tokenSelected ? 'Increase attention (Ctrl/Cmd+Up)' : 'Select a prompt token first' }}
     </NTooltip>
@@ -39,8 +40,9 @@ const emit = defineEmits<{
           size="tiny"
           @click.stop="emit('decrease')"
           @mousedown.prevent
-          ><template v-slot:icon><NIcon :component="ArrowDown" /></template
-        ></NButton>
+        >
+          <template v-slot:icon><NIcon :component="ArrowDown" /></template>
+        </NButton>
       </template>
       {{ tokenSelected ? 'Decrease attention (Ctrl/Cmd+Down)' : 'Select a prompt token first' }}
     </NTooltip>

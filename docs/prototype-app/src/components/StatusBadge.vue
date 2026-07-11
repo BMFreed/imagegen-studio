@@ -1,60 +1,60 @@
 <script setup lang="ts">
-import { NTag } from 'naive-ui';
-import { computed } from 'vue';
+import { NTag } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { ModelResourceStatus } from '../prototypes/model-manager/model-manager.types';
+import type { ModelResourceStatus } from '../prototypes/model-manager/model-manager.types'
 
 const props = defineProps<{
-  status: ModelResourceStatus;
-  variant?: 'default' | 'neutral';
-}>();
+  status: ModelResourceStatus
+  variant?: 'default' | 'neutral'
+}>()
 
 const label = computed(() => {
   switch (props.status) {
     case 'checking': {
-      return 'Verifying file';
+      return 'Verifying file'
     }
     case 'downloading': {
-      return 'Downloading';
+      return 'Downloading'
     }
     case 'installed': {
-      return 'Installed';
+      return 'Installed'
     }
     case 'missing': {
-      return 'File missing';
+      return 'File missing'
     }
     case 'needsAttention': {
-      return 'Needs attention';
+      return 'Needs attention'
     }
     default: {
-      return 'Unknown';
+      return 'Unknown'
     }
   }
-});
+})
 
 const tagType = computed(() => {
   if (props.variant === 'neutral') {
-    return 'default';
+    return 'default'
   }
 
   switch (props.status) {
     case 'downloading': {
-      return 'info';
+      return 'info'
     }
     case 'installed': {
-      return 'success';
+      return 'success'
     }
     case 'missing':
     case 'needsAttention': {
-      return 'warning';
+      return 'warning'
     }
     default: {
-      return 'default';
+      return 'default'
     }
   }
-});
+})
 
-const bordered = computed(() => props.variant !== 'neutral');
+const bordered = computed(() => props.variant !== 'neutral')
 </script>
 
 <template>

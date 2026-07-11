@@ -9,40 +9,40 @@ import {
   Plus as PlusIcon,
   Settings as SettingsIcon,
   Trash as TrashIcon,
-} from '@vicons/tabler';
-import { NButton, NDropdown, NEllipsis, NIcon, NScrollbar, NText } from 'naive-ui';
+} from '@vicons/tabler'
+import { NButton, NDropdown, NEllipsis, NIcon, NScrollbar, NText } from 'naive-ui'
 
-import type { HomeBrowseSelection, HomeWorkspace } from './home.types';
+import type { HomeBrowseSelection, HomeWorkspace } from './home.types'
 
 defineProps<{
-  browseSelection: HomeBrowseSelection;
-  projectCounts: Record<string, number>;
-  trashedCount: number;
-  workspaces: HomeWorkspace[];
-}>();
+  browseSelection: HomeBrowseSelection
+  projectCounts: Record<string, number>
+  trashedCount: number
+  workspaces: HomeWorkspace[]
+}>()
 
 defineEmits<{
-  addWorkspace: [];
-  importProject: [];
-  manageModels: [];
-  managePresets: [];
-  newProject: [];
-  selectBrowse: [value: 'all' | 'trash'];
-  selectWorkspace: [workspaceId: string];
-  workspaceAction: [value: { action: string; workspaceId: string }];
-}>();
+  addWorkspace: []
+  importProject: []
+  manageModels: []
+  managePresets: []
+  newProject: []
+  selectBrowse: [value: 'all' | 'trash']
+  selectWorkspace: [workspaceId: string]
+  workspaceAction: [value: { action: string; workspaceId: string }]
+}>()
 
 const workspaceOptions = [
   { key: 'settings', label: 'Workspace Settings' },
   { key: 'reveal', label: 'Show in Folder' },
   { key: 'rescan', label: 'Rescan' },
   { key: 'remove', label: 'Remove Workspace' },
-];
+]
 
 function getWorkspaceOptions(workspace: HomeWorkspace) {
   return workspace.isDefault
     ? workspaceOptions.filter((option) => option.key !== 'remove')
-    : workspaceOptions;
+    : workspaceOptions
 }
 </script>
 
@@ -115,11 +115,13 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
               <NIcon v-else :component="AlertIcon" />
             </template>
             <NEllipsis class="workspace-name">{{ workspace.name }}</NEllipsis>
-            <small>{{
-              workspace.availability === 'available'
-                ? (projectCounts[workspace.id] ?? 0)
-                : 'Missing'
-            }}</small>
+            <small>
+              {{
+                workspace.availability === 'available'
+                  ? (projectCounts[workspace.id] ?? 0)
+                  : 'Missing'
+              }}
+            </small>
           </NButton>
           <NDropdown
             :options="getWorkspaceOptions(workspace)"

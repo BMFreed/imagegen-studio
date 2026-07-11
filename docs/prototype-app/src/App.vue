@@ -9,40 +9,40 @@ import {
   NMessageProvider,
   NModal,
   NText,
-} from 'naive-ui';
-import { computed, onBeforeUnmount, reactive, ref } from 'vue';
+} from 'naive-ui'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 
-import type { DocumentTabModel } from './components/app-shell.types';
-import type { HomeProjectRecord, HomeScenarioId } from './prototypes/home/home.types';
-import type { PresetCreateIntent } from './prototypes/presets/presets.types';
-import type { ProjectScenarioId, ProjectSession } from './prototypes/project/project.types';
+import type { DocumentTabModel } from './components/app-shell.types'
+import type { HomeProjectRecord, HomeScenarioId } from './prototypes/home/home.types'
+import type { PresetCreateIntent } from './prototypes/presets/presets.types'
+import type { ProjectScenarioId, ProjectSession } from './prototypes/project/project.types'
 
-import AppChrome from './components/AppChrome.vue';
-import DocumentTabs from './components/DocumentTabs.vue';
-import ProjectContextMock from './components/ProjectContextMock.vue';
-import HomePrototype from './prototypes/home/HomePrototype.vue';
-import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue';
-import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue';
-import PresetManagerPrototype from './prototypes/presets/PresetManagerPrototype.vue';
-import { currentProjectPresetSource } from './prototypes/presets/presets.mock';
+import AppChrome from './components/AppChrome.vue'
+import DocumentTabs from './components/DocumentTabs.vue'
+import ProjectContextMock from './components/ProjectContextMock.vue'
+import HomePrototype from './prototypes/home/HomePrototype.vue'
+import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue'
+import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue'
+import PresetManagerPrototype from './prototypes/presets/PresetManagerPrototype.vue'
+import { currentProjectPresetSource } from './prototypes/presets/presets.mock'
 import {
   cloneDocument,
   discardProjectChanges,
   redoProject,
   saveProjectSession,
   undoProject,
-} from './prototypes/project/project-history';
+} from './prototypes/project/project-history'
 import {
   createProjectScenario,
   createProjectSessionFromHomeRecord,
-} from './prototypes/project/project.mock';
-import { createPresetIntent } from './prototypes/project/project.utils';
-import ProjectPrototype from './prototypes/project/ProjectPrototype.vue';
-import { appLayerCssVariables } from './theme/app-layers';
-import { imageGenNaiveTheme } from './theme/naive-theme';
+} from './prototypes/project/project.mock'
+import { createPresetIntent } from './prototypes/project/project.utils'
+import ProjectPrototype from './prototypes/project/ProjectPrototype.vue'
+import { appLayerCssVariables } from './theme/app-layers'
+import { imageGenNaiveTheme } from './theme/naive-theme'
 
 type PrototypeId =
-  'apply-preset' | 'home' | 'model-manager' | 'preset-manager' | 'project' | 'save-preset';
+  'apply-preset' | 'home' | 'model-manager' | 'preset-manager' | 'project' | 'save-preset'
 
 const prototypeIds = new Set<PrototypeId>([
   'apply-preset',
@@ -51,8 +51,8 @@ const prototypeIds = new Set<PrototypeId>([
   'preset-manager',
   'project',
   'save-preset',
-]);
-const scenarioIds = new Set<HomeScenarioId>(['default', 'first-run', 'no-model', 'problems']);
+])
+const scenarioIds = new Set<HomeScenarioId>(['default', 'first-run', 'no-model', 'problems'])
 const projectScenarioIds = new Set<ProjectScenarioId>([
   'default',
   'empty-project',
@@ -60,29 +60,29 @@ const projectScenarioIds = new Set<ProjectScenarioId>([
   'regional-guidance',
   'smart-patch',
   'staging',
-]);
-const searchParameters = new URLSearchParams(globalThis.location.search);
-const requestedPrototype = searchParameters.get('prototype');
-const requestedScenario = searchParameters.get('scenario');
+])
+const searchParameters = new URLSearchParams(globalThis.location.search)
+const requestedPrototype = searchParameters.get('prototype')
+const requestedScenario = searchParameters.get('scenario')
 
 const activePrototype = computed<PrototypeId>(() =>
   prototypeIds.has(requestedPrototype as PrototypeId)
     ? (requestedPrototype as PrototypeId)
     : 'home',
-);
+)
 const homeScenario = computed<HomeScenarioId>(() =>
   scenarioIds.has(requestedScenario as HomeScenarioId)
     ? (requestedScenario as HomeScenarioId)
     : 'default',
-);
+)
 const projectScenario = computed<ProjectScenarioId>(() =>
   projectScenarioIds.has(requestedScenario as ProjectScenarioId)
     ? (requestedScenario as ProjectScenarioId)
     : 'default',
-);
+)
 const usesProjectContext = computed(
   () => activePrototype.value === 'apply-preset' || activePrototype.value === 'save-preset',
-);
+)
 
 const workspaceColors: Record<string, string> = {
   'archive-drive': '#b8a06a',
@@ -90,8 +90,8 @@ const workspaceColors: Record<string, string> = {
   'regional-drafts': '#b58cff',
   uncategorized: '#64e36e',
   'upscale-tests': '#f0b65f',
-};
-const homeTab: DocumentTabModel = { dirty: false, id: 'home', kind: 'home', title: 'Home' };
+}
+const homeTab: DocumentTabModel = { dirty: false, id: 'home', kind: 'home', title: 'Home' }
 const homeDocumentTabs = ref<DocumentTabModel[]>([
   homeTab,
   {
@@ -108,7 +108,7 @@ const homeDocumentTabs = ref<DocumentTabModel[]>([
     title: 'Sample Project A.igs',
     workspaceColor: workspaceColors['uncategorized'],
   },
-]);
+])
 const staticDocumentTabs: DocumentTabModel[] = [
   homeTab,
   {
@@ -125,173 +125,171 @@ const staticDocumentTabs: DocumentTabModel[] = [
     title: 'Sample Project A.igs',
     workspaceColor: workspaceColors['character-studies'],
   },
-];
-const activeDocumentId = ref(activePrototype.value === 'home' ? 'home' : 'sample-project-b');
-const showHomeModelManager = ref(false);
-const showHomePresetManager = ref(false);
-const showStandaloneModelManager = ref(true);
-const managerCreateIntent = ref<PresetCreateIntent>();
-const pendingCloseId = ref<string>();
+]
+const activeDocumentId = ref(activePrototype.value === 'home' ? 'home' : 'sample-project-b')
+const showHomeModelManager = ref(false)
+const showHomePresetManager = ref(false)
+const showStandaloneModelManager = ref(true)
+const managerCreateIntent = ref<PresetCreateIntent>()
+const pendingCloseId = ref<string>()
 const projectSessions = reactive<Record<string, ProjectSession>>({
   'sample-project-a': createProjectScenario('default'),
   'sample-project-b': createProjectScenario(
     activePrototype.value === 'project' ? projectScenario.value : 'default',
   ),
-});
-projectSessions['sample-project-a']!.document.id = 'sample-project-a';
-projectSessions['sample-project-a']!.document.title = 'Sample Project A.igs';
+})
+projectSessions['sample-project-a']!.document.id = 'sample-project-a'
+projectSessions['sample-project-a']!.document.title = 'Sample Project A.igs'
 projectSessions['sample-project-a']!.savedDocument = cloneDocument(
   projectSessions['sample-project-a']!.document,
-);
+)
 
 const documentTabs = computed(() => {
-  const tabs = activePrototype.value === 'home' ? homeDocumentTabs.value : staticDocumentTabs;
+  const tabs = activePrototype.value === 'home' ? homeDocumentTabs.value : staticDocumentTabs
   return tabs.map((tab) =>
     tab.kind === 'project' && projectSessions[tab.id]
       ? { ...tab, dirty: projectSessions[tab.id]!.dirty }
       : tab,
-  );
-});
+  )
+})
 const activeProjectSession = computed(() =>
   activePrototype.value === 'home' || activePrototype.value === 'project'
     ? projectSessions[activeDocumentId.value]
     : undefined,
-);
-const managerOverlayOpen = computed(
-  () => showHomeModelManager.value || showHomePresetManager.value,
-);
+)
+const managerOverlayOpen = computed(() => showHomeModelManager.value || showHomePresetManager.value)
 const activeQueueCount = computed(
   () =>
     activeProjectSession.value?.queueItems.filter(
       (item) => item.status === 'pending' || item.status === 'running',
     ).length ?? 0,
-);
+)
 const openProjectIds = computed(() =>
   homeDocumentTabs.value.filter((tab) => tab.kind === 'project').map((tab) => tab.id),
-);
+)
 const dirtyProjectIds = computed(() =>
   homeDocumentTabs.value
     .filter((tab) => tab.kind === 'project' && (projectSessions[tab.id]?.dirty ?? tab.dirty))
     .map((tab) => tab.id),
-);
+)
 
 function requestHome() {
   if (activePrototype.value !== 'home') {
-    globalThis.location.href = '/';
-    return;
+    globalThis.location.href = '/'
+    return
   }
   if (!homeDocumentTabs.value.some((tab) => tab.id === 'home')) {
-    homeDocumentTabs.value.unshift({ ...homeTab });
+    homeDocumentTabs.value.unshift({ ...homeTab })
   }
-  activeDocumentId.value = 'home';
+  activeDocumentId.value = 'home'
 }
 
 function openHomeModelManager() {
-  managerCreateIntent.value = undefined;
-  showHomePresetManager.value = false;
-  showHomeModelManager.value = true;
+  managerCreateIntent.value = undefined
+  showHomePresetManager.value = false
+  showHomeModelManager.value = true
 }
 
 function openHomePresetManager() {
-  managerCreateIntent.value = undefined;
-  showHomeModelManager.value = false;
-  showHomePresetManager.value = true;
+  managerCreateIntent.value = undefined
+  showHomeModelManager.value = false
+  showHomePresetManager.value = true
 }
 
 function saveActiveProject() {
-  const session = activeProjectSession.value;
+  const session = activeProjectSession.value
   if (!session) {
-    return false;
+    return false
   }
-  const saved = saveProjectSession(session);
+  const saved = saveProjectSession(session)
   session.ui.notice = saved
     ? { text: 'Project saved', type: 'success' }
-    : { text: 'Project could not be saved. Your changes are still open.', type: 'error' };
-  return saved;
+    : { text: 'Project could not be saved. Your changes are still open.', type: 'error' }
+  return saved
 }
 
 function toggleActiveProjectQueue() {
-  const session = activeProjectSession.value;
+  const session = activeProjectSession.value
   if (session) {
-    session.ui.queueOpen = !session.ui.queueOpen;
+    session.ui.queueOpen = !session.ui.queueOpen
   }
 }
 
 function openSavePreset() {
-  const session = activeProjectSession.value;
+  const session = activeProjectSession.value
   if (!session) {
-    return;
+    return
   }
-  managerCreateIntent.value = createPresetIntent(session);
-  showHomeModelManager.value = false;
-  showHomePresetManager.value = true;
+  managerCreateIntent.value = createPresetIntent(session)
+  showHomeModelManager.value = false
+  showHomePresetManager.value = true
 }
 
 function requestCloseDocument(id: string) {
-  const session = projectSessions[id];
+  const session = projectSessions[id]
   if (session && (session.dirty || session.staging)) {
-    pendingCloseId.value = id;
-    return;
+    pendingCloseId.value = id
+    return
   }
-  closeDocument(id);
+  closeDocument(id)
 }
 
 function confirmClose(action: 'discard' | 'save') {
-  const id = pendingCloseId.value;
+  const id = pendingCloseId.value
   if (!id) {
-    return;
+    return
   }
-  const session = projectSessions[id];
+  const session = projectSessions[id]
   if (session) {
     if (action === 'save' && !saveProjectSession(session)) {
       session.ui.notice = {
         text: 'Project could not be saved. Your changes are still open.',
         type: 'error',
-      };
-      pendingCloseId.value = undefined;
-      return;
+      }
+      pendingCloseId.value = undefined
+      return
     }
     if (action === 'discard') {
-      discardProjectChanges(session);
+      discardProjectChanges(session)
     }
-    session.staging = undefined;
+    session.staging = undefined
   }
-  pendingCloseId.value = undefined;
-  closeDocument(id);
+  pendingCloseId.value = undefined
+  closeDocument(id)
 }
 
 function closeDocument(id: string) {
   if (activePrototype.value !== 'home') {
     if (activeDocumentId.value === id) {
-      activeDocumentId.value = '';
+      activeDocumentId.value = ''
     }
-    return;
+    return
   }
-  const index = homeDocumentTabs.value.findIndex((tab) => tab.id === id);
+  const index = homeDocumentTabs.value.findIndex((tab) => tab.id === id)
   if (index < 0) {
-    return;
+    return
   }
-  homeDocumentTabs.value.splice(index, 1);
+  homeDocumentTabs.value.splice(index, 1)
   if (activeDocumentId.value === id) {
     activeDocumentId.value =
-      homeDocumentTabs.value[index]?.id ?? homeDocumentTabs.value[index - 1]?.id ?? '';
+      homeDocumentTabs.value[index]?.id ?? homeDocumentTabs.value[index - 1]?.id ?? ''
   }
 }
 
 function openHomeProject(value: {
-  project: HomeProjectRecord;
-  recovered?: boolean;
-  target: 'current' | 'new';
+  project: HomeProjectRecord
+  recovered?: boolean
+  target: 'current' | 'new'
 }) {
-  const existing = homeDocumentTabs.value.find((tab) => tab.id === value.project.id);
+  const existing = homeDocumentTabs.value.find((tab) => tab.id === value.project.id)
   if (existing) {
     if (value.recovered) {
-      existing.dirty = true;
-      projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project);
-      projectSessions[value.project.id]!.dirty = true;
+      existing.dirty = true
+      projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project)
+      projectSessions[value.project.id]!.dirty = true
     }
-    activeDocumentId.value = existing.id;
-    return;
+    activeDocumentId.value = existing.id
+    return
   }
   const tab: DocumentTabModel = {
     dirty: value.recovered ?? false,
@@ -299,53 +297,53 @@ function openHomeProject(value: {
     kind: 'project',
     title: value.project.fileName,
     workspaceColor: workspaceColors[value.project.workspaceId] ?? '#64e36e',
-  };
-  projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project);
-  if (value.recovered) {
-    projectSessions[value.project.id]!.dirty = true;
   }
-  const homeIndex = homeDocumentTabs.value.findIndex((candidate) => candidate.id === 'home');
+  projectSessions[value.project.id] ??= createProjectSessionFromHomeRecord(value.project)
+  if (value.recovered) {
+    projectSessions[value.project.id]!.dirty = true
+  }
+  const homeIndex = homeDocumentTabs.value.findIndex((candidate) => candidate.id === 'home')
   if (value.target === 'current' && homeIndex >= 0) {
-    homeDocumentTabs.value.splice(homeIndex, 1, tab);
+    homeDocumentTabs.value.splice(homeIndex, 1, tab)
   } else {
     homeDocumentTabs.value.splice(
       homeIndex >= 0 ? homeIndex + 1 : homeDocumentTabs.value.length,
       0,
       tab,
-    );
+    )
   }
-  activeDocumentId.value = tab.id;
+  activeDocumentId.value = tab.id
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
-  const session = activeProjectSession.value;
+  const session = activeProjectSession.value
   if (!session || !(event.ctrlKey || event.metaKey)) {
-    return;
+    return
   }
   if (event.key.toLowerCase() === 's') {
-    event.preventDefault();
-    saveActiveProject();
+    event.preventDefault()
+    saveActiveProject()
   }
   if (event.key.toLowerCase() === 'z') {
-    event.preventDefault();
-    event.shiftKey ? redoProject(session) : undoProject(session);
+    event.preventDefault()
+    event.shiftKey ? redoProject(session) : undoProject(session)
   }
   if (event.key.toLowerCase() === 'y') {
-    event.preventDefault();
-    redoProject(session);
+    event.preventDefault()
+    redoProject(session)
   }
 }
 
-globalThis.addEventListener('keydown', handleGlobalKeydown);
-onBeforeUnmount(() => globalThis.removeEventListener('keydown', handleGlobalKeydown));
+globalThis.addEventListener('keydown', handleGlobalKeydown)
+onBeforeUnmount(() => globalThis.removeEventListener('keydown', handleGlobalKeydown))
 
 function syncProjectTab(project: HomeProjectRecord) {
-  const tab = homeDocumentTabs.value.find((candidate) => candidate.id === project.id);
+  const tab = homeDocumentTabs.value.find((candidate) => candidate.id === project.id)
   if (!tab) {
-    return;
+    return
   }
-  tab.title = project.fileName;
-  tab.workspaceColor = workspaceColors[project.workspaceId] ?? tab.workspaceColor;
+  tab.title = project.fileName
+  tab.workspaceColor = workspaceColors[project.workspaceId] ?? tab.workspaceColor
 }
 </script>
 
@@ -416,9 +414,9 @@ function syncProjectTab(project: HomeProjectRecord) {
                 @savePreset="openSavePreset"
               />
               <NEmpty v-else-if="activePrototype === 'project'" description="No document open">
-                <template v-slot:extra
-                  ><NButton type="primary" @click="requestHome">Open Home</NButton></template
-                >
+                <template v-slot:extra>
+                  <NButton type="primary" @click="requestHome">Open Home</NButton>
+                </template>
               </NEmpty>
               <ProjectContextMock v-else-if="usesProjectContext" />
               <section v-else aria-hidden="true" class="home-context">
@@ -500,17 +498,20 @@ function syncProjectTab(project: HomeProjectRecord) {
                 </NText>
                 <div class="close-project-actions">
                   <NButton tertiary @click="pendingCloseId = undefined">Cancel</NButton>
-                  <NButton secondary type="error" @click="confirmClose('discard')">{{
-                    projectSessions[pendingCloseId ?? '']?.dirty
-                      ? 'Discard Changes'
-                      : 'Discard Candidates and Close'
-                  }}</NButton>
+                  <NButton secondary type="error" @click="confirmClose('discard')">
+                    {{
+                      projectSessions[pendingCloseId ?? '']?.dirty
+                        ? 'Discard Changes'
+                        : 'Discard Candidates and Close'
+                    }}
+                  </NButton>
                   <NButton
                     v-if="projectSessions[pendingCloseId ?? '']?.dirty"
                     type="primary"
                     @click="confirmClose('save')"
-                    >Save</NButton
                   >
+                    Save
+                  </NButton>
                 </div>
               </NCard>
             </NModal>

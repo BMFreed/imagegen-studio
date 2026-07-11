@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import { Tool as ToolIcon } from '@vicons/tabler';
-import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui';
-import { computed } from 'vue';
+import { Tool as ToolIcon } from '@vicons/tabler'
+import { NButton, NIcon, NTag, useThemeVars } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { ModelResource } from './model-manager.types';
+import type { ModelResource } from './model-manager.types'
 
-import ResourceThumbnail from '../../components/ResourceThumbnail.vue';
-import StatusBadge from '../../components/StatusBadge.vue';
+import ResourceThumbnail from '../../components/ResourceThumbnail.vue'
+import StatusBadge from '../../components/StatusBadge.vue'
 
 defineProps<{
-  muted?: boolean;
-  resource: ModelResource;
-  selected: boolean;
-}>();
+  muted?: boolean
+  resource: ModelResource
+  selected: boolean
+}>()
 
 defineEmits<{
-  select: [id: string];
-}>();
+  select: [id: string]
+}>()
 
-const themeVars = useThemeVars();
-const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }));
+const themeVars = useThemeVars()
+const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }))
 </script>
 
 <template>
@@ -39,9 +39,9 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
         <strong v-overflow-title class="resource-title">{{ resource.name }}</strong>
         <p v-overflow-title>{{ resource.description }}</p>
         <div class="resource-meta">
-          <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">{{
-            badge
-          }}</NTag>
+          <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">
+            {{ badge }}
+          </NTag>
           <span v-if="resource.versionLabel">{{ resource.versionLabel }}</span>
           <span>{{ resource.sizeLabel }}</span>
         </div>

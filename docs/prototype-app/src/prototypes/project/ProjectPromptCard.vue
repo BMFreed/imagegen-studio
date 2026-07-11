@@ -1,68 +1,68 @@
 <script setup lang="ts">
-import { AlertTriangle } from '@vicons/tabler';
-import { NIcon, NText, NTooltip, useMessage } from 'naive-ui';
-import { computed, ref } from 'vue';
+import { AlertTriangle } from '@vicons/tabler'
+import { NIcon, NText, NTooltip, useMessage } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { GenerationPrompt } from '../../components/generation/generation.types';
-import type { ProjectSession } from './project.types';
+import type { GenerationPrompt } from '../../components/generation/generation.types'
+import type { ProjectSession } from './project.types'
 
 import {
   adjustPromptTokenAttention,
   cloneGenerationPrompt,
   createGenerationPrompt,
   serializeGenerationPrompt,
-} from '../../components/generation/generation-prompt.utils';
-import { mockDanbooruTags } from '../../components/generation/generation.mock';
-import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue';
-import { presetEditorResources } from '../presets/presets.mock';
-import { commitProjectMutation } from './project-history';
-import { getActiveGenerationDraft } from './project.utils';
-import ProjectPromptActions from './ProjectPromptActions.vue';
+} from '../../components/generation/generation-prompt.utils'
+import { mockDanbooruTags } from '../../components/generation/generation.mock'
+import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue'
+import { presetEditorResources } from '../presets/presets.mock'
+import { commitProjectMutation } from './project-history'
+import { getActiveGenerationDraft } from './project.utils'
+import ProjectPromptActions from './ProjectPromptActions.vue'
 
 const props = defineProps<{
-  field: 'negativePrompt' | 'prompt';
-  session: ProjectSession;
-  title: string;
-}>();
-const emit = defineEmits<{ dynamicPreview: [] }>();
-const message = useMessage();
-const selectedTokenId = ref<string>();
+  field: 'negativePrompt' | 'prompt'
+  session: ProjectSession
+  title: string
+}>()
+const emit = defineEmits<{ dynamicPreview: [] }>()
+const message = useMessage()
+const selectedTokenId = ref<string>()
 const value = computed(
   () => getActiveGenerationDraft(props.session).payload[props.field] ?? createGenerationPrompt(),
-);
-const serialized = computed(() => serializeGenerationPrompt(value.value));
-const tokenCount = computed(() => serialized.value.split(/\s+/).filter(Boolean).length);
-const warning = computed(() => serialized.value.includes('(broken'));
-const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? []);
+)
+const serialized = computed(() => serializeGenerationPrompt(value.value))
+const tokenCount = computed(() => serialized.value.split(/\s+/).filter(Boolean).length)
+const warning = computed(() => serialized.value.includes('(broken'))
+const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? [])
 
 function update(next: GenerationPrompt, label = `Edit ${props.title.toLowerCase()}`) {
   commitProjectMutation(props.session, label, () => {
-    getActiveGenerationDraft(props.session).payload[props.field] = cloneGenerationPrompt(next);
-  });
+    getActiveGenerationDraft(props.session).payload[props.field] = cloneGenerationPrompt(next)
+  })
 }
 function attention(direction: -1 | 1) {
   if (!selectedTokenId.value) {
-    return;
+    return
   }
   update(
     adjustPromptTokenAttention(value.value, selectedTokenId.value, direction),
     `${direction > 0 ? 'Increase' : 'Decrease'} prompt attention`,
-  );
+  )
 }
 async function copy() {
-  await navigator.clipboard.writeText(serialized.value);
-  message.success(`${props.title} copied`);
+  await navigator.clipboard.writeText(serialized.value)
+  message.success(`${props.title} copied`)
 }
 function clear() {
-  update(createGenerationPrompt(), `Clear ${props.title.toLowerCase()}`);
-  selectedTokenId.value = undefined;
+  update(createGenerationPrompt(), `Clear ${props.title.toLowerCase()}`)
+  selectedTokenId.value = undefined
 }
 function hotkey(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) {
-    return;
+    return
   }
-  event.preventDefault();
-  attention(event.key === 'ArrowUp' ? 1 : -1);
+  event.preventDefault()
+  attention(event.key === 'ArrowUp' ? 1 : -1)
 }
 </script>
 

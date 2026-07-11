@@ -1,22 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref } from 'vue'
 
-import type { ProjectCompositingLayer, ProjectSession } from './project.types';
+import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
-import ProjectSortableLayerRow from './ProjectSortableLayerRow.vue';
-import { scrollContainerRef, useProjectLayerDnd } from './useProjectLayerDnd';
+import ProjectSortableLayerRow from './ProjectSortableLayerRow.vue'
+import { scrollContainerRef, useProjectLayerDnd } from './useProjectLayerDnd'
 
-const props = defineProps<{ scrollContainer: HTMLElement | null; session: ProjectSession }>();
+const props = defineProps<{ scrollContainer: HTMLElement | null; session: ProjectSession }>()
 const emit = defineEmits<{
-  duplicate: [layer: ProjectCompositingLayer];
-  move: [layer: ProjectCompositingLayer, delta: number];
-  remove: [layer: ProjectCompositingLayer];
-  toggleLock: [layer: ProjectCompositingLayer];
-  toggleVisible: [layer: ProjectCompositingLayer];
-  variants: [layer: ProjectCompositingLayer];
-}>();
-const list = ref<HTMLElement | null>(null);
-const { isDragOver } = useProjectLayerDnd(props.session, list, scrollContainerRef(props));
+  duplicate: [layer: ProjectCompositingLayer]
+  move: [layer: ProjectCompositingLayer, delta: number]
+  remove: [layer: ProjectCompositingLayer]
+  toggleLock: [layer: ProjectCompositingLayer]
+  toggleVisible: [layer: ProjectCompositingLayer]
+  variants: [layer: ProjectCompositingLayer]
+}>()
+const list = ref<HTMLElement | null>(null)
+const { isDragOver } = useProjectLayerDnd(props.session, list, scrollContainerRef(props))
 </script>
 
 <template>

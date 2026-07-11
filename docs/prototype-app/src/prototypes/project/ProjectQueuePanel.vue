@@ -1,30 +1,31 @@
 <script setup lang="ts">
-import { NButton, NProgress, NTag } from 'naive-ui';
+import { NButton, NProgress, NTag } from 'naive-ui'
 
-import type { ProjectSession } from './project.types';
+import type { ProjectSession } from './project.types'
 
-defineProps<{ session: ProjectSession }>();
-defineEmits<{ cancelCurrent: []; cancelPending: []; clear: []; close: [] }>();
+defineProps<{ session: ProjectSession }>()
+defineEmits<{ cancelCurrent: []; cancelPending: []; clear: []; close: [] }>()
 </script>
 
 <template>
   <aside v-if="session.ui.queueOpen" aria-label="Project generation queue" class="queue-panel">
     <header>
-      <strong>Project Queue</strong
-      ><NButton
+      <strong>Project Queue</strong>
+      <NButton
         aria-label="Close project queue"
         circle
         quaternary
         size="tiny"
         @click="$emit('close')"
-        >×</NButton
       >
+        ×
+      </NButton>
     </header>
     <div v-if="session.queueItems.length" class="queue-list">
       <article v-for="item of session.queueItems" :key="item.id" class="queue-item">
         <div>
-          <strong>{{ item.label }}</strong
-          ><NTag
+          <strong>{{ item.label }}</strong>
+          <NTag
             size="small"
             :type="
               item.status === 'failed'
@@ -33,19 +34,20 @@ defineEmits<{ cancelCurrent: []; cancelPending: []; clear: []; close: [] }>();
                   ? 'success'
                   : 'default'
             "
-            >{{ item.status }}</NTag
           >
+            {{ item.status }}
+          </NTag>
         </div>
         <NProgress v-if="item.status === 'running'" :percentage="item.progress" type="line" />
       </article>
     </div>
     <p v-else>No jobs in this project queue.</p>
     <footer>
-      <NButton size="small" tertiary @click="$emit('clear')">Clear terminal</NButton
-      ><NButton size="small" tertiary @click="$emit('cancelPending')">Cancel pending</NButton
-      ><NButton secondary size="small" type="error" @click="$emit('cancelCurrent')"
-        >Cancel current</NButton
-      >
+      <NButton size="small" tertiary @click="$emit('clear')">Clear terminal</NButton>
+      <NButton size="small" tertiary @click="$emit('cancelPending')">Cancel pending</NButton>
+      <NButton secondary size="small" type="error" @click="$emit('cancelCurrent')">
+        Cancel current
+      </NButton>
     </footer>
   </aside>
 </template>
