@@ -163,7 +163,7 @@ When focus is already inside the prompt token editor, `Ctrl/Cmd+Space` opens the
 
 The Vue prototype treats spaces and underscores as equivalent, returns at most five items per group and twelve overall, and orders groups as `Active LoRA triggers`, `Embeddings`, then `Danbooru tags`. The menu has a usable width independent of the deliberately tiny inline input. LoRA triggers are available in both prompt polarities. Negative embedding metadata affects ranking and the inserted token, but the user still chooses the destination prompt.
 
-Autocomplete never inserts LoRA trigger phrases automatically when a LoRA is selected. If disabling/removing a LoRA would orphan linked trigger tokens, the user explicitly keeps them as ordinary prompt text, removes them, or cancels the LoRA change.
+Autocomplete never inserts LoRA trigger phrases automatically when a LoRA is selected. Temporarily disabling a LoRA removes its phrases from new autocomplete results but leaves existing linked tokens untouched and shows no interruption. Only removing a LoRA that would orphan linked trigger tokens asks the user to keep them as ordinary prompt text, remove them, or cancel the removal.
 
 ## Manual Update
 

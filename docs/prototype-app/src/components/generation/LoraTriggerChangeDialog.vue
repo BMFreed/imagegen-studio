@@ -10,14 +10,14 @@ const emit = defineEmits<{ resolve: [resolution: 'keep' | 'remove'] }>();
   <NModal
     v-model:show="show"
     aria-label="LoRA trigger phrases"
-    class="lora-trigger-dialog"
     preset="card"
+    :style="{ width: 'min(560px, calc(100vw - 48px))' }"
     title="LoRA trigger phrases"
   >
     <p>
       {{ positiveCount + negativeCount }} prompt
       {{ positiveCount + negativeCount === 1 ? 'token is' : 'tokens are' }} linked only to the LoRA
-      being disabled or removed.
+      to the LoRA being removed.
     </p>
     <p class="affected-prompts">
       <span v-if="positiveCount">Positive Prompt: {{ positiveCount }}</span>
@@ -35,10 +35,7 @@ const emit = defineEmits<{ resolve: [resolution: 'keep' | 'remove'] }>();
 </template>
 
 <style scoped>
-.lora-trigger-dialog {
-  width: min(560px, calc(100vw - 48px));
-}
-.lora-trigger-dialog p {
+p {
   margin: 0;
   color: var(--app-text-muted);
 }

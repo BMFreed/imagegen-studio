@@ -283,9 +283,24 @@ test.describe('Project prototype', () => {
       .click();
     await expect(page.getByRole('option', { name: /lora-trigger token painterly/ })).toBeVisible();
 
+    const loraWeight = page.getByLabel('Digital Art weight');
+    const loraWeightInput = loraWeight.locator('input');
+    await loraWeightInput.fill('0.65');
+    await loraWeightInput.press('Enter');
+    await expect(loraWeightInput).toHaveValue('0.65');
+    const weightWidth = await loraWeight.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    expect(weightWidth).toBeGreaterThanOrEqual(100);
+
     await page.getByRole('switch', { name: 'Enable Digital Art' }).click();
+    await expect(page.getByRole('dialog', { name: 'LoRA trigger phrases' })).toBeHidden();
+    await page.getByRole('button', { name: 'Remove Digital Art' }).click();
     const dialog = page.getByRole('dialog', { name: 'LoRA trigger phrases' });
     await expect(dialog).toBeVisible();
+    const dialogBox = await dialog.boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.width).toBeLessThanOrEqual(560);
     await dialog.getByRole('button', { name: 'Keep as Prompt Text' }).click();
     await expect(page.getByRole('option', { name: /custom token painterly/ })).toBeVisible();
 

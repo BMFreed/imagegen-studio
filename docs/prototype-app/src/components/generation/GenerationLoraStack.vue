@@ -9,6 +9,7 @@ const props = defineProps<{
   disabled?: boolean;
   resources: GenerationLoraResourceRef[];
 }>();
+const emit = defineEmits<{ remove: [resourceId: string] }>();
 
 const loras = defineModel<GenerationLora[]>({ required: true });
 const selectedResourceId = ref<string | null>(null);
@@ -47,7 +48,10 @@ function updateWeight(index: number, weight: number | null) {
   );
 }
 function remove(index: number) {
-  loras.value = loras.value.filter((_, current) => current !== index);
+  const lora = loras.value[index];
+  if (lora) {
+    emit('remove', lora.resource.id);
+  }
 }
 </script>
 
@@ -105,7 +109,7 @@ function remove(index: number) {
 }
 .lora-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 84px auto;
+  grid-template-columns: auto minmax(0, 1fr) 104px auto;
   align-items: center;
   gap: 8px;
   padding: 8px;

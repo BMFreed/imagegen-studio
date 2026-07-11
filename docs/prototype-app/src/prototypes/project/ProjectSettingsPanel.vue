@@ -123,6 +123,12 @@ function updateModel(id: string) {
   }
 }
 function updateLoras(value: GenerationLora[]) {
+  updatePayload('Edit LoRAs', (draft) => {
+    draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[];
+  });
+}
+function removeLora(resourceId: string) {
+  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId);
   const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
   const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
   if (positiveOrphans.length || negativeOrphans.length) {
@@ -132,7 +138,7 @@ function updateLoras(value: GenerationLora[]) {
     loraTriggerDialogOpen.value = true;
     return;
   }
-  updatePayload('Edit LoRAs', (draft) => {
+  updatePayload('Remove LoRA', (draft) => {
     draft.payload.loras = JSON.parse(JSON.stringify(value)) as GenerationLora[];
   });
 }
@@ -247,6 +253,7 @@ function normalizeCount(value: number | null) {
           <GenerationLoraStack
             :modelValue="payload.loras ?? []"
             :resources="presetEditorResources.loras"
+            @remove="removeLora"
             @update:modelValue="updateLoras"
           />
         </NCard>

@@ -81,19 +81,22 @@ const seedPolicyOptions = [
 ];
 const loras = computed({
   get: () => payload.value.loras ?? [],
-  set: (value) => {
-    const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
-    const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
-    if (positiveOrphans.length || negativeOrphans.length) {
-      pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>;
-      affectedPositiveTriggerCount.value = positiveOrphans.length;
-      affectedNegativeTriggerCount.value = negativeOrphans.length;
-      loraTriggerDialogOpen.value = true;
-      return;
-    }
-    payload.value.loras = value;
-  },
+  set: (value) => (payload.value.loras = value),
 });
+
+function removeLora(resourceId: string) {
+  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId);
+  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value);
+  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value);
+  if (positiveOrphans.length || negativeOrphans.length) {
+    pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>;
+    affectedPositiveTriggerCount.value = positiveOrphans.length;
+    affectedNegativeTriggerCount.value = negativeOrphans.length;
+    loraTriggerDialogOpen.value = true;
+    return;
+  }
+  payload.value.loras = value;
+}
 
 function resolveLoraTriggers(resolution: 'keep' | 'remove') {
   const nextLoras = pendingLoras.value;
@@ -228,6 +231,7 @@ function updateVae(vaeId: string) {
           v-model="loras"
           :disabled="sectionDisabled(section)"
           :resources="resources.loras"
+          @remove="removeLora"
         />
 
         <div v-else-if="section === 'size' && payload.size" class="two-column-fields">

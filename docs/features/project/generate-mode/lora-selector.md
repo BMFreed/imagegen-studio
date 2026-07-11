@@ -100,7 +100,8 @@ Rules:
 - the worker receives the selected LoRA stack as structured job input;
 - exported metadata may include an A1111-style token for compatibility when useful;
 - changing the weight in the selected LoRA row updates the structured LoRA stack;
-- removing or disabling the selected LoRA removes/disables the structured LoRA attachment.
+- removing or disabling the selected LoRA removes/disables the structured LoRA attachment;
+- disabling is non-destructive and never opens the trigger-phrase lifecycle dialog.
 
 Secondary trigger words are different. They are normal prompt words/phrases supplied by the LoRA author, and the user chooses whether to add them to the prompt.
 
@@ -110,7 +111,8 @@ Rules for secondary trigger words:
 - trigger words should also be available from the dropdown row's info button;
 - enabled, non-missing selected LoRAs contribute their trigger phrases to unified autocomplete in both prompt fields;
 - selecting a suggestion creates a source-linked LoRA trigger token, but selecting the LoRA itself never inserts prompt text;
-- disabling or removing the final source of an inserted trigger asks whether to keep it as prompt text, remove it, or cancel;
+- removing the final source of an inserted trigger asks whether to keep it as prompt text, remove it, or cancel;
+- disabling the final source keeps the linked token unchanged so the LoRA can be re-enabled without prompt churn;
 - the UI should make clear that these words are optional prompt guidance, not the LoRA attachment itself.
 
 ## Metadata Popover
