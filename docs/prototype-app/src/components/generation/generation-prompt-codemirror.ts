@@ -41,11 +41,21 @@ export function createPromptCompletionSource(getters: {
   return (context) => {
     const fragment = context.matchBefore(/[^\s,\n]*/)
     const query = fragment?.text ?? ''
-    if (!context.explicit && normalizePromptSearchValue(query).length < 2) {
+    const danbooruFragment = findDanbooruFragment(
+      context.state.doc.toString(),
+      context.pos,
+      getters.danbooruTags(),
+    )
+    if (
+      !context.explicit &&
+      normalizePromptSearchValue(query).length < 2 &&
+      normalizePromptSearchValue(danbooruFragment.text).length < 2
+    ) {
       return null
     }
 
     const suggestions = getPromptAutocompleteSuggestions({
+      danbooruQuery: danbooruFragment.text,
       danbooruTags: getters.danbooruTags(),
       embeddings: getters.embeddings(),
       explicit: context.explicit,
@@ -62,6 +72,7 @@ export function createPromptCompletionSource(getters: {
       from: fragment?.from ?? context.pos,
       options: suggestions.map<Completion>((suggestion) => ({
         apply(view, completion, from, to) {
+          const applyFrom = suggestion.group === 'danbooru' ? danbooruFragment.from : from
           const effects = suggestion.embedding
             ? [
                 addPromptEmbeddingEffect.of({
@@ -72,9 +83,9 @@ export function createPromptCompletionSource(getters: {
             : []
           view.dispatch({
             annotations: pickedCompletion.of(completion),
-            changes: { from, insert: suggestion.label, to },
+            changes: { from: applyFrom, insert: suggestion.label, to },
             effects,
-            selection: EditorSelection.cursor(from + suggestion.label.length),
+            selection: EditorSelection.cursor(applyFrom + suggestion.label.length),
           })
         },
         detail: suggestion.detail,
@@ -140,18 +151,22 @@ export function createPromptResourceExtensions(args: {
           if (embedding) {
             const resource = embedding.ref?.resource ?? embedding.resources[0]
             dom.textContent = embedding.ambiguous
-              ? `Ambiguous embedding token ${embedding.token}: ${embedding.resources.map((item) => item.name).join(', ')}`
+              ? `Embedding · Ambiguous activation: ${embedding.token} · Matches: ${embedding.resources.map((item) => item.name).join(', ')}`
               : [
+                  'Embedding',
                   resource?.name,
                   resource?.version,
-                  resource?.baseModel,
+                  resource?.baseModel ? `Base model: ${resource.baseModel}` : undefined,
                   `Activation: ${embedding.token}`,
                   resource?.missing ? 'Missing resource' : undefined,
                 ]
                   .filter(Boolean)
                   .join(' · ')
           } else if (lora) {
-            dom.textContent = `${lora.phrase} · ${lora.loras.map((item) => item.resource.name).join(', ')}`
+            const sources = lora.loras.map((item) =>
+              [item.resource.name, item.resource.version].filter(Boolean).join(' '),
+            )
+            dom.textContent = `LoRA · Trigger: ${lora.phrase} · Sources: ${sources.join(', ')}`
           }
           return { dom }
         },
@@ -183,4 +198,29 @@ export function tripleClickPhraseSelection(): Extension {
       update() {},
     }
   })
+}
+
+function findDanbooruFragment(text: string, position: number, tags: DanbooruTagMock[]) {
+  const phrase = findTopLevelPromptPhraseRange(text, position)
+  const beforeCaret = text.slice(phrase.from, position)
+  const suffixStarts = [0]
+  for (const match of beforeCaret.matchAll(/\s+/g)) {
+    suffixStarts.push((match.index ?? 0) + match[0].length)
+  }
+  for (const start of suffixStarts) {
+    const candidate = beforeCaret.slice(start)
+    const normalized = normalizePromptSearchValue(candidate)
+    if (
+      normalized.length >= 2 &&
+      tags.some((tag) =>
+        [tag.name, ...tag.aliases]
+          .map(normalizePromptSearchValue)
+          .some((value) => value.includes(normalized)),
+      )
+    ) {
+      return { from: phrase.from + start, text: candidate }
+    }
+  }
+  const fallback = beforeCaret.match(/\S*$/)?.[0] ?? ''
+  return { from: position - fallback.length, text: fallback }
 }

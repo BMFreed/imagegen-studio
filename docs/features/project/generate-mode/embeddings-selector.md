@@ -37,6 +37,6 @@ Embedding completion inserts `activationToken` in Positive Prompt. Negative Prom
 
 ## Diagnostics
 
-Resolved embeddings receive a restrained resource decoration and a tooltip with name, version, base model, activation token, and missing state. Recalled missing embeddings use an amber warning decoration and text diagnostic. Ambiguous unbound tokens use an amber diagnostic underline and require explicit selection from autocomplete.
+Resolved embeddings receive a restrained resource decoration and an explicitly labeled `Embedding` tooltip with name, version, base model, activation token, and missing state. Recalled missing embeddings use an amber warning decoration and text diagnostic. Ambiguous unbound tokens use an amber diagnostic underline and require explicit selection from autocomplete.
 
 Missing and ambiguous embeddings block generation for the active prompt. Apply Preset and New Project validate only selected prompt sections. Deleting the literal removes its ref and blocking error automatically.

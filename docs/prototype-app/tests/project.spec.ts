@@ -280,11 +280,28 @@ test.describe('Project prototype', () => {
   }) => {
     await openProject(page)
     const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    await prompt.fill('rim l')
+    const danbooruCompletion = page.locator('.cm-tooltip-autocomplete')
+    await expect(danbooruCompletion.getByText('Danbooru tags')).toBeVisible()
+    await expect(page.getByRole('option', { name: /rim_light/ })).toBeVisible()
+    await page.getByRole('option', { name: /rim_light/ }).click()
+    await expect(prompt).toHaveText('rim_light')
+
     await prompt.fill('pain')
     await expect(page.getByText('Active LoRA triggers')).toBeVisible()
     await page.getByRole('option', { name: /painterly/ }).click()
     await expect(prompt).toHaveText('painterly')
-    await expect(page.locator('.cm-prompt-lora-trigger')).toHaveText('painterly')
+    const loraTrigger = page.locator('.cm-prompt-lora-trigger')
+    await expect(loraTrigger).toHaveText('painterly')
+    await expect(loraTrigger).toHaveCSS('background-color', 'rgba(181, 140, 255, 0.14)')
+    await expect(loraTrigger).toHaveCSS(
+      'box-shadow',
+      'rgba(181, 140, 255, 0.72) 0px -1px 0px 0px inset',
+    )
+    await loraTrigger.hover()
+    const resourceTooltip = page.locator('.prompt-resource-tooltip')
+    await expect(resourceTooltip).toContainText('LoRA · Trigger: painterly')
+    await expect(resourceTooltip).toContainText('Sources: Digital Art v0.1')
 
     const loraWeight = page.getByLabel('Digital Art weight')
     const loraWeightInput = loraWeight.locator('input')
@@ -311,18 +328,48 @@ test.describe('Project prototype', () => {
     await expect(page.locator('.cm-tooltip-autocomplete').getByText('Embeddings')).toBeVisible()
     await page.getByRole('option', { name: /<bad-hands-negative>/ }).click()
     await expect(negative).toHaveText('bad <bad-hands-negative>')
-    await expect(page.locator('.cm-prompt-embedding')).toHaveText('<bad-hands-negative>')
+    const embedding = page.locator('.cm-prompt-embedding')
+    await expect(embedding).toHaveText('<bad-hands-negative>')
+    await embedding.hover()
+    await expect(resourceTooltip).toContainText('Embedding · Bad Hands Negative')
+    await expect(resourceTooltip).toContainText('Base model: Illustrious')
+    await expect(resourceTooltip).toContainText('Activation: <bad-hands-negative>')
   })
 
   test('supports native plain-text editing, semantic selection, onboarding, and bulk deletion', async ({
     page,
   }) => {
+    const vueWarnings: string[] = []
+    page.on('console', (message) => {
+      if (message.type() === 'warning' && message.text().includes('[Vue warn]')) {
+        vueWarnings.push(message.text())
+      }
+    })
     await openProject(page)
     const editor = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    const promptCard = editor.locator('xpath=ancestor::section[contains(@class, "prompt-card")]')
     await expect(page.getByRole('option', { name: /prompt token/ })).toHaveCount(0)
     await editor.fill('alpha phrase, beta word\nthird phrase')
-    await expect(page.getByText('Type and edit prompt text freely.')).toBeVisible()
-    await page.getByRole('button', { name: "Don't show again" }).click()
+    await expect(promptCard).toHaveCSS('background-color', 'rgba(20, 51, 25, 0.1)')
+    await expect(promptCard).toHaveCSS('border-color', 'rgb(126, 231, 135)')
+    await expect(promptCard).toHaveCSS('box-shadow', 'rgba(100, 227, 110, 0.3) 0px 0px 8px 0px')
+    await expect(promptCard).toHaveCSS('transition-duration', '0.3s, 0.3s, 0.3s')
+    const promptHelp = page.locator('.prompt-help')
+    await expect(promptHelp).toBeVisible()
+    const dismissHint = page.getByRole('button', { name: "Don't show again" })
+    await expect(dismissHint.locator('svg')).toHaveCount(1)
+    const onboardingWidth = await promptHelp.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).width),
+    )
+
+    await page.getByText('Size', { exact: true }).click()
+    await expect(promptHelp).toBeHidden()
+    await expect(promptCard).toHaveCSS('background-color', 'rgb(24, 24, 28)')
+    await expect(promptCard).toHaveCSS('border-color', 'rgb(52, 52, 55)')
+    await expect(promptCard).toHaveCSS('box-shadow', 'none')
+    await editor.click()
+    await expect(promptHelp).toBeVisible()
+    await dismissHint.click()
 
     await editor.press('Control+a')
     await editor.press('Backspace')
@@ -344,9 +391,15 @@ test.describe('Project prototype', () => {
     await expect(editor).toHaveText('reordered second, reordered first')
 
     await page.reload()
-    await expect(page.getByText('Type and edit prompt text freely.')).toBeHidden()
+    await expect(promptHelp).toBeHidden()
     await page.getByRole('button', { name: 'About Prompt editor' }).hover()
-    await expect(page.getByText(/Triple-click selects a comma-separated phrase/)).toBeVisible()
+    await expect(promptHelp).toBeVisible()
+    const regularHelpWidth = await promptHelp.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).width),
+    )
+    expect(regularHelpWidth).toBeCloseTo(onboardingWidth, 0)
+    await expect(page.getByRole('button', { name: "Don't show again" })).toHaveCount(0)
+    expect(vueWarnings).toEqual([])
   })
 
   test('keeps native double-click and Shift selection while triple-click selects a phrase', async ({

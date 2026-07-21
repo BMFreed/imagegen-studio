@@ -16,6 +16,7 @@ export interface PromptAutocompleteSuggestion {
 }
 
 export function getPromptAutocompleteSuggestions(args: {
+  danbooruQuery?: string
   danbooruTags: DanbooruTagMock[]
   embeddings: GenerationEmbeddingResourceRef[]
   explicit: boolean
@@ -24,6 +25,9 @@ export function getPromptAutocompleteSuggestions(args: {
   query: string
 }): PromptAutocompleteSuggestion[] {
   const query = normalizePromptSearchValue(String(args.query ?? '').replace(/^</, ''))
+  const danbooruQuery = normalizePromptSearchValue(
+    String(args.danbooruQuery ?? args.query ?? '').replace(/^</, ''),
+  )
   const browsingLocalResources = args.explicit && query.length === 0
 
   const triggerMap = new Map<string, { names: string[]; sourceIds: string[]; text: string }>()
@@ -84,8 +88,8 @@ export function getPromptAutocompleteSuggestions(args: {
           : embedding.activationToken,
     }))
 
-  const danbooru = (query.length >= 2 ? args.danbooruTags : [])
-    .map((tag) => ({ score: matchScore(query, tag.name, ...tag.aliases), tag }))
+  const danbooru = (danbooruQuery.length >= 2 ? args.danbooruTags : [])
+    .map((tag) => ({ score: matchScore(danbooruQuery, tag.name, ...tag.aliases), tag }))
     .filter((item) => Number.isFinite(item.score))
     .sort((left, right) => left.score - right.score || right.tag.postCount - left.tag.postCount)
     .slice(0, 5)

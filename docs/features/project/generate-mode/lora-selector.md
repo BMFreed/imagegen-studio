@@ -18,7 +18,7 @@ Only LoRAs in the current generation draft that are enabled and not missing part
 
 ## Matching and presentation
 
-Trigger matching is case-insensitive, treats spaces and underscores as equivalent, prefers longest phrases, and does not match inside longer words. Identical normalized phrases from multiple active LoRAs aggregate into one range. The restrained green contextual decoration communicates active support; its tooltip lists the phrase and every active LoRA source.
+Trigger matching is case-insensitive, treats spaces and underscores as equivalent, prefers longest phrases, and does not match inside longer words. Identical normalized phrases from multiple active LoRAs aggregate into one range. A restrained violet contextual decoration keeps active trigger phrases distinct from the green editor focus state and blue embedding resources. Its tooltip is explicitly labeled `LoRA` and lists the phrase plus every active LoRA source.
 
 Embedding decorations take precedence when ranges overlap. Missing or ambiguous embedding diagnostics take precedence over LoRA context.
 

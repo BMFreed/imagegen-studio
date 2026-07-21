@@ -107,11 +107,14 @@ function createView() {
           'aria-label': props.ariaLabel,
           'aria-multiline': 'true',
         }),
-        EditorView.theme({
-          '&': { height: '100%' },
-          '.cm-content': { minHeight: `calc(${props.minimumLines} * 20px)` },
-          '.cm-scroller': { fontFamily: 'inherit', lineHeight: '20px', overflow: 'auto' },
-        }),
+        EditorView.theme(
+          {
+            '&': { height: '100%' },
+            '.cm-content': { minHeight: `calc(${props.minimumLines} * 20px)` },
+            '.cm-scroller': { fontFamily: 'inherit', lineHeight: '20px', overflow: 'auto' },
+          },
+          { dark: true },
+        ),
         tripleClickPhraseSelection(),
         promptTooltipParent(),
         readOnlyCompartment.of([

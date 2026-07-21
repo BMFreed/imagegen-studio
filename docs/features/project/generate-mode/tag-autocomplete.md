@@ -4,7 +4,7 @@
 
 Autocomplete runs inside the shared plain-text CodeMirror editor. It combines contextual trigger phrases from the current enabled LoRA stack, installed embeddings, and the prototype Danbooru tag source without converting any result into a chip.
 
-Automatic completion starts after two normalized characters. Users can explicitly browse with the prompt action-rail button or `Ctrl/Cmd+Space`; an empty explicit query shows local resources immediately.
+Automatic completion starts after two normalized characters. The search fragment is the current top-level phrase, so spaces and `_` remain equivalent while typing multi-word aliases such as `rim l`. Users can explicitly browse with the prompt action-rail button or `Ctrl/Cmd+Space`; an empty explicit query shows local resources immediately.
 
 ## Sections and ranking
 

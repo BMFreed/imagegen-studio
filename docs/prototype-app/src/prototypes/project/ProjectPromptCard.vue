@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, InfoCircle } from '@vicons/tabler'
+import { AlertTriangle, InfoCircle, X } from '@vicons/tabler'
 import { NButton, NIcon, NPopover, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, ref } from 'vue'
 
@@ -33,8 +33,14 @@ const props = defineProps<{
 const emit = defineEmits<{ dynamicPreview: [] }>()
 const message = useMessage()
 const editor = ref<GenerationPromptEditorHandle>()
+const editorFocused = ref(false)
 const selection = ref<GenerationPromptSelection>({ anchor: 0, head: 0 })
+const hintDismissed = ref(localStorage.getItem(HINT_STORAGE_KEY) === '1')
 const hintOpen = ref(false)
+const hintLines = [
+  'Triple-click selects a comma-separated phrase.',
+  'Ctrl/Cmd+Space browses embeddings and LoRA triggers.',
+]
 const value = computed(
   () => getActiveGenerationDraft(props.session).payload[props.field] ?? createGenerationPrompt(),
 )
@@ -67,12 +73,14 @@ function update(next: GenerationPrompt) {
 
 function handleFocus() {
   beginEdit()
-  if (localStorage.getItem(HINT_STORAGE_KEY) !== '1') {
-    hintOpen.value = true
-  }
+  editorFocused.value = true
+  hintDismissed.value = localStorage.getItem(HINT_STORAGE_KEY) === '1'
+  hintOpen.value = !hintDismissed.value
 }
 
 function handleBlur() {
+  editorFocused.value = false
+  hintOpen.value = false
   commitActiveProjectEdit(props.session)
 }
 
@@ -95,7 +103,32 @@ function clear() {
 
 function dismissHint() {
   localStorage.setItem(HINT_STORAGE_KEY, '1')
+  hintDismissed.value = true
   hintOpen.value = false
+}
+
+function handleInfoMouseDown(event: MouseEvent) {
+  if (!hintDismissed.value) {
+    event.preventDefault()
+  }
+}
+
+function handleInfoClick() {
+  if (!hintDismissed.value) {
+    editor.value?.focus()
+  }
+}
+
+function showDismissedHint() {
+  if (hintDismissed.value) {
+    hintOpen.value = true
+  }
+}
+
+function hideDismissedHint() {
+  if (hintDismissed.value) {
+    hintOpen.value = false
+  }
 }
 
 function hotkey(event: KeyboardEvent) {
@@ -108,35 +141,45 @@ function hotkey(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="prompt-card" @keydown.capture="hotkey">
+  <section
+    class="prompt-card"
+    :class="{ 'prompt-card--focused': editorFocused }"
+    @keydown.capture="hotkey"
+  >
     <header class="prompt-meta">
       <strong>{{ title }}</strong>
       <NText depth="3">{{ tokenCount }} tokens</NText>
       <NPopover :show="hintOpen" trigger="manual">
         <template v-slot:trigger>
-          <NTooltip :disabled="hintOpen">
-            <template v-slot:trigger>
-              <NButton
-                :aria-label="`About ${title} editor`"
-                circle
-                class="prompt-info"
-                quaternary
-                size="tiny"
-                @click="hintOpen = !hintOpen"
-              >
-                <template v-slot:icon><NIcon :component="InfoCircle" /></template>
-              </NButton>
-            </template>
-            Type and edit prompt text freely. Double-click selects a word. Triple-click selects a
-            comma-separated phrase. Ctrl/Cmd+Space browses embeddings and LoRA triggers.
-          </NTooltip>
+          <NButton
+            :aria-label="`About ${title} editor`"
+            circle
+            class="prompt-info"
+            quaternary
+            size="tiny"
+            @blur="hideDismissedHint"
+            @click="handleInfoClick"
+            @focus="showDismissedHint"
+            @mousedown="handleInfoMouseDown"
+            @mouseenter="showDismissedHint"
+            @mouseleave="hideDismissedHint"
+          >
+            <template v-slot:icon><NIcon :component="InfoCircle" /></template>
+          </NButton>
         </template>
-        <div class="prompt-onboarding">
-          <span>Type and edit prompt text freely.</span>
-          <span>Double-click selects a word.</span>
-          <span>Triple-click selects a comma-separated phrase.</span>
-          <span>Ctrl/Cmd+Space browses embeddings and LoRA triggers.</span>
-          <NButton size="tiny" type="primary" @click="dismissHint">Don't show again</NButton>
+        <div class="prompt-help">
+          <span v-for="line of hintLines" :key="line">{{ line }}</span>
+          <NButton
+            v-if="!hintDismissed"
+            class="prompt-help__dismiss"
+            size="tiny"
+            text
+            @click="dismissHint"
+            @mousedown.prevent
+          >
+            <template v-slot:icon><NIcon :component="X" /></template>
+            Don't show again
+          </NButton>
         </div>
       </NPopover>
       <NTooltip v-if="warning">
@@ -186,6 +229,15 @@ function hotkey(event: KeyboardEvent) {
   background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
+  transition:
+    background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.prompt-card--focused {
+  background: var(--prompt-editor-focus-surface);
+  border-color: var(--prompt-editor-focus-border);
+  box-shadow: 0 0 8px 0 var(--prompt-editor-focus-shadow);
 }
 .prompt-meta {
   position: absolute;
@@ -217,13 +269,12 @@ function hotkey(event: KeyboardEvent) {
   top: 7px;
   right: 5px;
 }
-.prompt-onboarding {
+.prompt-help {
   display: grid;
-  max-width: 330px;
   gap: 3px;
   font-size: var(--app-font-size-meta);
 }
-.prompt-onboarding .n-button {
+.prompt-help__dismiss {
   justify-self: end;
   margin-top: 6px;
 }

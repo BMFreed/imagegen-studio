@@ -27,13 +27,11 @@ Project prompt input updates the active generation draft immediately, including 
 The first prompt focus opens a controlled onboarding popover:
 
 ```text
-Type and edit prompt text freely.
-Double-click selects a word.
 Triple-click selects a comma-separated phrase.
 Ctrl/Cmd+Space browses embeddings and LoRA triggers.
 ```
 
-`Don't show again` stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. The same help remains available from the Info button through an ordinary hover/focus tooltip.
+The hint deliberately omits ordinary typing and native double-click word selection, keeping only the editor-specific gestures. It stays visible only while a prompt editor is focused. Its text-style `Don't show again` action stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. The same compact help layout, without the action row, remains available from the Info button through an ordinary hover/focus popover.
 
 ## Resource-aware text
 
