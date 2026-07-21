@@ -4,7 +4,7 @@
 
 Presets let the user save and reuse generation settings without treating them as a hidden workflow graph.
 
-A preset is an editable user template made from explicit sections of generation state: structured positive and negative prompts, model, LoRAs, project size, sampler and scheduler, steps and CFG, denoising strength when applicable, seed policy and VAE. Embedding references live inside the prompt tokens where they are actually used; they are not a separate preset section.
+A preset is an editable user template made from explicit sections of generation state: plain-text positive and negative prompts with sidecar embedding refs, model, LoRAs, project size, sampler and scheduler, steps and CFG, denoising strength when applicable, seed policy and VAE. Embeddings are owned by their prompt section rather than a separate preset section.
 
 ## Reference
 
@@ -198,7 +198,7 @@ Editable fields:
 - tags/favorite;
 - workflow type;
 - included sections;
-- structured prompt and negative-prompt tokens, including embedding tokens;
+- plain-text prompt and negative-prompt values, including their embedding refs;
 - model and exact version;
 - LoRAs, weights, enabled state and removal;
 - project size;

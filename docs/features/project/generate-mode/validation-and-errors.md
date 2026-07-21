@@ -38,7 +38,7 @@ Generate must handle:
 
 - prompt diagnostics live in the prompt editor status area;
 - missing/incompatible LoRA warnings live on LoRA rows and selector rows;
-- missing/incompatible embedding warnings live on the affected embedding token inside the Positive or Negative Prompt editor;
+- missing/incompatible embedding warnings live on the affected text range and in the Positive or Negative Prompt diagnostic area;
 - bbox validity warnings live near bbox controls and canvas handles;
 - Smart Patch `outdated` status lives on the layer row and selected-layer controls;
 - worker unavailable/failed state can appear in global status and in Generate action area;
@@ -54,16 +54,19 @@ Block generation when:
 - bbox/internal resolution cannot produce a valid worker request;
 - required source assets for Smart Patch regeneration are missing.
 - an active prompt contains a missing embedding resource.
+- an exact embedding token is ambiguous and has no stored resource ref;
+- dynamic prompt syntax is invalid or the expanded batch exceeds the limit.
 
 Warn but allow generation when:
 
 - prompt diagnostics are non-fatal;
 - LoRA/embedding compatibility is uncertain but resource exists;
 - dynamic prompt expansion is large but within configured limits.
+- prompt text happens to match a disabled/removed LoRA trigger or a Danbooru tag.
 
 ## Vue Prototype Coverage
 
-The `errors` scenario currently demonstrates a missing selected model, missing/incompatible LoRA warning, missing embedding token, mock prompt warning, outdated Smart Patch, failed candidate and mock Save failure. Generate is disabled for a missing model, a missing embedding in either active prompt or a dynamic batch above 100 jobs, and the fixed action area shows the blocking reason as text rather than relying on a tooltip.
+The `errors` scenario currently demonstrates a missing selected model, missing/incompatible LoRA warning, a recalled missing embedding ref, mock prompt warning, outdated Smart Patch, failed candidate and mock Save failure. Generate is disabled for a missing model, missing or ambiguous active-prompt embedding dependency, invalid dynamic prompt, or a dynamic batch above 100 jobs. The fixed action area and editor diagnostics explain the reason in text rather than color alone.
 
 The prototype does not yet validate real worker availability, bbox ranges, internal-resolution compatibility, missing Smart Patch source assets or model-family support. Regional and LoRA compatibility are deterministic warnings. Failed queue/candidate state is mock operational state rather than a transported worker error.
 

@@ -80,12 +80,12 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
       generationEmbeddings,
       mockDanbooruTags,
     )
-    session.document.generationDraft.payload.negativePrompt?.tokens.push({
-      id: 'missing-embedding-token',
-      kind: 'embedding',
-      resource: { ...generationEmbeddings[0]!, missing: true },
-      text: generationEmbeddings[0]!.negativeToken!,
-    })
+    const missingRef = session.document.generationDraft.payload.negativePrompt?.embeddingRefs.find(
+      (ref) => ref.resource.id === generationEmbeddings[0]!.id,
+    )
+    if (missingRef) {
+      missingRef.resource.missing = true
+    }
     const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch')
     if (patch?.kind === 'smart-patch') {
       patch.status = 'outdated'
@@ -221,10 +221,12 @@ function queueItem(
     iteration,
     label,
     negativePrompt: serializeGenerationPrompt(baseDraft.payload.negativePrompt),
-    negativePromptTokens: structuredClone(baseDraft.payload.negativePrompt?.tokens ?? []),
+    negativePromptEmbeddingRefs: structuredClone(
+      baseDraft.payload.negativePrompt?.embeddingRefs ?? [],
+    ),
     progress,
     prompt: serializeGenerationPrompt(baseDraft.payload.prompt),
-    promptTokens: structuredClone(baseDraft.payload.prompt?.tokens ?? []),
+    promptEmbeddingRefs: structuredClone(baseDraft.payload.prompt?.embeddingRefs ?? []),
     status,
   }
 }

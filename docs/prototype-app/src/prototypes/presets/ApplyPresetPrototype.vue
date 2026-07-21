@@ -81,10 +81,16 @@ const applicationDraftDirty = computed(
 )
 const selectedMissingResource = computed(() =>
   draft.value.selectedSections.some((section) =>
-    presetSectionHasMissingResources(draft.value.payload, section),
+    presetSectionHasMissingResources(
+      draft.value.payload,
+      section,
+      presetEditorResources.embeddings,
+    ),
   ),
 )
-const applyDisabled = computed(() => !applicationDraftIsValid(draft.value))
+const applyDisabled = computed(
+  () => !applicationDraftIsValid(draft.value, presetEditorResources.embeddings),
+)
 
 function sectionSelected(section: PresetSectionKey): boolean {
   return draft.value.selectedSections.includes(section)

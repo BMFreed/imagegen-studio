@@ -320,6 +320,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   if (!session || !(event.ctrlKey || event.metaKey)) {
     return
   }
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.n-modal, .n-drawer, [role="dialog"]')) {
+    return
+  }
   if (event.key.toLowerCase() === 's') {
     event.preventDefault()
     saveActiveProject()

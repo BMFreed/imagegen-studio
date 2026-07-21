@@ -91,7 +91,11 @@ const changedSections = computed(() =>
 const selectedPresetHasMissingResource = computed(() =>
   Boolean(
     presetDraft.value?.selectedSections.some((section) =>
-      presetSectionHasMissingResources(presetDraft.value!.payload, section),
+      presetSectionHasMissingResources(
+        presetDraft.value!.payload,
+        section,
+        presetEditorResources.embeddings,
+      ),
     ),
   ),
 )

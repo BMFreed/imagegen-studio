@@ -3,28 +3,28 @@ import type {
   GenerationEmbeddingResourceRef,
   GenerationLora,
   GenerationPromptPolarity,
-  GenerationPromptToken,
 } from './generation.types'
 
-import { createPromptTokenId, normalizePromptSearchValue } from './generation-prompt.utils'
+import { normalizePromptSearchValue } from './generation-prompt.utils'
 
 export interface PromptAutocompleteSuggestion {
   detail: string
+  embedding?: GenerationEmbeddingResourceRef
   group: 'danbooru' | 'embeddings' | 'loras'
   id: string
   label: string
-  token: GenerationPromptToken
 }
 
 export function getPromptAutocompleteSuggestions(args: {
   danbooruTags: DanbooruTagMock[]
   embeddings: GenerationEmbeddingResourceRef[]
+  explicit: boolean
   loras: GenerationLora[]
   polarity: GenerationPromptPolarity
   query: string
 }): PromptAutocompleteSuggestion[] {
   const query = normalizePromptSearchValue(String(args.query ?? '').replace(/^</, ''))
-  const browsingLocalResources = query.length === 0
+  const browsingLocalResources = args.explicit && query.length === 0
 
   const triggerMap = new Map<string, { names: string[]; sourceIds: string[]; text: string }>()
   for (const lora of args.loras.filter((item) => item.enabled && !item.resource.missing)) {
@@ -50,49 +50,38 @@ export function getPromptAutocompleteSuggestions(args: {
       group: 'loras',
       id: `lora:${item.sourceIds.join('+')}:${item.text}`,
       label: item.text,
-      token: {
-        id: createPromptTokenId(),
-        kind: 'lora-trigger',
-        sourceLoraIds: item.sourceIds,
-        text: item.text,
-      },
     }))
 
   const embeddings = args.embeddings
     .filter((item) => !item.missing)
-    .map((resource) => ({
-      resource,
+    .map((embedding) => ({
+      embedding,
       score:
         (browsingLocalResources
           ? 0
           : matchScore(
               query,
-              resource.name,
-              resource.activationToken,
-              resource.negativeToken ?? '',
+              embedding.name,
+              embedding.activationToken,
+              embedding.negativeToken ?? '',
             )) +
-        (args.polarity === 'negative' && resource.suggestedPolarity === 'negative' ? -0.25 : 0),
+        (args.polarity === 'negative' && embedding.suggestedPolarity === 'negative' ? -0.25 : 0),
     }))
     .filter((item) => Number.isFinite(item.score))
-    .sort((left, right) => left.score - right.score)
+    .sort(
+      (left, right) =>
+        left.score - right.score || left.embedding.name.localeCompare(right.embedding.name),
+    )
     .slice(0, 5)
-    .map<PromptAutocompleteSuggestion>(({ resource }) => ({
-      detail: resource.name,
+    .map<PromptAutocompleteSuggestion>(({ embedding }) => ({
+      detail: embedding.name,
+      embedding,
       group: 'embeddings',
-      id: `embedding:${resource.id}`,
+      id: `embedding:${embedding.id}`,
       label:
-        args.polarity === 'negative' && resource.negativeToken
-          ? resource.negativeToken
-          : resource.activationToken,
-      token: {
-        id: createPromptTokenId(),
-        kind: 'embedding',
-        resource: structuredClone(resource),
-        text:
-          args.polarity === 'negative' && resource.negativeToken
-            ? resource.negativeToken
-            : resource.activationToken,
-      },
+        args.polarity === 'negative' && embedding.negativeToken
+          ? embedding.negativeToken
+          : embedding.activationToken,
     }))
 
   const danbooru = (query.length >= 2 ? args.danbooruTags : [])
@@ -105,21 +94,15 @@ export function getPromptAutocompleteSuggestions(args: {
       group: 'danbooru',
       id: `danbooru:${tag.name}`,
       label: tag.name,
-      token: {
-        aliases: [...tag.aliases],
-        canonicalName: tag.name,
-        category: tag.category,
-        id: createPromptTokenId(),
-        kind: 'danbooru',
-        postCount: tag.postCount,
-        text: tag.name,
-      },
     }))
 
   return [...loras, ...embeddings, ...danbooru].slice(0, 12)
 }
 
 function matchScore(query: string, ...values: string[]) {
+  if (!query) {
+    return 0
+  }
   const normalized = values.map(normalizePromptSearchValue)
   if (normalized.includes(query)) {
     return 0

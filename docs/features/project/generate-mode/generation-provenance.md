@@ -31,7 +31,7 @@ Provenance should include:
 
 - model identity and exact version/hash metadata;
 - prediction type metadata;
-- serialized positive and negative prompts plus frozen structured source tokens;
+- frozen positive and negative plain text plus their embedding resource refs;
 - concrete expanded dynamic prompt where relevant;
 - actual seed and seed behavior;
 - automatically derived generation mode: txt2img, img2img, inpaint or outpaint;
@@ -42,7 +42,7 @@ Provenance should include:
 - guidance/CFG;
 - denoising strength when it affected the job;
 - LoRA stack;
-- embedding resource refs nested in the prompt tokens where they were used;
+- positive and negative `GenerationPromptEmbeddingRef[]` sidecars;
 - VAE and other active model-aware options;
 - enabled Regional Guidance state and image refs used by the job;
 - Smart Patch compositing/infill/mask settings;
@@ -90,7 +90,7 @@ Global generation history is a derived index of accepted project results.
 
 ## Vue Prototype Coverage
 
-Queue items freeze serialized prompts, structured source tokens, iteration and derived request mode, and accepted layers/variants carry enough mock identity to validate the acceptance workflow. The prototype does not construct or persist the full `GenerationProvenance` object, hash source composites/masks, write `.igs` references or update a global accepted-result history index. Consequently, Recall Settings and Create Preset from accepted provenance remain product behavior rather than current interactive coverage.
+Queue items freeze concrete plain-text prompts, cloned embedding refs, iteration and derived request mode, and accepted layers/variants carry enough mock identity to validate the acceptance workflow. LoRA stack metadata remains frozen separately; Danbooru and LoRA-trigger annotations are not preserved. The prototype does not construct or persist the full `GenerationProvenance` object, hash source composites/masks, write `.igs` references or update a global accepted-result history index. Consequently, Recall Settings and Create Preset from accepted provenance remain product behavior rather than current interactive coverage.
 
 ## Acceptance Criteria
 

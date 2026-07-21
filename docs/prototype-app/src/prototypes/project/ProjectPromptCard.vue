@@ -1,24 +1,30 @@
 <script setup lang="ts">
-import { AlertTriangle } from '@vicons/tabler'
-import { NIcon, NText, NTooltip, useMessage } from 'naive-ui'
+import { AlertTriangle, InfoCircle } from '@vicons/tabler'
+import { NButton, NIcon, NPopover, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, ref } from 'vue'
 
-import type { GenerationPrompt } from '../../components/generation/generation.types'
+import type {
+  GenerationPrompt,
+  GenerationPromptSelection,
+} from '../../components/generation/generation.types'
+import type { GenerationPromptEditorHandle } from '../../components/generation/GenerationPromptEditor.vue'
 import type { ProjectSession } from './project.types'
 
 import {
-  adjustPromptTokenAttention,
   cloneGenerationPrompt,
+  countPromptTokens,
   createGenerationPrompt,
+  findTopLevelPromptPhraseRange,
   serializeGenerationPrompt,
 } from '../../components/generation/generation-prompt.utils'
 import { mockDanbooruTags } from '../../components/generation/generation.mock'
-import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue'
+import GenerationPromptEditor from '../../components/generation/GenerationPromptEditor.vue'
 import { presetEditorResources } from '../presets/presets.mock'
-import { commitProjectMutation } from './project-history'
+import { beginProjectEdit, commitActiveProjectEdit, updateProjectEdit } from './project-history'
 import { getActiveGenerationDraft } from './project.utils'
 import ProjectPromptActions from './ProjectPromptActions.vue'
 
+const HINT_STORAGE_KEY = 'imagegen-studio.prompt-editor-hint-dismissed.v1'
 const props = defineProps<{
   field: 'negativePrompt' | 'prompt'
   session: ProjectSession
@@ -26,37 +32,72 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ dynamicPreview: [] }>()
 const message = useMessage()
-const selectedTokenId = ref<string>()
+const editor = ref<GenerationPromptEditorHandle>()
+const selection = ref<GenerationPromptSelection>({ anchor: 0, head: 0 })
+const hintOpen = ref(false)
 const value = computed(
   () => getActiveGenerationDraft(props.session).payload[props.field] ?? createGenerationPrompt(),
 )
 const serialized = computed(() => serializeGenerationPrompt(value.value))
-const tokenCount = computed(() => serialized.value.split(/\s+/).filter(Boolean).length)
+const tokenCount = computed(() => countPromptTokens(serialized.value))
 const warning = computed(() => serialized.value.includes('(broken'))
 const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? [])
+const transactionKey = computed(() => {
+  const selected = props.session.ui.selection
+  return `prompt:${selected?.kind ?? 'project'}:${selected?.id ?? props.session.document.id}:${props.field}`
+})
+const attentionTargetAvailable = computed(() => {
+  if (selection.value.anchor !== selection.value.head) {
+    return true
+  }
+  const range = findTopLevelPromptPhraseRange(serialized.value, selection.value.head)
+  return Boolean(serialized.value.slice(range.from, range.to).trim())
+})
 
-function update(next: GenerationPrompt, label = `Edit ${props.title.toLowerCase()}`) {
-  commitProjectMutation(props.session, label, () => {
+function beginEdit() {
+  beginProjectEdit(props.session, transactionKey.value, `Edit ${props.title.toLocaleLowerCase()}`)
+}
+
+function update(next: GenerationPrompt) {
+  beginEdit()
+  updateProjectEdit(props.session, () => {
     getActiveGenerationDraft(props.session).payload[props.field] = cloneGenerationPrompt(next)
   })
 }
-function attention(direction: -1 | 1) {
-  if (!selectedTokenId.value) {
-    return
+
+function handleFocus() {
+  beginEdit()
+  if (localStorage.getItem(HINT_STORAGE_KEY) !== '1') {
+    hintOpen.value = true
   }
-  update(
-    adjustPromptTokenAttention(value.value, selectedTokenId.value, direction),
-    `${direction > 0 ? 'Increase' : 'Decrease'} prompt attention`,
-  )
 }
+
+function handleBlur() {
+  commitActiveProjectEdit(props.session)
+}
+
+function attention(direction: -1 | 1) {
+  beginEdit()
+  editor.value?.applyAttention(direction)
+}
+
 async function copy() {
   await navigator.clipboard.writeText(serialized.value)
   message.success(`${props.title} copied`)
 }
+
 function clear() {
-  update(createGenerationPrompt(), `Clear ${props.title.toLowerCase()}`)
-  selectedTokenId.value = undefined
+  beginEdit()
+  update(createGenerationPrompt())
+  selection.value = { anchor: 0, head: 0 }
+  editor.value?.focus()
 }
+
+function dismissHint() {
+  localStorage.setItem(HINT_STORAGE_KEY, '1')
+  hintOpen.value = false
+}
+
 function hotkey(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) {
     return
@@ -71,6 +112,33 @@ function hotkey(event: KeyboardEvent) {
     <header class="prompt-meta">
       <strong>{{ title }}</strong>
       <NText depth="3">{{ tokenCount }} tokens</NText>
+      <NPopover :show="hintOpen" trigger="manual">
+        <template v-slot:trigger>
+          <NTooltip :disabled="hintOpen">
+            <template v-slot:trigger>
+              <NButton
+                :aria-label="`About ${title} editor`"
+                circle
+                class="prompt-info"
+                quaternary
+                size="tiny"
+                @click="hintOpen = !hintOpen"
+              >
+                <template v-slot:icon><NIcon :component="InfoCircle" /></template>
+              </NButton>
+            </template>
+            Type and edit prompt text freely. Double-click selects a word. Triple-click selects a
+            comma-separated phrase. Ctrl/Cmd+Space browses embeddings and LoRA triggers.
+          </NTooltip>
+        </template>
+        <div class="prompt-onboarding">
+          <span>Type and edit prompt text freely.</span>
+          <span>Double-click selects a word.</span>
+          <span>Triple-click selects a comma-separated phrase.</span>
+          <span>Ctrl/Cmd+Space browses embeddings and LoRA triggers.</span>
+          <NButton size="tiny" type="primary" @click="dismissHint">Don't show again</NButton>
+        </div>
+      </NPopover>
       <NTooltip v-if="warning">
         <template v-slot:trigger>
           <NIcon
@@ -82,20 +150,25 @@ function hotkey(event: KeyboardEvent) {
         Check prompt weights
       </NTooltip>
     </header>
-    <GenerationPromptTokenEditor
-      v-model:selectedTokenId="selectedTokenId"
+    <GenerationPromptEditor
+      ref="editor"
+      v-model:selection="selection"
       :ariaLabel="title"
       :danbooruTags="mockDanbooruTags"
       :embeddings="presetEditorResources.embeddings"
+      historyMode="external"
       :loras
       :minimumLines="field === 'prompt' ? 9 : 4"
       :modelValue="value"
       :polarity="field === 'prompt' ? 'positive' : 'negative'"
+      @blur="handleBlur"
+      @focus="handleFocus"
       @update:modelValue="update($event)"
     />
     <ProjectPromptActions
+      :attentionTargetAvailable
       class="prompt-actions-rail"
-      :tokenSelected="Boolean(selectedTokenId)"
+      @browse="editor?.openAutocomplete()"
       @clear="clear"
       @copy="copy"
       @decrease="attention(-1)"
@@ -116,15 +189,14 @@ function hotkey(event: KeyboardEvent) {
 }
 .prompt-meta {
   position: absolute;
-  z-index: 1;
-  top: 7px;
+  z-index: 2;
+  top: 5px;
   left: 8px;
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   line-height: 1.2;
-  pointer-events: none;
 }
 .prompt-meta strong {
   font-weight: 600;
@@ -132,15 +204,27 @@ function hotkey(event: KeyboardEvent) {
 .prompt-meta .n-text {
   font-size: var(--app-font-size-meta);
 }
+.prompt-info {
+  color: var(--app-text-muted);
+}
 .prompt-warning {
   flex: 0 0 auto;
   color: var(--status-warning);
-  pointer-events: auto;
 }
 .prompt-actions-rail {
   position: absolute;
   z-index: 2;
   top: 7px;
   right: 5px;
+}
+.prompt-onboarding {
+  display: grid;
+  max-width: 330px;
+  gap: 3px;
+  font-size: var(--app-font-size-meta);
+}
+.prompt-onboarding .n-button {
+  justify-self: end;
+  margin-top: 6px;
 }
 </style>

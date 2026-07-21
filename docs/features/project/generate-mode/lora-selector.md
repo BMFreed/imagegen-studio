@@ -1,164 +1,31 @@
-# LoRA Selector
+# LoRA Selector and Trigger Phrases
 
-## Feature
+## LoRA stack
 
-The LoRA selector lets the user add and configure LoRAs for the current Generate operation.
+`GenerationLoraStack` owns only the structured LoRA stack: resource identity, enabled state, weight, missing state, add, and remove. The LoRA stack remains separate generation/provenance metadata.
 
-## Reference
+## Trigger phrases are plain text
 
-Primary reference: InvokeAI compact LoRA selector/list.
+Selecting a LoRA trigger completion inserts ordinary prompt text. Prompt state does not store `sourceLoraIds` or any other LoRA ownership link. Consequently:
 
-Secondary reference: Forge extra-network metadata cards.
+- disabling a LoRA removes its contextual highlight and suggestions but never changes prompt text;
+- enabling it again restores matching highlights;
+- removing a LoRA removes contextual highlight/suggestions but never changes text;
+- no orphan-trigger dialog or pending resolution state exists;
+- a trigger phrase without a matching active LoRA remains valid ordinary text.
 
-## ImageGen Studio Decision
+Only LoRAs in the current generation draft that are enabled and not missing participate in suggestions and highlighting.
 
-LoRAs get their own stacked card before `Generation` in the compact Project settings panel.
+## Matching and presentation
 
-Do not use a shared `Concepts` section name.
+Trigger matching is case-insensitive, treats spaces and underscores as equivalent, prefers longest phrases, and does not match inside longer words. Identical normalized phrases from multiple active LoRAs aggregate into one range. The restrained green contextual decoration communicates active support; its tooltip lists the phrase and every active LoRA source.
 
-```text
-Project settings
-├─ Prompt
-├─ Negative Prompt
-├─ LoRAs
-│  ├─ Add LoRA select
-│  └─ selected LoRA list
-└─ Generation
-   ├─ Model
-   └─ Sampling
-```
+Embedding decorations take precedence when ranges overlap. Missing or ambiguous embedding diagnostics take precedence over LoRA context.
 
-Embeddings are not a sibling stack: they are resource-bearing tokens inside Positive or Negative Prompt.
+## Autocomplete
 
-## Scope
+Active phrases appear in the first autocomplete section, ahead of embeddings and Danbooru tags. Choosing one inserts text at the current search fragment and records no resource link. Missing and disabled LoRAs contribute neither suggestions nor decoration.
 
-MVP:
+## Validation and persistence
 
-- searchable LoRA picker;
-- thumbnails directly in dropdown rows;
-- search field inside dropdown;
-- `Manage Models` action inside dropdown;
-- no `Full View` action inside dropdown;
-- active model family filtering where possible;
-- duplicate prevention inside the same LoRA stack;
-- selected LoRA rows below the selector;
-- enable/disable per selected LoRA;
-- weight editing per selected LoRA;
-- explicit info button on dropdown rows;
-- explicit info button on selected LoRA rows;
-- metadata popover/card opened only by clicking the info button;
-- missing/incompatible resource warnings when recalled from accepted results or presets.
-
-Post-MVP:
-
-- richer sorting and pinning;
-- compare LoRA previews;
-- custom preferred weight overrides.
-
-## Dropdown Row
-
-Each dropdown row should show:
-
-- thumbnail;
-- display name;
-- short subtitle such as trigger words or source URL/domain where useful;
-- base model family badge;
-- local status / missing status;
-- compatibility warning badge if needed;
-- size/version/hash metadata when space allows;
-- compact info button.
-
-The dropdown should remain optimized for choosing, not browsing. Large metadata should not open on plain hover.
-
-## Selected LoRA Row
-
-Selected LoRAs are displayed as cards/rows below the selector, not inside the collapsed select field.
-
-Each selected row should include:
-
-- name;
-- enable/disable toggle;
-- weight slider/input;
-- remove action;
-- compatibility warning if applicable;
-- info button.
-
-Only the info button opens the metadata popover/card.
-
-## LoRA Application And Trigger Words
-
-Adding a LoRA through the UI applies the LoRA resource and its weight automatically to the generation job.
-
-Conceptually this is equivalent to the common prompt token form:
-
-```text
-<lora:LoRA_Name:Weight>
-```
-
-But in ImageGen Studio this should be represented as structured generation state, not as user-authored prompt text. The prompt editor should not require the user to manually type the LoRA attachment token after they have selected the LoRA in the UI.
-
-Rules:
-
-- selected LoRA resource id/version and weight are stored in the LoRA stack;
-- the worker receives the selected LoRA stack as structured job input;
-- exported metadata may include an A1111-style token for compatibility when useful;
-- changing the weight in the selected LoRA row updates the structured LoRA stack;
-- removing or disabling the selected LoRA removes/disables the structured LoRA attachment;
-- disabling is non-destructive and never opens the trigger-phrase lifecycle dialog.
-
-Secondary trigger words are different. They are normal prompt words/phrases supplied by the LoRA author, and the user chooses whether to add them to the prompt.
-
-Rules for secondary trigger words:
-
-- trigger phrases must be visible from the selected LoRA row through the explicit info button;
-- trigger words should also be available from the dropdown row's info button;
-- enabled, non-missing selected LoRAs contribute their trigger phrases to unified autocomplete in both prompt fields;
-- selecting a suggestion creates a source-linked LoRA trigger token, but selecting the LoRA itself never inserts prompt text;
-- removing the final source of an inserted trigger asks whether to keep it as prompt text, remove it, or cancel;
-- disabling the final source keeps the linked token unchanged so the LoRA can be re-enabled without prompt churn;
-- the UI should make clear that these words are optional prompt guidance, not the LoRA attachment itself.
-
-## Metadata Popover
-
-The metadata popover/card should include:
-
-- preview thumbnail/image;
-- description;
-- trigger words / activation text;
-- preferred/default weight where known;
-- base model family;
-- version/hash metadata;
-- local file size/path metadata where useful;
-- compatibility warnings for the active model.
-
-The popover should not block normal dropdown selection. It opens by explicit click and can be dismissed without changing selection.
-
-## Provenance Behavior
-
-LoRA stack is stored in immutable provenance of accepted generated results.
-
-Each LoRA provenance entry should include:
-
-- resource id;
-- model/version/hash metadata available at generation time;
-- weight;
-- enabled state;
-- compatibility metadata/warnings where useful.
-
-## Vue Prototype Coverage
-
-The shared prototype component currently provides a stable Add LoRA select above selected rows, duplicate prevention, enable/disable, numeric weight from -2 through 2 and remove. It is reused by Project and preset/apply flows.
-
-Enabled non-missing LoRAs contribute resource-owned trigger phrases to both prompt autocompletes. Disabling immediately removes those phrases from new suggestions but keeps existing linked tokens without interruption. Only removing a LoRA that would orphan an existing trigger token opens the constrained `Keep as Prompt Text` / `Remove Trigger Phrases` / `Cancel` dialog; the LoRA change and token resolution are one Project undo entry.
-
-Thumbnail-rich dropdown rows, active-model filtering, Manage Models inside the dropdown, explicit resource info buttons/popovers and full compatibility metadata are not present in the current component. The current Add control is a normal Naive select and closes after selection.
-
-## Acceptance Criteria
-
-- Product picker supports search and rich resource metadata; the current prototype uses a compact text select.
-- `Manage Models` remains available from the Generation card rather than inside the current LoRA dropdown.
-- Selected LoRAs appear below the selector.
-- Resource info buttons/popovers remain product scope and are not current prototype behavior.
-- Adding a LoRA in the UI applies the LoRA resource and weight without requiring the user to type `<lora:...:...>` manually.
-- Secondary trigger phrases are visible through metadata and unified autocomplete and are never inserted automatically.
-- LoRA stack is stored in accepted-result provenance.
+LoRA trigger text never blocks Apply or Generate merely because its source LoRA is disabled, missing, or removed. Presets and prompt provenance store only the text; the actual LoRA stack continues to persist independently with resource metadata and weights.

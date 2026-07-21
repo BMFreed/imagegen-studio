@@ -108,7 +108,7 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - Product implementation lets the user select an installed version; the current prototype only displays the selected version.
 - Unsupported controls are not shown as generic always-on clutter.
 - Prediction type metadata is passed to the worker and stored in accepted-result provenance.
-- LoRAs have a structured stack; embeddings are prompt tokens and have no standalone section.
+- LoRAs have a structured stack; embeddings are plain prompt text with sidecar `embeddingRefs` and have no standalone section.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
 - Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.
 - Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage is limited to visible VAE and VAE precision controls.

@@ -3,7 +3,7 @@ import type { ProjectDocumentModel, ProjectSession } from './project.types'
 export function cloneDocument(document: ProjectDocumentModel): ProjectDocumentModel {
   // Project documents are JSON-shaped prototype state. Serializing here unwraps
   // nested Vue proxies as well as the top-level proxy, which structuredClone
-  // cannot do reliably after an editor writes reactive token arrays.
+  // cannot do reliably after an editor updates reactive prompt metadata.
   return JSON.parse(JSON.stringify(document)) as ProjectDocumentModel
 }
 
@@ -12,6 +12,7 @@ export function commitProjectMutation(
   label: string,
   mutate: (document: ProjectDocumentModel) => void,
 ) {
+  commitActiveProjectEdit(session)
   session.history.past.push({ document: cloneDocument(session.document), label })
   if (session.history.past.length > 64) {
     session.history.past.shift()
@@ -20,6 +21,51 @@ export function commitProjectMutation(
   mutate(session.document)
   session.document.updatedAt = new Date().toISOString()
   session.dirty = true
+}
+
+export function beginProjectEdit(session: ProjectSession, key: string, label: string) {
+  if (session.history.activeEdit?.key === key) {
+    return
+  }
+  commitActiveProjectEdit(session)
+  session.history.activeEdit = { baseline: cloneDocument(session.document), key, label }
+}
+
+export function updateProjectEdit(
+  session: ProjectSession,
+  mutate: (document: ProjectDocumentModel) => void,
+) {
+  mutate(session.document)
+  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
+}
+
+export function commitActiveProjectEdit(session: ProjectSession) {
+  const transaction = session.history.activeEdit
+  if (!transaction) {
+    return false
+  }
+  session.history.activeEdit = undefined
+  if (JSON.stringify(transaction.baseline) === JSON.stringify(session.document)) {
+    return false
+  }
+  session.history.past.push({ document: transaction.baseline, label: transaction.label })
+  if (session.history.past.length > 64) {
+    session.history.past.shift()
+  }
+  session.history.future = []
+  session.document.updatedAt = new Date().toISOString()
+  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
+  return true
+}
+
+export function cancelActiveProjectEdit(session: ProjectSession) {
+  const transaction = session.history.activeEdit
+  if (!transaction) {
+    return
+  }
+  session.document = cloneDocument(transaction.baseline)
+  session.history.activeEdit = undefined
+  session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
 }
 
 export function commitProjectEditFromBaseline(
@@ -40,6 +86,7 @@ export function commitProjectEditFromBaseline(
 }
 
 export function undoProject(session: ProjectSession) {
+  commitActiveProjectEdit(session)
   const entry = session.history.past.pop()
   if (!entry) {
     return
@@ -50,6 +97,7 @@ export function undoProject(session: ProjectSession) {
 }
 
 export function redoProject(session: ProjectSession) {
+  commitActiveProjectEdit(session)
   const entry = session.history.future.pop()
   if (!entry) {
     return
@@ -60,6 +108,7 @@ export function redoProject(session: ProjectSession) {
 }
 
 export function saveProjectSession(session: ProjectSession) {
+  commitActiveProjectEdit(session)
   if (session.saveShouldFail) {
     return false
   }
@@ -69,6 +118,7 @@ export function saveProjectSession(session: ProjectSession) {
 }
 
 export function discardProjectChanges(session: ProjectSession) {
+  cancelActiveProjectEdit(session)
   session.document = cloneDocument(session.savedDocument)
   session.history = { future: [], past: [] }
   session.staging = undefined

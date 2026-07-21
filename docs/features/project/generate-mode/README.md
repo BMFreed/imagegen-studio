@@ -16,7 +16,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 - [Smart Patch Layer](./smart-patch-layer.md)
 - [Generation settings](./generation-settings.md)
 - [LoRA selector](./lora-selector.md)
-- [Embedding prompt tokens](./embeddings-selector.md)
+- [Embeddings in prompts](./embeddings-selector.md)
 - [Regional guidance](./regional-guidance.md)
 - [ControlNet follow-up](./controlnet-follow-up.md)
 - [Smart Patch compositing settings](./smart-patch-compositing.md)
@@ -64,7 +64,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - Generate uses a compact `Apply preset...` action launcher above the settings stack; choosing a preset opens apply preview, copies selected values and does not persist a preset identity in Project;
 - no standalone inpaint mask layers;
 - Smart Patch Layer owns its mask, layer-owned bounding box, internal resolution and raster sub-layers;
-- LoRAs remain a structured stack, while embeddings and enabled LoRA trigger phrases are source-aware prompt tokens;
+- LoRAs remain a structured stack, embeddings use plain text plus sidecar refs, and enabled LoRA trigger phrases are contextual plain-text matches;
 - model-aware secondary controls belong in `Generation > Advanced Options`; the current prototype renders VAE and VAE precision there as non-persistent coverage controls, while CFG rescale is not yet present;
 - no separate Invoke-like `Advanced` accordion/dropdown below `Generation`;
 - tag autocomplete is included for Danbooru-style prompt authoring;
@@ -157,14 +157,14 @@ The central canvas is a deterministic DOM/CSS simulation rather than a Konva or 
 
 Current left-panel coverage is intentionally narrower than the full product scope:
 
-| Area | Current Vue behavior |
-| --- | --- |
-| Preset | One-shot chooser opens the shared editable Apply modal; manage and save-current actions open the existing manager flows; no preset identity remains in Project. |
-| Size | Aspect catalog, CSS preview, ratio lock, width/height, swap and deterministic fit-to-visible-layers behavior. |
-| Prompts | Structured token editor, positive/negative prompts, token selection/edit/removal, attention, local autocomplete, embedding tokens, active-LoRA trigger phrases, copy/clear and dynamic preview. |
-| LoRAs | Add, enable/disable, weight and remove. Only removal can open the orphaned-trigger decision dialog. |
+| Area       | Current Vue behavior                                                                                                                                                                                                                         |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Preset     | One-shot chooser opens the shared editable Apply modal; manage and save-current actions open the existing manager flows; no preset identity remains in Project.                                                                              |
+| Size       | Aspect catalog, CSS preview, ratio lock, width/height, swap and deterministic fit-to-visible-layers behavior.                                                                                                                                |
+| Prompts    | Shared CodeMirror 6 plain-text editor, native selection/bulk editing, phrase attention, local autocomplete, embedding refs, contextual active-LoRA highlights, copy/clear and dynamic preview.                                               |
+| LoRAs      | Add, enable/disable, weight and remove. Stack changes never rewrite prompt text or open an orphan dialog.                                                                                                                                    |
 | Generation | Model selection, read-only version, sampler, scheduler, steps, CFG and context-disabled denoising. VAE/precision are visible prototype controls but are not yet wired into the Project document. Seed, CFG rescale and clip skip are absent. |
-| Queue | Integer images-per-click from 1 through 100, sequential in-memory jobs, active badge, cancel-current and a compact project queue panel. |
+| Queue      | Integer images-per-click from 1 through 100, sequential in-memory jobs, active badge, cancel-current and a compact project queue panel.                                                                                                      |
 
 Current right-panel coverage is also explicit: Raster and Smart Patch share a flat sortable stack; Regional Guidance is separate; selection, visibility, lock, duplicate, delete, pointer reorder and overflow move actions work for compositing layers. Raster opacity/blend, Regional prompt/negative behavior and full Smart Patch precision/compositing forms are mostly read-only or presentational in the current prototype.
 

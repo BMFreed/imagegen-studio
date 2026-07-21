@@ -1,34 +1,42 @@
-# Embedding Prompt Tokens
+# Embeddings in Prompts
 
-## Feature
+## Model
 
-Textual-inversion embeddings are resource-bearing tokens inserted directly into Positive or Negative Prompt. They are not a separate generation stack or preset section.
+An embedding is visually ordinary prompt text but remains a real resource dependency. Identity is stored beside the text rather than as an offset range:
 
-## ImageGen Studio Decision
+```ts
+interface GenerationPromptEmbeddingRef {
+  resource: GenerationEmbeddingResourceRef
+  token: string
+}
 
-The prompt containing the token determines its polarity and exact position. Positive Prompt uses the embedding activation token. Negative Prompt uses `negativeToken` when available and otherwise falls back to the activation token.
+interface GenerationPrompt {
+  embeddingRefs: GenerationPromptEmbeddingRef[]
+  text: string
+}
+```
 
-The unified autocomplete searches installed compatible embeddings by display name and token. Negative metadata raises an embedding in Negative Prompt results but never silently moves it between prompts.
+The same resource/token pair is stored once regardless of how many times the literal appears. Refs are normalized by first appearance and then resource ID for deterministic dirty comparison.
 
-## Behavior
+## Resolution
 
-- embedding chips use a distinct resource icon and metadata tooltip;
-- selecting an autocomplete result records the resource ref in the prompt token;
-- manually typing embedding-like text creates a custom token unless the user selects the resource suggestion;
-- manually editing an embedding token converts it to custom text because the resource link can no longer be guaranteed;
-- missing recalled embeddings remain visible and block generation locally;
-- a missing embedding blocks Apply only when its owning Prompt or Negative Prompt section is selected;
-- accepted-result provenance freezes both the serialized prompt and structured resource-bearing tokens.
+After completed text changes the editor reconciles refs:
 
-## Vue Prototype Coverage
+1. retain an existing ref while its exact token remains;
+2. remove it when all literal occurrences disappear;
+3. auto-link a manually typed exact token when exactly one installed embedding owns it;
+4. report ambiguity when several installed embeddings own the same unbound token;
+5. preserve a recalled missing ref while its token remains;
+6. prefer stored resource identity over competing activation-token matches.
 
-Installed mock embeddings appear in the local browse dropdown opened by the prompt editor's `+` action and in filtered autocomplete results. The same catalog is available in both prompt polarities; Negative Prompt uses `negativeToken` when supplied. Missing recalled embedding tokens remain visible with a warning style and are part of the Project Generate blocking reason.
+Matching is case-sensitive, longest-first, and literal. Word boundaries are required only on token sides ending in a word character, so forms such as `<bad-hands-5>` work naturally.
 
-The prototype uses in-memory resource metadata only. It does not implement installation, compatibility resolution, production provenance persistence or an embedding browser outside the prompt editor.
+## Polarity and autocomplete
 
-## Acceptance Criteria
+Embedding completion inserts `activationToken` in Positive Prompt. Negative Prompt prefers `negativeToken` when defined. The selected resource is carried through a custom CodeMirror `StateEffect` and deduplicated into `embeddingRefs`.
 
-- Installed embeddings are suggested in both prompt editors.
-- Negative Prompt uses an explicit negative token when metadata provides one.
-- There is no standalone Embeddings card or preset section.
-- Resource identity and exact prompt placement have one source of truth.
+## Diagnostics
+
+Resolved embeddings receive a restrained resource decoration and a tooltip with name, version, base model, activation token, and missing state. Recalled missing embeddings use an amber warning decoration and text diagnostic. Ambiguous unbound tokens use an amber diagnostic underline and require explicit selection from autocomplete.
+
+Missing and ambiguous embeddings block generation for the active prompt. Apply Preset and New Project validate only selected prompt sections. Deleting the literal removes its ref and blocking error automatically.

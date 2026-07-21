@@ -1,6 +1,6 @@
 import type {
   GenerationPayload,
-  GenerationPromptToken,
+  GenerationPromptEmbeddingRef,
 } from '../../components/generation/generation.types'
 
 export type ProjectScenarioId =
@@ -148,10 +148,10 @@ export interface ProjectQueueItem {
   iteration: number
   label: string
   negativePrompt: string
-  negativePromptTokens: GenerationPromptToken[]
+  negativePromptEmbeddingRefs: GenerationPromptEmbeddingRef[]
   progress: number
   prompt: string
-  promptTokens: GenerationPromptToken[]
+  promptEmbeddingRefs: GenerationPromptEmbeddingRef[]
   status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running'
 }
 
@@ -160,8 +160,15 @@ export interface ProjectHistoryEntry {
   label: string
 }
 export interface ProjectHistoryState {
+  activeEdit?: ProjectHistoryEditTransaction
   future: ProjectHistoryEntry[]
   past: ProjectHistoryEntry[]
+}
+
+export interface ProjectHistoryEditTransaction {
+  baseline: ProjectDocumentModel
+  key: string
+  label: string
 }
 
 export interface ProjectUiState {

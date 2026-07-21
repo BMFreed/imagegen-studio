@@ -12,7 +12,7 @@ import {
 } from '../../components/generation/generation-prompt.utils'
 import ApplyPresetModal from '../presets/ApplyPresetModal.vue'
 import { presetResources } from '../presets/presets.mock'
-import { redoProject, undoProject } from './project-history'
+import { commitActiveProjectEdit, redoProject, undoProject } from './project-history'
 import { expandPromptPairs } from './project-prompt.utils'
 import {
   acceptStagingCandidates,
@@ -88,6 +88,7 @@ function runNext() {
   }, 420)
 }
 function generate(count: number) {
+  commitActiveProjectEdit(props.session)
   for (const timer of timers) {
     clearTimeout(timer)
   }
@@ -109,12 +110,13 @@ function generate(count: number) {
     iteration: job.iteration,
     label: `Image ${index + 1}`,
     negativePrompt: job.negativePrompt,
-    negativePromptTokens: cloneGenerationPrompt(
+    negativePromptEmbeddingRefs: cloneGenerationPrompt(
       draft.payload.negativePrompt ?? createGenerationPrompt(),
-    ).tokens,
+    ).embeddingRefs,
     progress: 0,
     prompt: job.prompt,
-    promptTokens: cloneGenerationPrompt(draft.payload.prompt ?? createGenerationPrompt()).tokens,
+    promptEmbeddingRefs: cloneGenerationPrompt(draft.payload.prompt ?? createGenerationPrompt())
+      .embeddingRefs,
     status: 'pending' as const,
   }))
   const selected = props.session.ui.selection

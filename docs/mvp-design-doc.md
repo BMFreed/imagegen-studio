@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, structured prompt tokens с embedding/LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, plain-text CodeMirror prompt editor с embedding sidecars и contextual LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -377,10 +377,10 @@ Zod v4
 
 ```ts
 type AppError = {
-  code: string;
-  message: string;
-  details?: unknown;
-};
+  code: string
+  message: string
+  details?: unknown
+}
 ```
 
 В UI на этапе MVP большинство ошибок можно показывать стандартным toast'ом.
@@ -571,12 +571,12 @@ Model A v2
 
 ```ts
 type ResourceIdentity = {
-  type: 'checkpoint' | 'lora' | 'vae' | 'controlnet' | 'other';
-  source: 'civitai' | 'local' | 'unknown';
-  civitaiModelId?: number;
-  civitaiModelVersionId?: number;
-  fileHash?: string;
-};
+  type: 'checkpoint' | 'lora' | 'vae' | 'controlnet' | 'other'
+  source: 'civitai' | 'local' | 'unknown'
+  civitaiModelId?: number
+  civitaiModelVersionId?: number
+  fileHash?: string
+}
 ```
 
 Для CivitAI-ресурса главным идентификатором является версия модели и hash файла.
@@ -588,18 +588,18 @@ type ResourceIdentity = {
 Поэтому accepted-result provenance должен хранить не только ID, но и копии human-readable данных:
 
 ```ts
-type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample';
+type ModelPredictionType = 'epsilon' | 'v_prediction' | 'sample'
 
 type ProvenanceModelRef = {
-  localResourceId?: string;
-  civitaiModelId?: number;
-  civitaiVersionId?: number;
-  name: string;
-  versionName?: string;
-  fileHash?: string;
-  baseModelFamily?: string;
-  predictionType?: ModelPredictionType;
-};
+  localResourceId?: string
+  civitaiModelId?: number
+  civitaiVersionId?: number
+  name: string
+  versionName?: string
+  fileHash?: string
+  baseModelFamily?: string
+  predictionType?: ModelPredictionType
+}
 ```
 
 То же правило применяется к LoRA.
@@ -701,52 +701,52 @@ Provenance создаётся в момент acceptance и больше не и
 
 ```ts
 type GenerationProvenance = {
-  generationId: string;
-  createdAt: string;
-  appVersion: string;
-  workerVersion?: string;
-  engineName?: string;
-  engineVersion?: string;
-  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint';
+  generationId: string
+  createdAt: string
+  appVersion: string
+  workerVersion?: string
+  engineName?: string
+  engineVersion?: string
+  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint'
 
-  prompt: string; // serialized frozen form sent to the worker
-  negativePrompt?: string;
-  promptTokens: GenerationPromptToken[];
-  negativePromptTokens: GenerationPromptToken[];
+  prompt: string // serialized frozen form sent to the worker
+  negativePrompt?: string
+  promptEmbeddingRefs: GenerationPromptEmbeddingRef[]
+  negativePromptEmbeddingRefs: GenerationPromptEmbeddingRef[]
 
-  model: ProvenanceModelRef;
+  model: ProvenanceModelRef
 
   loras: Array<{
-    localResourceId?: string;
-    civitaiModelId?: number;
-    civitaiVersionId?: number;
-    name: string;
-    versionName?: string;
-    fileHash?: string;
-    baseModelFamily?: string;
-    weight: number;
-    triggerPhrases?: string[];
-  }>;
+    localResourceId?: string
+    civitaiModelId?: number
+    civitaiVersionId?: number
+    name: string
+    versionName?: string
+    fileHash?: string
+    baseModelFamily?: string
+    weight: number
+    triggerPhrases?: string[]
+  }>
 
   params: {
-    width: number;
-    height: number;
-    steps: number;
-    cfgScale?: number;
-    sampler?: string;
-    scheduler?: string;
-    seed?: number;
-    clipSkip?: number;
-    vae?: ProvenanceModelRef;
-  };
+    width: number
+    height: number
+    steps: number
+    cfgScale?: number
+    sampler?: string
+    scheduler?: string
+    seed?: number
+    clipSkip?: number
+    vae?: ProvenanceModelRef
+  }
 
   output: {
-    imageId: string;
-    fileName: string;
-    filePath: string;
-    format: 'png' | 'jpg' | 'webp';
-  };
-};
+    imageId: string
+    fileName: string
+    filePath: string
+    format: 'png' | 'jpg' | 'webp'
+  }
+}
 ```
 
 Для Smart Patch variant provenance дополнительно хранит source composite hash, mask hash, bbox/internal resolution, layer-owned generation draft revision and compositing inputs. Сравнение active variant provenance с current owned inputs определяет `outdated`.
@@ -1257,46 +1257,46 @@ Eraser
 
 ```ts
 type SmartPatchLayer = {
-  id: string;
-  type: 'smart-patch';
+  id: string
+  type: 'smart-patch'
 
-  name: string;
-  visible: boolean;
-  opacity: number;
-  blendMode?: string;
+  name: string
+  visible: boolean
+  opacity: number
+  blendMode?: string
 
-  maskAssetId: string;
+  maskAssetId: string
 
-  generationDraft: PresetPayload;
+  generationDraft: PresetPayload
 
   rasterSubLayers: Array<{
-    id: string;
-    name: string;
-    rasterAssetId: string;
-    provenance: GenerationProvenance;
-    sourceRevisionHash: string;
-    createdAt: string;
-  }>;
+    id: string
+    name: string
+    rasterAssetId: string
+    provenance: GenerationProvenance
+    sourceRevisionHash: string
+    createdAt: string
+  }>
 
-  activeRasterSubLayerId: string | null;
+  activeRasterSubLayerId: string | null
 
   boundingBox: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+    x: number
+    y: number
+    width: number
+    height: number
+  }
 
   internalResolution: {
-    width: number;
-    height: number;
-  };
+    width: number
+    height: number
+  }
 
-  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed';
+  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed'
 
-  createdAt: string;
-  updatedAt: string;
-};
+  createdAt: string
+  updatedAt: string
+}
 ```
 
 Где:

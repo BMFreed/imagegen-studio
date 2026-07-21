@@ -1,7 +1,11 @@
 import type { PresetCreateIntent, PresetPayload, PresetSectionKey } from '../presets/presets.types'
 import type { GenerationCandidate, ProjectGenerationDraft, ProjectSession } from './project.types'
 
-import { promptHasMissingEmbedding } from '../../components/generation/generation-prompt.utils'
+import {
+  promptHasAmbiguousEmbedding,
+  promptHasMissingEmbedding,
+} from '../../components/generation/generation-prompt.utils'
+import { presetEditorResources } from '../presets/presets.mock'
 import { commitProjectMutation } from './project-history'
 
 export function getSelectedEntity(session: ProjectSession) {
@@ -44,7 +48,9 @@ export function projectHasBlockingGenerationErrors(session: ProjectSession) {
   return (
     payload.model?.missing === true ||
     promptHasMissingEmbedding(payload.prompt) ||
-    promptHasMissingEmbedding(payload.negativePrompt)
+    promptHasMissingEmbedding(payload.negativePrompt) ||
+    promptHasAmbiguousEmbedding(payload.prompt, presetEditorResources.embeddings) ||
+    promptHasAmbiguousEmbedding(payload.negativePrompt, presetEditorResources.embeddings)
   )
 }
 

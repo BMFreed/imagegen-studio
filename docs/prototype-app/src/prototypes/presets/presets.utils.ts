@@ -11,6 +11,7 @@ import type {
 import {
   createGenerationPrompt,
   getPromptEmbeddingRefs,
+  promptHasAmbiguousEmbedding,
   promptHasMissingEmbedding,
   serializeGenerationPrompt,
 } from '../../components/generation/generation-prompt.utils'
@@ -209,6 +210,7 @@ export function normalizePayloadForWorkflow(
 export function presetSectionHasMissingResources(
   payload: PresetPayload,
   section: PresetSectionKey,
+  embeddings: Parameters<typeof promptHasAmbiguousEmbedding>[1] = [],
 ): boolean {
   switch (section) {
     case 'loras': {
@@ -219,7 +221,10 @@ export function presetSectionHasMissingResources(
     }
     case 'negativePrompt':
     case 'prompt': {
-      return promptHasMissingEmbedding(payload[section])
+      return (
+        promptHasMissingEmbedding(payload[section]) ||
+        promptHasAmbiguousEmbedding(payload[section], embeddings)
+      )
     }
     case 'vae': {
       return payload.vae?.missing ?? false
@@ -236,11 +241,14 @@ export function presetHasMissingResources(preset: PresetDefinition): boolean {
   )
 }
 
-export function applicationDraftIsValid(draft: PresetApplicationDraft): boolean {
+export function applicationDraftIsValid(
+  draft: PresetApplicationDraft,
+  embeddings: Parameters<typeof promptHasAmbiguousEmbedding>[1] = [],
+): boolean {
   return (
     draft.selectedSections.length > 0 &&
     !draft.selectedSections.some((section) =>
-      presetSectionHasMissingResources(draft.payload, section),
+      presetSectionHasMissingResources(draft.payload, section, embeddings),
     )
   )
 }

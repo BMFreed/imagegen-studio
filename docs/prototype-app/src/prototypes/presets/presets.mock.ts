@@ -16,15 +16,8 @@ export const availableLoras = generationLoras
 export const availableEmbeddings = generationEmbeddings
 export const presetEditorResources: PresetEditorResources = generationEditorResources
 
-function prompt(value: string, triggerLinks: Record<string, string[]> = {}) {
-  const parsed = parseLegacyPromptString(value, availableEmbeddings, mockDanbooruTags)
-  parsed.tokens = parsed.tokens.map((token) => {
-    const sourceLoraIds = triggerLinks[token.text]
-    return sourceLoraIds
-      ? { id: token.id, kind: 'lora-trigger' as const, sourceLoraIds, text: token.text }
-      : token
-  })
-  return parsed
+function prompt(value: string, _legacyTriggerLinks: Record<string, string[]> = {}) {
+  return parseLegacyPromptString(value, availableEmbeddings, mockDanbooruTags)
 }
 
 export const presetResources: PresetRecord[] = [

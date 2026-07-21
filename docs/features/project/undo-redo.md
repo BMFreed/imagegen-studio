@@ -69,12 +69,12 @@ The stack is tied to the canonical open project identity:
 
 ```ts
 type ProjectUndoRedoState = {
-  projectId: string;
-  projectPath: string;
-  past: ProjectHistoryEntry[];
-  future: ProjectHistoryEntry[];
-  limit: number;
-};
+  projectId: string
+  projectPath: string
+  past: ProjectHistoryEntry[]
+  future: ProjectHistoryEntry[]
+  limit: number
+}
 ```
 
 Production undo history is not stored in `.igs` and does not survive an application restart. The Vue prototype keeps the in-memory `ProjectSession` registry after a tab is closed, so reopening the same mock project within the current browser session also restores its history. This prototype behavior must not be interpreted as persisted undo history.
@@ -129,7 +129,7 @@ Not undoable:
 - project file validation;
 - global settings;
 
-Structured prompt token drafts are not written into history before commit. Creating, editing, removing or changing attention on a committed token is a normal Project document mutation and creates one named undo entry. The prototype does not use a separate native textarea undo stack for prompt content.
+Project prompt editors update the generation draft while typing but use a transient focus-to-blur transaction. Focus captures a document baseline; input, attention, autocomplete and Clear update that transaction; blur creates one named history entry only when the final document differs. Switching prompts and every regular Project command first flush the active transaction. Project CodeMirror instances deliberately have no local history, so `Ctrl/Cmd+Z` restores the whole Project edit rather than one character.
 
 ## Busy / Running Rules
 
@@ -179,7 +179,7 @@ The visible actions remain generic (`Undo`, `Redo`). The current prototype alrea
 
 The current prototype implements a 64-entry per-project document snapshot history. Undo and Redo are available from the bottom viewport bar, the `Edit` menu and `mod+z` / `mod+shift+z` / `mod+y` shortcuts.
 
-Covered mutations include generation settings, structured prompt token commits, layer add/delete/duplicate/reorder/state changes, preset application and multi-candidate acceptance. Queue progress, candidate focus/selection and discard remain outside history. Acceptance is one grouped mutation and undoing it does not recreate the previous staging session.
+Covered mutations include generation settings, grouped plain-text prompt edits, layer add/delete/duplicate/reorder/state changes, preset application and multi-candidate acceptance. Save, Generate, Apply Preset, close, tab switch, Undo and Redo flush an active prompt transaction first. Queue progress, candidate focus/selection and discard remain outside history. Acceptance is one grouped mutation and undoing it does not recreate the previous staging session. Prompt editors inside app-level managers/modals use local CodeMirror history and are excluded from Project shortcuts.
 
 Canvas paint/transform fidelity remains mocked: tool selection and deterministic mask/bbox revision changes can produce history entries, but the prototype does not yet prove production gesture grouping, brush-stroke coalescing or busy-state arbitration against a real canvas/worker pipeline.
 

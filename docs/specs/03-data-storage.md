@@ -372,8 +372,8 @@ inpaint
 Предварительная TypeScript-форма:
 
 ```ts
-type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage';
-type SeedPolicy = 'fixed' | 'random' | 'reuse';
+type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
+type SeedPolicy = 'fixed' | 'random' | 'reuse'
 type PresetSectionKey =
   | 'denoisingStrength'
   | 'guidance'
@@ -384,88 +384,92 @@ type PresetSectionKey =
   | 'sampling'
   | 'seed'
   | 'size'
-  | 'vae';
+  | 'vae'
 
 interface PresetResourceRef {
-  id: string;
-  missing?: boolean;
-  name: string;
-  version?: string;
+  id: string
+  missing?: boolean
+  name: string
+  version?: string
 }
 
 interface PresetModelRef extends PresetResourceRef {
-  baseModel: string;
-  predictionType: 'epsilon' | 'v-pred';
+  baseModel: string
+  predictionType: 'epsilon' | 'v-pred'
 }
 
 interface PresetLora {
-  enabled: boolean;
-  resource: PresetResourceRef & { triggerPhrases: string[] };
-  weight: number;
+  enabled: boolean
+  resource: PresetResourceRef & { triggerPhrases: string[] }
+  weight: number
 }
 
 interface GenerationPrompt {
-  tokens: GenerationPromptToken[];
+  embeddingRefs: GenerationPromptEmbeddingRef[]
+  text: string
 }
 
-type GenerationPromptToken =
-  | { id: string; kind: 'custom' | 'dynamic'; text: string }
-  | { id: string; kind: 'danbooru'; text: string; canonicalName: string; aliases: string[]; category: string; postCount: number }
-  | { id: string; kind: 'embedding'; text: string; resource: PresetResourceRef & { activationToken: string; negativeToken?: string } }
-  | { id: string; kind: 'lora-trigger'; text: string; sourceLoraIds: string[] };
+interface GenerationPromptEmbeddingRef {
+  resource: PresetResourceRef & {
+    activationToken: string
+    baseModel?: string
+    negativeToken?: string
+  }
+  token: string
+}
 
 interface PresetPayload {
-  denoisingStrength?: number;
+  denoisingStrength?: number
   guidance?: {
-    cfgScale: number;
-    steps: number;
-  };
-  loras?: PresetLora[];
-  model?: PresetModelRef;
-  negativePrompt?: GenerationPrompt;
-  prompt?: GenerationPrompt;
+    cfgScale: number
+    steps: number
+  }
+  loras?: PresetLora[]
+  model?: PresetModelRef
+  negativePrompt?: GenerationPrompt
+  prompt?: GenerationPrompt
   sampling?: {
-    sampler: string;
-    scheduler: string;
-  };
+    sampler: string
+    scheduler: string
+  }
   seed?: {
-    policy: SeedPolicy;
-    value?: number;
-  };
+    policy: SeedPolicy
+    value?: number
+  }
   size?: {
-    height: number;
-    width: number;
-  };
-  vae?: PresetResourceRef;
+    height: number
+    width: number
+  }
+  vae?: PresetResourceRef
 }
 
 interface PresetDefinition {
-  description: string;
-  favorite: boolean;
-  name: string;
-  payload: PresetPayload;
-  tags: string[];
-  workflow: PresetWorkflow;
+  description: string
+  favorite: boolean
+  name: string
+  payload: PresetPayload
+  tags: string[]
+  workflow: PresetWorkflow
 }
 
 interface PresetRecord extends PresetDefinition {
-  id: string;
-  updatedAt: string;
+  id: string
+  updatedAt: string
 }
 
 type PresetCreateIntent =
   | { kind: 'manual' }
   | {
-      kind: 'project';
-      projectName: string;
-      projectSummary: string;
-      definition: PresetDefinition;
-    };
+      kind: 'project'
+      projectName: string
+      projectSummary: string
+      definition: PresetDefinition
+    }
 
 interface PresetApplicationDraft {
-  payload: PresetPayload;
-  selectedSections: PresetSectionKey[];
-  sourcePresetId: string;
+  payload: PresetPayload
+  selectedSections: PresetSectionKey[]
+  sourcePresetId: string
 }
 ```
 
@@ -477,7 +481,7 @@ interface PresetApplicationDraft {
 - Catalog metadata (`name`, `description`, `workflow`, `tags`, `favorite`) живёт в `PresetDefinition` и строгих columns, но не внутри `PresetPayload`.
 - Storage mapper нормализует nullable DB `description` в доменную пустую строку и SQLite `favorite` 0/1 в boolean; UI draft не должен разносить SQL-nullability по форме.
 - `workflow_type` storage tokens маппятся на доменные значения: `txt2img` ↔ `textToImage`, `img2img` ↔ `imageToImage`, `inpaint` ↔ `smartPatch`. Storage tokens не показываются в UI.
-- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`; embedding refs находятся внутри structured tokens соответствующего `prompt`/`negativePrompt`.
+- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`; prompt content/order хранится в `GenerationPrompt.text`, а embedding dependencies — в sidecar `embeddingRefs` соответствующего `prompt`/`negativePrompt`. Offsets, Danbooru metadata и LoRA trigger refs не сохраняются.
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.

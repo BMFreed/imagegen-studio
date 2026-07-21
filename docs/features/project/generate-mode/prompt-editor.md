@@ -1,93 +1,44 @@
 # Prompt Editor
 
-## Feature
+## Decision
 
-The prompt editor is the primary text authoring surface in `Project` / `Generate`.
+Positive Prompt and Negative Prompt use the shared `GenerationPromptEditor`, a plain-text editor built directly on the modular CodeMirror 6 runtime. `GenerationPrompt.text` is the only source of truth for authored content and order. The editor does not use prompt chips, stable token IDs, a language grammar, `basicSetup`, or a Vue CodeMirror wrapper.
 
-It contains positive and negative structured prompt tokens, unified autocomplete, dynamic-prompt preview affordances and preset/accepted-result recall actions.
+The Project card keeps the existing compact composition: title and approximate token count at the top left, an Info action beside the metadata, a vertical action rail on the right, about nine visible positive lines and four negative lines, line wrapping, and CSS vertical resize.
 
-## Reference
+## Editing and selection
 
-Primary reference: InvokeAI prompt components.
+The surface supports normal caret movement, character selection, Shift+click, Shift+Arrow, select all, cut/copy/paste, drag selection, bulk deletion, multiline input, and arbitrary phrase reordering. Double-click keeps CodeMirror's native word selection. Triple-click is the only overridden pointer gesture and selects the current top-level comma/newline-separated phrase. Commas inside `()`, `[]`, `{}` and escaped delimiters do not split a phrase; surrounding whitespace is excluded from the semantic range.
 
-Secondary reference: Forge prompt toolbar ideas, limited to useful actions such as clear, paste and metadata recall.
+Attention actions operate on the current non-empty selection. With a collapsed selection they operate on the top-level phrase under the caret and are disabled for an empty phrase. `Ctrl/Cmd+Up` increases attention and `Ctrl/Cmd+Down` decreases it. The existing suffix, outer-parentheses, and numeric-step semantics remain, including neutral transitions that remove helper parentheses without accumulating new layers.
 
-## ImageGen Studio Decision
+## Editor runtime
 
-Use an ImageGen Studio-native prompt editor. Do not copy Invoke's `Choose Prompt Template` dropdown.
+The minimal runtime uses `EditorState`, `EditorView`, `keymap`, `defaultKeymap`, `Decoration`, `hoverTooltip`, `autocompletion`, completion sections, `EditorView.lineWrapping`, content attributes, themes, and compartments for read-only/resource/autocomplete reconfiguration. `history` and `historyKeymap` are enabled only for local editors in Preset Manager, Apply Preset, and New Project. Project uses external document history.
 
-Prompt templates/settings templates belong to [Presets](../../presets.md). Generate exposes presets through an `Apply preset...` action above the settings stack, while direct prompt writing remains the main UI.
+Autocomplete tooltips use fixed positioning under a `document.body` tooltip parent so panel and modal overflow cannot clip them. Embedding completion uses a custom `StateEffect` to carry resource identity into the Vue model.
 
-## Scope
+## Project undo grouping
 
-MVP:
+Project prompt input updates the active generation draft immediately, including dirty comparison, but focus starts a transient edit transaction and blur commits at most one history entry. Returning to the baseline creates no entry. Switching prompt editors, a regular Project mutation, Undo/Redo, Save, Generate, Apply Preset, tab switch, and close flush the active transaction. Project `Ctrl/Cmd+Z` therefore restores the whole focus-to-blur edit, while overlay editors retain local CodeMirror undo.
 
-- positive prompt editor;
-- negative prompt editor;
-- wrapping token editing with a vertically resizable surface;
-- prompt history;
-- prompt attention syntax editing;
-- prompt token count when tokenizer/model support is available;
-- unified autocomplete for Danbooru tags, installed embeddings and active LoRA trigger phrases;
-- dynamic prompt preview entry point;
-- recall prompt/settings from accepted-result provenance;
-- explicit preset actions.
+## Discoverability
 
-Post-MVP:
+The first prompt focus opens a controlled onboarding popover:
 
-- image-to-prompt helper;
-- advanced prompt comparison;
-- saved prompt snippets if they become separate from Presets.
+```text
+Type and edit prompt text freely.
+Double-click selects a word.
+Triple-click selects a comma-separated phrase.
+Ctrl/Cmd+Space browses embeddings and LoRA triggers.
+```
 
-Rejected:
+`Don't show again` stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. The same help remains available from the Info button through an ordinary hover/focus tooltip.
 
-- Invoke-style `Choose Prompt Template` dropdown;
-- Forge prompt styles dropdown;
-- wildcard expansion.
+## Resource-aware text
 
-## UI Behavior
+Embeddings and enabled non-missing LoRA trigger phrases are rendered as restrained decorations over ordinary text. Missing and ambiguous embedding states also expose textual diagnostics; resource ranges have metadata hover tooltips. Danbooru matches and ordinary text do not retain metadata or tooltips.
 
-Positive prompt is always visible.
+## Prototype boundary
 
-Negative prompt can be visible by default or collapsible, but it must be available without changing modes. If collapsed, the collapsed state should show whether the negative prompt has content.
-
-Prompt editor status area should contain:
-
-- token count;
-- prompt diagnostics warning icon;
-- dynamic prompt preview indicator when dynamic syntax is detected;
-- model/tokenizer unavailable warning when token counting cannot run.
-
-Allowed preset-related affordances in Generate:
-
-- compact `Apply preset...` action launcher;
-- `Apply Preset` through apply preview;
-- `Save Current as Preset`;
-- `Recall Settings from Result`;
-- missing-resource warnings after applying a preset.
-
-These actions must be visually distinct from direct prompt editing.
-
-Positive and negative prompts expose the same helper actions: increase/decrease attention for the selected token, dynamic preview, copy and clear. Creating a token starts from a compact dashed `+` action, which becomes a three-character-wide inline autocomplete input and expands with its content. There is no separate `Insert Tag` action. Attention uses Invoke-like `+` / `-` suffixes and supports `Ctrl/Cmd+Up` and `Ctrl/Cmd+Down` when a token is selected.
-
-The Vue prototype uses a compact prompt-specific card shell instead of the generic card header/content/footer composition. The title and token count share the top-left metadata line, diagnostics use a compact adjacent warning, and helper actions form a vertical rail on the right. `GenerationPromptTokenEditor` is built from Naive `NTag`, `NAutoComplete`, tooltip and popover primitives. The surface uses ordinary CSS vertical resizing and starts at approximately nine lines for positive and four for negative.
-
-Single click selects a token and adds an input-like outline without replacing its neutral background. Clicking outside the editor clears selection. Double click replaces the chip in place with an input of the same measured initial width; the input then expands or contracts with the edited text without jumping to a generic full-row width. The same autocomplete dropdown is available during create and edit. Enter or blur commits, Escape cancels the draft, every chip has a close action, and Backspace remains a keyboard deletion path. Paste can create several top-level comma-separated tokens. A create, edit, delete or attention operation produces one named undo entry; uncommitted inline text does not mutate the document.
-
-Attention helpers reuse at most one outer pair of parentheses. When repeated increase/decrease actions return a token to neutral attention, the helper removes both the suffix and its helper-added outer parentheses.
-
-The editor's unused surface has no text cursor or hover treatment. Tooltips are limited to resource-bearing embedding and LoRA-trigger tokens, where they explain source identity; ordinary custom, Danbooru and dynamic tokens do not repeat their kind in a tooltip.
-
-## Vue Prototype Coverage
-
-The structured token surface is current behavior, not a future textarea design. It supports custom, Danbooru, dynamic, embedding and LoRA-trigger chips; compact `+` creation; top-level comma paste; in-place adaptive-width edit; Enter/blur commit; Escape cancel; per-token close; Backspace/Delete; click selection that clears on unrelated editor clicks; and selection-preserving attention actions.
-
-Token count is currently a deterministic whitespace approximation over the serialized prompt. Prompt diagnostics are limited to a mock `(broken` warning in the `errors` scenario. Prompt history and accepted-result recall are not implemented in the Vue prototype yet.
-
-## Acceptance Criteria
-
-- User can edit positive and negative prompts in Generate.
-- Prompt tokens wrap in a vertically resizable multi-line surface.
-- Prompt history/accepted-result recall remain product scope and are not current prototype behavior.
-- Preset actions are explicit and do not appear as a copied template dropdown.
-- [Tag autocomplete](./tag-autocomplete.md) and [dynamic prompt preview](./dynamic-prompting.md) can be reached from the prompt editor.
+Token count remains a whitespace-based approximation. Production tokenizer integration, persistent range annotations, production storage migration, wildcard syntax, nested dynamic prompting, and translation remain outside this iteration.

@@ -15,6 +15,13 @@
   --workspace-blue: #74a8ff;
   --status-warning: #f2c97d;
   --status-warning-soft: #f2c97d12;
+  --status-warning-text: #e8c47f;
+  --app-selection: #4674a766;
+  --prompt-resource-surface: #7697c51c;
+  --prompt-resource-border: #86a8d4a8;
+  --prompt-warning-surface: #f2c97d18;
+  --prompt-context-surface: #69b97a14;
+  --prompt-context-border: #73bd82a0;
   --app-radius: 3px;
   --app-font-size: 13px;
   --app-font-size-meta: 12px;
@@ -45,4 +52,43 @@ body {
 body .n-modal-mask {
   background: var(--app-overlay-mask);
   backdrop-filter: blur(8px);
+}
+
+body > .cm-tooltip {
+  z-index: 5000;
+}
+
+.cm-tooltip-autocomplete {
+  max-width: min(420px, calc(100vw - 32px));
+  color: var(--app-text);
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+}
+
+.cm-tooltip-autocomplete > ul {
+  max-height: 280px;
+  font-family: inherit;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected='true'] {
+  color: var(--app-text);
+  background: var(--app-elevated-hover);
+}
+
+.cm-completionSection {
+  padding: 4px 8px 2px;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-meta);
+  font-weight: 600;
+}
+
+.prompt-resource-tooltip {
+  max-width: 360px;
+  padding: 6px 8px;
+  color: var(--app-text);
+  background: var(--app-elevated);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  font-size: var(--app-font-size-meta);
 }

@@ -70,9 +70,9 @@ Do not persist:
 
 ## Vue Prototype Coverage
 
-The shared preview modal parses non-nested brace alternatives in serialized positive and negative structured prompts, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.
+The shared preview modal parses non-nested brace alternatives directly from `GenerationPrompt.text`, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.
 
-Generate multiplies expanded pairs by images-per-click and blocks the action when the result exceeds 100 mock jobs. Queue items freeze the concrete serialized prompts and original structured tokens. The prototype does not execute a production seed scheduler or write accepted-result provenance.
+Generate flushes the active prompt edit, expands the frozen plain text, multiplies the pairs by images-per-click and blocks the action when the result exceeds 100 mock jobs. Queue items freeze each concrete prompt plus cloned positive/negative embedding refs; Danbooru and LoRA-trigger metadata are not stored. The prototype does not execute a production seed scheduler or write accepted-result provenance.
 
 ## Acceptance Criteria
 

@@ -11,6 +11,7 @@ import {
   clonePreset,
   createApplicationDraft,
   includedSections,
+  presetSectionHasMissingResources,
   sectionLabels,
   summarizePresetSection,
 } from './presets.utils'
@@ -29,6 +30,17 @@ const draft = ref(createApplicationDraft(props.sourcePreset))
 const expanded = ref<PresetSectionKey[]>([])
 const sections = computed(() => includedSections(props.sourcePreset.payload))
 const allSelected = computed(() => draft.value.selectedSections.length === sections.value.length)
+const applyDisabled = computed(
+  () =>
+    draft.value.selectedSections.length === 0 ||
+    draft.value.selectedSections.some((section) =>
+      presetSectionHasMissingResources(
+        draft.value.payload,
+        section,
+        presetEditorResources.embeddings,
+      ),
+    ),
+)
 watch(
   () => props.sourcePreset.id,
   () => {
@@ -128,9 +140,7 @@ function apply() {
         <NButton tertiary @click="emit('editOriginal', sourcePreset.id)">Edit original</NButton>
         <span>
           <NButton tertiary @click="show = false">Cancel</NButton>
-          <NButton :disabled="draft.selectedSections.length === 0" type="primary" @click="apply">
-            Apply
-          </NButton>
+          <NButton :disabled="applyDisabled" type="primary" @click="apply">Apply</NButton>
         </span>
       </footer>
     </NCard>

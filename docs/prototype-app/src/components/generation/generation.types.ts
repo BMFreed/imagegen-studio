@@ -21,42 +21,20 @@ export interface GenerationLoraResourceRef extends GenerationResourceRef {
   triggerPhrases: string[]
 }
 
-export interface GenerationPrompt {
-  tokens: GenerationPromptToken[]
-}
-
-export interface GenerationCustomPromptToken extends GenerationPromptTokenBase {
-  kind: 'custom'
-}
-
-export interface GenerationDanbooruPromptToken extends GenerationPromptTokenBase {
-  aliases: string[]
-  canonicalName: string
-  category: DanbooruTagCategory
-  kind: 'danbooru'
-  postCount: number
-}
-
-export interface GenerationDynamicPromptToken extends GenerationPromptTokenBase {
-  kind: 'dynamic'
-}
-
-export interface GenerationEmbeddingPromptToken extends GenerationPromptTokenBase {
-  kind: 'embedding'
+export interface GenerationPromptEmbeddingRef {
   resource: GenerationEmbeddingResourceRef
+  token: string
 }
 
-export interface GenerationLoraTriggerPromptToken extends GenerationPromptTokenBase {
-  kind: 'lora-trigger'
-  sourceLoraIds: string[]
+export interface GenerationPrompt {
+  embeddingRefs: GenerationPromptEmbeddingRef[]
+  text: string
 }
 
-export type GenerationPromptToken =
-  | GenerationCustomPromptToken
-  | GenerationDanbooruPromptToken
-  | GenerationDynamicPromptToken
-  | GenerationEmbeddingPromptToken
-  | GenerationLoraTriggerPromptToken
+export interface GenerationPromptSelection {
+  anchor: number
+  head: number
+}
 
 export interface GenerationModelRef extends GenerationResourceRef {
   baseModel: string
@@ -99,9 +77,4 @@ export interface GenerationEditorResources {
   loras: GenerationLoraResourceRef[]
   models: GenerationModelRef[]
   vaes: GenerationResourceRef[]
-}
-
-interface GenerationPromptTokenBase {
-  id: string
-  text: string
 }

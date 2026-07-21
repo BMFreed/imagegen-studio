@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, Braces, Copy, Eraser } from '@vicons/tabler'
+import { ArrowDown, ArrowUp, Braces, Copy, Eraser, ListSearch } from '@vicons/tabler'
 import { NButton, NIcon, NTooltip } from 'naive-ui'
 
-defineProps<{ tokenSelected: boolean }>()
+defineProps<{ attentionTargetAvailable: boolean }>()
 const emit = defineEmits<{
+  browse: []
   clear: []
   copy: []
   decrease: []
@@ -17,9 +18,24 @@ const emit = defineEmits<{
     <NTooltip placement="right">
       <template v-slot:trigger>
         <NButton
+          aria-label="Browse prompt suggestions"
+          circle
+          quaternary
+          size="tiny"
+          @click.stop="emit('browse')"
+          @mousedown.prevent
+        >
+          <template v-slot:icon><NIcon :component="ListSearch" /></template>
+        </NButton>
+      </template>
+      Browse prompt suggestions (Ctrl/Cmd+Space)
+    </NTooltip>
+    <NTooltip placement="right">
+      <template v-slot:trigger>
+        <NButton
           aria-label="Increase prompt attention"
           circle
-          :disabled="!tokenSelected"
+          :disabled="!attentionTargetAvailable"
           quaternary
           size="tiny"
           @click.stop="emit('increase')"
@@ -28,14 +44,18 @@ const emit = defineEmits<{
           <template v-slot:icon><NIcon :component="ArrowUp" /></template>
         </NButton>
       </template>
-      {{ tokenSelected ? 'Increase attention (Ctrl/Cmd+Up)' : 'Select a prompt token first' }}
+      {{
+        attentionTargetAvailable
+          ? 'Increase attention (Ctrl/Cmd+Up)'
+          : 'Place the caret in a prompt phrase first'
+      }}
     </NTooltip>
     <NTooltip placement="right">
       <template v-slot:trigger>
         <NButton
           aria-label="Decrease prompt attention"
           circle
-          :disabled="!tokenSelected"
+          :disabled="!attentionTargetAvailable"
           quaternary
           size="tiny"
           @click.stop="emit('decrease')"
@@ -44,7 +64,11 @@ const emit = defineEmits<{
           <template v-slot:icon><NIcon :component="ArrowDown" /></template>
         </NButton>
       </template>
-      {{ tokenSelected ? 'Decrease attention (Ctrl/Cmd+Down)' : 'Select a prompt token first' }}
+      {{
+        attentionTargetAvailable
+          ? 'Decrease attention (Ctrl/Cmd+Down)'
+          : 'Place the caret in a prompt phrase first'
+      }}
     </NTooltip>
     <NTooltip placement="right">
       <template v-slot:trigger>
@@ -70,7 +94,14 @@ const emit = defineEmits<{
     </NTooltip>
     <NTooltip placement="right">
       <template v-slot:trigger>
-        <NButton aria-label="Clear prompt" circle quaternary size="tiny" @click="emit('clear')">
+        <NButton
+          aria-label="Clear prompt"
+          circle
+          quaternary
+          size="tiny"
+          @click="emit('clear')"
+          @mousedown.prevent
+        >
           <template v-slot:icon><NIcon :component="Eraser" /></template>
         </NButton>
       </template>

@@ -106,14 +106,20 @@ test.describe('Project prototype', () => {
     await expect(queue).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect(cancel).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
 
-    const prompt = settings.getByRole('listbox', { exact: true, name: 'Prompt' })
-    const negative = settings.getByRole('listbox', { exact: true, name: 'Negative Prompt' })
-    await expect(prompt).toHaveCSS('resize', 'vertical')
-    await expect(negative).toHaveCSS('resize', 'vertical')
+    const prompt = settings.getByRole('textbox', { exact: true, name: 'Prompt' })
+    const negative = settings.getByRole('textbox', { exact: true, name: 'Negative Prompt' })
+    await expect(settings.locator('.generation-prompt-editor').nth(0)).toHaveCSS(
+      'resize',
+      'vertical',
+    )
+    await expect(settings.locator('.generation-prompt-editor').nth(1)).toHaveCSS(
+      'resize',
+      'vertical',
+    )
     expect((await prompt.boundingBox())!.height).toBeGreaterThan(
       (await negative.boundingBox())!.height,
     )
-    await expect(settings.locator('.prompt-meta').first()).toContainText('12 tokens')
+    await expect(settings.locator('.prompt-meta').first()).toContainText('14 tokens')
 
     const promptBox = await prompt.boundingBox()
     const actionRail = await settings.locator('.prompt-actions').first().boundingBox()
@@ -181,19 +187,19 @@ test.describe('Project prototype', () => {
 
   test('edits, undoes, saves, and guards dirty close', async ({ page }) => {
     await openProject(page)
-    await page.getByRole('button', { name: 'Add Prompt token' }).click()
-    const prompt = page.getByRole('textbox', { name: 'Add Prompt token' })
+    const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    const baseline = await prompt.textContent()
     await prompt.fill('updated project prompt')
-    await prompt.press('Enter')
+    await page.locator('.canvas-stage').click({ position: { x: 400, y: 240 } })
     await expect(page.getByLabel('Unsaved changes')).toBeVisible()
     await page.getByRole('button', { name: 'Undo' }).click()
+    await expect(prompt).toHaveText(baseline!)
     await page.getByRole('button', { name: 'Redo' }).click()
+    await expect(prompt).toHaveText('updated project prompt')
     await page.keyboard.press('Control+s')
     await expect(page.getByText('Project saved')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Add Prompt token' }).click()
     await prompt.fill('another change')
-    await prompt.press('Enter')
     await page.getByRole('button', { name: 'Close Sample Project B.igs' }).click()
     const close = page.getByRole('dialog', { name: 'Close Project' })
     await expect(close).toBeVisible()
@@ -256,32 +262,29 @@ test.describe('Project prototype', () => {
 
   test('edits prompt attention and previews dynamic prompt pairs', async ({ page }) => {
     await openProject(page)
-    await page.getByRole('option', { name: /custom token portrait of ProjectB/ }).click()
+    const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    await prompt.fill('first phrase, second phrase')
+    await prompt.press('End')
     await page.getByLabel('Increase prompt attention').first().click()
-    await expect(
-      page.getByRole('option', { name: /\(portrait of Sample Project B\)\+/ }),
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'Add Prompt token' }).click()
-    const prompt = page.getByRole('textbox', { name: 'Add Prompt token' })
-    await prompt.fill('{red|blue} light')
-    await prompt.press('Enter')
+    await expect(prompt).toHaveText('first phrase, (second phrase)+')
+
+    await prompt.fill('portrait, {red|blue} light')
     await page.getByLabel('Preview dynamic prompt').first().click()
     const preview = page.getByRole('dialog', { name: 'Dynamic Prompt Preview' })
     await expect(preview).toContainText('2 concrete prompt pairs')
     await preview.getByRole('button', { name: 'Close' }).click()
   })
 
-  test('offers source-aware autocomplete and guards orphaned LoRA triggers', async ({ page }) => {
+  test('offers source-aware autocomplete and keeps LoRA trigger text independent', async ({
+    page,
+  }) => {
     await openProject(page)
-    await page.getByRole('button', { name: 'Add Prompt token' }).click()
-    const prompt = page.getByRole('textbox', { name: 'Add Prompt token' })
+    const prompt = page.getByRole('textbox', { exact: true, name: 'Prompt' })
     await prompt.fill('pain')
     await expect(page.getByText('Active LoRA triggers')).toBeVisible()
-    await page
-      .locator('.n-base-select-option')
-      .filter({ hasText: /^painterly/ })
-      .click()
-    await expect(page.getByRole('option', { name: /lora-trigger token painterly/ })).toBeVisible()
+    await page.getByRole('option', { name: /painterly/ }).click()
+    await expect(prompt).toHaveText('painterly')
+    await expect(page.locator('.cm-prompt-lora-trigger')).toHaveText('painterly')
 
     const loraWeight = page.getByLabel('Digital Art weight')
     const loraWeightInput = loraWeight.locator('input')
@@ -295,141 +298,73 @@ test.describe('Project prototype', () => {
 
     await page.getByRole('switch', { name: 'Enable Digital Art' }).click()
     await expect(page.getByRole('dialog', { name: 'LoRA trigger phrases' })).toBeHidden()
+    await expect(prompt).toHaveText('painterly')
+    await expect(page.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
+    await page.getByRole('switch', { name: 'Enable Digital Art' }).click()
+    await expect(page.locator('.cm-prompt-lora-trigger')).toHaveText('painterly')
     await page.getByRole('button', { name: 'Remove Digital Art' }).click()
-    const dialog = page.getByRole('dialog', { name: 'LoRA trigger phrases' })
-    await expect(dialog).toBeVisible()
-    const dialogBox = await dialog.boundingBox()
-    expect(dialogBox).not.toBeNull()
-    expect(dialogBox!.width).toBeLessThanOrEqual(560)
-    await dialog.getByRole('button', { name: 'Keep as Prompt Text' }).click()
-    await expect(page.getByRole('option', { name: /custom token painterly/ })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'LoRA trigger phrases' })).toBeHidden()
+    await expect(prompt).toHaveText('painterly')
 
-    await page.getByRole('button', { name: 'Add Negative Prompt token' }).click()
-    const negative = page.getByRole('textbox', { name: 'Add Negative Prompt token' })
+    const negative = page.getByRole('textbox', { exact: true, name: 'Negative Prompt' })
     await negative.fill('bad hand')
-    await expect(page.getByText('Embeddings')).toBeVisible()
-    await page
-      .locator('.n-base-select-option')
-      .filter({ hasText: /<bad-hands-negative>/ })
-      .click()
-    const negativeEditor = page.getByRole('listbox', { name: 'Negative Prompt' })
-    await expect(
-      negativeEditor.getByRole('option', { name: /embedding token <bad-hands-negative>/ }),
-    ).toHaveCount(2)
+    await expect(page.locator('.cm-tooltip-autocomplete').getByText('Embeddings')).toBeVisible()
+    await page.getByRole('option', { name: /<bad-hands-negative>/ }).click()
+    await expect(negative).toHaveText('bad <bad-hands-negative>')
+    await expect(page.locator('.cm-prompt-embedding')).toHaveText('<bad-hands-negative>')
   })
 
-  test('uses compact prompt token add, stable inline edit, and dismissible selection', async ({
+  test('supports native plain-text editing, semantic selection, onboarding, and bulk deletion', async ({
     page,
   }) => {
     await openProject(page)
-    const editor = page.getByRole('listbox', { exact: true, name: 'Prompt' })
-    const add = editor.getByRole('button', { name: 'Add Prompt token' })
-    await expect(add).toBeVisible()
-    await add.click()
+    const editor = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    await expect(page.getByRole('option', { name: /prompt token/ })).toHaveCount(0)
+    await editor.fill('alpha phrase, beta word\nthird phrase')
+    await expect(page.getByText('Type and edit prompt text freely.')).toBeVisible()
+    await page.getByRole('button', { name: "Don't show again" }).click()
 
-    const input = editor.getByRole('textbox', { name: 'Add Prompt token' })
-    const compactInput = editor.locator('.prompt-token-input')
-    const emptyWidth = await compactInput.evaluate(
-      (element) => element.getBoundingClientRect().width,
-    )
-    expect(emptyWidth).toBeLessThan(50)
-    await expect(page.getByText('Active LoRA triggers')).toBeVisible()
-    await expect(page.getByText('Embeddings', { exact: true })).toBeVisible()
-    const searchHint = page.getByText('Type 2 characters to search Danbooru tags')
-    await expect(searchHint).toBeVisible()
-    const hintBox = await searchHint.boundingBox()
-    const firstGroupBox = await page.getByText('Active LoRA triggers').boundingBox()
-    expect(hintBox).not.toBeNull()
-    expect(firstGroupBox).not.toBeNull()
-    expect(hintBox!.y).toBeLessThan(firstGroupBox!.y)
+    await editor.press('Control+a')
+    await editor.press('Backspace')
+    await expect(editor).toHaveText('')
+    await editor.press('Control+Space')
+    const completion = page.locator('.cm-tooltip-autocomplete')
+    await expect(completion.getByText('Active LoRA triggers')).toBeVisible()
+    await expect(completion.getByText('Embeddings', { exact: true })).toBeVisible()
+    expect(
+      await completion.evaluate(
+        (element) => !element.closest('[aria-label="Generate settings"], .n-modal, .n-scrollbar'),
+      ),
+    ).toBe(true)
+    await editor.press('Escape')
+    await page.getByRole('button', { name: 'Browse prompt suggestions' }).first().click()
+    await expect(completion.getByText('Active LoRA triggers')).toBeVisible()
+    await editor.press('Escape')
+    await editor.fill('reordered second, reordered first')
+    await expect(editor).toHaveText('reordered second, reordered first')
 
-    await input.fill('highly detailed portrait')
-    const expandedWidth = await compactInput.evaluate(
-      (element) => element.getBoundingClientRect().width,
-    )
-    expect(expandedWidth).toBeGreaterThan(emptyWidth)
-    await input.press('Escape')
+    await page.reload()
+    await expect(page.getByText('Type and edit prompt text freely.')).toBeHidden()
+    await page.getByRole('button', { name: 'About Prompt editor' }).hover()
+    await expect(page.getByText(/Triple-click selects a comma-separated phrase/)).toBeVisible()
+  })
 
-    const firstToken = editor.getByRole('option', {
-      name: /custom token portrait of Sample Project B/,
-    })
-    await firstToken.focus()
-    await firstToken.press('Control+Space')
-    await expect(editor.getByRole('textbox', { name: 'Add Prompt token' })).toBeVisible()
-    await editor.getByRole('textbox', { name: 'Add Prompt token' }).press('Escape')
+  test('keeps native double-click and Shift selection while triple-click selects a phrase', async ({
+    page,
+  }) => {
+    await openProject(page)
+    const editor = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    await editor.fill('alpha phrase, beta word')
+    await editor.dblclick({ position: { x: 18, y: 34 } })
+    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe('alpha')
 
-    await firstToken.click()
-    await expect(firstToken).toHaveAttribute('aria-selected', 'true')
-    const increaseAttention = page.getByLabel('Increase prompt attention').first()
-    await expect(increaseAttention).toBeEnabled()
+    await editor.click({ clickCount: 3, position: { x: 18, y: 34 } })
+    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe('alpha phrase')
 
-    await editor.click({ position: { x: 250, y: 150 } })
-    await expect(firstToken).toHaveAttribute('aria-selected', 'false')
-    await expect(increaseAttention).toBeDisabled()
-
-    await firstToken.click()
-    await increaseAttention.click()
-    await increaseAttention.click()
-    const selectedToken = editor.locator('[role="option"][aria-selected="true"]')
-    await expect(selectedToken).toHaveAttribute(
-      'aria-label',
-      /custom token \(portrait of Sample Project B\)\+\+/,
-    )
-    await expect(increaseAttention).toBeEnabled()
-
-    const decreaseAttention = page.getByLabel('Decrease prompt attention').first()
-    await decreaseAttention.click()
-    await decreaseAttention.click()
-    await expect(selectedToken).toHaveAttribute(
-      'aria-label',
-      'custom token portrait of Sample Project B',
-    )
-    await decreaseAttention.click()
-    await expect(selectedToken).toHaveAttribute(
-      'aria-label',
-      'custom token (portrait of Sample Project B)-',
-    )
-    await increaseAttention.click()
-    await expect(selectedToken).toHaveAttribute(
-      'aria-label',
-      'custom token portrait of Sample Project B',
-    )
-    await increaseAttention.click()
-    await expect(selectedToken).toHaveAttribute(
-      'aria-label',
-      'custom token (portrait of Sample Project B)+',
-    )
-
-    await page.locator('.canvas-stage').click({ position: { x: 400, y: 240 } })
-    await expect(editor.locator('[role="option"][aria-selected="true"]')).toHaveCount(0)
-    await expect(increaseAttention).toBeDisabled()
-
-    const updatedToken = editor.getByRole('option', {
-      name: 'custom token (portrait of Sample Project B)+',
-    })
-    const updatedBox = await updatedToken.boundingBox()
-    await updatedToken.dblclick()
-    const editInput = editor.locator('.prompt-token-input--editing')
-    const editBox = await editInput.boundingBox()
-    expect(updatedBox).not.toBeNull()
-    expect(editBox).not.toBeNull()
-    expect(Math.abs(editBox!.width - updatedBox!.width)).toBeLessThanOrEqual(1)
-    expect(Math.abs(editBox!.y - updatedBox!.y)).toBeLessThanOrEqual(1)
-    await expect(page.getByText('No matching suggestions')).toBeVisible()
-    const editingTextbox = editor.getByRole('textbox', {
-      name: 'Edit (portrait of Sample Project B)+',
-    })
-    await editingTextbox.fill('portrait of Sample Project B with a much longer description')
-    const expandedEditBox = await editInput.boundingBox()
-    expect(expandedEditBox).not.toBeNull()
-    expect(expandedEditBox!.width).toBeGreaterThan(editBox!.width)
-    await editingTextbox.press('Escape')
-
-    await updatedToken.getByRole('button', { name: 'close' }).click()
-    await expect(updatedToken).toHaveCount(0)
-    await expect(
-      editor.getByRole('option', { name: /lora-trigger token digital art/ }),
-    ).toBeVisible()
+    await page.keyboard.down('Shift')
+    await editor.click({ position: { x: 155, y: 34 } })
+    await page.keyboard.up('Shift')
+    expect(await page.evaluate(() => getSelection()?.toString().length ?? 0)).toBeGreaterThan(0)
   })
 
   test('supports aspect presets, locking and compact size actions', async ({ page }) => {

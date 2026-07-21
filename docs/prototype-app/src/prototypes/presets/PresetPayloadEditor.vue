@@ -11,7 +11,7 @@ import {
   NText,
   NTooltip,
 } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 
 import type {
   PresetEditorResources,
@@ -20,14 +20,10 @@ import type {
   PresetWorkflow,
 } from './presets.types'
 
-import {
-  findOrphanedLoraTriggers,
-  reconcileLoraTriggerSources,
-} from '../../components/generation/generation-prompt.utils'
+import { createGenerationPrompt } from '../../components/generation/generation-prompt.utils'
 import { mockDanbooruTags } from '../../components/generation/generation.mock'
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
-import GenerationPromptTokenEditor from '../../components/generation/GenerationPromptTokenEditor.vue'
-import LoraTriggerChangeDialog from '../../components/generation/LoraTriggerChangeDialog.vue'
+import GenerationPromptEditor from '../../components/generation/GenerationPromptEditor.vue'
 import PresetPayloadSection from './PresetPayloadSection.vue'
 import { clonePreset, sectionLabels } from './presets.utils'
 
@@ -44,10 +40,6 @@ const props = withDefaults(
 )
 
 const payload = defineModel<PresetPayload>({ required: true })
-const loraTriggerDialogOpen = ref(false)
-const affectedNegativeTriggerCount = ref(0)
-const affectedPositiveTriggerCount = ref(0)
-const pendingLoras = ref<NonNullable<PresetPayload['loras']>>()
 const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
   default: () => [],
 })
@@ -85,33 +77,9 @@ const loras = computed({
 })
 
 function removeLora(resourceId: string) {
-  const value = (payload.value.loras ?? []).filter((lora) => lora.resource.id !== resourceId)
-  const positiveOrphans = findOrphanedLoraTriggers([payload.value.prompt], value)
-  const negativeOrphans = findOrphanedLoraTriggers([payload.value.negativePrompt], value)
-  if (positiveOrphans.length || negativeOrphans.length) {
-    pendingLoras.value = JSON.parse(JSON.stringify(value)) as NonNullable<PresetPayload['loras']>
-    affectedPositiveTriggerCount.value = positiveOrphans.length
-    affectedNegativeTriggerCount.value = negativeOrphans.length
-    loraTriggerDialogOpen.value = true
-    return
-  }
-  payload.value.loras = value
-}
-
-function resolveLoraTriggers(resolution: 'keep' | 'remove') {
-  const nextLoras = pendingLoras.value
-  if (!nextLoras) {
-    return
-  }
-  payload.value.loras = JSON.parse(JSON.stringify(nextLoras)) as NonNullable<PresetPayload['loras']>
-  payload.value.prompt = reconcileLoraTriggerSources(payload.value.prompt, nextLoras, resolution)
-  payload.value.negativePrompt = reconcileLoraTriggerSources(
-    payload.value.negativePrompt,
-    nextLoras,
-    resolution,
+  payload.value.loras = (payload.value.loras ?? []).filter(
+    (lora) => lora.resource.id !== resourceId,
   )
-  pendingLoras.value = undefined
-  loraTriggerDialogOpen.value = false
 }
 
 function sectionDisabled(section: PresetSectionKey): boolean {
@@ -162,30 +130,32 @@ function updateVae(vaeId: string) {
           <slot name="section-empty" :section />
         </template>
 
-        <GenerationPromptTokenEditor
+        <GenerationPromptEditor
           v-if="section === 'prompt'"
           key="prompt"
           ariaLabel="Prompt"
           :danbooruTags="mockDanbooruTags"
           :disabled="sectionDisabled(section)"
           :embeddings="resources.embeddings"
+          historyMode="local"
           :loras="payload.loras ?? []"
           :minimumLines="3"
-          :modelValue="payload.prompt ?? { tokens: [] }"
+          :modelValue="payload.prompt ?? createGenerationPrompt()"
           polarity="positive"
           @update:modelValue="payload.prompt = $event"
         />
 
-        <GenerationPromptTokenEditor
+        <GenerationPromptEditor
           v-else-if="section === 'negativePrompt'"
           key="negative-prompt"
           ariaLabel="Negative Prompt"
           :danbooruTags="mockDanbooruTags"
           :disabled="sectionDisabled(section)"
           :embeddings="resources.embeddings"
+          historyMode="local"
           :loras="payload.loras ?? []"
           :minimumLines="3"
-          :modelValue="payload.negativePrompt ?? { tokens: [] }"
+          :modelValue="payload.negativePrompt ?? createGenerationPrompt()"
           polarity="negative"
           @update:modelValue="payload.negativePrompt = $event"
         />
@@ -349,12 +319,6 @@ function updateVae(vaeId: string) {
       </PresetPayloadSection>
     </NCollapse>
   </NCard>
-  <LoraTriggerChangeDialog
-    v-model:show="loraTriggerDialogOpen"
-    :negativeCount="affectedNegativeTriggerCount"
-    :positiveCount="affectedPositiveTriggerCount"
-    @resolve="resolveLoraTriggers"
-  />
 </template>
 
 <style scoped>

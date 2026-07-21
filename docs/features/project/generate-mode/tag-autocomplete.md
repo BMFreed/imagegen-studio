@@ -1,210 +1,37 @@
-# Tag Autocomplete
+# Prompt Autocomplete
 
-## Feature
+## Decision
 
-Unified prompt autocomplete helps users write prompts by combining canonical Danbooru-style tags with local resource-aware suggestions.
+Autocomplete runs inside the shared plain-text CodeMirror editor. It combines contextual trigger phrases from the current enabled LoRA stack, installed embeddings, and the prototype Danbooru tag source without converting any result into a chip.
 
-The feature is aimed at SDXL/Illustrious-like models where Danbooru tags are a meaningful part of the model's training vocabulary.
+Automatic completion starts after two normalized characters. Users can explicitly browse with the prompt action-rail button or `Ctrl/Cmd+Space`; an empty explicit query shows local resources immediately.
 
-## Reference
+## Sections and ranking
 
-Reference implementation: `a1111-sd-webui-tagcomplete`.
+Sections always use this order:
 
-Useful ideas to adapt:
+1. `Active LoRA triggers`;
+2. `Embeddings`;
+3. `Danbooru tags`.
 
-- tag index rows in the shape `tag,type,count,aliases`;
-- search by canonical tag and aliases;
-- sort by global post count plus local user usage;
-- color/category metadata for tag types;
-- manual refresh/update affordance;
-- lightweight autocomplete popup with keyboard navigation.
+Each section returns at most five results and the combined list at most twelve. Exact and prefix matches rank above contains matches. Contextual LoRA phrases rank ahead of Danbooru tags. Embeddings marked for negative use receive a small ranking preference in Negative Prompt.
 
-The A1111/Gradio DOM implementation is not copied. ImageGen Studio should implement the feature as native Vue/Electron UI with typed storage and application services.
+Only LoRAs in the current generation draft with `enabled === true` and without `missing: true` contribute suggestions. Equivalent phrases from multiple LoRAs are aggregated. Danbooru suggestions appear only after the two-character threshold.
 
-## ImageGen Studio Decision
+## Applying a completion
 
-Build an ImageGen Studio-native autocomplete system backed by a local SQLite tag index.
+Completion replaces the current search fragment at the caret inside the top-level phrase; adjacent prompt text is not rewritten.
 
-MVP source policy:
+- LoRA trigger: inserts ordinary text and saves no LoRA source metadata.
+- Danbooru tag: inserts canonical text and saves no Danbooru metadata.
+- Embedding: inserts the polarity-appropriate activation token and adds one resource/token entry to `embeddingRefs` through a CodeMirror `StateEffect`.
 
-- Danbooru-style tag source only.
-- Rule34 is not supported in MVP.
-- e621 is not supported in MVP unless a later furry-model feature needs it.
-- Custom extra CSV import is not supported in MVP.
-- Translation search is not supported in MVP.
-- Chants/styles are not supported.
-- Installed textual-inversion embeddings are offered as resource-bearing prompt tokens.
-- Trigger phrases from enabled selected LoRAs are offered as contextual prompt tokens.
-- Wildcards are not needed for the current product direction and are not supported.
+Positive Prompt uses `activationToken`. Negative Prompt uses `negativeToken` when present, otherwise `activationToken`. Repeated selection of the same resource/token does not duplicate the sidecar ref.
 
-Manual tag database update is supported. Automatic scheduled update can be added later.
+## Presentation
 
-## Scope
+CodeMirror completion sections provide group headings. The tooltip layer is teleported under `document.body` with fixed positioning, so suggestion lists remain visible outside Project panels, Preset Manager scroll areas, Apply Preset, and New Project modals.
 
-MVP:
+## Persistence boundary
 
-- install a bundled seed Danbooru-style tag set;
-- manually update the tag set from an app-managed source;
-- search by canonical tag and aliases;
-- insert canonical tags into positive/negative prompt fields;
-- insert installed embeddings into the specific positive/negative prompt being edited;
-- include trigger phrases only from enabled, non-missing LoRAs in the active generation draft;
-- show category/type and post count in suggestions;
-- track local tag usage and use it as a sorting signal;
-- show last update status and update errors in settings.
-
-Post-MVP:
-
-- scheduled auto-update;
-- multiple tag sources;
-- e621 source;
-- translations;
-- custom tag packs;
-- richer visual tag explorer.
-
-Rejected for this feature:
-
-- Rule34 source;
-- custom extra CSV import;
-- wildcard expansion;
-- chants/styles.
-
-## Tag Index Format
-
-A tag index row has this logical shape:
-
-```text
-tag,type,count,aliases
-```
-
-Example:
-
-```csv
-1girl,0,6008644,"1girls,sole_female"
-```
-
-Fields:
-
-- `tag` — canonical tag inserted into the prompt.
-- `type` — source category/type, such as general, character, copyright, artist, or meta.
-- `count` — global source frequency used as a ranking signal.
-- `aliases` — alternative names, spellings, abbreviations, or common mistakes that search should match.
-
-Autocomplete always inserts `tag`, not the matched alias.
-
-## Storage
-
-Suggested tables:
-
-```text
-tag_sources
-tag_sets
-tags
-tag_aliases
-tag_usage
-```
-
-`tag_sources` describes where a tag set can be obtained from. For MVP this is the app-managed Danbooru source.
-
-`tag_sets` describes an installed version of a source vocabulary:
-
-- `id`
-- `source_id`
-- `name`
-- `version`
-- `fetched_at`
-- `row_count`
-- `status`
-
-`tags` stores canonical tags:
-
-- `id`
-- `tag_set_id`
-- `name`
-- `normalized_name`
-- `category`
-- `post_count`
-
-`tag_aliases` stores searchable aliases for canonical tags:
-
-- `id`
-- `tag_id`
-- `alias`
-- `normalized_alias`
-
-`tag_usage` stores local user usage:
-
-- `tag_id`
-- `positive_use_count`
-- `negative_use_count`
-- `last_used_at`
-
-`normalized_name` and `normalized_alias` are precomputed search keys. They should use the same normalization rules so matching is consistent.
-
-## Search Behavior
-
-Search matches:
-
-- canonical tag names;
-- aliases.
-
-Search does not match translations in MVP.
-
-Ranking uses:
-
-- exact/prefix match before loose contains match;
-- global `post_count`;
-- local `tag_usage`;
-- active prompt polarity, so positive and negative usage can diverge.
-
-Clicking the prompt editor's `+` opens a compact input and immediately exposes a local browse view containing `Active LoRA triggers` and `Embeddings`. Double-click editing opens the same dropdown rather than a reduced plain-input mode. This makes the finite contextual resources discoverable without a separate selector or onboarding tooltip. A disabled instruction row at the top explains that Danbooru search begins after two normalized characters; after that threshold the same dropdown filters all sources and adds the `Danbooru tags` group.
-
-When focus is already inside the prompt token editor, `Ctrl/Cmd+Space` opens the same add/autocomplete flow. It is a keyboard accelerator, not the only discoverability mechanism.
-
-The Vue prototype treats spaces and underscores as equivalent, returns at most five items per group and twelve overall, and orders groups as `Active LoRA triggers`, `Embeddings`, then `Danbooru tags`. The menu has a usable width independent of the deliberately tiny inline input. LoRA triggers are available in both prompt polarities. Negative embedding metadata affects ranking and the inserted token, but the user still chooses the destination prompt.
-
-Autocomplete never inserts LoRA trigger phrases automatically when a LoRA is selected. Temporarily disabling a LoRA removes its phrases from new autocomplete results but leaves existing linked tokens untouched and shows no interruption. Only removing a LoRA that would orphan linked trigger tokens asks the user to keep them as ordinary prompt text, remove them, or cancel the removal.
-
-## Manual Update
-
-Manual update means "download and install the newest app-supported tag database now".
-
-It is not the same as the A1111 temp-file refresh workaround. ImageGen Studio owns its storage and should not need a UI restart or temp-file rebuild for normal operation.
-
-Manual update is still useful because:
-
-- users can update without waiting for an app release;
-- failed downloads can be retried explicitly;
-- automatic updates can remain disabled;
-- settings can show `lastUpdatedAt`, source, row count, and error state.
-
-## Vue Prototype Coverage
-
-The current implementation is intentionally local and deterministic:
-
-- a small in-memory Danbooru-style catalog supplies canonical name, aliases, category and post count;
-- matching starts after two normalized characters, treats spaces and underscores as equivalent and ranks prefix/exact matches above contains matches;
-- Active LoRA triggers and installed Embeddings are browsable immediately when `+` opens, even before a Danbooru query exists;
-- create and double-click edit use the same teleported Naive autocomplete menu;
-- results are capped at five per group and twelve overall;
-- keyboard navigation and `Ctrl/Cmd+Space` use the same add flow.
-
-SQLite tables, local usage ranking, model-family enablement, bundled database installation and manual update status are production requirements and are not implemented by the Vue prototype.
-
-## Dependencies
-
-- SQLite storage.
-- Electron main process update service.
-- Renderer prompt editor.
-- App settings screen.
-- Model compatibility metadata, so autocomplete can be enabled for Danbooru-trained model families and disabled or de-emphasized for model families that do not benefit from it.
-
-## Acceptance Criteria
-
-- A user typing in a prompt field sees Danbooru-style suggestions.
-- Suggestions include canonical tag, category/type, and post count.
-- Searching by alias returns the canonical tag.
-- Selecting a suggestion inserts the canonical tag.
-- Positive and negative prompts track usage separately.
-- Production settings allow manual tag-database update and show its status; the current prototype uses mock in-memory data and has no update UI.
-- Rule34, custom CSV import, translation search, chants/styles, wildcard expansion and production network-backed suggestions are not part of the Vue prototype.
+Autocomplete is an authoring aid, not a stored annotation system. Prompt persistence contains plain text plus embedding refs only. LoRA phrase ownership and Danbooru ranking/category/post-count metadata are recomputed context and are never stored with prompt text. The current tag list is an in-memory prototype; the production SQLite tag index is outside this iteration.

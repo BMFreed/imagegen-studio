@@ -17,7 +17,7 @@
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, new/import project flows, Trash и recovery states.
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
   - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, editable apply draft, partial apply и create/edit mode Preset Manager.
-  - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Create`: structured prompt tokens, bbox, Smart Patch Layer, LoRA, embedding prompt tokens, dynamic prompting, staging и regional guidance.
+  - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Create`: plain-text CodeMirror prompt editor, bbox, Smart Patch Layer, LoRA, embedding refs, dynamic prompting, staging и regional guidance.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
   - [features/project/document-lifecycle.md](./features/project/document-lifecycle.md) — dirty/save/autosave/recovery/close lifecycle opened `.igs` document.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для frozen generation jobs и temporary candidate outputs.
