@@ -507,6 +507,16 @@ interface PresetApplicationDraft {
 ImageGen Studio/
 ├─ database/
 │  └─ app.sqlite
+├─ runtime/
+│  ├─ python/
+│  ├─ environments/
+│  │  ├─ {active-runtime-id}/
+│  │  ├─ {previous-runtime-id}/
+│  │  └─ {next-runtime-id}.staging/
+│  └─ current-runtime.json
+├─ cache/
+│  ├─ uv/
+│  └─ runtime-downloads/
 ├─ models/
 │  ├─ checkpoints/
 │  ├─ loras/
@@ -520,6 +530,8 @@ ImageGen Studio/
 │  └─ project-thumbnails/
 ├─ autosave/
 │  └─ {project-id}/
+├─ logs/
+│  └─ worker/
 └─ temp/
    ├─ downloads/
    └─ generation-staging/{project-id}/{session-id}/
@@ -527,6 +539,8 @@ ImageGen Studio/
 
 ## Правила целостности
 
+- Python runtime, models, projects и caches имеют независимые lifecycle. Repair/replace runtime не удаляет модели или пользовательские данные, а очистка cache не меняет active runtime.
+- `current-runtime.json` заменяется атомарно только после успешного staging self-test. Failed install не изменяет active runtime и не удаляет previous known-good runtime.
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
 - Worker completion creates a temporary candidate, not a persistent project result.

@@ -88,6 +88,8 @@ Python ML worker
 - Локальная база данных — SQLite.
 - Python используется только для ML/inference-слоя.
 - Основная бизнес-логика приложения не должна жить в Python.
+- Python project и dependencies управляются только через `uv`, `pyproject.toml` и committed `uv.lock`; Poetry и `requirements.txt` не являются source of truth.
+- Приложение использует собственный exact CPython и не зависит от системного Python, пользовательского `PATH`, Conda или global `site-packages`.
 
 ### 2.3. Почему Electron, а не Tauri
 
@@ -119,6 +121,7 @@ Electron Main Process
   ├─ preset manager
   ├─ accepted generation result index
   ├─ model install/download service
+  ├─ Python runtime manager
   ├─ Python worker manager
   └─ IPC handlers
 Python ML Worker
@@ -133,6 +136,7 @@ Electron main process в этом проекте выступает как ло�
 
 - работу с SQLite;
 - работу с файловой системой;
+- установку, проверку, активацию и rollback app-owned Python runtime;
 - управление Python worker'ом;
 - скачивание моделей;
 - проверку целостности файлов;
@@ -1735,6 +1739,34 @@ Strict typing применяется к собственному worker/domain-�
 
 Diffusers/PyTorch остаются за прагматичным adapter-слоем. Внутри adapter'а допустимы локальные `Any`, `cast(...)` или suppressions, если они не протекают в остальной worker-код. Проект не пишет stub-файлы для Diffusers/PyTorch заранее и не переписывает inference-механику ради чистоты типов.
 
+Dependency workflow использует только `uv`: `pyproject.toml` описывает зависимости, `uv.lock` фиксирует точные версии, локальный `.venv` служит development environment. Poetry не используется, а ручная установка undeclared packages не считается частью проекта.
+
+### 16.6. Python runtime lifecycle
+
+ImageGen Studio поставляет или загружает собственный app-managed CPython. Worker запускается по абсолютному пути и никогда не выбирает `python`/`python3` из пользовательского `PATH`, системного каталога, Conda или случайно активированного `venv`.
+
+Production runtime хранится в per-user app data отдельно от Electron executable, моделей и проектов. Каждая версия worker/runtime profile получает отдельный environment. Обновление, смена Python и Repair всегда создают новый staging runtime; активный environment не мутируется на месте.
+
+```text
+verified runtime bundle или managed Python + signed wheelhouse
+↓
+new versioned staging runtime
+↓
+dependency/backend/worker protocol self-test
+↓
+atomic active-runtime pointer replacement
+↓
+previous known-good runtime retained for rollback
+```
+
+Release client не разрешает произвольные версии из public indexes и не собирает `sdist` на машине пользователя. Runtime artifacts формируются и тестируются для поддерживаемой матрицы OS × architecture × inference backend. Failed download/install/self-test оставляет предыдущий worker рабочим; повреждённый cache можно удалить независимо.
+
+GPU driver, поддерживаемая ОС, filesystem permissions и hardware capability остаются внешними системными условиями. Их несовместимость диагностируется отдельно и не является поводом пробовать случайный системный Python.
+
+Сторонние плагины не могут автоматически устанавливать packages в основной worker environment. Plugin isolation требует отдельного post-MVP architecture decision.
+
+Подробный нормативный контракт: [Python Runtime And Dependency Management](./specs/07-python-runtime-management.md).
+
 ---
 
 ## 17. Основные пользовательские сценарии
@@ -2109,6 +2141,7 @@ src/
 │  │  │  ├─ generation-service.ts
 │  │  │  ├─ preset-service.ts
 │  │  │  ├─ history-service.ts
+│  │  │  ├─ python-runtime-manager.ts
 │  │  │  └─ worker-manager.ts
 │  │  ├─ db/
 │  │  │  ├─ db.ts
@@ -2131,9 +2164,14 @@ src/
 │  └─ services/
 │
 └─ worker-python/
-   ├─ worker.py
-   ├─ protocol.py
-   └─ requirements.txt
+   ├─ pyproject.toml
+   ├─ uv.lock
+   ├─ .python-version
+   ├─ src/
+   │  └─ imagegen_worker/
+   │     ├─ worker.py
+   │     └─ protocol.py
+   └─ tests/
 ```
 
 ---

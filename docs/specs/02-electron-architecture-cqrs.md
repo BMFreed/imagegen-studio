@@ -2,7 +2,7 @@
 
 ## Граница процессов
 
-Renderer отвечает за UI и пользовательские сценарии. Main process отвечает за application layer: SQLite, filesystem, загрузки, worker process, валидацию команд и нормализацию ошибок.
+Renderer отвечает за UI и пользовательские сценарии. Main process отвечает за application layer: SQLite, filesystem, загрузки, app-owned Python runtime, worker process, валидацию команд и нормализацию ошибок.
 
 Renderer не импортирует:
 
@@ -104,6 +104,9 @@ generation.candidateReady
 models.downloadProgress
 models.downloadDone
 models.downloadError
+worker.runtimeInstallProgress
+worker.runtimeInstallFailed
+worker.runtimeActivated
 worker.statusChanged
 ```
 
@@ -116,3 +119,18 @@ Apply ownership следует preset-прототипу: `projects.applyPresetD
 `presets.create` принимает валидный `PresetDefinition` без fake identity и возвращает `PresetRecord`; id и timestamps появляются только после успешной команды. Ошибка команды не закрывает renderer draft. `projects.applyPresetDraft` принимает payload + ephemeral selection mask, но mask никогда не записывается в preset storage.
 
 Generation ownership also has an explicit boundary: `generation.enqueue/cancel` and candidate-discard commands change queue/staging state, while `projects.acceptGenerationCandidates` is the only command that turns selected candidates into persistent Raster Layers or Smart Patch variants. It creates generation provenance and derived accepted-result history rows as part of one grouped project mutation. Worker completion itself does not mutate the Project document.
+
+## Python runtime ownership
+
+Main process запускает worker только через runtime manager и только по абсолютному пути из атомарно записанного active-runtime manifest. Он не ищет `python` в `PATH`, не использует системный Python и не выполняет dependency installation внутри активного environment.
+
+Runtime install/repair является main-process operation:
+
+- получает и проверяет release artifacts;
+- создаёт новый versioned staging runtime;
+- выполняет dependency, backend и worker protocol self-tests;
+- атомарно переключает active-runtime pointer только после успеха;
+- сохраняет previous known-good runtime для rollback;
+- нормализует install/runtime failures в доменные DTO.
+
+Renderer может инициировать разрешённую install/repair command и показывать прогресс, но не получает доступ к `uv`, Python, `child_process` или произвольным shell-командам. Полный контракт зафиксирован в [Python Runtime And Dependency Management](./07-python-runtime-management.md).

@@ -4,6 +4,8 @@
 
 Python worker должен быть typed и linted с самого начала, но без попытки сделать внешние ML-библиотеки полностью статически прозрачными.
 
+Dependency и environment management выполняются только через `uv`: `pyproject.toml` описывает проект, `uv.lock` фиксирует версии, локальный `.venv` используется для разработки. Poetry и ручное управление постоянными зависимостями через `pip install` не используются. Production runtime lifecycle, собственный CPython, staged installation и rollback описаны отдельно в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
+
 Основной набор инструментов:
 
 - **BasedPyright** — основной type checker и language server для Python worker'а.
@@ -42,7 +44,7 @@ Ruff используется и как formatter, и как linter.
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["worker-python", "tests"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -69,21 +71,27 @@ BasedPyright является основным источником type diagnos
 
 ## Команды
 
-После появления `worker-python/` минимальные локальные проверки:
+После появления `worker-python/` минимальные локальные проверки запускаются внутри locked uv environment:
 
 ```bash
-ruff format worker-python tests
-ruff check worker-python tests
-basedpyright worker-python tests
+cd worker-python
+uv sync --locked
+uv run ruff format src tests
+uv run ruff check src tests
+uv run basedpyright src tests
 ```
 
 Для CI formatter должен запускаться в check-режиме:
 
 ```bash
-ruff format --check worker-python tests
-ruff check worker-python tests
-basedpyright worker-python tests
+cd worker-python
+uv sync --locked
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run basedpyright src tests
 ```
+
+CI не устанавливает undeclared dependencies вручную. Изменение постоянной зависимости проходит через `uv add` / `uv remove`, обновляет `uv.lock` и проверяется тем же locked environment, который используется для сборки release runtime artifacts.
 
 ## Связь с inference policy
 

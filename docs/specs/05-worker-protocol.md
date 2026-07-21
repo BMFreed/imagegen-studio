@@ -76,7 +76,14 @@ type WorkerJob = {
 
 ```ts
 type WorkerMessage =
-  | { type: 'ready'; workerVersion?: string }
+  | {
+      type: 'ready';
+      capabilities: string[];
+      protocolVersion: string;
+      pythonVersion: string;
+      runtimeProfile: string;
+      workerVersion: string;
+    }
   | { type: 'progress'; jobId: string; progress: number; step?: number; totalSteps?: number }
   | { type: 'done'; jobId: string; outputPath: string; seed?: number }
   | { type: 'canceled'; jobId: string }
@@ -86,6 +93,8 @@ type WorkerMessage =
 ## Правила протокола
 
 - `jobId` создаёт main process.
+- Main process принимает worker jobs только после валидного `ready` handshake. Несовместимые `workerVersion` / `protocolVersion` или неожиданный `runtimeProfile` являются runtime activation/startup error, а не generation job error.
+- `pythonVersion`, runtime profile и capabilities используются для diagnostics и compatibility checks, но не показываются как постоянные пользовательские labels в основном UI.
 - `queueItemId` связывает worker job с SQLite queue item.
 - Queue item contains a frozen job payload derived from Project/Smart Patch state. Worker does not read mutable renderer state.
 - В MVP main process отправляет worker'у только один active job одновременно, но pending jobs уже хранятся в queue.
@@ -98,6 +107,8 @@ type WorkerMessage =
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
 - Completed outputs are stored as temporary candidates and published to the target staging session. Worker completion does not mutate `.igs`, create generation provenance, write accepted-result history or create an undo step.
 - A separate Project command accepts one or more completed candidates and commits them as Raster Layers or Smart Patch variants.
+
+Перед активацией нового environment runtime manager также запускает worker self-test без пользовательской модели. Он должен проверить imports/native extensions, выбранный device/backend, минимальную tensor operation и тот же versioned handshake. Lifecycle установки, app-managed CPython и rollback описаны в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
 
 ## Queue item lifecycle
 

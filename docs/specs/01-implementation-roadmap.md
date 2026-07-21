@@ -58,6 +58,8 @@ docs/features/
 - `Home` tab shell according to [Home Screen](../features/home-screen.md).
 - Typed `window.api` без прямого доступа renderer к Node.js.
 - SQLite init, migrations, app data directory.
+- App-owned `runtime/`, `cache/` и logs roots без зависимости от системного Python или global packages.
+- Runtime manager boundary для versioned environments, active-runtime pointer и install-operation lock.
 
 Результат: приложение запускается как desktop shell, renderer общается с main process через безопасный typed API.
 
@@ -78,7 +80,10 @@ docs/features/
 ## Фаза 2. Generation Slice
 
 - Долгоживущий Python worker.
-- Python worker tooling: BasedPyright для типов, Ruff для formatting/linting.
+- Python project: `pyproject.toml`, committed `uv.lock`, BasedPyright для типов и Ruff для formatting/linting; Poetry и `requirements.txt` не являются source of truth.
+- Собственный exact CPython и platform/backend runtime artifacts; системный Python и пользовательский `PATH` не используются.
+- Staged runtime installation: новый versioned environment, verification/self-test, atomic activation, previous known-good rollback.
+- Production installation из проверенного runtime bundle либо app-managed Python + signed wheelhouse без client-side dependency resolution и `sdist` builds.
 - Invoke-like persistent Queue Manager baseline: SQLite-backed generation jobs в main process.
 - Worker protocol вокруг queue item lifecycle, даже если active worker job в MVP один.
 - Минимальный canvas workflow с automatic txt2img/img2img derivation from target content.
@@ -88,7 +93,7 @@ docs/features/
 - Explicit acceptance into Raster Layers with immutable generation provenance.
 - Derived history of accepted results with fallback for a missing accepted asset.
 
-Результат: пользователь выбирает модель, генерирует изображение и видит его в истории.
+Результат: приложение поднимает воспроизводимый worker без системного Python; пользователь выбирает модель, генерирует изображение и видит его в истории. Ошибка установки или обновления нового runtime не ломает предыдущий рабочий worker.
 
 ## Фаза 3. Presets
 

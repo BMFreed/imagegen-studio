@@ -11,7 +11,8 @@
 - [specs/03-data-storage.md](./specs/03-data-storage.md) — SQLite, `.igs`, staging candidates, accepted-result provenance, ресурсы и правила целостности.
 - [specs/04-ui-ux-navigation.md](./specs/04-ui-ux-navigation.md) — основные экраны, навигация и UX-поведение MVP.
 - [specs/05-worker-protocol.md](./specs/05-worker-protocol.md) — контракт Python worker'а и формат job/progress/error.
-- [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — типизация, linting и formatting для Python worker'а.
+- [specs/06-python-worker-tooling.md](./specs/06-python-worker-tooling.md) — development tooling, типизация, linting и formatting для Python worker'а.
+- [specs/07-python-runtime-management.md](./specs/07-python-runtime-management.md) — `uv`, app-managed CPython, versioned environments, staged installation, activation и rollback Python runtime.
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, new/import project flows, Trash и recovery states.
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
