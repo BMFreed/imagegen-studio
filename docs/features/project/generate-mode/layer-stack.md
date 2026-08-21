@@ -45,10 +45,20 @@ Layer stack behavior:
 - opacity;
 - blend mode;
 - selected-entity action bar.
+- shared `Compare generation settings` overflow/context-menu action for Raster
+  and Smart Patch Layers.
 
 Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the full layer selection surface after a small movement threshold; visibility and row action buttons are sibling controls and never start a drag. The insertion line and reduced-opacity source row communicate the target, and the right panel uses its own scroll container for edge auto-scroll.
 
 One completed drop creates one grouped `Reorder layers` undo entry. No document mutation occurs during hover. `Move up` and `Move down` remain in the row overflow menu as a keyboard fallback; permanent hover arrows are not shown.
+
+The same overflow/context menu for both compositing layer types exposes `Compare
+generation settings`. It opens the read-only provenance popover specified in
+[Generation Provenance](./generation-provenance.md). Generated Raster Layers use
+their own provenance; Smart Patch Layers use active-variant provenance. The
+comparison side is always `Current Canvas`, not another Smart Patch variant.
+Layers without applicable provenance keep the action disabled with `No generation
+data` so the menu location remains predictable.
 
 ## Layer Row Controls
 
@@ -142,6 +152,8 @@ Current limitations:
 - Smart Patch bbox/internal resolution/compositing precision controls are read-only or absent;
 - Regional Guidance prompt/reference authoring is not inline, and reference-image add/remove/reorder is not implemented;
 - destructive delete has no confirmation policy in this mock.
+- layer menus do not yet expose `Compare generation settings`, and the prototype
+  has no provenance comparison popover.
 
 ## Acceptance Criteria
 
@@ -157,5 +169,7 @@ Current limitations:
 - Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
 - Layer selection and sibling actions use valid non-nested interactive semantics.
 - Raster and Smart Patch Layers can be reordered by pointer DnD, with overflow move actions as the keyboard fallback.
+- Raster and Smart Patch Layer context menus expose the same provenance
+  comparison action and disabled no-data state.
 - Only one raster sub-layer inside one Smart Patch Layer can be active at a time.
 - Denoising strength is not displayed above the layer stack; it belongs to Generation settings.

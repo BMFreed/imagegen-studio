@@ -53,6 +53,8 @@ MVP:
 - store multiple raster sub-layers as result alternatives;
 - keep exactly one active/visible raster sub-layer;
 - mark layer `outdated` when editable inputs change after generation;
+- compare active-variant provenance with current Canvas state through the shared
+  layer context-menu popover;
 - duplicate Smart Patch Layer when the user wants an alternate mask/bbox/internal-resolution state.
 
 Post-MVP:
@@ -200,6 +202,18 @@ Rules:
 
 If the user needs to preserve an alternate mask/bbox/internal-resolution state, they duplicate the whole Smart Patch Layer.
 
+`Duplicate Layer` is also the canonical reuse action for Smart Patch geometry and
+layer-owned processing state. A preset created from an accepted variant copies
+only reusable generation configuration; it does not copy the mask, bbox,
+internal resolution, compositing state or source identities. Smart Patch
+`internalResolution` must not become generic preset `Size` implicitly.
+
+Variant provenance still records identities/hashes for this layer/source context
+so the app can explain the run and derive `outdated`. Those fields are excluded
+from the read-only `Compare generation settings` diff: that popover compares how
+the image was generated, not whether two Smart Patch Layers have the same shape
+or mask.
+
 ## Layer Row Display
 
 Smart Patch Layer should be visually distinct from a normal Raster Layer.
@@ -265,6 +279,10 @@ The prototype supports adding an empty Smart Patch, selecting its layer-owned ge
 
 The current details card only reads mask revision, bbox size, internal size and active variant. General bbox dragging, numeric precision editing, internal-size editing, mask painting, compositing controls, source-composite hashing and outpainting auto-expand are not implemented. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
 
+The prototype also does not expose the shared `Compare generation settings`
+context action or provenance popover. Its current `outdated` flag is a simplified
+mock and does not substitute for `Generated with` / `Current Canvas` comparison.
+
 ## Acceptance Criteria
 
 - Smart Patch Layer is documented as its own Generate feature.
@@ -275,3 +293,5 @@ The current details card only reads mask revision, bbox size, internal size and 
 - Only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.
 - Smart Patch regeneration can generate several temporary candidates and explicitly persist one or more selected candidates as variants.
 - Changing layer-owned editable inputs marks existing generated output `outdated`.
+- Smart Patch comparison uses active-variant provenance against current Canvas
+  state and never compares two variant provenance records.

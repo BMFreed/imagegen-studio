@@ -12,12 +12,18 @@ InvokeAI является основным reference product. Проектная
 
 Глобальная цель проекта — взять то, что хорошо работает в InvokeAI, перенести это в более удобный для ImageGen Studio стек и прокачать UX. Изобретательство допустимо прежде всего в продуктовой форме, UX и workflows. В работе с моделями, очередями, worker protocol, canvas lifecycle и другими сложными механизмами проект опирается на InvokeAI или другие готовые решения, если механизм InvokeAI нас не устраивает.
 
+Reference-first подход не означает перенос всей информационной архитектуры reference product. ImageGen Studio сознательно обещает понятный, product-owned интерфейс вместо собираемого workbench: пользователь настраивает генерацию и творческую работу, но не проектирует раскладку приложения. Продукт не является IDE или dockable panel system. Полный контракт, negative scope и проверяемые инварианты зафиксированы в [Product Promises](../product-promises.md#pp-001-понятный-интерфейс-вместо-собираемого-workbench).
+
+Та же продуктовая рамка требует [одного явного intent на control](../product-promises.md#pp-002-явное-намерение-вместо-магического-control), [одного canonical owner для каждой сущности и настройки](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место), [managed model library с безопасным version lifecycle](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами) и [immutable provenance каждого принятого результата](../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан). Search, create, import и install не маскируются одним polymorphic input; Projects, Models, Presets, temporary candidates, accepted Layers и provenance не подменяют друг друга.
+
 Для SDXL/Illustrious-like checkpoint'ов MVP также следует InvokeAI-пути: `.safetensors` хранится как исходный пользовательский файл, worker грузит его через Diffusers single-file loading, а кэширование происходит на уровне уже загруженных моделей в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию не входит в базовое поведение.
 
 MVP должен доказать ценность не как “ещё одной формы Generate”, а как студии, где пользователь может:
 
 - импортировать модель с CivitAI по ссылке;
 - хранить локальную библиотеку моделей и metadata;
+- обнаруживать новую CivitAI-версию, устанавливать её рядом со старой и явно
+  выбирать default version без изменения existing references;
 - видеть свои проекты через `Home` screen с workspace'ами, `Projects`, app-managed `Trash`, search/Status filtering и preview;
 - создавать `.igs`, импортировать внешний `.igs` через Move/Copy в managed workspace и открывать project files;
 - открывать несколько `.igs` проектов одновременно, каждый в своей `Project` tab;
@@ -25,6 +31,8 @@ MVP должен доказать ценность не как “ещё одн�
 - просматривать несколько временных generation candidates и принимать один или несколько;
 - видеть историю только принятых generated results;
 - открывать immutable provenance принятого результата;
+- открывать одинаковое read-only сравнение из контекстного меню Raster или Smart
+  Patch Layer: generated provenance против current Canvas state без mutation;
 - создавать пресеты вручную и из старых генераций;
 - применять пресеты полностью или по секциям;
 - получать понятные ошибки по отсутствующим моделям/LoRA.
@@ -33,6 +41,8 @@ MVP должен доказать ценность не как “ещё одн�
 
 - `Home` tab — стартовый экран: Workspaces, cross-workspace `Projects`, app-managed `Trash`, new/import project, доступ к Model Manager и Preset Manager;
 - `Project` tab — открытый `.igs` документ: canvas, Create/generate workflow, staging candidates, слои, маски, настройки модели, accepted-result provenance, save/dirty/recovery status.
+
+Document tabs не являются layout presets. Название Home, Project или domain mode задаёт стабильное назначение поверхности и не может быть переопределено произвольной заменой primary panels.
 
 Model Manager и Preset Manager являются app-level modal overlays, а не document tabs. Apply Preset остаётся Project-scoped modal flow: он редактирует временную application-копию и не изменяет сохранённый preset.
 

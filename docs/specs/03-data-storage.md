@@ -95,20 +95,47 @@ Generation provenance — immutable metadata accepted Raster Layer or Smart Patc
 
 Provenance exists only after explicit `Add N as Layers` / `Add N as Variants`. Worker completion and a temporary staging candidate do not create a project-local provenance record.
 
-Project-local provenance is stored inside `.igs` and referenced by its accepted layer/variant. It contains:
+Project-local provenance is stored inside `.igs` and referenced by its accepted
+layer/variant. Its payload logically distinguishes portable
+`generationConfiguration`, diagnostic `layerSourceContext` and
+`executionResultContext`. The eventual physical schema may encode these as
+explicit nested groups, but must preserve the ownership boundary.
+
+`generationConfiguration` contains:
 
 - prompt / negative prompt;
 - seed;
-- sampler, scheduler, steps, CFG and size;
+- sampler, scheduler, steps, CFG and explicit reusable generation/Canvas size;
 - model, LoRA, VAE references and compatibility metadata;
 - фактический `predictionType`;
-- input image, mask, bounding box and internal resolution для img2img/inpaint;
 - automatically derived txt2img/img2img/inpaint/outpaint mode;
-- source composite/mask revision hashes where relevant;
+- reusable Regional Guidance and other conditioning inputs.
+
+`layerSourceContext` contains, where relevant:
+
+- input image/source composite identity;
+- Smart Patch mask, bounding box and internal resolution;
+- compositing state;
+- source composite/mask/layer revision hashes.
+
+`executionResultContext` contains:
+
 - reference to the accepted result inside `.igs`;
 - created_at и worker/runtime metadata, нужные для воспроизводимости.
 
+The latter two groups are retained for diagnostics, explainability and Smart
+Patch `outdated`; they are not a preset payload and are not presented as
+generation settings.
+
 SQLite may store a derived global history index for accepted results: project path, result/provenance id, created_at, thumbnail/cache key and searchable metadata. The accepted layer/variant plus project-local provenance in `.igs` remains source of truth.
+
+`Compare generation settings` is derived at runtime and is not serialized as a
+second snapshot or cached diff. A generated Raster Layer contributes its
+provenance; a Smart Patch Layer contributes active-variant provenance. The other
+side is always a current projection of portable generation configuration in the
+open `ProjectDocumentModel`. Layer/source context is excluded from this settings
+diff. The comparison never uses a second variant's provenance as `Current
+Canvas`.
 
 One multi-accept may create several history rows but one grouped Project undo step. Discarded candidates never enter global history.
 
@@ -485,6 +512,9 @@ interface PresetApplicationDraft {
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.
+- `PresetPayload` represents only portable generation configuration. Smart Patch mask, bounding box, internal resolution, compositing state and source/revision identities are layer properties and must not be serialized into it.
+- A Smart Patch `internalResolution` must never be mapped implicitly into `PresetPayload.size`; `size` remains the explicit generic generation/canvas-size section supplied by the source configuration.
+- Reusing Smart Patch layer/source context is implemented by duplicating the layer, not by extending `PresetPayload` with geometry or mask fields.
 - Embeddings не образуют отдельную section/inclusion mask. Наличие `prompt` или `negativePrompt` включает всю соответствующую structured prompt-секцию вместе с embedding refs внутри её tokens.
 - При нормализации workflow `textToImage` удаляет `denoisingStrength`. Возврат к другому workflow не создаёт поле автоматически.
 - `predictionType` хранит scheduler prediction mode модели. Доменный label `v-pred` маппится на worker/storage token `v_prediction`; это compatibility metadata, а не user-facing style setting.
@@ -547,15 +577,25 @@ ImageGen Studio/
 - `current-runtime.json` заменяется атомарно только после успешного staging self-test. Failed install не изменяет active runtime и не удаляет previous known-good runtime.
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
+- CivitAI model identity и exact model version/file identity хранятся отдельно;
+  несколько version records одной модели могут ссылаться на независимые managed
+  files и существовать одновременно.
+- Default version является catalog preference для новых selections. Смена
+  default не обновляет resource references, уже записанные в `.igs`, Presets,
+  queue payloads или accepted-result provenance.
 - Worker completion creates a temporary candidate, not a persistent project result.
 - Generation provenance is created only when a candidate is accepted and never changes afterward.
 - Generation provenance stores the actual `predictionType` and actual seed so the accepted result can be reproduced with the correct scheduler mode.
+- Provenance comparison is read-only derived state. Opening or closing it cannot
+  mutate provenance or current Project state, and the MVP popover exposes no
+  Apply/Recall/Restore action.
 - Project thumbnail source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем.
 - Один и тот же `.igs` нельзя открыть в нескольких `Project` tabs; repeated open фокусирует уже открытую вкладку.
 - Удаление файла вне приложения не удаляет историю: UI показывает fallback.
 - Удаление или перемещение `.igs` вне приложения не должно ломать БД: UI показывает missing project и может предложить relink/rescan workspace.
 - `.igs` является источником истины проекта; SQLite project index можно пересобрать сканированием workspace'ов.
-- При применении preset/accepted-result provenance проверяются только выбранные секции.
+- При применении preset проверяются только выбранные секции. Provenance comparison
+  является read-only и только показывает missing-resource diagnostics.
 - Другая версия той же CivitAI-модели не считается валидной заменой.
 
 ## Что стоит уточнить перед схемой миграций

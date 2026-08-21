@@ -51,6 +51,8 @@ Rules:
 
 This keeps `Project` tabs focused on image work and keeps file/project organization in one predictable place.
 
+Home follows [PP-002](../product-promises.md#pp-002-явное-намерение-вместо-магического-control) and [PP-003](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место): `Search projects` only filters existing projects, while `New Project` and `Import Project` are explicit mutations. Workspaces own file locations; `Projects` is only a cross-workspace view and never becomes a competing container.
+
 ## Layout
 
 Recommended MVP layout:
@@ -204,6 +206,10 @@ Controls:
 The filter control is labeled `Status` in the prototype, even though the underlying conditions remain independent rather than one mutually exclusive project-state enum. `All statuses` is its default value.
 
 `Reset filters` clears Name search and Status only. It preserves the chosen sort and grid/list view mode. Changing between `Projects`, `Trash` and a workspace clears project selection but keeps those browser controls for the Home session.
+
+Typing an unmatched name does not offer inline project creation. Creation and
+import remain explicit actions with their own destination, validation and
+lifecycle dialogs.
 
 `Last opened` is the default sort and uses `lastOpenedAt`. `Modified` uses the last modification time of the `.igs` file. Search does not promise prompt, model or generation-setting indexing in MVP.
 

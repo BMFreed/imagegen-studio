@@ -5,6 +5,7 @@
 ## Главные документы
 
 - [mvp-design-doc.md](./mvp-design-doc.md) — канонический обзор продуктового scope и архитектуры MVP.
+- [product-promises.md](./product-promises.md) — реестр коротких нормативных продуктовых обещаний, явных не-обещаний, публичных статусов и ссылок на supporting contracts.
 - [specs/00-product-scope.md](./specs/00-product-scope.md) — краткая продуктовая рамка: что строим и что доказывает MVP.
 - [specs/01-implementation-roadmap.md](./specs/01-implementation-roadmap.md) — порядок разработки, чтобы можно было начинать без расползания scope.
 - [specs/02-electron-architecture-cqrs.md](./specs/02-electron-architecture-cqrs.md) — Electron best practices, IPC-границы и CQRS-подход.
@@ -18,6 +19,7 @@
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
   - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, editable apply draft, partial apply и create/edit mode Preset Manager.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Create`: plain-text CodeMirror prompt editor, bbox, Smart Patch Layer, LoRA, embedding refs, dynamic prompting, staging и regional guidance.
+  - [features/project/generate-mode/generation-provenance.md](./features/project/generate-mode/generation-provenance.md) — supporting contract PP-005: provenance принятого результата, read-only comparison, preset mapping и Smart Patch boundaries.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
   - [features/project/document-lifecycle.md](./features/project/document-lifecycle.md) — dirty/save/autosave/recovery/close lifecycle opened `.igs` document.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для frozen generation jobs и temporary candidate outputs.
@@ -47,9 +49,13 @@ Tooling проекта использует `pnpm`. Основные коман�
 
 Если решение меняет scope, архитектуру или пользовательское поведение, его нужно записать в один из документов выше. `mvp-design-doc.md` остаётся каноническим обзором, а `specs/` содержит рабочие уточнения для production-реализации. Для Home, Project, Model Manager и preset-system визуальное/интерактивное поведение сверяется с `prototype-app`; его компоненты, mock state и Playwright-сценарии являются источником истины для реализованных UI-переходов.
 
+Если решение меняет ожидания пользователя или сознательно отказывается от целого класса возможностей, нужно обновить краткую запись в [product-promises.md](./product-promises.md) и её linked supporting contract. Product promise не считается готовым публичным утверждением, пока его не подтверждают реализованный flow, UI и тесты.
+
 ## Глобальный инженерный принцип
 
 ImageGen Studio следует InvokeAI-first reference-подходу. Готовые механизмы InvokeAI заимствуются и адаптируются настолько, насколько это возможно в рамках выбранного стека, бизнес-логики и UX проекта.
+
+Reference-first подход подчиняется [продуктовым обещаниям](./product-promises.md). Наличие готового механизма в InvokeAI или другом продукте не является основанием переносить его пользовательскую форму, если она конфликтует с принятыми promise, negative scope или UX-инвариантами ImageGen Studio.
 
 NIH недопустим: сложные механизмы не проектируются с нуля, если уже есть рабочий подход в InvokeAI или другом зрелом решении. Изобретательство проекта сосредоточено в UX, продуктовой форме и workflows.
 

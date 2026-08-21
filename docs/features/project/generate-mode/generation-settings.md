@@ -90,9 +90,15 @@ Unsupported controls should be hidden or disabled with a clear reason.
 
 The selected model version is project-local state in the product model. The current prototype displays it as a disabled readout. A production `Version` select populated from Model Manager's installed versions remains required.
 
+Model versioning is mandatory MVP scope under PP-004. Interactive selection of
+an exact installed version should therefore be implemented alongside the first
+interactive Model Manager version/update pass rather than left as optional
+prototype polish.
+
 Rules:
 
-- new selections default to the latest installed/default version from Model Manager;
+- the first installed version becomes the initial default, and later new
+  selections use the version explicitly marked `Default` in Model Manager;
 - existing `.igs` projects preserve their exact selected version;
 - changing the version in Generate updates the current project settings and future jobs for that project;
 - changing Model Manager's default version must not silently rewrite open projects, presets or accepted-result provenance;

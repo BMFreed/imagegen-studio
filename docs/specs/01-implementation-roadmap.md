@@ -74,8 +74,17 @@ docs/features/
 - Проверка size/hash, если данные доступны.
 - Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
+- Обнаружение доступных CivitAI-версий и явный `Update available` state.
+- Preview и установка новой exact version рядом с уже установленными версиями.
+- Явный `Set Default` только для новых selections без изменения existing references.
+- Интерактивный prototype flow и regression coverage для version discovery,
+  side-by-side install и default-version switching. Текущий Model Manager
+  prototype показывает эти controls только presentation-only, поэтому этот flow
+  является первым приоритетом следующего расширения прототипа.
 
-Результат: модель можно установить локально и увидеть в Model Manager.
+Результат: модель можно установить локально, увидеть в Model Manager, безопасно
+добавить другую версию и выбрать default без изменения существующих Projects,
+Presets и provenance.
 
 ## Фаза 2. Generation Slice
 
@@ -91,6 +100,22 @@ docs/features/
 - Сохранение изображения UUID-именем.
 - Staging candidates without automatic Project commit.
 - Explicit acceptance into Raster Layers with immutable generation provenance.
+- Mock and production-shaped `GenerationProvenance` for accepted Raster Layers
+  and Smart Patch variants.
+- Shared `Compare generation settings` entry in Raster and Smart Patch Layer
+  context menus: semantic `Generated with` / `Current Canvas` diff in a bounded
+  read-only popover. The diff projects portable generation configuration only;
+  Smart Patch mask/bbox/internal resolution/compositing/source context remains
+  available for diagnostics and `outdated` but is not shown as settings.
+- `Same`/`Changed`/`Added`/`Removed`/`Missing resource`/`Unavailable` states and
+  Playwright coverage for both layer types, active Smart Patch variant selection
+  and disabled `No generation data` states. The popover has no Apply/Recall
+  action. The current prototype has no full provenance or comparison surface, so
+  this is the first priority of the provenance prototype pass rather than later
+  UI polish.
+- `Save Preset from Result` copies only portable generation configuration. It
+  never maps Smart Patch internal resolution to preset Size or copies layer
+  mask/bbox/compositing/source state; `Duplicate Layer` owns that reuse path.
 - Derived history of accepted results with fallback for a missing accepted asset.
 
 Результат: приложение поднимает воспроизводимый worker без системного Python; пользователь выбирает модель, генерирует изображение и видит его в истории. Ошибка установки или обновления нового runtime не ломает предыдущий рабочий worker.

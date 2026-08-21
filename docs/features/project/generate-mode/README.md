@@ -87,6 +87,11 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - completed outputs remain temporary candidates until the user explicitly adds one or more to Project;
 - accepted normal candidates become independent Raster Layers; accepted Smart Patch candidates become layer-owned variants;
 - only accepted results receive immutable generation provenance and global history entries;
+- Raster and Smart Patch Layer context menus expose the same read-only
+  `Generated with` / `Current Canvas` provenance comparison popover;
+- that comparison and `Save Preset from Result` use only portable generation
+  configuration; Smart Patch mask, bbox, internal resolution and compositing are
+  layer properties reused through `Duplicate Layer`;
 - Queue Manager owns jobs, not result history, and staging state is not undoable;
 - the Generate action area is fixed directly below the `Create` tab and above the scrolling settings stack; its grid keeps `Generate` plus images-per-click on the left and icon-only queue plus cancel actions on the right;
 - Queue pause/resume is not exposed in the current Project scope;

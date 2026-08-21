@@ -2,9 +2,15 @@
 
 Для Home, Project, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом.
 
+Навигация следует [PP-001: Понятный интерфейс вместо собираемого workbench](../product-promises.md#pp-001-понятный-интерфейс-вместо-собираемого-workbench). ImageGen Studio владеет основной композицией экранов и не предоставляет IDE-like docking, произвольную замену primary panels или layout presets, способные изменить назначение Home, Project или domain mode. Bounded resize, collapse и настройка плотности допустимы, пока они не меняют информационную архитектуру и сохраняются предсказуемо.
+
+Controls и domain entities следуют [PP-002](../product-promises.md#pp-002-явное-намерение-вместо-магического-control) и [PP-003](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место). Search не создаёт сущности, mutation имеет явный verb, setting располагается у своего domain owner, а несколько contextual entry points фокусируют одну canonical surface вместо создания конкурирующих Gallery/Manager-представлений.
+
 ## Основные зоны приложения
 
 MVP строится как document-based desktop editor, ближе к Photoshop / Affinity / Krita, а не как Invoke-like набор равноправных разделов.
+
+Это сравнение относится к document ownership и ясной task-oriented композиции, а не к полному набору DCC-возможностей. ImageGen Studio не обещает Photoshop-like dockable workspace: фиксированная продуктом структура является сознательным обменом произвольной layout-гибкости на понятность и устойчивую мышечную память.
 
 Основные top-level поверхности:
 
@@ -236,9 +242,20 @@ Project tab marker использует цвет workspace. Цвет workspace �
 - Base model family warning.
 - Smart Patch Layer outdated.
 
-## UX-правило для пресетов
+## UX-правило для provenance и presets
 
-Действия `Apply settings from image` и `Save preset from image` должны быть визуально и текстово различимы. Первое меняет текущую форму генерации, второе создаёт новый редактируемый шаблон.
+Контекстное меню Raster Layer и Smart Patch Layer использует одинаковое действие
+`Compare generation settings`. Оно открывает bounded read-only popover
+`Generated with` / `Current Canvas`; в popover нет Apply/Recall/Restore actions.
+
+`Save preset from image` остаётся отдельным context action и создаёт новый
+редактируемый template. Comparison не создаёт preset и не изменяет current
+generation state.
+
+Обе операции работают только с переносимыми generation settings. Smart Patch
+mask, Bounding Box, internal resolution, compositing state и source revisions не
+показываются в settings diff и не копируются в preset. Для переиспользования
+этого layer-owned состояния пользователь применяет `Duplicate Layer`.
 
 ## UX-правило для Smart Patch
 

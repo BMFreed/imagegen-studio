@@ -19,7 +19,13 @@ Primary reference: InvokeAI Model Manager V2 and backend model management system
 
 Current visual and interaction source of truth: `docs/prototype-app?prototype=model-manager`, plus the same manager opened from Home through `Manage Models`.
 
-The Vue prototype intentionally covers the manager shell and primary browse/import presentation. It implements resource selection, token popover visibility, local filter state/reset, native modal open/close behavior and pane resizing. The resource list, compact install strip and right details pane remain bounded by the manager body and scroll independently even on a short desktop viewport. Model-type/status/base-model filters do not yet filter the mock rows; install/repair, storage, version, queue and selected-resource actions are presentational. Empty, loading, invalid-token, invalid-URL, duplicate-install, failed-download and confirmation states remain required production behavior but do not have dedicated interactive prototype screens.
+The Vue prototype intentionally covers the manager shell and primary browse/import presentation. It implements resource selection, token popover visibility, local filter state/reset, native modal open/close behavior and pane resizing. The resource list, compact install strip and right details pane remain bounded by the manager body and scroll independently even on a short desktop viewport. Model-type/status/base-model filters do not yet filter the mock rows; install/repair, storage, version, update, queue and selected-resource actions are presentational. Empty, loading, invalid-token, invalid-URL, duplicate-install, available-update, failed-download and confirmation states remain required production behavior but do not have dedicated interactive prototype screens.
+
+Model versioning is nevertheless mandatory MVP scope. The next Model Manager
+prototype expansion should prioritize the complete version/update lifecycle:
+detect an available CivitAI version, preview and install it side by side, change
+the default for new selections and prove that existing project/preset references
+remain pinned to their exact versions.
 
 Useful InvokeAI areas:
 
@@ -51,11 +57,13 @@ Already fixed project decisions:
 - SDXL/Illustrious-like `.safetensors` files remain source files; the worker loads them through the Invoke-like Diffusers single-file path and caches loaded components in RAM/VRAM.
 - Model metadata includes `baseModelFamily` and `predictionType`.
 - `predictionType` is compatibility metadata, not a creative user setting.
-- Missing model/LoRA/embedding resources must be diagnosable when applying presets or recalling accepted-result provenance.
+- Missing model/LoRA/embedding resources must be diagnosable when applying presets or viewing accepted-result provenance/comparison.
 
 ## ImageGen Studio Decision
 
 Build an app-level Model Manager that feels like a compact desktop resource manager, not a web marketplace.
+
+Model Manager follows [PP-002](../product-promises.md#pp-002-явное-намерение-вместо-магического-control), [PP-003](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место) and [PP-004](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами): search only narrows the installed catalog, each install/import source has an explicit flow, every entry point opens the same canonical manager state, and model files/versions are managed resources rather than a user-maintained folder convention. The UI must not infer search, URL install, local file import or folder scan from one polymorphic input.
 
 Model Manager should borrow InvokeAI's durable mechanics:
 
@@ -196,6 +204,10 @@ The resource list toolbar owns day-to-day search and narrowing:
 - `Sort by` select with `Name`, `Recently installed` and `Size` options;
 - persistent `Reset filters` action, disabled when no non-default filter is active.
 
+`Search models` is a read-only catalog filter. It never parses a CivitAI URL,
+local file path, folder path or Hugging Face repository and never starts an
+install. Those sources use separately labelled actions and validation flows.
+
 The current visual prototype intentionally does not apply these filters to mock resources, but the controls retain coherent local state. `Reset filters` clears search and restores Model Types, Status and base model filters to their `All` values; it does not reset sorting. Production filtering remains required by the list behavior below.
 
 Do not duplicate Model Types/Status filters in the header.
@@ -284,11 +296,34 @@ The version list in Details Panel should use explicit actions:
 - each version has a compact info action that opens its explanatory note in a popover;
 - avoid vague labels such as `Show` when the action changes default selection behavior.
 
+Version discovery and update installation are part of MVP:
+
+- Model Manager checks the known CivitAI model identity for available versions;
+- a resource with a newer available version shows an explicit `Update available`
+  state;
+- opening that state shows the target version and file metadata before download;
+- `Install Version` creates an ordinary Model Manager install job;
+- the new version is installed alongside existing versions and never overwrites
+  or silently removes them;
+- the user explicitly chooses whether the newly installed version becomes
+  `Default`.
+
+Automatic check scheduling and caching are implementation details. Applying an
+update is always explicit: MVP does not silently download, install or select a
+new version.
+
 Default version is only a starting point for new model selections. It must not silently change existing projects, presets or accepted-result provenance.
 
-Project / Generate owns the actual selected version for a project. The model card in Generate must expose a `Version` select for the selected model. By default it uses the latest installed/default version, but an existing project can keep or switch to any installed version explicitly.
+Project / Generate owns the actual selected version for a project. The model card
+in Generate must expose a `Version` select for the selected model. The first
+installed version becomes the initial default; later new selections use the
+version explicitly marked `Default`. An existing project can keep or switch to
+any installed version explicitly.
 
-Do not implement a visible `Refresh Info` / `Update Metadata` action in MVP. We do not currently have evidence that CivitAI metadata refresh is important enough to promote as a product feature.
+Do not add a separate visible `Refresh Info` / `Update Metadata` action in MVP.
+The version check may refresh the current source snapshot as supporting data, but
+metadata refresh is not a second primary action and never mutates copied
+accepted-result provenance.
 
 ## MVP Scope
 
@@ -307,6 +342,11 @@ MVP includes:
 - create SQLite records for model/resource/version/local file;
 - store preview/avatar metadata;
 - detect duplicate already-installed resources by CivitAI version id and/or file hash;
+- detect newer versions for a known CivitAI model identity;
+- show an explicit available-update state;
+- preview and install another version side by side without overwriting installed versions;
+- allow the user to set the default version for new selections;
+- preserve exact version references in existing projects, presets and provenance;
 - show resource details;
 - show missing-file status;
 - repair a missing known CivitAI resource by re-downloading its exact version;
@@ -323,7 +363,6 @@ Post-MVP:
 - local file import by path/hash;
 - scan folder for models;
 - manual relink and folder-scan repair for missing local files; MVP may repair a known CivitAI resource by re-downloading the exact version;
-- one-click model update by CivitAI identity;
 - bulk actions;
 - richer model relationships;
 - optional non-destructive disk cache for expensive model conversion or cold-load optimization;
@@ -334,10 +373,16 @@ Rejected for MVP:
 
 - built-in CivitAI marketplace browser;
 - silent auto-update;
+- automatic installation or default-version switching after update detection;
 - installing arbitrary unknown resources without clear metadata;
 - hidden destructive conversion from `.safetensors` to Diffusers directory;
 - storing reusable model weights inside `.igs`;
 - project-local model libraries.
+
+Local file import, folder scan and any future external-catalog search remain
+separate user intents even if they share backend identification code. A folder
+scan may use an explicit folder field/picker followed by `Scan`; it must not be
+activated by pasting a path into model search.
 
 ## Core User Flow
 
@@ -530,6 +575,35 @@ flowchart TD
   H -- "No" --> J
 ```
 
+### Install New Version
+
+An available update is not a special destructive operation. It is another exact
+model version installed through the same verified install pipeline.
+
+```mermaid
+flowchart TD
+  A["Known CivitAI model"] --> B["Check available versions"]
+  B --> C{"Newer version available?"}
+  C -- "No" --> D["Show Up to date"]
+  C -- "Yes" --> E["Show Update available"]
+  E --> F["Open version/file preview"]
+  F --> G{"User confirms Install Version?"}
+  G -- "No" --> H["Keep current library unchanged"]
+  G -- "Yes" --> I["Create verified install job"]
+  I --> J["Register new version alongside old versions"]
+  J --> K{"Set as default?"}
+  K -- "Yes" --> L["Use for new selections"]
+  K -- "No" --> M["Keep current default"]
+```
+
+The update flow must preserve three identities separately:
+
+- the CivitAI model identity used to discover related versions;
+- the exact installed model-version/file identity;
+- each Project/Preset/provenance reference to the version it actually selected.
+
+Checking or installing an update cannot rewrite the third identity.
+
 ### Remove Local Resource
 
 Removing a model removes the local reusable resource, but does not rewrite history.
@@ -642,18 +716,29 @@ model_resource
 ├─ display_name
 ├─ description
 ├─ thumbnail_path / thumbnail_cache_key
+├─ civitai_model_id
+├─ source_metadata_json
+├─ source_checked_at
+├─ created_at
+└─ updated_at
+
+model_resource_version
+├─ id
+├─ model_resource_id
+├─ version_name
+├─ civitai_model_version_id
 ├─ base_model_family
 ├─ format
 ├─ prediction_type
-├─ civitai_model_id
-├─ civitai_model_version_id
 ├─ file_hash
+├─ is_default
+├─ source_metadata_json
 ├─ created_at
 └─ updated_at
 
 local_model_file
 ├─ id
-├─ resource_id
+├─ resource_version_id
 ├─ managed_path
 ├─ original_filename
 ├─ size_bytes
@@ -664,7 +749,7 @@ local_model_file
 model_install_job
 ├─ id
 ├─ download_url
-├─ target_resource_id
+├─ target_resource_version_id
 ├─ status
 ├─ bytes_downloaded
 ├─ total_bytes
@@ -674,6 +759,10 @@ model_install_job
 ├─ created_at
 └─ updated_at
 ```
+
+For every model resource with installed versions, exactly one installed version
+is the catalog default. This is a preference for new selections, not a mutable
+alias used by persisted resource references.
 
 ## Error Handling
 
@@ -708,7 +797,16 @@ The current Vue/Naive prototype is authoritative for the visible three-pane comp
 - `Add from CivitAI URL` dialog with a URL field and import preview;
 - compact in-progress install strip.
 
-It does not currently mutate mock results for filters, install a model, advance the install queue, repair/remove a resource, change a default version or simulate token/error/empty states. Those remain production acceptance criteria below, not claims about current prototype interactivity.
+It does not currently mutate mock results for filters, discover an available
+version, install a model/version, advance the install queue, repair/remove a
+resource, change a default version or simulate token/error/empty states. Those
+remain production acceptance criteria below, not claims about current prototype
+interactivity.
+
+Because versioning is now mandatory MVP scope, the first subsequent interactive
+Model Manager prototype pass should cover `Update available` -> version preview
+-> side-by-side install -> optional `Set Default`, including a regression that
+existing exact-version references do not change.
 
 The App Chrome downloads icon is visually present but not wired to Model Manager in the prototype; `Manage Models` on Home and the standalone query are the implemented entry points.
 
@@ -728,6 +826,12 @@ The following criteria describe the production feature; prototype-only coverage 
 - Installed LoRA appears in LoRA selector with thumbnail metadata when available.
 - Installed embedding appears in unified prompt autocomplete with token metadata when available.
 - Duplicate exact resource install does not download again by default.
+- Model Manager can detect and display an available CivitAI version.
+- User can preview and install another version of the same model.
+- The new version is installed side by side and does not overwrite the old version.
+- User can explicitly set an installed version as the default for new selections.
+- Existing Projects, Presets and accepted-result provenance keep their exact version after install/default changes.
+- No version is downloaded, installed, selected or removed by a silent update.
 - Missing local file is shown as a missing resource state.
 - Remove is blocked for resources used by running jobs.
 - Remove confirmation warns when resource is referenced by presets/accepted results.

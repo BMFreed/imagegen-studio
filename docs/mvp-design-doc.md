@@ -2,6 +2,8 @@
 
 > Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, plain-text CodeMirror prompt editor с embedding sidecars и contextual LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
 
+> Короткие продуктовые обещания, явные не-обещания и публичные статусы зафиксированы отдельно в [Product Promises](./product-promises.md); точные правила живут в linked supporting contracts. PP-001 закрепляет понятную product-owned композицию вместо IDE-like workbench; PP-002 требует одного явного intent на control; PP-003 закрепляет canonical ownership и lifecycle каждой пользовательской сущности и настройки; PP-004 определяет модели как managed resources и включает безопасное версионирование в MVP; PP-005 обещает, что каждый принятый результат помнит, как он был создан, а его [supporting contract](./features/project/generate-mode/generation-provenance.md) определяет provenance, comparison и preset boundaries.
+
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
 > Основной фокус MVP: **удобное управление моделями, пресетами, генерациями и воспроизводимостью настроек**
@@ -59,6 +61,10 @@ InvokeAI рассматривается как основной reference produc
 - txt2img/img2img/inpaint/outpaint определяется автоматически по target-area canvas content;
 - Upscale отложен до отдельного feature/prototype pass;
 - один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
+
+Document tabs, domain modes и presets не подменяют друг друга. Пользователь может настраивать содержимое своей работы и bounded presentation preferences, но не собирать основные экраны из взаимозаменяемых widgets. Эта ограниченность является частью продуктового обещания понятности, а не временным недостатком layout engine.
+
+Search, create, import, install и scan являются отдельными пользовательскими намерениями и не объединяются в универсальный input. Project, Workspace, Model, Preset, temporary Generation candidate, accepted Layer/variant, provenance и Queue item имеют разные owners и lifecycle. Internal storage terms вроде `asset` или `record` не становятся top-level navigation только из-за присутствия в data model.
 
 Model Manager и Preset Manager открываются как app-level modal overlays с native Naive transitions и `Esc` close; они не становятся document tabs. Apply Preset остаётся Project-scoped modal surface. Home, открытый под manager overlay, остаётся смонтированным и inert, поэтому browse state восстанавливается после закрытия.
 
@@ -432,20 +438,24 @@ MVP включает:
 4. Скачивание preview/avatar модели.
 5. Хранение модели, версии, автора и metadata в SQLite.
 6. Проверка целостности скачанного файла.
-7. Генерация изображений через Python ML worker.
-8. Staging completed outputs without automatic Project commit.
-9. Multi-select acceptance into layers/variants with immutable generation provenance and accepted-result history.
-10. Плоские пресеты без наследования и композиции.
-11. Создание пресета вручную.
-12. Создание пресета из генерации.
-13. Редактирование пресета.
-14. Full apply пресета.
-15. Partial apply пресета.
-16. Проверка отсутствующих моделей/LoRA при применении выбранных секций.
-17. Warning при несовместимости base model family.
-18. Fallback-состояние, если файл изображения отсутствует.
-19. Invoke-like persistent Queue Manager для generation jobs.
-20. Project-local undo/redo для `.igs` document mutations.
+7. Обнаружение доступных CivitAI-версий и явный update flow.
+8. Установка нескольких версий модели рядом без перезаписи старых файлов.
+9. Явный default version для новых selections при сохранении exact version в существующих Projects, Presets и provenance.
+10. Генерация изображений через Python ML worker.
+11. Staging completed outputs without automatic Project commit.
+12. Multi-select acceptance into layers/variants with immutable generation provenance and accepted-result history.
+13. Layer-context read-only comparison of generated settings with current Canvas state for Raster and Smart Patch Layers.
+14. Плоские пресеты без наследования и композиции.
+15. Создание пресета вручную.
+16. Создание пресета из генерации.
+17. Редактирование пресета.
+18. Full apply пресета.
+19. Partial apply пресета.
+20. Проверка отсутствующих моделей/LoRA при применении выбранных секций.
+21. Warning при несовместимости base model family.
+22. Fallback-состояние, если файл изображения отсутствует.
+23. Invoke-like persistent Queue Manager для generation jobs.
+24. Project-local undo/redo для `.igs` document mutations.
 
 ### 7.2. Что НЕ входит в MVP
 
@@ -453,8 +463,8 @@ MVP включает:
 
 - поиск моделей внутри CivitAI из приложения;
 - полноценный marketplace/browser моделей;
-- автоматическое обновление всех моделей;
-- silent auto-update моделей;
+- автоматическая установка обновлений моделей;
+- silent auto-update или silent default-version switching;
 - sidecar JSON рядом с изображением;
 - embedded metadata в изображении;
 - наследование пресетов;
@@ -508,7 +518,33 @@ Model install service скачивает файл во временный пут
 В SQLite создаются записи Model / ModelVersion / LocalModelFile
 ```
 
-### 8.3. Скачивание файлов
+### 8.3. Сценарий обновления версии
+
+Версионирование моделей входит в MVP. Model Manager использует стабильную
+CivitAI model identity для обнаружения связанных версий, но каждая точная
+version/file identity остаётся отдельным generation resource.
+
+```text
+Model Manager проверяет известную CivitAI model identity
+↓
+Показывает Update available без автоматической установки
+↓
+Пользователь открывает preview новой версии и файла
+↓
+Пользователь подтверждает Install Version
+↓
+Новая версия проходит обычный download/verify/install pipeline
+↓
+Новая и старая версии остаются установленными рядом
+↓
+Пользователь при желании явно делает новую версию Default
+```
+
+`Default` применяется только к новым model selections. Existing Projects,
+Presets и accepted-result provenance остаются привязаны к exact version/hash и
+не переписываются после update check, установки версии или смены default.
+
+### 8.4. Скачивание файлов
 
 Скачивание должно происходить во временный файл.
 
@@ -531,7 +567,7 @@ model.safetensors
 - проверки hash, если hash доступен;
 - записи в SQLite.
 
-### 8.4. Ошибки CivitAI
+### 8.5. Ошибки CivitAI
 
 На этапе MVP ошибки CivitAI показываются через стандартный toast.
 
@@ -635,7 +671,7 @@ Provenance принадлежит принятому layer/variant и храни
 Provenance нужен для:
 
 - воспроизводимости;
-- восстановления настроек из истории;
+- сравнения фактических настроек результата с current Canvas state;
 - создания пресетов из старых генераций;
 - диагностики отсутствующих моделей/LoRA;
 - понимания, каким конфигом была создана картинка.
@@ -692,7 +728,7 @@ Provenance создаётся в момент acceptance и больше не и
 
 - изменять provenance при редактировании пресета;
 - изменять provenance при обновлении/удалении/переименовании модели;
-- изменять provenance при partial apply;
+- изменять provenance при просмотре comparison или создании preset draft;
 - создавать project-local provenance для discarded candidate.
 
 ### 10.5. Состав provenance
@@ -749,7 +785,54 @@ type GenerationProvenance = {
 }
 ```
 
-Для Smart Patch variant provenance дополнительно хранит source composite hash, mask hash, bbox/internal resolution, layer-owned generation draft revision and compositing inputs. Сравнение active variant provenance с current owned inputs определяет `outdated`.
+Внутри provenance эти поля образуют переносимую `generation configuration`.
+Для Smart Patch variant рядом хранится отдельный `layer/source context`: source
+composite hash, mask hash, bbox/internal resolution, layer-owned generation
+draft revision and compositing inputs. Этот context нужен для объяснимости и
+сравнения active variant с current owned inputs при вычислении `outdated`, но не
+является preset payload или частью generation-settings diff.
+
+### 10.6. Compare generation settings
+
+Контекстное меню обычного Raster Layer и Smart Patch Layer предоставляет одно и
+то же read-only действие `Compare generation settings`.
+
+- для generated Raster Layer стороной `Generated with` является provenance
+  этого слоя;
+- для Smart Patch Layer стороной `Generated with` является provenance текущего
+  active/visible accepted variant;
+- comparison не сравнивает Smart Patch variants между собой;
+- стороной `Current Canvas` всегда является derived snapshot текущего открытого
+  `ProjectDocumentModel`;
+- current Canvas projection включает применимые generation settings/resources,
+  generation size/derived mode, Regional Guidance и переносимые inputs;
+- Prompt, Negative Prompt, Model/version, LoRAs, embeddings, Sampling, Guidance,
+  generation Size, Seed, Denoising Strength, VAE и применимый generation context
+  сравниваются по semantic sections;
+- Smart Patch mask, bbox, internal resolution, compositing state и source
+  revisions не входят в settings diff; они остаются отдельным layer/source
+  context для diagnostics и `outdated`;
+- section status имеет текстовое значение `Same`, `Changed`, `Added`, `Removed`,
+  `Missing resource` или `Unavailable`;
+- popover не содержит `Apply`, `Recall`, `Restore` или иных mutation actions;
+- imported Raster Layer без provenance и Smart Patch Layer без active accepted
+  variant показывают disabled action с причиной `No generation data`.
+
+Сравнение открывается как bounded popover из layer context menu, а не как modal
+или отдельная History surface. Оно вычисляется реактивно, не сохраняется как
+отдельный diff и ничего не изменяет при открытии или закрытии. `Create Preset
+from Result` остаётся отдельным layer/result action вне popover.
+
+`Create Preset from Result` копирует только `generation configuration`. Оно не
+копирует Smart Patch mask, bbox, internal resolution, compositing state или
+source identities; internal resolution не преобразуется в preset `Size`.
+Переиспользование этих layer-owned свойств выполняется через `Duplicate Layer`.
+
+Текущий Vue-прототип не создаёт полный `GenerationProvenance` и не реализует эту
+comparison surface. Первый provenance prototype pass обязан добавить mock
+provenance для generated Raster Layer и active Smart Patch variant, одинаковый
+context-menu entry, popover `Generated with` / `Current Canvas`, disabled states
+и Playwright coverage; это часть MVP/PP-005, а не post-MVP polish.
 
 ---
 
@@ -899,27 +982,37 @@ Partial apply позволяет пользователю выбрать, как
 
 Перед применением создаётся отдельный application draft. Пользователь может раскрыть секцию, изменить копируемые значения и сравнить `Current` с `Apply`. Эти изменения никогда не обновляют исходный preset; `Apply` копирует в проект только выбранные секции. Selection mask существует только во время операции применения и не сохраняется в `PresetPayload`. По умолчанию выбираются все секции исходного preset, кроме `Size` и `Seed`; все accordion-секции изначально свёрнуты. UI постоянно называет редактируемые значения временной копией, поддерживает `Expand all` / `Collapse all` и отделяет действие `Edit original`, которое открывает исходный preset в Preset Manager после подтверждения потери изменённого application draft.
 
-### 12.7. Apply из старой генерации
+### 12.7. Действия из старой генерации
 
 Из старой генерации можно:
 
-1. Применить настройки напрямую.
-2. Создать новый пресет.
+1. Посмотреть read-only сравнение с current Canvas из layer context menu.
+2. Создать новый preset отдельным действием.
 
 UI должен явно различать эти действия:
 
 ```text
-Apply settings from image
+Compare generation settings
 Save preset from image
 ```
 
+Прямой `Apply` / `Recall` настроек provenance не входит в MVP comparison flow.
+
+Обе команды работают с generation configuration. `Save preset from image` не
+копирует Smart Patch mask, bbox, internal resolution, compositing state и source
+identity; эти свойства переиспользуются через `Duplicate Layer`. Layer/source
+context может оставаться в provenance для diagnostics и `outdated`, но не
+показывается как generation-settings difference.
+
 ---
 
-## 13. Валидация применения пресетов и accepted-result provenance
+## 13. Валидация применения пресетов
 
 ### 13.1. Общий принцип
 
-При применении пресета или recalled accepted-result provenance проверяются только те секции, которые пользователь реально выбрал для применения.
+При применении preset проверяются только те секции, которые пользователь реально
+выбрал для применения. Provenance comparison не применяет значения и показывает
+missing resource как read-only diagnostic, поэтому не использует Apply validation.
 
 ### 13.2. Missing resource
 
@@ -1830,7 +1923,7 @@ Each accepted layer receives immutable provenance and derived history entry
 ↓
 Нажимает Save preset from image
 ↓
-Приложение копирует accepted-result provenance в editable preset
+Приложение копирует generation-configuration часть accepted-result provenance в editable preset
 ↓
 Preset Manager показывает transient Draft без записи в БД
 ↓
@@ -1840,6 +1933,10 @@ Preset Manager показывает transient Draft без записи в БД
 ↓
 Приложение создаёт ID и сохраняет preset
 ```
+
+Для Smart Patch этот flow намеренно не копирует mask, bbox, internal resolution,
+compositing state или source revisions. Если нужен повторно используемый patch
+контекст, пользователь дублирует слой.
 
 ### 17.4. Применение пресета частично
 
@@ -2088,13 +2185,11 @@ UI показывает fallback "Изображение не найдено"
 - импорт существующих локальных моделей по hash;
 - поиск модели по hash через CivitAI;
 - внутренний поиск по CivitAI;
-- обновление моделей в один клик;
-- проверку обновлений при запуске;
-- управление несколькими версиями модели;
-- откат на старую версию;
 - игнорирование конкретной версии обновления;
 - export/import пресетов;
 - resource status badges в каталоге пресетов;
+- explicit `Recall Settings` / `Apply as Current` from provenance after the
+  read-only comparison workflow is validated;
 - удаление модели с проверкой usage;
 - более сложную compatibility matrix;
 - composition presets;
@@ -2184,22 +2279,26 @@ MVP можно считать готовым, если пользователь 
 2. Импортировать модель по CivitAI URL.
 3. Скачать модель и metadata.
 4. Убедиться, что файл скачан корректно.
-5. Выбрать модель в UI.
-6. Запустить генерацию изображения.
-7. Увидеть completed output как temporary candidate без автоматического изменения Project.
-8. Выбрать один или несколько candidates и добавить их как independent Raster Layers / Smart Patch variants.
-9. Открыть историю принятых результатов и увидеть provenance их генерации.
-10. Создать пресет из генерации.
-11. Создать пресет вручную.
-12. Отредактировать пресет.
-13. Применить пресет полностью.
-14. Применить пресет частично.
-15. Получить понятный warning и заблокированный Apply, если выбранный для применения resource отсутствует.
-16. Получить warning, если base model family потенциально несовместима.
-17. Увидеть fallback, если файл изображения отсутствует.
-18. Организовывать `.igs` через Home: `Projects`, workspace'ы, app-managed `Trash`, поиск, Status filter и preview.
-19. Создать новый проект с `No preset` или detached Text to Image preset payload и импортировать внешний `.igs` через явный Move/Copy в managed workspace.
-20. Открывать несколько разных `.igs` в document tabs без создания дубликата одного и того же project file.
+5. Увидеть доступную новую CivitAI-версию и preview её exact file до установки.
+6. Установить несколько версий модели рядом и явно выбрать default для новых selections.
+7. Убедиться, что update/default change не переписал exact version в существующих Projects, Presets и provenance.
+8. Выбрать модель и точную установленную версию в UI.
+9. Запустить генерацию изображения.
+10. Увидеть completed output как temporary candidate без автоматического изменения Project.
+11. Выбрать один или несколько candidates и добавить их как independent Raster Layers / Smart Patch variants.
+12. Открыть историю принятых результатов и увидеть provenance их генерации.
+13. Открыть одинаковый context-menu comparison для Raster или Smart Patch Layer и увидеть `Generated with` / `Current Canvas` без возможности применить старые настройки.
+14. Создать пресет из генерации.
+15. Создать пресет вручную.
+16. Отредактировать пресет.
+17. Применить пресет полностью.
+18. Применить пресет частично.
+19. Получить понятный warning и заблокированный Apply, если выбранный для применения resource отсутствует.
+20. Получить warning, если base model family потенциально несовместима.
+21. Увидеть fallback, если файл изображения отсутствует.
+22. Организовывать `.igs` через Home: `Projects`, workspace'ы, app-managed `Trash`, поиск, Status filter и preview.
+23. Создать новый проект с `No preset` или detached Text to Image preset payload и импортировать внешний `.igs` через явный Move/Copy в managed workspace.
+24. Открывать несколько разных `.igs` в document tabs без создания дубликата одного и того же project file.
 
 ---
 

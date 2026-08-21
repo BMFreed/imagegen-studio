@@ -20,6 +20,8 @@ Current visual and interaction sources of truth live in `docs/prototype-app`:
 
 ## ImageGen Studio Decision
 
+Presets participate in [PP-005](../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан) only as editable consumers of accepted-result provenance. A preset is never the persistence mechanism or historical evidence for a Raster Layer / Smart Patch variant: provenance remains immutable inside `.igs`, while `Create Preset from Result` copies reusable sections into a detached draft.
+
 Use an Invoke-like compact preset launcher in `Project` / `Create`, but do not copy Invoke's `Choose Prompt Template` behavior directly.
 
 The control is not a persistent "selected preset" field. It is an action launcher:
@@ -140,6 +142,17 @@ The full manager editor is available before creation, including name, optional d
 
 Default included fields in a project-derived definition contain the main reusable generation settings, but seed remains absent until explicitly included. Accidentally preserving a fixed seed can make future generations feel repetitive.
 
+The same boundary applies when a draft is created from an accepted Raster Layer
+or Smart Patch variant. `Save Preset from Result` copies only portable generation
+configuration from provenance. It never copies a Smart Patch mask, bounding box,
+internal resolution, compositing state, source revisions or source composite
+identity. In particular, Smart Patch `internalResolution` must not be mapped into
+the generic preset `Size` section.
+
+Those values are properties of a Smart Patch Layer, not generation-template
+fields. When users want to reuse them, they duplicate the Smart Patch Layer;
+presets remain focused on prompts, resources and generation behavior.
+
 Sampling parameters are split into two meaningful groups instead of one merged checkbox:
 
 - `Sampler & Scheduler`;
@@ -172,6 +185,14 @@ Open entry points:
 - `Manage Presets` beside the Project preset action;
 - `Save Current as Preset`, which opens create mode with a project-derived draft;
 - accepted-result actions like `Save Preset from Result`.
+
+Raster and Smart Patch Layer context menus expose a separate read-only `Compare
+generation settings` popover. It compares `Generated with` provenance to
+`Current Canvas`, contains no Apply/Recall/preset action and does not mutate the
+Project. `Save Preset from Result` remains a separate action. The current
+prototype does not yet implement full accepted-result provenance, this
+comparison, or the save-from-result origin; they belong to the first provenance
+prototype pass.
 
 `New Preset` in the manager creates a minimal manual draft with `Text to Image`, an empty name and only an empty Prompt section. A pinned `Draft` row remains visible above saved results regardless of active filters. `Cancel` discards the manual draft and returns to the previously selected preset.
 
@@ -206,6 +227,14 @@ Editable fields:
 - steps and CFG;
 - seed policy;
 - VAE.
+
+Not editable or representable in a preset:
+
+- Smart Patch mask or mask asset identity;
+- Smart Patch bounding box;
+- Smart Patch internal resolution;
+- compositing state;
+- source composite or layer revision identities.
 
 Each generation section has an `Included` control in its section header. Turning it off removes that section from the preset rather than merely disabling its editor. The storage source of truth is field presence in `PresetPayload`; the UI must not maintain a separate inclusion list.
 

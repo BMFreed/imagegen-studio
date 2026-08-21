@@ -14,7 +14,6 @@
 - Sidecar JSON and embedded metadata.
 - Local model import by file/hash.
 - Поиск модели по hash через CivitAI.
-- One-click model update.
 - Batch experiments.
 - Workflow graph.
 - Plugin API.
@@ -26,6 +25,14 @@
 - UI kit: Naive UI.
 - Runtime validation: Valibot как предпочтительный вариант.
 - Global history indexes only accepted generated results in SQLite. Each accepted Raster Layer / Smart Patch variant owns immutable generation provenance in `.igs`; discarded candidates have neither provenance nor history rows.
+- Provenance comparison: the PP-005 supporting contract requires one read-only layer-context popover for
+  both Raster and Smart Patch Layers. `Generated with` comes from layer/active
+  variant provenance; `Current Canvas` always comes from the current open Project
+  generation settings. MVP exposes no Apply/Recall/Restore action in this
+  popover. Smart Patch mask/bbox/internal resolution/compositing remain
+  layer/source context for diagnostics and `outdated`; they are excluded from
+  the settings diff and from `Save preset from image`. `Duplicate Layer` is the
+  reuse path for those properties.
 - Типизированный доступ к SQLite: Kysely + SqliteDialect + better-sqlite3 + kysely-codegen входит в MVP.
 - Product direction: только однопользовательское desktop-приложение; server/multi-user направление не планируется.
 - Presets: плоские, без наследования и композиции в MVP.
@@ -34,6 +41,10 @@
 - Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в accepted-result provenance.
+- Model versioning: MVP обнаруживает доступные CivitAI-версии, устанавливает
+  новую exact version рядом со старой, позволяет явно выбрать default для новых
+  selections и никогда не переписывает существующие Projects, Presets или
+  provenance. Silent auto-update не поддерживается.
 - Canvas renderer: MVP берёт Invoke-like пайплайн через Konva scene graph поверх Canvas 2D, но compositor/cache/layer lifecycle остаются логикой ImageGen Studio; WebGL/WebGPU откладываются как возможные backend'ы для тяжёлых задач.
 - Project UX: document-based shell. `Home` is a normal tab and defaults to the cross-workspace `Projects` view, with Workspaces, app-managed `Trash`, New/Import Project and manager entry points; opened `.igs` files are `Project` tabs; `Canvas` is an entity inside `Project`, not a primary tab. Отдельная `Generate` вкладка, `Launchpad`, `Viewer` и постоянный Boards sidebar не входят в целевую модель.
 - Project working mode: domain mode `generate` has visible label `Create`; txt2img/img2img/inpaint/outpaint is derived from target-area canvas content. Upscale is deferred to a separate pass.
