@@ -24,6 +24,7 @@ import { createGenerationPrompt } from '../../components/generation/generation-p
 import { mockDanbooruTags } from '../../components/generation/generation.mock'
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
 import GenerationPromptEditor from '../../components/generation/GenerationPromptEditor.vue'
+import GenerationResourceSelect from '../../components/generation/GenerationResourceSelect.vue'
 import PresetPayloadSection from './PresetPayloadSection.vue'
 import { clonePreset, sectionLabels } from './presets.utils'
 
@@ -48,12 +49,6 @@ const visibleSections = computed(() =>
   props.sections.filter(
     (section) => section !== 'denoisingStrength' || props.workflow !== 'textToImage',
   ),
-)
-const modelOptions = computed(() =>
-  props.resources.models.map((model) => ({
-    label: `${model.name}${model.version ? ` · ${model.version}` : ''}`,
-    value: model.id,
-  })),
 )
 const vaeOptions = computed(() =>
   props.resources.vaes.map((vae) => ({ label: vae.name, value: vae.id })),
@@ -90,7 +85,7 @@ function sectionPresent(section: PresetSectionKey): boolean {
   return payload.value[section] !== undefined
 }
 
-function updateModel(modelId: string) {
+function updateModel(modelId: string | null | undefined) {
   const model = props.resources.models.find((candidate) => candidate.id === modelId)
 
   if (model) {
@@ -163,12 +158,12 @@ function updateVae(vaeId: string) {
         <div v-else-if="section === 'model' && payload.model" class="field-stack">
           <label>
             <NText depth="3">Model</NText>
-            <NSelect
-              aria-label="Model"
+            <GenerationResourceSelect
+              ariaLabel="Model"
               :disabled="sectionDisabled(section)"
-              :options="modelOptions"
-              :value="payload.model.id"
-              @update:value="updateModel"
+              :modelValue="payload.model.id"
+              :resources="resources.models"
+              @update:modelValue="updateModel"
             />
           </label>
           <label>

@@ -126,8 +126,9 @@ export interface RegionalGuidanceLayerModel {
   locked: boolean
   name: string
   negativePrompt: string
+  opacity: number
   positivePrompt: string
-  referenceImages: { id: string; name: string; tone: ProjectArtworkTone }[]
+  referenceImages: { id: string; name: string; previewUrl?: string; tone: ProjectArtworkTone }[]
   regionRevision: number
 }
 

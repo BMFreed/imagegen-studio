@@ -33,18 +33,21 @@ export const generationModels: GenerationModelRef[] = [
 
 export const generationLoras: GenerationLoraResourceRef[] = [
   {
+    baseModel: 'Illustrious',
     id: 'digital-art',
     name: 'Digital Art',
     triggerPhrases: ['digital art', 'painterly', 'concept art'],
     version: 'v0.1',
   },
   {
+    baseModel: 'Illustrious',
     id: 'detail-tweaker',
     name: 'Detail Tweaker',
     triggerPhrases: ['highly detailed', 'intricate detail'],
     version: 'v1.0',
   },
   {
+    baseModel: 'Illustrious',
     id: 'soft-detailer',
     name: 'Soft Detailer',
     triggerPhrases: ['soft detail', 'delicate texture'],

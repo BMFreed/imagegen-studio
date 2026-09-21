@@ -157,21 +157,22 @@ If the worker cannot support regional guidance or regional guidance images for t
 
 ## Vue Prototype Coverage
 
-The `regional-guidance` scenario validates ownership and placement rather than the full authoring workflow. It includes a Regional Guidance entity with an owned mock region, positive prompt, automatic global-negative setting, one reference-image record and a compatibility warning.
+The `regional-guidance` scenario includes an entity with an owned mock region, positive prompt, automatic global-negative setting, one reference-image record and a compatibility warning.
 
-The right panel currently supports add, select, enable/disable and delete. Selected details show the regional prompt, the global-negative switch and a compatibility warning, but those form controls are currently presentational. The canvas exposes Transform Region, Lasso, Polygon Lasso, Brush and Eraser as contextual tools and correctly omits Bounding Box actions; region painting/transforms are deterministic mock state, not a production mask editor.
+The right panel supports add, select, enable/disable, lock, duplicate and delete. Raster, Smart Patch and Regional Guidance rows share a common surface with consistent hover/selection states. The selected region expands inline prompt, negative prompt and reference-image blocks, with `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` actions. Text edits, the global-negative switch and reference add/remove participate in Project history. Uploaded image previews remain in-memory data URLs in this prototype.
+
+Opacity lives in the shared properties bar above the stack. For Regional Guidance it controls the mock region overlay's display opacity, not guidance strength. The canvas exposes Transform Region, Lasso, Polygon Lasso, Brush and Eraser and correctly omits Bounding Box actions. Region painting/transforms remain deterministic mock state.
 
 Not yet implemented in the Vue prototype:
 
-- inline `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` blocks;
-- editing/persisting regional prompts from the details form;
-- reference-image add/remove/reorder;
-- Regional duplicate/lock controls;
-- worker request construction and accepted-result provenance for regional inputs.
+- the full shared prompt-editor feature set (regional inputs are plain textareas);
+- reference-image reordering, resource metadata/weight controls and durable asset persistence;
+- production mask painting/transforms and worker request construction;
+- production accepted-result provenance for regional inputs (the existing mock snapshot is not proof of the worker/storage path).
 
 ## Acceptance Criteria
 
-- User can add/select/toggle/delete a Regional Guidance Layer in the prototype; full prompt/reference/region editing remains product scope.
+- User can add/select/toggle/duplicate/delete a Regional Guidance Layer, edit its prompts and add/remove reference images in the prototype; production mask editing and durable resources remain product scope.
 - Regional Guidance Layer owns its region/mask, prompts and reference images.
 - Regional guidance masks are not standalone or shared.
 - User can attach regional guidance images to a Regional Guidance Layer.

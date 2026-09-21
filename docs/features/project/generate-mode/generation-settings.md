@@ -39,7 +39,7 @@ Product MVP controls:
 - seed;
 - randomize seed;
 - shuffle/advance seed;
-- images per click beside `Generate` in the fixed action bar immediately below the `Create` tab rather than duplicated inside the settings card;
+- images per click beside `Generate` in the fixed action bar at the top of the left panel rather than duplicated inside the settings card;
 - model compatibility warnings for selected LoRAs/embeddings/presets.
 
 `Generation > Advanced Options` controls:
@@ -120,3 +120,7 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage includes draft-bound VAE and VAE precision controls.
 - A separate Invoke-like `Advanced` accordion is not implemented.
 - Seamless X/Y and generic color compensation are excluded from MVP Generate settings.
+
+## Resource selection presentation
+
+Model choices show a preview, base model and version. LoRA choices also show trigger words; search matches the name, base model and triggers. Already added LoRAs remain visible but disabled. Selecting a LoRA does not insert its triggers into the prompt. The same rich option component is used in Project and the preset payload editor; the collapsed selector remains a compact text control. Preview artwork is a local illustrative fixture, not a generated sample or installed model asset.

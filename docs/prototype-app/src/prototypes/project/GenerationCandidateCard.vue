@@ -14,6 +14,7 @@ defineEmits<{ focus: []; select: [value: boolean] }>()
     <button
       :aria-label="`Preview candidate ${candidate.imageIndex}`"
       class="preview-button"
+      :title="candidate.error ?? candidate.status"
       type="button"
       @click="$emit('focus')"
     >
@@ -43,47 +44,65 @@ defineEmits<{ focus: []; select: [value: boolean] }>()
       />
       <span>#{{ candidate.imageIndex }}</span>
     </div>
-    <small v-if="candidate.error">{{ candidate.error }}</small>
   </article>
 </template>
 
 <style scoped>
 .candidate {
-  flex: 0 0 112px;
-  display: grid;
-  grid-template-rows: 72px auto;
-  width: 112px;
+  position: relative;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-elevated);
 }
 .candidate--focused {
-  border-color: var(--workspace-green);
+  outline: 2px solid var(--workspace-green);
+  outline-offset: 0;
 }
 .preview-button {
-  position: relative;
-  min-width: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
   padding: 0;
   overflow: hidden;
   cursor: pointer;
   background: var(--app-surface-soft);
   border: 0;
 }
+.preview-button:focus-visible {
+  outline: 2px solid var(--workspace-green);
+  outline-offset: -2px;
+}
 .candidate-status {
   position: absolute;
-  top: 4px;
-  left: 4px;
+  top: 2px;
+  left: 2px;
+  max-width: calc(100% - 4px);
+  font-size: 9px;
+  height: 16px;
+  padding: 0 3px;
 }
 .candidate-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 7px;
-  font-size: 11px;
+  padding: 3px 4px;
+  font-size: 10px;
+  background: var(--app-overlay-backdrop);
+  pointer-events: none;
 }
-small {
-  padding: 0 7px 6px;
-  color: var(--app-window-close);
+.candidate-footer .n-checkbox {
+  pointer-events: auto;
+}
+.candidate :deep(.n-progress) {
+  position: absolute;
+  bottom: 0;
 }
 </style>

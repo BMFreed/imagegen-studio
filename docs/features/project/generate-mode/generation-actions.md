@@ -26,7 +26,7 @@ Pressing `Generate` does not call the worker directly. It creates one or more Qu
 
 ## Generate Action Area
 
-In the current Project UI, generation commands live in a fixed action bar directly below the `Create` tab and above the independently scrolling settings stack:
+In the current Project UI, generation commands live in a fixed action bar at the top of the left panel, above the independently scrolling settings stack. No separate `Create` header is shown. A compact target label appears only when generating into a Smart Patch:
 
 ```text
 [ wand Generate ] [ 1 ]                         [ queue badge ] [ x ]
@@ -96,7 +96,7 @@ Every concrete prompt/seed combination becomes its own queue item, grouped by on
 
 ## Upscale Follow-Up
 
-Upscale and `Send Composite to Upscale` are deferred to a separate Project pass. They do not block the current Create/Generate prototype or its acceptance criteria.
+Upscale and `Send Composite to Upscale` are deferred to a separate Project pass. They do not block the current Project generation prototype or its acceptance criteria.
 
 ## Vue Prototype Coverage
 

@@ -100,7 +100,7 @@ test('comparison is read-only and result preset is available in the integrated A
   await expect(comparison.getByText('Current Canvas', { exact: true })).toBeVisible()
   await comparison.getByRole('checkbox', { name: 'Show unchanged sections' }).check()
   await expect(comparison.getByRole('button')).toHaveCount(0)
-  await page.getByText('Project Canvas', { exact: true }).first().click()
+  await page.locator('.canvas-size-label').click()
   await expect(prompt).toHaveText(original!)
   await page.getByRole('button', { name: 'Layer actions for Portrait Base' }).click()
   await page.getByText('Create Preset from Result', { exact: true }).click()

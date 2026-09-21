@@ -241,6 +241,7 @@ function baseDocument(): ProjectDocumentModel {
         locked: false,
         name: 'Face lighting',
         negativePrompt: '',
+        opacity: 50,
         positivePrompt: 'even lighting, simple background',
         referenceImages: [{ id: 'face-reference', name: 'Lighting reference', tone: 'violet' }],
         regionRevision: 1,

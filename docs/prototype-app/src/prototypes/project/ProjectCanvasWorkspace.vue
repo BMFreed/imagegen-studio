@@ -80,6 +80,13 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => observer.disconnect())
+const stagingHeight = ref(0)
+const stagingSpace = computed(() =>
+  props.session.staging
+    ? (stagingHeight.value || (props.session.staging.collapsed ? 34 : 110)) + 12
+    : 0,
+)
+const regionOpacity = computed(() => (selectedRegional.value?.opacity ?? 50) / 100)
 const canvasWidth = computed(() => `${props.session.document.canvas.width}px`)
 const canvasHeight = computed(() => `${props.session.document.canvas.height}px`)
 const canvasTransform = computed(
@@ -101,6 +108,7 @@ const previewCandidate = computed(() =>
 )
 watch(
   [
+    stagingSpace,
     stageSize,
     () => props.session.document.canvas.width,
     () => props.session.document.canvas.height,
@@ -136,7 +144,7 @@ function setTool(tool: ProjectTool) {
 function startPan(event: PointerEvent) {
   if (
     props.session.ui.activeTool !== 'pan' ||
-    (event.target as Element).closest('button, input, .tool-rail')
+    (event.target as Element).closest('button, input, .tool-rail, .panel-toggle, .results-tray')
   ) {
     return
   }
@@ -194,9 +202,9 @@ function fitView() {
   const canvas = props.session.document.canvas
   const scale = Math.max(
     0.01,
-    Math.min((width - 112) / canvas.width, (height - 100) / canvas.height, 1),
+    Math.min((width - 112) / canvas.width, (height - 76 - stagingSpace.value) / canvas.height, 1),
   )
-  props.session.ui.viewport = { fit: true, offsetX: 0, offsetY: 0, scale }
+  props.session.ui.viewport = { fit: true, offsetX: 0, offsetY: -stagingSpace.value / 2, scale }
 }
 function zoom(delta: number) {
   setZoom(Math.min(1.5, Math.max(0.05, props.session.ui.viewport.scale + delta)))
@@ -226,7 +234,7 @@ function zoom(delta: number) {
         <strong>Your image starts here</strong>
         <span>Describe an image, then Generate. Choose the results you want to add as layers.</span>
       </div>
-      <div class="left-rail tool-rail">
+      <div class="panel-toggle panel-toggle--left">
         <NTooltip>
           <template v-slot:trigger>
             <NButton
@@ -244,6 +252,8 @@ function zoom(delta: number) {
           </template>
           {{ session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel' }}
         </NTooltip>
+      </div>
+      <div class="left-rail tool-rail">
         <NButton
           aria-label="Pan tool"
           circle
@@ -342,7 +352,7 @@ function zoom(delta: number) {
           </NButton>
         </template>
       </div>
-      <div class="right-rail tool-rail">
+      <div class="panel-toggle panel-toggle--right">
         <NButton
           :aria-expanded="!session.ui.rightCollapsed"
           :aria-label="session.ui.rightCollapsed ? 'Expand layers panel' : 'Collapse layers panel'"
@@ -380,6 +390,12 @@ function zoom(delta: number) {
           <span>Resize Project Canvas</span>
         </div>
       </div>
+      <GenerationResultsTray
+        :session
+        @accept="emit('acceptCandidates')"
+        @discard="emit('discardCandidates')"
+        @resize="stagingHeight = $event"
+      />
       <ProjectQueuePanel
         :session
         @cancelCurrent="emit('cancelCurrent')"
@@ -388,12 +404,6 @@ function zoom(delta: number) {
         @close="session.ui.queueOpen = false"
       />
     </div>
-
-    <GenerationResultsTray
-      :session
-      @accept="emit('acceptCandidates')"
-      @discard="emit('discardCandidates')"
-    />
 
     <footer class="viewport-bar">
       <div class="viewport-group">
@@ -443,9 +453,25 @@ function zoom(delta: number) {
 </template>
 
 <style scoped>
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: var(--z-floating-control);
+}
+.panel-toggle--left {
+  left: 8px;
+}
+.panel-toggle--right {
+  right: 8px;
+}
+.panel-toggle .n-button {
+  background: var(--app-elevated);
+}
+
 .canvas-workspace {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -558,6 +584,7 @@ function zoom(delta: number) {
   bottom: -4px;
 }
 .regional-overlay {
+  opacity: v-bind(regionOpacity);
   position: absolute;
   inset: 18% 12% 36% 38%;
   display: grid;

@@ -1,28 +1,24 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Plus, Trash } from '@vicons/tabler'
+import { ChevronDown, Plus } from '@vicons/tabler'
 import { DnDProvider } from '@vue-dnd-kit/core'
-import {
-  NAlert,
-  NButton,
-  NCard,
-  NIcon,
-  NInput,
-  NInputNumber,
-  NSelect,
-  NSwitch,
-  NTag,
-} from 'naive-ui'
+import { NButton, NIcon, NInputNumber, NPopover, NSelect, NSlider } from 'naive-ui'
 import { computed, ref } from 'vue'
 
 import type { PresetCreateIntent } from '../presets/presets.types'
 import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
 import { clonePreset } from '../presets/presets.utils'
-import { commitProjectMutation } from './project-history'
+import {
+  beginProjectEdit,
+  commitActiveProjectEdit,
+  commitProjectMutation,
+  updateProjectEdit,
+} from './project-history'
 import { presetIntentFromResult } from './project-provenance'
 import { getSelectedEntity } from './project.utils'
 import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
+import ProjectRegionalRow from './ProjectRegionalRow.vue'
 
 const props = defineProps<{ session: ProjectSession }>()
 const emit = defineEmits<{ savePreset: [intent: PresetCreateIntent] }>()
@@ -46,10 +42,24 @@ const variantLayer = computed(() =>
     (layer) => layer.id === variantLayerId.value && layer.kind === 'smart-patch',
   ),
 )
-function activeVariantName(layer: ProjectCompositingLayer) {
-  return layer.kind === 'smart-patch'
-    ? (layer.variants.find((item) => item.id === layer.activeVariantId)?.name ?? 'None')
-    : ''
+const opacityTarget = computed(() =>
+  selectedLayer.value?.kind === 'raster' ? selectedLayer.value : selectedRegional.value,
+)
+function updateOpacity(value: number | null, sliding = false) {
+  const entity = opacityTarget.value
+  if (!entity || value === null) {
+    return
+  }
+  if (sliding) {
+    beginProjectEdit(props.session, `opacity:${entity.id}`, 'Change opacity')
+    updateProjectEdit(props.session, () => {
+      entity.opacity = value
+    })
+  } else {
+    commitProjectMutation(props.session, 'Change opacity', () => {
+      entity.opacity = value
+    })
+  }
 }
 function mutateLayer(
   layer: ProjectCompositingLayer | undefined,
@@ -142,6 +152,7 @@ function addRegional() {
       locked: false,
       name: 'Regional Guidance',
       negativePrompt: '',
+      opacity: 50,
       positivePrompt: '',
       referenceImages: [],
       regionRevision: 0,
@@ -153,6 +164,62 @@ function addRegional() {
 
 <template>
   <aside aria-label="Layers and selected item" class="layers-panel">
+    <div aria-label="Selected layer properties" class="layer-properties" role="toolbar">
+      <NSelect
+        v-if="selectedLayer?.kind === 'raster'"
+        aria-label="Layer blend mode"
+        class="blend-select"
+        :options="
+          ['normal', 'multiply', 'screen', 'overlay'].map((value) => ({
+            label: value.charAt(0).toUpperCase() + value.slice(1),
+            value,
+          }))
+        "
+        size="small"
+        :value="selectedLayer.blendMode"
+        @update:value="
+          mutateLayer(selectedLayer, 'Change blend mode', (target) => {
+            if (target.kind === 'raster') target.blendMode = $event
+          })
+        "
+      />
+      <span v-else class="selection-kind">
+        {{ selectedRegional ? 'Region display' : selectedLayer ? 'Smart Patch' : 'Select a layer' }}
+      </span>
+      <template v-if="opacityTarget">
+        <span>Opacity</span>
+        <NInputNumber
+          class="opacity-input"
+          :inputProps="{ 'aria-label': selectedRegional ? 'Region opacity' : 'Layer opacity' }"
+          :max="100"
+          :min="0"
+          :showButton="false"
+          size="small"
+          :value="opacityTarget.opacity"
+          @update:value="updateOpacity"
+        >
+          <template v-slot:suffix>%</template>
+        </NInputNumber>
+        <NPopover placement="bottom-end" trigger="click">
+          <template v-slot:trigger>
+            <NButton aria-label="Adjust opacity with slider" quaternary size="tiny">
+              <NIcon :component="ChevronDown" />
+            </NButton>
+          </template>
+          <div class="opacity-slider">
+            <NSlider
+              aria-label="Opacity slider"
+              :max="100"
+              :min="0"
+              :value="opacityTarget.opacity"
+              @dragend="commitActiveProjectEdit(session)"
+              @keyup="commitActiveProjectEdit(session)"
+              @update:value="updateOpacity($event, true)"
+            />
+          </div>
+        </NPopover>
+      </template>
+    </div>
     <div ref="panelScroll" class="panel-scroll">
       <div class="panel-stack">
         <section aria-label="Regional Guidance">
@@ -169,63 +236,13 @@ function addRegional() {
               <NIcon :component="Plus" />
             </NButton>
           </header>
-          <article
+          <ProjectRegionalRow
             v-for="entity of session.document.regionalGuidance"
             :key="entity.id"
-            class="regional-row"
-            :class="{ 'regional-row--selected': session.ui.selection?.id === entity.id }"
-          >
-            <NButton
-              :aria-label="`${entity.enabled ? 'Hide' : 'Show'} ${entity.name}`"
-              circle
-              class="regional-icon-button"
-              quaternary
-              size="small"
-              @click="
-                commitProjectMutation(
-                  session,
-                  'Toggle Regional Guidance',
-                  () => (entity.enabled = !entity.enabled),
-                )
-              "
-            >
-              <NIcon :component="entity.enabled ? Eye : EyeOff" />
-            </NButton>
-            <NButton
-              :aria-label="`Select ${entity.name}`"
-              class="regional-select"
-              quaternary
-              @click="session.ui.selection = { id: entity.id, kind: 'regional-guidance' }"
-            >
-              <span class="regional-thumb" />
-              <span>
-                <strong>{{ entity.name }}</strong>
-                <small>{{ entity.referenceImages.length }} reference image</small>
-              </span>
-              <NTag v-if="entity.compatibilityStatus !== 'ok'" size="small" type="warning">
-                Check
-              </NTag>
-            </NButton>
-            <NButton
-              :aria-label="`Delete ${entity.name}`"
-              circle
-              class="regional-icon-button"
-              quaternary
-              size="small"
-              @click="
-                commitProjectMutation(
-                  session,
-                  'Delete Regional Guidance',
-                  (document) =>
-                    (document.regionalGuidance = document.regionalGuidance.filter(
-                      (item) => item.id !== entity.id,
-                    )),
-                )
-              "
-            >
-              <NIcon :component="Trash" />
-            </NButton>
-          </article>
+            :entity
+            :selected="session.ui.selection?.id === entity.id"
+            :session
+          />
         </section>
 
         <section aria-label="Compositing Layers">
@@ -273,116 +290,6 @@ function addRegional() {
             />
           </DnDProvider>
         </section>
-
-        <NCard v-if="selectedLayer" size="small" :title="selectedLayer.name">
-          <template v-if="selectedLayer.kind === 'raster'">
-            <div class="two-fields">
-              <label>
-                Opacity
-                <NInputNumber
-                  aria-label="Layer opacity"
-                  :inputProps="{ 'aria-label': 'Layer opacity' }"
-                  :max="100"
-                  :min="0"
-                  :value="selectedLayer.opacity"
-                  @update:value="
-                    mutateLayer(selectedLayer, 'Change opacity', (target) => {
-                      if (target.kind === 'raster') target.opacity = $event ?? 100
-                    })
-                  "
-                />
-              </label>
-              <label>
-                Blend
-                <NSelect
-                  aria-label="Layer blend mode"
-                  :options="
-                    ['normal', 'multiply', 'screen', 'overlay'].map((value) => ({
-                      label: value,
-                      value,
-                    }))
-                  "
-                  :value="selectedLayer.blendMode"
-                  @update:value="
-                    mutateLayer(selectedLayer, 'Change blend mode', (target) => {
-                      if (target.kind === 'raster') target.blendMode = $event
-                    })
-                  "
-                />
-              </label>
-            </div>
-            <p>Raster editing tools are outside the MVP canvas.</p>
-          </template>
-          <template v-else>
-            <NAlert v-if="selectedLayer.status === 'outdated'" type="warning">
-              Mask, bounds or generation settings changed. Regenerate to refresh this patch.
-            </NAlert>
-            <div class="detail-grid">
-              <span>
-                Mask
-                <strong>Revision {{ selectedLayer.maskRevision }}</strong>
-              </span>
-              <span>
-                Bounding Box
-                <strong>{{ selectedLayer.bbox.width }} × {{ selectedLayer.bbox.height }}</strong>
-              </span>
-              <span>
-                Internal Size
-                <strong>
-                  {{ selectedLayer.internalWidth }} × {{ selectedLayer.internalHeight }}
-                </strong>
-              </span>
-              <span>
-                Active Variant
-                <strong>{{ activeVariantName(selectedLayer) }}</strong>
-              </span>
-            </div>
-          </template>
-        </NCard>
-
-        <NCard v-if="selectedRegional" key="n-card-2" size="small" :title="selectedRegional.name">
-          <NAlert v-if="selectedRegional.compatibilityStatus !== 'ok'" type="warning">
-            The current model may ignore regional reference images.
-          </NAlert>
-          <label>
-            Prompt
-            <NInput
-              aria-label="Regional prompt"
-              type="textarea"
-              :value="selectedRegional.positivePrompt"
-              @update:value="
-                commitProjectMutation(session, 'Edit regional prompt', () => {
-                  if (selectedRegional) selectedRegional.positivePrompt = $event
-                })
-              "
-            />
-          </label>
-          <div class="switch-line">
-            <span>Use global negative prompt</span>
-            <NSwitch
-              aria-label="Use global negative prompt"
-              :value="selectedRegional.autoNegative"
-              @update:value="
-                commitProjectMutation(session, 'Change regional negative source', () => {
-                  if (selectedRegional) selectedRegional.autoNegative = $event
-                })
-              "
-            />
-          </div>
-          <label v-if="!selectedRegional.autoNegative">
-            Negative Prompt
-            <NInput
-              aria-label="Regional negative prompt"
-              type="textarea"
-              :value="selectedRegional.negativePrompt"
-              @update:value="
-                commitProjectMutation(session, 'Edit regional negative prompt', () => {
-                  if (selectedRegional) selectedRegional.negativePrompt = $event
-                })
-              "
-            />
-          </label>
-        </NCard>
       </div>
     </div>
 
@@ -414,6 +321,31 @@ function addRegional() {
 </template>
 
 <style scoped>
+.layer-properties {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+.blend-select {
+  flex: 1;
+  min-width: 80px;
+}
+.selection-kind {
+  flex: 1;
+}
+.opacity-input {
+  width: 64px;
+}
+.opacity-slider {
+  width: 180px;
+  padding: 6px;
+}
+
 .variant-thumb {
   position: relative;
   display: inline-block;
@@ -429,13 +361,15 @@ function addRegional() {
 .layers-panel {
   position: relative;
   min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
   background: var(--app-surface);
   border-left: 1px solid var(--app-border);
 }
 .panel-scroll {
-  height: 100%;
+  min-height: 0;
   overflow: auto;
 }
 .panel-stack {
@@ -451,77 +385,6 @@ function addRegional() {
   justify-content: space-between;
   gap: 5px;
   min-height: 30px;
-}
-.regional-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  border: 1px solid transparent;
-  background: var(--app-elevated);
-}
-.regional-row--selected {
-  border-color: #b58cff;
-}
-.regional-icon-button :deep(.n-icon) {
-  font-size: 18px;
-}
-
-.regional-select {
-  width: 100%;
-  height: 52px;
-  justify-content: start;
-  padding: 4px 6px;
-}
-.regional-select :deep(.n-button__content) {
-  display: flex;
-  justify-content: start;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-}
-.regional-select span:nth-child(2) {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-.regional-select small {
-  color: var(--app-text-muted);
-}
-.regional-thumb {
-  flex: 0 0 34px;
-  width: 34px;
-  height: 34px;
-  background: radial-gradient(circle, #b58cff99, transparent 60%), #18121f;
-  border: 1px solid #b58cff66;
-}
-.two-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.two-fields label,
-label {
-  display: grid;
-  gap: 4px;
-  color: var(--app-text-muted);
-}
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.detail-grid span {
-  display: grid;
-  padding: 7px;
-  color: var(--app-text-muted);
-  background: var(--app-elevated);
-}
-.detail-grid strong {
-  color: var(--app-text);
-}
-p {
-  color: var(--app-text-muted);
 }
 .variant-popover {
   position: absolute;

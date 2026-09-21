@@ -190,18 +190,22 @@ Undo removes the accepted project mutation; it does not reconstruct the previous
 
 ## Placement
 
-`GenerationResults` is a collapsible bottom tray inside the central canvas workspace:
+`GenerationResults` is a compact floating strip anchored above the bottom edge of the central canvas viewport:
 
-- thumbnail strip above a compact toolbar;
+- 64px candidate thumbnails above a compact toolbar;
+- previous/count/next, explicit `Add N as Layers/Variants`, preview visibility, selection menu, discard and collapse actions in one row;
+- Select all completed / Clear selection are secondary menu actions;
 - selected candidate preview rendered through a dedicated non-project canvas layer;
-- collapsed state preserves canvas space;
+- collapsed state hides thumbnails and keeps the acceptance toolbar available;
+- at narrow canvas widths the toolbar wraps within the viewport;
+- Fit reserves the strip's measured height so the image does not sit behind it;
 - the tray is absent when no staging session exists.
 
 It is not a permanent right sidebar and does not replace Queue Manager or the layer stack.
 
 ## Vue Prototype Coverage
 
-The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The bottom tray supports focus, checkbox selection, Select all/Clear selection, previous/next, preview visibility, Discard All and context-specific multi-accept labels.
+The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The floating strip supports focus, checkbox selection, Select all completed/Clear selection in a menu, previous/next, preview visibility, Discard All and context-specific multi-accept labels. Preview navigation scrolls the thumbnail strip to keep the focused candidate in view; it does not change acceptance selection.
 
 Normal acceptance creates one independent Raster Layer per selected candidate. Smart Patch acceptance creates variants owned by the selected Smart Patch. The focused selected candidate, or otherwise the first selected candidate in stable order, becomes the accepted anchor. If unfinished sibling jobs exist, acceptance uses a confirmation before canceling them and discarding unselected candidates. One acceptance produces one Project history entry and undo does not recreate staging.
 

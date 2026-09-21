@@ -18,6 +18,7 @@ export interface GenerationEmbeddingResourceRef extends GenerationResourceRef {
 }
 
 export interface GenerationLoraResourceRef extends GenerationResourceRef {
+  baseModel?: string
   triggerPhrases: string[]
 }
 

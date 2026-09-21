@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { Copy, DotsVertical, Eye, EyeOff, Lock, LockOpen, Refresh, Trash } from '@vicons/tabler'
-import { NButton, NDropdown, NIcon, NPopover } from 'naive-ui'
+import { DotsVertical, Eye, EyeOff, Lock, LockOpen, Refresh } from '@vicons/tabler'
+import { NAlert, NButton, NDropdown, NIcon, NPopover } from 'naive-ui'
 import { computed, ref } from 'vue'
 
 import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
 import { resultProvenance } from './project-provenance'
 import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
+import ProjectEntitySurface from './ProjectEntitySurface.vue'
 import ProjectGenerationComparison from './ProjectGenerationComparison.vue'
 
 const props = defineProps<{
@@ -38,6 +39,8 @@ const moveOptions = computed(() => [
   { disabled: !resultProvenance(props.layer), key: 'preset', label: 'Create Preset from Result' },
   { key: 'up', label: 'Move up' },
   { key: 'down', label: 'Move down' },
+  { key: 'duplicate', label: 'Duplicate layer' },
+  { key: 'delete', label: 'Delete layer' },
 ])
 function move(key: number | string) {
   if (key === 'compare') {
@@ -46,6 +49,14 @@ function move(key: number | string) {
   }
   if (key === 'preset') {
     emit('savePreset')
+    return
+  }
+  if (key === 'duplicate') {
+    emit('duplicate')
+    return
+  }
+  if (key === 'delete') {
+    emit('remove')
     return
   }
   if (key === 'up') {
@@ -63,7 +74,7 @@ function layerTone(layer: ProjectCompositingLayer) {
 </script>
 
 <template>
-  <article class="layer-row" :class="{ 'layer-row--selected': selected }">
+  <ProjectEntitySurface class="layer-row" :selected>
     <NButton
       :aria-label="`${layer.visible ? 'Hide' : 'Show'} ${layer.name}`"
       circle
@@ -112,24 +123,6 @@ function layerTone(layer: ProjectCompositingLayer) {
     >
       <template v-slot:icon><NIcon :component="layer.locked ? Lock : LockOpen" /></template>
     </NButton>
-    <NButton
-      :aria-label="`Duplicate ${layer.name}`"
-      circle
-      quaternary
-      size="tiny"
-      @click="$emit('duplicate')"
-    >
-      <template v-slot:icon><NIcon :component="Copy" /></template>
-    </NButton>
-    <NButton
-      :aria-label="`Delete ${layer.name}`"
-      circle
-      quaternary
-      size="tiny"
-      @click="$emit('remove')"
-    >
-      <template v-slot:icon><NIcon :component="Trash" /></template>
-    </NButton>
     <NPopover
       v-model:show="comparisonOpen"
       placement="left-start"
@@ -147,32 +140,67 @@ function layerTone(layer: ProjectCompositingLayer) {
       </template>
       <ProjectGenerationComparison :layer :session />
     </NPopover>
-  </article>
+    <template v-if="selected && layer.kind === 'smart-patch'" v-slot:details>
+      <NAlert
+        v-if="layer.status === 'outdated'"
+        class="patch-warning"
+        :showIcon="false"
+        type="warning"
+      >
+        Mask, bounds or settings changed. Regenerate to refresh this patch.
+      </NAlert>
+      <dl class="patch-properties">
+        <div>
+          <dt>Bounds</dt>
+          <dd>{{ layer.bbox.width }} × {{ layer.bbox.height }}</dd>
+        </div>
+        <div>
+          <dt>Internal size</dt>
+          <dd>{{ layer.internalWidth }} × {{ layer.internalHeight }}</dd>
+        </div>
+      </dl>
+      <div class="patch-variant">
+        <span>Mask revision {{ layer.maskRevision }}</span>
+        <NButton size="tiny" text @click="$emit('variants')">
+          {{
+            layer.variants.find(
+              (v) => v.id === (layer.kind === 'smart-patch' ? layer.activeVariantId : undefined),
+            )?.name ?? 'No variant'
+          }}
+          · Browse
+        </NButton>
+      </div>
+    </template>
+  </ProjectEntitySurface>
 </template>
 
 <style scoped>
-.layer-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) repeat(5, auto);
-  align-items: center;
-  min-width: 0;
-  border: 1px solid transparent;
-  border-radius: var(--app-radius);
-  background: var(--app-elevated);
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease;
+.patch-properties {
+  display: flex;
+  gap: 24px;
+  margin: 2px 0 8px;
+  font-size: 12px;
 }
-.layer-row:hover {
-  border-color: color-mix(in srgb, var(--app-text-muted) 35%, transparent);
-  background: var(--app-surface-soft);
+.patch-properties dt,
+.patch-variant {
+  color: var(--app-text-muted);
 }
-.layer-row--selected {
-  border-color: color-mix(in srgb, var(--workspace-green) 75%, transparent);
+.patch-properties dd {
+  margin: 0;
 }
+.patch-variant {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+.patch-warning {
+  margin-bottom: 8px;
+}
+
 .selection-button {
   min-width: 0;
-  width: 100%;
+  flex: 1;
   height: 48px;
   justify-content: start;
   padding: 4px 6px;

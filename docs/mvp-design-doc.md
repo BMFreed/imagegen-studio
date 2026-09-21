@@ -1,6 +1,6 @@
 # ImageGen Studio — MVP Design Document
 
-> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, plain-text CodeMirror prompt editor с embedding sidecars и contextual LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
+> Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Project workspace, plain-text CodeMirror prompt editor с embedding sidecars и contextual LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
 
 > Короткие продуктовые обещания, явные не-обещания и публичные статусы зафиксированы отдельно в [Product Promises](./product-promises.md); точные правила живут в linked supporting contracts. PP-001 закрепляет понятную product-owned композицию вместо IDE-like workbench; PP-002 требует одного явного intent на control; PP-003 закрепляет canonical ownership и lifecycle каждой пользовательской сущности и настройки; PP-004 определяет модели как managed resources и включает безопасное версионирование в MVP; PP-005 обещает, что каждый принятый результат помнит, как он был создан, а его [supporting contract](./features/project/generate-mode/generation-provenance.md) определяет provenance, comparison и preset boundaries; PP-006 обещает сохранение и повторное применение generation settings с честным предупреждением о missing resources, а [Preset supporting contract](./features/presets.md) определяет точный flow и текущие prototype gaps.
 
@@ -69,7 +69,7 @@ InvokeAI рассматривается как основной reference produc
 - `.igs` project file открывается как `Project` tab;
 - `Project` tabs могут быть открыты одновременно;
 - `Canvas` является рабочей поверхностью внутри `Project`, а не отдельной top-level вкладкой;
-- внутри `Project` current domain mode `generate` имеет visible label `Create`;
+- внутри `Project` используется domain mode `generate`; основное действие — `Generate`, отдельного заголовка `Create` и переключателя единственного режима нет;
 - txt2img/img2img/inpaint/outpaint определяется автоматически по target-area canvas content;
 - Upscale отложен до отдельного feature/prototype pass;
 - один и тот же `.igs` нельзя открыть дважды: повторное открытие фокусирует уже существующую `Project` tab.
@@ -1283,7 +1283,7 @@ Raster Layers and Smart Patch Layers share one compositing `Layers` stack and ca
 Для Raster Layer, Smart Patch Layer и Regional Guidance Layer используется единый принцип строки слоя:
 
 ```text
-visibility | thumbnail/preview | layer name + status | secondary actions | lock | delete
+visibility | thumbnail/preview | layer name + status | lock | actions menu
 ```
 
 Решения:
@@ -1292,13 +1292,15 @@ visibility | thumbnail/preview | layer name + status | secondary actions | lock 
 - warning/status icons находятся рядом с именем/status area;
 - Regional Guidance Layer сохраняет Invoke-like warning icon для compatibility/setup предупреждений;
 - lock layers поддерживается;
-- delete action поддерживается;
-- правый action cluster не должен смешивать visibility с lock/delete.
+- duplicate/delete и перемещение находятся в actions menu;
+- правый action cluster не должен смешивать visibility с lock/actions;
+- общие свойства выбранного слоя (blend для Raster, opacity для Raster/Regional display) находятся в компактной строке над стеком; отдельная карточка-инспектор под стеком не нужна;
+- Raster, Smart Patch и Regional Guidance используют одну поверхность строки и одинаковые hover/selected states; региональные prompts/references раскрываются внутри выбранной строки.
 
 Для Smart Patch Layer используется расширенная строка:
 
 ```text
-visibility | mask thumbnail | active raster thumbnail | layer name + status | switch variants | lock | delete
+visibility | mask thumbnail | active raster thumbnail | layer name + status | switch variants | lock | actions menu
 ```
 
 Решения:

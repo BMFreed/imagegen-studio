@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Trash as TrashIcon } from '@vicons/tabler'
-import { NButton, NIcon, NInputNumber, NSelect, NSwitch, NText } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { NButton, NIcon, NInputNumber, NSwitch, NText } from 'naive-ui'
+import { ref } from 'vue'
 
 import type { GenerationLora, GenerationLoraResourceRef } from './generation.types'
+
+import GenerationResourceSelect from './GenerationResourceSelect.vue'
 
 const props = defineProps<{
   disabled?: boolean
@@ -14,15 +16,7 @@ const emit = defineEmits<{ remove: [resourceId: string] }>()
 const loras = defineModel<GenerationLora[]>({ required: true })
 const selectedResourceId = ref<string | null>(null)
 
-const options = computed(() =>
-  props.resources.map((resource) => ({
-    disabled: loras.value.some((lora) => lora.resource.id === resource.id),
-    label: `${resource.name}${resource.version ? ` · ${resource.version}` : ''}`,
-    value: resource.id,
-  })),
-)
-
-function add(resourceId: string | null) {
+function add(resourceId: string | null | undefined) {
   const resource = props.resources.find((candidate) => candidate.id === resourceId)
   if (!resource || loras.value.some((lora) => lora.resource.id === resource.id)) {
     return
@@ -57,15 +51,15 @@ function remove(index: number) {
 
 <template>
   <div class="lora-stack">
-    <NSelect
-      v-model:value="selectedResourceId"
-      aria-label="Add LoRA"
+    <GenerationResourceSelect
+      v-model="selectedResourceId"
+      ariaLabel="Add LoRA"
       clearable
       :disabled
-      :options
+      :disabledIds="loras.map((lora) => lora.resource.id)"
       placeholder="Add LoRA"
-      :resetMenuOnOptionsChange="false"
-      @update:value="add"
+      :resources
+      @update:modelValue="add"
     />
     <article v-for="(lora, index) of loras" :key="lora.resource.id" class="lora-row">
       <NSwitch

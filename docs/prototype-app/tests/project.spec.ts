@@ -79,21 +79,22 @@ test.describe('Project prototype', () => {
     )
     await expect(page.locator('.tool-rail .n-icon').first()).toHaveCSS('font-size', '18px')
     await expect(
-      page.getByRole('button', { name: 'Delete Face lighting' }).locator('.n-icon'),
+      page.getByRole('button', { name: 'Layer actions for Face lighting' }).locator('.n-icon'),
     ).toHaveCSS('font-size', '18px')
   })
 
-  test('keeps generation actions below Create and gives prompts dedicated editor space', async ({
+  test('keeps generation actions at the top and gives prompts dedicated editor space', async ({
     page,
   }) => {
     await page.setViewportSize({ height: 900, width: 1440 })
     await openProject(page)
 
     const settings = page.getByLabel('Generate settings')
-    const create = await settings.locator('.create-label').boundingBox()
+    const settingsBox = await settings.boundingBox()
+    await expect(settings.getByText('Create', { exact: true })).toHaveCount(0)
     const actionBar = await settings.locator('.generation-footer').boundingBox()
     const settingsScroll = await settings.locator('.settings-scroll').boundingBox()
-    expect(create!.y + create!.height).toBeCloseTo(actionBar!.y, 0)
+    expect(actionBar!.y).toBeCloseTo(settingsBox!.y, 0)
     expect(actionBar!.y + actionBar!.height).toBeCloseTo(settingsScroll!.y, 0)
     await expect(settings.locator('.generation-footer')).toHaveCSS('display', 'grid')
 
@@ -157,8 +158,10 @@ test.describe('Project prototype', () => {
   test('keeps staging temporary and accepts multiple results as layers', async ({ page }) => {
     await openProject(page, 'staging')
     await expect(page.getByRole('region', { name: 'Generation Results' })).toContainText(
-      '2 selected',
+      'Add 2 as Layers',
     )
+    await expect(page.getByLabel('Select candidate 1')).toBeChecked()
+    await expect(page.getByLabel('Select candidate 2')).toBeChecked()
     await page.getByRole('button', { name: 'Add 2 as Layers' }).click()
     const dialog = page.getByRole('dialog', { name: 'Accept generation results' })
     await expect(dialog).toBeVisible()

@@ -1,6 +1,6 @@
-# Project / Create Workspace
+# Project Generation Workspace
 
-`Create` is the visible working surface inside an opened `Project` tab. The internal/domain mode remains `generate`, and `Generate` is the primary action that enqueues work.
+Generation happens inside an opened `Project` tab. The internal/domain mode remains `generate`, and `Generate` is the primary action that enqueues work. There is no separate `Create` header or one-option mode switch.
 
 It is not a top-level application tab and not a separate Invoke-like `Generate` page. It is a project-scoped generation and local-editing workspace.
 
@@ -71,19 +71,19 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - dynamic prompting is included;
 - Regional Guidance Layer is included with an owned region/mask, regional prompts and regional guidance images, but ControlNet/IP-Adapter as general-purpose feature families are not included in this Generate scope;
 - ControlNet is explicitly deferred to post-MVP; first follow-up workflows are tiled upscale, pose control, depth control and Canny/contour control;
-- Regional Guidance remains a separate conditioning section. The current prototype exposes enable/select/delete, prompt readout/editing context and compatibility status; Invoke-like inline `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` authoring remains product intent rather than implemented prototype behavior;
+- Regional Guidance remains a separate conditioning section. The current prototype exposes select/enable/lock/duplicate/delete, inline `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` blocks, reference add/remove and compatibility status; production mask authoring and resource persistence remain outside the prototype;
 - layer rows use Photoshop-like visibility placement: visibility button sits left of the thumbnail/preview, while warning/status, lock and delete stay in row actions/status areas;
 - Project Canvas is the document work area and replaces the old idea of a global/current working bbox;
-- the domain mode remains `generate`, while the visible working-mode label is `Create`; `Generate` is reserved for the action button that starts generation;
+- the domain mode remains `generate`; `Generate` starts generation without a redundant `Create` label or mode switch;
 - txt2img/img2img/inpaint/outpaint is derived automatically from visible raster/mask content inside the frozen target area, not selected manually;
 - normal generation settings belong to Project, while each Smart Patch Layer owns its own generation draft;
 - viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
 - Project Canvas numeric resize/fit actions live in the left `Size` section, while direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail;
 - the Project Canvas size label is a canvas-area overlay at top-left. The current top-right rail control collapses the details panel; a separate canvas context menu has not been implemented or validated;
-- canvas side controls always show panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- canvas side controls always show vertically centered panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
-- `GenerationResults` is an Invoke-like bottom staging tray with separate focused preview and multi-selection state;
+- `GenerationResults` is a compact floating staging strip above the bottom canvas edge with separate focused preview and multi-selection state;
 - completed outputs remain temporary candidates until the user explicitly adds one or more to Project;
 - accepted normal candidates become independent Raster Layers; accepted Smart Patch candidates become layer-owned variants;
 - only accepted results receive immutable generation provenance and global history entries;
@@ -93,9 +93,9 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
   configuration; Smart Patch mask, bbox, internal resolution and compositing are
   layer properties reused through `Duplicate Layer`;
 - Queue Manager owns jobs, not result history, and staging state is not undoable;
-- the Generate action area is fixed directly below the `Create` tab and above the scrolling settings stack; its grid keeps `Generate` plus images-per-click on the left and icon-only queue plus cancel actions on the right;
+- the Generate action area is fixed at the top of the left panel, above the scrolling settings stack; its grid keeps `Generate` plus images-per-click on the left and icon-only queue plus cancel actions on the right;
 - Queue pause/resume is not exposed in the current Project scope;
-- Upscale is deferred to a separate Project pass and does not block the Create/Generate prototype;
+- Upscale is deferred to a separate Project pass and does not block the Project generation prototype;
 - Forge-style prompt token counting, bracket checking and extra-network metadata cards are useful enough to adopt.
 
 ## Layout
@@ -109,9 +109,8 @@ Document tab strip
 └─ Project: background.igs
 
 Project: portrait.igs
-└─ Create workspace
+└─ Generation workspace
    ├─ left settings panel
-   │  ├─ working context: Create
    │  ├─ fixed Generate action area
    │  └─ scrolling settings stack
    ├─ center canvas
@@ -122,24 +121,24 @@ Project: portrait.igs
 ┌──────────────────────────────────────────────────────────────┐
 │ App menu / global status / document tabs                     │
 ├──────────────────────────────────────────────────────────────┤
-│ Create workspace                                             │
+│ Project generation workspace                                 │
 ├───────────────┬─────────────────────────────┬────────────────┤
 │ Settings      │ Canvas                      │ Layers /       │
 │               │                             │ selected item  │
-│ Create        │ Project Canvas frame        │                │
+│ Generate      │ Project Canvas frame        │ blend / opacity│
 │               │ canvas-area overlays        │ layer stack    │
 │ Preset action │ masks                       │ regional       │
 │ Size          │ raster layers               │ guidance       │
 │ Prompts       │ raster layers               │ smart patch    │
 │ LoRA stack    │ smart patch active variants │ selected       │
 │ Generation    │ regional guidance regions   │ entity details │
-│               │ GenerationResults tray      │                │
+│               │ floating results strip      │                │
 └───────────────┴─────────────────────────────┴────────────────┘
 ```
 
-The left panel contains the current generation context and settings. While `Create` is the only implemented mode, the UI must not render a useless one-option segmented switch merely to label it. `Create` may appear as a compact workspace label/header; a mode switch is introduced only when another real mode is designed.
+The left panel starts with the fixed Generate action bar and contains the scrolling generation settings. No `Create` label or one-option mode switch is rendered. A target label appears only for Smart Patch generation; a mode switch is introduced only when another real mode is designed.
 
-The right panel contains project structure and settings for the selected canvas entity or layer.
+The right panel contains a compact selected-entity properties bar above the stack. Raster and Regional display opacity share this location; Raster blend mode sits alongside it. Regional prompt/reference blocks and Smart Patch details expand inside their selected row, using the same row surface and hover/selection states.
 
 Canvas controls should remain close to the canvas. Viewport controls and interaction hints live in the bottom canvas bar; canvas-area metadata/actions live as overlays near the canvas edges; layer ownership and object-specific settings remain in the right panel so the user can always tell whether they are editing the global generation setup or a selected layer.
 
@@ -171,20 +170,20 @@ Current left-panel coverage is intentionally narrower than the full product scop
 | Generation | Model selection, read-only version, sampler, scheduler, steps, CFG and context-disabled denoising. VAE/precision are visible prototype controls but are not yet wired into the Project document. Seed, CFG rescale and clip skip are absent. |
 | Queue      | Integer images-per-click from 1 through 100, sequential in-memory jobs, active badge, cancel-current and a compact project queue panel.                                                                                                      |
 
-Current right-panel coverage is also explicit: Raster and Smart Patch share a flat sortable stack; Regional Guidance is separate; selection, visibility, lock, duplicate, delete, pointer reorder and overflow move actions work for compositing layers. Raster opacity/blend, Regional prompt/negative behavior and full Smart Patch precision/compositing forms are mostly read-only or presentational in the current prototype.
+Current right-panel coverage is also explicit: Raster and Smart Patch share a flat sortable stack; Regional Guidance is separate; selection, visibility, lock, duplicate, delete, pointer reorder and overflow move actions work for compositing layers. Raster opacity/blend, regional display opacity, regional prompts/negative source and reference add/remove update session state through Project history. Opacity changes the mock region overlay; Raster compositing and full Smart Patch precision forms still require production implementation.
 
 Undo and Redo live in the bottom viewport bar, the `Edit` menu and keyboard shortcuts. Queue progress and temporary candidate selection are deliberately excluded from document history; accepting candidates creates one grouped persistent mutation.
 
 ## Acceptance Criteria
 
-- User can open a `.igs` Project tab and work in visible mode `Create` backed by domain mode `generate`.
+- User can open a `.igs` Project tab and generate through the fixed action bar, backed by domain mode `generate`.
 - Generate shows structured prompts, model, LoRA, Project Canvas controls, Smart Patch context, dynamic prompt preview and the currently covered advanced controls without `Launchpad`, `Viewer` or Boards.
 - `Choose Prompt Template` is not present as an Invoke-like dropdown.
 - Preset actions exist through the explicit action launcher/apply-preview workflow described in [Presets](../../presets.md), and Project never retains a selected preset identity.
 - Project does not show a separate title/status toolbar above the workspace; project identity and dirty state belong to the document tab.
 - `GenerationResults` supports focused preview plus explicit multi-selection and never auto-commits completed outputs.
 - left and right panels can be resized, collapsed and restored without losing Project UI state;
-- the fixed Generate action bar remains visible below `Create` while stacked settings scroll independently;
+- the fixed Generate action bar remains visible at the top of the left panel while stacked settings scroll independently;
 - txt2img/img2img/inpaint/outpaint remain internal request-building states; the UI explains only control availability and never asks the user to choose or monitor a workflow label;
 - accepted Project candidates become independent Raster Layers, while accepted Smart Patch candidates become variants owned by that layer;
 - Project UI state survives document-tab switching within the prototype session;

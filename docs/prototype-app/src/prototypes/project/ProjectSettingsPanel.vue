@@ -23,6 +23,7 @@ import {
   serializeGenerationPrompt,
 } from '../../components/generation/generation-prompt.utils'
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
+import GenerationResourceSelect from '../../components/generation/GenerationResourceSelect.vue'
 import { presetEditorResources } from '../presets/presets.mock'
 import DynamicPromptsModal from './DynamicPromptsModal.vue'
 import { commitProjectMutation } from './project-history'
@@ -56,15 +57,15 @@ const target = computed(() => {
 const payload = computed(() => activeDraft.value.payload)
 const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 })
 const dynamicPreviewOpen = ref(false)
-const modelOptions = [
-  ...new Map(presetEditorResources.models.map((model) => [model.name, model.name])).keys(),
-].map((name) => ({ label: name, value: name }))
+const modelChoices = presetEditorResources.models.filter(
+  (model, index, models) => models.findIndex((item) => item.name === model.name) === index,
+)
 const versionOptions = computed(() =>
   presetEditorResources.models
     .filter((model) => model.name === payload.value.model?.name)
     .map((model) => ({ label: model.version ?? 'Version unavailable', value: model.id })),
 )
-function selectModel(name: string) {
+function selectModel(name: string | null | undefined) {
   const model = presetEditorResources.models.find((model) => model.name === name)
   if (model) {
     updateModel(model.id)
@@ -158,11 +159,6 @@ function normalizeCount(value: number | null) {
 
 <template>
   <aside aria-label="Generate settings" class="settings-panel">
-    <div class="create-label">
-      <strong>{{ target ? 'Smart Patch' : 'Create' }}</strong>
-      <span>{{ target?.name ?? 'Project Canvas' }}</span>
-    </div>
-
     <footer class="generation-footer">
       <div class="generation-primary-actions">
         <NButton
@@ -211,7 +207,12 @@ function normalizeCount(value: number | null) {
           <template v-slot:icon><NIcon :component="X" /></template>
         </NButton>
       </div>
-      <NText v-if="blockingReason" class="blocking-reason" type="error">{{ blockingReason }}</NText>
+      <NText v-if="target" class="generation-target" depth="3">
+        Smart Patch · {{ target.name }}
+      </NText>
+      <NText v-if="blockingReason" key="n-text-2" class="blocking-reason" type="error">
+        {{ blockingReason }}
+      </NText>
     </footer>
 
     <NScrollbar class="settings-scroll">
@@ -228,12 +229,12 @@ function normalizeCount(value: number | null) {
               Manage models
             </NButton>
           </div>
-          <NSelect
-            aria-label="Generation model"
-            :options="modelOptions"
-            size="small"
-            :value="payload.model?.name"
-            @update:value="selectModel"
+          <GenerationResourceSelect
+            ariaLabel="Generation model"
+            :modelValue="payload.model?.name"
+            :resources="modelChoices"
+            valueKey="name"
+            @update:modelValue="selectModel"
           />
           <NSelect
             aria-label="Model version"
@@ -451,11 +452,9 @@ function normalizeCount(value: number | null) {
 </template>
 
 <style scoped>
-.create-label span {
-  color: var(--app-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.generation-target {
+  grid-column: 1 / -1;
+  font-size: 12px;
 }
 .model-summary {
   display: grid;
@@ -465,7 +464,7 @@ function normalizeCount(value: number | null) {
 }
 .settings-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   height: 100%;
   font-size: var(--app-font-size);
@@ -479,13 +478,6 @@ function normalizeCount(value: number | null) {
   display: grid;
   gap: 7px;
   padding: 8px;
-}
-.create-label {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 8px 8px 0;
-  padding: 5px 8px;
 }
 .card-title-line {
   display: flex;
