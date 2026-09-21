@@ -30,6 +30,16 @@ function setSelected(id: string, selected: boolean) {
     ? [...new Set([...value.selectedCandidateIds, id])]
     : value.selectedCandidateIds.filter((item) => item !== id)
 }
+function previewStep(delta: number) {
+  const value = staging.value
+  if (!value || !completed.value.length) {
+    return
+  }
+  const index = completed.value.findIndex((c) => c.id === value.focusedCandidateId)
+  value.focusedCandidateId =
+    completed.value[(index + delta + completed.value.length) % completed.value.length]?.id
+  value.previewVisible = true
+}
 function selectAll() {
   if (staging.value) {
     staging.value.selectedCandidateIds = completed.value.map((item) => item.id)
@@ -54,7 +64,9 @@ function selectAll() {
       </div>
       <div class="tray-actions">
         <NButton size="tiny" tertiary @click="selectAll">Select all</NButton>
-        <NButton size="tiny" tertiary @click="staging.selectedCandidateIds = []">Clear</NButton>
+        <NButton size="tiny" tertiary @click="staging.selectedCandidateIds = []">
+          Clear selection
+        </NButton>
         <NButton
           :aria-label="staging.previewVisible ? 'Hide candidate preview' : 'Show candidate preview'"
           circle
@@ -91,6 +103,28 @@ function selectAll() {
       </div>
     </header>
     <template v-if="!staging.collapsed">
+      <div class="preview-navigation">
+        <NButton
+          aria-label="Previous result preview"
+          :disabled="completed.length < 2"
+          size="tiny"
+          @click="previewStep(-1)"
+        >
+          ←
+        </NButton>
+        <span>
+          Preview {{ completed.findIndex((c) => c.id === staging?.focusedCandidateId) + 1 }} /
+          {{ completed.length }} completed
+        </span>
+        <NButton
+          aria-label="Next result preview"
+          :disabled="completed.length < 2"
+          size="tiny"
+          @click="previewStep(1)"
+        >
+          →
+        </NButton>
+      </div>
       <div class="candidate-strip">
         <GenerationCandidateCard
           v-for="candidate of staging.candidates"
@@ -113,11 +147,18 @@ function selectAll() {
 </template>
 
 <style scoped>
+.preview-navigation {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-muted);
+}
 .results-tray {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 154px;
-  max-height: 226px;
+  max-height: 250px;
   background: color-mix(in srgb, var(--app-surface) 96%, black);
   border-top: 1px solid var(--app-border);
 }
@@ -134,9 +175,8 @@ function selectAll() {
   padding: 7px 10px;
 }
 .tray-header > div:first-child {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+  display: grid;
+  gap: 0;
 }
 .tray-actions {
   display: flex;

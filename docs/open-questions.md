@@ -11,6 +11,12 @@
 
 ## Можно решить позже
 
+- Отдельный privacy/offline promise: определить допустимые внешние запросы,
+  telemetry/crash reports и поведение без сети. Local desktop/inference scope
+  сам по себе не доказывает, что данные никогда не покидают устройство.
+- Общие accessibility/performance гарантии: определить измеримые границы до
+  появления публичного promise; существующие feature-level требования остаются.
+
 - Sidecar JSON and embedded metadata.
 - Local model import by file/hash.
 - Поиск модели по hash через CivitAI.
@@ -19,6 +25,16 @@
 - Plugin API.
 
 ## Уже закрытые решения
+
+- PP-007: переносимый `.igs` принадлежит пользователю; Save, dirty state и
+  recovery имеют разные роли. Production persistence остаётся обязательным
+  недоказанным flow, а не свойством in-memory prototype.
+- PP-008: генерация даёт temporary candidates; только явное принятие добавляет
+  слои/варианты одним undoable изменением. Queue progress, discard и завершение
+  worker не являются Project history.
+- Engineering workflow: risk-based research/review protocols приняты в
+  [engineering/](./engineering/README.md). work project command не переносится напрямую;
+  собственный review skill проектируется после PP-007/PP-006 пилотов.
 
 - Desktop shell: Electron.
 - Renderer: Vue 3 + TypeScript.
@@ -39,6 +55,7 @@
 - Preset import/export: не планируется; отдельный portable preset bundle format не проектируем.
 - Preset storage: гибридная SQLite-модель; каталог и `workflow_type` в колонках, настройки генерации в валидируемом `payload_json`.
 - Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
+- Preset resource diagnostics: PP-006 требует visible warning до mutation и hard block только для выбранных секций с missing model/LoRA/VAE/embedding. Standalone Apply это уже моделирует; Project-integrated Apply должен получить тот же textual diagnostic и nested-resource detection прежде, чем обещание станет публично готовым.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в accepted-result provenance.
 - Model versioning: MVP обнаруживает доступные CivitAI-версии, устанавливает

@@ -167,7 +167,7 @@ defineProps<{
 
 .large-preview {
   width: 100%;
-  height: 320px;
+  height: clamp(160px, 23vh, 230px);
 }
 
 h2,

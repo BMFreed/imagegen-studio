@@ -1,5 +1,13 @@
 # Project Document Lifecycle
 
+Supporting contract for [PP-007: Проект принадлежит пользователю](../../product-promises.md#pp-007-проект-принадлежит-пользователю).
+The promise registry owns the concise commitment and public readiness; this
+document owns Save, dirty state, close and recovery rules.
+
+Related contracts: [Home](../home-screen.md) owns workspaces, import/relink and
+app-managed Trash; [Data Storage](../../specs/03-data-storage.md) owns the `.igs`
+package and derived indexes; [Undo/Redo](./undo-redo.md) owns session history.
+
 ## Feature
 
 An opened `.igs` Project has an explicit saved revision, in-memory document state, a recovery shadow and optional temporary generation staging sessions.
@@ -14,6 +22,12 @@ open Project state = current editable document
 autosave shadow = crash recovery
 generation staging = temporary candidates, not document state
 ```
+
+The portable `.igs` package owns saved canvas/layer assets, settings, accepted
+results and their provenance. Project indexes and preview caches can be rebuilt;
+they are not required as the sole copy of the saved project. Model weights stay
+in the reusable library: moving a project may require installing its exact
+resources, and missing resources must remain understandable from copied metadata.
 
 ## Dirty State
 
@@ -76,6 +90,11 @@ After an unexpected shutdown:
 
 Recovery of unfinished generation staging sessions is deferred. Current recovery guarantees cover persistent Project document edits, not unaccepted candidate outputs.
 
+Recovery is best effort from validated shadow state and does not guarantee zero
+lost edits since the latest debounce. It is not a backup against disk corruption,
+external deletion or every crash. Recover opens a dirty document for review;
+only explicit Save replaces the main `.igs`. Undo history does not survive restart.
+
 ## Vue Prototype Coverage
 
 The interactive source of truth is `?prototype=project` and Project tabs opened from Home.
@@ -100,6 +119,12 @@ Not implemented by the Vue prototype:
 
 Home's `Recovery available` scenario is a separate mock of the intended recovery decision flow. It must not be read as evidence that the Project prototype writes or restores recovery shadows.
 
+[Project tests](../../prototype-app/tests/project.spec.ts) and
+[Home tests](../../prototype-app/tests/home.spec.ts) are prototype evidence sources,
+not evidence of completed production I/O. PP-007 stays publicly unavailable until
+the save/reopen and failure/recovery paths are exercised against real files.
+The pending process pilot is tracked in [Engineering workflow](../../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
+
 ## Acceptance Criteria
 
 - Dirty state represents divergence from the explicit saved `.igs` revision.
@@ -108,3 +133,6 @@ Home's `Recovery available` scenario is a separate mock of the intended recovery
 - Failed Save never closes the Project or deletes recovery state.
 - Staging-only state does not mark Project dirty and is never auto-accepted on close.
 - Undo/redo can clear dirty when it returns to the saved revision.
+- A saved supported `.igs` can be reopened after transfer/import without relying on the original installation's project index or preview cache; unavailable model weights produce diagnostics.
+- Save success is verified by reopening through the real loader; a write/validation/replacement failure keeps the previous saved package readable and the document dirty.
+- Valid recovery opens for review without replacing the saved package until explicit Save; failed Save does not delete the recoverable shadow.

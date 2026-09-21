@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowsMaximize, Refresh } from '@vicons/tabler'
-import { NButton, NCard, NCheckbox, NIcon, NModal, NScrollbar, NText } from 'naive-ui'
+import { NAlert, NButton, NCard, NCheckbox, NIcon, NModal, NText } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import type { PresetPayload, PresetRecord, PresetSectionKey } from './presets.types'
@@ -18,8 +18,10 @@ import {
 
 const props = defineProps<{
   currentPayload: PresetPayload
+  excludeSize?: boolean
   projectName: string
   sourcePreset: PresetRecord
+  targetLabel?: string
 }>()
 const emit = defineEmits<{
   apply: [value: { payload: PresetPayload; selectedSections: PresetSectionKey[] }]
@@ -27,8 +29,22 @@ const emit = defineEmits<{
 }>()
 const show = defineModel<boolean>('show', { required: true })
 const draft = ref(createApplicationDraft(props.sourcePreset))
+const editOriginalConfirm = ref(false)
 const expanded = ref<PresetSectionKey[]>([])
-const sections = computed(() => includedSections(props.sourcePreset.payload))
+const sections = computed(() =>
+  includedSections(props.sourcePreset.payload).filter(
+    (section) => !props.excludeSize || section !== 'size',
+  ),
+)
+const missingSections = computed(() =>
+  draft.value.selectedSections.filter((section) =>
+    presetSectionHasMissingResources(
+      draft.value.payload,
+      section,
+      presetEditorResources.embeddings,
+    ),
+  ),
+)
 const allSelected = computed(() => draft.value.selectedSections.length === sections.value.length)
 const applyDisabled = computed(
   () =>
@@ -42,7 +58,7 @@ const applyDisabled = computed(
     ),
 )
 watch(
-  () => props.sourcePreset.id,
+  () => [props.sourcePreset.id, show.value],
   () => {
     draft.value = createApplicationDraft(props.sourcePreset)
     expanded.value = []
@@ -60,6 +76,11 @@ function apply() {
   })
   show.value = false
 }
+function openOriginal() {
+  editOriginalConfirm.value = false
+  show.value = false
+  emit('editOriginal', props.sourcePreset.id)
+}
 </script>
 
 <template>
@@ -70,19 +91,30 @@ function apply() {
       role="dialog"
       size="small"
     >
-      <header>
-        <div>
-          <h2>Apply Preset: {{ sourcePreset.name }}</h2>
-          <NText depth="3">
-            Customize a temporary copy for
-            <strong>{{ projectName }}</strong>
-            . The saved preset will not change.
-          </NText>
-        </div>
-        <NButton aria-label="Close Apply Preset" circle quaternary @click="show = false">×</NButton>
-      </header>
-      <NScrollbar class="modal-scroll">
+      <template v-slot:header>
+        <header>
+          <div>
+            <h2>Apply Preset: {{ sourcePreset.name }}</h2>
+            <NText class="application-context" depth="3">
+              Customize a temporary copy for
+              <strong>{{ projectName }}{{ targetLabel ? ` · ${targetLabel}` : '' }}</strong>
+              . The saved preset will not change.
+            </NText>
+          </div>
+          <NButton aria-label="Close Apply Preset" circle quaternary @click="show = false">
+            ×
+          </NButton>
+        </header>
+      </template>
+      <div class="modal-scroll">
         <div class="modal-content">
+          <NAlert v-if="missingSections.length" title="Selected resource is missing" type="warning">
+            <p v-for="section of missingSections" :key="section">
+              {{ sectionLabels[section] }}: {{ summarizePresetSection(draft.payload, section) }}
+            </p>
+            Replace the resource in its section, or deselect the section to keep your current
+            settings.
+          </NAlert>
           <div class="modal-toolbar">
             <NCheckbox
               :checked="allSelected"
@@ -135,24 +167,49 @@ function apply() {
             </template>
           </PresetPayloadEditor>
         </div>
-      </NScrollbar>
-      <footer>
-        <NButton tertiary @click="emit('editOriginal', sourcePreset.id)">Edit original</NButton>
-        <span>
-          <NButton tertiary @click="show = false">Cancel</NButton>
-          <NButton :disabled="applyDisabled" type="primary" @click="apply">Apply</NButton>
-        </span>
-      </footer>
+      </div>
+      <template v-slot:footer>
+        <footer>
+          <NButton tertiary @click="editOriginalConfirm = true">Edit original</NButton>
+          <span>
+            <NButton tertiary @click="show = false">Cancel</NButton>
+            <NButton :disabled="applyDisabled" type="primary" @click="apply">Apply</NButton>
+          </span>
+        </footer>
+      </template>
+    </NCard>
+  </NModal>
+  <NModal v-model:show="editOriginalConfirm">
+    <NCard
+      aria-label="Edit saved preset"
+      class="edit-confirm"
+      role="dialog"
+      size="small"
+      title="Edit the saved preset?"
+    >
+      Changes in this temporary application will be discarded. The Preset Manager will open the
+      saved original.
+      <template v-slot:footer>
+        <footer>
+          <NButton @click="editOriginalConfirm = false">Keep editing here</NButton>
+          <NButton type="primary" @click="openOriginal">Open original</NButton>
+        </footer>
+      </template>
     </NCard>
   </NModal>
 </template>
 
 <style scoped>
+.application-context {
+  font-size: 13px;
+  font-weight: 400;
+}
+.edit-confirm {
+  width: min(460px, calc(100vw - 48px));
+}
 .apply-modal {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(980px, calc(100vw - 80px));
-  max-height: calc(100vh - 72px);
+  max-height: calc(100vh - 48px);
 }
 header,
 footer,
@@ -169,7 +226,11 @@ h2 {
   font-size: 18px;
 }
 .modal-scroll {
-  min-height: 0;
+  overflow: auto;
+  max-height: calc(100vh - 230px);
+}
+.modal-content p {
+  margin: 4px 0;
 }
 .modal-content {
   display: grid;

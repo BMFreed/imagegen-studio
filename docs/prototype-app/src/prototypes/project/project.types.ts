@@ -61,6 +61,24 @@ export interface ProjectAspectRatioState {
   value: number
 }
 
+export interface GenerationProvenance {
+  advanced: { cfgRescale: number; vaePrecision: string }
+  engine: 'Prototype simulation'
+  mode: DerivedGenerationMode
+  payload: GenerationPayload
+  queueItemId: string
+  regionalGuidance: RegionalGuidanceLayerModel[]
+  resultId?: string
+  source?: {
+    bbox: ProjectRect
+    draft: ProjectGenerationDraft
+    internalHeight: number
+    internalWidth: number
+    maskRevision: number
+  }
+  unavailableSections?: (keyof GenerationPayload)[]
+}
+
 export interface ProjectRasterLayer {
   blendMode: 'multiply' | 'normal' | 'overlay' | 'screen'
   id: string
@@ -70,6 +88,7 @@ export interface ProjectRasterLayer {
   mockCoverage: 'opaque' | 'partial'
   name: string
   opacity: number
+  provenance?: GenerationProvenance
   tone: ProjectArtworkTone
   visible: boolean
 }
@@ -77,6 +96,7 @@ export interface ProjectRasterLayer {
 export interface SmartPatchVariant {
   id: string
   name: string
+  provenance?: GenerationProvenance
   tone: ProjectArtworkTone
 }
 
@@ -144,6 +164,7 @@ export interface GenerationStagingSession {
 
 export interface ProjectQueueItem {
   derivedMode: DerivedGenerationMode
+  frozenGeneration?: GenerationProvenance
   id: string
   iteration: number
   label: string
@@ -182,7 +203,7 @@ export interface ProjectUiState {
   rightCollapsed: boolean
   rightWidth: number
   selection: ProjectEntitySelection
-  viewport: { offsetX: number; offsetY: number; scale: number }
+  viewport: { fit?: boolean; offsetX: number; offsetY: number; scale: number }
 }
 
 export interface ProjectSession {

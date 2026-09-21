@@ -17,7 +17,7 @@ import {
   ZoomOut,
 } from '@vicons/tabler'
 import { NButton, NIcon, NSelect, NText, NTooltip } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ProjectSession, ProjectTool } from './project.types'
 
@@ -67,14 +67,58 @@ const topArtwork = computed(() => {
   }
   return undefined
 })
-const canvasStyle = computed(() => ({
-  aspectRatio: `${props.session.document.canvas.width} / ${props.session.document.canvas.height}`,
-  transform: `translate(${props.session.ui.viewport.offsetX}px, ${props.session.ui.viewport.offsetY}px) scale(${props.session.ui.viewport.scale})`,
-}))
-const zoomOptions = [25, 50, 62, 75, 100, 125].map((value) => ({
-  label: `${value}%`,
-  value: value / 100,
-}))
+const stage = ref<HTMLElement | null>(null)
+const stageSize = ref({ height: 0, width: 0 })
+const observer = new ResizeObserver(([entry]) => {
+  if (entry) {
+    stageSize.value = { height: entry.contentRect.height, width: entry.contentRect.width }
+  }
+})
+onMounted(() => {
+  if (stage.value) {
+    observer.observe(stage.value)
+  }
+})
+onBeforeUnmount(() => observer.disconnect())
+const canvasWidth = computed(() => `${props.session.document.canvas.width}px`)
+const canvasHeight = computed(() => `${props.session.document.canvas.height}px`)
+const canvasTransform = computed(
+  () =>
+    `translate(${props.session.ui.viewport.offsetX}px, ${props.session.ui.viewport.offsetY}px) scale(${props.session.ui.viewport.scale})`,
+)
+const zoomOptions = computed(() =>
+  [...new Set([0.25, 0.5, 0.75, 1, 1.25, props.session.ui.viewport.scale])]
+    .sort((a, b) => a - b)
+    .map((value) => ({ label: `${Math.round(value * 100)}%`, value })),
+)
+const previewCandidate = computed(() =>
+  props.session.staging?.previewVisible
+    ? props.session.staging.candidates.find(
+        (item) =>
+          item.id === props.session.staging?.focusedCandidateId && item.status === 'completed',
+      )
+    : undefined,
+)
+watch(
+  [
+    stageSize,
+    () => props.session.document.canvas.width,
+    () => props.session.document.canvas.height,
+  ],
+  () => {
+    if (
+      props.session.ui.viewport.fit !== false &&
+      stageSize.value.width > 0 &&
+      stageSize.value.height > 0
+    ) {
+      fitView()
+    }
+  },
+)
+function setZoom(scale: number) {
+  props.session.ui.viewport.fit = false
+  props.session.ui.viewport.scale = scale
+}
 const toolHints: Record<ProjectTool, string> = {
   bbox: 'Drag handles to resize · Shift keeps ratio',
   brush: 'Drag to edit mask · [ ] changes size',
@@ -96,6 +140,7 @@ function startPan(event: PointerEvent) {
   ) {
     return
   }
+  props.session.ui.viewport.fit = false
   dragging.value = true
   lastPoint.value = { x: event.clientX, y: event.clientY }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -142,19 +187,26 @@ function fitPatch() {
   })
 }
 function fitView() {
-  props.session.ui.viewport = { offsetX: 0, offsetY: 0, scale: 0.62 }
+  const { height, width } = stageSize.value
+  if (!width || !height) {
+    return
+  }
+  const canvas = props.session.document.canvas
+  const scale = Math.max(
+    0.01,
+    Math.min((width - 112) / canvas.width, (height - 100) / canvas.height, 1),
+  )
+  props.session.ui.viewport = { fit: true, offsetX: 0, offsetY: 0, scale }
 }
 function zoom(delta: number) {
-  props.session.ui.viewport.scale = Math.min(
-    1.5,
-    Math.max(0.2, props.session.ui.viewport.scale + delta),
-  )
+  setZoom(Math.min(1.5, Math.max(0.05, props.session.ui.viewport.scale + delta)))
 }
 </script>
 
 <template>
   <section aria-label="Project canvas workspace" class="canvas-workspace">
     <div
+      ref="stage"
       class="canvas-stage"
       tabindex="0"
       @click.self="editContextualSurface"
@@ -162,15 +214,26 @@ function zoom(delta: number) {
       @pointerdown="startPan"
       @pointermove="movePan"
       @pointerup="stopPan"
+      @wheel.prevent="zoom($event.deltaY > 0 ? -0.05 : 0.05)"
     >
       <div class="canvas-size-label">
         Project Canvas {{ session.document.canvas.width }} × {{ session.document.canvas.height }}
+      </div>
+      <div v-if="previewCandidate" class="preview-label">
+        Preview #{{ previewCandidate.imageIndex }} · Not added
+      </div>
+      <div v-else-if="!session.document.layers.length" class="canvas-empty">
+        <strong>Your image starts here</strong>
+        <span>Describe an image, then Generate. Choose the results you want to add as layers.</span>
       </div>
       <div class="left-rail tool-rail">
         <NTooltip>
           <template v-slot:trigger>
             <NButton
               :aria-expanded="!session.ui.leftCollapsed"
+              :aria-label="
+                session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel'
+              "
               circle
               quaternary
               size="small"
@@ -292,7 +355,7 @@ function zoom(delta: number) {
         </NButton>
       </div>
 
-      <div class="canvas-frame" :style="canvasStyle" @click="editContextualSurface">
+      <div class="canvas-frame" @click="editContextualSurface">
         <ProjectCanvasArtwork v-if="topArtwork" :tone="topArtwork" />
         <div v-if="selectedRegional" class="regional-overlay"><span>Regional Guidance</span></div>
         <div
@@ -365,7 +428,7 @@ function zoom(delta: number) {
           :options="zoomOptions"
           size="small"
           :value="session.ui.viewport.scale"
-          @update:value="session.ui.viewport.scale = $event"
+          @update:value="setZoom"
         />
         <NButton aria-label="Zoom in" circle quaternary size="small" @click="zoom(0.1)">
           <NIcon :component="ZoomIn" />
@@ -382,7 +445,7 @@ function zoom(delta: number) {
 <style scoped>
 .canvas-workspace {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -394,12 +457,12 @@ function zoom(delta: number) {
   min-height: 0;
   overflow: hidden;
   outline: none;
-  background-color: #0b0b0f;
+  background-color: var(--canvas-background);
   background-image:
-    linear-gradient(45deg, #ffffff08 25%, transparent 25%),
-    linear-gradient(-45deg, #ffffff08 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #ffffff08 75%),
-    linear-gradient(-45deg, transparent 75%, #ffffff08 75%);
+    linear-gradient(45deg, var(--canvas-checker) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--canvas-checker) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--canvas-checker) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--canvas-checker) 75%);
   background-position:
     0 0,
     0 12px,
@@ -423,15 +486,14 @@ function zoom(delta: number) {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: min(54%, 560px);
-  min-width: 270px;
-  max-height: 82%;
+  width: v-bind(canvasWidth);
+  height: v-bind(canvasHeight);
+  transform: v-bind(canvasTransform);
   transform-origin: center;
   translate: -50% -50%;
   overflow: hidden;
   background: #070a0f;
-  border: 1px solid color-mix(in srgb, var(--workspace-green) 72%, transparent);
-  box-shadow: 0 18px 48px #0008;
+  outline: 1px solid var(--app-border);
 }
 .tool-rail {
   position: absolute;
@@ -442,14 +504,14 @@ function zoom(delta: number) {
   gap: 4px;
 }
 .tool-rail :deep(.n-button) {
-  color: #111116;
-  background: #a7a7ae;
+  color: var(--app-text);
+  background: var(--app-elevated);
 }
 .tool-rail :deep(.n-icon) {
   font-size: 18px;
 }
 .tool-rail :deep(.n-button:hover) {
-  background: #bebec4;
+  background: var(--app-surface-soft);
 }
 .left-rail {
   left: 8px;
@@ -539,5 +601,32 @@ function zoom(delta: number) {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.preview-label {
+  position: absolute;
+  top: 46px;
+  left: 56px;
+  z-index: 4;
+  padding: 4px 7px;
+  font-size: 12px;
+  color: var(--workspace-green);
+  background: var(--app-surface);
+}
+.canvas-empty {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 64px;
+  pointer-events: none;
+}
+.canvas-empty span {
+  max-width: 280px;
+  color: var(--app-text-muted);
 }
 </style>

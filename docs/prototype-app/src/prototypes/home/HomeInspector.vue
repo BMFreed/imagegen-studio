@@ -72,7 +72,12 @@ const canOpen = computed(
     </NButton>
 
     <template v-if="!collapsed">
-      <NEmpty v-if="!project" class="inspector-empty" description="Select a project to preview" />
+      <NEmpty v-if="!project" class="inspector-empty" description="Select a project to preview">
+        <template v-slot:extra>
+          <p>Review its image, file location and recovery status here before opening.</p>
+          <p>Double-click a project to continue working.</p>
+        </template>
+      </NEmpty>
       <template v-else>
         <header class="inspector-header">
           <div>

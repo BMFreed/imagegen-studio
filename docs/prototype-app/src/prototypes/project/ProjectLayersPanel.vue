@@ -14,13 +14,24 @@ import {
 } from 'naive-ui'
 import { computed, ref } from 'vue'
 
+import type { PresetCreateIntent } from '../presets/presets.types'
 import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
+import { clonePreset } from '../presets/presets.utils'
 import { commitProjectMutation } from './project-history'
+import { presetIntentFromResult } from './project-provenance'
 import { getSelectedEntity } from './project.utils'
+import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 
 const props = defineProps<{ session: ProjectSession }>()
+const emit = defineEmits<{ savePreset: [intent: PresetCreateIntent] }>()
+function saveResultPreset(layer: ProjectCompositingLayer) {
+  const intent = presetIntentFromResult(layer)
+  if (intent) {
+    emit('savePreset', intent)
+  }
+}
 const panelScroll = ref<HTMLElement | null>(null)
 const variantLayerId = ref<string>()
 const selected = computed(() => getSelectedEntity(props.session))
@@ -41,10 +52,13 @@ function activeVariantName(layer: ProjectCompositingLayer) {
     : ''
 }
 function mutateLayer(
-  layer: ProjectCompositingLayer,
+  layer: ProjectCompositingLayer | undefined,
   label: string,
   mutate: (target: ProjectCompositingLayer) => void,
 ) {
+  if (!layer) {
+    return
+  }
   commitProjectMutation(props.session, label, (document) => {
     const target = document.layers.find((item) => item.id === layer.id)
     if (target) {
@@ -70,7 +84,7 @@ function addLayer(kind: 'raster' | 'smart-patch') {
           }
         : {
             bbox: { height: 384, width: 384, x: 252, y: 360 },
-            generationDraft: structuredClone(document.generationDraft),
+            generationDraft: clonePreset(document.generationDraft),
             id,
             internalHeight: 768,
             internalWidth: 768,
@@ -89,7 +103,7 @@ function addLayer(kind: 'raster' | 'smart-patch') {
 function duplicate(layer: ProjectCompositingLayer) {
   commitProjectMutation(props.session, 'Duplicate layer', (document) => {
     const index = document.layers.findIndex((item) => item.id === layer.id)
-    const copy = structuredClone(layer)
+    const copy = clonePreset(layer)
     copy.id = `${layer.id}-copy-${Date.now()}`
     copy.name = `${layer.name} copy`
     document.layers.splice(index, 0, copy)
@@ -244,6 +258,7 @@ function addRegional() {
               @duplicate="duplicate"
               @move="move"
               @remove="remove"
+              @savePreset="saveResultPreset"
               @toggleLock="
                 mutateLayer($event, 'Toggle lock', (target) => (target.locked = !target.locked))
               "
@@ -266,9 +281,15 @@ function addRegional() {
                 Opacity
                 <NInputNumber
                   aria-label="Layer opacity"
+                  :inputProps="{ 'aria-label': 'Layer opacity' }"
                   :max="100"
                   :min="0"
                   :value="selectedLayer.opacity"
+                  @update:value="
+                    mutateLayer(selectedLayer, 'Change opacity', (target) => {
+                      if (target.kind === 'raster') target.opacity = $event ?? 100
+                    })
+                  "
                 />
               </label>
               <label>
@@ -282,6 +303,11 @@ function addRegional() {
                     }))
                   "
                   :value="selectedLayer.blendMode"
+                  @update:value="
+                    mutateLayer(selectedLayer, 'Change blend mode', (target) => {
+                      if (target.kind === 'raster') target.blendMode = $event
+                    })
+                  "
                 />
               </label>
             </div>
@@ -324,12 +350,38 @@ function addRegional() {
               aria-label="Regional prompt"
               type="textarea"
               :value="selectedRegional.positivePrompt"
+              @update:value="
+                commitProjectMutation(session, 'Edit regional prompt', () => {
+                  if (selectedRegional) selectedRegional.positivePrompt = $event
+                })
+              "
             />
           </label>
           <div class="switch-line">
             <span>Use global negative prompt</span>
-            <NSwitch :value="selectedRegional.autoNegative" />
+            <NSwitch
+              aria-label="Use global negative prompt"
+              :value="selectedRegional.autoNegative"
+              @update:value="
+                commitProjectMutation(session, 'Change regional negative source', () => {
+                  if (selectedRegional) selectedRegional.autoNegative = $event
+                })
+              "
+            />
           </div>
+          <label v-if="!selectedRegional.autoNegative">
+            Negative Prompt
+            <NInput
+              aria-label="Regional negative prompt"
+              type="textarea"
+              :value="selectedRegional.negativePrompt"
+              @update:value="
+                commitProjectMutation(session, 'Edit regional negative prompt', () => {
+                  if (selectedRegional) selectedRegional.negativePrompt = $event
+                })
+              "
+            />
+          </label>
         </NCard>
       </div>
     </div>
@@ -354,6 +406,7 @@ function addRegional() {
           }
         "
       >
+        <span class="variant-thumb"><ProjectCanvasArtwork :tone="variant.tone" /></span>
         {{ variant.name }}
       </NButton>
     </div>
@@ -361,6 +414,18 @@ function addRegional() {
 </template>
 
 <style scoped>
+.variant-thumb {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  margin-right: 12px;
+}
+.variant-popover > .n-button {
+  height: 60px;
+  justify-content: start;
+}
 .layers-panel {
   position: relative;
   min-width: 0;

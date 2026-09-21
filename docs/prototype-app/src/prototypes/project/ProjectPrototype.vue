@@ -2,7 +2,7 @@
 import { NAlert, NButton, NCard, NModal, NSplit, NText, useMessage } from 'naive-ui'
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-import type { PresetSectionKey } from '../presets/presets.types'
+import type { PresetCreateIntent, PresetSectionKey } from '../presets/presets.types'
 import type { ProjectSession } from './project.types'
 
 import {
@@ -11,9 +11,10 @@ import {
   serializeGenerationPrompt,
 } from '../../components/generation/generation-prompt.utils'
 import ApplyPresetModal from '../presets/ApplyPresetModal.vue'
-import { presetResources } from '../presets/presets.mock'
+import { presetCatalog } from '../presets/presets.catalog'
 import { commitActiveProjectEdit, redoProject, undoProject } from './project-history'
 import { expandPromptPairs } from './project-prompt.utils'
+import { freezeGeneration } from './project-provenance'
 import {
   acceptStagingCandidates,
   applyPresetSections,
@@ -27,7 +28,12 @@ import ProjectSettingsPanel from './ProjectSettingsPanel.vue'
 import { useProjectPanelSizes } from './useProjectPanelSizes'
 
 const props = defineProps<{ active?: boolean; session: ProjectSession }>()
-const emit = defineEmits<{ manageModels: []; managePresets: []; save: []; savePreset: [] }>()
+const emit = defineEmits<{
+  manageModels: []
+  managePresets: [id?: string]
+  save: []
+  savePreset: [intent?: PresetCreateIntent]
+}>()
 const message = useMessage()
 const imagesPerClick = ref(4)
 const pendingPresetId = ref<string>()
@@ -38,13 +44,16 @@ const showApplyPreset = computed({
   },
 })
 const showEarlyAccept = ref(false)
+const replacementCount = ref<number>()
 const timers = new Set<ReturnType<typeof globalThis.setTimeout>>()
 const { centerMax, centerMin, centerSize, innerHost, leftMax, leftMin, leftSize, outerHost } =
   useProjectPanelSizes(props.session)
 void innerHost
 void outerHost
 const selectedPreset = computed(
-  () => presetResources.find((item) => item.id === pendingPresetId.value) ?? presetResources[0]!,
+  () =>
+    presetCatalog.value.find((item) => item.id === pendingPresetId.value) ??
+    presetCatalog.value[0]!,
 )
 const currentPayload = computed(() => getActiveGenerationDraft(props.session).payload)
 
@@ -70,6 +79,9 @@ function runNext() {
     candidate.status = 'running'
   }
   schedule(() => {
+    if (next.status !== 'running' || !props.session.queueItems.includes(next)) {
+      return
+    }
     next.progress = 100
     next.status = 'completed'
     if (candidate) {
@@ -87,13 +99,29 @@ function runNext() {
     runNext()
   }, 420)
 }
+function requestGenerate(count: number) {
+  if (props.session.staging) {
+    replacementCount.value = count
+    return
+  }
+  generate(count)
+}
+function replaceAndGenerate() {
+  const count = replacementCount.value
+  replacementCount.value = undefined
+  if (count === undefined) {
+    return
+  }
+  discardStagingSession(props.session)
+  generate(count)
+}
 function generate(count: number) {
   commitActiveProjectEdit(props.session)
   for (const timer of timers) {
     clearTimeout(timer)
   }
   timers.clear()
-  const id = Date.now()
+  const id = crypto.randomUUID()
   const draft = getActiveGenerationDraft(props.session)
   const expansion = expandPromptPairs(
     serializeGenerationPrompt(draft.payload.prompt),
@@ -106,6 +134,15 @@ function generate(count: number) {
   const mode = deriveGenerationMode(props.session)
   props.session.queueItems = jobs.map((job, index) => ({
     derivedMode: mode,
+    frozenGeneration: freezeGeneration(
+      props.session,
+      `queue-${id}-${index}`,
+      job.prompt,
+      job.negativePrompt,
+      draft.payload.seed?.policy === 'fixed'
+        ? (draft.payload.seed.value ?? 0)
+        : crypto.getRandomValues(new Uint32Array(1))[0]!,
+    ),
     id: `queue-${id}-${index}`,
     iteration: job.iteration,
     label: `Image ${index + 1}`,
@@ -228,7 +265,7 @@ onBeforeUnmount(() => {
             :session
             @applyPreset="openPreset"
             @cancelGeneration="cancelCurrent"
-            @generate="generate"
+            @generate="requestGenerate"
             @manageModels="emit('manageModels')"
             @managePresets="emit('managePresets')"
             @savePreset="emit('savePreset')"
@@ -262,7 +299,11 @@ onBeforeUnmount(() => {
                 />
               </template>
               <template v-slot:2>
-                <ProjectLayersPanel v-if="!session.ui.rightCollapsed" :session />
+                <ProjectLayersPanel
+                  v-if="!session.ui.rightCollapsed"
+                  :session
+                  @savePreset="emit('savePreset', $event)"
+                />
                 <div v-else class="collapsed-panel" />
               </template>
             </NSplit>
@@ -274,17 +315,45 @@ onBeforeUnmount(() => {
     <ApplyPresetModal
       v-model:show="showApplyPreset"
       :currentPayload
+      :excludeSize="getActiveGenerationDraft(session) !== session.document.generationDraft"
       :projectName="session.document.title"
       :sourcePreset="selectedPreset"
+      :targetLabel="
+        getActiveGenerationDraft(session) === session.document.generationDraft
+          ? 'Project Canvas'
+          : 'Selected Smart Patch'
+      "
       @apply="applyPreset"
       @editOriginal="
-        () => {
+        (id) => {
           showApplyPreset = false
-          emit('managePresets')
+          emit('managePresets', id)
         }
       "
       @update:show="!$event && (pendingPresetId = undefined)"
     />
+    <NModal
+      :maskClosable="false"
+      :show="replacementCount !== undefined"
+      @update:show="!$event && (replacementCount = undefined)"
+    >
+      <NCard
+        aria-label="Replace generation results"
+        class="confirm-card"
+        role="dialog"
+        size="small"
+      >
+        <h2>Replace the current results?</h2>
+        <NText>
+          The current temporary results will be discarded and unfinished jobs canceled. Your project
+          layers will stay as they are.
+        </NText>
+        <footer>
+          <NButton @click="replacementCount = undefined">Keep results</NButton>
+          <NButton type="warning" @click="replaceAndGenerate">Discard and generate</NButton>
+        </footer>
+      </NCard>
+    </NModal>
     <NModal v-model:show="showEarlyAccept" :maskClosable="false">
       <NCard aria-label="Accept generation results" class="confirm-card" role="dialog" size="small">
         <h2>Add selected results now?</h2>

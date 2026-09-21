@@ -27,7 +27,8 @@ import type {
 import type { HomeProjectRecord, HomeWorkspace, NewProjectDraft } from './home.types'
 
 import PresetPayloadEditor from '../presets/PresetPayloadEditor.vue'
-import { presetEditorResources, presetResources } from '../presets/presets.mock'
+import { presetCatalog } from '../presets/presets.catalog'
+import { presetEditorResources } from '../presets/presets.mock'
 import {
   clonePreset,
   includedSections,
@@ -61,18 +62,20 @@ const sourcePayload = ref<PresetPayload>()
 const expandedSections = ref<PresetSectionKey[]>([])
 const formRef = ref<FormInst>()
 
-const textToImagePresets = presetResources.filter((preset) => preset.workflow === 'textToImage')
-const presetOptions = [
+const textToImagePresets = computed(() =>
+  presetCatalog.value.filter((preset) => preset.workflow === 'textToImage'),
+)
+const presetOptions = computed(() => [
   { label: 'No preset', value: 'none' },
-  ...textToImagePresets.map((preset) => ({ label: preset.name, value: preset.id })),
-]
+  ...textToImagePresets.value.map((preset) => ({ label: preset.name, value: preset.id })),
+])
 const workspaceOptions = computed(() =>
   props.workspaces
     .filter((workspace) => workspace.availability === 'available')
     .map((workspace) => ({ label: workspace.name, value: workspace.id })),
 )
 const selectedPreset = computed(() =>
-  textToImagePresets.find((preset) => preset.id === draft.generationPresetId),
+  textToImagePresets.value.find((preset) => preset.id === draft.generationPresetId),
 )
 const sections = computed(() =>
   presetDraft.value ? includedSections(presetDraft.value.payload) : [],
@@ -154,7 +157,7 @@ function selectPreset(presetId: string) {
     return
   }
 
-  const preset = textToImagePresets.find((candidate) => candidate.id === presetId)
+  const preset = textToImagePresets.value.find((candidate) => candidate.id === presetId)
   if (!preset) {
     return
   }

@@ -131,3 +131,8 @@ body .prompt-help {
   border-radius: var(--app-radius);
   font-size: var(--app-font-size-meta);
 }
+
+:root {
+  --canvas-background: #101114;
+  --canvas-checker: #ffffff05;
+}

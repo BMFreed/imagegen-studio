@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { ListCheck, ListDetails, Wand, X } from '@vicons/tabler'
+import { ListCheck, Wand, X } from '@vicons/tabler'
 import {
   NAlert,
   NBadge,
   NButton,
   NCard,
   NIcon,
-  NInput,
   NInputNumber,
   NScrollbar,
   NSelect,
@@ -31,6 +30,7 @@ import { expandPromptPairs } from './project-prompt.utils'
 import {
   deriveGenerationMode,
   getActiveGenerationDraft,
+  getSelectedEntity,
   projectHasBlockingGenerationErrors,
 } from './project.utils'
 import ProjectPresetCard from './ProjectPresetCard.vue'
@@ -49,13 +49,27 @@ const emit = defineEmits<{
 }>()
 
 const activeDraft = computed(() => getActiveGenerationDraft(props.session))
+const target = computed(() => {
+  const entity = getSelectedEntity(props.session)
+  return entity && 'kind' in entity && entity.kind === 'smart-patch' ? entity : undefined
+})
 const payload = computed(() => activeDraft.value.payload)
 const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 })
 const dynamicPreviewOpen = ref(false)
-const modelOptions = presetEditorResources.models.map((model) => ({
-  label: model.name,
-  value: model.id,
-}))
+const modelOptions = [
+  ...new Map(presetEditorResources.models.map((model) => [model.name, model.name])).keys(),
+].map((name) => ({ label: name, value: name }))
+const versionOptions = computed(() =>
+  presetEditorResources.models
+    .filter((model) => model.name === payload.value.model?.name)
+    .map((model) => ({ label: model.version ?? 'Version unavailable', value: model.id })),
+)
+function selectModel(name: string) {
+  const model = presetEditorResources.models.find((model) => model.name === name)
+  if (model) {
+    updateModel(model.id)
+  }
+}
 const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
@@ -144,7 +158,10 @@ function normalizeCount(value: number | null) {
 
 <template>
   <aside aria-label="Generate settings" class="settings-panel">
-    <div class="create-label"><strong>Create</strong></div>
+    <div class="create-label">
+      <strong>{{ target ? 'Smart Patch' : 'Create' }}</strong>
+      <span>{{ target?.name ?? 'Project Canvas' }}</span>
+    </div>
 
     <footer class="generation-footer">
       <div class="generation-primary-actions">
@@ -157,8 +174,8 @@ function normalizeCount(value: number | null) {
           <strong>Generate</strong>
         </NButton>
         <NInputNumber
-          aria-label="Images per click"
           class="count-input"
+          :inputProps="{ 'aria-label': 'Images per click' }"
           :max="100"
           :min="1"
           :step="1"
@@ -204,7 +221,31 @@ function normalizeCount(value: number | null) {
           @manage="emit('managePresets')"
           @save="emit('savePreset')"
         />
-        <ProjectSizeCard :session />
+        <section aria-label="Active model" class="model-summary">
+          <div class="card-title-line">
+            <strong>Model</strong>
+            <NButton aria-label="Manage Models" size="tiny" text @click="emit('manageModels')">
+              Manage models
+            </NButton>
+          </div>
+          <NSelect
+            aria-label="Generation model"
+            :options="modelOptions"
+            size="small"
+            :value="payload.model?.name"
+            @update:value="selectModel"
+          />
+          <NSelect
+            aria-label="Model version"
+            :options="versionOptions"
+            size="small"
+            :value="payload.model?.id"
+            @update:value="updateModel"
+          />
+          <NText depth="3">
+            {{ payload.model?.predictionType ?? 'Prediction type unavailable' }}
+          </NText>
+        </section>
         <ProjectPromptCard
           field="prompt"
           :session
@@ -217,6 +258,8 @@ function normalizeCount(value: number | null) {
           title="Negative Prompt"
           @dynamicPreview="dynamicPreviewOpen = true"
         />
+
+        <ProjectSizeCard :session />
 
         <NCard size="small" title="LoRAs">
           <NAlert v-if="payload.loras?.some((lora) => lora.resource.missing)" type="warning">
@@ -234,40 +277,12 @@ function normalizeCount(value: number | null) {
           <template v-slot:header>
             <div class="card-title-line">
               <strong>Generation</strong>
-              <NButton
-                aria-label="Manage Models"
-                quaternary
-                size="tiny"
-                @click="emit('manageModels')"
-              >
-                Manage models
-                <template v-slot:icon><NIcon :component="ListDetails" /></template>
-              </NButton>
             </div>
           </template>
           <NAlert v-if="payload.model?.missing" title="Selected model is missing" type="error">
             Choose an installed model before generating.
           </NAlert>
           <div class="field-stack">
-            <label>
-              Model
-              <NSelect
-                aria-label="Generation model"
-                :options="modelOptions"
-                size="small"
-                :value="payload.model?.id"
-                @update:value="updateModel"
-              />
-            </label>
-            <label>
-              Version
-              <NInput
-                aria-label="Model version"
-                disabled
-                size="small"
-                :value="payload.model?.version"
-              />
-            </label>
             <div class="two-fields">
               <label>
                 Sampler
@@ -353,6 +368,40 @@ function normalizeCount(value: number | null) {
                 Available when the generation area contains visible raster content.
               </NText>
             </label>
+            <div class="two-fields">
+              <label>
+                Seed policy
+                <NSelect
+                  aria-label="Seed policy"
+                  :options="[
+                    { label: 'Random', value: 'random' },
+                    { label: 'Fixed', value: 'fixed' },
+                  ]"
+                  :value="payload.seed?.policy ?? 'random'"
+                  @update:value="
+                    updatePayload('Change seed policy', (draft) => {
+                      draft.payload.seed = { policy: $event, value: draft.payload.seed?.value ?? 0 }
+                    })
+                  "
+                />
+              </label>
+              <label>
+                Seed
+                <NInputNumber
+                  :disabled="payload.seed?.policy !== 'fixed'"
+                  :inputProps="{ 'aria-label': 'Generation seed' }"
+                  :max="4294967295"
+                  :min="0"
+                  :precision="0"
+                  :value="payload.seed?.value ?? 0"
+                  @update:value="
+                    updatePayload('Change seed', (draft) => {
+                      draft.payload.seed = { policy: 'fixed', value: $event ?? 0 }
+                    })
+                  "
+                />
+              </label>
+            </div>
             <details>
               <summary>Advanced Options</summary>
               <div class="field-stack advanced">
@@ -363,6 +412,11 @@ function normalizeCount(value: number | null) {
                     :options="vaeOptions"
                     size="small"
                     :value="payload.vae?.id"
+                    @update:value="
+                      updatePayload('Change VAE', (draft) => {
+                        draft.payload.vae = presetEditorResources.vaes.find((v) => v.id === $event)
+                      })
+                    "
                   />
                 </label>
                 <label>
@@ -372,6 +426,11 @@ function normalizeCount(value: number | null) {
                     :options="['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))"
                     size="small"
                     :value="activeDraft.vaePrecision"
+                    @update:value="
+                      updatePayload('Change VAE precision', (draft) => {
+                        draft.vaePrecision = $event
+                      })
+                    "
                   />
                 </label>
               </div>
@@ -392,6 +451,18 @@ function normalizeCount(value: number | null) {
 </template>
 
 <style scoped>
+.create-label span {
+  color: var(--app-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-summary {
+  display: grid;
+  gap: 5px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--app-border);
+}
 .settings-panel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -410,11 +481,11 @@ function normalizeCount(value: number | null) {
   padding: 8px;
 }
 .create-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   margin: 8px 8px 0;
   padding: 5px 8px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  background: var(--app-elevated);
 }
 .card-title-line {
   display: flex;

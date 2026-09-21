@@ -3,13 +3,14 @@ import { FilePlus, Settings } from '@vicons/tabler'
 import { NButton, NCard, NIcon, NInput, NPopover, NTag, NTooltip } from 'naive-ui'
 import { computed, ref } from 'vue'
 
-import { presetResources } from '../presets/presets.mock'
+import { presetCatalog } from '../presets/presets.catalog'
+import { presetHasMissingResources, workflowLabel } from '../presets/presets.utils'
 
 const emit = defineEmits<{ apply: [id: string]; manage: []; save: [] }>()
 const open = ref(false)
 const search = ref('')
 const presets = computed(() =>
-  presetResources.filter((preset) =>
+  presetCatalog.value.filter((preset) =>
     preset.name.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()),
   ),
 )
@@ -54,19 +55,10 @@ function choose(id: string) {
               <span>
                 <strong>{{ preset.name }}</strong>
                 <small>
-                  {{ preset.workflow === 'textToImage' ? 'Text to Image' : preset.workflow }}
+                  {{ workflowLabel(preset.workflow) }}
                 </small>
               </span>
-              <NTag
-                v-if="
-                  Object.values(preset.payload).some(
-                    (value) =>
-                      typeof value === 'object' && value && 'missing' in value && value.missing,
-                  )
-                "
-                size="small"
-                type="warning"
-              >
+              <NTag v-if="presetHasMissingResources(preset)" size="small" type="warning">
                 Missing resource
               </NTag>
             </NButton>

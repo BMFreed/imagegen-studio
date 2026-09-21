@@ -19,6 +19,7 @@ export function commitProjectMutation(
   }
   session.history.future = []
   mutate(session.document)
+  refreshPatchStatus(session.document)
   session.document.updatedAt = new Date().toISOString()
   session.dirty = true
 }
@@ -36,6 +37,7 @@ export function updateProjectEdit(
   mutate: (document: ProjectDocumentModel) => void,
 ) {
   mutate(session.document)
+  refreshPatchStatus(session.document)
   session.dirty = JSON.stringify(session.document) !== JSON.stringify(session.savedDocument)
 }
 
@@ -124,4 +126,24 @@ export function discardProjectChanges(session: ProjectSession) {
   session.staging = undefined
   session.queueItems = []
   session.dirty = false
+}
+
+function refreshPatchStatus(document: ProjectDocumentModel) {
+  for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch') {
+      continue
+    }
+    const source = layer.variants.find((v) => v.id === layer.activeVariantId)?.provenance?.source
+    if (!source) {
+      continue
+    }
+    const current = {
+      bbox: layer.bbox,
+      draft: layer.generationDraft,
+      internalHeight: layer.internalHeight,
+      internalWidth: layer.internalWidth,
+      maskRevision: layer.maskRevision,
+    }
+    layer.status = JSON.stringify(source) === JSON.stringify(current) ? 'ready' : 'outdated'
+  }
 }

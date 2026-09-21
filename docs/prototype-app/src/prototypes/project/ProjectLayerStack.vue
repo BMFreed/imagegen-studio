@@ -11,6 +11,7 @@ const emit = defineEmits<{
   duplicate: [layer: ProjectCompositingLayer]
   move: [layer: ProjectCompositingLayer, delta: number]
   remove: [layer: ProjectCompositingLayer]
+  savePreset: [layer: ProjectCompositingLayer]
   toggleLock: [layer: ProjectCompositingLayer]
   toggleVisible: [layer: ProjectCompositingLayer]
   variants: [layer: ProjectCompositingLayer]
@@ -28,10 +29,12 @@ const { isDragOver } = useProjectLayerDnd(props.session, list, scrollContainerRe
       :layer
       :layers="session.document.layers"
       :selected="session.ui.selection?.id === layer.id"
+      :session
       @duplicate="emit('duplicate', layer)"
       @moveDown="emit('move', layer, 1)"
       @moveUp="emit('move', layer, -1)"
       @remove="emit('remove', layer)"
+      @savePreset="emit('savePreset', layer)"
       @select="session.ui.selection = { id: layer.id, kind: 'compositing-layer' }"
       @toggleLock="emit('toggleLock', layer)"
       @toggleVisible="emit('toggleVisible', layer)"

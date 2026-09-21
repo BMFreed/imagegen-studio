@@ -177,14 +177,28 @@ Global generation history is a derived index of accepted project results.
 
 ## Vue Prototype Coverage
 
-Queue items freeze concrete plain-text prompts, cloned embedding refs, iteration and derived request mode, and accepted layers/variants carry enough mock identity to validate the acceptance workflow. LoRA stack metadata remains frozen separately; Danbooru and LoRA-trigger annotations are not preserved. The prototype does not construct or persist the full `GenerationProvenance` object, hash source composites/masks, write `.igs` references, update a global accepted-result history index or provide a layer-context comparison popover. Consequently, Compare Generation Settings and Create Preset from accepted provenance remain product behavior rather than current interactive coverage.
+The Project prototype freezes a detached generation record when each mock job is
+queued, then copies it onto a Raster Layer or Smart Patch variant only on explicit
+acceptance. It includes expanded prompt text and embedding refs, exact mock model
+version, actual simulated seed, portable payload, advanced options and enabled
+Regional Guidance. Smart Patch owned inputs are kept separately for mock staleness.
 
-The first interactive provenance pass must add representative generated Raster
-Layer and active Smart Patch variant provenance, the same context-menu action for
-both layer types, the `Generated with` / `Current Canvas` popover and disabled
-states for layers without provenance. Coverage must also prove that comparison
-and preset creation omit Smart Patch layer/source context. This is required
-PP-005 coverage, not optional follow-up polish.
+Both result types expose a bounded, read-only `Compare generation settings`
+popover. The current side always reads the Project Canvas draft, including while
+a Smart Patch is selected. The comparison reports textual section statuses,
+resource warnings and explicit unavailable fields in the legacy/error scenario.
+Imported layers retain a disabled `No generation data` action. A separate
+`Create Preset from Result` action opens an editable draft; Seed is excluded by
+default and Smart Patch geometry is never copied. The shared in-memory catalog
+makes the created preset available to Project Apply without reloading.
+
+`project-provenance.spec.ts` covers detached queue records, acceptance, cleanup,
+undo/redo, active-variant ownership, read-only comparison and result-to-preset-to-
+Apply. `project-audit.spec.ts` covers replacement and cancellation boundaries.
+These are prototype checks, not production evidence: source/mask hashes, exact
+worker/runtime identities, real output assets, `.igs` serialization and the global
+accepted-result index remain unimplemented. Mock staleness compares owned draft,
+bbox, mask revision and internal dimensions; it does not hash source composites.
 
 ## Acceptance Criteria
 
@@ -192,7 +206,7 @@ PP-005 coverage, not optional follow-up polish.
 - Completed but unaccepted candidates have no project-local provenance record.
 - Raster Layer and Smart Patch Layer context menus expose the same comparison action.
 - Generated Raster Layers compare provenance generation configuration with the current Project generation configuration.
-- Smart Patch Layers compare active-variant generation configuration with the current layer-owned generation draft, never another variant provenance or layer/source properties.
+- Smart Patch Layers compare active-variant generation configuration with the current open Project generation configuration (`Current Canvas`), never the layer-owned generation draft, another variant provenance or layer/source properties. Layer-owned inputs are used separately for `outdated` checks.
 - Comparison reports semantic section statuses and does not mutate either side.
 - Comparison popover contains no Apply/Recall/Restore actions.
 - Layers without applicable provenance expose a disabled reason.

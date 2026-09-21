@@ -6,6 +6,10 @@
 
 - [mvp-design-doc.md](./mvp-design-doc.md) — канонический обзор продуктового scope и архитектуры MVP.
 - [product-promises.md](./product-promises.md) — реестр коротких нормативных продуктовых обещаний, явных не-обещаний, публичных статусов и ссылок на supporting contracts.
+- [contracts/](./contracts/) — supporting contracts PP-001–PP-004: композиция интерфейса, явные действия, ownership и managed model library.
+- [engineering/README.md](./engineering/README.md) — адаптация процессов work project, действующие правила и pending pilots.
+  - [research-protocol.md](./engineering/research-protocol.md) — исследование перед изменением по уровню риска.
+  - [review-protocol.md](./engineering/review-protocol.md) — проверка обещанного поведения и evidence.
 - [specs/00-product-scope.md](./specs/00-product-scope.md) — краткая продуктовая рамка: что строим и что доказывает MVP.
 - [specs/01-implementation-roadmap.md](./specs/01-implementation-roadmap.md) — порядок разработки, чтобы можно было начинать без расползания scope.
 - [specs/02-electron-architecture-cqrs.md](./specs/02-electron-architecture-cqrs.md) — Electron best practices, IPC-границы и CQRS-подход.
@@ -17,11 +21,12 @@
 - [features/README.md](./features/README.md) — каталог фич: scope, reference, решения и acceptance criteria.
   - [features/home-screen.md](./features/home-screen.md) — UX главной страницы: Workspaces, project browser, preview, new/import project flows, Trash и recovery states.
   - [features/model-manager.md](./features/model-manager.md) — user flow и scope Model Manager: CivitAI URL import, install queue, managed model list, metadata, missing-resource diagnostics.
-  - [features/presets.md](./features/presets.md) — Project preset UX: компактный Invoke-like selector, editable apply draft, partial apply и create/edit mode Preset Manager.
+  - [features/presets.md](./features/presets.md) — supporting contract PP-006: сохранение и переиспользование generation settings, editable apply draft, partial apply, missing-resource diagnostics и Preset Manager.
   - [features/project/generate-mode/README.md](./features/project/generate-mode/README.md) — карта фич `Project` / `Create`: plain-text CodeMirror prompt editor, bbox, Smart Patch Layer, LoRA, embedding refs, dynamic prompting, staging и regional guidance.
   - [features/project/generate-mode/generation-provenance.md](./features/project/generate-mode/generation-provenance.md) — supporting contract PP-005: provenance принятого результата, read-only comparison, preset mapping и Smart Patch boundaries.
   - [features/project/undo-redo.md](./features/project/undo-redo.md) — project-local undo/redo для `.igs` document mutations.
-  - [features/project/document-lifecycle.md](./features/project/document-lifecycle.md) — dirty/save/autosave/recovery/close lifecycle opened `.igs` document.
+  - [features/project/document-lifecycle.md](./features/project/document-lifecycle.md) — supporting contract PP-007: portable `.igs`, dirty/save/autosave/recovery/close lifecycle.
+  - [features/project/generate-mode/generation-results.md](./features/project/generate-mode/generation-results.md) — supporting contract PP-008: temporary candidates, explicit acceptance и undo.
   - [features/queue-manager.md](./features/queue-manager.md) — Invoke-like persistent Queue Manager для frozen generation jobs и temporary candidate outputs.
   - [features/project/generate-mode/tag-autocomplete.md](./features/project/generate-mode/tag-autocomplete.md) — Danbooru-style tag autocomplete для prompt editor.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
@@ -50,6 +55,11 @@ Tooling проекта использует `pnpm`. Основные коман�
 Если решение меняет scope, архитектуру или пользовательское поведение, его нужно записать в один из документов выше. `mvp-design-doc.md` остаётся каноническим обзором, а `specs/` содержит рабочие уточнения для production-реализации. Для Home, Project, Model Manager и preset-system визуальное/интерактивное поведение сверяется с `prototype-app`; его компоненты, mock state и Playwright-сценарии являются источником истины для реализованных UI-переходов.
 
 Если решение меняет ожидания пользователя или сознательно отказывается от целого класса возможностей, нужно обновить краткую запись в [product-promises.md](./product-promises.md) и её linked supporting contract. Product promise не считается готовым публичным утверждением, пока его не подтверждают реализованный flow, UI и тесты.
+
+Матрица в реестре отражает coverage, публичную готовность и gaps. Изменение
+статуса требует актуального evidence, а не только принятого roadmap. Перед
+medium/high-risk изменениями применяется [research protocol](./engineering/research-protocol.md),
+при review — [review protocol](./engineering/review-protocol.md) по уровню риска.
 
 ## Глобальный инженерный принцип
 

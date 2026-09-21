@@ -348,3 +348,11 @@ export function isPresetDefinitionValid(definition: PresetDefinition): boolean {
 export function isPresetEqual(left: PresetDefinition, right: PresetDefinition): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
+
+export function workflowLabel(workflow: PresetWorkflow): string {
+  return {
+    imageToImage: 'Image to Image',
+    smartPatch: 'Smart Patch',
+    textToImage: 'Text to Image',
+  }[workflow]
+}

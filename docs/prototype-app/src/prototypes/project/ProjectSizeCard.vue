@@ -92,7 +92,7 @@ function fitToLayers() {
 </script>
 
 <template>
-  <NCard size="small" title="Size">
+  <NCard size="small" title="Canvas Size">
     <div class="size-layout">
       <div class="size-controls">
         <label>

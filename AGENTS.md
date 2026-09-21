@@ -47,3 +47,13 @@
 
 - Run `pnpm run typecheck` after TypeScript/Vue changes.
 - Run `pnpm run prototype:test` after prototype UI changes.
+
+## Product contracts and engineering workflow
+
+- Before behavior/scope changes, read the relevant entry in `docs/product-promises.md` and its supporting contract. Preserve negative scope and record prototype gaps separately from production intent.
+- For medium/high-risk changes, read and follow `docs/engineering/research-protocol.md` before editing implementation. Classify risk by consequences; low-impact copy/style changes use a short local check.
+- For reviews and implementation verification, use `docs/engineering/review-protocol.md` at the appropriate risk tier. Promise-impacting and high-risk changes require the full behavior/evidence pass.
+- Treat `.igs` persistence/recovery, resource lifecycle, worker/queue persistence, immutable provenance and destructive filesystem/IPC behavior as high risk when those boundaries change.
+- Research and implementation are phases within an authorized change; do not insert an automatic approval gate between them. Analysis-only requests remain read-only. Explicit user scope and tool permissions govern mutations, delegation, commits and publication.
+- Report actual evidence and boundaries: prototype mocks do not prove production persistence, and a test file does not prove a successful run. Update promise status and its matrix row together when evidence changes readiness.
+- Integration notes and pending process pilots live in `docs/engineering/README.md`; no work project stand or imported MR-review skill is required.

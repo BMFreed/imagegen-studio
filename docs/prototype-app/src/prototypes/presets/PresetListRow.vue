@@ -61,10 +61,19 @@ const hasMissingResources = computed(() => presetHasMissingResources(props.prese
           </NTag>
         </span>
         <span v-overflow-title class="preset-description">{{ preset.description }}</span>
-        <span class="section-tags">
-          <NTag v-for="section of sections" :key="section" :bordered="false" size="small">
+        <span
+          class="section-tags"
+          :title="sections.map((section) => sectionLabels[section]).join(', ')"
+        >
+          <NTag
+            v-for="section of sections.slice(0, 3)"
+            :key="section"
+            :bordered="false"
+            size="small"
+          >
             {{ sectionLabels[section] }}
           </NTag>
+          <span v-if="sections.length > 3">+{{ sections.length - 3 }} sections</span>
         </span>
       </span>
       <NIcon

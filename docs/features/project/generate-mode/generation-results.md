@@ -1,5 +1,12 @@
 # GenerationResults And Staging
 
+Supporting contract for [PP-008: Генерация меняет проект только по явному решению](../../../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению).
+The promise registry owns the concise commitment and public readiness. This
+document owns selection, preview, acceptance and staging cleanup.
+Related contracts: [frozen queue jobs](../../queue-manager.md#frozen-job-rule),
+[Project Undo/Redo](../undo-redo.md), [document lifecycle](../document-lifecycle.md)
+and [accepted-result provenance](./generation-provenance.md).
+
 ## Feature
 
 `GenerationResults` is the canvas-adjacent staging surface for pending, running and completed generation candidates.
@@ -194,11 +201,21 @@ It is not a permanent right sidebar and does not replace Queue Manager or the la
 
 ## Vue Prototype Coverage
 
-The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The bottom tray supports focus, checkbox selection, Select all/Clear selection, previous/next, preview visibility, single-candidate discard, Discard All and context-specific multi-accept labels.
+The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The bottom tray supports focus, checkbox selection, Select all/Clear selection, previous/next, preview visibility, Discard All and context-specific multi-accept labels.
 
 Normal acceptance creates one independent Raster Layer per selected candidate. Smart Patch acceptance creates variants owned by the selected Smart Patch. The focused selected candidate, or otherwise the first selected candidate in stable order, becomes the accepted anchor. If unfinished sibling jobs exist, acceptance uses a confirmation before canceling them and discarding unselected candidates. One acceptance produces one Project history entry and undo does not recreate staging.
 
+Repeated Generate requires an explicit keep/discard decision while staging exists.
+Canceled mock jobs ignore delayed completion callbacks; sibling jobs can still finish.
+
 Candidate imagery, progress and temporary assets are deterministic CSS/in-memory mocks. The prototype does not write cache files, `.igs` assets, global result-history rows or production provenance records.
+
+[project.spec.ts](../../../prototype-app/tests/project.spec.ts) contains the
+interactive acceptance checks. PP-008 still requires production coverage of
+worker completion, frozen source inputs, late events after cancellation/close,
+asset commit and cleanup. These boundaries must preserve explicit acceptance;
+mock completion alone does not prove them. Undo is limited to Project session
+history and never reconstructs discarded staging candidates.
 
 ## Acceptance Criteria
 

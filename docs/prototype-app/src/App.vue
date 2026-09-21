@@ -130,6 +130,7 @@ const activeDocumentId = ref(activePrototype.value === 'home' ? 'home' : 'sample
 const showHomeModelManager = ref(false)
 const showHomePresetManager = ref(false)
 const showStandaloneModelManager = ref(true)
+const managerSelectedId = ref<string>()
 const managerCreateIntent = ref<PresetCreateIntent>()
 const pendingCloseId = ref<string>()
 const projectSessions = reactive<Record<string, ProjectSession>>({
@@ -190,7 +191,8 @@ function openHomeModelManager() {
   showHomeModelManager.value = true
 }
 
-function openHomePresetManager() {
+function openHomePresetManager(id?: string) {
+  managerSelectedId.value = typeof id === 'string' ? id : undefined
   managerCreateIntent.value = undefined
   showHomeModelManager.value = false
   showHomePresetManager.value = true
@@ -215,12 +217,12 @@ function toggleActiveProjectQueue() {
   }
 }
 
-function openSavePreset() {
+function openSavePreset(intent?: PresetCreateIntent) {
   const session = activeProjectSession.value
   if (!session) {
     return
   }
-  managerCreateIntent.value = createPresetIntent(session)
+  managerCreateIntent.value = intent ?? createPresetIntent(session)
   showHomeModelManager.value = false
   showHomePresetManager.value = true
 }
@@ -445,6 +447,7 @@ function syncProjectTab(project: HomeProjectRecord) {
               v-if="activePrototype === 'home' && showHomePresetManager"
               key="home-preset-manager"
               :initialCreateIntent="managerCreateIntent"
+              :initialSelectedId="managerSelectedId"
               @close="showHomePresetManager = false"
             />
             <ModelManagerPrototype
@@ -467,6 +470,7 @@ function syncProjectTab(project: HomeProjectRecord) {
               v-if="activePrototype === 'project' && showHomePresetManager"
               key="project-preset-manager"
               :initialCreateIntent="managerCreateIntent"
+              :initialSelectedId="managerSelectedId"
               @close="showHomePresetManager = false"
             />
             <ModelManagerPrototype

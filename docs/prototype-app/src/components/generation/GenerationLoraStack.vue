@@ -80,8 +80,8 @@ function remove(index: number) {
         <NText depth="3">{{ lora.resource.version ?? 'Local resource' }}</NText>
       </div>
       <NInputNumber
-        :aria-label="`${lora.resource.name} weight`"
         :disabled
+        :inputProps="{ 'aria-label': `${lora.resource.name} weight` }"
         :max="2"
         :min="-2"
         :step="0.05"

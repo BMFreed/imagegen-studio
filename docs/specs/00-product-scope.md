@@ -14,7 +14,7 @@ InvokeAI является основным reference product. Проектная
 
 Reference-first подход не означает перенос всей информационной архитектуры reference product. ImageGen Studio сознательно обещает понятный, product-owned интерфейс вместо собираемого workbench: пользователь настраивает генерацию и творческую работу, но не проектирует раскладку приложения. Продукт не является IDE или dockable panel system. Полный контракт, negative scope и проверяемые инварианты зафиксированы в [Product Promises](../product-promises.md#pp-001-понятный-интерфейс-вместо-собираемого-workbench).
 
-Та же продуктовая рамка требует [одного явного intent на control](../product-promises.md#pp-002-явное-намерение-вместо-магического-control), [одного canonical owner для каждой сущности и настройки](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место), [managed model library с безопасным version lifecycle](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами) и [immutable provenance каждого принятого результата](../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан). Search, create, import и install не маскируются одним polymorphic input; Projects, Models, Presets, temporary candidates, accepted Layers и provenance не подменяют друг друга.
+Та же продуктовая рамка требует [одного явного intent на control](../product-promises.md#pp-002-явное-намерение-вместо-магического-control), [одного canonical owner для каждой сущности и настройки](../product-promises.md#pp-003-одна-сущность-один-владелец-и-одно-каноническое-место), [managed model library с безопасным version lifecycle](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами), [immutable provenance каждого принятого результата](../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан) и [переиспользуемых presets с предупреждением о недоступных ресурсах до применения](../product-promises.md#pp-006-настройки-генерации-можно-сохранять-и-переиспользовать). Search, create, import и install не маскируются одним polymorphic input; Projects, Models, Presets, temporary candidates, accepted Layers и provenance не подменяют друг друга.
 
 Для SDXL/Illustrious-like checkpoint'ов MVP также следует InvokeAI-пути: `.safetensors` хранится как исходный пользовательский файл, worker грузит его через Diffusers single-file loading, а кэширование происходит на уровне уже загруженных моделей в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию не входит в базовое поведение.
 
@@ -53,6 +53,15 @@ Current Project scope uses domain mode `generate` with visible label `Create`. T
 Один и тот же `.igs` нельзя открыть дважды. Повторное открытие уже открытого project file фокусирует существующую `Project` tab.
 
 Отдельная top-level вкладка `Generate`, режимы `Launchpad`/`Viewer` и постоянный mini-gallery/boards sidebar не входят в целевую UX-модель ImageGen Studio. Быстрая генерация с нуля реализуется как создание нового `.igs` проекта и работа с ним в `Project` / `Create`.
+
+[PP-007](../product-promises.md#pp-007-проект-принадлежит-пользователю) закрепляет
+переносимый пользовательский `.igs`, явную сохранённую версию и recovery dirty
+работы. [PP-008](../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению)
+закрепляет просмотр candidates и явное undoable принятие результатов.
+Подробности находятся в [document lifecycle](../features/project/document-lifecycle.md)
+и [staging contract](../features/project/generate-mode/generation-results.md).
+Оба обещания обязательны для MVP; production persistence и worker flow пока
+не доказаны прототипом. Полная карта покрытия находится в реестре обещаний.
 
 ## Продуктовые нецели MVP
 

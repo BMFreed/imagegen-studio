@@ -13,6 +13,7 @@ import {
 import { generationEmbeddings, mockDanbooruTags } from '../../components/generation/generation.mock'
 import { currentProjectPresetSource } from '../presets/presets.mock'
 import { cloneDocument } from './project-history'
+import { freezeGeneration } from './project-provenance'
 
 const baseDraft: ProjectGenerationDraft = {
   cfgRescale: 0,
@@ -45,6 +46,34 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
     },
   }
 
+  session.document.generationDraft.payload.size = { ...session.document.canvas }
+  const main = session.document.layers.find((layer) => layer.id === 'raster-main')
+  if (main?.kind === 'raster') {
+    main.provenance = freezeGeneration(
+      session,
+      'fixture-base',
+      'portrait, studio lighting',
+      '',
+      42_018,
+    )
+    main.provenance.resultId = main.id
+  }
+  const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch')
+  if (patch?.kind === 'smart-patch') {
+    session.ui.selection = { id: patch.id, kind: 'compositing-layer' }
+    patch.variants.forEach((variant, index) => {
+      variant.provenance = freezeGeneration(
+        session,
+        `fixture-patch-${index}`,
+        `hand repair, variation ${index + 1}`,
+        '',
+        7300 + index,
+      )
+      variant.provenance.resultId = variant.id
+    })
+    session.ui.selection = { id: 'raster-main', kind: 'compositing-layer' }
+  }
+  session.savedDocument = cloneDocument(session.document)
   if (id === 'smart-patch') {
     session.ui.selection = { id: 'hand-repair', kind: 'compositing-layer' }
   }
@@ -69,6 +98,11 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
     session.savedDocument = cloneDocument(session.document)
   }
   if (id === 'errors') {
+    if (main?.kind === 'raster' && main.provenance) {
+      main.provenance.unavailableSections = ['sampling', 'vae']
+      delete main.provenance.payload.sampling
+      delete main.provenance.payload.vae
+    }
     if (session.document.generationDraft.payload.model) {
       session.document.generationDraft.payload.model.missing = true
     }
@@ -109,6 +143,15 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
     session.queueItems = [queueItem('queue-failed', 1, 72, 'failed', 'Portrait generation')]
     session.saveShouldFail = true
     session.dirty = true
+  }
+  for (const item of session.queueItems) {
+    item.frozenGeneration = freezeGeneration(
+      session,
+      item.id,
+      item.prompt,
+      item.negativePrompt,
+      9000 + item.iteration,
+    )
   }
   return session
 }

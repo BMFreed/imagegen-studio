@@ -1,4 +1,9 @@
-# Presets
+# PP-006 Supporting Contract: Presets
+
+This document is the canonical supporting contract for
+[PP-006: Настройки генерации можно сохранять и переиспользовать](../product-promises.md#pp-006-настройки-генерации-можно-сохранять-и-переиспользовать).
+It translates the general user-facing promise into preset ownership, create,
+edit, apply, validation, resource-diagnostic, prototype and acceptance rules.
 
 ## Feature
 
@@ -190,8 +195,8 @@ Raster and Smart Patch Layer context menus expose a separate read-only `Compare
 generation settings` popover. It compares `Generated with` provenance to
 `Current Canvas`, contains no Apply/Recall/preset action and does not mutate the
 Project. `Save Preset from Result` remains a separate action. The current
-prototype does not yet implement full accepted-result provenance, this
-comparison, or the save-from-result origin; they belong to the first provenance
+prototype implements accepted-result comparison and the separate save-from-result
+origin on in-memory records; production persistence remains part of the provenance
 prototype pass.
 
 `New Preset` in the manager creates a minimal manual draft with `Text to Image`, an empty name and only an empty Prompt section. A pinned `Draft` row remains visible above saved results regardless of active filters. `Cancel` discards the manual draft and returns to the previously selected preset.
@@ -301,7 +306,25 @@ The Vue/Naive prototype is authoritative for the manager/create/apply states des
 
 Normal Preset Manager opens with `Studio Portrait Soft Light` selected, `All Presets`, no search/favorite/attention filter and `Name` sorting. The Apply route demonstrates `Cinematic Img2Img Pass` against the shared `Sample Project B.igs` project state; the save route demonstrates the project-derived `Sample Portrait Baseline` Draft.
 
-It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate persistence failure, or complete the `Open in Models` missing-resource handoff. The compact Project / Create preset launcher itself remains specified by the Project prototype/docs; the Vue entry `?prototype=apply-preset` starts after a preset has already been chosen. Save-from-accepted-result provenance also remains outside the interactive prototype; the current `PresetCreateIntent` demonstrates only `manual` and current-`project` origins and must be extended explicitly for accepted results.
+It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate persistence failure, or complete the `Open in Models` missing-resource handoff. The compact Project / Create preset launcher itself remains specified by the Project prototype/docs; the Vue entry `?prototype=apply-preset` starts after a preset has already been chosen. Save-from-accepted-result uses a detached project-derived create intent with the accepted layer name and frozen payload. The catalog is shared across manager mounts for the current browser session; reloading resets it.
+
+### Known PP-006 Prototype Gaps
+
+The standalone `?prototype=apply-preset` surface already shows a prominent
+`Selected resource is missing` warning before mutation, disables Apply only for
+selected affected sections and has Playwright coverage for that behavior.
+
+Project-integrated Apply now uses the same nested-resource predicates, displays
+the affected selected sections and a recovery explanation, and keeps its footer
+outside the scroll area. Deselection preserves the current section. Size is
+excluded for Smart Patch targets; applying Size to Canvas synchronizes dimensions.
+`Edit original` confirms leaving the temporary draft and focuses the chosen saved
+preset. Regression coverage enters through the real Project picker and includes
+the result-to-preset-to-Apply loop.
+
+Remaining gaps: `Open in Models` does not yet focus/repair a missing resource;
+resource availability is mock metadata, and SQLite/`.igs` persistence, command
+execution and failure recovery remain unimplemented. PP-006 stays `пока не обещать`.
 
 ## Rejected
 
@@ -340,5 +363,7 @@ It does not persist to SQLite or a real `.igs`, execute CQRS commands, simulate 
 - Preset import/export is absent from MVP.
 - Workflow labels shown to the user are `Text to Image`, `Image to Image`, `Smart Patch`; internal `workflow_type` tokens are not exposed.
 - Missing resources are visible before apply and only block selected affected sections.
+- Project-integrated Apply explains why `Apply` is disabled, identifies the affected selected section/resource and uses the same nested-resource detection as Preset Manager and standalone Apply.
+- Project Playwright coverage proves warnings for nested LoRA and prompt-owned embedding refs, deselection recovery and the absence of silent application.
 - Applying a preset copies settings into the project and does not create a live synchronization relationship.
 - Apply initially selects every source section except Size and Seed, keeps all sections collapsed, and disables Apply for an empty selection or a missing resource in a selected section.

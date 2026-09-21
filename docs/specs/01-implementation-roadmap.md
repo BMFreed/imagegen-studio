@@ -52,6 +52,14 @@ docs/features/
 
 ## Фаза 0. Каркас приложения
 
+Изменения выполняются по [research](../engineering/research-protocol.md) и
+[review](../engineering/review-protocol.md) protocols согласно риску.
+При первой реализации `.igs` Save/recovery провести PP-007 research pilot с
+реальными filesystem failure/reopen checks. При исправлении Project Apply
+diagnostics провести PP-006 review pilot с red→green tests без ослабления
+assertions. Пилоты и критерий создания собственного review skill описаны в
+[Engineering workflow](../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
+
 - Vite + Vue 3 + TypeScript.
 - Electron main/preload/renderer.
 - Naive UI и базовая тёмная тема.
@@ -130,6 +138,10 @@ Presets и provenance.
 - Partial apply.
 - Editable application draft с `Current` / `Apply`, reset и guarded `Edit original`.
 - Проверка missing resources только для выбранных секций.
+- PP-006 parity fix: Project-integrated Apply показывает textual diagnostic до
+  mutation, а preset picker использует nested-resource detection для model,
+  LoRA, VAE и prompt-owned embeddings. Добавить Project Playwright coverage для
+  disabled reason и восстановления после deselect проблемной секции.
 - Warning при base model family mismatch.
 
 Результат: provenance принятого результата превращается в переиспользуемую настройку, а настройки можно применять точечно.

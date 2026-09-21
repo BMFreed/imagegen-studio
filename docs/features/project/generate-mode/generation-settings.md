@@ -69,16 +69,16 @@ If color matching is needed later, design it as a Smart Patch/compositing behavi
 The current Project settings stack implements:
 
 - one-shot Preset actions;
-- Size before Prompt/Negative Prompt;
-- structured positive/negative prompt editors;
+- explicit Project Canvas / Smart Patch target context and Canvas Size after prompts;
+- plain-text CodeMirror positive/negative prompt editors with embedding sidecars;
 - the shared LoRA stack;
 - model selection;
-- a read-only selected model version field;
-- sampler, scheduler, steps, CFG and Denoising Strength;
+- exact mock installed-version selection and prediction-type readout;
+- sampler, scheduler, steps, CFG, Denoising Strength and fixed/random seed;
 - images-per-click as an integer input from 1 through 100 in the fixed Generate bar;
 - an `Advanced Options` disclosure containing VAE and VAE precision controls.
 
-The VAE and precision selects currently validate composition only and are not wired back into the Project generation draft. The prototype does not yet expose seed/randomize/shuffle, CFG rescale, clip skip, editable model-version selection or model-family/prediction badges. These remain product requirements, not claims about current interactive coverage.
+VAE and precision update the active generation draft and participate in Project undo. Model and exact version selectors are placed above the prompts; Seed offers fixed/random behavior. Shuffle/advance seed, CFG rescale editing, clip skip and a production Model Manager installed-version registry remain gaps. Generation and seeds are simulated; no inference is performed.
 
 Selecting a Smart Patch binds the visible settings to its layer-owned draft. Denoising stays visible and is disabled with an explanation when the effective target has no raster input. The prototype uses deterministic layer coverage metadata for this decision because it has no pixel compositor.
 
@@ -88,7 +88,7 @@ The selected model controls which fields are visible.
 
 Unsupported controls should be hidden or disabled with a clear reason.
 
-The selected model version is project-local state in the product model. The current prototype displays it as a disabled readout. A production `Version` select populated from Model Manager's installed versions remains required.
+The selected model version is project-local state. The prototype selects exact version refs from shared generation fixtures (including Illustrious v1.1 and v1.0); the production registry connection to Model Manager remains required.
 
 Model versioning is mandatory MVP scope under PP-004. Interactive selection of
 an exact installed version should therefore be implemented alongside the first
@@ -117,6 +117,6 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - LoRAs have a structured stack; embeddings are plain prompt text with sidecar `embeddingRefs` and have no standalone section.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
 - Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.
-- Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage is limited to visible VAE and VAE precision controls.
+- Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage includes draft-bound VAE and VAE precision controls.
 - A separate Invoke-like `Advanced` accordion is not implemented.
 - Seamless X/Y and generic color compensation are excluded from MVP Generate settings.

@@ -1,28 +1,53 @@
 <script setup lang="ts">
 import { Copy, DotsVertical, Eye, EyeOff, Lock, LockOpen, Refresh, Trash } from '@vicons/tabler'
-import { NButton, NDropdown, NIcon } from 'naive-ui'
+import { NButton, NDropdown, NIcon, NPopover } from 'naive-ui'
+import { computed, ref } from 'vue'
 
-import type { ProjectCompositingLayer } from './project.types'
+import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
+import { resultProvenance } from './project-provenance'
 import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
+import ProjectGenerationComparison from './ProjectGenerationComparison.vue'
 
-defineProps<{ layer: ProjectCompositingLayer; selected: boolean }>()
+const props = defineProps<{
+  layer: ProjectCompositingLayer
+  selected: boolean
+  session: ProjectSession
+}>()
+const comparisonOpen = ref(false)
 const emit = defineEmits<{
   duplicate: []
   moveDown: []
   moveUp: []
   remove: []
+  savePreset: []
   select: []
   toggleLock: []
   toggleVisible: []
   variants: []
 }>()
 
-const moveOptions = [
+const moveOptions = computed(() => [
+  {
+    disabled: !resultProvenance(props.layer),
+    key: 'compare',
+    label: resultProvenance(props.layer)
+      ? 'Compare generation settings'
+      : 'Compare generation settings · No generation data',
+  },
+  { disabled: !resultProvenance(props.layer), key: 'preset', label: 'Create Preset from Result' },
   { key: 'up', label: 'Move up' },
   { key: 'down', label: 'Move down' },
-]
+])
 function move(key: number | string) {
+  if (key === 'compare') {
+    comparisonOpen.value = true
+    return
+  }
+  if (key === 'preset') {
+    emit('savePreset')
+    return
+  }
   if (key === 'up') {
     emit('moveUp')
   } else {
@@ -105,11 +130,23 @@ function layerTone(layer: ProjectCompositingLayer) {
     >
       <template v-slot:icon><NIcon :component="Trash" /></template>
     </NButton>
-    <NDropdown :options="moveOptions" trigger="click" @select="move">
-      <NButton :aria-label="`Layer actions for ${layer.name}`" circle quaternary size="tiny">
-        <template v-slot:icon><NIcon :component="DotsVertical" /></template>
-      </NButton>
-    </NDropdown>
+    <NPopover
+      v-model:show="comparisonOpen"
+      placement="left-start"
+      trigger="manual"
+      @clickoutside="comparisonOpen = false"
+    >
+      <template v-slot:trigger>
+        <span>
+          <NDropdown :options="moveOptions" trigger="click" @select="move">
+            <NButton :aria-label="`Layer actions for ${layer.name}`" circle quaternary size="tiny">
+              <template v-slot:icon><NIcon :component="DotsVertical" /></template>
+            </NButton>
+          </NDropdown>
+        </span>
+      </template>
+      <ProjectGenerationComparison :layer :session />
+    </NPopover>
   </article>
 </template>
 

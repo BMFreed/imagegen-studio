@@ -14,7 +14,8 @@ import PresetList from './PresetList.vue'
 import PresetManagerEditor from './PresetManagerEditor.vue'
 import PresetManagerHeader from './PresetManagerHeader.vue'
 import PresetManagerNavigation from './PresetManagerNavigation.vue'
-import { defaultPresetId, presetEditorResources, presetResources } from './presets.mock'
+import { presetCatalog } from './presets.catalog'
+import { defaultPresetId, presetEditorResources } from './presets.mock'
 import {
   clonePreset,
   createManualPresetDefinition,
@@ -40,7 +41,7 @@ const emit = defineEmits<{
 
 const dialog = useDialog()
 const message = useMessage()
-const presets = ref(presetResources.map((preset) => clonePreset(preset)))
+const presets = presetCatalog
 const managerOpen = ref(false)
 const navigationPaneSize = ref<number | string>('210px')
 const presetPaneSize = ref<number | string>('calc(100% - 520px)')

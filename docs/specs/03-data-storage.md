@@ -89,6 +89,12 @@ project.igs
 
 `ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
 
+Storage serves [PP-007](../product-promises.md#pp-007-проект-принадлежит-пользователю):
+the portable saved project remains authoritative independently of derived indexes.
+The acceptance boundary is defined by
+[PP-008](../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению)
+and the [staging contract](../features/project/generate-mode/generation-results.md).
+
 ### Generation provenance
 
 Generation provenance — immutable metadata accepted Raster Layer or Smart Patch variant: which settings, resources, inputs and runtime parameters produced that persistent result.

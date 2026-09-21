@@ -1,5 +1,10 @@
 # Model Manager
 
+Feature contract for [PP-004](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами).
+[Managed Model Library supporting contract](../contracts/managed-model-library.md)
+defines the normative resource/version invariants, source metadata boundaries
+and negative scope; this document defines the detailed UI and installation flows.
+
 ## Feature
 
 Model Manager is the app-level place where the user installs, inspects, repairs, removes and selects reusable generation resources:

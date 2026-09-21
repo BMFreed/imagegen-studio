@@ -6,6 +6,7 @@ import {
   promptHasMissingEmbedding,
 } from '../../components/generation/generation-prompt.utils'
 import { presetEditorResources } from '../presets/presets.mock'
+import { clonePreset } from '../presets/presets.utils'
 import { commitProjectMutation } from './project-history'
 
 export function getSelectedEntity(session: ProjectSession) {
@@ -80,6 +81,12 @@ export function acceptStagingCandidates(session: ProjectSession) {
     return
   }
 
+  function acceptedProvenance(candidate: GenerationCandidate) {
+    const frozen = session.queueItems.find(
+      (item) => item.id === candidate.queueItemId,
+    )?.frozenGeneration
+    return frozen ? { ...clonePreset(frozen), resultId: candidate.id } : undefined
+  }
   const target = staging.target
   commitProjectMutation(
     session,
@@ -94,6 +101,7 @@ export function acceptStagingCandidates(session: ProjectSession) {
           ...selected.map((candidate) => ({
             id: `variant-${candidate.id}`,
             name: `Variant ${patch.variants.length + candidate.imageIndex}`,
+            provenance: acceptedProvenance(candidate),
             tone: candidate.tone,
           })),
         )
@@ -109,6 +117,7 @@ export function acceptStagingCandidates(session: ProjectSession) {
         mockCoverage: 'partial' as const,
         name: `Generated Result ${candidate.imageIndex}`,
         opacity: 100,
+        provenance: acceptedProvenance(candidate),
         tone: candidate.tone,
         visible: candidate.id === anchor.id,
       }))
@@ -133,8 +142,14 @@ export function discardStagingSession(session: ProjectSession) {
 
 export function createPresetIntent(session: ProjectSession): PresetCreateIntent {
   const draft = getActiveGenerationDraft(session)
-  const payload = structuredClone(draft.payload)
+  const payload = clonePreset(draft.payload)
   delete payload.seed
+  const entity = getSelectedEntity(session)
+  if (entity && 'kind' in entity && entity.kind === 'smart-patch') {
+    delete payload.size
+  } else {
+    payload.size = clonePreset(session.document.canvas)
+  }
   return {
     definition: {
       description: '',
@@ -142,7 +157,12 @@ export function createPresetIntent(session: ProjectSession): PresetCreateIntent 
       name: session.document.title.replace(/\.igs$/i, ' Baseline'),
       payload,
       tags: ['project'],
-      workflow: deriveGenerationMode(session) === 'inpaint' ? 'smartPatch' : 'textToImage',
+      workflow:
+        deriveGenerationMode(session) === 'inpaint'
+          ? 'smartPatch'
+          : deriveGenerationMode(session) === 'txt2img'
+            ? 'textToImage'
+            : 'imageToImage',
     },
     kind: 'project',
     projectName: session.document.title,
@@ -161,12 +181,25 @@ export function applyPresetSections(
     presetName ? `Apply preset: ${presetName}` : 'Apply preset',
     () => {
       const target = getActiveGenerationDraft(session).payload
+      const entity = getSelectedEntity(session)
+      const patch = entity && 'kind' in entity && entity.kind === 'smart-patch'
       for (const section of selectedSections) {
+        if (section === 'size' && patch) {
+          continue
+        }
         const value = payload[section]
         if (value === undefined) {
           Reflect.deleteProperty(target, section)
         } else {
-          Reflect.set(target, section, structuredClone(value))
+          Reflect.set(target, section, clonePreset(value))
+          if (section === 'size' && payload.size) {
+            session.document.canvas = clonePreset(payload.size)
+            session.ui.aspectRatio = {
+              id: 'free',
+              locked: false,
+              value: payload.size.width / payload.size.height,
+            }
+          }
         }
       }
     },

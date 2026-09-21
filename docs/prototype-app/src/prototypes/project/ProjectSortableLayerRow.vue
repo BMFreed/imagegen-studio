@@ -2,7 +2,7 @@
 import { makeDraggable } from '@vue-dnd-kit/core'
 import { computed, ref } from 'vue'
 
-import type { ProjectCompositingLayer } from './project.types'
+import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
 import ProjectLayerRow from './ProjectLayerRow.vue'
 
@@ -11,12 +11,14 @@ const props = defineProps<{
   layer: ProjectCompositingLayer
   layers: ProjectCompositingLayer[]
   selected: boolean
+  session: ProjectSession
 }>()
 const emit = defineEmits<{
   duplicate: []
   moveDown: []
   moveUp: []
   remove: []
+  savePreset: []
   select: []
   toggleLock: []
   toggleVisible: []
@@ -46,10 +48,12 @@ const placementClass = computed(() => ({
     <ProjectLayerRow
       :layer
       :selected
+      :session
       @duplicate="emit('duplicate')"
       @moveDown="emit('moveDown')"
       @moveUp="emit('moveUp')"
       @remove="emit('remove')"
+      @savePreset="emit('savePreset')"
       @select="emit('select')"
       @toggleLock="emit('toggleLock')"
       @toggleVisible="emit('toggleVisible')"

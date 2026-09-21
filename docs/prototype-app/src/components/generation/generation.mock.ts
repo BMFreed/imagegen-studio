@@ -16,6 +16,13 @@ export const generationModels: GenerationModelRef[] = [
     version: 'v1.1 main',
   },
   {
+    baseModel: 'Illustrious',
+    id: 'illustrious-xl-v1-0',
+    name: 'Illustrious XL',
+    predictionType: 'v-pred',
+    version: 'v1.0 archive',
+  },
+  {
     baseModel: 'NoobAI',
     id: 'noobai-xl-v3',
     name: 'NoobAI XL',

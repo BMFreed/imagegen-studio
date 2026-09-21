@@ -2,7 +2,19 @@
 
 > Этот документ — канонический обзор scope и production-архитектуры. Для реализованных Home, Project, Model Manager и preset-system точные layout, visible labels, mock states и переходы определяет `docs/prototype-app`; документ синхронизируется с ним. Vue/Naive Project реализует трёхпанельный Create workspace, plain-text CodeMirror prompt editor с embedding sidecars и contextual LoRA-trigger autocomplete, stacked generation settings, DOM/CSS canvas simulation, sortable layer architecture, multi-select staging и mock queue lifecycle. Его DOM/CSS geometry, queue, save и resource states являются in-memory simulation, а не готовыми Konva/worker/filesystem contracts.
 
-> Короткие продуктовые обещания, явные не-обещания и публичные статусы зафиксированы отдельно в [Product Promises](./product-promises.md); точные правила живут в linked supporting contracts. PP-001 закрепляет понятную product-owned композицию вместо IDE-like workbench; PP-002 требует одного явного intent на control; PP-003 закрепляет canonical ownership и lifecycle каждой пользовательской сущности и настройки; PP-004 определяет модели как managed resources и включает безопасное версионирование в MVP; PP-005 обещает, что каждый принятый результат помнит, как он был создан, а его [supporting contract](./features/project/generate-mode/generation-provenance.md) определяет provenance, comparison и preset boundaries.
+> Короткие продуктовые обещания, явные не-обещания и публичные статусы зафиксированы отдельно в [Product Promises](./product-promises.md); точные правила живут в linked supporting contracts. PP-001 закрепляет понятную product-owned композицию вместо IDE-like workbench; PP-002 требует одного явного intent на control; PP-003 закрепляет canonical ownership и lifecycle каждой пользовательской сущности и настройки; PP-004 определяет модели как managed resources и включает безопасное версионирование в MVP; PP-005 обещает, что каждый принятый результат помнит, как он был создан, а его [supporting contract](./features/project/generate-mode/generation-provenance.md) определяет provenance, comparison и preset boundaries; PP-006 обещает сохранение и повторное применение generation settings с честным предупреждением о missing resources, а [Preset supporting contract](./features/presets.md) определяет точный flow и текущие prototype gaps.
+
+> PP-007 обещает переносимый пользовательский `.igs`, явное сохранение и защиту
+> dirty работы через recovery; [Document Lifecycle](./features/project/document-lifecycle.md)
+> определяет точные границы. PP-008 обещает явное принятие результатов генерации
+> с возможностью отмены; [Staging](./features/project/generate-mode/generation-results.md)
+> определяет temporary candidates, acceptance и cleanup. Production готовность
+> этих обещаний не подтверждается in-memory mock flows.
+
+> Разработка следует [Research protocol](./engineering/research-protocol.md) и
+> [Review protocol](./engineering/review-protocol.md) по уровню риска.
+> [Матрица обещаний](./product-promises.md#матрица-обещаний) показывает coverage,
+> публичные статусы и supporting evidence.
 
 > Рабочее название документа: **ТЗ / дизайн-документ MVP**  
 > Проект: локальное desktop-приложение для генерации изображений нейросетями  
@@ -2073,7 +2085,9 @@ UI показывает fallback "Изображение не найдено"
 
 - для каждого accepted result сохраняется immutable generation provenance;
 - discarded candidates do not enter result history;
-- provenance supports recall, preset creation and missing-resource diagnostics.
+- provenance supports read-only settings comparison, preset creation and
+  missing-resource diagnostics; direct Recall is not part of the MVP comparison
+  flow.
 
 Статус: закрыто для MVP.
 

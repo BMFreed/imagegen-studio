@@ -19,15 +19,10 @@ defineEmits<{ focus: []; select: [value: boolean] }>()
     >
       <ProjectCanvasArtwork :tone="candidate.tone" />
       <NTag
+        v-if="candidate.status !== 'completed'"
         class="candidate-status"
         size="small"
-        :type="
-          candidate.status === 'failed'
-            ? 'error'
-            : candidate.status === 'completed'
-              ? 'success'
-              : 'default'
-        "
+        :type="candidate.status === 'failed' ? 'error' : 'default'"
       >
         {{ candidate.status }}
       </NTag>
@@ -40,6 +35,7 @@ defineEmits<{ focus: []; select: [value: boolean] }>()
     />
     <div class="candidate-footer">
       <NCheckbox
+        :aria-disabled="candidate.status !== 'completed'"
         :aria-label="`Select candidate ${candidate.imageIndex}`"
         :checked="selected"
         :disabled="candidate.status !== 'completed'"
@@ -53,6 +49,7 @@ defineEmits<{ focus: []; select: [value: boolean] }>()
 
 <style scoped>
 .candidate {
+  flex: 0 0 112px;
   display: grid;
   grid-template-rows: 72px auto;
   width: 112px;

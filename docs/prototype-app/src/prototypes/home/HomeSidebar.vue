@@ -64,6 +64,7 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
         <NText class="group-label" depth="3">Browse</NText>
         <NButton
           :aria-pressed="browseSelection.kind === 'all'"
+          :bordered="false"
           class="navigation-row"
           :secondary="browseSelection.kind === 'all'"
           @click="$emit('selectBrowse', 'all')"
@@ -73,6 +74,7 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
         </NButton>
         <NButton
           :aria-pressed="browseSelection.kind === 'trash'"
+          :bordered="false"
           class="navigation-row"
           :secondary="browseSelection.kind === 'trash'"
           @click="$emit('selectBrowse', 'trash')"
@@ -100,6 +102,7 @@ function getWorkspaceOptions(workspace: HomeWorkspace) {
             :aria-pressed="
               browseSelection.kind === 'workspace' && browseSelection.workspaceId === workspace.id
             "
+            :bordered="false"
             class="navigation-row workspace-select"
             :secondary="
               browseSelection.kind === 'workspace' && browseSelection.workspaceId === workspace.id

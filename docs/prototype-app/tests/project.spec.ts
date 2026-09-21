@@ -252,7 +252,7 @@ test.describe('Project prototype', () => {
 
   test('accepts arbitrary generation counts within the prototype limit', async ({ page }) => {
     await openProject(page, 'empty-project')
-    const count = page.getByLabel('Images per click').locator('input')
+    const count = page.getByRole('textbox', { exact: true, name: 'Images per click' })
     await count.fill('7')
     await count.press('Enter')
     await page.getByRole('button', { name: 'Generate' }).click()
@@ -303,8 +303,8 @@ test.describe('Project prototype', () => {
     await expect(resourceTooltip).toContainText('LoRA · Trigger: painterly')
     await expect(resourceTooltip).toContainText('Sources: Digital Art v0.1')
 
-    const loraWeight = page.getByLabel('Digital Art weight')
-    const loraWeightInput = loraWeight.locator('input')
+    const loraWeightInput = page.getByRole('textbox', { exact: true, name: 'Digital Art weight' })
+    const loraWeight = page.locator('.n-input-number').filter({ has: loraWeightInput })
     await loraWeightInput.fill('0.65')
     await loraWeightInput.press('Enter')
     await expect(loraWeightInput).toHaveValue('0.65')
@@ -362,7 +362,7 @@ test.describe('Project prototype', () => {
       Number.parseFloat(getComputedStyle(element).width),
     )
 
-    await page.getByText('Size', { exact: true }).click()
+    await page.getByText('Canvas Size', { exact: true }).click()
     await expect(promptHelp).toBeHidden()
     await expect(promptCard).toHaveCSS('background-color', 'rgb(24, 24, 28)')
     await expect(promptCard).toHaveCSS('border-color', 'rgb(52, 52, 55)')
