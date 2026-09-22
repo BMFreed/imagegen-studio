@@ -36,6 +36,7 @@
 - `docs/prototype-app` is the current Vue/Naive prototype playground.
 - Home, Project, Model Manager and preset-system visual sources of truth live in `docs/prototype-app`.
 - Do not recreate standalone HTML prototypes; use Vue components, mock scenarios and Playwright coverage in `docs/prototype-app`.
+- For repeated icon actions, layer rows, resource pickers and labeled controls, read `docs/engineering/ui-component-contracts.md` and the referenced component API before composing or styling them.
 
 ## Design guidance
 

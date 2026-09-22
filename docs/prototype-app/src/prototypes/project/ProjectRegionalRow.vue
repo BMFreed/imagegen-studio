@@ -138,7 +138,11 @@ async function addReferences(event: Event) {
     <template v-slot:preview><ProjectEntityThumbnail class="region-thumb" /></template>
     <template v-slot:details>
       <div class="regional-settings">
-        <div v-if="positiveOpen || entity.positivePrompt" class="regional-field">
+        <div
+          v-if="positiveOpen || entity.positivePrompt"
+          class="regional-field"
+          data-entity-control
+        >
           <header>
             <span>Prompt</span>
             <NButton
@@ -165,7 +169,7 @@ async function addReferences(event: Event) {
             @update:value="edit('positivePrompt', $event)"
           />
         </div>
-        <div v-if="negativeOpen || !entity.autoNegative" class="regional-field">
+        <div v-if="negativeOpen || !entity.autoNegative" class="regional-field" data-entity-control>
           <header>
             <span>Negative Prompt</span>
             <NButton
@@ -297,6 +301,7 @@ async function addReferences(event: Event) {
 .regional-field {
   display: grid;
   gap: 4px;
+  cursor: default;
 }
 .regional-field header {
   display: flex;

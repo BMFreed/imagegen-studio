@@ -74,6 +74,53 @@ test('layer details stay visible and row positions stay stable while selecting d
   expect(warning.y + warning.height / 2).toBeCloseTo(lock.y + lock.height / 2, 0)
 })
 
+test('whole layer surfaces hover and select while nested controls keep the current selection', async ({
+  page,
+}) => {
+  await page.setViewportSize({ height: 1000, width: 1440 })
+  await page.goto('/?prototype=project')
+  const row = (name: string) =>
+    page
+      .locator('.entity-surface')
+      .filter({ has: page.getByRole('button', { exact: true, name: `Select ${name}` }) })
+  const selected = (name: string) =>
+    page.getByRole('button', { exact: true, name: `Select ${name}` })
+  const region = row('Face lighting')
+  const patch = row('Hand Repair Patch')
+  const raster = row('Highlight Pass')
+  const regionalDetails = region.locator('.entity-details')
+  const regionalDetailsBox = (await regionalDetails.boundingBox())!
+  const regionalBottom = { x: 3, y: regionalDetailsBox.height - 3 }
+  const idleBackground = await region.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  )
+
+  await regionalDetails.hover({ position: regionalBottom })
+  await expect
+    .poll(() => region.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .not.toBe(idleBackground)
+  await regionalDetails.click({ position: regionalBottom })
+  await expect(selected('Face lighting')).toHaveAttribute('aria-pressed', 'true')
+
+  await selected('Portrait Base').click()
+  await region.getByRole('textbox', { exact: true, name: 'Regional prompt' }).click()
+  await expect(selected('Portrait Base')).toHaveAttribute('aria-pressed', 'true')
+  await region.getByRole('button', { exact: true, name: 'Hide Face lighting' }).click()
+  await expect(
+    region.getByRole('button', { exact: true, name: 'Show Face lighting' }),
+  ).toBeVisible()
+  await expect(selected('Portrait Base')).toHaveAttribute('aria-pressed', 'true')
+
+  const patchDetails = patch.locator('.entity-details')
+  const patchDetailsBox = (await patchDetails.boundingBox())!
+  await patchDetails.click({ position: { x: 3, y: patchDetailsBox.height - 3 } })
+  await expect(selected('Hand Repair Patch')).toHaveAttribute('aria-pressed', 'true')
+  await raster.click({ position: { x: 1, y: 1 } })
+  await expect(selected('Highlight Pass')).toHaveAttribute('aria-pressed', 'true')
+  await patch.getByRole('button', { name: /Browse/ }).click()
+  await expect(selected('Highlight Pass')).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('editing an unselected region changes only that region and shared actions use their own row', async ({
   page,
 }) => {

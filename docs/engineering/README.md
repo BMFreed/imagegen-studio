@@ -6,6 +6,10 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты прототипа, их владельцы, API и browser checks.
+- [UI kit experiment](./ui-kit-experiment.md) — завершённый замер 18 реализаций: прямой Naive, общий API поверх Naive и Vue/HTML; первые и финальные версии, стоимость подготовки и границы вывода.
+- [UI context experiment](./ui-context-experiment.md) — завершённый пилот на 24
+  изолированных агентах: влияние справок об API и композиции, результаты и ограничения.
 
 ## Источник и адаптация
 
@@ -33,10 +37,10 @@ Protocols и указатели в AGENTS.md действуют сейчас. П
 они привязаны к реализации соответствующих boundaries и не делают promises
 публично готовыми.
 
-| Пилот | Что проверить | Критерий завершения |
-| --- | --- | --- |
-| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием |
-| PP-006 Project Apply review | Integrated missing-resource diagnostic, nested refs, section selection, source preset | Reproduction и red tests на реальном Project entry point; fix делает их зелёными без ослабления assertions, невыбранные секции и source preset неизменны |
+| Пилот                         | Что проверить                                                                         | Критерий завершения                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе                 | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием                  |
+| PP-006 Project Apply review   | Integrated missing-resource diagnostic, nested refs, section selection, source preset | Reproduction и red tests на реальном Project entry point; fix делает их зелёными без ослабления assertions, невыбранные секции и source preset неизменны |
 
 Первый пилот начинается вместе с production Save/recovery slice. Второй — при
 первом исправлении [известных PP-006 gaps](../features/presets.md#known-pp-006-prototype-gaps).

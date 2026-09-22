@@ -7,6 +7,7 @@ import { computed, ref } from 'vue'
 import type { PresetCreateIntent } from '../presets/presets.types'
 import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 
+import LabeledControl from '../../components/LabeledControl.vue'
 import { clonePreset } from '../presets/presets.utils'
 import {
   beginProjectEdit,
@@ -187,19 +188,23 @@ function addRegional() {
         {{ selectedRegional ? 'Region display' : selectedLayer ? 'Smart Patch' : 'Select a layer' }}
       </span>
       <template v-if="opacityTarget">
-        <span>Opacity</span>
-        <NInputNumber
-          class="opacity-input"
-          :inputProps="{ 'aria-label': selectedRegional ? 'Region opacity' : 'Layer opacity' }"
-          :max="100"
-          :min="0"
-          :showButton="false"
-          size="small"
-          :value="opacityTarget.opacity"
-          @update:value="updateOpacity"
-        >
-          <template v-slot:suffix>%</template>
-        </NInputNumber>
+        <LabeledControl v-slot="{ controlId }" label="Opacity">
+          <NInputNumber
+            class="opacity-input"
+            :inputProps="{
+              id: controlId,
+              'aria-label': selectedRegional ? 'Region opacity' : 'Layer opacity',
+            }"
+            :max="100"
+            :min="0"
+            :showButton="false"
+            size="small"
+            :value="opacityTarget.opacity"
+            @update:value="updateOpacity"
+          >
+            <template v-slot:suffix>%</template>
+          </NInputNumber>
+        </LabeledControl>
         <NPopover placement="bottom-end" trigger="click">
           <template v-slot:trigger>
             <NButton aria-label="Adjust opacity with slider" quaternary size="tiny">

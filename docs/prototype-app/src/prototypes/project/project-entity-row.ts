@@ -15,7 +15,13 @@ export interface EntityRowAction {
   run: () => void
 }
 
-/** Presentation and commands supplied by the owning adapter, never a document model. */
+/**
+ * Presentation and commands supplied by the owning adapter, never a document model.
+ * ProjectEntitySurface owns three event zones: passive surface clicks select, actions own their
+ * clicks, and passive details select unless a nested control (native interactive element or
+ * `data-entity-control` wrapper) owns the click. The header selection button remains the keyboard
+ * and drag-handle target.
+ */
 export interface EntityRowController {
   menu: Readonly<Ref<EntityRowAction[]>>
   popoverOpen?: Ref<boolean>

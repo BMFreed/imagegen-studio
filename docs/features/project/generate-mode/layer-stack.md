@@ -48,7 +48,7 @@ Layer stack behavior:
 - shared `Compare generation settings` overflow/context-menu action for Raster
   and Smart Patch Layers.
 
-Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the full layer selection surface after a small movement threshold; visibility and row action buttons are sibling controls and never start a drag. The insertion line and reduced-opacity source row communicate the target, and the right panel uses its own scroll container for edge auto-scroll.
+Pointer reorder uses a sortable flat list backed by `@vue-dnd-kit/core`. Drag begins from the row's header selection button after a small movement threshold; visibility, row actions and inline details never start a drag. The insertion line and reduced-opacity source row communicate the target, and the right panel uses its own scroll container for edge auto-scroll.
 
 One completed drop creates one grouped `Reorder layers` undo entry. No document mutation occurs during hover. `Move up` and `Move down` remain in the row overflow menu as a keyboard fallback; permanent hover arrows are not shown.
 
@@ -67,7 +67,7 @@ Use the same row-control layout for Raster Layer, Smart Patch Layer and Regional
 Base row order:
 
 ```text
-visibility | thumbnail/preview | name + status | secondary actions | lock | delete
+visibility | thumbnail/preview | name + status | secondary actions | lock | actions menu (delete)
 ```
 
 Rules:
@@ -81,7 +81,7 @@ Rules:
 - destructive delete should use the app's normal confirm/undo policy once that policy is defined;
 - right-side actions should remain compact and type-specific, while visibility remains visually tied to the thumbnail.
 
-Rows with nested controls must not be implemented as one button containing other buttons. Use a full-height selection `NButton` for thumbnail/name/status plus sibling visibility and action buttons.
+Rows with nested controls must not be implemented as one button containing other buttons. Use a selection `NButton` for the header thumbnail/name/status plus sibling visibility and action buttons. Passive space in the article can select the row; inline editors keep their own click behavior.
 
 ## Smart Patch Layer Display
 
@@ -100,7 +100,7 @@ The full product Smart Patch Layer display should include:
 Smart Patch Layer row order:
 
 ```text
-visibility | mask thumbnail | active raster thumbnail | name + status | switch variants | lock | delete
+visibility | mask thumbnail | active raster thumbnail | name + status | switch variants | lock | actions menu (delete)
 ```
 
 The mask thumbnail comes before the active raster thumbnail so the row reads like a Photoshop-style masked layer: visibility, mask, visible/generated pixels, then name and actions.
@@ -136,24 +136,23 @@ The current right panel implements:
 
 - a separate Regional Guidance conditioning section;
 - one flat compositing stack shared by Raster and Smart Patch layers;
-- selection surfaces implemented as full-height `NButton` siblings beside visibility/actions, without nested controls;
+- a shared `ProjectEntitySurface` for Raster, Smart Patch and Regional Guidance; passive row space and details select, while sibling actions and editors keep their own click handling;
 - add Raster, add Smart Patch and add Regional Guidance;
 - Raster/Smart Patch visibility, lock, duplicate and delete;
 - pointer DnD with a 6px activation distance, insertion indicator, source opacity and overflow `Move up` / `Move down` fallback;
 - Smart Patch mask thumbnail before active-raster thumbnail, status text, variant count and a compact variant chooser;
-- selected Raster readouts for opacity/blend and selected Smart Patch readouts for mask revision, bbox, internal size and active variant;
-- Regional Guidance select/enable/delete and a compatibility warning.
+- selected Raster opacity/blend and selected Regional Guidance opacity controls above the stack; always-visible Smart Patch readouts for mask revision, bbox, internal size and active variant;
+- Regional Guidance select/enable/delete, always-visible inline prompt/reference controls and a compatibility warning.
 
 Current limitations:
 
 - layer rename is not exposed;
-- Raster opacity and blend controls are present but not wired;
+- Raster opacity and blend controls update the mock Project with Undo, but production compositing is not validated here;
 - locked state is visual/state coverage and does not yet prevent every destructive action;
 - Smart Patch bbox/internal resolution/compositing precision controls are read-only or absent;
-- Regional Guidance prompt/reference authoring is not inline, and reference-image add/remove/reorder is not implemented;
+- Regional Guidance prompt and reference-image add/remove work in the mock; reference-image reorder is not implemented;
 - destructive delete has no confirmation policy in this mock.
-- layer menus do not yet expose `Compare generation settings`, and the prototype
-  has no provenance comparison popover.
+- the prototype comparison popover does not prove production provenance persistence.
 
 ## Acceptance Criteria
 
@@ -164,7 +163,7 @@ Current limitations:
 - Warning/status icons, lock and delete actions are available in layer rows.
 - Smart Patch Layer status and active raster sub-layer are visible.
 - Smart Patch Layer row shows both mask thumbnail and active raster thumbnail, in that order.
-- Inline Regional Guidance prompt/reference-image authoring remains product scope; the current prototype shows compact entity rows plus selected-item details.
+- Inline Regional Guidance prompt/reference-image authoring remains product scope; the current prototype keeps details visible regardless of selection.
 - Regional Guidance Layer mask ownership is explicit and non-shared.
 - Smart Patch row exposes a switch-variants action/count instead of expanding variants inline by default.
 - Layer selection and sibling actions use valid non-nested interactive semantics.

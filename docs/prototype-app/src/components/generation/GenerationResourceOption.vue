@@ -5,17 +5,21 @@ import { resourcePreviews } from './generation-resource-previews'
 
 defineProps<{
   alreadyAdded?: boolean
-  resource: GenerationResourceRef & { baseModel?: string; triggerPhrases?: string[] }
+  resource: GenerationResourceRef & {
+    baseModel?: string
+    previewSrc?: string
+    triggerPhrases?: string[]
+  }
 }>()
 </script>
 
 <template>
   <div class="resource-option">
     <img
-      v-if="resourcePreviews[resource.id]"
+      v-if="resource.previewSrc || resourcePreviews[resource.id]"
       alt=""
       class="resource-preview"
-      :src="resourcePreviews[resource.id]"
+      :src="resource.previewSrc || resourcePreviews[resource.id]"
     />
     <span v-else aria-hidden="true" class="resource-preview resource-preview--empty">—</span>
     <div class="resource-description">
@@ -67,10 +71,12 @@ defineProps<{
   color: var(--app-text);
   font-size: 13px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 .resource-meta {
   color: var(--app-text-muted);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .resource-triggers {
   color: var(--app-text);

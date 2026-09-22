@@ -21,22 +21,63 @@ function closePopover() {
     row.popoverOpen.value = false
   }
 }
+
+const nestedControlSelector = [
+  '[data-entity-zone="actions"]',
+  '[data-entity-control]',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'a[href]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="checkbox"]',
+  '[role="switch"]',
+  '[role="textbox"]',
+].join(', ')
+
+function selectFromSurface(event: MouseEvent) {
+  if (event.button !== 0 || event.defaultPrevented) {
+    return
+  }
+
+  // The surface and passive details select the row. Sibling actions and editors
+  // own their clicks, including clicks on icons or padding inside a field.
+  for (const target of event.composedPath()) {
+    if (target === event.currentTarget) {
+      break
+    }
+    if (target instanceof Element && target.matches(nestedControlSelector)) {
+      return
+    }
+  }
+  row.select()
+}
 </script>
 
 <template>
-  <article class="entity-surface" :class="{ 'entity-surface--selected': state.selected }">
+  <article
+    class="entity-surface"
+    :class="{ 'entity-surface--selected': state.selected }"
+    data-entity-zone="surface"
+    @click="selectFromSurface"
+  >
     <div class="entity-header">
-      <NButton
-        :aria-label="`${state.visible ? 'Hide' : 'Show'} ${state.name}`"
-        circle
-        quaternary
-        size="tiny"
-        @click="row.toggleVisible"
-      >
-        <template v-slot:icon>
-          <NIcon :component="state.visible ? Eye : EyeOff" :size="18" />
-        </template>
-      </NButton>
+      <span class="entity-leading-action" data-entity-zone="actions">
+        <NButton
+          :aria-label="`${state.visible ? 'Hide' : 'Show'} ${state.name}`"
+          circle
+          quaternary
+          size="tiny"
+          @click="row.toggleVisible"
+        >
+          <template v-slot:icon>
+            <NIcon :component="state.visible ? Eye : EyeOff" :size="18" />
+          </template>
+        </NButton>
+      </span>
       <NButton
         :aria-label="`Select ${state.name}`"
         :aria-pressed="state.selected"
@@ -50,7 +91,7 @@ function closePopover() {
           <span v-overflow-title class="entity-summary">{{ state.summary }}</span>
         </span>
       </NButton>
-      <div class="entity-actions">
+      <div class="entity-actions" data-entity-zone="actions">
         <NTooltip v-if="state.warning">
           <template v-slot:trigger>
             <span :aria-label="state.warning.label" class="entity-warning" role="img" tabindex="0">
@@ -95,7 +136,9 @@ function closePopover() {
         </NPopover>
       </div>
     </div>
-    <div v-if="$slots['details']" class="entity-details"><slot name="details" /></div>
+    <div v-if="$slots['details']" class="entity-details" data-entity-zone="details">
+      <slot name="details" />
+    </div>
   </article>
 </template>
 
@@ -105,6 +148,7 @@ function closePopover() {
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
+  cursor: pointer;
   transition:
     background-color 120ms ease,
     border-color 120ms ease;
@@ -145,6 +189,7 @@ function closePopover() {
   justify-content: start;
 }
 .entity-previews,
+.entity-leading-action,
 .entity-actions,
 .entity-menu-anchor {
   display: flex;
