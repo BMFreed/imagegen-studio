@@ -128,7 +128,7 @@ test('imported layers explain missing provenance and patch comparison follows th
   const comparison = page.getByRole('region', { name: 'Compare generation settings' })
   await expect(comparison).toContainText('hand repair, variation 2')
   await expect(comparison).not.toContainText('Internal Size')
-  await page.getByText('Smart Patch', { exact: true }).first().click()
+  await page.locator('.canvas-size-label').click()
   await page.getByRole('button', { name: 'Switch variant for Hand Repair Patch' }).click()
   await page.getByRole('button', { exact: true, name: 'Variant 1' }).click()
   await page.getByRole('button', { name: 'Layer actions for Hand Repair Patch' }).click()

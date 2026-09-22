@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { AlertTriangle, DotsVertical, Eye, EyeOff, Lock, LockOpen, Plus, X } from '@vicons/tabler'
-import { NButton, NDropdown, NIcon, NInput, NSwitch, NTooltip } from 'naive-ui'
-import { ref } from 'vue'
+import { Plus, X } from '@vicons/tabler'
+import { NButton, NIcon, NInput, NSwitch } from 'naive-ui'
+import { computed, ref } from 'vue'
 
 import type { ProjectSession, RegionalGuidanceLayerModel } from './project.types'
 
 import { clonePreset } from '../presets/presets.utils'
+import { provideEntityRow } from './project-entity-row'
 import {
   beginProjectEdit,
   commitActiveProjectEdit,
@@ -14,12 +15,42 @@ import {
 } from './project-history'
 import ProjectCanvasArtwork from './ProjectCanvasArtwork.vue'
 import ProjectEntitySurface from './ProjectEntitySurface.vue'
+import ProjectEntityThumbnail from './ProjectEntityThumbnail.vue'
 
 const props = defineProps<{
   entity: RegionalGuidanceLayerModel
   selected: boolean
   session: ProjectSession
 }>()
+provideEntityRow({
+  menu: computed(() => [
+    { key: 'duplicate', label: 'Duplicate region', run: duplicate },
+    { key: 'delete', label: 'Delete region', run: remove },
+  ]),
+  select,
+  state: computed(() => ({
+    locked: props.entity.locked,
+    name: props.entity.name,
+    selected: props.selected,
+    summary: `${props.entity.positivePrompt ? 'Prompt · ' : ''}${props.entity.referenceImages.length} reference${props.entity.referenceImages.length === 1 ? '' : 's'}`,
+    visible: props.entity.enabled,
+    warning:
+      props.entity.compatibilityStatus === 'ok'
+        ? undefined
+        : {
+            label: 'Regional Guidance compatibility warning',
+            message: 'The current model may ignore regional reference images.',
+          },
+  })),
+  toggleLock: () =>
+    mutate('Toggle region lock', () => {
+      props.entity.locked = !props.entity.locked
+    }),
+  toggleVisible: () =>
+    mutate('Toggle Regional Guidance', () => {
+      props.entity.enabled = !props.entity.enabled
+    }),
+})
 const positiveOpen = ref(Boolean(props.entity.positivePrompt))
 const negativeOpen = ref(!props.entity.autoNegative || Boolean(props.entity.negativePrompt))
 const imageInput = ref<HTMLInputElement>()
@@ -103,60 +134,9 @@ async function addReferences(event: Event) {
 </script>
 
 <template>
-  <ProjectEntitySurface class="regional-row" :selected>
-    <NButton
-      :aria-label="`${entity.enabled ? 'Hide' : 'Show'} ${entity.name}`"
-      circle
-      quaternary
-      size="tiny"
-      @click="mutate('Toggle Regional Guidance', () => (entity.enabled = !entity.enabled))"
-    >
-      <NIcon :component="entity.enabled ? Eye : EyeOff" />
-    </NButton>
-    <NButton :aria-label="`Select ${entity.name}`" class="regional-select" text @click="select">
-      <span class="region-thumb" />
-      <span class="regional-name">
-        <strong v-overflow-title>{{ entity.name }}</strong>
-        <small>
-          {{ entity.positivePrompt ? 'Prompt · ' : ''
-          }}{{ entity.referenceImages.length }} reference{{
-            entity.referenceImages.length === 1 ? '' : 's'
-          }}
-        </small>
-      </span>
-    </NButton>
-    <NTooltip v-if="entity.compatibilityStatus !== 'ok'">
-      <template v-slot:trigger>
-        <NIcon
-          aria-label="Regional Guidance compatibility warning"
-          class="compatibility-warning"
-          :component="AlertTriangle"
-        />
-      </template>
-      The current model may ignore regional reference images.
-    </NTooltip>
-    <NButton
-      :aria-label="`${entity.locked ? 'Unlock' : 'Lock'} ${entity.name}`"
-      circle
-      quaternary
-      size="tiny"
-      @click="mutate('Toggle region lock', () => (entity.locked = !entity.locked))"
-    >
-      <NIcon :component="entity.locked ? Lock : LockOpen" />
-    </NButton>
-    <NDropdown
-      :options="[
-        { key: 'duplicate', label: 'Duplicate region' },
-        { key: 'delete', label: 'Delete region' },
-      ]"
-      trigger="click"
-      @select="$event === 'duplicate' ? duplicate() : remove()"
-    >
-      <NButton :aria-label="`Layer actions for ${entity.name}`" circle quaternary size="tiny">
-        <NIcon :component="DotsVertical" />
-      </NButton>
-    </NDropdown>
-    <template v-if="selected" v-slot:details>
+  <ProjectEntitySurface class="regional-row">
+    <template v-slot:preview><ProjectEntityThumbnail class="region-thumb" /></template>
+    <template v-slot:details>
       <div class="regional-settings">
         <div v-if="positiveOpen || entity.positivePrompt" class="regional-field">
           <header>
@@ -296,43 +276,11 @@ async function addReferences(event: Event) {
 </template>
 
 <style scoped>
-.regional-select {
-  flex: 1;
-  min-width: 0;
-  height: 48px;
-  justify-content: start;
-  padding: 4px 6px;
-}
-.regional-select :deep(.n-button__content) {
-  display: flex;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-  justify-content: start;
-}
-.regional-name {
-  display: grid;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-.regional-name strong,
-.regional-name small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.regional-name small,
 .regional-field header,
 .negative-source {
   color: var(--app-text-muted);
 }
 .region-thumb {
-  flex: 0 0 32px;
-  height: 32px;
-  border: 1px solid var(--app-border);
-  border-radius: 2px;
   background:
     radial-gradient(
       ellipse at 52% 48%,
@@ -341,9 +289,6 @@ async function addReferences(event: Event) {
       transparent 50%
     ),
     var(--canvas-background);
-}
-.compatibility-warning {
-  color: var(--status-warning);
 }
 .regional-settings {
   display: grid;

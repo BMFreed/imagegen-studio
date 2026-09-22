@@ -1295,7 +1295,7 @@ visibility | thumbnail/preview | layer name + status | lock | actions menu
 - duplicate/delete и перемещение находятся в actions menu;
 - правый action cluster не должен смешивать visibility с lock/actions;
 - общие свойства выбранного слоя (blend для Raster, opacity для Raster/Regional display) находятся в компактной строке над стеком; отдельная карточка-инспектор под стеком не нужна;
-- Raster, Smart Patch и Regional Guidance используют одну поверхность строки и одинаковые hover/selected states; региональные prompts/references раскрываются внутри выбранной строки.
+- Raster, Smart Patch и Regional Guidance используют одну поверхность строки и одинаковые hover/selected states; региональные prompts/references и Smart Patch details постоянно видны внутри строки; выделение не меняет её высоту. Общий компонент строки получает состояние и команды через DI и не знает типов слоёв.
 
 Для Smart Patch Layer используется расширенная строка:
 

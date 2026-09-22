@@ -138,7 +138,7 @@ Project: portrait.igs
 
 The left panel starts with the fixed Generate action bar and contains the scrolling generation settings. No `Create` label or one-option mode switch is rendered. A target label appears only for Smart Patch generation; a mode switch is introduced only when another real mode is designed.
 
-The right panel contains a compact selected-entity properties bar above the stack. Raster and Regional display opacity share this location; Raster blend mode sits alongside it. Regional prompt/reference blocks and Smart Patch details expand inside their selected row, using the same row surface and hover/selection states.
+The right panel contains a compact selected-entity properties bar above the stack. Raster and Regional display opacity share this location; Raster blend mode sits alongside it. Regional prompt/reference blocks and Smart Patch details remain visible inside every row regardless of selection. Selecting a layer must not change row heights or move neighboring layers. All types share the same presentation-only row component: typed Vue provide/inject supplies row state and commands, and named slots supply previews, extra actions and details. The base component has no dependency on layer types, ProjectSession or history.
 
 Canvas controls should remain close to the canvas. Viewport controls and interaction hints live in the bottom canvas bar; canvas-area metadata/actions live as overlays near the canvas edges; layer ownership and object-specific settings remain in the right panel so the user can always tell whether they are editing the global generation setup or a selected layer.
 

@@ -99,7 +99,7 @@ Canvas tools for the selected Regional Guidance Layer:
 Prompt and reference-image blocks are optional per layer:
 
 - if no prompt/reference block exists, show compact `+ Prompt`, `+ Negative Prompt`, `+ Reference Image` actions;
-- when a block exists, show it inline under the layer row, Invoke-style;
+- when a block exists, keep it visible inline under the layer header, Invoke-style; selection must not mount/unmount the editor or change row geometry;
 - positive/negative prompts use the same prompt editor behavior as the main prompt where possible, including tag autocomplete and prompt diagnostics;
 - regional reference images show thumbnails and metadata controls, but this remains a Regional Guidance feature rather than a generic IP-Adapter browser.
 
@@ -159,7 +159,7 @@ If the worker cannot support regional guidance or regional guidance images for t
 
 The `regional-guidance` scenario includes an entity with an owned mock region, positive prompt, automatic global-negative setting, one reference-image record and a compatibility warning.
 
-The right panel supports add, select, enable/disable, lock, duplicate and delete. Raster, Smart Patch and Regional Guidance rows share a common surface with consistent hover/selection states. The selected region expands inline prompt, negative prompt and reference-image blocks, with `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` actions. Text edits, the global-negative switch and reference add/remove participate in Project history. Uploaded image previews remain in-memory data URLs in this prototype.
+The right panel supports add, select, enable/disable, lock, duplicate and delete. Raster, Smart Patch and Regional Guidance rows share a common surface with consistent hover/selection states. Every region shows its existing inline prompt, negative prompt and reference-image blocks regardless of selection, with `+ Prompt`, `+ Negative Prompt` and `+ Reference Image` actions. Text edits, the global-negative switch and reference add/remove participate in Project history. Uploaded image previews remain in-memory data URLs in this prototype.
 
 Opacity lives in the shared properties bar above the stack. For Regional Guidance it controls the mock region overlay's display opacity, not guidance strength. The canvas exposes Transform Region, Lasso, Polygon Lasso, Brush and Eraser and correctly omits Bounding Box actions. Region painting/transforms remain deterministic mock state.
 

@@ -236,13 +236,15 @@ function addRegional() {
               <NIcon :component="Plus" />
             </NButton>
           </header>
-          <ProjectRegionalRow
-            v-for="entity of session.document.regionalGuidance"
-            :key="entity.id"
-            :entity
-            :selected="session.ui.selection?.id === entity.id"
-            :session
-          />
+          <div class="regional-list">
+            <ProjectRegionalRow
+              v-for="entity of session.document.regionalGuidance"
+              :key="entity.id"
+              :entity
+              :selected="session.ui.selection?.id === entity.id"
+              :session
+            />
+          </div>
         </section>
 
         <section aria-label="Compositing Layers">
@@ -376,6 +378,10 @@ function addRegional() {
   display: grid;
   gap: 10px;
   padding: 8px;
+}
+.regional-list {
+  display: grid;
+  gap: 5px;
 }
 .section-header,
 .section-header span,
