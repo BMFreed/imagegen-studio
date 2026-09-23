@@ -20,6 +20,11 @@
 - `docs/product-capabilities/promise-matrix.md`;
 - `architecture/standards/research-protocol.md`;
 - `architecture/standards/review-protocol.md`;
+- `architecture/adr/042-three-test-levels-and-lighter-system-layer.md`;
+- `architecture/standards/test-quality/layer-choice.md`;
+- `architecture/standards/test-quality/substitutions.md`;
+- `architecture/standards/test-quality/test-health.md`;
+- `tools/e2e/tests/sample/resource-management.spec.ts`;
 - `.claude/commands/mr-review.md`.
 
 Это reference paths другого репозитория, не зависимости checkout ImageGen Studio.
@@ -31,6 +36,9 @@ entry points, отказных сценариев, red→green regression и ч�
 GitLab refs/API, shared stand, service deployment, changesets и обязательные
 reviewer commits заменены правилами для GitHub и локального Vue playground.
 Сам факт зелёного теста не доказывает корректность произвольной реализации.
+Правила выбора уровня, проверки полноты перечней и async-свидетеля сверены с
+work project `dev` на `<private revision>` (2026-09-23).
+Специфичный для work project harness и его большой CI-gate подмен не переносились.
 
 ## Пилоты и дальнейшая автоматизация
 
@@ -38,13 +46,34 @@ Protocols и указатели в AGENTS.md действуют сейчас. П
 они привязаны к реализации соответствующих boundaries и не делают promises
 публично готовыми.
 
-| Пилот                         | Что проверить                                                                         | Критерий завершения                                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе                 | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием                  |
-| PP-006 Project Apply review   | Integrated missing-resource diagnostic, nested refs, section selection, source preset | Reproduction и red tests на реальном Project entry point; fix делает их зелёными без ослабления assertions, невыбранные секции и source preset неизменны |
+| Пилот                         | Что проверить                                                                                               | Критерий завершения                                                                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе                                       | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием |
+| PP-006 Apply handoff review   | `Open in Models` для missing resource и возврат к Apply; позднее — настоящие resource/SQLite/`.igs` команды | Red→green через Project picker; selected sections, current Project и source preset проверены; evidence прототипа и production разделены |
 
 Первый пилот начинается вместе с production Save/recovery slice. Второй — при
-первом исправлении [известных PP-006 gaps](../features/presets.md#known-pp-006-prototype-gaps).
+реализации [оставшегося `Open in Models` gap](../features/presets.md#known-pp-006-prototype-gaps).
+Project Apply diagnostics и regression coverage через picker уже есть на mocks;
+формальным пилотом review они не отмечены.
+
+Сбор данных для оценки методики начинается **до и во время** реализации, а не
+задним числом после готового приложения. Сейчас можно зафиксировать acceptance
+criteria, явные gaps и baseline прототипного flow: UI-поведение, время работы,
+доработки после review и чувствительность браузерных тестов к ошибкам. Это не
+проверяет Save, recovery или worker.
+
+Для PP-007 до реализации writer/loader записать инвариант
+отказа, успешный соседний сценарий и mutation, которую будущий тест обязан
+поймать: interrupted Save оставляет прежний `.igs` читаемым, shadow сохранным,
+Project dirty; успешный Save открывает новую ревизию; преждевременный `Saved`
+до замены файла должен делать соответствующий тест красным. С появлением реальной
+границы сохранить SHA, executed/failed/skipped, исход mutation, найденные
+дефекты и время/доработки; итоговый вывод сделать после рабочего среза и
+независимой проверки. Число зелёных тестов прототипа не измеряет надёжность
+production `.igs`. Один пилот показывает применимость и стоимость процесса;
+для сравнительного вывода нужны сопоставимые задачи и одинаковая независимая
+оценка.
+
 После пилотов уточнить инструкции по фактическим затруднениям и только затем
 создать собственный `.codex/skills/promise-review/SKILL.md`.
 
