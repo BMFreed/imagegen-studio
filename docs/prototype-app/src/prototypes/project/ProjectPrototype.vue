@@ -13,8 +13,9 @@ import {
 import ApplyPresetModal from '../presets/ApplyPresetModal.vue'
 import { presetCatalog } from '../presets/presets.catalog'
 import { commitActiveProjectEdit, redoProject, undoProject } from './project-history'
-import { expandPromptPairs } from './project-prompt.utils'
+import { expandPromptPairs, scheduleDynamicPromptSeeds } from './project-prompt.utils'
 import { freezeGeneration } from './project-provenance'
+import { recordCompletedActualSeed } from './project-seed.utils'
 import {
   acceptStagingCandidates,
   applyPresetSections,
@@ -86,6 +87,7 @@ function runNext() {
     next.status = 'completed'
     if (candidate) {
       candidate.status = 'completed'
+      recordCompletedActualSeed(props.session, next, candidate)
       const staging = props.session.staging
       if (staging) {
         if (!staging.focusedCandidateId) {
@@ -117,12 +119,22 @@ function replaceAndGenerate() {
 }
 function generate(count: number) {
   commitActiveProjectEdit(props.session)
+  const draft = getActiveGenerationDraft(props.session)
+  const seedPolicy = draft.payload.seed?.policy ?? 'random'
+  const baseSeed =
+    seedPolicy === 'reuse'
+      ? props.session.lastActualSeed
+      : seedPolicy === 'fixed'
+        ? (draft.payload.seed?.value ?? 0)
+        : crypto.getRandomValues(new Uint32Array(1))[0]!
+  if (baseSeed === undefined) {
+    return
+  }
   for (const timer of timers) {
     clearTimeout(timer)
   }
   timers.clear()
   const id = crypto.randomUUID()
-  const draft = getActiveGenerationDraft(props.session)
   const expansion = expandPromptPairs(
     serializeGenerationPrompt(draft.payload.prompt),
     serializeGenerationPrompt(draft.payload.negativePrompt),
@@ -130,6 +142,12 @@ function generate(count: number) {
   )
   const jobs = expansion.pairs.flatMap((pair) =>
     Array.from({ length: count }, (_, iteration) => ({ iteration: iteration + 1, ...pair })),
+  )
+  const seeds = scheduleDynamicPromptSeeds(
+    expansion.pairs.length,
+    count,
+    draft.dynamicPrompt.seedBehavior,
+    baseSeed,
   )
   const mode = deriveGenerationMode(props.session)
   props.session.queueItems = jobs.map((job, index) => ({
@@ -139,9 +157,7 @@ function generate(count: number) {
       `queue-${id}-${index}`,
       job.prompt,
       job.negativePrompt,
-      draft.payload.seed?.policy === 'fixed'
-        ? (draft.payload.seed.value ?? 0)
-        : crypto.getRandomValues(new Uint32Array(1))[0]!,
+      seeds[index]!,
     ),
     id: `queue-${id}-${index}`,
     iteration: job.iteration,

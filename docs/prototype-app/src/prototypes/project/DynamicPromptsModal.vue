@@ -63,6 +63,13 @@ function update(value: Partial<ProjectDynamicPromptSettings>) {
           />
         </label>
       </div>
+      <NText class="seed-behavior-help" depth="3">
+        {{
+          settings.seedBehavior === 'per-iteration'
+            ? 'One seed per iteration, shared by every expanded prompt pair.'
+            : 'A different seed for every prompt pair and iteration.'
+        }}
+      </NText>
       <NText depth="3">
         {{ result.pairs.length }} concrete prompt pair{{ result.pairs.length === 1 ? '' : 's' }}
       </NText>
@@ -98,6 +105,11 @@ function update(value: Partial<ProjectDynamicPromptSettings>) {
   display: grid;
   gap: 4px;
   color: var(--app-text-muted);
+  font-size: 12px;
+}
+.seed-behavior-help {
+  display: block;
+  margin: -2px 0 10px;
   font-size: 12px;
 }
 .prompt-pairs {

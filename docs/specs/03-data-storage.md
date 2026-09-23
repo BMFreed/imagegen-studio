@@ -21,24 +21,39 @@ SQLite — источник истины для:
 - installed resources;
 - derived global history index of accepted generated project results and recoverable project index for Home;
 - Queue Manager runtime/history records: queue items, batches, status, progress, errors and serialized worker job payloads;
+- project-scoped operational last-actual-seed cursor, updated on validated
+  completed outputs independently of queue and staging retention;
 - presets;
 - references на файлы изображений, масок и моделей.
 
 Project file `.igs` — источник истины для конкретного canvas-проекта:
 
 - canvas document metadata;
-- canvas size and color/profile metadata;
+- unbounded Project Canvas coordinate metadata, project-owned primary generation
+  bbox and color/profile metadata;
 - layer stack;
 - raster layer assets;
 - masks;
 - generation settings and immutable generation provenance attached to accepted Raster Layers / Smart Patch variants;
+- the last-actual-seed snapshot as of the most recent explicit Project Save;
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
 SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, optional `trashed_at`, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
 
-Project `open` state не хранится в index row: Home вычисляет его по in-memory document-tab registry. `recovery_available` отражает наличие валидированного shadow candidate, а не обычный autosave progress.
+Project `open` state не хранится в index row: Home вычисляет его по in-memory document-tab registry. `recovery_available` отражает наличие валидированного незавершённого document shadow или completed staging recovery после сбоя, а не обычный autosave progress.
 
-Queue rows are not project source of truth or generation result history. They describe operational jobs that produce temporary staging candidates. Completed queue rows can be pruned without deleting accepted project results.
+Queue rows are not project source of truth or generation result history. They describe operational jobs that produce temporary staging candidates. Completed queue rows can be pruned without deleting accepted project results or valid unaccepted candidate recovery: each completed candidate owns a separate durable manifest entry with its frozen generation context.
+
+Seed `Reuse` takes the most recent completed output's actual seed for this same
+Project, even when that candidate was subsequently discarded. Its local cursor
+is operational metadata, not a document edit: job completion does not mark the
+Project dirty or add an undo step. The cursor is keyed to the local Project
+identity and survives graceful tab close, staging cleanup and queue pruning.
+An explicit Project Save snapshots its current value into `.igs`; until then,
+the newer local cursor stays on this computer. Opening a portable `.igs` without
+a local cursor starts from its saved snapshot, if any. A copied `.igs` at a new
+local identity does not inherit an unrelated local cursor. A managed Project
+move migrates the local identity mapping along with the project index.
 
 Файловая система хранит тяжёлые артефакты:
 
@@ -48,10 +63,17 @@ Queue rows are not project source of truth or generation result history. They de
 - workspace directories;
 - derived thumbnail/cache previews;
 - autosave shadow directories;
-- temporary generation staging candidates;
+- app-managed generation staging recovery manifests and candidate assets;
 - temporary exports/downloads.
 
 Sidecar JSON рядом с пользовательскими изображениями и embedded metadata не входят в MVP. Project metadata хранится внутри `.igs`.
+
+CivitAI API token is stored by Electron main process using `safeStorage`; only
+its encrypted value may be persisted in app-managed configuration. The token is
+not stored in SQLite, `.igs`, presets, queue payloads or logs. On Linux, if
+`safeStorage` reports the unprotected `basic_text` backend or secure storage is
+unavailable, the app refuses to persist the token and shows an actionable
+connection/setup error. It must not silently fall back to plaintext storage.
 
 ## Workspaces и `.igs` project files
 
@@ -86,6 +108,13 @@ project.igs
 Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, `predictionType`, display name/version и отсутствующий-resource status после проверки.
 
 `preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они едут вместе с project file и являются источником истины для project preview.
+На бесконечном Project Canvas их конечный rasterization rect определяется по
+union bounds видимого composited raster content: видимые Raster Layers и
+активные видимые Smart Patch variants. Скрытое содержимое и primary generation
+bbox не расширяют этот rect. Для проекта без видимых raster pixels оба preview
+артефакта содержат детерминированный placeholder для Home, не «размер canvas»
+и не изображение, доступное для `Export As`. Default image export использует
+тот же visible-content bounds rule и в пустом проекте недоступен.
 
 `ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
 
@@ -97,12 +126,13 @@ and the [staging contract](../features/project/generate-mode/generation-results.
 
 ### Generation provenance
 
-Generation provenance — immutable metadata accepted Raster Layer or Smart Patch variant: which settings, resources, inputs and runtime parameters produced that persistent result.
+Generation provenance — immutable metadata of an accepted Raster Layer or Smart Patch variant: recorded settings, resources, non-regional source context and runtime parameters associated with that persistent result. It is not a complete reconstruction recipe when Regional Guidance was used.
 
 Provenance exists only after explicit `Add N as Layers` / `Add N as Variants`. Worker completion and a temporary staging candidate do not create a project-local provenance record.
 
-Project-local provenance is stored inside `.igs` and referenced by its accepted
-layer/variant. Its payload logically distinguishes portable
+Acceptance attaches project-local provenance to the open document and its
+recovery shadow; explicit Save stores it inside `.igs`, referenced by its
+accepted layer/variant. Its payload logically distinguishes portable
 `generationConfiguration`, diagnostic `layerSourceContext` and
 `executionResultContext`. The eventual physical schema may encode these as
 explicit nested groups, but must preserve the ownership boundary.
@@ -110,12 +140,20 @@ explicit nested groups, but must preserve the ownership boundary.
 `generationConfiguration` contains:
 
 - prompt / negative prompt;
-- seed;
-- sampler, scheduler, steps, CFG and explicit reusable generation/Canvas size;
+- actual seed, requested Seed policy and dynamic seed behavior;
+- sampler, scheduler, steps, CFG and applicable reusable primary generation
+  bbox width/height, never Smart Patch geometry or internal resolution;
 - model, LoRA, VAE references and compatibility metadata;
 - фактический `predictionType`;
 - automatically derived txt2img/img2img/inpaint/outpaint mode;
-- reusable Regional Guidance and other conditioning inputs.
+- CFG Rescale, VAE Precision and other supported, reproducible
+  generation/conditioning options.
+
+Regional Guidance is excluded from every accepted-result provenance group,
+including `generationConfiguration` and `layerSourceContext`. Frozen operational
+worker input may contain Regional Guidance needed to run the job, but acceptance
+does not copy it into provenance. A saved result generated with regions therefore
+cannot fully reconstruct that regional setup.
 
 `layerSourceContext` contains, where relevant:
 
@@ -126,14 +164,20 @@ explicit nested groups, but must preserve the ownership boundary.
 
 `executionResultContext` contains:
 
-- reference to the accepted result inside `.igs`;
+- stable accepted-result identity in the open document and, after Save, `.igs`;
 - created_at и worker/runtime metadata, нужные для воспроизводимости.
 
 The latter two groups are retained for diagnostics, explainability and Smart
 Patch `outdated`; they are not a preset payload and are not presented as
 generation settings.
 
-SQLite may store a derived global history index for accepted results: project path, result/provenance id, created_at, thumbnail/cache key and searchable metadata. The accepted layer/variant plus project-local provenance in `.igs` remains source of truth.
+Immediately after Add, each accepted result appears in the open Project's
+history UI projection; the projection is rebuilt from the recovered document
+shadow after a crash. SQLite may store a derived durable global history index
+for saved accepted results: project path, result/provenance id, created_at,
+thumbnail/cache key and searchable metadata. Explicit Save synchronizes that
+index with the accepted layer/variant and project-local provenance in `.igs`,
+which remain its source of truth.
 
 `Compare generation settings` is derived at runtime and is not serialized as a
 second snapshot or cached diff. A generated Raster Layer contributes its
@@ -145,22 +189,86 @@ Canvas`.
 
 One multi-accept may create several history rows but one grouped Project undo step. Discarded candidates never enter global history.
 
+Accepted-result history has no soft-delete/tombstone lifecycle. Its global
+SQLite rows are derived from accepted results in `.igs`; removing or rebuilding
+an index row cannot silently delete or hide the source result. Queue Manager's
+independent terminal-job pruning is not accepted-result history deletion.
+
 ### Temporary generation staging
 
-Queue completion writes candidate assets to application-managed temporary/cache storage, for example:
+Queue completion writes candidate assets to application-managed recovery storage,
+separate from both the document autosave shadow and the user-owned `.igs`:
 
 ```text
-ImageGen Studio/temp/generation-staging/{project-id}/{session-id}/
+ImageGen Studio/recovery/generation-staging/{project-id}/{session-id}/
+├─ manifest.json
+└─ assets/
+   └─ {candidate-id}.png
 ```
 
 Rules:
 
-- candidates are previewed by `GenerationResults` without becoming layers;
-- focus and checkbox selection are ephemeral staging state;
-- accepting a candidate moves/copies its raster data into `.igs` and creates provenance;
-- unselected/discarded candidates can be deleted when the staging session closes;
-- Queue Manager rows may outlive candidate cleanup but never become accepted-result history;
-- crash/reopen recovery of an unfinished staging session is a separate follow-up decision.
+- candidates are previewed by `GenerationResults` without becoming layers or
+  marking the Project dirty;
+- the manifest records stable project/session/candidate/target identities,
+  committed asset path and integrity metadata, frozen job inputs/resources and
+  actual result metadata needed to create provenance on later acceptance. For
+  Smart Patch candidates it also retains the frozen bbox and either a
+  display-ready raster with transparency or immutable mask/compositing
+  snapshot assets needed for faithful independent Raster Layer conversion if
+  the target layer is missing after recovery;
+  queue-row retention is never the only copy of that context;
+- main process writes each output to a provisional file, validates it, then
+  atomically publishes the asset and manifest update. Only a validated,
+  manifest-backed candidate can be shown as completed/recoverable;
+- each committed candidate records its actual seed and stable completion order.
+  After manifest publication, a durable SQLite completion transaction marks
+  its queue item completed and advances the Project seed cursor. If a crash
+  occurs between those operations, startup reconciles valid committed
+  manifests idempotently by candidate id and completion order before `Reuse`
+  becomes available. A missing, corrupt or partial output never advances the
+  cursor;
+- a crash between filesystem and SQLite updates is reconciled idempotently by
+  candidate id: valid committed manifest entries remain recoverable even if a
+  queue row was not marked completed or has since been pruned; unreferenced partial
+  files and manifest entries with missing/corrupt assets are not shown as
+  usable candidates and are diagnosed/quarantined for cleanup;
+- focus and checkbox selection are ephemeral staging UI state and may be
+  initialized again when valid candidates are recovered;
+- a valid Smart Patch candidate whose target layer is absent after recovery is
+  retained and surfaced as orphaned, not treated as a corrupt/partial file.
+  Original Add as Variant is disabled. The user may explicitly Add as Raster
+  Layer at the frozen bbox only when its committed asset and retained geometry/
+  compositing snapshot reproduce the candidate's own visible contribution
+  without the missing layer. Otherwise Raster conversion is disabled. A valid
+  asset still supports explicit Save Candidate Image export, and Discard remains
+  available; export neither accepts it into the Project nor removes its
+  recovery entry. None of these actions silently retargets or changes an
+  existing layer;
+- `Add N as Layers/Variants` first gives selected raster assets and frozen
+  context to the open document and document recovery shadow, creating accepted
+  provenance there. Only after that handoff is durable may their staging
+  records/assets be removed. The main `.igs` receives accepted state on
+  explicit Save; failed handoff leaves the candidate recoverable;
+- Save of an otherwise dirty Project clears only its document shadow, never
+  unaccepted staging recovery. A clean saved Project with valid completed
+  candidates can therefore offer recovery after a crash;
+- discarding a completed candidate or its staging session does not roll back
+  the last actual seed: the output really completed. The cursor has its own
+  retention lifecycle and is not derived from remaining candidate files;
+- graceful confirmed Project close cancels its unfinished jobs, durably marks
+  its staging session discarded before close commits, then cleans its
+  candidates; late outputs for that session cannot be published. Explicit
+  per-candidate/session discard follows
+  the same cleanup rule without creating provenance/history;
+- cleanup removes discarded, accepted-after-handoff, unreferenced filesystem
+  orphans and invalid candidate data; a valid missing-target Smart Patch
+  candidate is retained until explicit Add as Raster Layer or Discard. A quota
+  must be checked before reserving new output space;
+  when space is insufficient, enqueue/completion reports an actionable error
+  instead of silently evicting valid unresolved recovery. A failed deletion
+  remains hidden/tombstoned and is retried by GC;
+- Queue Manager rows may outlive candidate cleanup but never become accepted-result history.
 
 ### Upscale assets follow-up
 
@@ -175,13 +283,15 @@ assets/upscale-inputs/{id}.png
 Metadata input'а хранит:
 
 - source layer stack hash;
-- source canvas size;
+- finite source capture bounds in Project coordinates;
 - source project revision id или timestamp;
 - visible layers metadata;
 - created_at;
 - исходный project mode/action, который создал input.
 
-Если после создания input'а слой, маска, opacity, blend mode или canvas size изменились, input считается устаревшим относительно текущего Generate composite. Upscale mode должен показывать `Source is outdated` и предлагать refresh.
+Если после создания input'а слой, маска, opacity, blend mode или выбранные
+границы захвата изменились, input считается устаревшим относительно исходного
+composite. Upscale mode должен показывать `Source is outdated` и предлагать refresh.
 
 Upscale result хранится как отдельный asset:
 
@@ -219,7 +329,8 @@ MVP-правило:
 - валидировать `manifest.json` и `project.json` через runtime schema;
 - запретить опасные archive paths вроде `../` и абсолютных путей;
 - проверить наличие обязательных assets, referenced layers, masks и previews;
-- проверить допустимые размеры canvas/layers/masks;
+- проверить допустимые размеры generation bbox, raster layers, masks и
+  распакованных assets, включая лимиты на координаты и общий объём archive;
 - показать понятную ошибку, если файл повреждён, не поддерживается или создан более новой версией приложения.
 
 Изменения формата проходят через явные schema migrations. Старый `.igs` нельзя молча пересохранять в новой схеме без успешной миграции и атомарного save.
@@ -245,15 +356,15 @@ ImageGen Studio/
 
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
 - Raster assets, masks и previews пишутся только по dirty-флагам.
-- Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
+- Autosave не изменяет основной `.igs` до явного Save.
 - Обычная запись в shadow directory является внутренним механизмом защиты и не создаёт пользовательский Home status.
-- При запуске приложение проверяет незавершённые autosave directories. Валидный unclean state, оставшийся после неожиданного завершения работы, становится recovery candidate и отображается как `Recovery available`.
-- После успешного обычного save autosave state для проекта помечается clean или удаляется.
+- При запуске приложение проверяет незавершённые document shadow и отдельные staging recovery manifests. Валидный unclean document state или completed staging candidate после неожиданного завершения становится `Recovery available`; прежние pending/running jobs отменяются, а partial outputs не показываются.
+- После успешного обычного Save только document autosave state для проекта помечается clean или удаляется; staging recovery остаётся до Add или explicit discard.
 - После graceful `Discard Changes` соответствующий shadow state удаляется.
-- `Recover` открывает shadow state как dirty `Project` document и не перезаписывает основной `.igs` до явного Save.
-- `Discard Recovery and Open Saved` удаляет recovery candidate и открывает основной `.igs`.
+- `Recover` открывает shadow state как dirty `Project` document, когда он есть, иначе сохранённый `.igs`; валидные completed candidates возвращаются в staging, не меняя dirty state сами по себе.
+- `Discard Recovery and Open Saved` удаляет оба вида recovery state для проекта и открывает основной `.igs`.
 - `Cancel` не изменяет ни recovery candidate, ни основной `.igs`.
-- Запись autosave-файлов выполняется через temp file + atomic rename.
+- Запись autosave и staging manifest/assets выполняется через temp file + atomic rename с валидацией ссылок и содержимого.
 - Main `.igs` save выполняется отдельно: собрать archive во временный файл, провалидировать, затем атомарно заменить исходный project file.
 
 Такой подход сохраняет переносимость `.igs`, но не превращает каждое изменение canvas в перепаковку всего project archive.
@@ -378,6 +489,18 @@ CREATE TABLE presets (
 ) STRICT;
 ```
 
+`deleted_at` is a preset-only soft-delete tombstone, recorded as a UTC time.
+`NULL` means active. A deleted preset remains in SQLite with its entire
+`payload_json` and resource refs, is excluded from active catalog/search and
+Apply/New Project selectors, and is available in the Preset Manager's `Deleted`
+view for `Restore`. Restore clears `deleted_at` without changing preset identity
+or payload. Once 30 days have elapsed since `deleted_at`, cleanup permanently
+deletes the row; if the application was closed at expiry, cleanup runs on the
+next launch. Neither the preset payload nor its copied resource-reference
+metadata is physically removed before expiry. The referenced model files have
+their own lifecycle. This preset lifecycle is separate from managed `.igs`
+Project Trash.
+
 `workflow_type` — категория применимости пресета, а не параметр генерации.
 
 `tags_json` and `favorite` are catalog metadata used for browsing and filtering. They do not belong in `PresetPayload`, because they do not change generation behavior. `tags_json` is validated as a string array at the storage boundary.
@@ -408,6 +531,7 @@ inpaint
 type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
 type SeedPolicy = 'fixed' | 'random' | 'reuse'
 type PresetSectionKey =
+  | 'cfgRescale'
   | 'denoisingStrength'
   | 'guidance'
   | 'loras'
@@ -418,6 +542,7 @@ type PresetSectionKey =
   | 'seed'
   | 'size'
   | 'vae'
+  | 'vaePrecision'
 
 interface PresetResourceRef {
   id: string
@@ -452,6 +577,7 @@ interface GenerationPromptEmbeddingRef {
 }
 
 interface PresetPayload {
+  cfgRescale?: number
   denoisingStrength?: number
   guidance?: {
     cfgScale: number
@@ -474,6 +600,7 @@ interface PresetPayload {
     width: number
   }
   vae?: PresetResourceRef
+  vaePrecision?: 'Auto' | 'FP16' | 'FP32'
 }
 
 interface PresetDefinition {
@@ -518,10 +645,20 @@ interface PresetApplicationDraft {
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.
+- `cfgRescale` and `vaePrecision` are independent typed optional payload fields
+  and `PresetSectionKey` values; they are not a generic `advanced` section.
+  Absence means Apply leaves the current Project value unchanged. Future
+  advanced settings require named typed fields and sections rather than an
+  `engineSpecific` bag.
 - `PresetPayload` represents only portable generation configuration. Smart Patch mask, bounding box, internal resolution, compositing state and source/revision identities are layer properties and must not be serialized into it.
-- A Smart Patch `internalResolution` must never be mapped implicitly into `PresetPayload.size`; `size` remains the explicit generic generation/canvas-size section supplied by the source configuration.
+- A Smart Patch `internalResolution` or layer-owned bbox must never be mapped
+  implicitly into `PresetPayload.size`; when explicitly included, `size` carries
+  portable primary normal-generation bbox width/height, never a fixed Project
+  Canvas size or bbox x/y placement.
 - Reusing Smart Patch layer/source context is implemented by duplicating the layer, not by extending `PresetPayload` with geometry or mask fields.
-- Embeddings не образуют отдельную section/inclusion mask. Наличие `prompt` или `negativePrompt` включает всю соответствующую structured prompt-секцию вместе с embedding refs внутри её tokens.
+- Embeddings не образуют отдельную section/inclusion mask. Наличие `prompt` или
+  `negativePrompt` включает plain-text prompt и соответствующий sidecar
+  `embeddingRefs`; refs не являются токенами текста или UI chips.
 - При нормализации workflow `textToImage` удаляет `denoisingStrength`. Возврат к другому workflow не создаёт поле автоматически.
 - `predictionType` хранит scheduler prediction mode модели. Доменный label `v-pred` маппится на worker/storage token `v_prediction`; это compatibility metadata, а не user-facing style setting.
 - Optional `missing` — runtime/catalog resolution state в текущем prototype DTO. Production mapper может вычислять его по Model Manager registry, но должен сохранять human-readable `id`/`name`/`version` reference metadata, чтобы preset оставался понятным при отсутствии файла.
@@ -583,6 +720,16 @@ ImageGen Studio/
 - `current-runtime.json` заменяется атомарно только после успешного staging self-test. Failed install не изменяет active runtime и не удаляет previous known-good runtime.
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
+- Anima requires its Qwen3 encoder and VAE alongside the chosen checkpoint.
+  The install preview lists all required files and the total additional
+  download size before consent. A checkpoint is not published as selectable
+  until the checkpoint and all required companions are verified and their
+  relationships are recorded; an interrupted/failed companion download leaves
+  no partially installed selectable Anima model. Existing verified companions
+  may be reused and are not counted as new download bytes. Shared companion
+  files are not removed while another installed model still references them. If
+  a companion later goes missing, the dependent checkpoint becomes unavailable
+  for generation until the exact dependency is repaired.
 - CivitAI model identity и exact model version/file identity хранятся отдельно;
   несколько version records одной модели могут ссылаться на независимые managed
   files и существовать одновременно.
@@ -603,10 +750,12 @@ ImageGen Studio/
 - При применении preset проверяются только выбранные секции. Provenance comparison
   является read-only и только показывает missing-resource diagnostics.
 - Другая версия той же CivitAI-модели не считается валидной заменой.
+- Model resources have no user-visible soft-delete/Trash state. Removing a
+  local resource deletes its managed file after the existing job/reference
+  checks; only minimal identity/display metadata needed for missing-resource
+  diagnostics may remain. This metadata is not a restorable model copy.
 
 ## Что стоит уточнить перед схемой миграций
 
-- Нужен ли soft delete для моделей, пресетов и истории.
-- Где хранить CivitAI API token: OS keychain или зашифрованная app config.
 - Нужны ли дополнительные размеры cache thumbnail'ов сверх `.igs` `preview/thumbnail.webp` и `preview/merged.png`.
 - Нужно ли хранить нормализованные поля accepted-result provenance отдельно от JSON для поиска и фильтров.

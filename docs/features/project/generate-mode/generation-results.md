@@ -15,7 +15,7 @@ A completed candidate is not project state yet. The user previews one candidate 
 
 This applies to:
 
-- normal generation targeting Project Canvas;
+- normal generation targeting the project-owned primary generation bbox on the unbounded Project Canvas;
 - Smart Patch Layer generation;
 - dynamic prompting and multi-output generation.
 
@@ -39,10 +39,15 @@ The product model is:
 
 ```text
 completed generation = temporary staging candidate
-selected + Add to Project = persistent Raster Layer or Smart Patch variant
+selected + Add to Project = accepted Raster Layer or Smart Patch variant in the open document
+explicit Save = accepted state in the portable .igs
 ```
 
-Generation completion alone must not mutate `.igs`, create an undo step or add an entry to project/global result history.
+Generation completion durably records the completed candidate in app-managed
+recovery storage, but must not mutate the main `.igs`, create an undo step or
+add an entry to project/global result history. The candidate is recoverable
+locally after an unexpected shutdown; it is not portable with `.igs` before
+acceptance and explicit Save.
 
 `GenerationResults` is the visible UI name. The domain/session model should use a less ambiguous name such as `GenerationStagingSession`.
 
@@ -67,6 +72,8 @@ interface GenerationStagingSession {
 }
 ```
 
+`project-canvas` remains the logical normal-generation target discriminator; it does **not** mean the whole infinite canvas is rasterized. Each candidate's frozen job/result context supplies the finite bbox used for preview and acceptance. Moving the current bbox while jobs run must not move their previews or accepted results.
+
 The two selection concepts are intentionally separate:
 
 - `focusedCandidateId` — the single candidate shown on canvas;
@@ -85,12 +92,41 @@ When generation starts:
 
 When a candidate completes:
 
-- its temporary raster asset becomes previewable;
+- main process validates and atomically commits its raster asset, recovery
+  manifest entry and frozen generation/result context before reporting it as a
+  completed, previewable candidate;
+- preview appears at the frozen job bbox coordinates;
 - the first completed candidate becomes focused and selected by default;
 - later auto-switch behavior may change focus, but never changes `selectedCandidateIds`;
 - the candidate remains outside persistent project state until explicit acceptance.
 
-Candidate assets live in application-managed temporary/cache storage. They are not placed in the main `.igs` project package merely because the worker completed successfully.
+Candidate assets and the context needed to create accepted-result provenance
+live in app-managed staging recovery storage, independently of prunable Queue
+Manager rows. They are not placed in the main `.igs` merely because the worker
+completed or the user saved the Project. After crash/restart, valid completed
+candidates return to staging without being accepted; pending/running jobs from
+the previous lifetime are canceled and incomplete/invalid assets are excluded.
+Focus and checkbox selection may be initialized again on recovery; neither is
+Project document state.
+
+If recovery opens a valid completed Smart Patch candidate but its target layer
+is absent from the recovered document or saved `.igs`, keep the candidate
+visible in staging as **orphaned** with an explanation. `Add as Variant` is
+disabled; the app never retargets it or converts it automatically. The user may
+explicitly `Add as Raster Layer` at the candidate's frozen Smart Patch bbox or
+Discard it. Raster conversion is enabled only when the committed asset already
+represents the candidate's visible contribution with transparency, or its
+retained frozen mask/compositing snapshot can produce those same pixels at the
+saved bbox without relying on a missing or current layer. Otherwise
+show why conversion is unavailable and keep Discard available. Successful
+conversion follows the normal Add handoff, provenance, history and Save rules;
+it creates a new top-level layer without changing other layers.
+For any valid recovered raster asset, including one whose compositing snapshot
+cannot support Raster conversion, offer `Save Candidate Image` as an explicit
+file export in that candidate's secondary actions. It preserves the generated
+pixels without accepting them into the Project or claiming that the original
+Smart Patch composition is reproducible; it does not add another permanent
+button to the compact staging toolbar.
 
 ## Multi-Selection UX
 
@@ -124,17 +160,18 @@ The accepted anchor candidate is resolved deterministically:
 
 That anchor becomes the visible Raster Layer or active Smart Patch variant after acceptance. Focusing an unselected candidate for comparison therefore never changes the selection implicitly.
 
-Acceptance does not need to wait for the full batch. If the user accepts completed candidates while sibling jobs are still pending or running, the confirmation/action copy must explain that the remaining jobs will be canceled and unselected candidates discarded. Confirming ends the staging session, requests cancellation for unfinished sibling jobs and commits only the completed selected candidates.
+Acceptance does not need to wait for the full batch. If the user accepts completed candidates while sibling jobs are still pending or running, the confirmation/action copy must explain that the remaining jobs will be canceled and unselected candidates discarded. Confirming ends the staging session, requests cancellation for unfinished sibling jobs and commits only the completed selected candidates into the open Project document and its recovery shadow. The main `.igs` is replaced only by explicit Save.
 
-## Normal Project Canvas Acceptance
+## Normal Generation Acceptance
 
 For a `project-canvas` target, every selected candidate becomes an independent Raster Layer.
 
 Rules:
 
 - selected candidates are inserted as adjacent layers in deterministic candidate order;
+- each new layer is placed at its candidate's frozen primary generation bbox coordinates, even beyond all existing raster content; acceptance does not expand Project Canvas or move the current bbox;
 - the accepted anchor candidate becomes selected and visible;
-- other accepted full-canvas candidates start hidden so opaque alternatives do not cover one another;
+- other accepted opaque alternatives at that location start hidden so they do not cover one another;
 - all pre-existing project layers remain unchanged;
 - an existing selected Raster Layer is never overwritten implicitly;
 - unselected candidates are discarded when the staging session closes;
@@ -184,7 +221,20 @@ Undoable:
 
 Queue Manager owns job lifecycle and remains prunable operational history. It is not generation result history.
 
-Only accepted layers/variants receive immutable generation provenance and derived global history entries. Discarded candidates receive neither.
+Only accepted layers/variants receive immutable generation provenance and
+history entries. Add makes one entry per accepted result visible in the open
+Project history projection; after a crash, document-shadow recovery rebuilds
+that projection. Explicit Save persists those results in `.igs` and updates the
+durable derived SQLite history index. Discarded candidates receive neither.
+
+An accepted candidate's frozen context and raster asset must be handed off to
+the Project working state/recovery shadow before its staging record is removed.
+If the handoff fails, the valid candidate remains recoverable. Queue-history
+pruning cannot remove that context. Discarding a candidate or confirming a
+graceful Project close removes it from staging and schedules its recovery asset
+for cleanup; neither action is undoable. Closing with staging or unfinished jobs
+warns first, cancels only that Project's jobs and prevents late completions from
+reappearing. A successful Save while Project stays open does not end staging.
 
 Undo removes the accepted project mutation; it does not reconstruct the previous staging session.
 
@@ -212,25 +262,37 @@ Normal acceptance creates one independent Raster Layer per selected candidate. S
 Repeated Generate requires an explicit keep/discard decision while staging exists.
 Canceled mock jobs ignore delayed completion callbacks; sibling jobs can still finish.
 
-Candidate imagery, progress and temporary assets are deterministic CSS/in-memory mocks. The prototype does not write cache files, `.igs` assets, global result-history rows or production provenance records.
+Candidate imagery, progress and temporary assets are deterministic CSS/in-memory mocks. The prototype does not write recovery manifests/assets, `.igs` assets, global result-history rows or production provenance records.
+Missing-target recovery, orphaned-candidate Raster conversion and `Save
+Candidate Image` are also not modeled in the current prototype.
 
 [project.spec.ts](../../../prototype-app/tests/project.spec.ts) contains the
 interactive acceptance checks. PP-008 still requires production coverage of
-worker completion, frozen source inputs, late events after cancellation/close,
-asset commit and cleanup. These boundaries must preserve explicit acceptance;
+worker completion, frozen source inputs, crash recovery, late events after
+cancellation/close, asset handoff and cleanup. These boundaries must preserve explicit acceptance;
 mock completion alone does not prove them. Undo is limited to Project session
 history and never reconstructs discarded staging candidates.
 
 ## Acceptance Criteria
 
 - Completed worker outputs remain temporary candidates until explicit acceptance.
+- Valid completed candidates survive unexpected shutdown in app-managed
+  recovery storage, including when Save succeeded before the crash; they are
+  never silently added to the main `.igs`.
 - User can focus one candidate and independently select one or more candidates.
 - Normal acceptance creates one Raster Layer per selected candidate.
 - Smart Patch acceptance creates one variant per selected candidate.
+- Recovery keeps a valid candidate with a missing Smart Patch target visible
+  as orphaned; only explicit, geometry-valid `Add as Raster Layer` or Discard
+  can resolve its staging status, never implicit retargeting. `Save Candidate
+  Image` remains available for a valid asset even when conversion is blocked.
 - The focused selected result, or otherwise the first selected result, becomes the visible/active accepted anchor; accepted alternatives remain hidden/inactive.
 - Accepting before a batch finishes explicitly cancels unfinished sibling jobs and discards unselected candidates.
 - Existing project content is never overwritten implicitly.
 - One multi-accept action creates one grouped undo step.
 - Candidate navigation, selection and discard do not create undo steps.
+- Confirmed graceful Project close cancels its unfinished jobs and discards
+  staging; startup cancels unfinished jobs from the previous lifetime but
+  preserves valid completed candidates for recovery.
 - Only accepted results receive generation provenance and global history entries.
 - Queue Manager and `GenerationResults` remain distinct surfaces with distinct ownership.

@@ -16,13 +16,13 @@ Generation output first enters a project-scoped staging session. Worker completi
 
 The generation target depends on selection/context:
 
-- no Smart Patch Layer target: stage normal Project Canvas candidates;
+- no Smart Patch Layer target: stage normal candidates for the project-owned primary generation bbox;
 - Smart Patch Layer target: stage candidates for that self-contained Smart Patch Layer;
 - regional guidance entities: included as conditioning data when supported.
 
-The user can select one or more completed candidates in [GenerationResults](./generation-results.md). Only explicit `Add N as Layers` / `Add N as Variants` writes raster assets and [generation provenance](./generation-provenance.md) into `.igs`.
+The user can select one or more completed candidates in [GenerationResults](./generation-results.md). Only explicit `Add N as Layers` / `Add N as Variants` adds raster assets and [generation provenance](./generation-provenance.md) to the open Project document and its recovery shadow. The main `.igs` is replaced only by explicit Save.
 
-Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, Project Canvas or Smart Patch bbox while they are pending.
+Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, the primary generation bbox or a Smart Patch bbox while they are pending.
 
 ## Generate Action Area
 
@@ -50,7 +50,7 @@ Project does not expose a manual txt2img/img2img mode switch. At enqueue time it
 - opaque composite without an effective mask → img2img;
 - raster content plus an effective Smart Patch mask → inpaint.
 
-For normal generation the target area is Project Canvas. For Smart Patch generation it is the selected layer-owned bbox.
+For normal generation the target area is the primary generation bbox, which may be partly or wholly outside existing raster content on the unbounded Project Canvas. For Smart Patch generation it is the selected layer-owned bbox.
 
 The mere existence of a Raster Layer elsewhere in the document does not imply img2img; only visible raster pixels inside the frozen target area matter. That frozen composite includes visible Raster Layers and the active variants of visible Smart Patch Layers according to their shared z-order.
 
@@ -59,10 +59,10 @@ The mere existence of a Raster Layer elsewhere in the document does not imply im
 When no Smart Patch Layer is the generation target:
 
 - worker receives prompt/settings/model resources;
-- worker receives Project Canvas bounds/dimensions as the normal generation target;
-- worker receives the frozen visible composite inside Project Canvas when raster content exists;
+- worker receives the frozen primary bbox position/dimensions as the normal generation target;
+- worker receives the frozen visible composite inside that bbox, including transparent areas beyond existing raster content;
 - completed outputs remain temporary candidates;
-- selected candidates become independent new Raster Layers only after `Add N as Layers`;
+- selected candidates become independent new Raster Layers at the frozen bbox coordinates only after `Add N as Layers`; this does not expand Project Canvas or change the primary bbox;
 - an existing selected Raster Layer is never overwritten implicitly;
 - the accepted anchor candidate starts selected/visible, while other accepted opaque alternatives start hidden;
 - accepted layers store immutable generation provenance.
@@ -100,7 +100,7 @@ Upscale and `Send Composite to Upscale` are deferred to a separate Project pass.
 
 ## Vue Prototype Coverage
 
-`Generate` creates deterministic in-memory queue items. The images-per-click input accepts integers from 1 through 100; dynamic prompt pairs multiply that value and the prototype blocks a combined batch above 100 jobs. Each item freezes serialized positive/negative prompts, structured source tokens, iteration and an internally derived request mode.
+`Generate` creates deterministic in-memory queue items. The images-per-click input accepts integers from 1 through 100; dynamic prompt pairs multiply that value and the prototype blocks a combined batch above 100 jobs. Each item freezes plain positive/negative prompt text, embedding sidecar refs, iteration and an internally derived request mode.
 
 One item runs at a time and the remaining items stay pending. Deterministic completion creates temporary candidates in the Project staging session; it does not add layers. The compact queue panel shows current, pending and terminal jobs, and the action bar can cancel the current job. This is a project-scoped mock lifecycle, not the production Queue Manager, worker transport or filesystem asset pipeline.
 

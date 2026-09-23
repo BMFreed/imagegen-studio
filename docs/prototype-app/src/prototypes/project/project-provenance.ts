@@ -19,6 +19,7 @@ export function freezeGeneration(
   seed: number,
 ): GenerationProvenance {
   const draft = getActiveGenerationDraft(session)
+  const requestedSeedPolicy = draft.payload.seed?.policy ?? 'random'
   const payload = clonePreset(draft.payload)
   payload.prompt = { embeddingRefs: clonePreset(payload.prompt?.embeddingRefs ?? []), text: prompt }
   payload.negativePrompt = {
@@ -38,12 +39,12 @@ export function freezeGeneration(
     delete payload.denoisingStrength
   }
   return {
-    advanced: { cfgRescale: draft.cfgRescale, vaePrecision: draft.vaePrecision },
+    dynamicPrompt: clonePreset(draft.dynamicPrompt),
     engine: 'Prototype simulation',
     mode,
     payload,
     queueItemId,
-    regionalGuidance: clonePreset(session.document.regionalGuidance.filter((r) => r.enabled)),
+    requestedSeedPolicy,
     source: patch
       ? clonePreset({
           bbox: patch.bbox,

@@ -45,12 +45,36 @@ The current prototype supports non-nested brace alternatives such as `{red|green
 
 Seed behavior must be explicit because it changes reproducibility.
 
-Supported modes should include:
+Supported modes:
 
-- keep the same base seed across expanded prompts where appropriate;
-- advance/new seed per expanded prompt where appropriate.
+- `Per iteration`: use one seed per iteration and share it across every expanded
+  positive/negative prompt pair in that iteration;
+- `Per prompt`: use a different seed for every prompt-pair × iteration job.
 
-The selected seed behavior is stored in accepted-result provenance.
+For `Fixed`, the entered seed starts the sequence. For `Random`, Generate picks
+one random base seed for the batch, then advances the sequence. Seeds wrap in the
+32-bit unsigned range. Queue display order remains prompt pair first, then
+iteration within that pair. `Reuse` snapshots the last actual seed from a
+completed output of this same Project as the base seed at Generate time, then
+uses the same `Per iteration` or `Per prompt` schedule. It never searches another
+Project, accepted layer provenance or prunable queue rows for a substitute. If
+the Project has no completed seed, Generate is disabled with an explicit reason;
+there is no silent random fallback.
+
+The project-scoped last-actual-seed cursor advances only after a candidate
+output is validated and durably committed as completed. Pending, canceled,
+failed and partially written outputs do not advance it. Later discard of a
+completed candidate does not erase the fact that its seed was actually used.
+The cursor is operational metadata outside document dirty/undo history and
+survives same-session tab switches and graceful close/reopen. Production stores
+it in app-managed project recovery independently of staging manifests and queue
+rows; explicit Project Save also snapshots it into `.igs`. Without Save, a newer
+local cursor is not part of the portable `.igs` file.
+
+Each queued job freezes its actual seed and its requested seed policy separately.
+The selected dynamic seed behavior and requested policy are stored in
+accepted-result provenance alongside the actual seed, even when the requested
+policy was `Random` or `Reuse`.
 
 ## Persistence
 
@@ -72,12 +96,14 @@ Do not persist:
 
 The shared preview modal parses non-nested brace alternatives directly from `GenerationPrompt.text`, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.
 
-Generate flushes the active prompt edit, expands the frozen plain text, multiplies the pairs by images-per-click and blocks the action when the result exceeds 100 mock jobs. Queue items freeze each concrete prompt plus cloned positive/negative embedding refs; Danbooru and LoRA-trigger metadata are not stored. The prototype does not execute a production seed scheduler or write accepted-result provenance.
+Generate flushes the active prompt edit, expands the frozen plain text, multiplies the pairs by images-per-click and blocks the action when the result exceeds 100 mock jobs. Queue items freeze each concrete prompt, the scheduled actual seed, requested seed policy and cloned positive/negative embedding refs; Danbooru and LoRA-trigger metadata are not stored. The mock completion advances a session-owned cursor only after a candidate reaches `completed`; cancel and queue pruning do not change it. Accepting a result copies its frozen actual seed, requested policy and selected seed behavior into in-memory provenance. The prototype does not execute a production worker seed scheduler or persist the cursor/provenance to `.igs` or an app-managed recovery store.
 
 ## Acceptance Criteria
 
 - User can preview expanded prompts before generation.
 - Invalid dynamic syntax is visible before queueing a job.
 - Dynamic prompt settings affect the generated job list.
+- `Reuse` uses the last completed actual seed of the current Project and cannot
+  generate until one exists; canceled/failed jobs cannot supply that seed.
 - Concrete expanded prompts are stored in accepted-result provenance.
 - Wildcard expansion is not supported.

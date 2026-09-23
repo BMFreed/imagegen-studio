@@ -139,6 +139,21 @@ test.describe('Project prototype', () => {
     await expect(page.getByRole('button', { name: 'Bounding Box' })).toBeHidden()
   })
 
+  test('keeps a Smart Patch empty when its bounds change before the first variant', async ({
+    page,
+  }) => {
+    await openProject(page, 'default')
+    await page.getByRole('button', { name: 'Add Smart Patch Layer' }).click()
+    await expect(page.getByText('0 variants · empty')).toBeVisible()
+    await page.getByRole('button', { name: 'Fit Patch BBox to Mask' }).click()
+    await expect(page.getByText('0 variants · empty')).toBeVisible()
+    await expect(page.getByText(/Regenerate to refresh/)).toBeHidden()
+    await page.getByRole('button', { name: 'Brush' }).click()
+    await page.locator('.canvas-frame').click()
+    await expect(page.getByText('0 variants · empty')).toBeVisible()
+    await expect(page.getByText('Mask revision 1')).toBeVisible()
+  })
+
   test('centers the left canvas controls as one rail across layer contexts', async ({ page }) => {
     await page.setViewportSize({ height: 800, width: 1280 })
 

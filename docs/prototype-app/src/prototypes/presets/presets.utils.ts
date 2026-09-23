@@ -23,6 +23,7 @@ export const workflowLabels: Record<PresetWorkflow, string> = {
 }
 
 export const sectionLabels: Record<PresetSectionKey, string> = {
+  cfgRescale: 'CFG Rescale',
   denoisingStrength: 'Denoising Strength',
   guidance: 'Steps & CFG',
   loras: 'LoRA',
@@ -33,6 +34,7 @@ export const sectionLabels: Record<PresetSectionKey, string> = {
   seed: 'Seed',
   size: 'Size',
   vae: 'VAE',
+  vaePrecision: 'VAE Precision',
 }
 
 export const sectionOrder = [
@@ -43,9 +45,11 @@ export const sectionOrder = [
   'size',
   'sampling',
   'guidance',
+  'cfgRescale',
   'denoisingStrength',
   'seed',
   'vae',
+  'vaePrecision',
 ] as const satisfies readonly PresetSectionKey[]
 
 export function clonePreset<T>(value: T): T {
@@ -96,6 +100,9 @@ export function createDefaultSectionValue(
   workflow: PresetWorkflow,
 ): PresetPayload[PresetSectionKey] {
   switch (section) {
+    case 'cfgRescale': {
+      return 0
+    }
     case 'denoisingStrength': {
       return workflow === 'textToImage' ? undefined : 0.5
     }
@@ -130,6 +137,9 @@ export function createDefaultSectionValue(
     case 'vae': {
       return { id: 'illustrious-built-in-vae', name: 'Illustrious built-in' }
     }
+    case 'vaePrecision': {
+      return 'Auto'
+    }
   }
 }
 
@@ -151,6 +161,10 @@ export function setPresetSectionIncluded(
   }
 
   switch (section) {
+    case 'cfgRescale': {
+      payload.cfgRescale = value as number
+      break
+    }
     case 'denoisingStrength': {
       payload.denoisingStrength = value as number
       break
@@ -189,6 +203,10 @@ export function setPresetSectionIncluded(
     }
     case 'vae': {
       payload.vae = value as NonNullable<PresetPayload['vae']>
+      break
+    }
+    case 'vaePrecision': {
+      payload.vaePrecision = value as NonNullable<PresetPayload['vaePrecision']>
       break
     }
   }
@@ -255,6 +273,9 @@ export function applicationDraftIsValid(
 
 export function summarizePresetSection(payload: PresetPayload, section: PresetSectionKey): string {
   switch (section) {
+    case 'cfgRescale': {
+      return payload.cfgRescale === undefined ? 'Not set' : payload.cfgRescale.toFixed(2)
+    }
     case 'denoisingStrength': {
       return payload.denoisingStrength === undefined
         ? 'Not set'
@@ -300,6 +321,9 @@ export function summarizePresetSection(payload: PresetPayload, section: PresetSe
     }
     case 'vae': {
       return payload.vae?.name ?? 'Not set'
+    }
+    case 'vaePrecision': {
+      return payload.vaePrecision ?? 'Not set'
     }
   }
 }

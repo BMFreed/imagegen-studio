@@ -52,7 +52,9 @@ provideEntityRow({
     }),
 })
 const positiveOpen = ref(Boolean(props.entity.positivePrompt))
-const negativeOpen = ref(!props.entity.autoNegative || Boolean(props.entity.negativePrompt))
+const negativeOpen = ref(
+  !props.entity.useGlobalNegativePrompt || Boolean(props.entity.negativePrompt),
+)
 const imageInput = ref<HTMLInputElement>()
 function mutate(label: string, update: () => void) {
   commitProjectMutation(props.session, label, update)
@@ -88,7 +90,7 @@ function remove() {
 function addNegative() {
   negativeOpen.value = true
   mutate('Add regional negative prompt', () => {
-    props.entity.autoNegative = false
+    props.entity.useGlobalNegativePrompt = false
   })
 }
 async function addReferences(event: Event) {
@@ -169,7 +171,11 @@ async function addReferences(event: Event) {
             @update:value="edit('positivePrompt', $event)"
           />
         </div>
-        <div v-if="negativeOpen || !entity.autoNegative" class="regional-field" data-entity-control>
+        <div
+          v-if="negativeOpen || !entity.useGlobalNegativePrompt"
+          class="regional-field"
+          data-entity-control
+        >
           <header>
             <span>Negative Prompt</span>
             <NButton
@@ -181,7 +187,7 @@ async function addReferences(event: Event) {
                 () => {
                   mutate('Remove regional negative prompt', () => {
                     entity.negativePrompt = ''
-                    entity.autoNegative = true
+                    entity.useGlobalNegativePrompt = true
                   })
                   negativeOpen = false
                 }
@@ -194,15 +200,18 @@ async function addReferences(event: Event) {
             <NSwitch
               aria-label="Use global negative prompt"
               size="small"
-              :value="entity.autoNegative"
+              :value="entity.useGlobalNegativePrompt"
               @update:value="
-                mutate('Change regional negative source', () => (entity.autoNegative = $event))
+                mutate(
+                  'Change regional negative source',
+                  () => (entity.useGlobalNegativePrompt = $event),
+                )
               "
             />
             Use global negative prompt
           </label>
           <NInput
-            v-if="!entity.autoNegative"
+            v-if="!entity.useGlobalNegativePrompt"
             :inputProps="{ 'aria-label': 'Regional negative prompt' }"
             :rows="2"
             type="textarea"
@@ -251,7 +260,7 @@ async function addReferences(event: Event) {
             Prompt
           </NButton>
           <NButton
-            v-if="!negativeOpen && entity.autoNegative"
+            v-if="!negativeOpen && entity.useGlobalNegativePrompt"
             key="n-button-2"
             size="tiny"
             text

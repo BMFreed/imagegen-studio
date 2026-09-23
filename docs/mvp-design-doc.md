@@ -37,7 +37,7 @@ InvokeAI рассматривается как основной reference produc
 - модели данных и границах desktop security;
 - UX, навигации и пользовательских workflow.
 
-В сложных низкоуровневых механизмах — работа с моделями, compatibility metadata, очереди, worker protocol, canvas lifecycle, caching, compositing, generation pipeline — проект опирается на InvokeAI настолько, насколько это возможно в рамках выбранного стека. Если механизм InvokeAI не подходит, сначала ищем другое зрелое готовое решение или reference implementation, и только после этого проектируем своё.
+В сложных низкоуровневых механизмах — работа с моделями, compatibility metadata, очереди, worker protocol, canvas lifecycle, caching, compositing, generation pipeline — проект опирается на InvokeAI настолько, насколько это возможно в рамках выбранного стека. Для UI, storage и runtime mechanisms, которым подход InvokeAI не подходит, сначала изучаем другие зрелые решения. Inference при этом остаётся одним Invoke-like pipeline для принятого MVP scope; альтернативные inference engines не проектируются.
 
 Это не означает механическое копирование. Решения InvokeAI используются как проверенная отправная точка:
 
@@ -56,6 +56,12 @@ InvokeAI рассматривается как основной reference produc
 - переиспользовать настройки через развитую систему пресетов;
 - применять пресеты целиком или частично;
 - быстро находить старые удачные настройки и пробовать их с другими моделями.
+
+Первый рабочий релиз рассчитан только на Linux с NVIDIA GPU. Генерация
+поддерживает Illustrious (SDXL architecture) и Anima, включая LoRA для обеих
+семей, через один Invoke-like inference pipeline в границах принятого MVP.
+Model Manager устанавливает необходимые Anima Qwen3 encoder и VAE вместе с
+моделью, заранее показывая полный объём загрузки.
 
 Проект позиционируется как:
 
@@ -104,7 +110,7 @@ Python ML worker
 - Desktop shell — Electron.
 - UI-библиотека — Naive UI.
 - Локальная база данных — SQLite.
-- Python используется только для ML/inference-слоя.
+- Python используется для model loading, conditioning, inference и создания связанных image derivatives/previews в ML Worker; application business logic остаётся в TypeScript.
 - Основная бизнес-логика приложения не должна жить в Python.
 - Python project и dependencies управляются только через `uv`, `pyproject.toml` и committed `uv.lock`; Poetry и `requirements.txt` не являются source of truth.
 - Приложение использует собственный exact CPython и не зависит от системного Python, пользовательского `PATH`, Conda или global `site-packages`.
@@ -143,7 +149,7 @@ Electron Main Process
   ├─ Python worker manager
   └─ IPC handlers
 Python ML Worker
-  └─ PyTorch / diffusers / transformers / inference
+  └─ PyTorch / diffusers / transformers / inference / image derivatives
 ```
 
 ### 3.2. Роль Electron main process
@@ -157,9 +163,11 @@ Electron main process в этом проекте выступает как ло�
 - установку, проверку, активацию и rollback app-owned Python runtime;
 - управление Python worker'ом;
 - скачивание моделей;
+- хранение CivitAI token через Electron `safeStorage` без постоянного plaintext fallback;
 - проверку целостности файлов;
 - хранение истории генераций;
 - хранение пресетов;
+- владение путями, cache и атомарной публикацией результатов и preview, созданных worker'ом;
 - single-instance lifecycle через Electron `app.requestSingleInstanceLock()`;
 - обработку `second-instance` intents для повторного запуска, file association и deep links;
 - регистрацию IPC handlers;
@@ -581,7 +589,12 @@ model.safetensors
 
 ### 8.5. Ошибки CivitAI
 
-На этапе MVP ошибки CivitAI показываются через стандартный toast.
+Ошибки привязаны к операции в Model Manager. Статус token и его настройка
+доступны из header pill; отсутствие защищённого хранилища на Linux объясняется
+там же, а import с token не начинается, пока проблема не устранена. Ошибка
+metadata/dependency разрешения остаётся в import preview/dialog, а failed
+download — в install job с Retry/Cancel. Toast может дополнительно уведомить
+об ошибке, но не является единственным местом диагностики.
 
 Примеры:
 
@@ -592,7 +605,8 @@ CivitAI API token недействителен.
 Файл модели недоступен.
 ```
 
-Под каждый тип ошибки отдельный UX-сценарий в MVP не делается.
+Конкретные states и доступные действия определяет
+[Model Manager](./features/model-manager.md).
 
 ---
 
@@ -651,6 +665,13 @@ type ProvenanceModelRef = {
 ```
 
 То же правило применяется к LoRA.
+
+Удаление локальной модели в MVP — жёсткое, без пользовательского soft delete.
+Main process блокирует удаление используемой running job модели, предлагает
+разобраться с pending jobs и предупреждает о ссылках из Projects, Presets и
+provenance до подтверждения. Скопированная display/identity metadata сохраняет
+читаемость отсутствующих ссылок, но не делает весы восстановимыми. Общий
+resource lifecycle определяет [Model Manager](./features/model-manager.md#remove-local-resource).
 
 `predictionType` — compatibility metadata модели. Для `v_prediction`-моделей scheduler должен работать в `v_prediction` mode; запуск такой модели как обычной `epsilon`-модели приводит к неверному denoising.
 
@@ -730,7 +751,9 @@ SQLite = derived index истории принятых результатов.
 .igs = source of truth для accepted layers/variants и их provenance.
 ```
 
-Staging candidates хранятся во временном app-managed cache и не входят ни в `.igs`, ни в global history до принятия.
+Staging candidates хранятся в локальном app-managed recovery с durable manifest
+и assets. Они не входят ни в `.igs`, ни в global history до принятия; Save
+самого проекта не переносит непринятые кандидаты в `.igs`.
 
 ### 10.4. Иммутабельность provenance
 
@@ -783,9 +806,13 @@ type GenerationProvenance = {
     cfgScale?: number
     sampler?: string
     scheduler?: string
-    seed?: number
+    seed: number // actual worker-used seed
+    requestedSeedPolicy: 'fixed' | 'random' | 'reuse'
+    seedBehavior: 'per-iteration' | 'per-prompt'
     clipSkip?: number
     vae?: ProvenanceModelRef
+    cfgRescale?: number
+    vaePrecision?: 'Auto' | 'FP16' | 'FP32'
   }
 
   output: {
@@ -817,9 +844,11 @@ draft revision and compositing inputs. Этот context нужен для объ
 - стороной `Current Canvas` всегда является derived snapshot текущего открытого
   `ProjectDocumentModel`;
 - current Canvas projection включает применимые generation settings/resources,
-  generation size/derived mode, Regional Guidance и переносимые inputs;
+  generation size/derived mode и переносимые inputs; Regional Guidance
+  исключён с обеих сторон;
 - Prompt, Negative Prompt, Model/version, LoRAs, embeddings, Sampling, Guidance,
-  generation Size, Seed, Denoising Strength, VAE и применимый generation context
+  generation Size, actual Seed и requested Seed policy, Denoising Strength,
+  VAE, CFG Rescale, VAE Precision и применимый generation context
   сравниваются по semantic sections;
 - Smart Patch mask, bbox, internal resolution, compositing state и source
   revisions не входят в settings diff; они остаются отдельным layer/source
@@ -840,11 +869,11 @@ from Result` остаётся отдельным layer/result action вне popo
 source identities; internal resolution не преобразуется в preset `Size`.
 Переиспользование этих layer-owned свойств выполняется через `Duplicate Layer`.
 
-Текущий Vue-прототип не создаёт полный `GenerationProvenance` и не реализует эту
-comparison surface. Первый provenance prototype pass обязан добавить mock
-provenance для generated Raster Layer и active Smart Patch variant, одинаковый
-context-menu entry, popover `Generated with` / `Current Canvas`, disabled states
-и Playwright coverage; это часть MVP/PP-005, а не post-MVP polish.
+Текущий Vue-прототип создаёт in-memory mock provenance для accepted generated
+Raster Layer и active Smart Patch variant и реализует общий read-only popover
+`Generated with` / `Current Canvas`, disabled states и Playwright coverage.
+Production `.igs` serialization, exact runtime identities и source hashes пока
+не реализованы; mock не является доказательством production persistence.
 
 ---
 
@@ -935,13 +964,14 @@ Project-derived draft копирует reusable generation sections, но иск
 - модель;
 - LoRA stack;
 - веса LoRA;
-- embedding tokens inside positive/negative prompts;
+- plain-text positive/negative prompts and their embedding-reference sidecars;
 - size;
 - sampler и scheduler;
 - steps и CFG;
 - denoising strength для Image to Image / Smart Patch;
 - seed policy;
-- VAE.
+- VAE;
+- CFG Rescale и VAE Precision, когда поддерживаются выбранной моделью.
 
 ### 12.4. Типы секций пресета
 
@@ -958,9 +988,11 @@ Steps & CFG
 Denoising Strength (Image to Image / Smart Patch)
 Seed
 VAE
+CFG Rescale
+VAE Precision
 ```
 
-Наличие секции в сохранённом пресете определяется наличием соответствующего поля в `PresetPayload`; отдельный persisted `includedSections` не хранится. Embedding refs являются токенами внутри Prompt или Negative Prompt и не имеют собственной секции. В текущем редакторе `VAE` является явной секцией. Общего `Advanced`/`engineSpecific` bag в пресете нет: новый параметр добавляется отдельным типизированным полем и секцией только после явного продуктового решения.
+Наличие секции в сохранённом пресете определяется наличием соответствующего поля в `PresetPayload`; отдельный persisted `includedSections` не хранится. Embedding refs являются sidecar-ресурсами соответствующего plain-text Prompt или Negative Prompt и не имеют собственной секции. `VAE`, `CFG Rescale` и `VAE Precision` являются явными отдельными секциями. Общего `Advanced`/`engineSpecific` bag в пресете нет: новый параметр добавляется отдельным типизированным полем и секцией только после явного продуктового решения.
 
 При переключении workflow на `Text to Image` поле `denoisingStrength` удаляется. Обратное переключение не включает его автоматически: пользователь должен явно включить секцию.
 
@@ -1063,7 +1095,7 @@ LoRA "Zyra v1.2" не найдена.
 Пример:
 
 ```text
-Эта LoRA относится к SDXL, а выбранная модель относится к Flux. Результат может быть некорректным.
+Эта LoRA относится к SDXL, а выбранная модель относится к Anima. Результат может быть некорректным.
 ```
 
 Это warning, а не hard error.
@@ -1118,40 +1150,23 @@ Smart Patch Layer является самодостаточной generative ent
 - одновременно активным и видимым может быть только один raster sub-layer;
 - включить два raster sub-layers одного Smart Patch Layer одновременно запрещено.
 
-### 14.2. Canvas size и bounding box — разные интерфейсные сущности
+### 14.2. Бесконечный Project Canvas и отдельные generation bbox
 
-В ImageGen Studio размер холста/изображения и bounding box локальной генерации не смешиваются в один инструмент.
-
-```text
-Project Canvas / Work Area
-= рабочая область документа, видимая композиция и default export bounds
-
-Bounding Box
-= область конкретного Smart Patch Layer, которая подаётся в генерацию
-```
-
-В UI это должны быть разные секции:
+Project Canvas — бесконечная координатная область композиции без фиксированных width/height и края документа, как в InvokeAI. Предыдущая модель `Project Canvas / Work Area = default generation/export bounds` и обязательный auto-expand при outpainting больше не действуют.
 
 ```text
-Project Canvas / Work Area
-├─ canvas width
-├─ canvas height
-├─ resize canvas
-├─ crop / extend canvas
-├─ fit canvas to selected/visible raster layers
-└─ output/export bounds
-
-Selected Smart Patch Layer / Bounding Box
-├─ x / y
-├─ width / height
-├─ internal generation resolution
-├─ lock aspect ratio
-├─ fit to mask via Smart Patch contextual toolbar
-├─ fit to canvas
-└─ regenerate
+Project Canvas = unbounded composition space
+Primary Generation BBox = project-owned normal-generation x/y/width/height
+Selected Smart Patch Layer / Bounding Box = layer-owned patch x/y/width/height
+Raster Layer Transform = placement/scale/rotation of one layer
+Export Bounds = finite rectangle resolved by an explicit export action
 ```
 
-Отдельного **current working bounding box** для всего изображения в ImageGen Studio нет. Normal generation использует Project Canvas как target bounds. Smart Patch generation использует layer-owned Bounding Box выбранного Smart Patch Layer.
+New Project создаёт primary generation bbox в x=0, y=0 с width/height из `Size` (по умолчанию 1024 × 1024) и открывает viewport в `Fit View` относительно bbox. Добавление Raster Layer в открытый Project не передвигает bbox автоматически; пользователь явно выбирает `Fit BBox to visible layers`, если хочет подогнать область под изображение.
+
+В `Size` секции normal generation пользователь меняет width/height, aspect и fit-to-visible-layers **primary generation bbox**, а не размер Project Canvas. Numeric x/y находятся в bbox precision controls. Bbox можно свободно перемещать и изменять handles на canvas; positional snapping по умолчанию выключен, координаты могут быть отрицательными. Допустимые размеры generation request проверяются по ограничениям модели/worker, не по границам canvas. Выбор Smart Patch переключает target на его собственный layer-owned bbox и generation draft. Изменение primary bbox не меняет Smart Patch bbox или Raster Layers. Маска и bbox остаются разными сущностями; aspect lock — опциональный режим.
+
+При enqueue normal generation использует frozen primary bbox; Smart Patch generation — frozen layer-owned bbox. После явного `Add N as Layers` normal candidates становятся новыми Raster Layers в координатах frozen bbox, даже вне прежнего изображения. Принятие не расширяет canvas, не сдвигает существующие слои и не меняет текущий primary bbox. Smart Patch outpainting и `Add N as Variants` тоже не требуют расширения canvas.
 
 Project не показывает manual txt2img/img2img switch. При enqueue compositor анализирует visible raster/mask content inside frozen target area:
 
@@ -1166,15 +1181,17 @@ raster content + Smart Patch mask → inpaint
 
 Правила:
 
-- изменение `Canvas Size` не должно неявно менять bounding box слоя;
-- изменение `Canvas Size` не должно неявно transform/resize Raster Layers;
-- изменение bounding box не должно менять размер canvas;
+- изменение primary bbox не должно неявно менять Smart Patch bbox или Raster Layers;
+- изменение Smart Patch bbox не должно двигать primary bbox или Raster Layers;
 - bounding box по умолчанию **не лочит aspect ratio**;
 - `Lock aspect ratio` — опциональный режим;
 - маска и bounding box являются разными сущностями и не должны путаться в UI;
-- термин в интерфейсе оставляем именно **Bounding Box**, а не `Generation Box`, чтобы явно отделять его от `Mask`.
-- Raster Layers могут быть меньше Project Canvas, больше Project Canvas или частично находиться за его пределами;
-- уменьшение Project Canvas не уничтожает off-canvas pixels, если пользователь явно не выбирает trim/crop layer data.
+- термин в интерфейсе оставляем **Bounding Box** и явно показываем владельца target: Project или выбранный Smart Patch;
+- Raster Layers могут размещаться в любых project coordinates; вне конечного bbox они не теряются и не обрезаются.
+
+`File > Export As` по умолчанию использует конечное объединение bounds видимого raster content, включая active visible Smart Patch variants. `Export Generation BBox` — отдельное действие. Если видимого raster content нет, image export недоступен, но `.igs` можно сохранить. Export не обрезает исходные layer assets; custom export rect откладывается.
+
+Текущий Vue-прототип всё ещё использует конечный `Project Canvas` frame, изменяет его через `Size` и `Crop / Resize Project Canvas` и генерирует в этих границах. Это gap к принятой модели, а не готовая реализация бесконечного canvas/primary bbox.
 
 ### 14.2.1. Canvas rendering pipeline
 
@@ -1241,14 +1258,14 @@ Smart Patch Layer владеет:
 
 Помимо Smart Patch Layer в MVP есть **Regional Guidance Layer**.
 
-Regional Guidance Layer нужен не для хранения сгенерированного raster-result, а для regional conditioning во время генерации. Он следует InvokeAI Regional Guidance model максимально близко:
+Regional Guidance Layer нужен не для хранения сгенерированного raster-result, а для regional conditioning во время генерации. Regional text prompts входят в MVP для Illustrious и Anima. Regional reference images поддерживаются только для Illustrious/SDXL: выбранный Invoke-like Anima pipeline не предоставляет совместимый региональный image-adapter path.
 
 ```text
 Regional Guidance Layer
 = 1 owned region/mask
 = optional positive prompt
 = optional negative prompt
-= N regional reference images
+= N regional reference images (Illustrious/SDXL only)
 ```
 
 В layer stack он отображается отдельной группой/секцией `Regional Guidance` и раскрывается inline:
@@ -1261,7 +1278,11 @@ Regional Guidance
    └─ + Reference Image
 ```
 
-В текущем Vue-прототипе реализована более узкая проверка структуры: отдельная conditioning-секция, add/select/enable/delete, compatibility warning, selected prompt/global-negative details и контекстный tool rail без bbox. Inline prompt/reference blocks, редактирование и reorder reference images пока не реализованы.
+Текущий Vue-прототип показывает отдельную conditioning-секцию, постоянные
+inline prompt/reference blocks, add/select/enable/delete, compatibility warning
+и контекстный tool rail без bbox. Prompt и reference-image add/remove работают
+в mock; reorder reference images, реальное редактирование mask на canvas и
+worker conditioning ещё не реализованы.
 
 Правила ownership:
 
@@ -1273,6 +1294,16 @@ Regional Guidance
 - duplicate создаёт отдельный Regional Guidance Layer с копией region/mask, prompts и reference images.
 
 Generic ControlNet/IP-Adapter layers в MVP не вводятся. Regional reference images являются частью Regional Guidance Layer, а не отдельным универсальным адаптерным workflow.
+
+Invoke-style `auto-negative` — позитивный prompt региона как negative вне его
+маски — исключён для обеих моделей. `Use global negative prompt` означает
+наследование текущего общего negative prompt при фиксации Generate job, а не
+этот режим. При выбранной Anima добавление regional reference image объясняет
+несовместимость; job с включёнными несовместимыми reference inputs не попадает
+в очередь. Regional Guidance не копируется ни в одну группу accepted-result
+provenance, settings comparison или result-derived preset. Пространственная
+семантика regional negative prompt у Anima требует проверки реальной генерацией
+до заявления о поддержке.
 
 ControlNet остаётся post-MVP follow-up. Первые сценарии, которые стоит рассмотреть после MVP: tiled upscale, pose control, depth control, Canny/контуры. Остальные виды ControlNet добавляются только при появлении реальной пользовательской необходимости.
 
@@ -1532,7 +1563,7 @@ Permanent raster sub-layer variants
 - other accepted candidates and the previous active variant remain inactive;
 - unselected candidates are discarded when staging closes.
 
-Для обычной генерации внутри Project Canvas `Add N as Layers` создаёт отдельный Raster Layer для каждого selected candidate. Accepted anchor candidate становится selected/visible, остальные accepted opaque alternatives начинают hidden. Existing layers never overwrite implicitly.
+Для обычной генерации на бесконечном Project Canvas `Add N as Layers` создаёт отдельный Raster Layer для каждого selected candidate в координатах frozen primary generation bbox. Accepted anchor candidate становится selected/visible, остальные accepted opaque alternatives начинают hidden. Existing layers never overwrite implicitly; границы документа не расширяются.
 
 ```text
 Smart Patch Layer
@@ -1656,7 +1687,7 @@ Import Project destination flow по умолчанию предлагает `Mo
 
 Home по умолчанию открывает `Projects`, а выбор workspace становится отдельным browse selection. `Move to Trash` помечает managed project как trashed и сохраняет возможность восстановления; окончательное удаление файла выполняется только отдельным `Delete Permanently` confirmation из Trash view.
 
-Home `New Project` использует текущий concrete writable workspace, а из `Projects`, `Trash` или unavailable workspace — `Uncategorized`; остальные defaults — `No preset` и canvas 1024 × 1024. Если выбран Text to Image preset, диалог клонирует его в detached editable initialization payload через общий `PresetPayloadEditor`: Size обязателен, Seed исключён по умолчанию, missing resources предупреждают, но не блокируют создание.
+Home `New Project` использует текущий concrete writable workspace, а из `Projects`, `Trash` или unavailable workspace — `Uncategorized`; остальные defaults — `No preset` и primary generation bbox `(0, 0, 1024 × 1024)` на бесконечном Canvas. Если выбран Text to Image preset, диалог клонирует его в detached editable initialization payload через общий `PresetPayloadEditor`: Size задаёт начальные размеры bbox, Seed исключён по умолчанию, missing resources предупреждают, но не блокируют создание.
 
 SQLite может хранить только восстанавливаемый project index:
 
@@ -1702,7 +1733,7 @@ project.igs
 
 ```text
 canvas metadata
-canvas size
+primary generation bbox x/y/width/height
 layer stack
 Smart Patch Layer state
 mask references
@@ -1720,7 +1751,7 @@ Upscale storage is deferred with the feature. Future Upscale mode should not wor
 assets/upscale-inputs/{id}.png
 ```
 
-Metadata input'а хранит source layer stack hash, source canvas size, source project revision id или timestamp, visible layers metadata и created_at. Если source composite после этого изменился, Upscale показывает состояние `Source is outdated` и предлагает refresh.
+Metadata input'а хранит source layer stack hash, конечный source composite rect/dimensions, source project revision id или timestamp, visible layers metadata и created_at. Если source composite после этого изменился, Upscale показывает состояние `Source is outdated` и предлагает refresh. Для будущего handoff исходный rect определяется по bounds видимого raster content, а не по несуществующему `canvas size`.
 
 Upscale result хранится как:
 
@@ -1749,7 +1780,7 @@ ImageGen Studio/
 
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
 - Raster assets, masks и previews пишутся только по dirty-флагам.
-- Autosave не изменяет основной `.igs` до явного save или scheduled safe save.
+- Shadow autosave не изменяет основной `.igs`; его атомарная замена происходит только по явному Save.
 - Нормальная shadow autosave activity не показывается на Home как статус проекта.
 - После неожиданного завершения валидный незавершённый shadow state становится recovery candidate и показывается как `Recovery available`.
 - После успешного обычного save autosave state помечается clean или удаляется.
@@ -1760,7 +1791,7 @@ ImageGen Studio/
 
 ### 15.4. Валидация
 
-При открытии `.igs` приложение проверяет package signature, `schemaVersion`, runtime-схемы `manifest.json`/`project.json`, отсутствие опасных archive paths, наличие обязательных assets и допустимые размеры canvas/layers/masks.
+При открытии `.igs` приложение проверяет package signature, `schemaVersion`, runtime-схемы `manifest.json`/`project.json`, отсутствие опасных archive paths, наличие обязательных assets и допустимые размеры generation bboxes/layers/masks.
 
 Повреждённый или несовместимый `.igs` должен давать понятную ошибку, а не частично открытый проект с неочевидным состоянием.
 
@@ -1770,7 +1801,9 @@ ImageGen Studio/
 
 ### 16.1. Назначение
 
-Python worker отвечает только за ML/inference.
+Python worker отвечает за model loading, conditioning, inference и создание
+связанных image derivatives/previews. Основная бизнес-логика и владение
+постоянными ресурсами остаются в TypeScript/main process.
 
 Он не должен быть основным backend'ом приложения.
 
@@ -1782,8 +1815,9 @@ Python worker:
 - держит модель в памяти;
 - принимает active worker job из main-process queue;
 - выполняет inference;
+- создаёт image derivatives и thumbnails по типизированным заданиям main process;
 - отдаёт progress;
-- сохраняет output image или возвращает путь;
+- записывает output в назначенную staging-область и возвращает manifest результата;
 - сообщает об ошибках.
 
 ### 16.3. Ответственность Electron main process
@@ -1798,7 +1832,10 @@ Electron main process:
 - читает stdout/stderr;
 - нормализует ошибки;
 - пересылает progress events в renderer;
-- сохраняет worker output как temporary staging candidate и публикует candidate-ready event.
+- проверяет output manifest, владеет paths/cache и атомарно публикует worker
+  output как temporary staging candidate или derived preview;
+- управляет CivitAI preview download и source files, не передавая worker'у
+  обязанности глобального resource manager.
 
 Queue Manager следует InvokeAI-like модели:
 
@@ -1866,7 +1903,7 @@ atomic active-runtime pointer replacement
 previous known-good runtime retained for rollback
 ```
 
-Release client не разрешает произвольные версии из public indexes и не собирает `sdist` на машине пользователя. Runtime artifacts формируются и тестируются для поддерживаемой матрицы OS × architecture × inference backend. Failed download/install/self-test оставляет предыдущий worker рабочим; повреждённый cache можно удалить независимо.
+Release client не разрешает произвольные версии из public indexes и не собирает `sdist` на машине пользователя. Первая release matrix — Linux × NVIDIA; runtime artifacts формируются и тестируются для поддерживаемых OS × architecture × device/runtime profiles, а не альтернативных inference engines. Минимальные driver/CUDA/VRAM требования устанавливаются packaging и реальными inference tests. Failed download/install/self-test оставляет предыдущий worker рабочим; повреждённый cache можно удалить независимо.
 
 GPU driver, поддерживаемая ОС, filesystem permissions и hardware capability остаются внешними системными условиями. Их несовместимость диагностируется отдельно и не является поводом пробовать случайный системный Python.
 
@@ -2115,8 +2152,11 @@ UI показывает fallback "Изображение не найдено"
 
 Решение:
 
-- показывать warning;
-- не блокировать пользователя.
+- при недостаточной metadata о совместимости LoRA/embedding показывать warning;
+- заведомо неисполняемое сочетание model family и feature отклонять до
+  enqueue с объяснением. Например, Anima regional reference images нельзя
+  тихо игнорировать или отправлять worker'у. Точные правила для остальных
+  сочетаний ресурсов задаёт Generate validation contract.
 
 Статус: закрыто для MVP.
 
@@ -2157,8 +2197,9 @@ UI показывает fallback "Изображение не найдено"
 
 Решение:
 
-- показывать стандартную ошибку через toast;
-- отдельную UX-логику не делать в MVP.
+- показывать token status/setup, import-preview error и failed install job рядом
+  с соответствующим действием в Model Manager;
+- toast использовать как дополнительный сигнал, не как единственную диагностику.
 
 Статус: достаточно закрыто для MVP.
 
@@ -2206,7 +2247,6 @@ UI показывает fallback "Изображение не найдено"
 - resource status badges в каталоге пресетов;
 - explicit `Recall Settings` / `Apply as Current` from provenance after the
   read-only comparison workflow is validated;
-- удаление модели с проверкой usage;
 - более сложную compatibility matrix;
 - composition presets;
 - preset inheritance;

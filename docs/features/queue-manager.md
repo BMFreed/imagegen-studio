@@ -50,8 +50,9 @@ MVP:
 - delete terminal job from queue history;
 - clear/prune terminal queue history;
 - preserve enough job payload to reproduce what was enqueued;
-- completed canvas outputs are handed to the Project staging session as temporary candidates;
-- app startup marks interrupted `running` jobs as `canceled`;
+- completed canvas outputs are durably handed to the Project staging recovery
+  store as temporary candidates;
+- app startup marks previous-lifetime `pending` and `running` jobs as `canceled`;
 - queue events are delivered to renderer as typed app events.
 
 Post-MVP:
@@ -123,7 +124,7 @@ type ProjectQueueItem = {
 };
 ```
 
-The queue item stores a frozen job payload. It must not read mutable renderer/project state at execution time. Worker completion creates a temporary candidate for `stagingTarget`; it does not commit a project layer.
+The queue item stores a frozen job payload. It must not read mutable renderer/project state at execution time. Worker completion creates a temporary candidate for `stagingTarget`; it does not commit a project layer. A completed candidate's separate recovery manifest retains the frozen context needed for later acceptance, so pruning a queue item cannot make that candidate unusable.
 
 ## Batch Model
 
@@ -174,22 +175,27 @@ Completed canvas outputs are temporary candidates.
 
 On completion:
 
-- `generate` exposes each output in the target Project `GenerationResults` staging session;
-- `smart-patch-generate` exposes each output as a candidate for the target Smart Patch Layer;
+- main process validates and atomically publishes the output asset and candidate
+  recovery manifest with frozen job/result context before changing the item to
+  `completed` or exposing a preview;
+- `generate` exposes the durable candidate in the target Project `GenerationResults` staging session;
+- `smart-patch-generate` exposes it as a candidate for the target Smart Patch Layer;
 - queue completion alone does not write a Raster Layer, Smart Patch variant, generation provenance or result-history row;
-- `Add N as Layers` / `Add N as Variants` is a separate Project command that commits selected candidates;
-- each accepted candidate receives immutable generation provenance derived from the frozen job plus actual result metadata;
+- `Add N as Layers` / `Add N as Variants` is a separate Project command that commits selected candidates to the open document/recovery shadow; only explicit Save updates the main `.igs`;
+- each accepted candidate receives immutable generation provenance and an
+  immediate Project history projection entry; the durable derived global index
+  syncs from saved `.igs` on explicit Save;
 - one multi-accept command creates one grouped undoable project mutation.
 
 Acceptance may happen before every sibling job finishes. In that case the UI explicitly warns that the staging session will end, requests cancellation for unfinished jobs targeting that session and discards every unselected candidate. Only completed selected candidates are committed.
 
-If the target project is closed when a job completes:
-
-- do not mutate the closed `.igs` directly;
-- retain or discard the temporary output according to staging-session cleanup/recovery policy;
-- surface the completed job in Queue Manager without presenting it as accepted project history.
-
-The current Project scope may require an open target project for canvas staging. Closed-project staging recovery can be designed separately.
+On confirmed graceful Project close, cancel only that Project's pending/running
+items and discard its staging session, including completed candidates. Closing
+requires a warning before that loss; Save alone does not discard staging.
+Completion arriving after close/cancel is ignored for staging and its partial
+output is cleaned, not attached to a closed `.igs`. If the application crashes,
+valid completed candidates committed before the crash remain recoverable even
+though previous-lifetime pending/running jobs are canceled at startup.
 
 ## Processor Model
 
@@ -202,7 +208,8 @@ MVP processor behavior:
 - main process sends worker job;
 - worker emits progress;
 - worker emits done or error;
-- main process stores a temporary candidate output or records failure;
+- main process durably stores/validates a candidate asset and recovery manifest
+  or records failure;
 - item becomes `completed`, `failed` or `canceled`;
 - processor continues to next pending item.
 
@@ -215,9 +222,13 @@ Cancellation:
 
 Startup recovery:
 
-- any `running` item from previous process lifetime becomes `canceled`;
+- every `pending` or `running` item from the previous process lifetime becomes
+  `canceled` before processing resumes; there is no automatic job resume;
+- completed candidate recovery is rebuilt from validated app-managed staging
+  manifests/assets, not from queue rows alone; partial/invalid outputs are
+  diagnosed and excluded;
 - terminal queue history may be pruned by retention policy;
-- pending items remain pending unless the user/app clears them.
+- queue-history pruning must not remove valid completed candidate recovery.
 
 ## Queue Manager UI
 
@@ -340,7 +351,12 @@ Queue items should store:
 - error payload;
 - timestamps.
 
-The `.igs` file remains source of truth for accepted project state. SQLite queue rows and temporary candidate assets are operational data and can be pruned independently from accepted project results.
+The saved `.igs` remains source of truth for saved accepted project state.
+SQLite queue rows are prunable operational history; unaccepted candidate
+manifests/assets are a separate recovery store retained until Add, explicit
+discard/confirmed graceful close or validated cleanup. Queue deletion never
+implies candidate deletion. Candidate GC/quota follows
+[Data Storage](../specs/03-data-storage.md#temporary-generation-staging).
 
 ## Relation To GenerationResults
 
@@ -351,10 +367,12 @@ Queue Manager shows jobs across projects.
 They are linked but not the same:
 
 - while a job is pending/running, both the app-level queue and its target staging session may show contextual progress;
-- when a job completes, `GenerationResults` displays a temporary candidate;
+- when a job completes, `GenerationResults` displays a durable but still
+  unaccepted candidate;
 - focusing, selecting or discarding candidates is not a project mutation;
 - accepting candidates is the explicit boundary that creates persistent layers/variants, provenance, history rows and an undo step;
-- deleting a queue row never deletes an already accepted project result.
+- deleting a queue row never deletes an already accepted result or valid
+  unaccepted candidate recovery.
 
 ## Acceptance Criteria
 
@@ -368,6 +386,9 @@ They are linked but not the same:
 - Only explicitly accepted normal candidates become Raster Layers.
 - Only explicitly accepted Smart Patch candidates become variants.
 - Queue Manager is not result history and queue completion is not undoable.
-- App restart does not leave stale `running` jobs.
+- App restart cancels previous-lifetime `pending` and `running` jobs while
+  preserving valid completed candidates for local recovery.
+- Confirmed graceful Project close cancels that Project's unfinished jobs and
+  discards staging without affecting other projects.
 - Queue storage is SQLite-backed and prunable.
 - Queue status changes are not part of undo/redo.

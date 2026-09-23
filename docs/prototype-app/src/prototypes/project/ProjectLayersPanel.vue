@@ -146,7 +146,6 @@ function addRegional() {
   commitProjectMutation(props.session, 'Add Regional Guidance', (document) => {
     const id = `regional-${Date.now()}`
     document.regionalGuidance.push({
-      autoNegative: true,
       compatibilityStatus: 'ok',
       enabled: true,
       id,
@@ -157,6 +156,7 @@ function addRegional() {
       positivePrompt: '',
       referenceImages: [],
       regionRevision: 0,
+      useGlobalNegativePrompt: true,
     })
     props.session.ui.selection = { id, kind: 'regional-guidance' }
   })

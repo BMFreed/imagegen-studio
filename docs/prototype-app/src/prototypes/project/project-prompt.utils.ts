@@ -1,3 +1,5 @@
+import type { ProjectDynamicPromptSettings } from './project.types'
+
 export interface PromptEditResult {
   selectionEnd: number
   selectionStart: number
@@ -8,6 +10,23 @@ export interface DynamicPromptExpansion {
   error?: string
   truncated: boolean
   values: string[]
+}
+
+const seedModulus = 2 ** 32
+
+/** Queue order is prompt pair first, then iteration within that pair. */
+export function scheduleDynamicPromptSeeds(
+  promptPairCount: number,
+  iterations: number,
+  behavior: ProjectDynamicPromptSettings['seedBehavior'],
+  baseSeed: number,
+): number[] {
+  const start = Math.trunc(baseSeed) >>> 0
+  return Array.from({ length: promptPairCount * iterations }, (_, index) => {
+    const iteration = index % iterations
+    const offset = behavior === 'per-iteration' ? iteration : index
+    return (start + offset) % seedModulus
+  })
 }
 
 export function adjustPromptAttention(

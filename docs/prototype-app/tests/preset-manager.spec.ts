@@ -113,6 +113,77 @@ test.describe('Preset Manager prototype', () => {
     await expect(page.getByText('Preset saved')).toBeVisible()
   })
 
+  test('selects and saves an exact installed model version', async ({ page }) => {
+    await openPresetManager(page)
+
+    const modelSection = page
+      .locator('.preset-editor .n-collapse-item')
+      .filter({ hasText: /^Model/ })
+    const modelSelect = modelSection.getByLabel('Model', { exact: true })
+    await expect(modelSelect).toContainText('Illustrious XL · v1.1 main')
+    await expect(modelSection.getByRole('textbox', { name: 'Model version' })).toHaveCount(0)
+
+    await modelSelect.click()
+    const versions = page.getByRole('listbox', { name: 'Model options' })
+    await versions.getByRole('option', { name: /Illustrious XL.*v1\.0 archive/ }).click()
+    await expect(modelSelect).toContainText('Illustrious XL · v1.0 archive')
+    await page.getByRole('button', { name: 'Save Changes' }).click()
+    const savedModel = await page.evaluate(async () => {
+      const loadModule = (path: string) => import(path)
+      const { presetCatalog } = (await loadModule(
+        '/src/prototypes/presets/presets.catalog.ts',
+      )) as typeof import('../src/prototypes/presets/presets.catalog')
+      return presetCatalog.value.find((preset) => preset.id === 'studio-portrait-soft-light')
+        ?.payload.model
+    })
+    expect(savedModel).toMatchObject({ id: 'illustrious-xl-v1-0', version: 'v1.0 archive' })
+
+    await page.getByRole('button', { name: 'Select Cinematic Img2Img Pass' }).click()
+    await page.getByRole('button', { name: 'Select Studio Portrait Soft Light' }).click()
+    await expect(modelSelect).toContainText('Illustrious XL · v1.0 archive')
+    await expect(page.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  })
+
+  test('keeps a missing exact model version visible until it is replaced', async ({ page }) => {
+    await openPresetManager(page)
+    await page.evaluate(async () => {
+      const loadModule = (path: string) => import(path)
+      const { presetCatalog } = (await loadModule(
+        '/src/prototypes/presets/presets.catalog.ts',
+      )) as typeof import('../src/prototypes/presets/presets.catalog')
+      const preset = presetCatalog.value.find((item) => item.id === 'anime-clean-lines')!
+      preset.payload.model = {
+        baseModel: 'Illustrious',
+        id: 'uninstalled-xl-v9',
+        missing: true,
+        name: 'Uninstalled XL',
+        predictionType: 'v-pred',
+        version: 'v9',
+      }
+    })
+
+    await page.getByRole('button', { name: 'Select Anime Clean Lines' }).click()
+    const modelSection = page
+      .locator('.preset-editor .n-collapse-item')
+      .filter({ hasText: /^Model/ })
+    const modelSelect = modelSection.getByLabel('Model', { exact: true })
+    await expect(
+      page.getByText('One or more resources used by this preset are not installed.'),
+    ).toBeVisible()
+    await expect(modelSelect).toContainText('Uninstalled XL · v9')
+
+    await modelSelect.click()
+    const versions = page.getByRole('listbox', { name: 'Model options' })
+    await expect(
+      versions.getByRole('option', { name: /Uninstalled XL.*v9.*Missing/ }),
+    ).toHaveAttribute('aria-disabled', 'true')
+    await versions.getByRole('option', { name: /Illustrious XL.*v1\.1 main/ }).click()
+    await expect(modelSelect).toContainText('Illustrious XL · v1.1 main')
+    await expect(
+      page.getByText('One or more resources used by this preset are not installed.'),
+    ).toBeHidden()
+  })
+
   test('resizes navigation and preset editor panes', async ({ page }) => {
     await page.setViewportSize({ height: 900, width: 1440 })
     await openPresetManager(page)

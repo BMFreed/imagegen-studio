@@ -2,7 +2,7 @@
 
 ## Feature
 
-Generate canvas tools provide direct manipulation for masks, regional guidance regions and Smart Patch bounding boxes.
+Generate canvas tools provide direct manipulation for the primary generation bbox, masks, regional guidance regions and Smart Patch bounding boxes on an unbounded Project Canvas.
 
 ## Reference
 
@@ -18,16 +18,18 @@ MVP canvas tools are scoped to generative editing primitives. ImageGen Studio do
 
 ## Scope
 
-Always-visible side controls:
+Base side controls for normal generation:
 
 - collapse left panel;
 - `Pan Tool`;
-- `Crop / Resize Project Canvas`;
+- primary `Bounding Box`;
 - collapse right panel.
+
+With a Smart Patch target selected, the contextual `Bounding Box` control edits that layer's owned bbox. The primary bbox remains project state but is not the active generation target.
 
 `Pan Tool` is not a separate `Viewer` mode. It is the default navigation/inspection tool for pan, zoom, fit view and non-editing canvas interaction.
 
-`Crop / Resize Project Canvas` edits the document work area bounds. It does not crop, resample or transform Raster Layer pixels. Layer pixels outside the Project Canvas remain preserved in `.igs` unless the user later runs an explicit destructive trim/export action.
+The primary `Bounding Box` tool moves/resizes the finite normal-generation target. It can extend outside all existing image content. Project Canvas has no finite boundary to crop or grow. This tool does not crop, resample or transform Raster Layer pixels.
 
 Contextual tools when a Smart Patch Layer is selected:
 
@@ -70,11 +72,11 @@ Side toolbars/tool rails:
 - tool rails are solid light vertical panels, visually distinct from the dark checkerboard canvas background;
 - panel collapse controls are always available at the canvas edges;
 - `Pan Tool` is always available on the left rail;
-- `Crop / Resize Project Canvas` is always available on the left rail;
-- the Project Canvas size label is a `canvas-area` overlay, not a child of the canvas frame; a separate canvas context menu is not present in the current prototype;
+- primary `Bounding Box` is available on the left rail when no Smart Patch target is selected;
+- the active bbox size/readout is a `canvas-area` overlay, not a child of a finite canvas frame; a separate canvas context menu is not present in the current prototype;
 - layer-specific editing tools appear only when a compatible layer is selected;
 - layer selection in the right panel drives the contextual tool rail; there are no visible prototype state tabs in the product UI;
-- Smart Patch mask/bbox tools appear in the Smart Patch contextual tool rail when Smart Patch Layer is selected;
+- Smart Patch mask/bbox tools appear in the Smart Patch contextual tool rail when Smart Patch Layer is selected; its bbox tool edits the layer-owned target, not the primary bbox;
 - Regional Guidance region/mask tools appear in the Regional Guidance contextual tool rail when Regional Guidance Layer is selected;
 - Raster Layer selection does not show raster editing tools in MVP.
 
@@ -121,7 +123,7 @@ Not in MVP:
 
 Implemented:
 
-- one vertically centered left rail containing the always-visible settings-panel collapse, Pan and Crop/Resize buttons plus contextual tools; the right-panel collapse button stays centered at its edge;
+- one vertically centered left rail containing the settings-panel collapse, Pan and current `Crop / Resize Project Canvas` buttons plus contextual tools; the right-panel collapse button stays centered at its edge;
 - context-specific Smart Patch and Regional Guidance tool rails;
 - active/pressed tool state, accessible names and contextual viewport hints;
 - pointer pan and viewport zoom;
@@ -131,7 +133,7 @@ Implemented:
 Simulated or not implemented:
 
 - Brush, Eraser, Lasso, Polygon Lasso, Transform Mask and Transform Region do not create production raster/vector masks;
-- bbox and crop handles are visual overlays rather than general pointer-resize implementations;
+- bbox and crop handles are visual overlays rather than general pointer-resize implementations; the primary generation bbox is not modeled separately from the finite prototype frame;
 - there is no precision bbox popover, snapping engine, rotation transform or production compositor;
 - Raster Layer pixel/transform editing remains absent.
 
@@ -141,7 +143,7 @@ Simulated or not implemented:
 - Precision controls exist in panels/popovers where needed.
 - Generate does not expose inactive Launchpad/Viewer controls.
 - Pan Tool is available as the neutral canvas navigation tool.
-- Crop / Resize Project Canvas is available as a Project Canvas tool, not a Raster Layer crop tool.
+- Primary Bounding Box moves/resizes the normal-generation target without editing Raster Layer pixels or canvas bounds; the current finite prototype does not yet demonstrate this.
 - Raster Layer canvas editing is not exposed in MVP.
 - Smart Patch Layer selection shows Transform Mask, Lasso, Polygon Lasso, Brush, Eraser and Bounding Box.
 - Smart Patch Layer selection shows `Fit Patch BBox to Mask` in its contextual toolbar.

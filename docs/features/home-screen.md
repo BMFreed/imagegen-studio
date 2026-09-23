@@ -241,6 +241,8 @@ Preview tools:
 
 Preview must not show inactive canvas/generation controls. It is a viewer/inspector only.
 
+Home's `Size` metadata for a Project refers to the saved primary generation bbox dimensions, not finite Project Canvas dimensions. The preview image may use a different finite visible-content rectangle. The current Vue cards still show bare width × height from their finite-canvas mock record; that label/data mapping must change with the infinite-canvas implementation.
+
 Preview actions:
 
 - open;
@@ -322,14 +324,14 @@ Creating a project from Home:
 
 1. User clicks `New Project`.
 2. App opens a compact create dialog.
-3. User chooses name, workspace and initial canvas size/preset. A concrete writable workspace selected on Home is used as the default; otherwise the dialog defaults to `Uncategorized`.
+3. User chooses name, workspace and initial primary generation bbox dimensions/preset. The bbox starts at x=0, y=0; Project Canvas itself is unbounded. A concrete writable workspace selected on Home is used as the default; otherwise the dialog defaults to `Uncategorized`.
 4. App creates a valid `.igs` project package.
 5. App adds it to the selected workspace index.
-6. App opens it as a `Project` tab.
+6. App opens it as a `Project` tab with the viewport fitted to the initial bbox.
 
 New project creation should not create an untitled invisible project outside a workspace. Every project file lives in a workspace folder from the start, and a project created without another explicit destination is physically created in `Uncategorized`.
 
-The Vue prototype defaults to `No preset` and a 1024 × 1024 canvas. The optional Generation preset selector shows Text to Image presets only. Selecting a preset creates an editable temporary payload through the shared `PresetPayloadEditor`; sections can be included, edited and reset without changing the saved preset. Seed is excluded by default, Size remains the required non-toggleable canvas source, all sections start collapsed, and missing resources warn without blocking project creation. `Expand all` / `Collapse all`, per-section reset and `Reset all` reuse the same payload-editor behavior as Apply.
+The Vue prototype defaults to `No preset` and a finite 1024 × 1024 canvas; the product default is a primary generation bbox `{ x: 0, y: 0, width: 1024, height: 1024 }` on an unbounded canvas, with initial `Fit View`. The optional Generation preset selector shows Text to Image presets only. Selecting a preset creates an editable temporary payload through the shared `PresetPayloadEditor`; sections can be included, edited and reset without changing the saved preset. Seed is excluded by default. `Size` remains required but supplies primary bbox dimensions, not document bounds. All sections start collapsed, and missing resources warn without blocking project creation. `Expand all` / `Collapse all`, per-section reset and `Reset all` reuse the same payload-editor behavior as Apply.
 
 Project-name validation is initially quiet. It becomes visible after the name field is edited or after a create attempt; opening the dialog with an untouched empty field does not immediately show an error.
 
@@ -344,7 +346,7 @@ sequenceDiagram
 
   User->>UI: Click New Project
   UI->>User: Show create dialog
-  User->>UI: Confirm name/workspace/canvas
+  User->>UI: Confirm name/workspace/initial generation bbox
   UI->>Main: projects.createProject(command)
   Main->>FS: Create .igs package atomically
   Main->>DB: Upsert project index row

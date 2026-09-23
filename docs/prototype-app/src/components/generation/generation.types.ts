@@ -1,4 +1,5 @@
 export type SeedPolicy = 'fixed' | 'random' | 'reuse'
+export type GenerationVaePrecision = 'Auto' | 'FP16' | 'FP32'
 
 export interface GenerationResourceRef {
   id: string
@@ -49,6 +50,7 @@ export interface GenerationLora {
 }
 
 export interface GenerationPayload {
+  cfgRescale?: number
   denoisingStrength?: number
   guidance?: {
     cfgScale: number
@@ -71,6 +73,7 @@ export interface GenerationPayload {
     width: number
   }
   vae?: GenerationResourceRef
+  vaePrecision?: GenerationVaePrecision
 }
 
 export interface GenerationEditorResources {

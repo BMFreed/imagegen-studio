@@ -2,53 +2,36 @@
 
 ## Документационный трек перед production-разработкой
 
-Vue/Naive prototype уже закрыл базовую интерактивную проработку Home, Model Manager и presets. Перед стартом production renderer/main-process реализации остаётся поддерживать два документационных шага ниже в актуальном состоянии.
+Vue/Naive prototype уже закрыл базовую интерактивную проработку Home, Model
+Manager и presets. Перед production renderer/main-process реализацией нужно
+закрыть оставшиеся детали и довести worker/storage contracts до исполнимого
+уровня, сохраняя различие между prototype mocks и production evidence.
 
-### Шаг 1. Закрыть open questions
+### Шаг 1. Зафиксировать принятые продуктовые решения во всех контрактах
 
-Ответить на вопросы из [open-questions.md](../open-questions.md), которые влияют на архитектуру первого среза:
+Основные архитектурные решения уже находятся в [реестре](../open-questions.md#уже-закрытые-решения):
+Linux/NVIDIA, Illustrious и Anima, единый Invoke-like inference pipeline внутри
+MVP, LoRA, worker-created previews, `safeStorage`, очередь и lifecycle удаления.
+Model Manager ставит обязательные Anima Qwen3/VAE components вместе с моделью,
+показывая суммарный объём до скачивания. Удалённые пресеты доступны для
+восстановления 30 дней, затем автоматически очищаются. Блокирующих продуктовых
+решений в принятом MVP scope сейчас нет; новые обнаруженные варианты поведения
+записываются в реестр, а не выбираются при реализации молча.
 
-- где хранить CivitAI API token;
-- какой inference backend берём первым;
-- какие base model families поддерживает MVP;
-- входит ли LoRA в первый generation slice;
-- нужна ли очередь генераций в MVP;
-- где и как создаются thumbnails;
-- нужен ли soft delete для history/models/presets; для managed projects уже зафиксирован app-managed Trash.
+Результат: ни один пользовательский сценарий первого среза не опирается на
+догадку при реализации.
 
-Результат: открытые вопросы превращаются в зафиксированные решения или явно помечаются как `Later`.
+### Шаг 2. Довести существующий feature catalog и worker contract
 
-### Шаг 2. Составить подробный feature catalog
+[Каталог фич](../features/README.md) уже существует. Перед production worker
+дополнить source map для закреплённой версии Invoke reference, per-family
+capability matrix, Anima component dependencies, типизированные request/response DTO,
+pre-enqueue rejection несовместимых input и проверяемые acceptance criteria.
+Внешние готовые решения можно изучать для UI, storage и runtime mechanisms,
+но альтернативный inference engine не проектируется.
 
-Создать каталог фич в `docs/features/`, чтобы явно отделить MVP от later-scope и зафиксировать отношение к InvokeAI как к reference product.
-
-Предварительная структура:
-
-```text
-docs/features/
-├─ README.md
-├─ generation.md
-├─ model-manager.md
-├─ presets.md
-├─ history.md
-├─ canvas-smart-patch.md
-├─ settings.md
-└─ import-export.md
-```
-
-Для каждой фичи фиксировать:
-
-- `Feature` — что именно делает пользователь.
-- `InvokeAI reference` — как похожий сценарий устроен в InvokeAI.
-- `ImageGen Studio decision` — берём как есть, берём с доработками, берём другой mature reference, откладываем или отказываемся. Своя реализация с нуля допустима только после явного обоснования, почему готовые механизмы не подходят.
-- `Reason` — почему выбрано такое решение.
-- `Scope` — `MVP`, `Post-MVP`, `Later`, `Rejected`.
-- `Dependencies` — модели, worker, БД, UI, canvas, presets и т.д.
-- `Acceptance criteria` — как понять, что фича готова.
-
-Формулировать это как reference-анализ. Базовая стратегия проекта — брать из InvokeAI всё, что уже хорошо работает, и адаптировать под доменную модель ImageGen Studio, вместо того чтобы изобретать велосипед. NIH недопустим: для сложных механизмов вроде моделей, очередей, worker protocol, canvas lifecycle, caching и generation pipeline сначала проверяем InvokeAI, затем другие зрелые решения, и только потом проектируем своё. Если поведение InvokeAI важно для решения, его нужно проверять по актуальным docs/source/UI, а не по памяти.
-
-Результат: feature catalog становится инструментом отсечения scope, а не бесконечным списком хотелок.
+Результат: feature contracts описывают итоговое пользовательское поведение, а
+worker protocol — точную границу TS domain logic и Python inference.
 
 ## Фаза 0. Каркас приложения
 
@@ -78,6 +61,8 @@ assertions. Пилоты и критерий создания собственн
 - Настройка CivitAI API token.
 - Импорт модели по CivitAI URL.
 - Получение metadata и preview перед скачиванием.
+- Установка Anima checkpoint вместе с проверенными Qwen3 encoder и VAE после
+  показа полного объёма всех обязательных файлов и одного подтверждения.
 - model install/download pipeline с временным файлом и очередью внутри Model Manager, без отдельной Download Manager surface.
 - Проверка size/hash, если данные доступны.
 - Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
@@ -94,18 +79,27 @@ assertions. Пилоты и критерий создания собственн
 добавить другую версию и выбрать default без изменения существующих Projects,
 Presets и provenance.
 
-## Фаза 2. Generation Slice
+## Фаза 2. Project core и первый Generation Slice
 
+- Реальный `.igs` Project tab, базовые Save/reopen/recovery, бесконечный Canvas,
+  primary generation bbox и Raster Layer stack до первой пользовательской
+  генерации. Минимальный Konva compositor даёт frozen finite target input и
+  показывает принятый Raster Layer; полные инструменты развиваются в фазе 4.
 - Долгоживущий Python worker.
 - Python project: `pyproject.toml`, committed `uv.lock`, BasedPyright для типов и Ruff для formatting/linting; Poetry и `requirements.txt` не являются source of truth.
-- Собственный exact CPython и platform/backend runtime artifacts; системный Python и пользовательский `PATH` не используются.
+- Собственный exact CPython и Linux/NVIDIA runtime artifact; системный Python и пользовательский `PATH` не используются.
 - Staged runtime installation: новый versioned environment, verification/self-test, atomic activation, previous known-good rollback.
 - Production installation из проверенного runtime bundle либо app-managed Python + signed wheelhouse без client-side dependency resolution и `sdist` builds.
 - Invoke-like persistent Queue Manager baseline: SQLite-backed generation jobs в main process.
 - Worker protocol вокруг queue item lifecycle, даже если active worker job в MVP один.
-- Минимальный canvas workflow с automatic txt2img/img2img derivation from target content.
+- Illustrious/SDXL и Anima в одном Invoke-like pipeline, включая LoRA для
+  обоих семейств и проверку обязательных Anima Qwen3/VAE dependencies.
+- Первый исполнимый Canvas flow выводит `txt2img` или `img2img` из frozen target
+  content. `inpaint`/`outpaint` и полный Smart Patch workflow входят в MVP после
+  расширения canvas в фазе 4, а не в этот узкий вертикальный срез.
 - Progress/done/error events.
-- Сохранение изображения UUID-именем.
+- Main-managed provisional output, проверка результата worker'а и атомарная
+  публикация temporary candidate.
 - Staging candidates without automatic Project commit.
 - Explicit acceptance into Raster Layers with immutable generation provenance.
 - Mock and production-shaped `GenerationProvenance` for accepted Raster Layers
@@ -115,23 +109,30 @@ Presets и provenance.
   read-only popover. The diff projects portable generation configuration only;
   Smart Patch mask/bbox/internal resolution/compositing/source context remains
   available for diagnostics and `outdated` but is not shown as settings.
-- `Same`/`Changed`/`Added`/`Removed`/`Missing resource`/`Unavailable` states and
-  Playwright coverage for both layer types, active Smart Patch variant selection
-  and disabled `No generation data` states. The popover has no Apply/Recall
-  action. The current prototype has no full provenance or comparison surface, so
-  this is the first priority of the provenance prototype pass rather than later
-  UI polish.
-- `Save Preset from Result` copies only portable generation configuration. It
-  never maps Smart Patch internal resolution to preset Size or copies layer
-  mask/bbox/compositing/source state; `Duplicate Layer` owns that reuse path.
+- `Same`/`Changed`/`Added`/`Removed`/`Missing resource`/`Unavailable` states
+  and production comparison for accepted Raster results. The prototype already
+  covers Raster and Smart Patch comparison on mocks; production storage,
+  worker context and real assets remain to be verified. The popover has no
+  Apply/Recall action.
+- Подготовить portable projection принятого результата для будущего
+  `Save Preset from Result`; сам create flow входит в фазу 3, а Smart Patch
+  variant integration — в фазу 4.
 - Derived history of accepted results with fallback for a missing accepted asset.
 
-Результат: приложение поднимает воспроизводимый worker без системного Python; пользователь выбирает модель, генерирует изображение и видит его в истории. Ошибка установки или обновления нового runtime не ломает предыдущий рабочий worker.
+Результат: приложение поднимает воспроизводимый worker без системного Python;
+пользователь открывает сохраняемый Project, выбирает Illustrious или Anima с
+LoRA, генерирует временный результат и явно принимает его как Raster Layer.
+Только принятый результат попадает в производную историю. Ошибка установки или
+обновления runtime не ломает предыдущий рабочий worker.
 
 ## Фаза 3. Presets
 
 - Создание пресета вручную.
 - Создание пресета из accepted-result provenance.
+- `Save Preset from Result` копирует только portable generation configuration:
+  один фактический expanded prompt для dynamic-result, без batch settings.
+  Размер Smart Patch internal resolution не становится preset Size; маска,
+  bbox, compositing и source state остаются свойствами слоя.
 - Редактирование секций пресета.
 - Общий `PresetPayloadEditor` для manager create/edit, Apply и New Project preset customization.
 - Full apply.
@@ -146,14 +147,19 @@ Presets и provenance.
 
 Результат: provenance принятого результата превращается в переиспользуемую настройку, а настройки можно применять точечно.
 
-## Фаза 4. Smart Patch Layer
+## Фаза 4. Полный Canvas и Smart Patch Layer
 
-- `.igs` Project tab with embedded Canvas.
-- domain mode `generate` with visible working label `Create`; Upscale is deferred.
+- Развить базовый `.igs` Project Canvas из фазы 2; domain mode остаётся
+  `generate` с основным действием `Generate`, без заголовка `Create`. Upscale
+  отложен.
 - Generate mode according to `docs/features/project/generate-mode/README.md`.
 - Layer stack.
-- Konva-based interactive canvas pipeline with app-owned manager/compositor/cache.
+- Расширить Konva-based interactive canvas pipeline: app-owned
+  manager/compositor/cache, masks, transforms и bbox tools.
 - Smart Patch Layer с mask, bounding box, internal resolution.
+- Довести автоматическое определение `inpaint`/`outpaint` из frozen target-area
+  content и выполнить оба режима для Illustrious и Anima в рамках capability
+  matrix, без silent fallback.
 - `GenerationResults` as multi-select staging: one focused preview plus one or more candidates selected for acceptance.
 - Project-local undo/redo для `.igs` document mutations.
 - Completed outputs remain temporary until explicit acceptance.
@@ -162,7 +168,9 @@ Presets и provenance.
 - The focused candidate becomes the accepted anchor when selected; otherwise the first selected candidate becomes active. Other accepted Smart Patch variants remain inactive.
 - Active raster sub-layer единственный видимый внутри Smart Patch Layer.
 - Outdated status при изменении mask/bbox/settings.
-- Regional Guidance Layer with owned region/mask, inline prompt/negative/reference-image controls and regional guidance images.
+- Regional Guidance Layer with owned region/mask and inline prompt/negative
+  controls for both families; regional reference images only for
+  Illustrious/SDXL, no inverse-mask auto-negative.
 
 Результат: появляется локальное генеративное редактирование без standalone-масок и неочевидных связей.
 
@@ -193,4 +201,9 @@ Presets и provenance.
 
 ## Первый вертикальный срез
 
-Минимальный срез для начала разработки: Фаза 0 + импорт одной модели + automatic canvas generation + staging одного результата + explicit Add as Layer with provenance/history. Всё остальное можно наращивать поверх этого скелета.
+Первый исполнимый срез соответствует фазам 0–2: Linux/NVIDIA runtime,
+установка Illustrious и Anima с обязательными компонентами, LoRA для обоих,
+сохраняемый `.igs` Project с базовым Canvas, automatic `txt2img`/`img2img`,
+temporary staging и explicit Add as Raster Layer с provenance/history.
+Preset create/apply, Smart Patch, regional controls и `inpaint`/`outpaint`
+завершают принятый MVP в следующих фазах; этот срез не равен полному релизу.

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowsMaximize, Refresh } from '@vicons/tabler'
-import { NAlert, NButton, NCard, NCheckbox, NIcon, NModal, NText } from 'naive-ui'
+import { ArrowsMaximize, Edit as EditIcon, InfoCircle as InfoIcon, Refresh } from '@vicons/tabler'
+import { NAlert, NButton, NCard, NCheckbox, NIcon, NModal, NTag, NText, NTooltip } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import type { PresetPayload, PresetRecord, PresetSectionKey } from './presets.types'
@@ -11,9 +11,11 @@ import {
   clonePreset,
   createApplicationDraft,
   includedSections,
+  isPresetSectionEqual,
   presetSectionHasMissingResources,
   sectionLabels,
   summarizePresetSection,
+  workflowLabels,
 } from './presets.utils'
 
 const props = defineProps<{
@@ -46,6 +48,24 @@ const missingSections = computed(() =>
   ),
 )
 const allSelected = computed(() => draft.value.selectedSections.length === sections.value.length)
+const changedSections = computed(() =>
+  sections.value.filter(
+    (section) => !isPresetSectionEqual(draft.value.payload, props.sourcePreset.payload, section),
+  ),
+)
+const initialSelectedSections = computed(
+  () => createApplicationDraft(props.sourcePreset).selectedSections,
+)
+const selectionChanged = computed(() =>
+  sections.value.some(
+    (section) =>
+      draft.value.selectedSections.includes(section) !==
+      initialSelectedSections.value.includes(section),
+  ),
+)
+const applicationDraftDirty = computed(
+  () => changedSections.value.length > 0 || selectionChanged.value,
+)
 const applyDisabled = computed(
   () =>
     draft.value.selectedSections.length === 0 ||
@@ -68,6 +88,29 @@ function setSelected(section: PresetSectionKey, selected: boolean) {
   draft.value.selectedSections = selected
     ? [...new Set([...draft.value.selectedSections, section])]
     : draft.value.selectedSections.filter((item) => item !== section)
+}
+function resetSection(section: PresetSectionKey) {
+  const nextPayload = clonePreset(draft.value.payload)
+  const sourceValue = props.sourcePreset.payload[section]
+
+  if (sourceValue === undefined) {
+    Reflect.deleteProperty(nextPayload, section)
+  } else {
+    Reflect.set(nextPayload, section, clonePreset(sourceValue))
+  }
+
+  draft.value.payload = nextPayload
+}
+function resetAll() {
+  draft.value.payload = clonePreset(props.sourcePreset.payload)
+}
+function requestEditOriginal() {
+  if (applicationDraftDirty.value) {
+    editOriginalConfirm.value = true
+    return
+  }
+
+  openOriginal()
 }
 function apply() {
   emit('apply', {
@@ -94,7 +137,21 @@ function openOriginal() {
       <template v-slot:header>
         <header>
           <div>
-            <h2>Apply Preset: {{ sourcePreset.name }}</h2>
+            <div class="title-line">
+              <h2>Apply Preset: {{ sourcePreset.name }}</h2>
+              <NTooltip trigger="hover">
+                <template v-slot:trigger>
+                  <NButton aria-label="About Apply Preset" circle quaternary size="tiny">
+                    <template v-slot:icon><NIcon :component="InfoIcon" /></template>
+                  </NButton>
+                </template>
+                <div class="apply-help">
+                  <strong>Apply copies selected settings into the current project.</strong>
+                  <span>Changes made here do not update the saved preset.</span>
+                  <span>The project does not stay linked to the preset after applying.</span>
+                </div>
+              </NTooltip>
+            </div>
             <NText class="application-context" depth="3">
               Customize a temporary copy for
               <strong>{{ projectName }}{{ targetLabel ? ` · ${targetLabel}` : '' }}</strong>
@@ -108,6 +165,16 @@ function openOriginal() {
       </template>
       <div class="modal-scroll">
         <div class="modal-content">
+          <div class="preset-meta">
+            <NTag type="info">{{ workflowLabels[sourcePreset.workflow] }}</NTag>
+            <NButton size="small" tertiary @click="requestEditOriginal">
+              <template v-slot:icon><NIcon :component="EditIcon" /></template>
+              Edit original
+            </NButton>
+          </div>
+          <p v-if="sourcePreset.description.trim()" class="preset-description">
+            {{ sourcePreset.description }}
+          </p>
           <NAlert v-if="missingSections.length" title="Selected resource is missing" type="warning">
             <p v-for="section of missingSections" :key="section">
               {{ sectionLabels[section] }}: {{ summarizePresetSection(draft.payload, section) }}
@@ -132,7 +199,12 @@ function openOriginal() {
                 <template v-slot:icon><NIcon :component="ArrowsMaximize" /></template>
                 {{ expanded.length === sections.length ? 'Collapse all' : 'Expand all' }}
               </NButton>
-              <NButton size="small" tertiary @click="draft = createApplicationDraft(sourcePreset)">
+              <NButton
+                :disabled="changedSections.length === 0"
+                size="small"
+                tertiary
+                @click="resetAll"
+              >
                 <template v-slot:icon><NIcon :component="Refresh" /></template>
                 Reset all
               </NButton>
@@ -156,6 +228,17 @@ function openOriginal() {
                 <NText depth="3">Apply: {{ summarizePresetSection(draft.payload, section) }}</NText>
               </span>
             </template>
+            <template v-slot:section-actions="{ section }">
+              <NButton
+                v-if="changedSections.includes(section)"
+                :aria-label="`Reset ${sectionLabels[section]}`"
+                size="tiny"
+                tertiary
+                @click="resetSection(section)"
+              >
+                Reset
+              </NButton>
+            </template>
             <template v-slot:section-control="{ section }">
               <NCheckbox
                 :checked="draft.selectedSections.includes(section)"
@@ -170,7 +253,6 @@ function openOriginal() {
       </div>
       <template v-slot:footer>
         <footer>
-          <NButton tertiary @click="editOriginalConfirm = true">Edit original</NButton>
           <span>
             <NButton tertiary @click="show = false">Cancel</NButton>
             <NButton :disabled="applyDisabled" type="primary" @click="apply">Apply</NButton>
@@ -204,6 +286,26 @@ function openOriginal() {
   font-size: 13px;
   font-weight: 400;
 }
+.title-line,
+.preset-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.preset-meta {
+  justify-content: space-between;
+}
+.apply-help {
+  display: grid;
+  gap: 4px;
+  max-width: 380px;
+}
+.preset-description {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--workspace-blue);
+  background: var(--app-elevated);
+}
 .edit-confirm {
   width: min(460px, calc(100vw - 48px));
 }
@@ -222,7 +324,7 @@ footer span {
   gap: 8px;
 }
 h2 {
-  margin: 0 0 3px;
+  margin: 0;
   font-size: 18px;
 }
 .modal-scroll {

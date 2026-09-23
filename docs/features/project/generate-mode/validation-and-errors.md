@@ -25,7 +25,6 @@ Generate must handle:
 - missing LoRA/embedding from accepted-result provenance/preset;
 - invalid prompt dynamic syntax;
 - prompt bracket mismatch warning;
-- bbox outside canvas;
 - bbox too small/too large;
 - internal resolution unsupported by selected model;
 - worker unavailable;
@@ -33,6 +32,8 @@ Generate must handle:
 - Smart Patch Layer outdated;
 - regional guidance unsupported for current model.
 - regional guidance images unsupported for current model.
+
+A primary or Smart Patch bbox partly or wholly outside existing raster content is valid outpainting/txt2img placement on the infinite Project Canvas. Do not warn solely for this condition.
 
 ## Placement Rules
 
@@ -56,6 +57,8 @@ Block generation when:
 - an active prompt contains a missing embedding resource.
 - an exact embedding token is ambiguous and has no stored resource ref;
 - dynamic prompt syntax is invalid or the expanded batch exceeds the limit.
+- enabled regional reference images are present with Anima; show the affected
+  region and explain that this model's selected pipeline cannot use them.
 
 Warn but allow generation when:
 
@@ -68,7 +71,7 @@ Warn but allow generation when:
 
 The `errors` scenario currently demonstrates a missing selected model, missing/incompatible LoRA warning, a recalled missing embedding ref, mock prompt warning, outdated Smart Patch, failed candidate and mock Save failure. Generate is disabled for a missing model, missing or ambiguous active-prompt embedding dependency, invalid dynamic prompt, or a dynamic batch above 100 jobs. The fixed action area and editor diagnostics explain the reason in text rather than color alone.
 
-The prototype does not yet validate real worker availability, bbox ranges, internal-resolution compatibility, missing Smart Patch source assets or model-family support. Regional and LoRA compatibility are deterministic warnings. Failed queue/candidate state is mock operational state rather than a transported worker error.
+The prototype does not yet validate real worker availability, bbox ranges, internal-resolution compatibility, missing Smart Patch source assets or model-family support. Regional and LoRA compatibility are deterministic warnings in the mock; production must hard-block known unsupported regional reference images with Anima before enqueue. Failed queue/candidate state is mock operational state rather than a transported worker error.
 
 ## Acceptance Criteria
 

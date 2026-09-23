@@ -69,16 +69,22 @@ const rows = computed(() => {
   }
   const rows = sectionOrder.map((section) => ({
     after: describeSection(current.value, section),
-    before: describeSection(record.payload, section),
+    before:
+      section === 'seed'
+        ? `${describeSection(record.payload, section)}\nRequested policy: ${record.requestedSeedPolicy ?? 'Unavailable'}`
+        : describeSection(record.payload, section),
     label: sectionLabels[section],
-    status: record.unavailableSections?.includes(section)
-      ? 'Unavailable'
-      : status(
-          record.payload[section],
-          current.value[section],
-          presetSectionHasMissingResources(record.payload, section) ||
-            presetSectionHasMissingResources(current.value, section),
-        ),
+    status:
+      record.unavailableSections?.includes(section) ||
+      ((section === 'cfgRescale' || section === 'vaePrecision') &&
+        record.payload[section] === undefined)
+        ? 'Unavailable'
+        : status(
+            record.payload[section],
+            current.value[section],
+            presetSectionHasMissingResources(record.payload, section) ||
+              presetSectionHasMissingResources(current.value, section),
+          ),
   }))
   const mode = deriveGenerationMode({
     ...props.session,
@@ -89,30 +95,6 @@ const rows = computed(() => {
     before: record.mode,
     label: 'Generation mode',
     status: status(record.mode, mode),
-  })
-  const advanced = props.session.document.generationDraft
-  rows.push({
-    after: `CFG rescale ${advanced.cfgRescale} · VAE ${advanced.vaePrecision}`,
-    before: `CFG rescale ${record.advanced.cfgRescale} · VAE ${record.advanced.vaePrecision}`,
-    label: 'Model options',
-    status: status(record.advanced, {
-      cfgRescale: advanced.cfgRescale,
-      vaePrecision: advanced.vaePrecision,
-    }),
-  })
-  const regions = props.session.document.regionalGuidance.filter((r) => r.enabled)
-  const summary = (items: typeof regions) =>
-    items
-      .map(
-        (r) =>
-          `${r.name}: ${r.positivePrompt} · ${r.autoNegative ? 'Global negative' : r.negativePrompt} · ${r.referenceImages.length} references`,
-      )
-      .join('; ') || 'None'
-  rows.push({
-    after: summary(regions),
-    before: summary(record.regionalGuidance),
-    label: 'Regional Guidance',
-    status: status(record.regionalGuidance, regions),
   })
   return rows
 })

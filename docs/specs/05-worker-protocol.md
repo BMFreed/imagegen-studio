@@ -2,7 +2,9 @@
 
 ## Роль worker'а
 
-Python worker отвечает только за ML/inference. Он не управляет SQLite, пресетами, CivitAI, файлами приложения и бизнес-логикой.
+MVP использует один Invoke-like inference pipeline для Illustrious/SDXL и Anima, включая совместимые LoRA. Другие inference engines не являются fallback или будущим backend-вариантом. Diffusers и PyTorch могут оставаться внутренними библиотеками pipeline.
+
+TypeScript владеет строго типизированной бизнес-логикой, очередью, проверкой совместимости ресурсов/операций и подготовкой immutable job inputs. Python worker загружает и кэширует модели в RAM/VRAM, выполняет model-specific conditioning и denoising, создаёт image derivatives/thumbnails из переданных assets и промежуточные previews во время генерации. Он не управляет SQLite, пресетами, CivitAI, app-managed storage, именами/путями файлов или публикацией результатов. Main process владеет download, file cache, materialization, storage и атомарной публикацией output; worker получает только разрешённые main-managed paths.
 
 Main process:
 
@@ -12,8 +14,11 @@ Main process:
 - отправляет в worker только один active job за раз в MVP;
 - читает progress/done/error;
 - нормализует ошибки;
-- сохраняет worker output как temporary staging candidate;
+- валидирует и сохраняет worker output как app-managed staging recovery
+  candidate с manifest и frozen generation context;
 - публикует renderer events.
+
+Первый release target — Linux с NVIDIA GPU. Другая ОС или device profile не должны переключать приложение на альтернативный inference engine; это отдельная работа по портированию того же pipeline.
 
 ## Queue-first contract
 
@@ -24,16 +29,22 @@ Main process владеет:
 - SQLite-backed queue;
 - job lifecycle;
 - frozen job payloads;
-- staging destination and temporary-output lifecycle;
+- staging destination, durable candidate recovery and cleanup lifecycle;
 - cancel/retry/delete/prune actions;
 - renderer events.
 
 Python worker выполняет только текущий job и не знает о полной очереди.
 
-## Минимальный worker job
+## Иллюстративная транспортная оболочка
+
+Следующий shape показывает identity, routing и output handoff, но **не является
+полной исполнимой схемой генерации**. В частности, плоских `params` недостаточно
+для img2img/inpaint/outpaint: они не описывают frozen composite, mask,
+положение bbox, VAE, Regional Guidance и model-specific ветви. Его нельзя
+реализовывать как единственный worker DTO.
 
 ```ts
-type WorkerJob = {
+type WorkerJobEnvelopeSketch = {
   id: string;
   queueItemId: string;
   operation: 'generate' | 'smart-patch-generate' | 'upscale'; // upscale is reserved for a follow-up
@@ -58,7 +69,7 @@ type WorkerJob = {
     cfgScale?: number;
     sampler?: string;
     scheduler?: string;
-    seed?: number;
+    seed: number; // concrete scheduled seed, not the Seed policy
   };
   output: {
     targetPath: string;
@@ -71,6 +82,54 @@ type WorkerJob = {
   };
 };
 ```
+
+Production request должен использовать типизированный discriminated union для
+txt2img, img2img, inpaint, outpaint и Smart Patch target. Main process freeze'ит
+в его составе bbox `{x,y,width,height}` в координатах бесконечного Project,
+исходный composite/alpha, mask и другие входные assets по immutable identity и
+hash, exact model/LoRA/VAE refs, применимые advanced options и operational
+Regional Guidance inputs. В worker передаются уже materialized paths этих
+assets, а не ссылки на изменяемый renderer state. Неподдерживаемые сочетания
+model/operation/options отвергаются до enqueue с объяснимой ошибкой, а не
+игнорируются worker'ом. Invoke-like adapter компилирует этот domain request в
+семейный pipeline/graph; graph не становится скрытым пользовательским проектом
+или пресетом. Такой порядок следует
+[SDXL graph builder](https://github.com/invoke-ai/InvokeAI/blob/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b/invokeai/frontend/web/src/features/nodes/util/graph/generation/buildSDXLGraph.ts#L41)
+и [Anima graph builder](https://github.com/invoke-ai/InvokeAI/blob/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b/invokeai/frontend/web/src/features/nodes/util/graph/generation/buildAnimaGraph.ts#L32)
+в InvokeAI checkout `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`, без
+предположения, что их graph DTO можно перенести один к одному. Отдельная
+[reference note](../engineering/invoke-recovery-canvas-reference.md) подтверждает
+queue, staging и canvas lifecycle, но не является спецификацией inference.
+
+Capability validation до enqueue различает Illustrious/SDXL и Anima, а не
+полагается на универсальные поля `model`, `loras` и `params` из эскиза выше.
+Для обоих семейств нужны compatible LoRA и positive regional text. Regional
+negative text для Illustrious входит в pipeline; для Anima его spatial semantics
+имеет отдельный validation gate ниже. Regional reference images допустимы
+только с Illustrious/SDXL; inverse-mask
+`auto-negative` недоступен для обоих. Anima требует installed Qwen3 encoder и
+совместимый VAE вместе с checkpoint'ом; отсутствие любого компонента блокирует
+job с объяснимой ошибкой. Model Manager показывает полный объём скачивания
+Anima-набора до загрузки. Для Anima regional negative text требуется
+integration check на реальных изображениях, подтверждающий spatial behavior:
+пока он не пройден, запрос с таким input не может быть молча исполнен как
+глобальный negative prompt. Unsupported combinations отвергаются до enqueue.
+
+Граница TS/Python для composite, masks, intermediate image transforms, graph
+steps и live previews всё ещё требует исполнимого versioned DTO и проверки
+семейной capability matrix. Этот контракт нельзя вывести из транспортного
+эскиза или считать реализованным по одному наличию Invoke graph builders.
+
+Regional Guidance может быть нужен именно в frozen operational request, чтобы
+job выполнился корректно. По отдельному продуктовому решению он не копируется
+в accepted-result provenance и не появляется в result-derived preset.
+
+Before enqueue, main process resolves `Fixed`, `Random` or `Reuse` to concrete
+uint32 seeds for every job. `Reuse` snapshots only this Project's durable last
+actual seed at Generate time; without one, Generate is blocked. `Per iteration`
+or `Per prompt` then schedules the batch from that base. The frozen request
+keeps the concrete seed and requested policy separately, so later completions
+cannot silently change an already queued batch.
 
 ## Минимальные сообщения worker'а
 
@@ -85,7 +144,7 @@ type WorkerMessage =
       workerVersion: string;
     }
   | { type: 'progress'; jobId: string; progress: number; step?: number; totalSteps?: number }
-  | { type: 'done'; jobId: string; outputPath: string; seed?: number }
+  | { type: 'done'; jobId: string; outputPath: string; seed: number }
   | { type: 'canceled'; jobId: string }
   | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown };
 ```
@@ -99,16 +158,45 @@ type WorkerMessage =
 - Queue item contains a frozen job payload derived from Project/Smart Patch state. Worker does not read mutable renderer state.
 - В MVP main process отправляет worker'у только один active job одновременно, но pending jobs уже хранятся в queue.
 - Worker не выбирает имена файлов финального output.
-- Worker может сообщить фактический seed, если seed был сгенерирован автоматически.
+- `output.targetPath` указывает на main-managed provisional output. Worker
+  `done` означает завершение inference, но не публикацию готового candidate:
+  main process проверяет файл, атомарно публикует asset и staging recovery
+  manifest с frozen job inputs/resources и фактическими result metadata, затем
+  переводит queue item в `completed` и сообщает renderer. При неудаче записи
+  кандидат не показывается; job получает нормализованную ошибку, partial file
+  отправляется на cleanup.
+- Worker всегда сообщает фактически использованный uint32 seed в `done`.
+  Main process проверяет его вместе с output; отсутствие или недопустимое
+  значение делает completion ошибкой. Если worker использовал seed, отличный
+  от запланированного, фактическое значение сохраняется в candidate context и
+  показывается как отклонение для диагностики; именно оно становится следующим
+  `Reuse` cursor и записывается в provenance при acceptance.
 - Worker должен поддерживать cancel request на безопасных границах, особенно во время denoising steps.
 - `predictionType` — compatibility-параметр модели, а не художественная настройка. Worker должен использовать его при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`.
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
+- Для Anima worker использует отдельные model loader, Qwen3 text encoder, VAE, LoRA и denoising path. Он проверяет exact installed identities обязательных компонентов перед началом job; ImageGen Studio не выдаёт SDXL single-file загрузчик за универсальный путь для Anima.
+- Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
 - Worker-код должен быть совместим с BasedPyright и Ruff. Собственные DTO/protocol/model metadata типизируются строго; прямой Diffusers/PyTorch integration изолируется в adapter-слое.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
-- Completed outputs are stored as temporary candidates and published to the target staging session. Worker completion does not mutate `.igs`, create generation provenance, write accepted-result history or create an undo step.
-- A separate Project command accepts one or more completed candidates and commits them as Raster Layers or Smart Patch variants.
+- Completed outputs are stored as locally recoverable, unaccepted candidates
+  and published to the target staging session only after durable validation.
+  Worker completion does not mutate the main `.igs`, create accepted-result
+  provenance/history or create an undo step. The candidate manifest retains
+  frozen context even after its queue row is pruned.
+- Only after validated output and durable candidate manifest publication may
+  main process advance the Project's local last-actual-seed cursor. It commits
+  queue completion and cursor together, then reconciles a published manifest
+  idempotently after a crash if that transaction did not finish. Pending,
+  canceled, failed and partial jobs never advance the cursor. Discarding a
+  completed candidate or pruning its queue row does not rewind it.
+- A separate Project command accepts one or more completed candidates into
+  Raster Layers or Smart Patch variants in the open document/recovery shadow;
+  explicit Save later updates the main `.igs`.
+- After confirmed graceful Project close, main process cancels its unfinished
+  jobs and discards its staging. A late `done` for that canceled session cannot
+  publish a candidate or mutate the closed Project.
 
-Перед активацией нового environment runtime manager также запускает worker self-test без пользовательской модели. Он должен проверить imports/native extensions, выбранный device/backend, минимальную tensor operation и тот же versioned handshake. Lifecycle установки, app-managed CPython и rollback описаны в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
+Перед активацией нового environment runtime manager также запускает worker self-test без пользовательской модели. Он должен проверить imports/native extensions, выбранный device/runtime profile, минимальную tensor operation и тот же versioned handshake. Lifecycle установки, app-managed CPython и rollback описаны в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
 
 ## Queue item lifecycle
 
@@ -118,6 +206,9 @@ type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancele
 
 Startup rule:
 
-- `running` jobs from previous app lifetime become `canceled`;
-- `pending` jobs remain pending unless user/app clears them;
-- terminal queue history may be pruned by retention policy.
+- `pending` and `running` jobs from the previous app lifetime become
+  `canceled`; none resume automatically;
+- valid completed candidate manifests/assets remain recoverable locally even
+  if their queue rows are pruned or were not updated before the crash;
+- invalid/partial outputs are excluded and diagnosed; terminal queue history
+  may be pruned independently of valid candidate recovery.

@@ -1,6 +1,7 @@
 import type {
   GenerationPayload,
   GenerationPromptEmbeddingRef,
+  SeedPolicy,
 } from '../../components/generation/generation.types'
 
 export type ProjectScenarioId =
@@ -44,10 +45,8 @@ export interface ProjectRect {
 }
 
 export interface ProjectGenerationDraft {
-  cfgRescale: number
   dynamicPrompt: ProjectDynamicPromptSettings
   payload: GenerationPayload
-  vaePrecision: 'Auto' | 'FP16' | 'FP32'
 }
 
 export interface ProjectDynamicPromptSettings {
@@ -62,12 +61,12 @@ export interface ProjectAspectRatioState {
 }
 
 export interface GenerationProvenance {
-  advanced: { cfgRescale: number; vaePrecision: string }
+  dynamicPrompt: ProjectDynamicPromptSettings
   engine: 'Prototype simulation'
   mode: DerivedGenerationMode
   payload: GenerationPayload
   queueItemId: string
-  regionalGuidance: RegionalGuidanceLayerModel[]
+  requestedSeedPolicy: SeedPolicy
   resultId?: string
   source?: {
     bbox: ProjectRect
@@ -119,7 +118,6 @@ export interface ProjectSmartPatchLayer {
 export type ProjectCompositingLayer = ProjectRasterLayer | ProjectSmartPatchLayer
 
 export interface RegionalGuidanceLayerModel {
-  autoNegative: boolean
   compatibilityStatus: 'ok' | 'unsupported' | 'warning'
   enabled: boolean
   id: string
@@ -130,6 +128,7 @@ export interface RegionalGuidanceLayerModel {
   positivePrompt: string
   referenceImages: { id: string; name: string; previewUrl?: string; tone: ProjectArtworkTone }[]
   regionRevision: number
+  useGlobalNegativePrompt: boolean
 }
 
 export type ProjectEntitySelection =
@@ -211,6 +210,8 @@ export interface ProjectSession {
   dirty: boolean
   document: ProjectDocumentModel
   history: ProjectHistoryState
+  /** Operational cursor, independent of prunable queue rows and document undo. */
+  lastActualSeed?: number
   queueItems: ProjectQueueItem[]
   savedDocument: ProjectDocumentModel
   saveShouldFail: boolean

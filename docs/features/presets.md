@@ -25,7 +25,7 @@ Current visual and interaction sources of truth live in `docs/prototype-app`:
 
 ## ImageGen Studio Decision
 
-Presets participate in [PP-005](../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан) only as editable consumers of accepted-result provenance. A preset is never the persistence mechanism or historical evidence for a Raster Layer / Smart Patch variant: provenance remains immutable inside `.igs`, while `Create Preset from Result` copies reusable sections into a detached draft.
+Presets participate in [PP-005](../product-promises.md#pp-005-принятый-результат-хранит-настройки-генерации) only as editable consumers of accepted-result provenance. A preset is never the persistence mechanism or historical evidence for a Raster Layer / Smart Patch variant: provenance remains immutable inside `.igs`, while `Create Preset from Result` copies reusable sections into a detached draft.
 
 Use an Invoke-like compact preset launcher in `Project` / `Create`, but do not copy Invoke's `Choose Prompt Template` behavior directly.
 
@@ -120,7 +120,7 @@ Primary actions:
 
 There is no separate `Apply All` button. The preview keeps a single primary `Apply` action plus a `Cancel`. Above the section list, a single `Select all sections` master checkbox toggles every section checkbox. The master checkbox shows an indeterminate state when only some sections are selected. Selecting every section with the master checkbox is the equivalent of the old `Apply All` flow, but the choice is visible in the section list rather than hidden behind a second button.
 
-Partial apply is a normal workflow, not an advanced escape hatch. Users often need only a style prompt, LoRA stack or size from a preset while keeping the current model or canvas settings.
+Partial apply is a normal workflow, not an advanced escape hatch. Users often need only a style prompt, LoRA stack or default generation bounding-box size from a preset while keeping the current model and other generation settings.
 
 Validation only checks selected sections. If the user applies only prompt text, missing model or LoRA resources in the preset must not block the action.
 
@@ -130,14 +130,16 @@ For list-like sections, selection and content remain distinct. A selected empty 
 
 Home `New Project` reuses `PresetPayloadEditor` rather than copying Apply controls. The Generation preset select contains Text to Image presets only. Choosing one creates a detached temporary payload for the new project; editing it never changes the saved preset.
 
-The customization differs from Apply where project creation needs a canvas:
+The customization differs from Apply where project creation needs an initial generation area:
 
 - all source sections are shown and initially collapsed;
-- `Size` is the required canvas source and is displayed as `Canvas`, not as a toggleable `Use` checkbox;
+- `Size` supplies the initial default generation bounding-box dimensions on the infinite Canvas. The current finite-Canvas prototype still labels this field `Canvas`; it does not yet demonstrate the infinite-Canvas behavior;
 - all other source sections use `Use` checkboxes and are selected by default except `Seed`;
 - per-section reset, `Reset all` and `Expand all` / `Collapse all` preserve the current selection mask;
 - a missing selected resource shows an amber warning but does not block `Create Project`; the project can be created and repaired before generation;
-- choosing `No preset` restores the simple 1024 × 1024 canvas fields and removes the temporary generation payload.
+- choosing `No preset` restores default generation bounding-box dimensions of
+  1024 × 1024 and removes the temporary generation payload. The finite-Canvas
+  prototype still presents these as Canvas fields.
 
 ## Save Current As Preset
 
@@ -149,14 +151,22 @@ Default included fields in a project-derived definition contain the main reusabl
 
 The same boundary applies when a draft is created from an accepted Raster Layer
 or Smart Patch variant. `Save Preset from Result` copies only portable generation
-configuration from provenance. It never copies a Smart Patch mask, bounding box,
-internal resolution, compositing state, source revisions or source composite
-identity. In particular, Smart Patch `internalResolution` must not be mapped into
-the generic preset `Size` section.
+configuration from provenance. Preset `Size` means default generation bounding-box
+dimensions, not the size of the infinite Canvas. It never copies a Smart Patch
+mask, bounding box, internal resolution, compositing state, source revisions or
+source composite identity. In particular, Smart Patch `internalResolution` must
+not be mapped into preset `Size`.
 
 Those values are properties of a Smart Patch Layer, not generation-template
 fields. When users want to reuse them, they duplicate the Smart Patch Layer;
 presets remain focused on prompts, resources and generation behavior.
+
+When the result came from dynamic prompting, `Save Preset from Result` takes that
+one result's concrete expanded positive/negative prompt pair and its embedding
+refs. It does not copy the authored brace template, the other expanded prompts,
+`maxPrompts` or the batch's `seedBehavior`. Those batch facts remain in result
+provenance; the preset describes one reusable generation configuration. The Seed
+section is still omitted by default and requires the user's explicit choice.
 
 Sampling parameters are split into two meaningful groups instead of one merged checkbox:
 
@@ -166,6 +176,15 @@ Sampling parameters are split into two meaningful groups instead of one merged c
 Grouping by meaning keeps the dialog short while still letting the user save only sampling style without the step count, or vice versa.
 
 Seed remains an ordinary explicit editor section, but it is excluded from a project-derived draft by default and carries a short explanation. Accidentally preserving a fixed seed can make future generations feel repetitive.
+
+The Seed editor may save `Reuse`. Applying that section copies the policy, not a
+seed value or a cross-project cursor. Generate then uses the last actual seed
+from a completed output in the target Project; with no such seed, Generate is
+disabled with a reason. `Save Preset from Result` still omits Seed by default:
+its frozen actual seed and requested policy stay in immutable provenance, and
+the user must explicitly include and choose a Seed policy in the editable
+preset draft. This avoids silently turning a historical `Reuse` request into a
+fixed reusable seed.
 
 Suggested default:
 
@@ -261,8 +280,18 @@ The manager uses an explicit save model:
 - `Save Changes` is disabled while the selected preset has no unsaved edits;
 - editing any included field, catalog metadata or included-state marks the preset as changed;
 - selecting another preset or closing the manager with unsaved edits opens a `Save`, `Discard` or `Cancel` confirmation;
-- `Delete` requires confirmation and explains that projects already created from the preset are not changed;
+- `Delete` requires confirmation, moves the preset to `Deleted` for 30 days and explains that projects already created from it are not changed;
 - `Duplicate` creates a separately named copy, selects it and leaves the original unchanged.
+
+`Deleted` is a discoverable Preset Manager view with each preset's expiry and a
+`Restore` action. A deleted preset keeps its payload and resource references
+intact until expiry, but is absent from the active catalog, search, Project Apply
+and New Project selection. Restore before expiry returns the same preset identity
+and payload to the active catalog. After 30 days from deletion, the app permanently
+removes the preset on its next cleanup run; it cannot then be restored. This is a
+preset-local lifecycle, separate from Home's app-managed Project Trash. The
+current Vue prototype's Delete removes an in-memory row immediately and does not
+demonstrate this production soft-delete/recovery behavior.
 
 Create mode uses the same explicit lifecycle with `Cancel`, `Not saved` and `Create Preset`. Switching presets or closing with a draft offers `Create Preset`, `Discard Draft` or `Cancel`. After creation the transient row becomes a normal selected catalog record and workflow counts update.
 
@@ -274,7 +303,15 @@ The Vue/Naive prototype owns interaction states. Preset Manager uses a native Na
 
 Preset import and export are not planned for MVP. The manager does not show import/export actions, and no portable preset bundle format is defined yet.
 
-`Advanced` is not a saved section in MVP. `PresetPayload` in `docs/specs/03-data-storage.md` intentionally does not include an `engineSpecific` or generic advanced bag, to avoid an unstructured escape hatch. When a concrete advanced parameter (for example clip skip, tiling, refiner or noise multiplier) is supported, it is added as an explicit named field in `PresetPayload` and an explicit named section in the editor, not folded into a generic `Advanced` group. In MVP the section is simply `VAE`.
+`Advanced` is not a generic saved section. `PresetPayload` has explicit optional
+`cfgRescale` and `vaePrecision` fields, with independent `CFG Rescale` and
+`VAE Precision` sections alongside `VAE`. Save Current copies their current
+values; Save from Result copies their frozen values. Apply changes only the
+sections selected by the user. An older preset without either field leaves that
+Project setting unchanged. Other
+advanced parameters (for example clip skip, tiling, refiner or noise multiplier)
+must likewise get named fields and sections when supported, not an
+`engineSpecific` bag.
 
 ## Surface Ownership
 
@@ -317,14 +354,20 @@ selected affected sections and has Playwright coverage for that behavior.
 Project-integrated Apply now uses the same nested-resource predicates, displays
 the affected selected sections and a recovery explanation, and keeps its footer
 outside the scroll area. Deselection preserves the current section. Size is
-excluded for Smart Patch targets; applying Size to Canvas synchronizes dimensions.
+excluded for Smart Patch targets. The finite-Canvas mock currently resizes its
+Canvas on Size Apply; the product contract instead changes default generation
+bounding-box dimensions without resizing the infinite Canvas.
+
 `Edit original` confirms leaving the temporary draft and focuses the chosen saved
 preset. Regression coverage enters through the real Project picker and includes
 the result-to-preset-to-Apply loop.
 
 Remaining gaps: `Open in Models` does not yet focus/repair a missing resource;
 resource availability is mock metadata, and SQLite/`.igs` persistence, command
-execution and failure recovery remain unimplemented. PP-006 stays `пока не обещать`.
+execution, 30-day deleted-preset recovery and failure recovery remain
+unimplemented. Save from Result must map a dynamic result's concrete expanded
+prompt pair rather than its source batch/template in the production command;
+prototype mocks do not prove that mapping. PP-006 stays `пока не обещать`.
 
 ## Rejected
 
@@ -347,7 +390,7 @@ execution and failure recovery remain unimplemented. PP-006 stays `пока не
 - Project / Create has a compact `Apply preset...` launcher above the prompt editor and no persistent selected-preset value.
 - Selecting a preset opens apply preview instead of mutating settings immediately.
 - Successful Apply creates an ordinary project generation-draft mutation/undo step and leaves no live preset identity on Project.
-- New Project can customize a detached Text to Image preset payload through the shared editor; Size remains required, Seed is excluded by default, and missing resources warn without blocking creation.
+- New Project can customize a detached Text to Image preset payload through the shared editor; Size supplies initial default generation bounding-box dimensions, Seed is excluded by default, and missing resources warn without blocking creation.
 - Apply preview is Project-scoped and reached from the Generate selector; it is not opened from the Preset Manager.
 - User can apply all sections or a selected subset via per-section checkboxes plus a single `Select all sections` master checkbox (no separate `Apply All` button).
 - Apply values are editable in a detached application draft, show `Current` to `Apply` comparisons and support section-level and global reset without mutating the stored preset.
@@ -360,6 +403,8 @@ execution and failure recovery remain unimplemented. PP-006 stays `пока не
 - Preset search covers metadata text, prompts and referenced resource names; `Name` and `Recently updated` are the available sort modes, and reset does not change sort.
 - Included sections are editable in the Preset Manager and are represented by field presence in `PresetPayload`.
 - Preset Manager uses an explicit dirty/save lifecycle and protects unsaved edits when switching presets or closing.
+- Deleting a preset removes it from active choices, preserves it in `Deleted` for restoration until its 30-day expiry, and does not change existing Projects; expired presets are permanently cleaned up.
+- `Save Preset from Result` for a dynamic result uses that result's concrete expanded prompt pair, not its authored template or batch settings.
 - Preset import/export is absent from MVP.
 - Workflow labels shown to the user are `Text to Image`, `Image to Image`, `Smart Patch`; internal `workflow_type` tokens are not exposed.
 - Missing resources are visible before apply and only block selected affected sections.

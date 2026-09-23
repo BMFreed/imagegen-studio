@@ -1,13 +1,13 @@
 # PP-005 Supporting Contract: Generation Provenance
 
 This document is the canonical supporting contract for
-[PP-005: Каждый принятый результат помнит, как он был создан](../../../product-promises.md#pp-005-каждый-принятый-результат-помнит-как-он-был-создан).
+[PP-005: Принятый результат хранит настройки генерации](../../../product-promises.md#pp-005-принятый-результат-хранит-настройки-генерации).
 It translates the general user-facing promise into domain ownership, storage,
 comparison, preset, prototype and acceptance rules.
 
 ## Feature
 
-Generation provenance is immutable metadata attached to an accepted generated Raster Layer or Smart Patch variant. It explains how that persistent project result was produced.
+Generation provenance is immutable metadata attached to an accepted generated Raster Layer or Smart Patch variant. It records reusable generation settings and technical context, but is not a complete recipe for every conditioning input that affected the image.
 
 It is not an undo snapshot, a staging candidate or an independent History item.
 
@@ -26,7 +26,7 @@ frozen queue job
 → persistent layer/variant + GenerationProvenance
 ```
 
-Discarded candidates do not create project-local provenance or global history entries.
+Discarded candidates do not create project-local provenance or global history entries. A completed, unaccepted candidate may retain a frozen operational record in local recovery storage; that record is not accepted-result provenance and is not included in `.igs` before explicit acceptance and Save.
 
 Provenance may be serialized as a separate referenced JSON object inside `.igs`, but in the domain model it belongs to the accepted result rather than to a standalone snapshot catalog.
 
@@ -42,9 +42,9 @@ This is the portable, user-comparable configuration that may seed a preset:
 - prediction type metadata;
 - frozen positive and negative plain text plus their embedding resource refs;
 - concrete expanded dynamic prompt where relevant;
-- actual seed and seed behavior;
+- actual worker-used seed, requested Seed policy and dynamic seed behavior;
 - automatically derived generation mode: txt2img, img2img, inpaint or outpaint;
-- explicit reusable generation/Canvas width and height where applicable, never
+- default generation bounding-box width and height where applicable, never
   Smart Patch internal resolution;
 - sampler/scheduler;
 - steps;
@@ -52,8 +52,13 @@ This is the portable, user-comparable configuration that may seed a preset:
 - denoising strength when it affected the job;
 - LoRA stack;
 - positive and negative `GenerationPromptEmbeddingRef[]` sidecars;
-- VAE and other active model-aware options;
-- enabled Regional Guidance state and other reusable conditioning inputs.
+- VAE, CFG Rescale, VAE Precision and explicitly supported model-aware options.
+
+Regional Guidance is deliberately excluded from every provenance group, not
+only from preset creation and comparison. The queue request may still contain
+regional inputs needed to execute a job; accepting its result does not copy
+those inputs into result provenance. The saved record therefore cannot fully
+reconstruct a generation that used regions.
 
 ### Layer And Source Context
 
@@ -84,8 +89,9 @@ Generation provenance supports:
 - `Compare generation settings` from the layer context menu;
 - `Create Preset from Result`;
 - missing-resource diagnostics;
-- explaining how an accepted layer/variant was produced;
-- reproducibility and support/debug details;
+- explaining the recorded settings and execution context of an accepted layer/variant;
+- reapplying recorded settings and support/debug details, within the stated
+  Regional Guidance and runtime limits;
 - Smart Patch `outdated` comparison.
 
 It does not power undo/redo. Undo/redo stores project mutations; provenance is simply part of the layer/variant added by an accepted-result mutation.
@@ -105,9 +111,8 @@ uses the provenance of its current active/visible accepted variant.
 
 `Current Canvas` is always derived from the current open `ProjectDocumentModel`
 at viewing time. It includes current generation settings and resources,
-applicable generation size and derived mode, Regional Guidance and other
-reusable conditioning inputs. It does not use another variant's provenance as
-the current side.
+applicable default generation bounding-box size and derived mode. It does not
+use another variant's provenance as the current side.
 
 The popover groups values into the same semantic sections used by
 generation/preset UI instead of displaying raw serialized payloads:
@@ -121,7 +126,8 @@ generation/preset UI instead of displaying raw serialized payloads:
 - Seed;
 - Denoising Strength where applicable;
 - VAE and other active model-aware options;
-- applicable reusable generation context.
+- applicable reusable generation context. Regional Guidance is absent from
+  both sides of the comparison, even when it affected the original image.
 
 Smart Patch mask, bbox, internal resolution, compositing state and source
 revision identities do not appear in this settings diff. They remain available
@@ -168,7 +174,10 @@ If current owned inputs differ from the active variant provenance, the Smart Pat
 
 ## History Boundary
 
-Global generation history is a derived index of accepted project results.
+Global generation history is a derived view of accepted project results. The
+open Project shows an in-memory history projection immediately after Add; its
+durable SQLite index is rebuilt from saved `.igs` results after explicit Save.
+Crash recovery can reconstruct the unsaved projection from the document shadow.
 
 - one accepted candidate → one accepted result → one history entry;
 - multi-accept creates several history entries but one grouped project undo step;
@@ -180,11 +189,11 @@ Global generation history is a derived index of accepted project results.
 The Project prototype freezes a detached generation record when each mock job is
 queued, then copies it onto a Raster Layer or Smart Patch variant only on explicit
 acceptance. It includes expanded prompt text and embedding refs, exact mock model
-version, actual simulated seed, portable payload, advanced options and enabled
+version, actual simulated seed, portable payload and advanced options, but no
 Regional Guidance. Smart Patch owned inputs are kept separately for mock staleness.
 
 Both result types expose a bounded, read-only `Compare generation settings`
-popover. The current side always reads the Project Canvas draft, including while
+popover. The current side always reads the Project default generation draft, including while
 a Smart Patch is selected. The comparison reports textual section statuses,
 resource warnings and explicit unavailable fields in the legacy/error scenario.
 Imported layers retain a disabled `No generation data` action. A separate
@@ -199,6 +208,8 @@ These are prototype checks, not production evidence: source/mask hashes, exact
 worker/runtime identities, real output assets, `.igs` serialization and the global
 accepted-result index remain unimplemented. Mock staleness compares owned draft,
 bbox, mask revision and internal dimensions; it does not hash source composites.
+The mock still reads generation Size from its finite Project Canvas frame rather
+than an independently movable default generation bbox; this is a prototype gap.
 
 ## Acceptance Criteria
 
@@ -215,5 +226,6 @@ bbox, mask revision and internal dimensions; it does not hash source composites.
 - Preset creation and the settings comparison exclude Smart Patch mask, bbox, internal resolution, compositing and source context.
 - Smart Patch internal resolution is never mapped implicitly into generic preset Size.
 - Missing model/LoRA resources and prompt-owned embedding resources can be detected from provenance.
+- Regional Guidance never appears in result provenance, comparison or result-derived presets; results generated with regions cannot be fully reconstructed from their saved record.
 - Smart Patch outdated state can be derived from active variant provenance versus current layer-owned inputs.
 - Provenance is not presented or implemented as an undo snapshot.

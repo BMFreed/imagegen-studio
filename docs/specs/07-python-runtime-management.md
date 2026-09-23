@@ -4,6 +4,13 @@
 
 ImageGen Studio не использует системный Python и не изменяет активное Python-окружение при установке или обновлении worker'а.
 
+Первый release target — Linux с NVIDIA GPU. Один Invoke-like inference pipeline
+поддерживает Illustrious/SDXL и Anima с LoRA; альтернативных inference engines,
+включая отдельный ComfyUI backend, нет. Diffusers/PyTorch — внутренние
+зависимости этого pipeline. Будущий platform/device port потребует проверенного
+runtime artifact и self-test того же pipeline, а не автоматического fallback на
+другой engine.
+
 Зафиксированный stack:
 
 - `pyproject.toml` — стандартное описание Python-проекта и его зависимостей;
@@ -58,7 +65,9 @@ Python входит в platform runtime artifact либо загружается
 
 Runtime принадлежит приложению, но не устанавливается внутрь Electron executable/application bundle. Каталог программы может быть read-only, требовать elevated permissions, заменяться при app update или быть подписанным bundle.
 
-Production runtime хранится в per-user app data:
+Production runtime хранится в per-user app data. Следующие пути показывают
+platform-neutral layout; наличие Windows/macOS paths не обещает их поддержку в
+первом release:
 
 ```text
 Windows: %LOCALAPPDATA%\ImageGen Studio\
@@ -131,10 +140,10 @@ uv run pytest
 Release pipeline формирует и тестирует runtime artifacts для поддерживаемой матрицы:
 
 ```text
-operating system × architecture × inference backend
+operating system × architecture × device/runtime profile
 ```
 
-Например, NVIDIA, AMD, CPU и Metal могут требовать разных runtime profiles. `uv.lock` остаётся source of truth для разрешённых версий, а release manifest однозначно связывает app/worker version с Python build, runtime profile и artifact hashes.
+В первом release проверяется Linux/NVIDIA profile. Возможные будущие AMD, CPU или Metal profiles не являются альтернативными inference engines и не считаются поддержанными без отдельного platform/device port и проверок. `uv.lock` остаётся source of truth для разрешённых версий, а release manifest однозначно связывает app/worker version с Python build, runtime profile и artifact hashes.
 
 Допустимы два способа доставки с одинаковыми гарантиями:
 
@@ -160,7 +169,7 @@ Packaging spike должен подтвердить relocatability полног�
 
 ### 1. Prepare
 
-- main process выбирает runtime profile по OS/architecture/backend;
+- main process выбирает runtime profile по OS/architecture/device;
 - получает release manifest;
 - проверяет совместимость app, worker protocol и Python ABI;
 - проверяет свободное место;
@@ -187,7 +196,7 @@ Packaging spike должен подтвердить relocatability полног�
 - dependency consistency check;
 - импорт собственного worker package;
 - импорт PyTorch, Diffusers, Transformers и обязательных native extensions;
-- проверка ожидаемого inference backend;
+- проверка Invoke-like pipeline и выбранного device/runtime profile (Linux/NVIDIA для первого release);
 - небольшой tensor/device smoke test;
 - запуск worker subprocess;
 - handshake с worker version и protocol version;
@@ -195,6 +204,15 @@ Packaging spike должен подтвердить relocatability полног�
 - отсутствие неожиданного обращения к системному Python или глобальным packages.
 
 Полный inference smoke test может быть отдельным release/diagnostic gate, если для него нужна модель. Базовый runtime self-test не должен требовать скачивания пользовательского checkpoint.
+
+Отдельный release/integration gate прогоняет реальные Illustrious и Anima jobs с
+совместимыми LoRA, включая обещанные generation modes и regional inputs.
+В частности, Anima regional negative text требует проверенной spatial
+semantics; успешный import и базовый tensor self-test этого не доказывают.
+Обязательные Anima Qwen3 encoder и VAE — model-library dependencies, а не
+Python environment packages: main process показывает полный размер набора до
+загрузки и управляет files, worker проверяет их exact installed identities при
+запуске job.
 
 ### 5. Activate
 
@@ -244,7 +262,7 @@ App-owned runtime устраняет зависимость от системн�
 - GPU driver;
 - поддерживаемую версию ОС и kernel/runtime ABI;
 - доступное место и filesystem permissions;
-- аппаратную поддержку выбранного backend;
+- аппаратную поддержку выбранного device/runtime profile;
 - вмешательство antivirus/security software.
 
 Эти условия проверяются отдельно и дают понятную diagnostic error. Они не являются поводом изменять активный environment или пробовать случайный системный Python.
@@ -277,5 +295,10 @@ Python worker не обновляет сам себя. Renderer не запус�
 - Удаление runtime/cache не удаляет models, projects или presets.
 - Production client не собирает Python packages из `sdist` и не разрешает зависимости из публичных indexes.
 - Arbitrary plugin dependencies не устанавливаются в основной worker environment.
-- Logs позволяют определить runtime id, Python version, worker/protocol version, backend profile и этап отказа без показа внутренних терминов в основном пользовательском UI.
-
+- Первый release artifact и worker self-test покрывают Linux/NVIDIA profile;
+  неподдерживаемая OS/device combination не запускает альтернативный inference
+  engine и даёт понятную диагностику до установки.
+- Release/integration checks проверяют реальные Illustrious и Anima generation
+  jobs с LoRA и обещанными regional inputs. Anima regional negative text нельзя
+  объявлять рабочим без подтверждённой пространственной семантики.
+- Logs позволяют определить runtime id, Python version, worker/protocol version, device/runtime profile и этап отказа без показа внутренних терминов в основном пользовательском UI.

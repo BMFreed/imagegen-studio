@@ -21,6 +21,7 @@ import {
 
 test('accepted metadata comes from the frozen job and survives queue cleanup and undo/redo', () => {
   const session = reactive(createProjectScenario('staging'))
+  expect(session.document.regionalGuidance.some((region) => region.enabled)).toBe(true)
   const originalModel = session.document.generationDraft.payload.model!.name
   const job = session.queueItems[0]!
   job.frozenGeneration = freezeGeneration(
@@ -37,6 +38,7 @@ test('accepted metadata comes from the frozen job and survives queue cleanup and
   expect(resultProvenance(layer)?.payload.prompt?.text).toBe('frozen positive')
   expect(resultProvenance(layer)?.payload.model?.name).toBe(originalModel)
   expect(resultProvenance(layer)?.payload.seed?.value).toBe(123)
+  expect(resultProvenance(layer)).not.toHaveProperty('regionalGuidance')
   session.queueItems = []
   undoProject(session)
   expect(session.document.layers.some((l) => l.id === layer.id)).toBe(false)
@@ -172,4 +174,25 @@ test('comparison labels missing resources and unavailable legacy fields explicit
   await expect(
     comparison.locator('.comparison-row').filter({ hasText: /Model.*Missing resource/ }),
   ).toContainText('Illustrious XL')
+})
+
+test('changing regional overlay opacity does not change reusable generation settings', async ({
+  page,
+}) => {
+  await page.goto('/?prototype=project')
+  await page.getByRole('button', { name: 'Layer actions for Portrait Base' }).click()
+  await page.getByText('Compare generation settings', { exact: true }).click()
+  const comparison = page.getByRole('region', { name: 'Compare generation settings' })
+  const before = await comparison.locator('p').first().textContent()
+  await expect(comparison.getByText('Regional Guidance', { exact: true })).toHaveCount(0)
+
+  await page.locator('.canvas-size-label').click()
+  await page.getByRole('button', { name: 'Select Face lighting' }).click()
+  const opacity = page.getByRole('textbox', { name: 'Region opacity' })
+  await opacity.fill('25')
+  await opacity.press('Enter')
+  await page.getByRole('button', { name: 'Layer actions for Portrait Base' }).click()
+  await page.getByText('Compare generation settings', { exact: true }).click()
+  await expect(comparison.locator('p').first()).toHaveText(before ?? '')
+  await expect(comparison.getByText('Regional Guidance', { exact: true })).toHaveCount(0)
 })

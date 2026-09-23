@@ -189,16 +189,16 @@ export function applyPresetSections(
         }
         const value = payload[section]
         if (value === undefined) {
-          Reflect.deleteProperty(target, section)
-        } else {
-          Reflect.set(target, section, clonePreset(value))
-          if (section === 'size' && payload.size) {
-            session.document.canvas = clonePreset(payload.size)
-            session.ui.aspectRatio = {
-              id: 'free',
-              locked: false,
-              value: payload.size.width / payload.size.height,
-            }
+          // Legacy/partial presets cannot clear a setting they never stored.
+          continue
+        }
+        Reflect.set(target, section, clonePreset(value))
+        if (section === 'size' && payload.size) {
+          session.document.canvas = clonePreset(payload.size)
+          session.ui.aspectRatio = {
+            id: 'free',
+            locked: false,
+            value: payload.size.width / payload.size.height,
           }
         }
       }

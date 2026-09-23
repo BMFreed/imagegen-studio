@@ -56,10 +56,18 @@ Already fixed project decisions:
 - SQLite is the source of truth for installed reusable resources.
 - Heavy resource files live on disk, not in SQLite and not inside `.igs` by default.
 - `.igs` projects store model references and compatibility metadata, not copied model weights.
-- MVP installs models from CivitAI URLs only.
+- MVP user-initiated model import starts from CivitAI URLs only; supported
+  models may install required companion artifacts as part of the same confirmed
+  install group.
 - CivitAI API token is required for CivitAI download.
+- The main process persists that token through Electron `safeStorage`, never
+  through SQLite, `.igs` or plaintext app config. On Linux, `basic_text` or an
+  unavailable secure storage backend cannot be used to save a token.
 - CivitAI in-app search / marketplace browsing is not MVP.
 - SDXL/Illustrious-like `.safetensors` files remain source files; the worker loads them through the Invoke-like Diffusers single-file path and caches loaded components in RAM/VRAM.
+- Illustrious and Anima are the supported MVP checkpoint families. Anima's
+  Qwen3 encoder and VAE are installed with its checkpoint as required managed
+  dependencies, not left for the user to find and install separately.
 - Model metadata includes `baseModelFamily` and `predictionType`.
 - `predictionType` is compatibility metadata, not a creative user setting.
 - Missing model/LoRA/embedding resources must be diagnosable when applying presets or viewing accepted-result provenance/comparison.
@@ -164,6 +172,14 @@ The CivitAI token status pill is the persistent entry point for token management
 - failed state: `CivitAI connection failed`;
 - click opens a compact popover with `Change token`, `Remove token` and `Check connection`;
 - if the user clicks `Add from CivitAI URL` without a valid token, the same token setup flow is shown before URL preview.
+
+The token is encrypted/decrypted only in Electron main process through
+`safeStorage`. If Linux reports the insecure `basic_text` backend or no secure
+storage is available, token setup reports why saving is unavailable and does
+not persist or silently reuse plaintext. The connected status requires a
+securely stored, usable token; token-dependent import stays unavailable until
+that condition is met. The Vue prototype models the status UI only, not OS
+secret storage.
 
 Do not add a separate always-visible `Storage` button in the header for MVP. The planned storage action is `Open Folder` in the side summary. More advanced storage settings should not be promoted until they become real product scope.
 
@@ -340,12 +356,16 @@ MVP includes:
 - require active CivitAI API token before download;
 - fetch CivitAI metadata and preview before download;
 - show an import preview before starting the install;
+- for Anima, show the checkpoint, required Qwen3 encoder and VAE, and the total
+  additional download size before confirming their joint installation;
 - download to a temporary file;
 - show download/install progress;
 - verify size and hash when available;
 - move verified file to managed models directory;
 - create SQLite records for model/resource/version/local file;
 - store preview/avatar metadata;
+- have the worker create derived thumbnail images where needed; main process
+  fetches CivitAI source previews and owns thumbnail/cache publication;
 - detect duplicate already-installed resources by CivitAI version id and/or file hash;
 - detect newer versions for a known CivitAI model identity;
 - show an explicit available-update state;
@@ -435,6 +455,21 @@ flowchart TD
 ### Add From CivitAI URL
 
 The import flow is preview-first. The app should not start downloading a large model before the user sees what will be installed.
+
+For Anima, the CivitAI URL is still the user-facing install entrypoint. A
+versioned, app-supported dependency mapping resolves the exact Qwen3 encoder
+and VAE artifacts needed by that checkpoint; this is not a generic second
+model-source browser. The import preview lists each required artifact and its
+size, any already installed verified companion, and the total bytes still to
+download. If a required artifact or its size cannot be resolved, installation
+cannot start and the dialog explains the missing dependency. One confirmation
+starts the whole group. The checkpoint becomes selectable only after all
+required components pass verification and their relationships are committed;
+failure/cancel leaves no partially installed selectable Anima model. Verified
+shared companions are reused rather than downloaded again, and are retained
+while another installed model needs them. If a companion later goes missing,
+the dependent checkpoint is unavailable for generation until that exact
+dependency is repaired.
 
 Validation steps:
 
@@ -613,6 +648,13 @@ Checking or installing an update cannot rewrite the third identity.
 
 Removing a model removes the local reusable resource, but does not rewrite history.
 
+This is a hard removal, with no Model Manager Trash, restore window or
+soft-deleted model record. Minimal copied identity/display metadata can remain
+solely to explain missing references in Projects, Presets and provenance; it is
+not an installed or restorable resource. Repair is a new verified download of
+the exact resource. Removing an Anima checkpoint must not delete a companion
+still used by another installed model.
+
 Rules:
 
 - if the resource is used by a running generation/upscale job, deletion is blocked;
@@ -634,7 +676,7 @@ flowchart TD
   G --> I{"User confirms?"}
   H --> I
   I -- "No" --> J["Keep resource"]
-  I -- "Yes" --> K["Remove file and mark resource removed/missing"]
+  I -- "Yes" --> K["Remove file; retain only missing-reference metadata"]
   K --> L["Update selectors and diagnostics"]
 ```
 
@@ -680,10 +722,10 @@ LoRA selector:
 - opens detail popover from explicit info button;
 - opens Model Manager through `Manage Models`.
 
-Embedding prompt tokens:
+Embedding references in plain-text prompts:
 
 - unified prompt autocomplete reads installed embeddings from Model Manager;
-- embedding token metadata shows activation/negative tokens;
+- embedding reference metadata shows activation/negative tokens;
 - opens detail popover from explicit info button;
 - opens Model Manager through `Manage Models`.
 
@@ -824,6 +866,11 @@ The following criteria describe the production feature; prototype-only coverage 
 - User can open Model Manager from Generate model/LoRA controls and embedding-token diagnostics.
 - User can paste a CivitAI URL and see import preview before downloading.
 - Import is blocked until CivitAI token is configured.
+- Linux cannot persist a token with `safeStorage`'s `basic_text` backend or a
+  plaintext fallback; token setup explains secure-storage unavailability.
+- Anima install preview shows all required companion files and total additional
+  download size; the checkpoint is selectable only after the whole group is
+  verified and registered.
 - User can start model install and see it in an install queue.
 - Download progress is visible and survives Model Manager close/reopen during the app session.
 - Completed install creates SQLite resource records and a managed local file.
@@ -841,4 +888,6 @@ The following criteria describe the production feature; prototype-only coverage 
 - Remove is blocked for resources used by running jobs.
 - Remove confirmation warns when resource is referenced by presets/accepted results.
 - Accepted-result provenance remains readable after a resource is removed.
+- Removing a model has no soft-delete/Restore lifecycle; missing references
+  retain diagnostics, and shared Anima companions remain while still used.
 - Model Manager actions are not part of project undo/redo.

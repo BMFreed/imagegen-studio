@@ -16,10 +16,12 @@ import { cloneDocument } from './project-history'
 import { freezeGeneration } from './project-provenance'
 
 const baseDraft: ProjectGenerationDraft = {
-  cfgRescale: 0,
   dynamicPrompt: { maxPrompts: 100, seedBehavior: 'per-iteration' },
-  payload: structuredClone(currentProjectPresetSource.definition.payload),
-  vaePrecision: 'Auto',
+  payload: {
+    ...structuredClone(currentProjectPresetSource.definition.payload),
+    cfgRescale: 0,
+    vaePrecision: 'Auto',
+  },
 }
 
 export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
@@ -164,7 +166,11 @@ export function createProjectSessionFromHomeRecord(project: HomeProjectRecord): 
   session.document.title = project.fileName
   session.document.canvas = { height: project.height, width: project.width }
   if (project.generationPayload) {
-    session.document.generationDraft.payload = structuredClone(project.generationPayload)
+    session.document.generationDraft.payload = {
+      cfgRescale: baseDraft.payload.cfgRescale,
+      vaePrecision: baseDraft.payload.vaePrecision,
+      ...structuredClone(project.generationPayload),
+    }
   }
   session.savedDocument = cloneDocument(session.document)
   return session
@@ -234,7 +240,6 @@ function baseDocument(): ProjectDocumentModel {
     ],
     regionalGuidance: [
       {
-        autoNegative: true,
         compatibilityStatus: 'warning',
         enabled: true,
         id: 'face-light',
@@ -245,6 +250,7 @@ function baseDocument(): ProjectDocumentModel {
         positivePrompt: 'even lighting, simple background',
         referenceImages: [{ id: 'face-reference', name: 'Lighting reference', tone: 'violet' }],
         regionRevision: 1,
+        useGlobalNegativePrompt: true,
       },
     ],
     title: 'Sample Project B.igs',

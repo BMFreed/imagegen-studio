@@ -29,13 +29,13 @@ Smart Patch Layer is a self-contained generative entity. The mask, bounding box,
 
 This is intentionally separate from:
 
-- Project Canvas / document work area;
+- the unbounded Project Canvas and its project-owned primary generation bbox;
 - ordinary Raster Layer transform/position.
 
 Hard rule:
 
 ```text
-Project / Canvas Size
+Primary Generation BBox
 != Smart Patch Layer Bounding Box
 != Raster Layer Transform
 ```
@@ -151,7 +151,7 @@ Regeneration freezes a source composite from compositing layers beneath the targ
 
 ## Layer-Owned Bounding Box
 
-Smart Patch Layer Bounding Box is not the same thing as Project Canvas or Raster Layer transform.
+Smart Patch Layer Bounding Box is not the same thing as the project-owned primary generation bbox or Raster Layer transform. Both bboxes live in the unbounded Project Canvas coordinate space.
 
 It defines the project-space area sent to the worker for this layer's local generation.
 
@@ -163,12 +163,12 @@ Product bbox controls:
 - internal resolution width/height;
 - aspect lock;
 - `Fit Patch BBox to Mask`, exposed primarily in the Smart Patch contextual left toolbar;
-- fit to canvas;
+- fit to the primary generation bbox where useful;
 - scale before processing.
 
 Changing layer bbox or internal resolution marks the layer `outdated` if it already has an active raster sub-layer.
 
-If the bbox extends beyond Project Canvas bounds, Smart Patch outpainting should automatically expand Project Canvas to include the bbox. This canvas growth is undoable and does not transform Raster Layer pixels.
+The bbox can extend beyond all existing raster content. Smart Patch outpainting and acceptance do not expand Project Canvas, because it has no fixed bounds; they do not transform existing Raster Layer pixels. The previous auto-expand rule is retired.
 
 ## Mask
 
@@ -277,7 +277,7 @@ The `smart-patch` scenario contains a self-contained Smart Patch with owned bbox
 
 The prototype supports adding an empty Smart Patch, selecting its layer-owned generation draft, deterministic mask revision/outdated transitions, deterministic fit-to-mask, generating temporary candidates, multi-accepting them as variants and switching the active accepted variant. These persistent actions participate in Project undo/redo.
 
-The current details card only reads mask revision, bbox size, internal size and active variant. General bbox dragging, numeric precision editing, internal-size editing, mask painting, compositing controls, source-composite hashing and outpainting auto-expand are not implemented. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
+The current details card only reads mask revision, bbox size, internal size and active variant. General bbox dragging, numeric precision editing, internal-size editing, mask painting, compositing controls and source-composite hashing are not implemented. The finite Project Canvas frame in the prototype remains a gap against the unbounded-canvas contract. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
 
 The prototype also does not expose the shared `Compare generation settings`
 context action or provenance popover. Its current `outdated` flag is a simplified
@@ -286,7 +286,7 @@ mock and does not substitute for `Generated with` / `Current Canvas` comparison.
 ## Acceptance Criteria
 
 - Smart Patch Layer is documented as its own Generate feature.
-- Project Canvas, Raster Layer transform and Smart Patch Layer bbox are explicitly separate.
+- Unbounded Project Canvas, primary generation bbox, Raster Layer transform and Smart Patch Layer bbox are explicitly separate.
 - Smart Patch Layer owns its mask, bbox, internal resolution, compositing settings and raster sub-layers.
 - Smart Patch Layer owns the generation draft used by its regeneration workflow.
 - Standalone inpaint mask layers are not part of MVP.

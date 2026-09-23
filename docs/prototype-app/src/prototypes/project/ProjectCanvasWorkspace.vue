@@ -178,7 +178,9 @@ function editContextualSurface() {
   if (entity && 'kind' in entity && entity.kind === 'smart-patch') {
     commitProjectMutation(props.session, 'Edit Smart Patch mask', () => {
       entity.maskRevision += 1
-      entity.status = 'outdated'
+      if (entity.activeVariantId) {
+        entity.status = 'outdated'
+      }
     })
   } else if (entity && !('kind' in entity)) {
     commitProjectMutation(props.session, 'Edit regional guidance', () => {
@@ -196,7 +198,9 @@ function fitPatch() {
     const target = document.layers.find((layer) => layer.id === patchId)
     if (target?.kind === 'smart-patch') {
       target.bbox = { height: 384, width: 448, x: 284, y: 296 }
-      target.status = 'outdated'
+      if (target.activeVariantId) {
+        target.status = 'outdated'
+      }
     }
   })
 }

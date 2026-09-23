@@ -9,6 +9,7 @@ import type {
 export type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
 
 export type PresetSectionKey =
+  | 'cfgRescale'
   | 'denoisingStrength'
   | 'guidance'
   | 'loras'
@@ -19,6 +20,7 @@ export type PresetSectionKey =
   | 'seed'
   | 'size'
   | 'vae'
+  | 'vaePrecision'
 
 export type PresetResourceRef = GenerationResourceRef
 export type PresetModelRef = GenerationModelRef

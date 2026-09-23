@@ -227,9 +227,26 @@ function openSavePreset(intent?: PresetCreateIntent) {
   showHomePresetManager.value = true
 }
 
+function hasUnfinishedProjectJobs(session: ProjectSession) {
+  return session.queueItems.some((item) => item.status === 'pending' || item.status === 'running')
+}
+
+function cancelUnfinishedProjectJobs(session: ProjectSession) {
+  for (const item of session.queueItems) {
+    if (item.status === 'pending' || item.status === 'running') {
+      item.status = 'canceled'
+    }
+  }
+  for (const candidate of session.staging?.candidates ?? []) {
+    if (candidate.status === 'pending' || candidate.status === 'running') {
+      candidate.status = 'canceled'
+    }
+  }
+}
+
 function requestCloseDocument(id: string) {
   const session = projectSessions[id]
-  if (session && (session.dirty || session.staging)) {
+  if (session && (session.dirty || session.staging || hasUnfinishedProjectJobs(session))) {
     pendingCloseId.value = id
     return
   }
@@ -263,6 +280,10 @@ function confirmClose(action: 'discard' | 'save') {
 function closeDocument(id: string) {
   if (activePrototype.value !== 'home') {
     if (activeDocumentId.value === id) {
+      const session = projectSessions[id]
+      if (session) {
+        cancelUnfinishedProjectJobs(session)
+      }
       activeDocumentId.value = ''
     }
     return
@@ -270,6 +291,10 @@ function closeDocument(id: string) {
   const index = homeDocumentTabs.value.findIndex((tab) => tab.id === id)
   if (index < 0) {
     return
+  }
+  const session = projectSessions[id]
+  if (session) {
+    cancelUnfinishedProjectJobs(session)
   }
   homeDocumentTabs.value.splice(index, 1)
   if (activeDocumentId.value === id) {
@@ -494,14 +519,18 @@ function syncProjectTab(project: HomeProjectRecord) {
                   {{
                     projectSessions[pendingCloseId ?? '']?.dirty
                       ? 'Unsaved project changes'
-                      : 'Unaccepted generation results'
+                      : projectSessions[pendingCloseId ?? '']?.staging
+                        ? 'Unaccepted generation results'
+                        : 'Generation in progress'
                   }}
                 </h2>
                 <NText>
                   {{
                     projectSessions[pendingCloseId ?? '']?.dirty
-                      ? 'Save changes before closing this project? Unaccepted candidates will be discarded.'
-                      : 'Temporary generation candidates will be discarded when this project closes.'
+                      ? 'Save changes before closing this project? Unaccepted candidates will be discarded and unfinished jobs canceled.'
+                      : projectSessions[pendingCloseId ?? '']?.staging
+                        ? 'Temporary generation candidates will be discarded and unfinished jobs canceled when this project closes.'
+                        : 'Unfinished generation jobs will be canceled when this project closes.'
                   }}
                 </NText>
                 <div class="close-project-actions">
@@ -510,7 +539,9 @@ function syncProjectTab(project: HomeProjectRecord) {
                     {{
                       projectSessions[pendingCloseId ?? '']?.dirty
                         ? 'Discard Changes'
-                        : 'Discard Candidates and Close'
+                        : projectSessions[pendingCloseId ?? '']?.staging
+                          ? 'Discard Candidates and Close'
+                          : 'Cancel Jobs and Close'
                     }}
                   </NButton>
                   <NButton

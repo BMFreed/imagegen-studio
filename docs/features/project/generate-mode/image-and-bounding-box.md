@@ -1,174 +1,86 @@
-# Project Canvas And Bounding Boxes
+# Infinite Project Canvas And Generation Bounds
 
 ## Feature
 
-Generate needs Photoshop/Affinity/Krita-like project canvas controls plus explicit Smart Patch bounding boxes.
+Project Canvas is an unbounded composition space, as in InvokeAI. A finite, movable generation bounding box defines where a normal generation runs. Smart Patch Layers retain their own separate, layer-owned bounding boxes.
 
-This document defines the difference between the document work area, raster layer transforms and Smart Patch generation regions.
-
-Smart Patch Layer's full ownership model lives in [Smart Patch Layer](./smart-patch-layer.md).
+This document distinguishes the canvas coordinate space, generation targets, Raster Layer placement and export bounds. [Smart Patch Layer](./smart-patch-layer.md) owns the full local-editing contract.
 
 ## Reference
 
-Primary reference: Photoshop, Affinity Photo and Krita canvas/document models.
+InvokeAI's canvas scene and draggable generation bbox are the primary interaction reference. Its `saveCanvasHooks.ts` and `copyHooks.ts` use visible Raster Layer bounds for the `canvas` region and the generation bbox for the `bbox` region; `useExportCanvasToPSD.ts` also derives a finite rectangle from visible Raster Layers. ImageGen Studio adopts that separation for normal image export versus an explicit bbox export.
 
-The shared pattern:
-
-- canvas/document work area can be resized independently from layer pixels;
-- raster layers can be smaller than, larger than or partially outside the canvas;
-- layer transform and canvas resize are separate operations;
-- canvas can be fit/trimmed/grown to layer or selection bounds;
-- local editing tools may have their own generation/selection region.
-
-InvokeAI bbox controls remain useful as implementation inspiration for grid-snapped handles, but ImageGen Studio does not model the whole project as a global Invoke-like generation bbox.
+Photoshop, Affinity Photo and Krita remain references for independent layer transforms and explicit raster export/crop operations. Their fixed document canvas is **not** the Project Canvas model adopted here.
 
 ## ImageGen Studio Decision
 
-Separate three concepts in UI and state:
+Keep these concepts separate in state and UI:
 
 ```text
-Project Canvas
-= document work area / visible composition / default export bounds
-
-Raster Layer Transform
-= position/scale/rotation of an individual raster layer relative to Project Canvas
-
-Smart Patch Layer Bounding Box
-= layer-owned generation region for one Smart Patch Layer
+Project Canvas = unbounded project-coordinate composition space
+Primary Generation BBox = project-owned x/y/width/height for normal generation
+Smart Patch BBox = layer-owned x/y/width/height for one Smart Patch Layer
+Raster Layer Transform = placement/scale/rotation of one layer
+Export Bounds = a finite rectangle chosen by an explicit export rule or user action
 ```
 
-The UI must never collapse these into one ambiguous control.
+There is no fixed Project Canvas width/height and no document edge that generation or layers must stay inside. The previous rule that normal generation uses Project Canvas bounds, and the previous Smart Patch outpainting auto-expand rule, are retired. The primary generation bbox is the finite target for normal generation. It can be moved or resized independently of layers and may lie partly or wholly outside existing raster content.
 
-There is no separate `Current Working Bounding Box` for the whole image.
+The runtime derives txt2img/img2img/outpaint/inpaint from the frozen visible raster/mask content **inside the active target bbox**, without a manual mode switch. A Raster Layer elsewhere in the project does not turn an empty target into img2img.
 
-Normal generation targets the Project Canvas. Smart Patch generation targets the selected Smart Patch Layer's owned bbox. The runtime derives txt2img/img2img/outpaint/inpaint from visible raster/mask content inside that target rather than exposing those as manual Project modes.
+## Project Canvas And Raster Layers
 
-## Project Canvas
+Project Canvas provides shared coordinates for Raster Layers, Smart Patch masks/bboxes and Regional Guidance regions. Pan, zoom and `Fit View` change only the viewport. Layer positions are not clipped by a document frame, and placing a new layer outside existing content does not resize a document.
 
-Project Canvas is the document work area.
+Raster Layer transforms remain independent of either generation bbox. Normal generation never overwrites or moves an existing selected Raster Layer implicitly. After explicit acceptance, each selected normal candidate becomes a new Raster Layer placed at the frozen primary generation bbox coordinates. The accepted result can extend beyond every existing image; acceptance does not enlarge Project Canvas or silently change the primary bbox. Other accepted opaque alternatives begin hidden, as specified in [GenerationResults](./generation-results.md).
 
-It defines:
+Project data must preserve negative and positive project coordinates. A finite rasterization rectangle is still required for worker input and export, but that rectangle is an operation input, not the boundary of Project Canvas.
 
-- visible composition bounds;
-- default generation bounds for normal non-Smart-Patch generation;
-- default export bounds;
-- the coordinate space in which layers, masks, regions and Smart Patch bboxes live.
+## Primary Generation BBox
 
-Raster Layers can be:
+The project owns one default bbox for normal generation, separate from every Smart Patch Layer's bbox. It has x, y, width and height in project coordinates. A new Project starts at x=0, y=0 with width/height from New Project `Size` (1024 × 1024 by default), and its initial viewport fits that bbox. InvokeAI also starts its bbox at x=0, y=0, though ImageGen Studio uses its own default dimensions.
 
-- smaller than Project Canvas;
-- larger than Project Canvas;
-- partially outside Project Canvas;
-- exactly aligned to Project Canvas.
+The existing `Size` controls should edit bbox width/height, aspect ratio and swap; fit-to-visible-layers sets its full x/y/width/height bounds. Numeric x/y belong to bbox precision controls. Canvas handles allow free movement/resize, with positional snapping off by default; coordinates may be negative. Worker/model constraints validate allowable generation dimensions without imposing a canvas boundary. These controls no longer edit a fixed document size.
 
-Project Canvas resizing must not resample or transform Raster Layer pixels by default.
+Adding a Raster Layer to an already open Project never moves or resizes the primary bbox implicitly. The user can explicitly run `Fit BBox to visible layers` when the imported image should become the next generation target.
 
-Controls:
+The `Size` card's existing aspect catalog remains useful: `Free`, `8:1`, `4:1`, `21:9`, `16:9`, `3:2`, `5:4`, `4:3`, `1:1`, `3:4`, `4:5`, `2:3`, `9:16`, `1:4`, `9:21`, `1:8`. Supported min/max dimensions and any model-specific size multiple constrain the **generation request**, not the canvas or bbox position. The prototype's 64–4096 clamp and grid-8 rounding are mock rules pending worker-specific validation.
 
-- width;
-- height;
-- resize canvas/work area;
-- crop canvas/work area;
-- extend/grow canvas/work area;
-- fit canvas to selected visible Raster Layers;
-- fit canvas to all visible Raster Layers;
-- fit canvas to selection where relevant;
-- output/export size metadata where applicable.
+At enqueue, freeze the bbox, target-area composite, prompts, model/resources and settings into the job. Moving the bbox or editing layers afterward must not change that job. The worker receives only the finite frozen bbox/composite, including transparent pixels where the bbox extends beyond current raster content. Generated candidates preview at the same project coordinates before acceptance.
 
-The `Size` card exposes `Free` plus `8:1`, `4:1`, `21:9`, `16:9`, `3:2`, `5:4`, `4:3`, `1:1`, `3:4`, `4:5`, `2:3`, `9:16`, `1:4`, `9:21` and `1:8`. It includes a compact CSS aspect preview, ratio lock, swap and fit-to-visible-layers actions. Automatic calculations preserve approximate area, snap to the model grid and clamp the prototype canvas to 64–4096 pixels. No separate aspect-preview dependency is needed.
+`Fit BBox to visible layers` changes the primary generation bbox to the chosen visible content bounds; it does not crop layers or move the viewport. `Fit View to layers` changes only the camera. Neither command is an export or destructive trim operation.
 
-Changing Project Canvas size must not silently resize Raster Layers or Smart Patch Layer bounding boxes.
+## Smart Patch Layer BBox
 
-In the current Project prototype, Project Canvas numeric size controls live in the left `Size` section. Direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail. The canvas area may show a compact `Project Canvas W x H` label at the top-left edge as readout/context, but that label is not the primary editing control and must not cover important image content.
+Selecting a Smart Patch Layer switches the active generation target to its owned bbox and binds the settings panel to its owned generation draft. Editing the primary bbox does not change that layer's geometry or mark it `outdated`; editing the Smart Patch bbox/internal resolution can mark it `outdated` when it has an accepted active variant.
 
-`Crop / Resize Project Canvas` behaves like a document work-area crop tool, not a Raster Layer crop tool:
+The product design calls for canvas handles plus a compact selected-layer `Bounding Box` precision popover with x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-primary-bbox and scale-before-processing. `Fit Patch BBox to Mask` remains a Smart Patch contextual toolbar action. The current prototype shows bbox dimensions and deterministic fit-to-mask but no general pointer resize or numeric precision popover.
 
-- it changes Project Canvas bounds;
-- it does not resample Raster Layer pixels;
-- it does not transform Raster Layer positions;
-- it preserves off-canvas layer pixels in `.igs`;
-- destructive pixel trimming, if added later, must be an explicit separate command.
+Smart Patch outpainting can place its bbox beyond existing raster content. Generation and `Add N as Variants` do not expand Project Canvas; there are no document bounds to expand. Existing Raster Layer pixels and transforms remain unchanged.
 
-If Project Canvas shrinks, off-canvas layer pixels are preserved in `.igs` unless the user explicitly trims/crops layer pixel data.
+Regional Guidance owns a conditioning region/mask, not a generation bbox.
 
-## Raster Layer Transform
+## Export And Crop Boundary
 
-Raster Layer Transform is separate from Project Canvas resizing.
+`File > Export As` uses the union of visible raster-content bounds as its default finite image-export rectangle. In ImageGen Studio that composited content includes visible Raster Layers and the active visible variants of Smart Patch Layers. Hidden layers/variants do not enlarge the default rectangle. An explicit `Export Generation BBox` action exports the current primary bbox region instead. The bbox is never silently treated as a document boundary.
 
-It controls:
+If there is no visible raster content, image export is unavailable with an explanatory empty-state message; the user can still Save the `.igs` project. Custom export rectangles can be designed later. Exporting does not crop source layer assets. This follows InvokeAI's visible-content versus bbox region distinction while adapting it to Smart Patch compositing.
 
-- x/y position;
-- scale;
-- rotation;
-- future crop/trim behavior if added later.
+An explicit destructive trim/crop of Raster Layer pixel data, if added, is a separate operation from moving a generation bbox or exporting a finite region.
 
-MVP does not expose full Raster Layer editing by default, but the document model must support layer bounds that differ from Project Canvas bounds.
+## Vue Prototype Gap
 
-InvokeAI's entity transform implementation can be used as a reference when ImageGen Studio adds Raster Layer transform controls.
-
-## Smart Patch Layer Bounding Box
-
-When a Smart Patch Layer is selected, bbox editing targets the selected layer's owned bbox.
-
-This bbox is part of Smart Patch Layer state. It is not a global project setting.
-
-The product design calls for a compact `Bounding Box` precision action/popover for the selected Smart Patch Layer. The current Vue prototype shows bbox dimensions in selected-layer details and exposes `Bounding Box` plus `Fit Patch BBox to Mask` in the contextual canvas rail; it does not yet implement the numeric precision popover.
-
-Popover controls:
-
-- x;
-- y;
-- width;
-- height;
-- internal resolution width;
-- internal resolution height;
-- aspect lock;
-- fit to mask, exposed primarily as `Fit Patch BBox to Mask` in the Smart Patch Layer contextual toolbar;
-- fit to canvas;
-- scale before processing.
-
-In the production interaction, canvas handles remain the primary way to move/resize the bbox and the popover is for exact values and less common actions. Current prototype handles are visual coverage only.
-
-Changing layer bbox or internal resolution marks the Smart Patch Layer as `outdated` if it already has an active raster sub-layer.
-
-Hard rule: a Smart Patch Layer bbox is not a global project setting. It belongs to that layer. See [Smart Patch Layer](./smart-patch-layer.md) for the full layer-owned state model.
-
-## Outpainting Auto-Expand
-
-Smart Patch Layer supports outpainting.
-
-If a Smart Patch Layer bbox extends beyond Project Canvas bounds, ImageGen Studio should automatically expand Project Canvas to include the full Smart Patch bbox before or as part of the generation action.
-
-Rules:
-
-- auto-expand is undoable as part of the same user action;
-- expansion preserves all existing Raster Layer pixels and transforms;
-- expansion preserves Smart Patch mask/bbox coordinates in project space;
-- expansion should snap to required model/grid constraints where needed;
-- UI should preview or clearly indicate the canvas growth before generation when the change is non-trivial;
-- user should not need to manually resize Project Canvas just to perform a straightforward outpaint.
-
-This behavior follows the creative-editor mental model: the canvas grows to provide more work area, while layer pixels and local patch state remain their own objects.
-
-## Vue Prototype Coverage
-
-The Size card currently implements numeric dimensions, the full documented aspect catalog, lock/unlock, a CSS ratio preview, swap and deterministic fit-to-visible-layer bounds. Automatic ratio calculations use the documented 64–4096 clamp and grid-8 rounding.
-
-The canvas renders separate Project Canvas, Smart Patch bbox and mask overlays. `Fit Patch BBox to Mask` writes deterministic owned bbox values and marks an existing patch outdated. Arbitrary bbox handle dragging, numeric x/y/width/height editing, Crop/Resize commit/cancel and outpainting auto-expansion are not implemented in the Vue prototype yet.
+The current Project prototype still renders a finite `Project Canvas W × H` frame. Its `Size` card and `Crop / Resize Project Canvas` tool mutate or depict that finite frame, and its normal jobs target those bounds. This is **outdated prototype behavior**, not evidence that the infinite-canvas contract is implemented. The deterministic Smart Patch fit-to-mask command does not close this gap. Production work must replace the finite frame semantics, add movable/resizable primary bbox interactions, and place staged/accepted results by frozen bbox coordinates.
 
 ## Acceptance Criteria
 
-- Project Canvas, Raster Layer transform and Smart Patch Layer bbox are visually separate.
-- There is no global/current working bbox separate from Project Canvas.
-- Normal generation uses Project Canvas as its target bounds.
-- User can resize/grow/fit Project Canvas without transforming layer pixels.
-- Project Canvas numeric resize/fit controls are presented in the `Size` section.
-- Direct Project Canvas crop/resize is available from the left canvas rail as `Crop / Resize Project Canvas`.
-- The canvas area shows a compact size readout, not a primary editing control.
-- Raster Layers may be smaller, larger or partially outside Project Canvas.
-- Product implementation lets the user edit Smart Patch bbox through canvas handles and numeric controls; current prototype coverage is limited to visual handles, read-only dimensions and deterministic fit-to-mask.
-- A compact bbox precision popover remains unimplemented in the current prototype.
-- Selected Smart Patch Layer exposes `Fit Patch BBox to Mask` from its contextual toolbar.
-- Regional Guidance Layer does not expose bbox controls.
-- Smart Patch outpainting auto-expansion remains product behavior and is not simulated by the current prototype.
-- Changing Smart Patch bbox/internal resolution marks an existing result as `outdated`.
+- Project Canvas has no fixed width/height or clipping document edge.
+- The primary normal-generation bbox is project-owned, movable and resizable, and may be outside all existing raster content.
+- New Project initializes that bbox at (0, 0) with `Size` dimensions and fits the viewport to it; importing a Raster Layer into an open Project leaves the bbox unchanged until explicit fit or edit.
+- Numeric x/y are available in bbox precision controls; free drag allows negative coordinates and does not snap by default. Only worker/model generation dimensions are constrained.
+- `Size` edits primary generation bbox dimensions, not Project Canvas size; Smart Patch bbox remains layer-owned.
+- Worker mode derives from visible content inside the frozen active bbox, and later canvas edits do not mutate queued jobs.
+- Explicitly accepted normal results become new Raster Layers at the frozen bbox location without expanding canvas or overwriting existing layers.
+- Smart Patch generation/acceptance beyond existing image content requires no canvas auto-expand.
+- Viewport fit, bbox fit, export and destructive raster crop are distinct actions.
+- The finite-canvas Vue prototype is recorded as a gap until its behavior is replaced and tested.

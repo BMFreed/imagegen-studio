@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты прототипа, их владельцы, API и browser checks.
 - [UI kit experiment](./ui-kit-experiment.md) — завершённый замер 18 реализаций: прямой Naive, общий API поверх Naive и Vue/HTML; первые и финальные версии, стоимость подготовки и границы вывода.
 - [UI context experiment](./ui-context-experiment.md) — завершённый пилот на 24

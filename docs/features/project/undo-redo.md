@@ -96,7 +96,8 @@ Undoable project mutations:
 - add/delete/edit Regional Guidance Layer;
 - edit Regional Guidance region/mask;
 - edit regional prompts/reference images;
-- resize/crop/grow Project Canvas;
+- move/resize the project-owned primary generation bbox; an explicit destructive
+  crop of Raster Layer pixels is a separate undoable mutation if implemented;
 - change canvas/project-local generation settings if those settings are stored in `.igs`;
 - apply selected preset sections into Project or Smart Patch generation draft as one ordinary grouped settings mutation;
 - accept one or more staging candidates as Raster Layers;

@@ -76,6 +76,7 @@ projects.acceptGenerationCandidates
 presets.create
 presets.update
 presets.delete
+presets.restore
 canvas.createSmartPatchLayer
 canvas.regenerateSmartPatchLayer
 ```
@@ -91,6 +92,7 @@ history.getRecent
 history.getById
 presets.getList
 presets.getById
+presets.getDeleted
 canvas.getProject
 ```
 
@@ -116,9 +118,17 @@ Command handler может вызывать сервисы, писать в SQLi
 
 Apply ownership следует preset-прототипу: `projects.applyPresetDraft` изменяет generation state конкретного открытого проекта из detached application draft. Команды `presets.create/update/delete` изменяют каталог presets; отдельной `presets.apply`, которая могла бы двусмысленно выглядеть как mutation исходного preset, нет.
 
+`presets.delete` устанавливает `deleted_at` и скрывает preset из активного
+каталога, `presets.getDeleted` показывает восстановимые записи и срок истечения,
+а `presets.restore` до 30-дневного срока снимает tombstone с той же identity.
+Main process очищает просроченные записи отдельной idempotent maintenance
+операцией при запуске и по расписанию во время работы; cleanup не вызывается
+из renderer как пользовательское удаление. Это не Project Trash и не
+физическое удаление модели.
+
 `presets.create` принимает валидный `PresetDefinition` без fake identity и возвращает `PresetRecord`; id и timestamps появляются только после успешной команды. Ошибка команды не закрывает renderer draft. `projects.applyPresetDraft` принимает payload + ephemeral selection mask, но mask никогда не записывается в preset storage.
 
-Generation ownership also has an explicit boundary: `generation.enqueue/cancel` and candidate-discard commands change queue/staging state, while `projects.acceptGenerationCandidates` is the only command that turns selected candidates into persistent Raster Layers or Smart Patch variants. It creates generation provenance and derived accepted-result history rows as part of one grouped project mutation. Worker completion itself does not mutate the Project document.
+Generation ownership also has an explicit boundary: `generation.enqueue/cancel` and candidate-discard commands change queue/staging state, while `projects.acceptGenerationCandidates` is the only command that turns selected candidates into persistent Raster Layers or Smart Patch variants. It creates generation provenance and an immediate in-memory Project history projection as one grouped document mutation. Explicit Project Save synchronizes the durable derived global SQLite history index from accepted `.igs` results. Worker completion itself does not mutate the Project document.
 
 ## Python runtime ownership
 

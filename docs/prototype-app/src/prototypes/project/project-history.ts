@@ -124,7 +124,6 @@ export function discardProjectChanges(session: ProjectSession) {
   session.document = cloneDocument(session.savedDocument)
   session.history = { future: [], past: [] }
   session.staging = undefined
-  session.queueItems = []
   session.dirty = false
 }
 

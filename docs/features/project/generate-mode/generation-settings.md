@@ -14,13 +14,22 @@ ImageGen Studio adapts Invoke's controls, but not Invoke's separate lower `Advan
 
 Use an Invoke-like model-aware settings panel, adapted to ImageGen Studio's supported model families and worker protocol.
 
-Project does not ask the user to choose Text to Image or Image to Image. The runtime generation path is derived from visible raster/mask content in the current target area when the job is frozen.
+Project does not ask the user to choose Text to Image or Image to Image. The runtime generation path is derived from visible raster/mask content in the current finite target bbox when the job is frozen. For normal generation that is the movable project-owned primary bbox, not a fixed Project Canvas frame.
 
-Normal Project Canvas generation uses a project-owned generation draft. Each Smart Patch Layer owns its own generation draft; selecting a Smart Patch Layer binds the settings panel to that layer, so edits only affect and potentially mark that layer `outdated`.
+Normal Project generation uses a project-owned generation draft. Each Smart Patch Layer owns its own generation draft; selecting a Smart Patch Layer binds the settings panel to that layer, so edits only affect and potentially mark that layer `outdated`.
 
-LoRAs remain structured generation resources. Embeddings live inside the positive or negative structured prompt as resource-bearing tokens.
+For normal generation, `Size` configures the project-owned primary generation bbox dimensions, not a finite canvas size. Smart Patch `internalResolution` and layer-owned bbox geometry do not become generic preset `Size` fields.
+
+LoRAs remain structured generation resources. Positive and negative prompts are
+plain text with separate embedding-resource reference sidecars; editing the text
+does not turn embeddings into UI chips or serialized prompt tokens.
 
 All generation-related advanced controls live inside the `Generation` card's own `Advanced Options` area. Do not create a separate Invoke-like `Advanced` dropdown/accordion below `Generation`.
+
+Supported advanced values that affect generation are explicit optional fields
+in the generation payload. `cfgRescale` and `vaePrecision` are frozen with a job,
+shown in comparison, and can be independently included in presets. There is no
+generic advanced-options bag.
 
 ## Scope
 
@@ -69,16 +78,16 @@ If color matching is needed later, design it as a Smart Patch/compositing behavi
 The current Project settings stack implements:
 
 - one-shot Preset actions;
-- explicit Project Canvas / Smart Patch target context and Canvas Size after prompts;
+- explicit normal-generation / Smart Patch target context and the current prototype's finite `Canvas Size` controls after prompts; product `Size` must instead edit primary generation bbox dimensions;
 - plain-text CodeMirror positive/negative prompt editors with embedding sidecars;
 - the shared LoRA stack;
 - model selection;
 - exact mock installed-version selection and prediction-type readout;
-- sampler, scheduler, steps, CFG, Denoising Strength and fixed/random seed;
+- sampler, scheduler, steps, CFG, Denoising Strength and fixed/random/reuse seed;
 - images-per-click as an integer input from 1 through 100 in the fixed Generate bar;
-- an `Advanced Options` disclosure containing VAE and VAE precision controls.
+- an `Advanced Options` disclosure containing VAE, VAE precision and CFG Rescale controls.
 
-VAE and precision update the active generation draft and participate in Project undo. Model and exact version selectors are placed above the prompts; Seed offers fixed/random behavior. Shuffle/advance seed, CFG rescale editing, clip skip and a production Model Manager installed-version registry remain gaps. Generation and seeds are simulated; no inference is performed.
+VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. Seed offers `Fixed`, `Random` and `Reuse`; `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. Shuffle/advance seed, clip skip and a production Model Manager installed-version registry remain gaps. Generation and seeds are simulated; no inference is performed.
 
 Selecting a Smart Patch binds the visible settings to its layer-owned draft. Denoising stays visible and is disabled with an explanation when the effective target has no raster input. The prototype uses deterministic layer coverage metadata for this decision because it has no pixel compositor.
 
@@ -117,7 +126,7 @@ If the user selects a v-prediction model, Generate should use the model metadata
 - LoRAs have a structured stack; embeddings are plain prompt text with sidecar `embeddingRefs` and have no standalone section.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
 - Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.
-- Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage includes draft-bound VAE and VAE precision controls.
+- Model-aware secondary controls live in `Generation > Advanced Options`; current prototype coverage includes payload-bound VAE, VAE precision and CFG Rescale controls, while model capability gating remains required.
 - A separate Invoke-like `Advanced` accordion is not implemented.
 - Seamless X/Y and generic color compensation are excluded from MVP Generate settings.
 

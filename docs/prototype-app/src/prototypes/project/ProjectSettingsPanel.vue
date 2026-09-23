@@ -113,6 +113,9 @@ const blockingReason = computed(() => {
   if (projectHasBlockingGenerationErrors(props.session)) {
     return 'Choose an installed model before generating.'
   }
+  if (payload.value.seed?.policy === 'reuse' && props.session.lastActualSeed === undefined) {
+    return 'No completed seed in this project yet. Complete a generation before using Reuse.'
+  }
   if (expandedPrompts.value.error) {
     return expandedPrompts.value.error
   }
@@ -377,6 +380,7 @@ function normalizeCount(value: number | null) {
                   :options="[
                     { label: 'Random', value: 'random' },
                     { label: 'Fixed', value: 'fixed' },
+                    { label: 'Reuse', value: 'reuse' },
                   ]"
                   :value="payload.seed?.policy ?? 'random'"
                   @update:value="
@@ -394,7 +398,11 @@ function normalizeCount(value: number | null) {
                   :max="4294967295"
                   :min="0"
                   :precision="0"
-                  :value="payload.seed?.value ?? 0"
+                  :value="
+                    payload.seed?.policy === 'reuse'
+                      ? (session.lastActualSeed ?? null)
+                      : (payload.seed?.value ?? 0)
+                  "
                   @update:value="
                     updatePayload('Change seed', (draft) => {
                       draft.payload.seed = { policy: 'fixed', value: $event ?? 0 }
@@ -403,6 +411,13 @@ function normalizeCount(value: number | null) {
                 />
               </label>
             </div>
+            <NText v-if="payload.seed?.policy === 'reuse'" depth="3">
+              {{
+                session.lastActualSeed === undefined
+                  ? 'No completed seed in this project yet.'
+                  : `Last completed seed in this project: ${session.lastActualSeed}`
+              }}
+            </NText>
             <details>
               <summary>Advanced Options</summary>
               <div class="field-stack advanced">
@@ -426,10 +441,27 @@ function normalizeCount(value: number | null) {
                     aria-label="VAE precision"
                     :options="['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))"
                     size="small"
-                    :value="activeDraft.vaePrecision"
+                    :value="payload.vaePrecision ?? 'Auto'"
                     @update:value="
                       updatePayload('Change VAE precision', (draft) => {
-                        draft.vaePrecision = $event
+                        draft.payload.vaePrecision = $event
+                      })
+                    "
+                  />
+                </label>
+                <label>
+                  CFG Rescale
+                  <NInputNumber
+                    aria-label="CFG Rescale"
+                    :max="0.99"
+                    :min="0"
+                    :precision="2"
+                    size="small"
+                    :step="0.05"
+                    :value="payload.cfgRescale ?? 0"
+                    @update:value="
+                      updatePayload('Change CFG Rescale', (draft) => {
+                        draft.payload.cfgRescale = $event ?? 0
                       })
                     "
                   />

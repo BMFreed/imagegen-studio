@@ -1,6 +1,6 @@
 # UI / UX Navigation
 
-Для Home, Project, Model Manager и preset-system точные visible labels, default states и переходы берутся из `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent; при расхождении с реализованной Vue-поверхностью он обновляется вслед за прототипом.
+Для Home, Project, Model Manager и preset-system текущие visible labels, default states и переходы сверяются с `docs/prototype-app` и его Playwright tests. Этот документ объясняет navigation ownership и production intent. Принятое решение о бесконечном Project Canvas пока опережает конечный canvas в прототипе; этот разрыв описан ниже и не считается реализованной возможностью.
 
 Навигация следует [PP-001: Понятный интерфейс вместо собираемого workbench](../product-promises.md#pp-001-понятный-интерфейс-вместо-собираемого-workbench). ImageGen Studio владеет основной композицией экранов и не предоставляет IDE-like docking, произвольную замену primary panels или layout presets, способные изменить назначение Home, Project или domain mode. Bounded resize, collapse и настройка плотности допустимы, пока они не меняют информационную архитектуру и сохраняются предсказуемо.
 
@@ -20,7 +20,7 @@ MVP строится как document-based desktop editor, ближе к Photosh
 
 `Canvas` не является primary navigation item или отдельной вкладкой приложения. Canvas — это сущность внутри `Project` tab: interactive рабочая поверхность открытого `.igs` проекта.
 
-`Generate` не является top-level вкладкой приложения. Это domain mode внутри `Project` tab; его visible working-mode label — `Create`, а `Generate` зарезервирован для action button. Upscale остаётся planned Project mode, но отложен до отдельного feature/prototype pass.
+`Generate` не является top-level вкладкой приложения. Это domain mode внутри `Project` tab; отдельный `Create` header или однопунктовый mode switch не показывается, а `Generate` является primary action. Upscale остаётся planned Project mode, но отложен до отдельного feature/prototype pass.
 
 `Model Manager` и `Preset Manager` остаются важными частями приложения, но не являются primary tabs: текущий источник истины оформляет их как app-level modal overlays. Settings и queue/status UI также остаются app-level surfaces, но их точная форма определяется отдельными feature passes.
 
@@ -83,19 +83,17 @@ Workspace — плоская папка с `.igs` project files. Вложенн�
 - generation provenance attached to accepted layers/variants and derived accepted-result history;
 - save/dirty/recovery status.
 
-Current Project scope contains domain mode `generate` with visible label `Create`: generation and local editing through canvas, layers, Smart Patch Layer, masks and model settings.
+Current Project scope contains domain mode `generate`: generation and local editing through canvas, layers, Smart Patch Layer, masks and model settings, with no separate `Create` label.
 
 Upscale is deferred. Its future domain slot may remain reserved, but current Project navigation, prototype and acceptance criteria must not depend on a working `Upscale` mode.
 
 Детальная спецификация содержимого `Generate` mode: `docs/features/project/generate-mode/README.md`.
 
-Current visible working-mode label is `Create`. If/when Upscale is designed, `Create | Upscale` may become a compact segmented control in the left settings panel. It must remain visually distinct from the document tab strip.
-
-Until then, Project must not render a one-option segmented switch. `Create` may be shown as a compact context label/header, while the actual mode switch appears only after a second implemented mode exists.
+If/when Upscale is designed, a mode switch may appear in the left settings panel, visually distinct from the document tab strip. Until then, Project renders neither a one-option segmented switch nor a redundant `Create` header.
 
 Project tab не показывает отдельную строку с названием файла и статусом сохранения над рабочей областью. Название проекта, dirty marker и базовый статус документа принадлежат document tab/app chrome, чтобы не дублировать информацию.
 
-`Canvas` remains the central Project entity and Create workspace.
+`Canvas` remains the central unbounded Project composition space. A separate movable/resizable primary generation bbox defines the finite normal-generation target and can extend beyond existing image content. The selected Smart Patch Layer uses its own layer-owned bbox.
 
 Project does not expose txt2img/img2img/inpaint/outpaint as user-selected modes. At enqueue time the runtime derives the path from visible raster/mask content inside the frozen target area. Denoising Strength remains visible but disabled with a reason when the current target has no applicable raster input.
 
@@ -105,12 +103,12 @@ Project does not expose txt2img/img2img/inpaint/outpaint as user-selected modes.
 
 - collapse left panel;
 - `Pan Tool`;
-- `Crop / Resize Project Canvas`;
+- primary `Bounding Box` for the normal-generation target;
 - collapse right panel;
 
 `Pan Tool` является navigation/inspection tool, а не отдельным `Viewer` mode.
 
-`Crop / Resize Project Canvas` изменяет рабочую область документа. Это не crop растрового слоя: пиксели Raster Layers за пределами Project Canvas сохраняются в `.igs`, пока пользователь явно не запускает destructive trim/export operation.
+Primary `Bounding Box` перемещает и изменяет область генерации, не обрезая Raster Layer и не расширяя Project Canvas: у бесконечной рабочей поверхности нет фиксированной границы. При выбранном Smart Patch его контекстный `Bounding Box` редактирует только layer-owned bbox.
 
 Contextual canvas tool rails появляются только для выбранных layer types:
 
@@ -121,15 +119,17 @@ Raster Layer canvas editing в MVP не поддерживается. Для Ras
 
 `Fit Patch BBox to Mask` показывается только для Smart Patch Layer в его контекстном тулбаре. Для Regional Guidance Layer такая кнопка не показывается, потому что у Regional Guidance нет собственного generation bbox.
 
-Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Точные числовые изменения Project Canvas (`Fit Size to Layers`, grow/resize, width/height) находятся в `Size` секции левой панели, а прямое ручное изменение границ рабочей области доступно через `Crop / Resize Project Canvas` в левом canvas rail.
+Canvas viewport controls живут в нижней compact bar у canvas: zoom, `Fit View` и contextual interaction hints. Числовые width/height, aspect и fit-to-visible-layers в `Size` секции меняют primary generation bbox, а его перемещение/изменение размера доступны через handles на canvas. `Fit View` меняет только viewport. Ни одно из этих действий не задаёт export bounds автоматически.
 
-Project Canvas size label и `...` canvas context menu позиционируются как overlays самой `canvas-area`: label сверху слева, menu сверху справа. Они не должны быть вложены в canvas frame так, чтобы перекрывать изображение.
+Active bbox size/readout и будущий `...` canvas context menu позиционируются как overlays самой `canvas-area`: readout сверху слева, menu сверху справа. Они не должны перекрывать изображение. Текущий label `Project Canvas W × H` принадлежит конечному прототипу и должен быть заменён при реализации бесконечного canvas.
 
-Generate action area находится фиксированно внизу левой settings panel. В ней находятся кнопка `Generate`, селектор количества изображений за одно нажатие, queue/context menu и отдельная кнопка отмены текущей генерации.
+Generate action area находится фиксированно сверху левой settings panel, над прокручиваемыми настройками. В ней находятся кнопка `Generate`, селектор количества изображений за одно нажатие, queue action и отдельная кнопка отмены текущей генерации.
 
 Project footer does not expose `Pause Queue` or `Resume Queue` in the current scope.
 
 Completed outputs appear in a collapsible bottom `GenerationResults` staging tray. One candidate is focused for canvas preview; a separate checkbox selection can contain one or more completed candidates. Normal acceptance adds independent Raster Layers, Smart Patch acceptance adds variants, and generation completion alone does not mutate `.igs`.
+
+Normal candidate preview and accepted Raster Layer use the bbox coordinates frozen with the job. `Add N as Layers` can place a result outside all earlier image content without growing a document frame. The current Vue prototype still has a finite `Project Canvas` frame, `Crop / Resize Project Canvas` rail control and Size mutation of that frame; these are gaps, not the accepted infinite-canvas behavior.
 
 ### Upscale follow-up
 
@@ -141,7 +141,7 @@ The previously agreed future direction remains:
 
 - берёт flattened composite видимых слоёв текущего Project;
 - создаёт immutable upscale input asset внутри `.igs`;
-- сохраняет metadata источника: source layer stack hash, canvas size, source revision/timestamp, visible layers metadata;
+- сохраняет metadata источника: source layer stack hash, finite source composite rect/dimensions, source revision/timestamp, visible layers metadata;
 - switches Project into a future `Upscale` mode;
 - делает новый input активным для upscale job.
 
@@ -259,10 +259,10 @@ mask, Bounding Box, internal resolution, compositing state и source revisions �
 
 ## UX-правило для Smart Patch
 
-Mask, Bounding Box и Canvas Size должны быть разными секциями интерфейса. Пользователь не должен гадать, что именно он сейчас изменяет: размер всего проекта, область генерации или форму маски.
+Mask, primary generation bbox dimensions и Smart Patch Bounding Box должны иметь понятный контекст владения. Пользователь не должен гадать, что именно он изменяет: нормальную область генерации, область выбранного Smart Patch или форму его маски. Бесконечный Project Canvas не имеет параметра `Canvas Size`.
 
 Smart Patch Layer описан как отдельная feature-сущность в `docs/features/project/generate-mode/smart-patch-layer.md`. Этот документ является рабочим источником правил ownership для layer-owned mask, layer-owned bounding box, internal resolution и raster sub-layers.
 
-Для выбранного Smart Patch Layer точное редактирование bounding box оформляется как компактная кнопка/бейдж `Bounding Box` в selected-layer controls. Кнопка открывает popover с x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-canvas и scale-before-processing. Прямое редактирование bbox handles на canvas остаётся основным способом работы, popover нужен для точных значений.
+Для выбранного Smart Patch Layer точное редактирование bounding box оформляется как компактная кнопка/бейдж `Bounding Box` в selected-layer controls. Кнопка открывает popover с x/y/width/height, internal resolution, aspect lock, fit-to-mask, fit-to-primary-bbox и scale-before-processing. Прямое редактирование bbox handles на canvas остаётся основным способом работы, popover нужен для точных значений.
 
 Основная видимая команда `Fit Patch BBox to Mask` находится в контекстном тулбаре Smart Patch Layer. В bbox popover она может дублироваться как precision/action command, но не является глобальной командой canvas toolbar.

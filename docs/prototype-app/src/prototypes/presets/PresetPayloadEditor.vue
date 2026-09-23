@@ -1,16 +1,6 @@
 <script setup lang="ts">
 import { InfoCircle as InfoIcon } from '@vicons/tabler'
-import {
-  NButton,
-  NCard,
-  NCollapse,
-  NIcon,
-  NInput,
-  NInputNumber,
-  NSelect,
-  NText,
-  NTooltip,
-} from 'naive-ui'
+import { NButton, NCard, NCollapse, NIcon, NInputNumber, NSelect, NText, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 
 import type {
@@ -53,6 +43,16 @@ const visibleSections = computed(() =>
 const vaeOptions = computed(() =>
   props.resources.vaes.map((vae) => ({ label: vae.name, value: vae.id })),
 )
+const modelResources = computed(() => {
+  const selected = payload.value.model
+
+  if (!selected || props.resources.models.some((model) => model.id === selected.id)) {
+    return props.resources.models
+  }
+
+  // Keep an unavailable exact version visible until the user explicitly replaces it.
+  return [{ ...selected, missing: true }, ...props.resources.models]
+})
 const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
@@ -61,6 +61,7 @@ const schedulerOptions = ['Karras', 'Normal', 'Exponential'].map((value) => ({
   label: value,
   value,
 }))
+const vaePrecisionOptions = ['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))
 const seedPolicyOptions = [
   { label: 'Random', value: 'random' },
   { label: 'Fixed', value: 'fixed' },
@@ -157,22 +158,13 @@ function updateVae(vaeId: string) {
 
         <div v-else-if="section === 'model' && payload.model" class="field-stack">
           <label>
-            <NText depth="3">Model</NText>
+            <NText depth="3">Model &amp; version</NText>
             <GenerationResourceSelect
               ariaLabel="Model"
               :disabled="sectionDisabled(section)"
               :modelValue="payload.model.id"
-              :resources="resources.models"
+              :resources="modelResources"
               @update:modelValue="updateModel"
-            />
-          </label>
-          <label>
-            <NText depth="3">Version</NText>
-            <NInput
-              :disabled="sectionDisabled(section)"
-              :inputProps="{ 'aria-label': 'Model version' }"
-              :value="payload.model.version"
-              @update:value="payload.model!.version = $event"
             />
           </label>
           <div class="model-compatibility">
@@ -270,7 +262,21 @@ function updateVae(vaeId: string) {
         </div>
 
         <NInputNumber
+          v-else-if="section === 'cfgRescale'"
+          key="cfg-rescale"
+          :disabled="sectionDisabled(section)"
+          :inputProps="{ 'aria-label': 'CFG Rescale' }"
+          :max="0.99"
+          :min="0"
+          :precision="2"
+          :step="0.05"
+          :value="payload.cfgRescale ?? 0"
+          @update:value="payload.cfgRescale = $event ?? 0"
+        />
+
+        <NInputNumber
           v-else-if="section === 'denoisingStrength'"
+          key="denoising-strength"
           :disabled="sectionDisabled(section)"
           :inputProps="{ 'aria-label': 'Denoising Strength' }"
           :max="1"
@@ -305,11 +311,22 @@ function updateVae(vaeId: string) {
 
         <NSelect
           v-else-if="section === 'vae' && payload.vae"
+          key="vae"
           aria-label="VAE"
           :disabled="sectionDisabled(section)"
           :options="vaeOptions"
           :value="payload.vae.id"
           @update:value="updateVae"
+        />
+
+        <NSelect
+          v-else-if="section === 'vaePrecision'"
+          key="vae-precision"
+          aria-label="VAE Precision"
+          :disabled="sectionDisabled(section)"
+          :options="vaePrecisionOptions"
+          :value="payload.vaePrecision ?? 'Auto'"
+          @update:value="payload.vaePrecision = $event"
         />
       </PresetPayloadSection>
     </NCollapse>
