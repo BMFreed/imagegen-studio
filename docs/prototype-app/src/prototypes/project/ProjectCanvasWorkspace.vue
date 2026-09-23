@@ -21,6 +21,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ProjectSession, ProjectTool } from './project.types'
 
+import { canvasControlButtonActiveTheme, canvasControlButtonTheme } from '../../theme/naive-theme'
 import GenerationResultsTray from './GenerationResultsTray.vue'
 import { commitProjectMutation } from './project-history'
 import { getSelectedEntity } from './project.utils'
@@ -141,6 +142,11 @@ const toolHints: Record<ProjectTool, string> = {
 function setTool(tool: ProjectTool) {
   props.session.ui.activeTool = tool
 }
+function canvasToolTheme(tool: ProjectTool) {
+  return props.session.ui.activeTool === tool
+    ? canvasControlButtonActiveTheme
+    : canvasControlButtonTheme
+}
 function startPan(event: PointerEvent) {
   if (
     props.session.ui.activeTool !== 'pan' ||
@@ -246,6 +252,7 @@ function zoom(delta: number) {
                 circle
                 quaternary
                 size="small"
+                :themeOverrides="canvasControlButtonTheme"
                 @click="session.ui.leftCollapsed = !session.ui.leftCollapsed"
               >
                 <NIcon :component="session.ui.leftCollapsed ? ChevronRight : ChevronLeft" />
@@ -256,20 +263,22 @@ function zoom(delta: number) {
         </div>
         <NButton
           aria-label="Pan tool"
+          :aria-pressed="session.ui.activeTool === 'pan'"
           circle
           quaternary
           size="small"
-          :type="session.ui.activeTool === 'pan' ? 'primary' : 'default'"
+          :themeOverrides="canvasToolTheme('pan')"
           @click="setTool('pan')"
         >
           <NIcon :component="HandMove" />
         </NButton>
         <NButton
           aria-label="Crop or resize Project Canvas"
+          :aria-pressed="session.ui.activeTool === 'crop-canvas'"
           circle
           quaternary
           size="small"
-          :type="session.ui.activeTool === 'crop-canvas' ? 'primary' : 'default'"
+          :themeOverrides="canvasToolTheme('crop-canvas')"
           @click="setTool('crop-canvas')"
         >
           <NIcon :component="Crop" />
@@ -277,36 +286,66 @@ function zoom(delta: number) {
         <template v-if="selectedPatch">
           <NButton
             aria-label="Transform Mask"
+            :aria-pressed="session.ui.activeTool === 'transform-mask'"
             circle
             quaternary
             size="small"
+            :themeOverrides="canvasToolTheme('transform-mask')"
             @click="setTool('transform-mask')"
           >
             <NIcon :component="HandMove" />
           </NButton>
-          <NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')">
+          <NButton
+            aria-label="Lasso"
+            :aria-pressed="session.ui.activeTool === 'lasso'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('lasso')"
+            @click="setTool('lasso')"
+          >
             <NIcon :component="Lasso" />
           </NButton>
           <NButton
             aria-label="Polygon Lasso"
+            :aria-pressed="session.ui.activeTool === 'polygon-lasso'"
             circle
             quaternary
             size="small"
+            :themeOverrides="canvasToolTheme('polygon-lasso')"
             @click="setTool('polygon-lasso')"
           >
             <NIcon :component="Polygon" />
           </NButton>
-          <NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')">
+          <NButton
+            aria-label="Brush"
+            :aria-pressed="session.ui.activeTool === 'brush'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('brush')"
+            @click="setTool('brush')"
+          >
             <NIcon :component="Brush" />
           </NButton>
-          <NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')">
+          <NButton
+            aria-label="Eraser"
+            :aria-pressed="session.ui.activeTool === 'eraser'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('eraser')"
+            @click="setTool('eraser')"
+          >
             <NIcon :component="Eraser" />
           </NButton>
           <NButton
             aria-label="Bounding Box"
+            :aria-pressed="session.ui.activeTool === 'bbox'"
             circle
             quaternary
             size="small"
+            :themeOverrides="canvasToolTheme('bbox')"
             @click="setTool('bbox')"
           >
             <NIcon :component="Box" />
@@ -314,9 +353,9 @@ function zoom(delta: number) {
           <NButton
             aria-label="Fit Patch BBox to Mask"
             circle
-            secondary
+            quaternary
             size="small"
-            type="primary"
+            :themeOverrides="canvasControlButtonTheme"
             @click="fitPatch"
           >
             <NIcon :component="ArrowsMaximize" />
@@ -325,29 +364,57 @@ function zoom(delta: number) {
         <template v-else-if="selectedRegional">
           <NButton
             aria-label="Transform Region"
+            :aria-pressed="session.ui.activeTool === 'transform-region'"
             circle
             quaternary
             size="small"
+            :themeOverrides="canvasToolTheme('transform-region')"
             @click="setTool('transform-region')"
           >
             <NIcon :component="HandMove" />
           </NButton>
-          <NButton aria-label="Lasso" circle quaternary size="small" @click="setTool('lasso')">
+          <NButton
+            aria-label="Lasso"
+            :aria-pressed="session.ui.activeTool === 'lasso'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('lasso')"
+            @click="setTool('lasso')"
+          >
             <NIcon :component="Lasso" />
           </NButton>
           <NButton
             aria-label="Polygon Lasso"
+            :aria-pressed="session.ui.activeTool === 'polygon-lasso'"
             circle
             quaternary
             size="small"
+            :themeOverrides="canvasToolTheme('polygon-lasso')"
             @click="setTool('polygon-lasso')"
           >
             <NIcon :component="Polygon" />
           </NButton>
-          <NButton aria-label="Brush" circle quaternary size="small" @click="setTool('brush')">
+          <NButton
+            aria-label="Brush"
+            :aria-pressed="session.ui.activeTool === 'brush'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('brush')"
+            @click="setTool('brush')"
+          >
             <NIcon :component="Brush" />
           </NButton>
-          <NButton aria-label="Eraser" circle quaternary size="small" @click="setTool('eraser')">
+          <NButton
+            aria-label="Eraser"
+            :aria-pressed="session.ui.activeTool === 'eraser'"
+            circle
+            quaternary
+            size="small"
+            :themeOverrides="canvasToolTheme('eraser')"
+            @click="setTool('eraser')"
+          >
             <NIcon :component="Eraser" />
           </NButton>
         </template>
@@ -359,6 +426,7 @@ function zoom(delta: number) {
           circle
           quaternary
           size="small"
+          :themeOverrides="canvasControlButtonTheme"
           @click="session.ui.rightCollapsed = !session.ui.rightCollapsed"
         >
           <NIcon :component="session.ui.rightCollapsed ? ChevronLeft : ChevronRight" />
@@ -462,10 +530,6 @@ function zoom(delta: number) {
 .panel-toggle--right {
   right: 8px;
 }
-.panel-toggle .n-button {
-  background: var(--app-elevated);
-}
-
 .canvas-workspace {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -538,15 +602,8 @@ function zoom(delta: number) {
   justify-content: center;
   margin-bottom: 4px;
 }
-.tool-rail :deep(.n-button) {
-  color: var(--app-text);
-  background: var(--app-elevated);
-}
 .tool-rail :deep(.n-icon) {
   font-size: 18px;
-}
-.tool-rail :deep(.n-button:hover) {
-  background: var(--app-surface-soft);
 }
 .left-rail {
   left: 8px;

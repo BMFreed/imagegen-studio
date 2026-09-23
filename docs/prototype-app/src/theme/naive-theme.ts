@@ -1,6 +1,14 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
 
 export const imageGenColors = {
+  canvasControlActive: '#afe4b4',
+  canvasControlActiveHover: '#c2edc5',
+  canvasControlActivePressed: '#9bd4a1',
+  canvasControlInk: '#222932',
+  canvasControlSurface: '#a8b0bb',
+  canvasControlSurfaceHover: '#bdc5cf',
+  canvasControlSurfacePressed: '#979faa',
+  documentTabActive: '#adcbb0',
   floatingSurface: '#3b3b40',
   primary: '#64e36e',
   primaryHover: '#7ee787',
@@ -32,10 +40,27 @@ export const imageGenNaiveTheme = {
   Menu: {
     itemHeight: '32px',
   },
+  Tabs: {
+    tabTextColorActiveCard: imageGenColors.documentTabActive,
+  },
   Tag: {
     textColorSuccess: imageGenColors.primary,
   },
 } satisfies GlobalThemeOverrides
+
+export const canvasControlButtonTheme = {
+  colorQuaternary: imageGenColors.canvasControlSurface,
+  colorQuaternaryHover: imageGenColors.canvasControlSurfaceHover,
+  colorQuaternaryPressed: imageGenColors.canvasControlSurfacePressed,
+  textColor: imageGenColors.canvasControlInk,
+} satisfies NonNullable<GlobalThemeOverrides['Button']>
+
+export const canvasControlButtonActiveTheme = {
+  ...canvasControlButtonTheme,
+  colorQuaternary: imageGenColors.canvasControlActive,
+  colorQuaternaryHover: imageGenColors.canvasControlActiveHover,
+  colorQuaternaryPressed: imageGenColors.canvasControlActivePressed,
+} satisfies NonNullable<GlobalThemeOverrides['Button']>
 
 export const projectStatusTagTheme = {
   borderSuccess: '1px solid #287c3a',

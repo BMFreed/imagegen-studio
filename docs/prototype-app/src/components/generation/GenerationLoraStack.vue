@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Trash as TrashIcon } from '@vicons/tabler'
 import { NButton, NIcon, NInputNumber, NSwitch, NText } from 'naive-ui'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import type { GenerationLora, GenerationLoraResourceRef } from './generation.types'
 
@@ -15,6 +15,7 @@ const emit = defineEmits<{ remove: [resourceId: string] }>()
 
 const loras = defineModel<GenerationLora[]>({ required: true })
 const selectedResourceId = ref<string | null>(null)
+const addedResourceIds = computed(() => loras.value.map((lora) => lora.resource.id))
 
 function add(resourceId: string | null | undefined) {
   const resource = props.resources.find((candidate) => candidate.id === resourceId)
@@ -53,10 +54,11 @@ function remove(index: number) {
   <div class="lora-stack">
     <GenerationResourceSelect
       v-model="selectedResourceId"
+      :addedIds="addedResourceIds"
       ariaLabel="Add LoRA"
       clearable
       :disabled
-      :disabledIds="loras.map((lora) => lora.resource.id)"
+      :disabledIds="addedResourceIds"
       placeholder="Add LoRA"
       :resources
       @update:modelValue="add"

@@ -24,6 +24,7 @@ type Resource = GenerationResourceRef & {
 }
 const props = withDefaults(
   defineProps<{
+    addedIds?: string[]
     ariaLabel: string
     clearable?: boolean
     disabled?: boolean
@@ -32,7 +33,7 @@ const props = withDefaults(
     resources: Resource[]
     valueKey?: 'id' | 'name'
   }>(),
-  { disabledIds: () => [], placeholder: 'Choose a resource', valueKey: 'id' },
+  { addedIds: () => [], disabledIds: () => [], placeholder: 'Choose a resource', valueKey: 'id' },
 )
 const value = defineModel<string | null>()
 const select = ref<SelectInst | null>(null)
@@ -92,6 +93,7 @@ onBeforeUnmount(() => {
 })
 const options = computed(() =>
   props.resources.map((resource) => ({
+    class: props.addedIds.includes(resource.id) ? 'resource-select-option--added' : undefined,
     disabled: Boolean(resource.missing) || props.disabledIds.includes(resource.id),
     label:
       props.valueKey === 'name'
@@ -112,7 +114,7 @@ function renderLabel(option: SelectOption) {
   const resource = props.resources.find((resource) => resource[props.valueKey] === option.value)
   return resource
     ? h(GenerationResourceOption, {
-        alreadyAdded: props.disabledIds.includes(resource.id),
+        alreadyAdded: props.addedIds.includes(resource.id),
         resource,
       })
     : String(option.label)
@@ -130,6 +132,7 @@ const inputProps = computed<InputHTMLAttributes>(() => ({
 }))
 const menuProps = computed(() => ({
   'aria-label': `${props.ariaLabel} options`,
+  class: 'generation-resource-select-menu',
   id: menuId,
   role: 'listbox',
 }))
@@ -168,3 +171,10 @@ function nodeProps(option: SelectGroupOption | SelectOption) {
     @update:show="menuOpen = $event"
   />
 </template>
+
+<style scoped>
+/* The menu is teleported by Naive UI, so its dedicated class scopes this state. */
+:global(.generation-resource-select-menu .resource-select-option--added::before) {
+  background-color: color-mix(in srgb, var(--workspace-green) 9%, var(--app-floating-surface));
+}
+</style>

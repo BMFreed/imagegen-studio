@@ -36,8 +36,10 @@ Vue-прототипа, а не готовность production UI.
 - **Выбор ресурса:** `defineModel<string | null>` хранит выбранное значение;
   `valueKey` — `id` (по умолчанию) либо уникальное и стабильное `name`. `resources` содержит
   `id`, `name` и необязательные `version`, `missing`, `previewSrc`, `baseModel`,
-  `triggerPhrases`. Есть `ariaLabel`, `disabledIds`, `disabled`, `clearable`,
-  `placeholder`. Выбор не создаёт ресурс. Закрытое значение компактное;
+  `triggerPhrases`. Есть `ariaLabel`, `disabledIds`, `addedIds`, `disabled`,
+  `clearable`, `placeholder`. `disabledIds` блокирует выбор; `addedIds` визуально
+  помечает уже добавленные LoRA, не объявляя их текущим значением single-select.
+  Выбор не создаёт ресурс. Закрытое значение компактное;
   открытый вариант показывает превью, базовую модель и триггеры, если они есть.
   Поиск учитывает метаданные; `missing` и `disabledIds` блокируют выбор.
 - **Поле с подписью:** `label` обязателен, `id` и отображаемое `value`
