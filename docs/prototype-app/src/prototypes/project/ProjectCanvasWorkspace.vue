@@ -234,26 +234,26 @@ function zoom(delta: number) {
         <strong>Your image starts here</strong>
         <span>Describe an image, then Generate. Choose the results you want to add as layers.</span>
       </div>
-      <div class="panel-toggle panel-toggle--left">
-        <NTooltip>
-          <template v-slot:trigger>
-            <NButton
-              :aria-expanded="!session.ui.leftCollapsed"
-              :aria-label="
-                session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel'
-              "
-              circle
-              quaternary
-              size="small"
-              @click="session.ui.leftCollapsed = !session.ui.leftCollapsed"
-            >
-              <NIcon :component="session.ui.leftCollapsed ? ChevronRight : ChevronLeft" />
-            </NButton>
-          </template>
-          {{ session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel' }}
-        </NTooltip>
-      </div>
       <div class="left-rail tool-rail">
+        <div class="tool-rail__panel-toggle">
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
+                :aria-expanded="!session.ui.leftCollapsed"
+                :aria-label="
+                  session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel'
+                "
+                circle
+                quaternary
+                size="small"
+                @click="session.ui.leftCollapsed = !session.ui.leftCollapsed"
+              >
+                <NIcon :component="session.ui.leftCollapsed ? ChevronRight : ChevronLeft" />
+              </NButton>
+            </template>
+            {{ session.ui.leftCollapsed ? 'Expand settings panel' : 'Collapse settings panel' }}
+          </NTooltip>
+        </div>
         <NButton
           aria-label="Pan tool"
           circle
@@ -459,9 +459,6 @@ function zoom(delta: number) {
   transform: translateY(-50%);
   z-index: var(--z-floating-control);
 }
-.panel-toggle--left {
-  left: 8px;
-}
 .panel-toggle--right {
   right: 8px;
 }
@@ -523,11 +520,23 @@ function zoom(delta: number) {
 }
 .tool-rail {
   position: absolute;
-  top: 12px;
+  top: 50%;
   z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  transform: translateY(-50%);
+}
+.tool-rail::-webkit-scrollbar {
+  display: none;
+}
+.tool-rail__panel-toggle {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
 }
 .tool-rail :deep(.n-button) {
   color: var(--app-text);
@@ -541,9 +550,6 @@ function zoom(delta: number) {
 }
 .left-rail {
   left: 8px;
-}
-.right-rail {
-  right: 8px;
 }
 .mask-overlay {
   position: absolute;

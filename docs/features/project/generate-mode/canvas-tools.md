@@ -121,7 +121,7 @@ Not in MVP:
 
 Implemented:
 
-- always-visible panel collapse, Pan and Crop/Resize buttons;
+- one vertically centered left rail containing the always-visible settings-panel collapse, Pan and Crop/Resize buttons plus contextual tools; the right-panel collapse button stays centered at its edge;
 - context-specific Smart Patch and Regional Guidance tool rails;
 - active/pressed tool state, accessible names and contextual viewport hints;
 - pointer pan and viewport zoom;

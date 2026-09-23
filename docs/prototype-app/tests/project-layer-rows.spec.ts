@@ -99,6 +99,13 @@ test('whole layer surfaces hover and select while nested controls keep the curre
   await expect
     .poll(() => region.evaluate((element) => getComputedStyle(element).backgroundColor))
     .not.toBe(idleBackground)
+  const regionTitle = region.locator('.entity-title')
+  const regionTitleColor = await regionTitle.evaluate((element) => getComputedStyle(element).color)
+  await expect(region).toHaveCSS('cursor', 'default')
+  await selected('Face lighting').hover()
+  await page.waitForTimeout(220)
+  await expect(selected('Face lighting')).toHaveCSS('cursor', 'default')
+  await expect(regionTitle).toHaveCSS('color', regionTitleColor)
   await regionalDetails.click({ position: regionalBottom })
   await expect(selected('Face lighting')).toHaveAttribute('aria-pressed', 'true')
 
@@ -113,6 +120,13 @@ test('whole layer surfaces hover and select while nested controls keep the curre
 
   const patchDetails = patch.locator('.entity-details')
   const patchDetailsBox = (await patchDetails.boundingBox())!
+  await patchDetails.hover({ position: { x: 3, y: patchDetailsBox.height - 3 } })
+  const patchTitle = patch.locator('.entity-title')
+  const patchTitleColor = await patchTitle.evaluate((element) => getComputedStyle(element).color)
+  await selected('Hand Repair Patch').hover()
+  await page.waitForTimeout(220)
+  await expect(selected('Hand Repair Patch')).toHaveCSS('cursor', 'default')
+  await expect(patchTitle).toHaveCSS('color', patchTitleColor)
   await patchDetails.click({ position: { x: 3, y: patchDetailsBox.height - 3 } })
   await expect(selected('Hand Repair Patch')).toHaveAttribute('aria-pressed', 'true')
   await raster.click({ position: { x: 1, y: 1 } })

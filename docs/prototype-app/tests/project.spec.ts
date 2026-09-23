@@ -139,6 +139,33 @@ test.describe('Project prototype', () => {
     await expect(page.getByRole('button', { name: 'Bounding Box' })).toBeHidden()
   })
 
+  test('centers the left canvas controls as one rail across layer contexts', async ({ page }) => {
+    await page.setViewportSize({ height: 800, width: 1280 })
+
+    for (const scenario of ['default', 'smart-patch', 'regional-guidance']) {
+      await openProject(page, scenario)
+      const stage = page.locator('.canvas-stage')
+      const rail = stage.locator('.left-rail.tool-rail')
+      const collapse = rail.getByRole('button', { name: 'Collapse settings panel' })
+      await expect(collapse).toBeVisible()
+      await expect(rail.getByRole('button', { name: 'Pan tool' })).toBeVisible()
+      await expect(
+        rail.getByRole('button', { name: 'Crop or resize Project Canvas' }),
+      ).toBeVisible()
+
+      const stageBox = await stage.boundingBox()
+      const railBox = await rail.boundingBox()
+      expect(stageBox).not.toBeNull()
+      expect(railBox).not.toBeNull()
+      expect(railBox!.y + railBox!.height / 2).toBeCloseTo(stageBox!.y + stageBox!.height / 2, 0)
+      expect(railBox!.y).toBeGreaterThanOrEqual(stageBox!.y)
+      expect(railBox!.y + railBox!.height).toBeLessThanOrEqual(stageBox!.y + stageBox!.height)
+
+      await collapse.click()
+      await expect(rail.getByRole('button', { name: 'Expand settings panel' })).toBeVisible()
+    }
+  })
+
   test('shows empty and error generation states', async ({ page }) => {
     await openProject(page, 'empty-project')
     await expect(page.getByText(/Text to Image|Image to Image|Canvas content/)).toHaveCount(0)

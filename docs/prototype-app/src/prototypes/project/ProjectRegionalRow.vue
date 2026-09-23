@@ -240,7 +240,7 @@ async function addReferences(event: Event) {
             </NButton>
           </div>
         </div>
-        <div class="regional-add-actions">
+        <div class="regional-add-actions" data-entity-control>
           <NButton
             v-if="!positiveOpen && !entity.positivePrompt"
             size="tiny"
@@ -301,7 +301,6 @@ async function addReferences(event: Event) {
 .regional-field {
   display: grid;
   gap: 4px;
-  cursor: default;
 }
 .regional-field header {
   display: flex;
@@ -322,6 +321,9 @@ async function addReferences(event: Event) {
 }
 .regional-add-actions .n-icon {
   margin-right: 3px;
+}
+.regional-add-actions {
+  padding-top: 4px;
 }
 .reference {
   position: relative;

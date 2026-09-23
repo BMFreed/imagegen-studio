@@ -78,7 +78,7 @@ for (const viewport of [
   { height: 900, width: 1440 },
   { height: 1080, width: 1920 },
 ]) {
-  test(`staging stays compact and panel handles stay centered at ${viewport.width}`, async ({
+  test(`staging stays compact and canvas controls stay centered at ${viewport.width}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport)
@@ -94,12 +94,16 @@ for (const viewport of [
     await expect(tray.getByRole('button', { name: 'Add 2 as Layers' })).toBeInViewport({ ratio: 1 })
     for (const panel of ['settings', 'layers']) {
       const handle = page.getByRole('button', { name: `Collapse ${panel} panel` })
-      const box = (await handle.boundingBox())!
+      const centeredControl = panel === 'settings' ? stage.locator('.left-rail.tool-rail') : handle
+      const box = (await centeredControl.boundingBox())!
       const currentStage = (await stage.boundingBox())!
       expect(box.y + box.height / 2).toBeCloseTo(currentStage.y + currentStage.height / 2, 0)
       await handle.click()
       const expand = page.getByRole('button', { name: `Expand ${panel} panel` })
-      const expandedBox = (await expand.boundingBox())!
+      const expandedBox =
+        panel === 'settings'
+          ? (await stage.locator('.left-rail.tool-rail').boundingBox())!
+          : (await expand.boundingBox())!
       expect(expandedBox.y + expandedBox.height / 2).toBeCloseTo(
         currentStage.y + currentStage.height / 2,
         0,

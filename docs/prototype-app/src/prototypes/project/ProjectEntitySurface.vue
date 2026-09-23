@@ -10,6 +10,11 @@ const state = row.state
 const menuOptions = computed(() =>
   row.menu.value.map(({ disabled, key, label }) => ({ disabled, key, label })),
 )
+const selectionButtonTheme = {
+  textColorTextFocus: 'var(--n-text-color)',
+  textColorTextHover: 'var(--n-text-color)',
+  textColorTextPressed: 'var(--n-text-color)',
+}
 function runAction(key: number | string) {
   const action = row.menu.value.find((action) => action.key === key)
   if (action && !action.disabled) {
@@ -83,6 +88,7 @@ function selectFromSurface(event: MouseEvent) {
         :aria-pressed="state.selected"
         class="selection-button"
         text
+        :themeOverrides="selectionButtonTheme"
         @click="row.select"
       >
         <span class="entity-previews"><slot name="preview" /></span>
@@ -148,7 +154,7 @@ function selectFromSurface(event: MouseEvent) {
   border: 1px solid transparent;
   border-radius: var(--app-radius);
   background: var(--app-elevated);
-  cursor: pointer;
+  cursor: default;
   transition:
     background-color 120ms ease,
     border-color 120ms ease;
@@ -179,6 +185,7 @@ function selectFromSurface(event: MouseEvent) {
   height: 48px;
   justify-content: start;
   padding: 4px 6px;
+  cursor: default;
 }
 .selection-button :deep(.n-button__content) {
   display: flex;

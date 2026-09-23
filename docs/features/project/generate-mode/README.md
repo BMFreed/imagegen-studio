@@ -80,7 +80,7 @@ These details should be adapted as native Vue/Electron UI. Forge's Gradio implem
 - viewport controls live in a compact bottom bar near the canvas: zoom, `Fit View` and context-sensitive interaction hints;
 - Project Canvas numeric resize/fit actions live in the left `Size` section, while direct crop/resize manipulation is exposed as `Crop / Resize Project Canvas` in the left canvas rail;
 - the Project Canvas size label is a canvas-area overlay at top-left. The current top-right rail control collapses the details panel; a separate canvas context menu has not been implemented or validated;
-- canvas side controls always show vertically centered panel collapse buttons, `Pan Tool` and `Crop / Resize Project Canvas`; layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
+- the left canvas rail groups the settings-panel collapse button, `Pan Tool`, `Crop / Resize Project Canvas` and contextual tools in one vertically centered container; the right-panel collapse button remains centered at its edge. Layer-specific mask/region tools appear only for Smart Patch Layer and Regional Guidance Layer;
 - `Fit Patch BBox to Mask` is a Smart Patch Layer contextual toolbar action, not a global canvas toolbar action, and it is not shown for Regional Guidance Layer;
 - ordinary Raster Layer canvas editing is not included in MVP;
 - `GenerationResults` is a compact floating staging strip above the bottom canvas edge with separate focused preview and multi-selection state;
