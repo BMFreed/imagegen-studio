@@ -1,14 +1,14 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
 
 export const imageGenColors = {
-  canvasControlActive: '#afe4b4',
-  canvasControlActiveHover: '#c2edc5',
-  canvasControlActivePressed: '#9bd4a1',
+  canvasControlActive: '#6ecc79',
+  canvasControlActiveHover: '#7cbf8f',
+  canvasControlActivePressed: '#60b36a',
   canvasControlInk: '#222932',
   canvasControlSurface: '#a8b0bb',
   canvasControlSurfaceHover: '#bdc5cf',
   canvasControlSurfacePressed: '#979faa',
-  documentTabActive: '#adcbb0',
+  documentTabActive: '#8dd9a2',
   floatingSurface: '#3b3b40',
   primary: '#64e36e',
   primaryHover: '#7ee787',
