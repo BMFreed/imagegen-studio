@@ -353,10 +353,13 @@ selected affected sections and has Playwright coverage for that behavior.
 
 Project-integrated Apply now uses the same nested-resource predicates, displays
 the affected selected sections and a recovery explanation, and keeps its footer
-outside the scroll area. Deselection preserves the current section. Size is
-excluded for Smart Patch targets. The finite-Canvas mock currently resizes its
-Canvas on Size Apply; the product contract instead changes default generation
-bounding-box dimensions without resizing the infinite Canvas.
+outside the scroll area. Current Project Playwright coverage checks a missing
+LoRA and recovery after deselection; it does not yet exercise a prompt-owned
+missing embedding in the integrated Apply flow. Deselection preserves the
+current section. Size is excluded for Smart Patch targets. The finite-Canvas
+mock currently resizes its Canvas on Size Apply; the product contract instead
+changes default generation bounding-box dimensions without resizing the
+infinite Canvas.
 
 `Edit original` confirms leaving the temporary draft and focuses the chosen saved
 preset. Regression coverage enters through the real Project picker and includes
@@ -409,6 +412,6 @@ prototype mocks do not prove that mapping. PP-006 stays `пока не обещ�
 - Workflow labels shown to the user are `Text to Image`, `Image to Image`, `Smart Patch`; internal `workflow_type` tokens are not exposed.
 - Missing resources are visible before apply and only block selected affected sections.
 - Project-integrated Apply explains why `Apply` is disabled, identifies the affected selected section/resource and uses the same nested-resource detection as Preset Manager and standalone Apply.
-- Project Playwright coverage proves warnings for nested LoRA and prompt-owned embedding refs, deselection recovery and the absence of silent application.
+- Project Playwright coverage must prove warnings for nested LoRA and prompt-owned embedding refs, deselection recovery and the absence of silent application.
 - Applying a preset copies settings into the project and does not create a live synchronization relationship.
 - Apply initially selects every source section except Size and Seed, keeps all sections collapsed, and disables Apply for an empty selection or a missing resource in a selected section.

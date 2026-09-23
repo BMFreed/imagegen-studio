@@ -158,7 +158,7 @@ reproduction/доказанный invariant и точное ограничени
 - `pnpm run prototype:build` — при изменении dependencies, imports или build;
 - для docs-only — diff, local links/anchors и согласованность contracts.
 
-Focused Playwright запуск: `pnpm run prototype:test -- tests/project.spec.ts`.
+Focused Playwright запуск: `pnpm run prototype:test docs/prototype-app/tests/project.spec.ts`.
 Он помогает локализовать проблему и не заменяет обязательный полный UI набор.
 Production tests добавляются вместе с production boundaries; не подменять их
 prototype runs. Для visual checks использовать штатные viewport scenarios и
