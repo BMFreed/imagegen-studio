@@ -24,6 +24,8 @@ export interface ProjectAutosaveOptions {
   beforeEditCommit?: (document: IgsProjectDocumentV1) => Promise<void>
   /** Normal document debounce is 500–1500 ms; shorter values are useful in tests. */
   debounceMs?: number
+  /** Reject an indexed path swapped to another real file before a tab acquires its lease. */
+  expectedCanonicalPath?: string
   /** Inject a fresh registry only when simulating a new main process after a crash. */
   leaseRegistry?: ProjectAutosaveLeaseRegistry
   onAutosaveError?: (error: Error) => void
@@ -199,7 +201,11 @@ export class ProjectAutosaveCoordinator {
     shadow: ProjectShadowStore,
     options: ProjectAutosaveOptions = {},
   ): Promise<ProjectAutosaveCoordinator> {
-    const { savedPackage, session } = await openConsistent(projectPath, roots)
+    const { savedPackage, session } = await openConsistent(
+      projectPath,
+      roots,
+      options.expectedCanonicalPath,
+    )
     const releaseLease = acquireLease(session, options)
     try {
       await shadow.discard(session.filePath)
@@ -232,7 +238,7 @@ export class ProjectAutosaveCoordinator {
     shadow: ProjectShadowStore,
     options: ProjectAutosaveOptions = {},
   ): Promise<ProjectAutosaveCoordinator> {
-    const session = await ProjectSession.open(projectPath, roots)
+    const session = await ProjectSession.open(projectPath, roots, options.expectedCanonicalPath)
     return await ProjectAutosaveCoordinator.attach(session, roots, shadow, options)
   }
 
@@ -243,7 +249,11 @@ export class ProjectAutosaveCoordinator {
     shadow: ProjectShadowStore,
     options: ProjectAutosaveOptions = {},
   ): Promise<ProjectAutosaveCoordinator> {
-    const { savedPackage, session } = await openConsistent(projectPath, roots)
+    const { savedPackage, session } = await openConsistent(
+      projectPath,
+      roots,
+      options.expectedCanonicalPath,
+    )
     const releaseLease = acquireLease(session, options)
     let coordinator: ProjectAutosaveCoordinator | undefined
     try {
@@ -800,8 +810,9 @@ function acquireLease(session: ProjectSession, options: ProjectAutosaveOptions):
 async function openConsistent(
   projectPath: string,
   roots: ProjectSessionRoots,
+  expectedCanonicalPath?: string,
 ): Promise<{ savedPackage: Awaited<ReturnType<typeof readIgsPackage>>; session: ProjectSession }> {
-  const session = await ProjectSession.open(projectPath, roots)
+  const session = await ProjectSession.open(projectPath, roots, expectedCanonicalPath)
   const savedPackage = await readIgsPackage(session.filePath)
   if (!sameDocument(savedPackage.project, session.document)) {
     throw new ProjectAutosaveError(

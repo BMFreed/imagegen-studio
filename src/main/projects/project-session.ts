@@ -1,6 +1,7 @@
 import type {
   IgsPreviewRectV1,
   IgsProjectDocumentV1,
+  IgsRectV1,
 } from '../../shared/projects/project-schema.js'
 import {
   createEmptyProjectDocumentV1,
@@ -18,7 +19,11 @@ import {
   readIgsPackage,
   saveIgsPackage,
 } from './igs-package.js'
-import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import {
+  canonicalProjectPath,
+  localProjectRecoveryKey,
+  ProjectIdentityError,
+} from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 
@@ -71,12 +76,17 @@ const savingPaths = new Set<string>()
 
 /** One open Project document. This first slice has no autosave, queue, UI or SQLite index yet. */
 export class ProjectSession {
+  /** Null for reopened files; false means the new filename was not directory-fsynced. */
+  get creationDirectorySynced(): boolean | null {
+    return this.createdDirectorySynced
+  }
   get dirty(): boolean {
     return contentKey(this.current) !== contentKey(this.saved)
   }
   get document(): IgsProjectDocumentV1 {
     return structuredClone(this.current)
   }
+  private createdDirectorySynced: boolean | null = null
   private current: IgsProjectDocumentV1
   private reloadRequired = false
   private saved: IgsProjectDocumentV1
@@ -102,20 +112,40 @@ export class ProjectSession {
     filePath: string,
     title: string,
     roots: ProjectSessionRoots,
+    primaryBbox?: IgsRectV1,
+    expectedDirectory?: string,
   ): Promise<ProjectSession> {
     const canonicalPath = await canonicalProjectPath(filePath, { allowNewFile: true })
-    const project = createEmptyProjectDocumentV1({ title })
+    if (expectedDirectory && path.dirname(canonicalPath) !== expectedDirectory) {
+      throw new ProjectIdentityError(
+        'PROJECT_INVALID_PATH',
+        'The Project workspace no longer matches its managed location.',
+      )
+    }
+    const project = createEmptyProjectDocumentV1({ primaryBbox, title })
     const placeholders = await readProjectPlaceholders(roots.placeholdersDir, 'empty')
-    await saveIgsPackage(
+    const written = await saveIgsPackage(
       canonicalPath,
       { preview: { ...placeholders, rect: null, status: 'empty' }, project },
       { createOnly: true },
     )
-    return await ProjectSession.open(canonicalPath, roots)
+    const session = await ProjectSession.open(canonicalPath, roots, canonicalPath)
+    session.createdDirectorySynced = written.directorySynced
+    return session
   }
 
-  static async open(filePath: string, roots: ProjectSessionRoots): Promise<ProjectSession> {
+  static async open(
+    filePath: string,
+    roots: ProjectSessionRoots,
+    expectedCanonicalPath?: string,
+  ): Promise<ProjectSession> {
     const canonicalPath = await canonicalProjectPath(filePath)
+    if (expectedCanonicalPath && canonicalPath !== expectedCanonicalPath) {
+      throw new ProjectIdentityError(
+        'PROJECT_INVALID_PATH',
+        'The Project file no longer matches its indexed location.',
+      )
+    }
     const before = await fileFingerprint(canonicalPath)
     const initial = await readIgsPackage(canonicalPath)
     const after = await fileFingerprint(canonicalPath)

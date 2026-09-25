@@ -1,12 +1,13 @@
-# Phase 2A: `.igs` storage research and first implementation slice
+# Phase 2A: `.igs` storage and Project application boundary
 
 Scope: [PP-007](../product-promises.md#pp-007-проект-принадлежит-пользователю),
 [storage](../specs/03-data-storage.md) and
 [document lifecycle](../features/project/document-lifecycle.md). This is a
-high-risk data boundary. The first slice defines an executable v1 format and
-tests Save→reopen and standalone autosave/recovery through real files; it does
-not complete the production Project UI, generation staging recovery, compositor
-or Linux/NVIDIA Python runtime.
+high-risk data boundary. The storage slice defines an executable v1 format and
+tests Save→reopen and standalone autosave/recovery through real files. A later
+slice connects these services to the production Home/Project UI through typed
+IPC. Generation staging recovery, compositor and Linux/NVIDIA Python runtime
+remain separate Phase 2A work.
 
 ## Baseline before implementation and evidence
 
@@ -136,3 +137,51 @@ compare-and-swap against an unrelated writer that ignores our in-process lock.
 The remaining interval between fingerprint check and rename requires a managed
 workspace/file-lock policy or a stronger Linux-specific publication primitive
 before concurrent third-party writers can be treated as supported.
+
+## Production Home/Project bridge
+
+The renderer receives only Project summaries and tab snapshots. It cannot send
+an arbitrary document, asset path or `.igs` path to main. Home lists indexed
+Projects; `create` chooses a new file inside the default `Uncategorized`
+workspace, and `open` resolves a validated local project key against that
+workspace's index. Main checks canonical path and workspace ownership before
+opening. The primary bbox remains an independent world-space rectangle, and
+the only document edit exposed by this bridge is its typed rectangle. This is
+an intentionally narrow Project UI slice, not the final Canvas or layer stack.
+
+Main owns the open-tab registry and one autosave coordinator per canonical
+file. Normal Open first inspects document recovery. A recoverable shadow must
+be explicitly recovered or discarded; stale/invalid shadow state offers only
+Discard Recovery and Open Saved. Save reports the `.igs` commit separately
+from derived Home-index and shadow-cleanup warnings. A failed pre-commit Save
+keeps the tab dirty and the shadow available. Closing a dirty tab or native
+window requires Save, Discard Changes or Cancel. An indexing failure after
+New Project cannot roll back the committed `.igs`; the error names that state,
+and a later workspace scan can rediscover the file.
+
+Independent review reproduced an indexed-path swap between lookup and Open:
+without a second canonical-path check, Save could commit into a different
+valid `.igs`. The session now checks the expected canonical path before
+reading or leasing it, including Recover/Discard Recovery; real-file tests
+swap the indexed path during recovery inspection and verify that the external
+file is unchanged. New Project also checks its expected workspace directory
+before writing. Native Save All keeps tabs attached until every Save succeeds
+and pushes fresh tab snapshots to renderer if a later close step fails.
+`create` passes through a warning when the writer cannot confirm directory
+sync after committing the new filename.
+
+The integration checks use real `.igs`, SQLite and shadow paths for
+create→edit→Save→reopen, explicit recovery without changing the saved package,
+invalid Project IDs and bbox values, failed Save with preserved recovery, and
+post-create index failure. The desktop smoke enters through Home and typed IPC,
+verifies an actual `.igs` ZIP, saves/reopens a bbox edit, waits for a published
+shadow snapshot with the next edit, then restarts Electron after `SIGKILL`.
+It confirms that recovery is offered before opening the saved revision and
+that explicit Save commits the recovered edit. On this working tree,
+`pnpm run app:smoke` passed; this is production IPC/filesystem evidence, not a
+claim that the final Canvas or staging flow works.
+
+This bridge does not yet cover file-picker import/transfer, raster layers,
+compositing/worker-generated previews, generation staging recovery, clean
+`Rebuild Preview` or the installable release runtime. PP-007 remains a required
+MVP promise with public readiness pending these boundaries.

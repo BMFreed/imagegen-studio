@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -22,6 +30,38 @@ const environment = {
   XDG_DATA_HOME: path.join(dataRoot, 'data'),
 }
 delete environment.ELECTRON_RUN_AS_NODE
+
+async function waitForShadowBbox(manifestPath, expectedBbox) {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      if (manifest.state === 'dirty' && typeof manifest.snapshotId === 'string') {
+        const snapshotPath = path.join(
+          path.dirname(manifestPath),
+          'snapshots',
+          manifest.snapshotId,
+          'project.json',
+        )
+        const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'))
+        if (
+          snapshot.documentRevision === manifest.documentRevision &&
+          Object.keys(expectedBbox).every(
+            (key) => snapshot.primaryBbox?.[key] === expectedBbox[key],
+          )
+        ) {
+          return
+        }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error
+      }
+    }
+    await delay(100)
+  }
+  throw new Error('Autosave did not publish the edited generation area to the shadow snapshot.')
+}
 
 let application
 let secondProcess
@@ -70,11 +110,70 @@ try {
     ok: true,
     value: [],
   })
-  const invalidModelRequest = await window.evaluate(() => window.api.models.previewImport('file:///etc/passwd'))
+  const invalidModelRequest = await window.evaluate(() =>
+    window.api.models.previewImport('file:///etc/passwd'),
+  )
   assert.equal(invalidModelRequest.ok, false)
-  assert.ok(['CIVITAI_TOKEN_REQUIRED', 'TOKEN_SECURE_STORAGE_UNAVAILABLE'].includes(invalidModelRequest.error.code))
+  assert.ok(
+    ['CIVITAI_TOKEN_REQUIRED', 'TOKEN_SECURE_STORAGE_UNAVAILABLE'].includes(
+      invalidModelRequest.error.code,
+    ),
+  )
   await window.getByRole('button', { name: 'Close Model Manager' }).click()
   await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
+
+  const projectTitle = 'Smoke Project'
+  await window.getByRole('button', { name: 'New Project' }).first().click()
+  const newProjectDialog = window.getByRole('dialog', { name: 'New Project' })
+  await newProjectDialog.waitFor()
+  await newProjectDialog.locator('input[aria-label="Project name"]').fill(projectTitle)
+  await newProjectDialog.locator('input[aria-label="Project width"]').fill('640')
+  await newProjectDialog.locator('input[aria-label="Project height"]').fill('512')
+  await newProjectDialog.getByRole('button', { name: 'Create Project' }).click()
+  await window.getByRole('tab', { name: projectTitle }).waitFor()
+
+  const createdProjects = await window.evaluate(() => window.api.projects.list())
+  assert.equal(createdProjects.ok, true)
+  assert.equal(createdProjects.value.length, 1)
+  assert.equal(createdProjects.value[0].title, projectTitle)
+  assert.deepEqual(createdProjects.value[0].bbox, { width: 640, height: 512 })
+  const projectId = createdProjects.value[0].id
+  const projectDir = path.join(dataRoot, 'data', 'imagegen-studio', 'workspaces', 'Uncategorized')
+  const projectPackages = readdirSync(projectDir).filter((entry) => entry.endsWith('.igs'))
+  assert.equal(projectPackages.length, 1)
+  const packagePath = path.join(projectDir, projectPackages[0])
+  assert.ok(statSync(packagePath).size > 0)
+  assert.equal(readFileSync(packagePath).subarray(0, 2).toString('ascii'), 'PK')
+
+  const invalidProjectRequest = await window.evaluate(
+    (id) => window.api.projects.setPrimaryBbox(id, { x: 0, y: 0, width: 0, height: 512 }),
+    projectId,
+  )
+  assert.equal(invalidProjectRequest.ok, false)
+  assert.equal(invalidProjectRequest.error.code, 'IPC_INVALID_CALLER')
+  const unchangedProject = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(unchangedProject.ok, true)
+  assert.equal(unchangedProject.value.kind, 'opened')
+  assert.deepEqual(unchangedProject.value.tab.primaryBbox, { x: 0, y: 0, width: 640, height: 512 })
+
+  await window.locator('input[aria-label="Generation area X"]').fill('72')
+  await window.locator('input[aria-label="Generation area width"]').fill('704')
+  await window.getByRole('button', { name: 'Apply generation area' }).click()
+  await window.getByRole('button', { name: 'Save Project' }).click()
+  await window
+    .getByRole('region', { name: `Project ${projectTitle}` })
+    .getByText('Saved', { exact: true })
+    .waitFor()
+  await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
+  await window.getByRole('tab', { name: projectTitle }).waitFor({ state: 'detached' })
+  await window.getByRole('tab', { name: 'Home' }).click()
+  await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  await window.getByRole('tab', { name: projectTitle }).waitFor()
+  const reopenedProject = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(reopenedProject.ok, true)
+  assert.equal(reopenedProject.value.kind, 'opened')
+  assert.deepEqual(reopenedProject.value.tab.primaryBbox, { x: 72, y: 0, width: 704, height: 512 })
+  assert.equal(reopenedProject.value.tab.dirty, false)
 
   const receivedSecondInstance = application.evaluate(
     ({ app }) => new Promise((resolve) => app.once('second-instance', () => resolve(true))),
@@ -90,7 +189,9 @@ try {
       throw new Error('The first app did not receive second-instance.')
     }),
   ])
-  const windows = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+  const windows = await application.evaluate(
+    ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+  )
   assert.equal(windows, 1)
   if (secondProcess.exitCode === null) {
     await Promise.race([
@@ -100,7 +201,90 @@ try {
       }),
     ])
   }
-  console.log('Desktop smoke passed: Home, Model Manager IPC, keyboard navigation, one instance.')
+  console.log('Desktop smoke passed: Home, Model Manager IPC, Project Save/reopen, one instance.')
+
+  const savedPackage = readFileSync(packagePath)
+  await window.locator('input[aria-label="Generation area Y"]').fill('96')
+  await window.getByRole('button', { name: 'Apply generation area' }).click()
+  await window.waitForFunction(
+    async (id) => {
+      const result = await window.api.projects.open(id)
+      return (
+        result.ok &&
+        result.value.kind === 'opened' &&
+        result.value.tab.dirty &&
+        result.value.tab.primaryBbox.y === 96
+      )
+    },
+    projectId,
+    { timeout: 10_000 },
+  )
+  const shadowManifestPath = path.join(
+    dataRoot,
+    'data',
+    'imagegen-studio',
+    'autosave',
+    projectId,
+    'manifest.json',
+  )
+  await waitForShadowBbox(shadowManifestPath, { x: 72, y: 96, width: 704, height: 512 })
+  assert.ok(
+    readFileSync(packagePath).equals(savedPackage),
+    'Autosave must not replace the saved .igs',
+  )
+
+  const crashedProcess = application.process()
+  const crashed = new Promise((resolve) => crashedProcess.once('exit', resolve))
+  assert.equal(crashedProcess.kill('SIGKILL'), true)
+  await Promise.race([
+    crashed,
+    delay(10_000).then(() => {
+      throw new Error('The simulated crash did not stop Electron.')
+    }),
+  ])
+  application = undefined
+  assert.ok(readFileSync(packagePath).equals(savedPackage), 'Crash must not change the saved .igs')
+
+  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  const recoveryWindow = await application.firstWindow()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
+  await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  const recoveryDialog = recoveryWindow.getByRole('dialog', { name: 'Recovery available' })
+  await recoveryDialog.waitFor()
+  assert.ok(
+    readFileSync(packagePath).equals(savedPackage),
+    'Recovery must not change the .igs before Save',
+  )
+  await recoveryDialog.getByRole('button', { name: 'Recover', exact: true }).click()
+  await recoveryWindow.getByRole('tab', { name: projectTitle }).waitFor()
+  const recoveredProject = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    projectId,
+  )
+  assert.equal(recoveredProject.ok, true)
+  assert.equal(recoveredProject.value.kind, 'opened')
+  assert.deepEqual(recoveredProject.value.tab.primaryBbox, {
+    x: 72,
+    y: 96,
+    width: 704,
+    height: 512,
+  })
+  assert.equal(recoveredProject.value.tab.dirty, true)
+  await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
+  await recoveryWindow
+    .getByRole('region', { name: `Project ${projectTitle}` })
+    .getByText('Saved', { exact: true })
+    .waitFor()
+  const afterRecoverySave = await recoveryWindow.evaluate(() => window.api.projects.list())
+  assert.equal(afterRecoverySave.ok, true)
+  assert.equal(
+    afterRecoverySave.value.find((project) => project.id === projectId)?.recoveryStatus,
+    'none',
+  )
+  await recoveryWindow.getByRole('button', { name: `Close ${projectTitle}` }).click()
+  console.log(
+    'Desktop smoke passed: crash shadow recovery is explicit and Save commits the recovered edit.',
+  )
 
   await application.close()
   application = undefined
@@ -117,9 +301,13 @@ try {
   assert.equal(damagedStatus.ok, true)
   assert.equal(damagedStatus.value.kind, 'needs-repair')
   assert.deepEqual(readdirSync(outside), [])
-  console.log('Desktop smoke passed: damaged runtime storage still opens Home and exposes repair state.')
+  console.log(
+    'Desktop smoke passed: damaged runtime storage still opens Home and exposes repair state.',
+  )
 } finally {
   secondProcess?.kill()
-  await application?.close()
+  // A failed assertion can leave a dirty tab behind and a native close dialog waiting for input.
+  // Stop this disposable test instance directly so cleanup never turns into a UI deadlock.
+  application?.process().kill('SIGKILL')
   rmSync(dataRoot, { force: true, recursive: true })
 }

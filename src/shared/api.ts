@@ -1,4 +1,6 @@
-/** The phase-0 renderer contract. System APIs remain in Electron main. */
+import type { IgsRectV1 } from './projects/project-schema.js'
+
+/** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
   models: {
     cancelInstall: 'models:cancel-install',
@@ -15,6 +17,17 @@ export const ipcChannels = {
     saveToken: 'models:save-token',
     setDefaultVersion: 'models:set-default-version',
     startInstall: 'models:start-install',
+  },
+  projects: {
+    close: 'projects:close',
+    create: 'projects:create',
+    discardAndClose: 'projects:discard-and-close',
+    list: 'projects:list',
+    open: 'projects:open',
+    resolveRecovery: 'projects:resolve-recovery',
+    save: 'projects:save',
+    setPrimaryBbox: 'projects:set-primary-bbox',
+    tabsChanged: 'projects:tabs-changed',
   },
   runtime: {
     getStatus: 'runtime:get-status',
@@ -37,6 +50,63 @@ export interface ApiError {
 }
 
 export type ApiResult<T> = { error: ApiError; ok: false } | { ok: true; value: T }
+
+export interface ProjectSummary {
+  bbox: Pick<IgsRectV1, 'height' | 'width'> | null
+  health: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
+  id: string
+  previewStatus: 'empty' | 'rendered' | 'unavailable' | null
+  recoveryReason?: string
+  recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale'
+  title: string
+}
+
+export interface ProjectTab {
+  autosaveError: string | null
+  dirty: boolean
+  id: string
+  primaryBbox: IgsRectV1
+  storageWarning?: string
+  title: string
+}
+
+export type ProjectOpenResult =
+  | { kind: 'opened'; tab: ProjectTab }
+  | {
+      kind: 'recovery-required'
+      projectId: string
+      reason: string
+      recoveryStatus: 'invalid' | 'recoverable' | 'stale'
+    }
+
+export interface ProjectSaveResult {
+  committed: true
+  directorySynced: boolean
+  indexWarning?: string
+  recoveryError?: string
+  recoveryStatus: 'clean' | 'dirty' | 'failed'
+  reloadRequired: boolean
+  tab: ProjectTab
+}
+
+export interface ProjectApi {
+  close: (tabId: string) => Promise<ApiResult<void>>
+  create: (options: {
+    height: number
+    title: string
+    width: number
+  }) => Promise<ApiResult<ProjectTab>>
+  discardAndClose: (tabId: string) => Promise<ApiResult<void>>
+  list: () => Promise<ApiResult<ProjectSummary[]>>
+  onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
+  open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
+  resolveRecovery: (
+    projectId: string,
+    decision: 'discard' | 'recover',
+  ) => Promise<ApiResult<ProjectTab>>
+  save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
+  setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+}
 
 export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae'
 export type BaseModelFamily = 'anima' | 'illustrious'
@@ -162,6 +232,7 @@ export interface RuntimeApi {
 
 export interface StudioApi {
   models: ModelApi
+  projects: ProjectApi
   runtime: RuntimeApi
 }
 

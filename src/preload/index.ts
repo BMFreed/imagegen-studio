@@ -6,9 +6,15 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  ProjectOpenResult,
+  ProjectSaveResult,
+  ProjectSummary,
+  ProjectTab,
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
+import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -174,6 +180,125 @@ function isVoid(value: unknown): value is void {
   return value === undefined
 }
 
+function isProjectId(value: unknown): value is string {
+  return typeof value === 'string' && /^project-v1-[a-f0-9]{64}$/.test(value)
+}
+
+function isProjectDimension(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= IGS_SAFETY_CEILINGS.rasterDimension
+  )
+}
+
+function isProjectDimensions(value: unknown): value is Pick<IgsRectV1, 'height' | 'width'> {
+  return isRecord(value) && isProjectDimension(value.width) && isProjectDimension(value.height)
+}
+
+function isProjectRect(value: unknown): value is IgsRectV1 {
+  if (!isRecord(value)) {
+    return false
+  }
+  const { height, width, x, y } = value
+  return (
+    typeof x === 'number' &&
+    Number.isSafeInteger(x) &&
+    Math.abs(x) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+    typeof y === 'number' &&
+    Number.isSafeInteger(y) &&
+    Math.abs(y) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+    isProjectDimension(width) &&
+    isProjectDimension(height)
+  )
+}
+
+function isProjectTab(value: unknown): value is ProjectTab {
+  return (
+    isRecord(value) &&
+    isProjectId(value.id) &&
+    typeof value.title === 'string' &&
+    isProjectRect(value.primaryBbox) &&
+    typeof value.dirty === 'boolean' &&
+    (value.autosaveError === null || typeof value.autosaveError === 'string') &&
+    (value.storageWarning === undefined || typeof value.storageWarning === 'string')
+  )
+}
+
+function isProjectSummary(value: unknown): value is ProjectSummary {
+  return (
+    isRecord(value) &&
+    isProjectId(value.id) &&
+    typeof value.title === 'string' &&
+    ['corrupt', 'missing', 'ready', 'unsupported_schema'].includes(String(value.health)) &&
+    (value.previewStatus === null ||
+      ['empty', 'rendered', 'unavailable'].includes(String(value.previewStatus))) &&
+    (value.bbox === null || isProjectDimensions(value.bbox)) &&
+    ['invalid', 'none', 'recoverable', 'stale'].includes(String(value.recoveryStatus)) &&
+    (value.recoveryReason === undefined || typeof value.recoveryReason === 'string')
+  )
+}
+
+function isProjectOpenResult(value: unknown): value is ProjectOpenResult {
+  if (!isRecord(value)) {
+    return false
+  }
+  if (value.kind === 'opened') {
+    return isProjectTab(value.tab)
+  }
+  return (
+    value.kind === 'recovery-required' &&
+    isProjectId(value.projectId) &&
+    typeof value.reason === 'string' &&
+    ['invalid', 'recoverable', 'stale'].includes(String(value.recoveryStatus))
+  )
+}
+
+function isProjectSaveResult(value: unknown): value is ProjectSaveResult {
+  return (
+    isRecord(value) &&
+    isProjectTab(value.tab) &&
+    value.committed === true &&
+    typeof value.directorySynced === 'boolean' &&
+    typeof value.reloadRequired === 'boolean' &&
+    ['clean', 'dirty', 'failed'].includes(String(value.recoveryStatus)) &&
+    (value.recoveryError === undefined || typeof value.recoveryError === 'string') &&
+    (value.indexWarning === undefined || typeof value.indexWarning === 'string')
+  )
+}
+
+async function invokeProject<T>(
+  channel: string,
+  args: unknown[],
+  isValue: (value: unknown) => value is T,
+): Promise<ApiResult<T>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(channel, ...args)
+    if (isRecord(result) && result.ok === true && isValue(result.value)) {
+      return { ok: true, value: result.value }
+    }
+    if (isRecord(result) && result.ok === false && isApiError(result.error)) {
+      return { error: result.error, ok: false }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: 'The Project service returned an invalid response.',
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: 'The application could not reach the Project service.',
+      },
+      ok: false,
+    }
+  }
+}
+
 const api: StudioApi = {
   models: {
     cancelInstall: (jobId) =>
@@ -227,6 +352,33 @@ const api: StudioApi = {
         [previewId, fileId, acceptedAnimaLicense],
         isModelInstallJob,
       ),
+  },
+  projects: {
+    close: (tabId) => invokeProject(ipcChannels.projects.close, [tabId], isVoid),
+    create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
+    discardAndClose: (tabId) =>
+      invokeProject(ipcChannels.projects.discardAndClose, [tabId], isVoid),
+    list: () =>
+      invokeProject(
+        ipcChannels.projects.list,
+        [],
+        (value): value is ProjectSummary[] => Array.isArray(value) && value.every(isProjectSummary),
+      ),
+    onTabsChanged(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {
+        if (Array.isArray(tabs) && tabs.every(isProjectTab)) {
+          listener(tabs)
+        }
+      }
+      ipcRenderer.on(ipcChannels.projects.tabsChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.projects.tabsChanged, handler)
+    },
+    open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
+    resolveRecovery: (projectId, decision) =>
+      invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
+    save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
+    setPrimaryBbox: (tabId, rect) =>
+      invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
   },
   runtime: {
     getStatus: () => invokeRuntime(ipcChannels.runtime.getStatus),

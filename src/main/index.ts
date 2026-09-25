@@ -1,5 +1,7 @@
 import { ipcChannels } from '../shared/api.js'
 import type { ApiResult, RuntimeStatus } from '../shared/api.js'
+import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
+import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron'
 import { mkdirSync } from 'node:fs'
@@ -15,6 +17,13 @@ import { ModelDownloader, ModelDownloadError } from './models/model-downloader.j
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
+import { IgsPackageError } from './projects/igs-package.js'
+import { ProjectAutosaveError } from './projects/project-autosave.js'
+import { ProjectIdentityError } from './projects/project-identity.js'
+import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
+import { ProjectService, ProjectServiceError } from './projects/project-service.js'
+import { ProjectSessionError } from './projects/project-session.js'
+import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
 const moduleDir = __dirname
@@ -66,7 +75,7 @@ if (!gotInstanceLock) {
   })
 
   app.on('window-all-closed', () => app.quit())
-  app.on('before-quit', () => {
+  app.on('will-quit', () => {
     if (closeDatabase) {
       void closeDatabase()
     }
@@ -79,6 +88,20 @@ if (!gotInstanceLock) {
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
+      const projectService = new ProjectService({
+        dataRoot: paths.dataRoot,
+        repository: new ProjectIndexRepository(database.db),
+        roots: {
+          placeholdersDir: path.join(moduleDir, 'placeholders'),
+          scratchDir: path.join(paths.dataRoot, 'scratch'),
+        },
+        shadow: new ProjectShadowStore(path.join(paths.dataRoot, 'autosave')),
+      })
+      try {
+        await projectService.initialize()
+      } catch (error) {
+        console.error('Project storage is unavailable', error)
+      }
       const modelRepository = new ModelRepository(database.db)
       const modelService = new ModelService(
         modelRepository,
@@ -133,6 +156,68 @@ if (!gotInstanceLock) {
         width: 1380,
       })
       mainWindow = window
+
+      // Closing the native window follows the same Save / Discard / Cancel contract as a tab.
+      // This also covers Alt+F4 and app.quit(), which do not go through renderer controls.
+      let closingAfterResolution = false
+      let resolvingClose = false
+      window.on('close', (event) => {
+        if (closingAfterResolution || projectService.getOpenTabs().length === 0) {
+          return
+        }
+        event.preventDefault()
+        if (resolvingClose) {
+          return
+        }
+        const dirtyCount = projectService.getOpenTabs().filter((tab) => tab.dirty).length
+        const choice = dirtyCount
+          ? dialog.showMessageBoxSync(window, {
+              buttons: ['Save', 'Discard Changes', 'Cancel'],
+              cancelId: 2,
+              defaultId: 0,
+              detail: `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`,
+              message: 'Close ImageGen Studio?',
+              type: 'question',
+            })
+          : 0
+        if (choice === 2) {
+          return
+        }
+        resolvingClose = true
+        void (async () => {
+          try {
+            // Keep every tab attached until all requested Saves have committed. If a later Save
+            // fails, the window and all tabs remain usable; their snapshots are resynchronized.
+            if (choice === 0) {
+              for (const tab of projectService.getOpenTabs()) {
+                if (tab.dirty) {
+                  await projectService.save(tab.id)
+                }
+              }
+            }
+            for (const tab of projectService.getOpenTabs()) {
+              await (tab.dirty && choice === 1
+                ? projectService.discardAndClose(tab.id)
+                : projectService.close(tab.id))
+            }
+            closingAfterResolution = true
+            window.close()
+          } catch (error) {
+            if (!window.isDestroyed()) {
+              window.webContents.send(
+                ipcChannels.projects.tabsChanged,
+                projectService.getOpenTabs(),
+              )
+            }
+            dialog.showErrorBox(
+              'Project close failed',
+              error instanceof Error ? error.message : 'The Project could not be closed.',
+            )
+          } finally {
+            resolvingClose = false
+          }
+        })()
+      })
 
       const invalidCaller = (): ApiResult<RuntimeStatus> => ({
         error: { code: 'IPC_INVALID_CALLER', message: 'Runtime request was rejected.' },
@@ -215,6 +300,140 @@ if (!gotInstanceLock) {
       const noArgs = (args: unknown[]): boolean => args.length === 0
       const oneString = (args: unknown[]): boolean =>
         args.length === 1 && typeof args[0] === 'string'
+
+      const isProjectId = (value: unknown): value is string =>
+        typeof value === 'string' && /^project-v1-[a-f0-9]{64}$/.test(value)
+      const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
+      const isProjectRect = (value: unknown): boolean => {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          return false
+        }
+        const rect = value as Record<string, unknown>
+        return (
+          Object.keys(rect).length === 4 &&
+          Number.isSafeInteger(rect.x) &&
+          Number.isSafeInteger(rect.y) &&
+          Math.abs(rect.x as number) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+          Math.abs(rect.y as number) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+          Number.isSafeInteger(rect.width) &&
+          Number.isSafeInteger(rect.height) &&
+          (rect.width as number) >= 1 &&
+          (rect.height as number) >= 1 &&
+          (rect.width as number) <= IGS_SAFETY_CEILINGS.rasterDimension &&
+          (rect.height as number) <= IGS_SAFETY_CEILINGS.rasterDimension
+        )
+      }
+      function registerProjectHandler<T>(
+        channel: string,
+        validate: (args: unknown[]) => boolean,
+        handler: (...args: unknown[]) => Promise<T>,
+      ): void {
+        ipcMain.handle(channel, async (event, ...args: unknown[]): Promise<ApiResult<T>> => {
+          if (
+            event.sender !== window.webContents ||
+            event.senderFrame !== window.webContents.mainFrame ||
+            !validate(args)
+          ) {
+            return {
+              error: { code: 'IPC_INVALID_CALLER', message: 'The Project request was rejected.' },
+              ok: false,
+            }
+          }
+          try {
+            return { ok: true, value: await handler(...args) }
+          } catch (error) {
+            if (
+              error instanceof ProjectServiceError ||
+              error instanceof ProjectAutosaveError ||
+              error instanceof ProjectSessionError ||
+              error instanceof ProjectIndexError ||
+              error instanceof ProjectIdentityError ||
+              error instanceof ProjectShadowError ||
+              error instanceof IgsPackageError ||
+              error instanceof IgsSchemaError
+            ) {
+              return { error: { code: error.code, message: error.message }, ok: false }
+            }
+            const storageCode = (error as NodeJS.ErrnoException)?.code
+            if (storageCode === 'ENOSPC' || storageCode === 'EDQUOT') {
+              return {
+                error: {
+                  code: 'PROJECT_STORAGE_FULL',
+                  message: 'The Project could not be saved because storage is full.',
+                },
+                ok: false,
+              }
+            }
+            if (storageCode === 'EACCES' || storageCode === 'EPERM' || storageCode === 'EROFS') {
+              return {
+                error: {
+                  code: 'PROJECT_WRITE_DENIED',
+                  message: 'The Project location is not writable.',
+                },
+                ok: false,
+              }
+            }
+            console.error(`Project operation failed: ${channel}`, error)
+            return {
+              error: {
+                code: 'PROJECT_INTERNAL_ERROR',
+                message: 'The Project operation could not be completed.',
+              },
+              ok: false,
+            }
+          }
+        })
+      }
+
+      registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(
+        ipcChannels.projects.create,
+        (args) => {
+          if (args.length !== 1 || typeof args[0] !== 'object' || args[0] === null) {
+            return false
+          }
+          const input = args[0] as Record<string, unknown>
+          return (
+            Object.keys(input).length === 3 &&
+            typeof input.title === 'string' &&
+            input.title.trim().length > 0 &&
+            new TextEncoder().encode(input.title).byteLength <= IGS_SAFETY_CEILINGS.titleBytes &&
+            Number.isSafeInteger(input.width) &&
+            Number.isSafeInteger(input.height) &&
+            (input.width as number) >= 1 &&
+            (input.height as number) >= 1 &&
+            (input.width as number) <= IGS_SAFETY_CEILINGS.rasterDimension &&
+            (input.height as number) <= IGS_SAFETY_CEILINGS.rasterDimension
+          )
+        },
+        (input) => projectService.create(input as { height: number; title: string; width: number }),
+      )
+      registerProjectHandler(ipcChannels.projects.open, oneProjectId, (projectId) =>
+        projectService.open(projectId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.resolveRecovery,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          (args[1] === 'recover' || args[1] === 'discard'),
+        (projectId, decision) =>
+          projectService.resolveRecovery(projectId as string, decision as 'discard' | 'recover'),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.setPrimaryBbox,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectRect(args[1]),
+        (tabId, rect) => projectService.setPrimaryBbox(tabId as string, rect as IgsRectV1),
+      )
+      registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
+        projectService.save(tabId as string),
+      )
+      registerProjectHandler(ipcChannels.projects.close, oneProjectId, (tabId) =>
+        projectService.close(tabId as string),
+      )
+      registerProjectHandler(ipcChannels.projects.discardAndClose, oneProjectId, (tabId) =>
+        projectService.discardAndClose(tabId as string),
+      )
 
       registerModelHandler(ipcChannels.models.getCatalog, noArgs, () => modelService.getCatalog())
       registerModelHandler(
