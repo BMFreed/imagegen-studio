@@ -3,8 +3,9 @@ import type { ApiResult, RuntimeStatus } from '../shared/api.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
 import { mkdirSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -21,6 +22,11 @@ import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
+import {
+  parseProjectLayerImageUrl,
+  streamSavedProjectLayer,
+  streamStagedProjectLayer,
+} from './projects/project-layer-resource.js'
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
@@ -31,6 +37,12 @@ const paths = resolveAppPaths()
 mkdirSync(paths.dataRoot, { recursive: true })
 app.setName('ImageGen Studio')
 app.setPath('userData', paths.dataRoot)
+protocol.registerSchemesAsPrivileged([
+  {
+    privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
+    scheme: 'igs-layer',
+  },
+])
 const gotInstanceLock = app.requestSingleInstanceLock()
 
 function unavailableRuntimeService(): Pick<
@@ -96,6 +108,33 @@ if (!gotInstanceLock) {
           scratchDir: path.join(paths.dataRoot, 'scratch'),
         },
         shadow: new ProjectShadowStore(path.join(paths.dataRoot, 'autosave')),
+      })
+      const layerScratchRoot = path.join(paths.dataRoot, 'scratch', 'layer-responses')
+      await mkdir(layerScratchRoot, { recursive: true })
+      protocol.handle('igs-layer', async (request) => {
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { status: 405 })
+        }
+        const resource = parseProjectLayerImageUrl(request.url)
+        if (!resource) {
+          return new Response('Layer not found.', { status: 404 })
+        }
+        let asset: ReturnType<ProjectService['getLayerAsset']>
+        try {
+          asset = projectService.getLayerAsset(resource)
+        } catch {
+          return new Response('Layer unavailable.', { status: 503 })
+        }
+        if (!asset) {
+          return new Response('Layer not found.', { status: 404 })
+        }
+        try {
+          return asset.kind === 'staged'
+            ? await streamStagedProjectLayer(asset.source, asset.member, layerScratchRoot)
+            : await streamSavedProjectLayer(asset.filePath, asset.member, layerScratchRoot)
+        } catch {
+          return new Response('Layer unavailable.', { status: 503 })
+        }
       })
       try {
         await projectService.initialize()
@@ -304,6 +343,8 @@ if (!gotInstanceLock) {
       const isProjectId = (value: unknown): value is string =>
         typeof value === 'string' && /^project-v1-[a-f0-9]{64}$/.test(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
+      const isImportId = (value: unknown): value is string =>
+        typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value)
       const isProjectRect = (value: unknown): boolean => {
         if (typeof value !== 'object' || value === null || Array.isArray(value)) {
           return false
@@ -386,6 +427,29 @@ if (!gotInstanceLock) {
       }
 
       registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(ipcChannels.projects.selectImport, noArgs, async () => {
+        const selection = await dialog.showOpenDialog(window, {
+          filters: [{ extensions: ['igs'], name: 'ImageGen Studio Projects' }],
+          properties: ['openFile'],
+          title: 'Import Project',
+        })
+        if (selection.canceled || selection.filePaths.length !== 1) {
+          return null
+        }
+        return await projectService.selectImport(selection.filePaths[0])
+      })
+      registerProjectHandler(
+        ipcChannels.projects.finishImport,
+        (args) =>
+          args.length === 2 && isImportId(args[0]) && (args[1] === 'move' || args[1] === 'copy'),
+        (importId, choice) =>
+          projectService.finishImport(importId as string, choice as 'copy' | 'move'),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.cancelImport,
+        (args) => args.length === 1 && isImportId(args[0]),
+        async (importId) => projectService.cancelImport(importId as string),
+      )
       registerProjectHandler(
         ipcChannels.projects.create,
         (args) => {

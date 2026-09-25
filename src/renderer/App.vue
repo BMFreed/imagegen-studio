@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ApiResult,
+  ProjectImportSelection,
   ProjectOpenResult,
   ProjectSaveResult,
   ProjectSummary,
@@ -23,6 +24,8 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NRadio,
+  NRadioGroup,
 } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
@@ -34,9 +37,10 @@ import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
+type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type PendingProjectAction =
   | { kind: 'bbox' | 'close' | 'discard' | 'save'; tabId: string }
-  | { kind: 'create' | 'recover' }
+  | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open'; projectId: string }
 
 const homeOpen = ref(true)
@@ -60,6 +64,9 @@ const newProjectError = ref<string | null>(null)
 const newProjectName = ref('')
 const newProjectWidth = ref<number | null>(1024)
 const newProjectHeight = ref<number | null>(1024)
+const importTransfer = ref<ImportTransfer | null>(null)
+const importDialogVisible = ref(false)
+const importChoice = ref<'copy' | 'move'>('move')
 
 const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
@@ -300,6 +307,83 @@ async function openProject(projectId: string) {
       await refreshProjects()
     }
   } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function selectImport() {
+  if (pendingProjectAction.value !== null || importTransfer.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'import-select' }
+  homeError.value = null
+  try {
+    const selection = await apiValue(() => projectApi().selectImport())
+    if (!selection) {
+      return
+    }
+    if (selection.kind === 'opened') {
+      if (selection.result.kind === 'opened') {
+        focusTab(selection.result.tab)
+      } else {
+        recoveryDecision.value = selection.result
+        recoveryError.value = null
+      }
+      await refreshProjects()
+      return
+    }
+    importChoice.value = 'move'
+    importTransfer.value = selection
+    importDialogVisible.value = true
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function cancelImport() {
+  const transfer = importTransfer.value
+  if (!transfer || !importDialogVisible.value || pendingProjectAction.value !== null) {
+    return
+  }
+  importDialogVisible.value = false
+  try {
+    const result = await projectApi().cancelImport(transfer.importId)
+    if (!result.ok) {
+      homeError.value = result.error.message
+    }
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  }
+}
+
+async function finishImport() {
+  const transfer = importTransfer.value
+  if (!transfer || pendingProjectAction.value !== null) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'import-finish' }
+  try {
+    const finished = await apiValue(() =>
+      projectApi().finishImport(transfer.importId, importChoice.value),
+    )
+    importDialogVisible.value = false
+    if (finished.warning) {
+      globalNotice.value = finished.warning
+    }
+    if (finished.result.kind === 'opened') {
+      focusTab(finished.result.tab)
+    } else {
+      recoveryDecision.value = finished.result
+      recoveryError.value = null
+    }
+    await refreshProjects()
+  } catch (cause) {
+    // Import selections are one-use in main, including failed attempts. Return to the picker.
+    importDialogVisible.value = false
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
@@ -635,6 +719,7 @@ onBeforeUnmount(() => {
           "
           :projects
           @createProject="beginNewProject"
+          @importProject="selectImport"
           @manageModels="modelManagerOpen = true"
           @openProject="openProject"
           @refresh="refreshProjects"
@@ -658,6 +743,45 @@ onBeforeUnmount(() => {
       </main>
 
       <ModelManager v-model:show="modelManagerOpen" />
+
+      <NModal
+        :closeOnEsc="pendingProjectAction?.kind !== 'import-finish'"
+        :maskClosable="false"
+        :show="importDialogVisible"
+        @afterLeave="importTransfer = null"
+        @update:show="!$event && cancelImport()"
+      >
+        <NCard
+          aria-label="Import Project"
+          class="dialog-card"
+          role="dialog"
+          size="small"
+          title="Import Project"
+        >
+          <p>
+            Add
+            <strong>{{ importTransfer?.title }}</strong>
+            ({{ importTransfer?.fileName }}) to Uncategorized before opening it.
+          </p>
+          <NRadioGroup v-model:value="importChoice" aria-label="Import method">
+            <NRadio value="move">Move the file here</NRadio>
+            <NRadio value="copy">Keep the original and copy it here</NRadio>
+          </NRadioGroup>
+          <div class="dialog-actions">
+            <NButton :disabled="pendingProjectAction !== null" @click="cancelImport">
+              Cancel
+            </NButton>
+            <NButton
+              :disabled="pendingProjectAction !== null"
+              :loading="pendingProjectAction?.kind === 'import-finish'"
+              type="primary"
+              @click="finishImport"
+            >
+              {{ importChoice === 'move' ? 'Move and Open' : 'Copy and Open' }}
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
 
       <NModal
         v-model:show="showNewProject"

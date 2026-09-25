@@ -3,6 +3,7 @@ import type { ProjectSummary } from '../../shared/api.js'
 
 import {
   Folder as FolderIcon,
+  Upload as ImportIcon,
   Stack2 as ModelsIcon,
   Plus as PlusIcon,
   Refresh as RefreshIcon,
@@ -19,6 +20,7 @@ const props = defineProps<{
 
 defineEmits<{
   createProject: []
+  importProject: []
   manageModels: []
   openProject: [projectId: string]
   refresh: []
@@ -88,6 +90,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
       <NButton class="sidebar-action new-project" type="primary" @click="$emit('createProject')">
         <template v-slot:icon><NIcon :component="PlusIcon" /></template>
         New Project
+      </NButton>
+      <NButton class="sidebar-action import-project" quaternary @click="$emit('importProject')">
+        <template v-slot:icon><NIcon :component="ImportIcon" /></template>
+        Import Project
       </NButton>
       <div aria-current="page" class="sidebar-item sidebar-item--selected">Projects</div>
       <h2 class="tools-heading">Tools</h2>
@@ -222,6 +228,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
 }
 
 .new-project {
+  margin-bottom: 6px;
+}
+
+.import-project {
   margin-bottom: 18px;
 }
 

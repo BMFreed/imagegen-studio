@@ -19,13 +19,16 @@ export const ipcChannels = {
     startInstall: 'models:start-install',
   },
   projects: {
+    cancelImport: 'projects:cancel-import',
     close: 'projects:close',
     create: 'projects:create',
     discardAndClose: 'projects:discard-and-close',
+    finishImport: 'projects:finish-import',
     list: 'projects:list',
     open: 'projects:open',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
+    selectImport: 'projects:select-import',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
   },
@@ -65,9 +68,39 @@ export interface ProjectTab {
   autosaveError: string | null
   dirty: boolean
   id: string
+  layers: ProjectRasterLayerView[]
   primaryBbox: IgsRectV1
   storageWarning?: string
   title: string
+}
+
+export interface ProjectRasterLayerView {
+  blendMode: 'multiply' | 'normal' | 'overlay' | 'screen'
+  height: number
+  id: string
+  imageUrl: string
+  locked: boolean
+  name: string
+  opacity: number
+  transform: {
+    rotationDegrees: number
+    scaleX: number
+    scaleY: number
+    x: number
+    y: number
+  }
+  visible: boolean
+  width: number
+}
+
+export type ProjectImportSelection =
+  | { fileName: string; importId: string; kind: 'transfer-required'; title: string }
+  | { kind: 'opened'; result: ProjectOpenResult }
+
+export interface ProjectImportFinishResult {
+  result: ProjectOpenResult
+  sourceRetained: boolean
+  warning?: string
 }
 
 export type ProjectOpenResult =
@@ -90,6 +123,7 @@ export interface ProjectSaveResult {
 }
 
 export interface ProjectApi {
+  cancelImport: (importId: string) => Promise<ApiResult<void>>
   close: (tabId: string) => Promise<ApiResult<void>>
   create: (options: {
     height: number
@@ -97,6 +131,10 @@ export interface ProjectApi {
     width: number
   }) => Promise<ApiResult<ProjectTab>>
   discardAndClose: (tabId: string) => Promise<ApiResult<void>>
+  finishImport: (
+    importId: string,
+    choice: 'copy' | 'move',
+  ) => Promise<ApiResult<ProjectImportFinishResult>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
@@ -105,6 +143,7 @@ export interface ProjectApi {
     decision: 'discard' | 'recover',
   ) => Promise<ApiResult<ProjectTab>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
+  selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
 }
 

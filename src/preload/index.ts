@@ -6,7 +6,10 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  ProjectImportFinishResult,
+  ProjectImportSelection,
   ProjectOpenResult,
+  ProjectRasterLayerView,
   ProjectSaveResult,
   ProjectSummary,
   ProjectTab,
@@ -220,9 +223,61 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isProjectId(value.id) &&
     typeof value.title === 'string' &&
     isProjectRect(value.primaryBbox) &&
+    Array.isArray(value.layers) &&
+    value.layers.every(isProjectRasterLayerView) &&
     typeof value.dirty === 'boolean' &&
     (value.autosaveError === null || typeof value.autosaveError === 'string') &&
     (value.storageWarning === undefined || typeof value.storageWarning === 'string')
+  )
+}
+
+function isProjectRasterLayerView(value: unknown): value is ProjectRasterLayerView {
+  if (!isRecord(value) || !isRecord(value.transform)) {
+    return false
+  }
+  const transform = value.transform
+  return (
+    typeof value.id === 'string' &&
+    /^[a-f0-9-]{36}$/i.test(value.id) &&
+    typeof value.name === 'string' &&
+    typeof value.imageUrl === 'string' &&
+    value.imageUrl.startsWith('igs-layer://asset/') &&
+    typeof value.visible === 'boolean' &&
+    typeof value.locked === 'boolean' &&
+    typeof value.opacity === 'number' &&
+    Number.isFinite(value.opacity) &&
+    value.opacity >= 0 &&
+    value.opacity <= 1 &&
+    ['multiply', 'normal', 'overlay', 'screen'].includes(String(value.blendMode)) &&
+    isProjectDimension(value.width) &&
+    isProjectDimension(value.height) &&
+    ['x', 'y', 'scaleX', 'scaleY', 'rotationDegrees'].every(
+      (key) => typeof transform[key] === 'number' && Number.isFinite(transform[key]),
+    )
+  )
+}
+
+function isProjectImportSelection(value: unknown): value is ProjectImportSelection | null {
+  if (value === null) {
+    return true
+  }
+  return (
+    isRecord(value) &&
+    ((value.kind === 'opened' && isProjectOpenResult(value.result)) ||
+      (value.kind === 'transfer-required' &&
+        typeof value.importId === 'string' &&
+        /^[a-f0-9-]{36}$/i.test(value.importId) &&
+        typeof value.fileName === 'string' &&
+        typeof value.title === 'string'))
+  )
+}
+
+function isProjectImportFinishResult(value: unknown): value is ProjectImportFinishResult {
+  return (
+    isRecord(value) &&
+    isProjectOpenResult(value.result) &&
+    typeof value.sourceRetained === 'boolean' &&
+    (value.warning === undefined || typeof value.warning === 'string')
   )
 }
 
@@ -354,10 +409,18 @@ const api: StudioApi = {
       ),
   },
   projects: {
+    cancelImport: (importId) =>
+      invokeProject(ipcChannels.projects.cancelImport, [importId], isVoid),
     close: (tabId) => invokeProject(ipcChannels.projects.close, [tabId], isVoid),
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
     discardAndClose: (tabId) =>
       invokeProject(ipcChannels.projects.discardAndClose, [tabId], isVoid),
+    finishImport: (importId, choice) =>
+      invokeProject(
+        ipcChannels.projects.finishImport,
+        [importId, choice],
+        isProjectImportFinishResult,
+      ),
     list: () =>
       invokeProject(
         ipcChannels.projects.list,
@@ -377,6 +440,8 @@ const api: StudioApi = {
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
+    selectImport: () =>
+      invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
   },

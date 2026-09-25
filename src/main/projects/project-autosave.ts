@@ -85,11 +85,10 @@ export class ProjectAutosaveLeaseRegistry {
 const processLeases = new ProjectAutosaveLeaseRegistry()
 
 /**
- * Main-process document autosave for one Project tab. Use applyDocument for normal edits. An import
- * service that already mutates an attached ProjectSession must call adoptCurrentEdit with its
- * returned sources before disposing caller staging or claiming that the edit is protected. Sources
- * are copied into coordinator-owned staging before either method resolves. Generation candidate
- * staging is deliberately separate.
+ * Main-process document autosave for one Project tab. Use applyDocument for normal edits and
+ * prepared imports. The legacy adoptCurrentEdit path is only for callers that already mutated an
+ * attached ProjectSession. Sources are copied into coordinator-owned staging before either method
+ * resolves. Generation candidate staging is deliberately separate.
  */
 export class ProjectAutosaveCoordinator {
   get dirty(): boolean {
@@ -104,7 +103,9 @@ export class ProjectAutosaveCoordinator {
   get lastAutosaveError(): Error | null {
     return this.autosaveError
   }
+
   private activeSave: Promise<CoordinatedSaveOutcome> | undefined
+
   private autosaveError: Error | null = null
   private baseDocument: IgsProjectDocumentV1
   private closed = false
@@ -113,7 +114,6 @@ export class ProjectAutosaveCoordinator {
   private editGeneration = 0
   private readonly historicalSources = new Map<string, PendingSource>()
   private readonly ownedStaging = new Set<string>()
-
   private pendingWrite: Promise<void> = Promise.resolve()
 
   private rebasing = false
@@ -315,17 +315,34 @@ export class ProjectAutosaveCoordinator {
 
   /**
    * Apply one persistent edit. New or changed asset references must have a matching source. Source
-   * files are copied and hash-checked before the edit becomes visible in the session.
+   * files are copied and hash-checked before the edit becomes visible in the session. A prepared
+   * edit can supply its original revision to reject publication after another edit wins.
    */
   async applyDocument(
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>> = {},
+    options: { expectedDocumentRevision?: string } = {},
   ): Promise<void> {
     this.assertOpen()
     await this.editGate
     this.assertOpen()
     const before = this.session.document
+    if (
+      options.expectedDocumentRevision !== undefined &&
+      before.documentRevision !== options.expectedDocumentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while preparing this edit.',
+      )
+    }
     const candidate = parseProjectDocumentV1(input)
+    if (
+      options.expectedDocumentRevision !== undefined &&
+      candidate.documentRevision !== options.expectedDocumentRevision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'This edit has an outdated Project revision.')
+    }
     const staged = await this.stageSources(candidate, assetSources)
     try {
       await this.options.beforeEditCommit?.(candidate)
@@ -418,6 +435,38 @@ export class ProjectAutosaveCoordinator {
       this.reportError(error)
       throw error
     }
+  }
+
+  /**
+   * Resolve only an exact Raster Layer asset in the current unsaved document. The returned source
+   * belongs to this coordinator, not the import caller; main must still verify its bytes when
+   * copying it for display. Saved assets are read from the `.igs` package instead.
+   */
+  getCurrentAssetSource(member: {
+    bytes: number
+    path: string
+    sha256: string
+  }): IgsAssetSource | null {
+    this.assertOpen()
+    const ref = this.session.document.layers.find(
+      (layer) =>
+        layer.asset.path === member.path &&
+        layer.asset.sha256 === member.sha256 &&
+        layer.asset.bytes === member.bytes,
+    )?.asset
+    if (!ref || sameRef(ref, referencedMembers(this.baseDocument).get(ref.path))) {
+      return null
+    }
+    const pending = this.sourceFor(ref)
+    if (!pending) {
+      throw new ProjectAutosaveError(
+        'ASSET_SOURCE_MISSING',
+        'The current Raster Layer has no verified asset source.',
+      )
+    }
+    return 'sourcePath' in pending.source
+      ? { sourcePath: pending.source.sourcePath }
+      : { bytes: Buffer.from(pending.source.bytes) }
   }
 
   /** Explicit Save commits `.igs`, then cleans only that revision and rebases any later edit. */

@@ -6,7 +6,6 @@ import { type FileHandle, lstat, mkdtemp, open, realpath, rm } from 'node:fs/pro
 import path from 'node:path'
 
 import type { IgsAssetSource } from './igs-package.js'
-import type { ProjectSession } from './project-session.js'
 import type { ProjectWorkerClient, VerifiedImportResult } from './worker-client.js'
 
 // Mirrors the first worker protocol's defensive source-byte ceiling, not a product capacity.
@@ -16,22 +15,27 @@ const COPY_CHUNK_BYTES = 1024 * 1024
 export interface RasterImportInput {
   /** Main-process path from an authorized local file selection, never renderer-supplied directly. */
   authorizedSourcePath: string
+  /** Snapshot supplier owned by the open Project tab; never exposes its mutable session. */
+  getDocument: () => IgsProjectDocumentV1
   /** Explicit insertion point in the current layer order. */
   insertIndex: number
   /** User-visible Raster Layer name. */
   name: string
   /** Project-coordinate origin, independent of the generation bbox. */
   position: { x: number; y: number }
-  session: ProjectSession
   /** Existing canonical app-owned base, identical to the worker client's staging base. */
   stagingBasePath: string
   worker: ImportWorker
 }
 export interface PreparedRasterImport {
-  /** Pass these sources to explicit ProjectSession.save; retain staging until Save or Discard. */
+  /** Sources owned by this preparation until the autosave coordinator copies them. */
   assetSources: Readonly<Record<string, IgsAssetSource>>
-  /** Remove this import's local files only after explicit Save or Discard. Idempotent. */
+  /** The revision read before normalization; compare again when publishing this edit. */
+  baseDocumentRevision: string
+  /** Remove temporary files after successful coordinator adoption or a rejected edit. Idempotent. */
   dispose: () => Promise<void>
+  /** Publish with ProjectAutosaveCoordinator.applyDocument before disposing staging. */
+  document: IgsProjectDocumentV1
   layer: RasterLayer
   sourceFormat: VerifiedImportResult['sourceFormat']
   stagingRoot: string
@@ -58,11 +62,12 @@ export class RasterImportError extends Error {
 }
 
 /**
- * Freeze one authorized raster, normalize it in Python, and add a dirty Raster Layer. This does not
- * save `.igs`, start a compositor, or transfer ownership of temporary assets to ProjectSession.
+ * Freeze one authorized raster and normalize it in Python, without publishing a document edit. The
+ * caller atomically transfers the returned document and sources through the autosave coordinator,
+ * then disposes this preparation regardless of adoption success.
  */
 export async function importRasterLayer(input: RasterImportInput): Promise<PreparedRasterImport> {
-  const initial = input.session.document
+  const initial = input.getDocument()
   if (
     !Number.isSafeInteger(input.insertIndex) ||
     input.insertIndex < 0 ||
@@ -83,7 +88,7 @@ export async function importRasterLayer(input: RasterImportInput): Promise<Prepa
       originalIccPath: path.join(stagingRoot, 'original.icc'),
       stagingRoot,
     })
-    const latest = input.session.document
+    const latest = input.getDocument()
     if (JSON.stringify(latest) !== JSON.stringify(initial)) {
       throw new RasterImportError(
         'IMPORT_PROJECT_CHANGED',
@@ -125,7 +130,7 @@ export async function importRasterLayer(input: RasterImportInput): Promise<Prepa
     }
     const layers = [...latest.layers]
     layers.splice(input.insertIndex, 0, layer)
-    input.session.applyDocument({ ...latest, layers })
+    const document = { ...latest, layers }
     const assetSources: Record<string, IgsAssetSource> = {
       [layerPath]: { sourcePath: normalized.normalized.path },
     }
@@ -135,9 +140,11 @@ export async function importRasterLayer(input: RasterImportInput): Promise<Prepa
     transferred = true
     return {
       assetSources,
+      baseDocumentRevision: initial.documentRevision,
       dispose: async () => {
         await rm(stagingRoot, { force: true, recursive: true })
       },
+      document,
       layer,
       sourceFormat: normalized.sourceFormat,
       stagingRoot,

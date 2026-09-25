@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,6 +16,17 @@ import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { _electron as electron } from '@playwright/test'
 import electronBinary from 'electron'
+import { saveIgsPackage } from '../src/main/projects/igs-package.ts'
+import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
+
+const rasterPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
+  'base64',
+)
+const rasterWebp = Buffer.from(
+  'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
+  'base64',
+)
 
 for (const kind of ['empty', 'unavailable']) {
   const root = path.join('dist', 'main', 'placeholders', kind)
@@ -285,6 +298,116 @@ try {
   console.log(
     'Desktop smoke passed: crash shadow recovery is explicit and Save commits the recovered edit.',
   )
+
+  // The OS picker is the only source of import paths. Replace that nondeterministic dialog while
+  // keeping renderer, preload, IPC, main validation, ZIP transfer and Home indexing real.
+  const externalDirectory = path.join(dataRoot, 'external')
+  mkdirSync(externalDirectory)
+  const externalProject = path.join(externalDirectory, 'Portable Copy.igs')
+  const rasterLayerId = randomUUID()
+  const rasterAssetPath = `assets/layers/${rasterLayerId}.png`
+  const rasterTitle = 'Raster Import Smoke'
+  const rasterDocument = createEmptyProjectDocumentV1({ title: rasterTitle })
+  await saveIgsPackage(externalProject, {
+    assets: { [rasterAssetPath]: { bytes: rasterPng } },
+    preview: {
+      merged: rasterPng,
+      rect: { height: 400, width: 400, x: -3, y: 4 },
+      status: 'rendered',
+      thumbnail: rasterWebp,
+    },
+    project: {
+      ...rasterDocument,
+      layers: [
+        {
+          asset: {
+            bytes: rasterPng.length,
+            height: 2,
+            path: rasterAssetPath,
+            sha256: createHash('sha256').update(rasterPng).digest('hex'),
+            width: 2,
+          },
+          blendMode: 'normal',
+          id: rasterLayerId,
+          kind: 'raster',
+          locked: false,
+          name: 'Raster smoke layer',
+          opacity: 1,
+          transform: { rotationDegrees: 0, scaleX: 200, scaleY: 200, x: -3, y: 4 },
+          visible: true,
+        },
+      ],
+    },
+  })
+  const externalBytes = readFileSync(externalProject)
+  await application.evaluate(({ dialog }, selectedPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, externalProject)
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: 'Import Project' }).click()
+  const importDialog = recoveryWindow.getByRole('dialog', { name: 'Import Project' })
+  await importDialog.waitFor()
+  assert.equal(await importDialog.getByRole('radio', { name: 'Move the file here' }).isChecked(), true)
+  await importDialog.getByRole('button', { name: 'Cancel' }).click()
+  await importDialog.waitFor({ state: 'detached' })
+  assert.deepEqual(readFileSync(externalProject), externalBytes)
+  assert.equal((await recoveryWindow.evaluate(() => window.api.projects.list())).value.length, 1)
+
+  await recoveryWindow.getByRole('button', { name: 'Import Project' }).click()
+  await importDialog.waitFor()
+  await importDialog.getByText('Keep the original and copy it here').click()
+  await importDialog.getByRole('button', { name: 'Copy and Open' }).click()
+  await importDialog.waitFor({ state: 'detached' })
+  await recoveryWindow.getByRole('tab', { name: rasterTitle }).waitFor()
+  const afterImport = await recoveryWindow.evaluate(() => window.api.projects.list())
+  assert.equal(afterImport.ok, true)
+  assert.equal(afterImport.value.length, 2)
+  const rasterProject = afterImport.value.find((project) => project.title === rasterTitle)
+  assert.ok(rasterProject && rasterProject.id !== projectId)
+  const rasterTab = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    rasterProject.id,
+  )
+  assert.equal(rasterTab.ok, true)
+  assert.equal(rasterTab.value.kind, 'opened')
+  assert.equal(rasterTab.value.tab.layers.length, 1)
+  const layerUrl = rasterTab.value.tab.layers[0].imageUrl
+  const imageSize = await recoveryWindow.evaluate(
+    async (url) =>
+      await new Promise((resolve, reject) => {
+        const image = new Image()
+        image.onload = () => resolve({ height: image.naturalHeight, width: image.naturalWidth })
+        image.onerror = () => reject(new Error('The saved raster did not load in the renderer.'))
+        image.src = url
+      }),
+    layerUrl,
+  )
+  assert.deepEqual(imageSize, { height: 2, width: 2 })
+  await recoveryWindow.getByText('Raster smoke layer').waitFor()
+  const canvasRegion = recoveryWindow.getByRole('region', { name: 'Project Canvas' })
+  await canvasRegion.locator('canvas').first().waitFor()
+  await canvasRegion.getByRole('button', { name: 'Bounding Box tool' }).waitFor()
+  assert.equal(await canvasRegion.getByText('layer image could not be displayed').count(), 0)
+  if (process.env.IMAGEGEN_SMOKE_RASTER_SCREENSHOT) {
+    await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_RASTER_SCREENSHOT })
+  }
+  await recoveryWindow.waitForFunction(() => {
+    const canvas = document.querySelector('[aria-label="Project Canvas"] canvas')
+    if (!(canvas instanceof HTMLCanvasElement)) return false
+    try {
+      const pixel = canvas
+        .getContext('2d')
+        .getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data
+      return pixel[3] > 0 && pixel[2] > pixel[0] + 40
+    } catch {
+      return false
+    }
+  })
+  assert.equal(existsSync(externalProject), true)
+  assert.deepEqual(readFileSync(externalProject), externalBytes)
+  assert.equal(readdirSync(projectDir).filter((entry) => entry.endsWith('.igs')).length, 2)
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  console.log('Desktop smoke passed: Import Cancel/Copy and saved raster pixels through IPC.')
 
   await application.close()
   application = undefined

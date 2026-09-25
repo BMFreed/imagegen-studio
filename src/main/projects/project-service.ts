@@ -1,4 +1,6 @@
 import type {
+  ProjectImportFinishResult,
+  ProjectImportSelection,
   ProjectOpenResult,
   ProjectSaveResult,
   ProjectSummary,
@@ -7,35 +9,63 @@ import type {
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
+  type IgsProjectDocumentV1,
   type IgsRectV1,
   IgsSchemaError,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
+import { type BigIntStats, constants } from 'node:fs'
+import { link, lstat, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
 
+import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, type ProjectAutosaveOptions } from './project-autosave.js'
-import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import {
+  canonicalProjectPath,
+  localProjectRecoveryKey,
+  ProjectIdentityError,
+} from './project-identity.js'
 import { type ProjectIndexRecord, UNCATEGORIZED_WORKSPACE_ID } from './project-index.js'
+import {
+  projectLayerImageUrl,
+  type ProjectLayerResourceRequest,
+  resolveProjectLayerAsset,
+} from './project-layer-resource.js'
 import { ProjectSession, type ProjectSessionRoots } from './project-session.js'
 
 export type {
+  ProjectImportFinishResult,
+  ProjectImportSelection,
   ProjectOpenResult,
   ProjectSaveResult,
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
 
+interface PendingProjectImport {
+  documentId: string
+  documentRevision: string
+  fileName: string
+  fingerprint: string
+  sourcePath: string
+  title: string
+}
+
 const PROJECT_ID_PATTERN = /^project-v1-[a-f0-9]{64}$/
+const MAX_PENDING_IMPORTS = 16
+const COPY_CHUNK_BYTES = 1024 * 1024
 
 export interface ProjectServiceOptions {
   /** Primarily a test seam for deterministic autosave and simulated process restart. */
   autosaveOptions?: ProjectAutosaveOptions
   dataRoot: string
+  /** Test seam for a post-commit source removal failure; production uses fs.unlink. */
+  removeImportedSource?: (sourcePath: string) => Promise<void>
   repository: ProjectIndexRepository
   roots: ProjectSessionRoots
   shadow: ProjectShadowStore
@@ -48,6 +78,11 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_CREATED_NOT_INDEXED'
       | 'PROJECT_DIRTY'
       | 'PROJECT_IDENTITY_MISMATCH'
+      | 'PROJECT_IMPORT_INVALID_SOURCE'
+      | 'PROJECT_IMPORT_SELECTION_MISSING'
+      | 'PROJECT_IMPORT_SOURCE_CHANGED'
+      | 'PROJECT_IMPORTED_NOT_INDEXED'
+      | 'PROJECT_IMPORTED_NOT_OPENED'
       | 'PROJECT_INVALID_INPUT'
       | 'PROJECT_NOT_FOUND'
       | 'PROJECT_NOT_OPEN'
@@ -68,8 +103,14 @@ export class ProjectService {
   private initialization: Promise<void> | undefined
   private readonly opening = new Map<string, Promise<ProjectOpenResult>>()
   private readonly openTabs = new Map<string, ProjectAutosaveCoordinator>()
+  private readonly pendingImports = new Map<string, PendingProjectImport>()
 
   constructor(private readonly options: ProjectServiceOptions) {}
+
+  /** Cancel never changes the chosen external file or the managed workspace. */
+  cancelImport(importId: string): void {
+    this.pendingImports.delete(importId)
+  }
 
   async close(tabId: string): Promise<void> {
     const coordinator = this.requireTab(tabId)
@@ -135,8 +176,148 @@ export class ProjectService {
     this.openTabs.delete(tabId)
   }
 
+  /** Publish a validated copy before considering removal of the external source. */
+  async finishImport(
+    importId: string,
+    choice: 'copy' | 'move',
+  ): Promise<ProjectImportFinishResult> {
+    if (choice !== 'copy' && choice !== 'move') {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose Move or Copy.')
+    }
+    const selected = this.pendingImports.get(importId)
+    if (!selected) {
+      throw new ProjectServiceError(
+        'PROJECT_IMPORT_SELECTION_MISSING',
+        'Choose the Project file again before importing it.',
+      )
+    }
+    // One selection cannot initiate two concurrent transfers or be replayed after a failure.
+    this.pendingImports.delete(importId)
+    const current = await inspectImportSource(selected.sourcePath).catch(() => {
+      throw sourceChanged()
+    })
+    if (!sameImportSource(current, selected)) {
+      throw sourceChanged()
+    }
+    const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
+    await assertImportWorkspace(workspace.directoryPath)
+    const stagedPath = path.join(workspace.directoryPath, `.import-${randomUUID()}.tmp`)
+    let destinationPath: string | undefined
+    try {
+      await copySelectedSource(selected, stagedPath)
+      const staged = await readIgsPackage(stagedPath)
+      if (
+        staged.project.documentId !== selected.documentId ||
+        staged.project.documentRevision !== selected.documentRevision
+      ) {
+        throw sourceChanged()
+      }
+      await assertImportWorkspace(workspace.directoryPath)
+      destinationPath = await publishImportedFile(
+        stagedPath,
+        workspace.directoryPath,
+        selected.fileName,
+      )
+    } finally {
+      await unlink(stagedPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          process.emitWarning(`Project import staging cleanup failed: ${String(error)}`)
+        }
+      })
+    }
+
+    // The imported .igs is already committed. An index/open failure must not delete either copy.
+    if (!destinationPath) {
+      throw new ProjectServiceError(
+        'PROJECT_IMPORT_INVALID_SOURCE',
+        'The selected Project was not copied into the workspace.',
+      )
+    }
+    const destinationFingerprint = await sourceFingerprint(destinationPath)
+    const destinationSynced = await syncImportDirectory(workspace.directoryPath)
+    try {
+      await this.options.repository.indexSaved(destinationPath, workspace.id)
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_IMPORTED_NOT_INDEXED',
+        'The Project was copied into Uncategorized, but Home could not index it. The source was kept; reload Home to rediscover the imported file.',
+      )
+    }
+    let result: ProjectOpenResult
+    try {
+      result = await this.open(localProjectRecoveryKey(destinationPath))
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_IMPORTED_NOT_OPENED',
+        'The Project was copied into Uncategorized, but could not be opened. The source was kept; reload Home and open the imported Project.',
+      )
+    }
+
+    const warnings: string[] = []
+    if (!destinationSynced) {
+      warnings.push('The imported Project was saved, but directory sync could not be confirmed.')
+    }
+    let sourceRetained = true
+    if (choice === 'move' && destinationSynced && result.kind === 'opened') {
+      try {
+        if (
+          (await sourceFingerprint(selected.sourcePath)) !== selected.fingerprint ||
+          (await sourceFingerprint(destinationPath)) !== destinationFingerprint
+        ) {
+          throw sourceChanged()
+        }
+        await (this.options.removeImportedSource ?? unlink)(selected.sourcePath)
+        sourceRetained = false
+        if (!(await syncImportDirectory(path.dirname(selected.sourcePath)))) {
+          warnings.push('Source removal could not be confirmed on disk after the move.')
+        }
+      } catch {
+        warnings.push(
+          'The Project was imported, but its original file was kept. Remove it manually if no longer needed.',
+        )
+      }
+    } else if (choice === 'move' && result.kind !== 'opened') {
+      warnings.push(
+        'The original file was kept because the imported Project needs recovery review.',
+      )
+    } else if (choice === 'move' && !destinationSynced) {
+      warnings.push('The original file was kept because the imported directory was not synced.')
+    }
+    return {
+      result,
+      sourceRetained,
+      ...(warnings.length ? { warning: warnings.join(' ') } : {}),
+    }
+  }
+
   async flushAutosave(tabId: string): Promise<void> {
     await this.requireTab(tabId).flush()
+  }
+
+  /** Resolve a process-issued image capability only against a currently open document revision. */
+  getLayerAsset(resource: ProjectLayerResourceRequest):
+    | { filePath: string; kind: 'saved'; member: IgsProjectDocumentV1['layers'][number]['asset'] }
+    | {
+        kind: 'staged'
+        member: IgsProjectDocumentV1['layers'][number]['asset']
+        source: IgsAssetSource
+      }
+    | null {
+    if (!PROJECT_ID_PATTERN.test(resource.tabId)) {
+      return null
+    }
+    const coordinator = this.openTabs.get(resource.tabId)
+    if (!coordinator) {
+      return null
+    }
+    const member = resolveProjectLayerAsset(coordinator.document, resource)
+    if (!member) {
+      return null
+    }
+    const source = coordinator.getCurrentAssetSource(member)
+    return source
+      ? { kind: 'staged', member, source }
+      : { filePath: coordinator.filePath, kind: 'saved', member }
   }
 
   getOpenTabs(): ProjectTab[] {
@@ -259,6 +440,32 @@ export class ProjectService {
         ? { recoveryError: saved.recovery.error.message }
         : {}),
       ...(indexWarning ? { indexWarning } : {}),
+    }
+  }
+
+  /** Call only with a path returned by Electron's main-process file picker. */
+  async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
+    await this.initialize()
+    const selected = await inspectImportSource(sourcePath)
+    const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
+    if (path.dirname(selected.sourcePath) === workspace.directoryPath) {
+      await this.options.repository.indexSaved(selected.sourcePath, workspace.id)
+      return {
+        kind: 'opened',
+        result: await this.open(localProjectRecoveryKey(selected.sourcePath)),
+      }
+    }
+    const importId = randomUUID()
+    // A pending selection owns no copied file. Limit abandoned dialogs to bounded memory.
+    if (this.pendingImports.size >= MAX_PENDING_IMPORTS) {
+      this.pendingImports.delete(this.pendingImports.keys().next().value!)
+    }
+    this.pendingImports.set(importId, selected)
+    return {
+      fileName: selected.fileName,
+      importId,
+      kind: 'transfer-required',
+      title: selected.title,
     }
   }
 
@@ -420,6 +627,18 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     autosaveError: coordinator.lastAutosaveError?.message ?? null,
     dirty: coordinator.dirty,
     id,
+    layers: document.layers.map((layer) => ({
+      blendMode: layer.blendMode,
+      height: layer.asset.height,
+      id: layer.id,
+      imageUrl: projectLayerImageUrl(id, document.documentRevision, layer.id, layer.asset.sha256),
+      locked: layer.locked,
+      name: layer.name,
+      opacity: layer.opacity,
+      transform: layer.transform,
+      visible: layer.visible,
+      width: layer.asset.width,
+    })),
     primaryBbox: document.primaryBbox,
     title: document.title,
   }
@@ -436,4 +655,178 @@ function describeRecovery(inspection: ProjectShadowInspection): string {
     return `Local recovery cannot be validated (${inspection.reason}). Open the saved revision only after discarding recovery.`
   }
   return 'There is no pending Project recovery.'
+}
+
+function sourceChanged(): ProjectServiceError {
+  return new ProjectServiceError(
+    'PROJECT_IMPORT_SOURCE_CHANGED',
+    'The selected Project file changed. Choose it again before importing.',
+  )
+}
+
+function importFingerprint(entry: BigIntStats): string {
+  return `${entry.dev}:${entry.ino}:${entry.size}:${entry.mtimeNs}:${entry.ctimeNs}`
+}
+
+async function sourceFingerprint(sourcePath: string): Promise<string> {
+  try {
+    const entry = await lstat(sourcePath, { bigint: true })
+    if (!entry.isFile() || entry.isSymbolicLink() || (await realpath(sourcePath)) !== sourcePath) {
+      throw new ProjectServiceError(
+        'PROJECT_IMPORT_INVALID_SOURCE',
+        'Choose a regular .igs file without symbolic links.',
+      )
+    }
+    return importFingerprint(entry)
+  } catch (error) {
+    if (error instanceof ProjectServiceError) {
+      throw error
+    }
+    throw new ProjectServiceError(
+      'PROJECT_IMPORT_INVALID_SOURCE',
+      'The selected Project file is unavailable.',
+    )
+  }
+}
+
+async function inspectImportSource(sourcePath: string): Promise<PendingProjectImport> {
+  if (
+    typeof sourcePath !== 'string' ||
+    !path.isAbsolute(sourcePath) ||
+    path.normalize(sourcePath) !== sourcePath ||
+    path.extname(sourcePath).toLowerCase() !== '.igs'
+  ) {
+    throw new ProjectServiceError(
+      'PROJECT_IMPORT_INVALID_SOURCE',
+      'Choose a local .igs Project file.',
+    )
+  }
+  const before = await sourceFingerprint(sourcePath)
+  const project = (await readIgsPackage(sourcePath)).project
+  if ((await sourceFingerprint(sourcePath)) !== before) {
+    throw sourceChanged()
+  }
+  return {
+    documentId: project.documentId,
+    documentRevision: project.documentRevision,
+    fileName: path.basename(sourcePath),
+    fingerprint: before,
+    sourcePath,
+    title: project.title,
+  }
+}
+
+function sameImportSource(a: PendingProjectImport, b: PendingProjectImport): boolean {
+  return (
+    a.sourcePath === b.sourcePath &&
+    a.fingerprint === b.fingerprint &&
+    a.documentId === b.documentId &&
+    a.documentRevision === b.documentRevision
+  )
+}
+
+async function assertImportWorkspace(directoryPath: string): Promise<void> {
+  try {
+    const entry = await lstat(directoryPath)
+    if (
+      !entry.isDirectory() ||
+      entry.isSymbolicLink() ||
+      (await realpath(directoryPath)) !== directoryPath
+    ) {
+      throw new Error('Unsafe workspace directory')
+    }
+  } catch {
+    throw new ProjectIdentityError(
+      'PROJECT_INVALID_PATH',
+      'The Project workspace no longer matches its managed location.',
+    )
+  }
+}
+
+async function copySelectedSource(
+  selected: PendingProjectImport,
+  stagedPath: string,
+): Promise<void> {
+  const source = await open(
+    selected.sourcePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch(() => {
+    throw sourceChanged()
+  })
+  try {
+    if (importFingerprint(await source.stat({ bigint: true })) !== selected.fingerprint) {
+      throw sourceChanged()
+    }
+    const target = await open(stagedPath, 'wx', 0o600)
+    try {
+      const chunk = Buffer.allocUnsafe(COPY_CHUNK_BYTES)
+      let copied = 0n
+      while (true) {
+        const { bytesRead } = await source.read(chunk, 0, chunk.length, null)
+        if (bytesRead === 0) {
+          break
+        }
+        copied += BigInt(bytesRead)
+        let offset = 0
+        while (offset < bytesRead) {
+          const { bytesWritten } = await target.write(chunk, offset, bytesRead - offset)
+          offset += bytesWritten
+        }
+      }
+      const after = await source.stat({ bigint: true })
+      if (
+        copied !== after.size ||
+        importFingerprint(after) !== selected.fingerprint ||
+        (await sourceFingerprint(selected.sourcePath)) !== selected.fingerprint
+      ) {
+        throw sourceChanged()
+      }
+      await target.sync()
+    } finally {
+      await target.close()
+    }
+  } finally {
+    await source.close()
+  }
+}
+
+async function publishImportedFile(
+  stagedPath: string,
+  workspacePath: string,
+  originalName: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const fileName = attempt === 0 ? originalName : `project-${randomUUID()}.igs`
+    const destination = path.join(workspacePath, fileName)
+    try {
+      // A hard link publishes the fsynced staged bytes without replacing an existing Project.
+      await link(stagedPath, destination)
+      return destination
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error
+      }
+    }
+  }
+  throw new ProjectServiceError(
+    'PROJECT_IMPORT_INVALID_SOURCE',
+    'Could not choose an unused Project filename in the workspace.',
+  )
+}
+
+async function syncImportDirectory(directoryPath: string): Promise<boolean> {
+  try {
+    const directory = await open(
+      directoryPath,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    )
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
+    return true
+  } catch {
+    return false
+  }
 }

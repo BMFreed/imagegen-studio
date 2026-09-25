@@ -4,10 +4,10 @@ Scope: [PP-007](../product-promises.md#pp-007-проект-принадлежи�
 [storage](../specs/03-data-storage.md) and
 [document lifecycle](../features/project/document-lifecycle.md). This is a
 high-risk data boundary. The storage slice defines an executable v1 format and
-tests Save→reopen and standalone autosave/recovery through real files. A later
-slice connects these services to the production Home/Project UI through typed
-IPC. Generation staging recovery, compositor and Linux/NVIDIA Python runtime
-remain separate Phase 2A work.
+tests Save→reopen and standalone autosave/recovery through real files. The
+production Home/Project bridge uses typed IPC. Generation staging recovery,
+worker-generated previews and the Linux/NVIDIA Python runtime remain separate
+Phase 2A work.
 
 ## Baseline before implementation and evidence
 
@@ -181,7 +181,66 @@ that explicit Save commits the recovered edit. On this working tree,
 `pnpm run app:smoke` passed; this is production IPC/filesystem evidence, not a
 claim that the final Canvas or staging flow works.
 
-This bridge does not yet cover file-picker import/transfer, raster layers,
-compositing/worker-generated previews, generation staging recovery, clean
-`Rebuild Preview` or the installable release runtime. PP-007 remains a required
-MVP promise with public readiness pending these boundaries.
+## External import and raster display
+
+`Import Project` opens Electron's `.igs` picker. Main validates the selected
+package and keeps its canonical path behind a one-use selection token. A file
+already in the managed workspace opens through the normal index/recovery path.
+For an external file, Home asks whether to Move (default) or Copy into
+`Uncategorized`; Cancel drops the token without touching the source or index.
+The destination copy is streamed into a private staging file, validated as an
+`.igs`, fsynced and published without replacing an existing filename. Indexing
+and opening follow publication. Move removes the source only after a valid
+destination opens and the destination directory sync succeeds. If source
+removal, indexing or opening fails, the committed destination remains available
+for Home rediscovery and the source is kept. Copy preserves the portable
+document ID but gets a distinct path-derived local recovery key.
+
+The production Project now receives raster layer metadata with no filesystem
+paths. Main issues a process-lifetime `igs-layer:` capability for each open
+tab/layer/revision; the image handler checks the current open document and
+streams the saved member only after `.igs` validation. The Konva viewport uses
+world coordinates independent of the primary bbox; pan, zoom and Fit View are
+camera-only, while applying bbox fields or a bbox drag commits a document edit.
+The layer stack is currently read-only; visibility, opacity, reorder and raster
+editing need typed main mutations before those controls can be exposed.
+
+The raster importer now prepares a candidate and verified asset sources without
+mutating the Project. The autosave coordinator checks the expected revision,
+stages the sources, then publishes the document edit. A stale candidate or
+failed source adoption leaves the current document unchanged. The image handler
+serves both saved `.igs` members and currently referenced coordinator-owned
+pending assets through the same revision-scoped capability, reverifying the
+pending bytes before response. The production file-picker/runtime path for
+PNG/JPEG/WebP import is not yet wired, so this before-Save rendering path has
+only focused boundary tests, not a user-flow smoke test.
+
+Focused real-file service tests cover Copy/Move/Cancel, rename collision,
+source changes, symlinks, post-commit failures and independent recovery keys.
+The layer-resource test streams exact PNG/WebP and staged bytes and rejects a
+forged or stale capability. The prepared-import test runs a real Python image worker and checks
+Save/reopen with original ICC metadata; a semantic mutation of its revision
+guard makes the stale-candidate test fail. These are bounded checks, not the
+full PP-007 exit test.
+
+The desktop smoke uses the real package writer to seed a raster `.igs`, then
+enters through Home's native picker, cancels once, copies on the next attempt,
+and verifies the external source, indexed destination, open tab layer DTO and
+browser image decode through `igs-layer:`. The resulting Konva canvas was
+visually inspected from the smoke screenshot; the 2×2 blue test image appears
+at its world-space transform, with the independent bbox outline visible. The
+smoke also reads a blue center pixel from the Konva scene; a cross-origin
+taint discovered during review was resolved by CORS-enabled custom scheme and
+anonymous image loading. The smoke does not yet exercise a before-Save import
+in the UI. At this working-tree state, `pnpm run app:test`
+passed 182/182, `pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke`
+passed. These results are local checks of this uncommitted change, not release
+evidence.
+
+Remaining Phase 2A gaps include finite frozen compositor input for generation,
+worker-generated previews, generation staging recovery, clean `Rebuild Preview`,
+PNG/JPEG/WebP import UI/runtime and the installable Linux/NVIDIA runtime.
+The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent
+external process replacing the selected source path; that concurrency boundary
+needs a separate policy before it can be claimed as supported. PP-007 remains
+an MVP promise with public readiness pending these boundaries.

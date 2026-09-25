@@ -5,7 +5,11 @@ import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { DeviceFloppy as SaveIcon } from '@vicons/tabler'
 import { NAlert, NButton, NFormItem, NIcon, NInputNumber } from 'naive-ui'
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+
+import { fitTargetBounds } from './project-canvas-geometry.js'
+import ProjectCanvas from './ProjectCanvas.vue'
+import ProjectLayerStack from './ProjectLayerStack.vue'
 
 const props = defineProps<{
   busy: boolean
@@ -20,6 +24,22 @@ const emit = defineEmits<{
   applyBbox: [rect: IgsRectV1]
   save: []
 }>()
+
+const selectedLayerId = ref<string | null>(null)
+watch(
+  () => props.tab.id,
+  () => {
+    selectedLayerId.value = null
+  },
+)
+watch(
+  () => props.tab.layers,
+  (layers) => {
+    if (selectedLayerId.value && !layers.some((layer) => layer.id === selectedLayerId.value)) {
+      selectedLayerId.value = null
+    }
+  },
+)
 
 const draft = reactive<{
   height: number | null
@@ -71,29 +91,55 @@ function applyBbox() {
   }
   emit('applyBbox', { height, width, x, y })
 }
+
+const fitBbox = computed<IgsRectV1 | null>(() => {
+  const selected = props.tab.layers.find(
+    (layer) => layer.id === selectedLayerId.value && layer.visible && layer.opacity > 0,
+  )
+  const visible = selected
+    ? [selected]
+    : props.tab.layers.filter((layer) => layer.visible && layer.opacity > 0)
+  if (visible.length === 0) {
+    return null
+  }
+  const bounds = fitTargetBounds(visible, props.tab.primaryBbox)
+  const x = Math.floor(bounds.left)
+  const y = Math.floor(bounds.top)
+  const rect = {
+    height: Math.ceil(bounds.bottom) - y,
+    width: Math.ceil(bounds.right) - x,
+    x,
+    y,
+  }
+  return Number.isSafeInteger(x) &&
+    Number.isSafeInteger(y) &&
+    Math.abs(x) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+    Math.abs(y) <= IGS_SAFETY_CEILINGS.coordinateMagnitude &&
+    rect.width >= 1 &&
+    rect.height >= 1 &&
+    rect.width <= IGS_SAFETY_CEILINGS.rasterDimension &&
+    rect.height <= IGS_SAFETY_CEILINGS.rasterDimension
+    ? rect
+    : null
+})
+
+const canFitBbox = computed(
+  () =>
+    fitBbox.value !== null &&
+    (['x', 'y', 'width', 'height'] as const).some(
+      (key) => fitBbox.value?.[key] !== props.tab.primaryBbox[key],
+    ),
+)
+
+function applyFitBbox() {
+  if (fitBbox.value && canFitBbox.value && !props.busy && !props.reloadRequired) {
+    emit('applyBbox', fitBbox.value)
+  }
+}
 </script>
 
 <template>
   <section :aria-label="`Project ${tab.title}`" class="project-view">
-    <header class="project-heading">
-      <div class="project-identity">
-        <h1>{{ tab.title }}</h1>
-        <span class="document-state" :class="{ 'document-state--dirty': tab.dirty }">
-          {{ tab.dirty ? 'Unsaved changes' : 'Saved' }}
-        </span>
-      </div>
-      <NButton
-        aria-label="Save Project"
-        :disabled="reloadRequired || busy"
-        :loading="pending === 'save'"
-        type="primary"
-        @click="emit('save')"
-      >
-        <template v-slot:icon><NIcon :component="SaveIcon" /></template>
-        Save
-      </NButton>
-    </header>
-
     <div class="project-notices">
       <NAlert v-if="error" title="Project action failed" type="error">{{ error }}</NAlert>
       <NAlert v-if="saveNotice" key="n-alert-2" title="Project saved with a warning" type="warning">
@@ -114,17 +160,22 @@ function applyBbox() {
     </div>
 
     <div class="project-layout">
-      <div aria-label="Generation area preview" class="project-stage">
-        <div class="generation-area">
-          <span class="area-caption">Primary generation area</span>
-          <strong>{{ tab.primaryBbox.width }} × {{ tab.primaryBbox.height }}</strong>
-          <span class="area-coordinates">
-            X {{ tab.primaryBbox.x }} · Y {{ tab.primaryBbox.y }}
-          </span>
-        </div>
-      </div>
-
       <aside aria-label="Project settings" class="project-settings">
+        <div class="document-actions">
+          <span class="document-state" :class="{ 'document-state--dirty': tab.dirty }">
+            {{ tab.dirty ? 'Unsaved changes' : 'Saved' }}
+          </span>
+          <NButton
+            aria-label="Save Project"
+            :disabled="reloadRequired || busy"
+            :loading="pending === 'save'"
+            size="small"
+            @click="emit('save')"
+          >
+            <template v-slot:icon><NIcon :component="SaveIcon" /></template>
+            Save
+          </NButton>
+        </div>
         <h2>Generation area</h2>
         <p>Set the position and size of the area used for the next image.</p>
         <div class="bbox-fields">
@@ -174,7 +225,28 @@ function applyBbox() {
         >
           Apply
         </NButton>
+        <NButton
+          aria-label="Fit generation area to visible layers"
+          class="fit-bbox"
+          :disabled="!canFitBbox || busy || reloadRequired"
+          secondary
+          @click="applyFitBbox"
+        >
+          Fit to visible layers
+        </NButton>
       </aside>
+
+      <ProjectCanvas
+        :key="tab.id"
+        :bbox="tab.primaryBbox"
+        :disabled="busy || reloadRequired"
+        :layers="tab.layers"
+        :selectedLayerId
+        @changeBbox="emit('applyBbox', $event)"
+        @selectLayer="selectedLayerId = $event"
+      />
+
+      <ProjectLayerStack v-model:selectedLayerId="selectedLayerId" :layers="tab.layers" />
     </div>
   </section>
 </template>
@@ -185,32 +257,6 @@ function applyBbox() {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-}
-
-.project-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  min-height: 53px;
-  padding: 0 18px 0 22px;
-  border-bottom: 1px solid var(--app-border);
-}
-
-.project-identity {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  min-width: 0;
-}
-
-.project-identity h1 {
-  overflow: hidden;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .document-state {
@@ -226,64 +272,35 @@ function applyBbox() {
 .project-notices {
   display: grid;
   gap: 8px;
-  padding: 0 18px;
+  padding: 0 12px;
 }
 
 .project-notices:has(.n-alert) {
-  padding-top: 12px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .project-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 288px;
+  grid-template-columns: 244px minmax(0, 1fr) 252px;
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.project-stage {
-  display: grid;
-  place-items: center;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  background: var(--app-chrome);
-}
-
-.generation-area {
-  display: grid;
-  place-items: center;
-  gap: 12px;
-  width: min(52vw, 460px);
-  min-width: 230px;
-  min-height: 220px;
-  padding: 24px;
-  border: 1px solid var(--app-border);
-  color: var(--app-text-muted);
-  text-align: center;
-}
-
-.generation-area strong {
-  color: var(--app-text);
-  font-size: 24px;
-  font-weight: 500;
-}
-
-.area-caption {
-  align-self: start;
-  font-size: var(--app-font-size-meta);
-}
-
-.area-coordinates {
-  align-self: end;
-  font-size: var(--app-font-size-meta);
 }
 
 .project-settings {
   min-width: 0;
   overflow: auto;
-  padding: 20px 16px;
-  border-left: 1px solid var(--app-border);
+  padding: 14px 12px;
+  border-right: 1px solid var(--app-border);
   background: var(--app-surface);
+}
+
+.document-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 20px;
 }
 
 .project-settings h2 {
@@ -310,5 +327,10 @@ function applyBbox() {
 .apply-bbox {
   width: 100%;
   margin-top: 18px;
+}
+
+.fit-bbox {
+  width: 100%;
+  margin-top: 8px;
 }
 </style>

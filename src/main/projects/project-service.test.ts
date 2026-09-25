@@ -342,3 +342,290 @@ test('dirty close preserves the tab; explicit discard removes recovery and reope
     }
   })
 })
+
+test('external .igs selection is inert until confirmed and Copy preserves portable document identity', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const externalDirectory = path.join(dataRoot, 'external')
+    await mkdir(externalDirectory)
+    const sourcePath = path.join(externalDirectory, 'Field Notes.igs')
+    await ProjectSession.create(sourcePath, 'Field Notes', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const originalBytes = await readFile(sourcePath)
+    const originalDocument = (await readIgsPackage(sourcePath)).project
+    const canceled = await service.selectImport(sourcePath)
+    assert.equal(canceled.kind, 'transfer-required')
+    if (canceled.kind !== 'transfer-required') {
+      return
+    }
+    assert.equal(canceled.title, 'Field Notes')
+    const workspace = await repository.workspaceById('uncategorized')
+    assert.deepEqual(await readdir(workspace.directoryPath), [])
+    service.cancelImport(canceled.importId)
+    await assert.rejects(service.finishImport(canceled.importId, 'move'), {
+      code: 'PROJECT_IMPORT_SELECTION_MISSING',
+    })
+    assert.deepEqual(await readFile(sourcePath), originalBytes)
+    assert.deepEqual(await readdir(workspace.directoryPath), [])
+
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const imported = await service.finishImport(selected.importId, 'copy')
+    assert.equal(imported.result.kind, 'opened')
+    assert.equal(imported.sourceRetained, true)
+    assert.equal(imported.warning, undefined)
+    assert.deepEqual(await readFile(sourcePath), originalBytes)
+    const first = (await repository.listProjects())[0]
+    assert.equal(path.basename(first.canonicalPath), 'Field Notes.igs')
+    assert.equal(first.documentId, originalDocument.documentId)
+    assert.notEqual(first.localProjectKey, selected.importId)
+    assert.deepEqual(await readFile(first.canonicalPath), originalBytes)
+    if (imported.result.kind === 'opened') {
+      assert.equal(imported.result.tab.id, first.localProjectKey)
+      await service.close(imported.result.tab.id)
+    }
+
+    // A second Copy cannot overwrite the already imported Project and gets its own recovery key.
+    const secondSelection = await service.selectImport(sourcePath)
+    assert.equal(secondSelection.kind, 'transfer-required')
+    if (secondSelection.kind !== 'transfer-required') {
+      return
+    }
+    const second = await service.finishImport(secondSelection.importId, 'copy')
+    assert.equal(second.result.kind, 'opened')
+    const rows = await repository.listProjects()
+    assert.equal(rows.length, 2)
+    assert.notEqual(rows[0].localProjectKey, rows[1].localProjectKey)
+    assert.deepEqual(
+      rows.map((row) => row.documentId),
+      [originalDocument.documentId, originalDocument.documentId],
+    )
+    if (second.result.kind === 'opened') {
+      await service.close(second.result.tab.id)
+    }
+  })
+})
+
+test('Move removes the selected source only after a valid imported .igs opens', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const externalDirectory = path.join(dataRoot, 'external')
+    await mkdir(externalDirectory)
+    const sourcePath = path.join(externalDirectory, 'Move Me.igs')
+    await ProjectSession.create(sourcePath, 'Move Me', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const originalBytes = await readFile(sourcePath)
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const imported = await service.finishImport(selected.importId, 'move')
+    assert.equal(imported.result.kind, 'opened')
+    assert.equal(imported.sourceRetained, false)
+    assert.equal(imported.warning, undefined)
+    await assert.rejects(readFile(sourcePath), { code: 'ENOENT' })
+    const row = (await repository.listProjects())[0]
+    assert.deepEqual(await readFile(row.canonicalPath), originalBytes)
+    if (imported.result.kind === 'opened') {
+      await service.close(imported.result.tab.id)
+    }
+    const reopened = await service.open(row.localProjectKey)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind === 'opened') {
+      await service.close(reopened.tab.id)
+    }
+  })
+})
+
+test('a changed selected source cannot be transferred and leaves the workspace untouched', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const sourcePath = path.join(dataRoot, 'Original.igs')
+    await ProjectSession.create(sourcePath, 'Original', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    await utimes(sourcePath, new Date('2000-01-01T00:00:00Z'), new Date('2000-01-01T00:00:00Z'))
+    await assert.rejects(service.finishImport(selected.importId, 'move'), {
+      code: 'PROJECT_IMPORT_SOURCE_CHANGED',
+    })
+    assert.equal((await readIgsPackage(sourcePath)).project.title, 'Original')
+    assert.deepEqual(
+      await readdir((await repository.workspaceById('uncategorized')).directoryPath),
+      [],
+    )
+  })
+})
+
+test('Move keeps a source changed after destination publication and reports the duplicate', async () => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-service-import-race-'))
+  const database = openAppDatabase(dataRoot, migrations)
+  try {
+    const sourcePath = path.join(dataRoot, 'External.igs')
+    await ProjectSession.create(sourcePath, 'External', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    class ChangingSourceIndex extends ProjectIndexRepository {
+      private changed = false
+
+      override async indexSaved(filePath: string, workspaceId: string) {
+        if (!this.changed) {
+          this.changed = true
+          await utimes(
+            sourcePath,
+            new Date('2000-01-01T00:00:00Z'),
+            new Date('2000-01-01T00:00:00Z'),
+          )
+        }
+        return await super.indexSaved(filePath, workspaceId)
+      }
+    }
+    const repository = new ChangingSourceIndex(database.db)
+    const service = new ProjectService({
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow: new ProjectShadowStore(path.join(dataRoot, 'autosave')),
+    })
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const imported = await service.finishImport(selected.importId, 'move')
+    assert.equal(imported.result.kind, 'opened')
+    assert.equal(imported.sourceRetained, true)
+    assert.match(imported.warning ?? '', /original file was kept/i)
+    assert.equal((await readIgsPackage(sourcePath)).project.title, 'External')
+    assert.equal((await repository.listProjects()).length, 1)
+    if (imported.result.kind === 'opened') {
+      await service.close(imported.result.tab.id)
+    }
+  } finally {
+    await database.close()
+    await rm(dataRoot, { force: true, recursive: true })
+  }
+})
+
+test('failed source removal returns a retained-source warning after a valid destination commits', async () => {
+  await withService(async ({ dataRoot, repository, shadow }) => {
+    const sourcePath = path.join(dataRoot, 'External.igs')
+    await ProjectSession.create(sourcePath, 'External', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const service = new ProjectService({
+      dataRoot,
+      removeImportedSource: async () => {
+        throw new Error('simulated unlink failure')
+      },
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const imported = await service.finishImport(selected.importId, 'move')
+    assert.equal(imported.result.kind, 'opened')
+    assert.equal(imported.sourceRetained, true)
+    assert.match(imported.warning ?? '', /original file was kept/i)
+    assert.equal((await repository.listProjects()).length, 1)
+    assert.equal((await readIgsPackage(sourcePath)).project.title, 'External')
+    if (imported.result.kind === 'opened') {
+      await service.close(imported.result.tab.id)
+    }
+  })
+})
+
+test('index failure after import publication keeps both valid files for Home rediscovery', async () => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-service-import-index-'))
+  const database = openAppDatabase(dataRoot, migrations)
+  try {
+    const sourcePath = path.join(dataRoot, 'External.igs')
+    await ProjectSession.create(sourcePath, 'External', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const originalBytes = await readFile(sourcePath)
+    class FailingImportIndex extends ProjectIndexRepository {
+      private failed = false
+
+      override async indexSaved(filePath: string, workspaceId: string) {
+        if (!this.failed) {
+          this.failed = true
+          throw new Error('simulated index outage after copy')
+        }
+        return await super.indexSaved(filePath, workspaceId)
+      }
+    }
+    const repository = new FailingImportIndex(database.db)
+    const service = new ProjectService({
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow: new ProjectShadowStore(path.join(dataRoot, 'autosave')),
+    })
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    await assert.rejects(service.finishImport(selected.importId, 'move'), {
+      code: 'PROJECT_IMPORTED_NOT_INDEXED',
+    })
+    assert.deepEqual(await readFile(sourcePath), originalBytes)
+    assert.deepEqual(service.getOpenTabs(), [])
+    const workspace = await repository.workspaceById('uncategorized')
+    const files = await readdir(workspace.directoryPath)
+    assert.deepEqual(files, ['External.igs'])
+    assert.deepEqual(await readFile(path.join(workspace.directoryPath, files[0])), originalBytes)
+    assert.equal((await service.list())[0].title, 'External')
+  } finally {
+    await database.close()
+    await rm(dataRoot, { force: true, recursive: true })
+  }
+})
+
+test('import rejects a symlinked file and a redirected workspace without publishing outside it', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const sourcePath = path.join(dataRoot, 'External.igs')
+    await ProjectSession.create(sourcePath, 'External', {
+      placeholdersDir,
+      scratchDir: path.join(dataRoot, 'scratch'),
+    })
+    const linkedSource = path.join(dataRoot, 'Linked.igs')
+    await symlink(sourcePath, linkedSource)
+    await assert.rejects(service.selectImport(linkedSource), {
+      code: 'PROJECT_IMPORT_INVALID_SOURCE',
+    })
+    const selected = await service.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const workspace = await repository.workspaceById('uncategorized')
+    const elsewhere = path.join(dataRoot, 'elsewhere')
+    await mkdir(elsewhere)
+    await rename(workspace.directoryPath, `${workspace.directoryPath}.original`)
+    await symlink(elsewhere, workspace.directoryPath)
+    await assert.rejects(service.finishImport(selected.importId, 'copy'), {
+      code: 'PROJECT_INVALID_PATH',
+    })
+    assert.deepEqual(await readdir(elsewhere), [])
+    assert.equal((await readIgsPackage(sourcePath)).project.title, 'External')
+  })
+})

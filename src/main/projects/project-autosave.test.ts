@@ -280,6 +280,16 @@ test('pending imported raster survives caller staging disposal, shadow publicati
       [edit.assetPath]: { sourcePath },
     })
     await rm(sourcePath)
+    const importedRef = coordinator.document.layers[0]?.asset
+    assert.ok(importedRef)
+    const activeSource = coordinator.getCurrentAssetSource(importedRef)
+    assert.ok(activeSource && 'sourcePath' in activeSource)
+    assert.notEqual(activeSource.sourcePath, sourcePath)
+    assert.deepEqual(await readFile(activeSource.sourcePath), raster)
+    assert.equal(
+      coordinator.getCurrentAssetSource({ ...importedRef, sha256: '0'.repeat(64) }),
+      null,
+    )
     await coordinator.applyDocument({ ...coordinator.document, title: 'Imported and renamed' })
     await coordinator.flush()
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
@@ -294,6 +304,7 @@ test('pending imported raster survives caller staging disposal, shadow publicati
     const packageResult = await readIgsPackage(projectPath)
     assert.equal(packageResult.project.title, 'Imported and renamed')
     assert.deepEqual(await packageResult.readMember(edit.assetPath), raster)
+    assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
   })
 })
 
@@ -569,10 +580,16 @@ test('undo after a completed Save can restore an asset removed from the package'
     await rm(sourcePath)
     await coordinator.save()
     const savedWithRaster = coordinator.document
+    const importedRef = savedWithRaster.layers[0]?.asset
+    assert.ok(importedRef)
+    assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
     await coordinator.applyDocument({ ...savedWithRaster, layers: [], title: 'Removed' })
     await coordinator.save()
     assert.equal((await readIgsPackage(projectPath)).project.layers.length, 0)
     await coordinator.applyDocument({ ...savedWithRaster, title: 'Restored by undo' })
+    const restoredSource = coordinator.getCurrentAssetSource(importedRef)
+    assert.ok(restoredSource && 'sourcePath' in restoredSource)
+    assert.deepEqual(await readFile(restoredSource.sourcePath), raster)
     await coordinator.flush()
     assert.equal(
       (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
@@ -583,6 +600,7 @@ test('undo after a completed Save can restore an asset removed from the package'
       (await readIgsPackage(projectPath)).project.layers[0]?.asset.path,
       imported.assetPath,
     )
+    assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
   })
 })
 
