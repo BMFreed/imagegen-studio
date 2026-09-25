@@ -16,7 +16,7 @@ import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { _electron as electron } from '@playwright/test'
 import electronBinary from 'electron'
-import { saveIgsPackage } from '../src/main/projects/igs-package.ts'
+import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 
 const rasterPng = Buffer.from(
@@ -74,6 +74,19 @@ async function waitForShadowBbox(manifestPath, expectedBbox) {
     await delay(100)
   }
   throw new Error('Autosave did not publish the edited generation area to the shadow snapshot.')
+}
+
+async function waitForOpenTab(window, tabId, predicate, description) {
+  const deadline = Date.now() + 10_000
+  let last
+  while (Date.now() < deadline) {
+    last = await window.evaluate((id) => window.api.projects.open(id), tabId)
+    if (last.ok && last.value.kind === 'opened' && predicate(last.value.tab)) {
+      return last.value.tab
+    }
+    await delay(50)
+  }
+  throw new Error(`${description}: ${JSON.stringify(last)}`)
 }
 
 let application
@@ -219,18 +232,11 @@ try {
   const savedPackage = readFileSync(packagePath)
   await window.locator('input[aria-label="Generation area Y"]').fill('96')
   await window.getByRole('button', { name: 'Apply generation area' }).click()
-  await window.waitForFunction(
-    async (id) => {
-      const result = await window.api.projects.open(id)
-      return (
-        result.ok &&
-        result.value.kind === 'opened' &&
-        result.value.tab.dirty &&
-        result.value.tab.primaryBbox.y === 96
-      )
-    },
+  await waitForOpenTab(
+    window,
     projectId,
-    { timeout: 10_000 },
+    (tab) => tab.dirty && tab.primaryBbox.y === 96,
+    'Generation-area edit did not reach the Project tab',
   )
   const shadowManifestPath = path.join(
     dataRoot,
@@ -305,11 +311,16 @@ try {
   mkdirSync(externalDirectory)
   const externalProject = path.join(externalDirectory, 'Portable Copy.igs')
   const rasterLayerId = randomUUID()
+  const lowerRasterLayerId = randomUUID()
   const rasterAssetPath = `assets/layers/${rasterLayerId}.png`
+  const lowerRasterAssetPath = `assets/layers/${lowerRasterLayerId}.png`
   const rasterTitle = 'Raster Import Smoke'
   const rasterDocument = createEmptyProjectDocumentV1({ title: rasterTitle })
   await saveIgsPackage(externalProject, {
-    assets: { [rasterAssetPath]: { bytes: rasterPng } },
+    assets: {
+      [rasterAssetPath]: { bytes: rasterPng },
+      [lowerRasterAssetPath]: { bytes: rasterPng },
+    },
     preview: {
       merged: rasterPng,
       rect: { height: 400, width: 400, x: -3, y: 4 },
@@ -336,6 +347,23 @@ try {
           transform: { rotationDegrees: 0, scaleX: 200, scaleY: 200, x: -3, y: 4 },
           visible: true,
         },
+        {
+          asset: {
+            bytes: rasterPng.length,
+            height: 2,
+            path: lowerRasterAssetPath,
+            sha256: createHash('sha256').update(rasterPng).digest('hex'),
+            width: 2,
+          },
+          blendMode: 'normal',
+          id: lowerRasterLayerId,
+          kind: 'raster',
+          locked: false,
+          name: 'Lower smoke layer',
+          opacity: 1,
+          transform: { rotationDegrees: 0, scaleX: 200, scaleY: 200, x: -3, y: 4 },
+          visible: false,
+        },
       ],
     },
   })
@@ -347,7 +375,10 @@ try {
   await recoveryWindow.getByRole('button', { name: 'Import Project' }).click()
   const importDialog = recoveryWindow.getByRole('dialog', { name: 'Import Project' })
   await importDialog.waitFor()
-  assert.equal(await importDialog.getByRole('radio', { name: 'Move the file here' }).isChecked(), true)
+  assert.equal(
+    await importDialog.getByRole('radio', { name: 'Move the file here' }).isChecked(),
+    true,
+  )
   await importDialog.getByRole('button', { name: 'Cancel' }).click()
   await importDialog.waitFor({ state: 'detached' })
   assert.deepEqual(readFileSync(externalProject), externalBytes)
@@ -370,7 +401,7 @@ try {
   )
   assert.equal(rasterTab.ok, true)
   assert.equal(rasterTab.value.kind, 'opened')
-  assert.equal(rasterTab.value.tab.layers.length, 1)
+  assert.equal(rasterTab.value.tab.layers.length, 2)
   const layerUrl = rasterTab.value.tab.layers[0].imageUrl
   const imageSize = await recoveryWindow.evaluate(
     async (url) =>
@@ -403,11 +434,163 @@ try {
       return false
     }
   })
+  const invalidRasterChange = await recoveryWindow.evaluate(
+    ([tabId, layerId]) =>
+      window.api.projects.updateRasterLayer(tabId, layerId, { kind: 'opacity', opacity: 2 }),
+    [rasterProject.id, rasterLayerId],
+  )
+  assert.equal(invalidRasterChange.ok, false)
+  assert.equal(invalidRasterChange.error.code, 'IPC_INVALID_CALLER')
+
+  await recoveryWindow.getByRole('button', { name: 'Hide Raster smoke layer' }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => !tab.layers.find((layer) => layer.id === rasterLayerId)?.visible,
+    'Hide did not reach the Project tab',
+  )
+  await recoveryWindow.waitForFunction(() => {
+    const canvas = document.querySelector('[aria-label="Project Canvas"] canvas')
+    if (!(canvas instanceof HTMLCanvasElement)) return false
+    const pixel = canvas
+      .getContext('2d')
+      .getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data
+    return pixel[2] <= pixel[0] + 40
+  })
+  await recoveryWindow.getByRole('button', { name: 'Show Raster smoke layer' }).click()
+  await recoveryWindow.getByRole('button', { name: 'Select Raster smoke layer' }).click()
+  const opacityInput = recoveryWindow.locator('input[aria-label="Layer opacity"]')
+  await opacityInput.fill('40')
+  await opacityInput.press('Tab')
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => {
+      const layer = tab.layers.find((candidate) => candidate.id === rasterLayerId)
+      return layer?.visible === true && layer.opacity === 0.4
+    },
+    'Opacity did not reach the Project tab',
+  )
+  await recoveryWindow.waitForFunction(() => {
+    const canvas = document.querySelector('[aria-label="Project Canvas"] canvas')
+    if (!(canvas instanceof HTMLCanvasElement)) return false
+    const pixel = canvas
+      .getContext('2d')
+      .getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data
+    return pixel[3] >= 80 && pixel[3] <= 125 && pixel[2] > pixel[0] + 40
+  })
+  await recoveryWindow.locator('[aria-label="Layer blend mode"]').click()
+  await recoveryWindow.getByText('Multiply', { exact: true }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => tab.layers.find((layer) => layer.id === rasterLayerId)?.blendMode === 'multiply',
+    'Blend mode did not reach the Project tab',
+  )
+  if (process.env.IMAGEGEN_SMOKE_RASTER_EDITED_SCREENSHOT) {
+    await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_RASTER_EDITED_SCREENSHOT })
+  }
+  await recoveryWindow.getByRole('button', { name: 'Lock Raster smoke layer' }).click()
+  await recoveryWindow.getByRole('button', { name: 'Unlock Raster smoke layer' }).waitFor()
+  assert.equal(await opacityInput.isDisabled(), true)
+  await recoveryWindow.getByRole('button', { name: 'Unlock Raster smoke layer' }).click()
+  assert.equal(await opacityInput.isEnabled(), true)
+  await recoveryWindow.getByRole('button', { name: 'Layer actions for Raster smoke layer' }).click()
+  await recoveryWindow.getByText('Move down', { exact: true }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      tab.layers.map((layer) => layer.id).join(',') === `${lowerRasterLayerId},${rasterLayerId}`,
+    'Menu move down did not reach the Project tab',
+  )
+  await recoveryWindow.waitForFunction(() => {
+    const list = document.querySelector('[aria-label="Project layers"] .layer-list')
+    const labels = [...(list?.querySelectorAll('button[aria-label^="Select "]') ?? [])].map(
+      (button) => button.getAttribute('aria-label'),
+    )
+    return labels.join(',') === 'Select Lower smoke layer,Select Raster smoke layer'
+  })
+  await recoveryWindow.waitForFunction(() => {
+    const button = document.querySelector('button[aria-label="Hide Raster smoke layer"]')
+    return button instanceof HTMLButtonElement && !button.disabled
+  })
+  const sourceBox = await recoveryWindow
+    .getByRole('button', { name: 'Select Raster smoke layer' })
+    .boundingBox()
+  const targetBox = await recoveryWindow
+    .getByRole('button', { name: 'Select Lower smoke layer' })
+    .boundingBox()
+  assert.ok(sourceBox && targetBox)
+  await recoveryWindow.mouse.move(sourceBox.x + 45, sourceBox.y + sourceBox.height / 2)
+  await recoveryWindow.mouse.down()
+  await recoveryWindow.mouse.move(targetBox.x + 45, targetBox.y + targetBox.height * 0.25, {
+    steps: 12,
+  })
+  await recoveryWindow.mouse.up()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      tab.layers.map((layer) => layer.id).join(',') === `${rasterLayerId},${lowerRasterLayerId}`,
+    'Pointer reorder did not reach the Project tab',
+  )
+  await recoveryWindow.waitForFunction(() => {
+    const button = document.querySelector('button[aria-label="Hide Raster smoke layer"]')
+    return button instanceof HTMLButtonElement && !button.disabled
+  })
+  await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      !tab.dirty &&
+      tab.layers.map((layer) => layer.id).join(',') === `${rasterLayerId},${lowerRasterLayerId}`,
+    'Save did not commit the reordered Project',
+  )
+  await recoveryWindow
+    .getByRole('region', { name: `Project ${rasterTitle}` })
+    .getByText('Saved', { exact: true })
+    .waitFor()
+  const savedRasterPackages = await Promise.all(
+    readdirSync(projectDir)
+      .filter((entry) => entry.endsWith('.igs'))
+      .map((entry) => readIgsPackage(path.join(projectDir, entry))),
+  )
+  const savedRasterPackage = savedRasterPackages.find(
+    (candidate) => candidate.project.title === rasterTitle,
+  )
+  assert.ok(savedRasterPackage)
+  assert.deepEqual(
+    savedRasterPackage.project.layers.map((layer) => layer.id),
+    [rasterLayerId, lowerRasterLayerId],
+  )
+  assert.equal(savedRasterPackage.project.layers[0].blendMode, 'multiply')
   assert.equal(existsSync(externalProject), true)
   assert.deepEqual(readFileSync(externalProject), externalBytes)
   assert.equal(readdirSync(projectDir).filter((entry) => entry.endsWith('.igs')).length, 2)
   await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
-  console.log('Desktop smoke passed: Import Cancel/Copy and saved raster pixels through IPC.')
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  const editedRaster = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    rasterProject.id,
+  )
+  assert.equal(editedRaster.ok, true)
+  assert.equal(editedRaster.value.kind, 'opened')
+  assert.deepEqual(
+    editedRaster.value.tab.layers.map((layer) => layer.id),
+    [rasterLayerId, lowerRasterLayerId],
+  )
+  assert.equal(editedRaster.value.tab.layers[0].opacity, 0.4)
+  assert.equal(editedRaster.value.tab.layers[0].blendMode, 'multiply')
+  assert.equal(editedRaster.value.tab.layers[0].visible, true)
+  assert.equal(editedRaster.value.tab.layers[0].locked, false)
+  assert.equal(editedRaster.value.tab.layers[1].visible, false)
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  console.log(
+    'Desktop smoke passed: Import, Raster controls, canvas pixels and Save/reopen through IPC.',
+  )
 
   await application.close()
   application = undefined

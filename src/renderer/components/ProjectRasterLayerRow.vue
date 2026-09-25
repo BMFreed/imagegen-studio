@@ -1,27 +1,54 @@
 <script setup lang="ts">
-import type { ProjectRasterLayerView } from '../../shared/api.js'
+import type { ProjectApi, ProjectRasterLayerView } from '../../shared/api.js'
 
 import { computed } from 'vue'
 
-import { provideProjectEntityRow } from './project-entity-row.js'
+import { type ProjectEntityRowAction, provideProjectEntityRow } from './project-entity-row.js'
 import ProjectEntitySurface from './ProjectEntitySurface.vue'
 
 const props = defineProps<{
+  disabled: boolean
+  index: number
   layer: ProjectRasterLayerView
+  layerCount: number
   selected: boolean
 }>()
 
-const emit = defineEmits<{ select: [layerId: string] }>()
+const emit = defineEmits<{
+  move: [layerId: string, targetIndex: number]
+  select: [layerId: string]
+  update: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
+}>()
+
+const menu = computed<ProjectEntityRowAction[]>(() => [
+  {
+    disabled: props.disabled || props.layer.locked || props.index === 0,
+    key: 'up',
+    label: 'Move up',
+    run: () => emit('move', props.layer.id, props.index - 1),
+  },
+  {
+    disabled: props.disabled || props.layer.locked || props.index >= props.layerCount - 1,
+    key: 'down',
+    label: 'Move down',
+    run: () => emit('move', props.layer.id, props.index + 1),
+  },
+])
 
 provideProjectEntityRow({
+  menu,
   select: () => emit('select', props.layer.id),
   state: computed(() => ({
+    disabled: props.disabled,
     locked: props.layer.locked,
     name: props.layer.name,
     selected: props.selected,
     summary: `${props.layer.width} × ${props.layer.height} · ${Math.round(props.layer.opacity * 100)}%`,
     visible: props.layer.visible,
   })),
+  toggleLock: () => emit('update', props.layer.id, { kind: 'lock', locked: !props.layer.locked }),
+  toggleVisible: () =>
+    emit('update', props.layer.id, { kind: 'visibility', visible: !props.layer.visible }),
 })
 
 const blendLabel = computed(() =>

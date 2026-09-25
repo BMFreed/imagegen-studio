@@ -1,6 +1,7 @@
 import { inject, type InjectionKey, provide, type Ref } from 'vue'
 
 export interface ProjectEntityRowState {
+  disabled: boolean
   locked: boolean
   name: string
   selected: boolean
@@ -8,10 +9,20 @@ export interface ProjectEntityRowState {
   visible: boolean
 }
 
+export interface ProjectEntityRowAction {
+  disabled?: boolean
+  key: string
+  label: string
+  run: () => void
+}
+
 /** The shared row owns presentation; the entity adapter supplies its state and command. */
 export interface ProjectEntityRowController {
+  menu: Readonly<Ref<ProjectEntityRowAction[]>>
   select: () => void
   state: Readonly<Ref<ProjectEntityRowState>>
+  toggleLock: () => void
+  toggleVisible: () => void
 }
 
 const projectEntityRowKey: InjectionKey<ProjectEntityRowController> = Symbol('project-entity-row')

@@ -427,6 +427,12 @@ const api: StudioApi = {
         [],
         (value): value is ProjectSummary[] => Array.isArray(value) && value.every(isProjectSummary),
       ),
+    moveRasterLayer: (tabId, layerId, targetIndex) =>
+      invokeProject(
+        ipcChannels.projects.moveRasterLayer,
+        [tabId, layerId, targetIndex],
+        isProjectTab,
+      ),
     onTabsChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {
         if (Array.isArray(tabs) && tabs.every(isProjectTab)) {
@@ -444,6 +450,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
+    updateRasterLayer: (tabId, layerId, change) =>
+      invokeProject(ipcChannels.projects.updateRasterLayer, [tabId, layerId, change], isProjectTab),
   },
   runtime: {
     getStatus: () => invokeRuntime(ipcChannels.runtime.getStatus),

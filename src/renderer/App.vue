@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ApiResult,
+  ProjectApi,
   ProjectImportSelection,
   ProjectOpenResult,
   ProjectSaveResult,
@@ -39,7 +40,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme.js'
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type PendingProjectAction =
-  | { kind: 'bbox' | 'close' | 'discard' | 'save'; tabId: string }
+  | { kind: 'bbox' | 'close' | 'discard' | 'layer' | 'save'; tabId: string }
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open'; projectId: string }
 
@@ -442,6 +443,57 @@ async function applyBbox(tabId: string, rect: IgsRectV1) {
   }
 }
 
+async function updateRasterLayer(
+  tabId: string,
+  layerId: string,
+  change: Parameters<ProjectApi['updateRasterLayer']>[2],
+) {
+  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  setTabError(tabId, null)
+  try {
+    replaceTab(await apiValue(() => projectApi().updateRasterLayer(tabId, layerId, change)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function moveRasterLayer(tabId: string, layerId: string, targetIndex: number) {
+  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  setTabError(tabId, null)
+  try {
+    replaceTab(await apiValue(() => projectApi().moveRasterLayer(tabId, layerId, targetIndex)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function moveActiveRasterLayer(layerId: string, targetIndex: number) {
+  if (activeTab.value) {
+    void moveRasterLayer(activeTab.value.id, layerId, targetIndex)
+  }
+}
+
+function updateActiveRasterLayer(
+  layerId: string,
+  change: Parameters<ProjectApi['updateRasterLayer']>[2],
+) {
+  if (activeTab.value) {
+    void updateRasterLayer(activeTab.value.id, layerId, change)
+  }
+}
+
 function saveWarning(outcome: ProjectSaveResult): string | null {
   const warnings: string[] = []
   if (!outcome.directorySynced) {
@@ -733,7 +785,9 @@ onBeforeUnmount(() => {
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
           @applyBbox="applyBbox(activeTab.id, $event)"
+          @moveLayer="moveActiveRasterLayer"
           @save="saveProject(activeTab.id)"
+          @updateLayer="updateActiveRasterLayer"
         />
         <NEmpty v-else class="empty-document" description="No document open">
           <template v-slot:extra>

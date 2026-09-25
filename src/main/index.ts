@@ -1,5 +1,5 @@
-import { ipcChannels } from '../shared/api.js'
-import type { ApiResult, RuntimeStatus } from '../shared/api.js'
+import { ipcChannels, isProjectRasterLayerChange } from '../shared/api.js'
+import type { ApiResult, ProjectRasterLayerChange, RuntimeStatus } from '../shared/api.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
@@ -342,6 +342,9 @@ if (!gotInstanceLock) {
 
       const isProjectId = (value: unknown): value is string =>
         typeof value === 'string' && /^project-v1-[a-f0-9]{64}$/.test(value)
+      const isRasterLayerId = (value: unknown): value is string =>
+        typeof value === 'string' &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
       const isImportId = (value: unknown): value is string =>
         typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value)
@@ -488,6 +491,31 @@ if (!gotInstanceLock) {
         ipcChannels.projects.setPrimaryBbox,
         (args) => args.length === 2 && isProjectId(args[0]) && isProjectRect(args[1]),
         (tabId, rect) => projectService.setPrimaryBbox(tabId as string, rect as IgsRectV1),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateRasterLayer,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isRasterLayerId(args[1]) &&
+          isProjectRasterLayerChange(args[2]),
+        (tabId, layerId, change) =>
+          projectService.updateRasterLayer(
+            tabId as string,
+            layerId as string,
+            change as ProjectRasterLayerChange,
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.moveRasterLayer,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isRasterLayerId(args[1]) &&
+          Number.isSafeInteger(args[2]) &&
+          (args[2] as number) >= 0,
+        (tabId, layerId, targetIndex) =>
+          projectService.moveRasterLayer(tabId as string, layerId as string, targetIndex as number),
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
         projectService.save(tabId as string),

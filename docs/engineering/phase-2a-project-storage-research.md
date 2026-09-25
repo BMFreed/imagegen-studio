@@ -202,8 +202,11 @@ tab/layer/revision; the image handler checks the current open document and
 streams the saved member only after `.igs` validation. The Konva viewport uses
 world coordinates independent of the primary bbox; pan, zoom and Fit View are
 camera-only, while applying bbox fields or a bbox drag commits a document edit.
-The layer stack is currently read-only; visibility, opacity, reorder and raster
-editing need typed main mutations before those controls can be exposed.
+The Raster Layer stack in the current working tree now routes visibility, lock,
+opacity, blend mode and top-first reorder through typed renderer/preload/IPC
+commands to `ProjectService` and the document autosave coordinator. A locked
+layer cannot change opacity/blend or move until unlocked; an unchanged command
+does not dirty the document. This does not add raster painting or transforms.
 
 The raster importer now prepares a candidate and verified asset sources without
 mutating the Project. The autosave coordinator checks the expected revision,
@@ -223,6 +226,20 @@ Save/reopen with original ICC metadata; a semantic mutation of its revision
 guard makes the stale-candidate test fail. These are bounded checks, not the
 full PP-007 exit test.
 
+The Raster Layer service tests seed a real `.igs` through the package writer and
+public Copy import, then call the typed service commands. They verify layer
+properties and order in the durable document shadow, explicit Save and reopen;
+invalid, missing and locked commands; clean no-ops; and exact raster asset
+bytes when all layers become hidden or zero-opacity. Without a worker, the saved
+preview is `empty` when no layer is visible with opacity above zero, and
+`unavailable` when one remains. The focused command
+`pnpm exec tsx --test src/main/projects/project-service.test.ts` passed 19/19
+on the current working tree. The current `pnpm run app:smoke` also passed through
+the Electron UI: hide/show changed Canvas pixels, 40% opacity changed the pixel,
+the selected-layer blend control set `multiply`, lock/unlock changed the editor
+state, menu move and pointer drag changed layer order, and Save/reopen preserved
+the final layer properties, including blend mode.
+
 The desktop smoke uses the real package writer to seed a raster `.igs`, then
 enters through Home's native picker, cancels once, copies on the next attempt,
 and verifies the external source, indexed destination, open tab layer DTO and
@@ -231,15 +248,18 @@ visually inspected from the smoke screenshot; the 2×2 blue test image appears
 at its world-space transform, with the independent bbox outline visible. The
 smoke also reads a blue center pixel from the Konva scene; a cross-origin
 taint discovered during review was resolved by CORS-enabled custom scheme and
-anonymous image loading. The smoke does not yet exercise a before-Save import
-in the UI. At this working-tree state, `pnpm run app:test`
-passed 182/182, `pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke`
-passed. These results are local checks of this uncommitted change, not release
-evidence.
+anonymous image loading. The smoke does not yet exercise a before-Save
+PNG/JPEG/WebP import in the UI. The earlier raster-display slice was committed
+as `ac7e913`; its recorded checks were `pnpm run app:test` 182/182,
+`pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke`. The focused 19/19
+test run and extended Electron smoke above verify the current Raster controls;
+none of these checks is release evidence.
 
 Remaining Phase 2A gaps include finite frozen compositor input for generation,
 worker-generated previews, generation staging recovery, clean `Rebuild Preview`,
 PNG/JPEG/WebP import UI/runtime and the installable Linux/NVIDIA runtime.
+Layer add/delete/rename, undo and production raster editing also remain open;
+the current Raster controls do not complete the wider layer-stack contract.
 The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent
 external process replacing the selected source path; that concurrency boundary
 needs a separate policy before it can be claimed as supported. PP-007 remains

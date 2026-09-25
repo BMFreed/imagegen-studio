@@ -2,10 +2,12 @@ import type {
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectOpenResult,
+  ProjectRasterLayerChange,
   ProjectSaveResult,
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
+import { isProjectRasterLayerChange } from '../../shared/api.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -84,6 +86,8 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_IMPORTED_NOT_INDEXED'
       | 'PROJECT_IMPORTED_NOT_OPENED'
       | 'PROJECT_INVALID_INPUT'
+      | 'PROJECT_LAYER_LOCKED'
+      | 'PROJECT_LAYER_NOT_FOUND'
       | 'PROJECT_NOT_FOUND'
       | 'PROJECT_NOT_OPEN'
       | 'PROJECT_NOT_READY'
@@ -347,6 +351,46 @@ export class ProjectService {
     return await Promise.all(records.map(async (record) => await this.toSummary(record)))
   }
 
+  async moveRasterLayer(tabId: string, layerId: string, targetIndex: number): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (
+      !Number.isSafeInteger(targetIndex) ||
+      targetIndex < 0 ||
+      targetIndex >= document.layers.length
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Raster Layer position is invalid.',
+      )
+    }
+    const index = document.layers.findIndex((layer) => layer.id === layerId)
+    if (index < 0) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This Raster Layer is not available.',
+      )
+    }
+    const layer = document.layers[index]
+    if (layer.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Raster Layer before moving it.',
+      )
+    }
+    if (index === targetIndex) {
+      return toTab(tabId, coordinator)
+    }
+    document.layers.splice(index, 1)
+    document.layers.splice(targetIndex, 0, layer)
+    await coordinator.applyDocument(
+      document,
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   async open(projectId: string): Promise<ProjectOpenResult> {
     assertProjectId(projectId)
     const existing = this.openTabs.get(projectId)
@@ -479,6 +523,66 @@ export class ProjectService {
       }
       throw error
     }
+    return toTab(tabId, coordinator)
+  }
+
+  async updateRasterLayer(
+    tabId: string,
+    layerId: string,
+    change: ProjectRasterLayerChange,
+  ): Promise<ProjectTab> {
+    if (!isProjectRasterLayerChange(change)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Raster Layer change is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const index = document.layers.findIndex((layer) => layer.id === layerId)
+    if (index < 0) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This Raster Layer is not available.',
+      )
+    }
+    const layer = document.layers[index]
+    if (layer.locked && (change.kind === 'opacity' || change.kind === 'blend-mode')) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Raster Layer before editing it.',
+      )
+    }
+    const updated = { ...layer }
+    switch (change.kind) {
+      case 'blend-mode': {
+        updated.blendMode = change.blendMode
+        break
+      }
+      case 'lock': {
+        updated.locked = change.locked
+        break
+      }
+      case 'opacity': {
+        updated.opacity = change.opacity
+        break
+      }
+      case 'visibility': {
+        updated.visible = change.visible
+        break
+      }
+    }
+    if (
+      updated.visible === layer.visible &&
+      updated.locked === layer.locked &&
+      updated.opacity === layer.opacity &&
+      updated.blendMode === layer.blendMode
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    document.layers[index] = updated
+    await coordinator.applyDocument(
+      document,
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
     return toTab(tabId, coordinator)
   }
 

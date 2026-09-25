@@ -1,20 +1,49 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Lock } from '@vicons/tabler'
-import { NButton, NIcon } from 'naive-ui'
+import { DotsVertical, Eye, EyeOff, Lock, LockOpen } from '@vicons/tabler'
+import { NButton, NDropdown, NIcon } from 'naive-ui'
+import { computed } from 'vue'
 
 import { useProjectEntityRow } from './project-entity-row.js'
 
 const row = useProjectEntityRow()
+const menuOptions = computed(() =>
+  row.menu.value.map(({ disabled, key, label }) => ({ disabled, key, label })),
+)
+const selectionButtonTheme = {
+  textColorTextFocus: 'var(--n-text-color)',
+  textColorTextHover: 'var(--n-text-color)',
+  textColorTextPressed: 'var(--n-text-color)',
+}
+
+function runAction(key: number | string) {
+  const action = row.menu.value.find((item) => item.key === key)
+  if (action && !action.disabled) {
+    action.run()
+  }
+}
+
+const nestedControlSelector = [
+  '[data-entity-control]',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'a[href]',
+  '[role="button"]',
+].join(', ')
 
 function selectFromSurface(event: MouseEvent) {
   if (event.button !== 0 || event.defaultPrevented) {
     return
   }
-  if (
-    event.target instanceof Element &&
-    event.target.closest('button, input, textarea, select, a[href]')
-  ) {
-    return
+  for (const target of event.composedPath()) {
+    if (target === event.currentTarget) {
+      break
+    }
+    if (target instanceof Element && target.matches(nestedControlSelector)) {
+      return
+    }
   }
   row.select()
 }
@@ -27,18 +56,25 @@ function selectFromSurface(event: MouseEvent) {
     @click="selectFromSurface"
   >
     <div class="entity-header">
-      <span
-        :aria-label="row.state.value.visible ? 'Visible' : 'Hidden'"
-        class="entity-status-icon"
-        role="img"
+      <NButton
+        :aria-label="`${row.state.value.visible ? 'Hide' : 'Show'} ${row.state.value.name}`"
+        circle
+        class="entity-action"
+        :disabled="row.state.value.disabled"
+        quaternary
+        size="tiny"
+        @click="row.toggleVisible"
       >
-        <NIcon :component="row.state.value.visible ? Eye : EyeOff" :size="17" />
-      </span>
+        <template v-slot:icon>
+          <NIcon :component="row.state.value.visible ? Eye : EyeOff" :size="17" />
+        </template>
+      </NButton>
       <NButton
         :aria-label="`Select ${row.state.value.name}`"
         :aria-pressed="row.state.value.selected"
-        class="entity-select"
+        class="entity-select selection-button"
         text
+        :themeOverrides="selectionButtonTheme"
         @click="row.select"
       >
         <span class="entity-preview"><slot name="preview" /></span>
@@ -47,9 +83,31 @@ function selectFromSurface(event: MouseEvent) {
           <span :title="row.state.value.summary">{{ row.state.value.summary }}</span>
         </span>
       </NButton>
-      <span v-if="row.state.value.locked" aria-label="Locked" class="entity-status-icon" role="img">
-        <NIcon :component="Lock" :size="17" />
-      </span>
+      <NButton
+        :aria-label="`${row.state.value.locked ? 'Unlock' : 'Lock'} ${row.state.value.name}`"
+        circle
+        class="entity-action"
+        :disabled="row.state.value.disabled"
+        quaternary
+        size="tiny"
+        @click="row.toggleLock"
+      >
+        <template v-slot:icon>
+          <NIcon :component="row.state.value.locked ? Lock : LockOpen" :size="17" />
+        </template>
+      </NButton>
+      <NDropdown :options="menuOptions" trigger="click" @select="runAction">
+        <NButton
+          :aria-label="`Layer actions for ${row.state.value.name}`"
+          circle
+          class="entity-action"
+          :disabled="row.state.value.disabled"
+          quaternary
+          size="tiny"
+        >
+          <template v-slot:icon><NIcon :component="DotsVertical" :size="17" /></template>
+        </NButton>
+      </NDropdown>
     </div>
     <div v-if="$slots.details" class="entity-details"><slot name="details" /></div>
   </article>
@@ -88,12 +146,8 @@ function selectFromSurface(event: MouseEvent) {
   padding: 3px 5px;
 }
 
-.entity-status-icon {
-  display: flex;
-  flex: 0 0 20px;
-  align-items: center;
-  justify-content: center;
-  color: var(--app-text-muted);
+.entity-action {
+  flex: 0 0 22px;
 }
 
 .entity-select {

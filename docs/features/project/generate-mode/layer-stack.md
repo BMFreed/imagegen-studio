@@ -154,6 +154,24 @@ Current limitations:
 - destructive delete has no confirmation policy in this mock.
 - the prototype comparison popover does not prove production provenance persistence.
 
+## Production Project Coverage
+
+The production Project currently displays imported Raster Layers on an infinite
+Konva canvas. The current working tree also connects Raster visibility, lock,
+opacity, blend mode and reorder controls to typed main-process document edits.
+The selected-layer properties bar owns opacity and blend mode; the shared row
+supplies visibility and lock actions. Layer order is top-first in the document,
+and a locked Raster Layer cannot be moved or have opacity/blend changed until
+unlocked. These edits enter the document shadow and reach `.igs` through Save.
+
+The service/filesystem boundary passed 19/19 focused tests, including real
+`.igs` Save/reopen and asset preservation. The Electron smoke passed with actual
+visibility and opacity changes observed on Canvas pixels, selected-layer blend
+mode set to `multiply`, lock/unlock, menu and pointer reorder, then Save/reopen
+of the edited Project. Prototype pointer DnD remains separate evidence.
+Production add/delete/rename, undo, Smart Patch and Regional Guidance behavior,
+raster painting/transforms and worker-generated previews are still open.
+
 ## Acceptance Criteria
 
 - User can manage Raster Layer, Smart Patch Layer and Regional Guidance Layer from the layer stack.

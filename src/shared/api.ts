@@ -25,12 +25,14 @@ export const ipcChannels = {
     discardAndClose: 'projects:discard-and-close',
     finishImport: 'projects:finish-import',
     list: 'projects:list',
+    moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
+    updateRasterLayer: 'projects:update-raster-layer',
   },
   runtime: {
     getStatus: 'runtime:get-status',
@@ -93,6 +95,12 @@ export interface ProjectRasterLayerView {
   width: number
 }
 
+export type ProjectRasterLayerChange =
+  | { blendMode: ProjectRasterLayerView['blendMode']; kind: 'blend-mode' }
+  | { kind: 'lock'; locked: boolean }
+  | { kind: 'opacity'; opacity: number }
+  | { kind: 'visibility'; visible: boolean }
+
 export type ProjectImportSelection =
   | { fileName: string; importId: string; kind: 'transfer-required'; title: string }
   | { kind: 'opened'; result: ProjectOpenResult }
@@ -136,6 +144,11 @@ export interface ProjectApi {
     choice: 'copy' | 'move',
   ) => Promise<ApiResult<ProjectImportFinishResult>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
+  moveRasterLayer: (
+    tabId: string,
+    layerId: string,
+    targetIndex: number,
+  ) => Promise<ApiResult<ProjectTab>>
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   resolveRecovery: (
@@ -145,12 +158,17 @@ export interface ProjectApi {
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+  updateRasterLayer: (
+    tabId: string,
+    layerId: string,
+    change: ProjectRasterLayerChange,
+  ) => Promise<ApiResult<ProjectTab>>
 }
 
 export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae'
+
 export type BaseModelFamily = 'anima' | 'illustrious'
 export type ModelFileStatus = 'corrupt' | 'missing' | 'ready'
-
 export interface ModelVersionView {
   baseModelFamily: BaseModelFamily | null
   civitaiFileId: number | null
@@ -273,6 +291,40 @@ export interface StudioApi {
   models: ModelApi
   projects: ProjectApi
   runtime: RuntimeApi
+}
+
+export function isProjectRasterLayerChange(input: unknown): input is ProjectRasterLayerChange {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  const keys = Object.keys(value)
+  return (
+    (value.kind === 'visibility' &&
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('visible') &&
+      typeof value.visible === 'boolean') ||
+    (value.kind === 'lock' &&
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('locked') &&
+      typeof value.locked === 'boolean') ||
+    (value.kind === 'opacity' &&
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('opacity') &&
+      typeof value.opacity === 'number' &&
+      Number.isFinite(value.opacity) &&
+      value.opacity >= 0 &&
+      value.opacity <= 1) ||
+    (value.kind === 'blend-mode' &&
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('blendMode') &&
+      typeof value.blendMode === 'string' &&
+      ['multiply', 'normal', 'overlay', 'screen'].includes(value.blendMode))
+  )
 }
 
 declare global {

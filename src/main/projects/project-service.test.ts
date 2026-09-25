@@ -1,19 +1,76 @@
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+
 import assert from 'node:assert/strict'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
-import { readIgsPackage } from './igs-package.js'
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
+import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+const rasterPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+/** Seed a real portable .igs, then enter the Project service through its public import flow. */
+async function openTwoLayerProject(
+  dataRoot: string,
+  repository: ProjectIndexRepository,
+  service: ProjectService,
+): Promise<{ filePath: string; layerIds: [string, string]; tabId: string }> {
+  const externalPath = path.join(dataRoot, 'Raster fixture.igs')
+  const layerIds: [string, string] = [randomUUID(), randomUUID()]
+  const sha256 = createHash('sha256').update(rasterPng).digest('hex')
+  const assetPaths = layerIds.map((id) => `assets/layers/${id}.png`)
+  const project = createEmptyProjectDocumentV1({ title: 'Raster editing' })
+  const placeholders = await readProjectPlaceholders(placeholdersDir, 'unavailable')
+  await saveIgsPackage(externalPath, {
+    assets: Object.fromEntries(assetPaths.map((assetPath) => [assetPath, { bytes: rasterPng }])),
+    preview: {
+      ...placeholders,
+      rect: { height: 2, width: 6, x: 0, y: 0 },
+      status: 'unavailable',
+    },
+    project: {
+      ...project,
+      layers: layerIds.map((id, index) => ({
+        asset: { bytes: rasterPng.length, height: 2, path: assetPaths[index], sha256, width: 2 },
+        blendMode: 'normal' as const,
+        id,
+        kind: 'raster' as const,
+        locked: false,
+        name: index === 0 ? 'Top' : 'Bottom',
+        opacity: 1,
+        transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: index * 4, y: 0 },
+        visible: true,
+      })),
+    },
+  })
+  const selected = await service.selectImport(externalPath)
+  assert.equal(selected.kind, 'transfer-required')
+  if (selected.kind !== 'transfer-required') {
+    throw new Error('Fixture import did not request a transfer.')
+  }
+  const imported = await service.finishImport(selected.importId, 'copy')
+  assert.equal(imported.result.kind, 'opened')
+  if (imported.result.kind !== 'opened') {
+    throw new Error('Fixture import did not open the Project.')
+  }
+  const indexed = await repository.listProjects()
+  assert.equal(indexed.length, 1)
+  return { filePath: indexed[0].canonicalPath, layerIds, tabId: imported.result.tab.id }
+}
 
 async function withService(
   run: (context: {
@@ -627,5 +684,169 @@ test('import rejects a symlinked file and a redirected workspace without publish
     })
     assert.deepEqual(await readdir(elsewhere), [])
     assert.equal((await readIgsPackage(sourcePath)).project.title, 'External')
+  })
+})
+
+test('Raster Layer commands persist top-first order and properties through shadow, Save and reopen', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const original = await readIgsPackage(filePath)
+    assert.deepEqual(
+      original.project.layers.map((layer) => layer.id),
+      layerIds,
+    )
+    assert.equal(original.manifest.preview.status, 'unavailable')
+
+    // The public service boundary must change the open document, while the saved .igs stays put
+    // until Save. Each property and the list order must survive the independent loader.
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'visibility', visible: false })
+    await service.updateRasterLayer(tabId, layerIds[1], { kind: 'opacity', opacity: 0.4 })
+    await service.updateRasterLayer(tabId, layerIds[1], {
+      blendMode: 'multiply',
+      kind: 'blend-mode',
+    })
+    const moved = await service.moveRasterLayer(tabId, layerIds[1], 0)
+    assert.deepEqual(
+      moved.layers.map((layer) => layer.id),
+      [layerIds[1], layerIds[0]],
+    )
+    const locked = await service.updateRasterLayer(tabId, layerIds[1], {
+      kind: 'lock',
+      locked: true,
+    })
+    assert.equal(locked.dirty, true)
+    assert.deepEqual(
+      locked.layers.map(({ blendMode, locked, opacity, visible }) => ({
+        blendMode,
+        locked,
+        opacity,
+        visible,
+      })),
+      [
+        { blendMode: 'multiply', locked: true, opacity: 0.4, visible: true },
+        { blendMode: 'normal', locked: false, opacity: 1, visible: false },
+      ],
+    )
+    await service.flushAutosave(tabId)
+    assert.deepEqual((await readIgsPackage(filePath)).project.layers, original.project.layers)
+    const recovery = await shadow.inspect({ projectPath: filePath, savedPackage: original })
+    assert.equal(recovery.status, 'recoverable')
+    if (recovery.status === 'recoverable') {
+      assert.deepEqual(
+        recovery.document.layers.map((layer) => layer.id),
+        [layerIds[1], layerIds[0]],
+      )
+      assert.equal(recovery.document.layers[0].blendMode, 'multiply')
+      assert.equal(recovery.document.layers[1].visible, false)
+    }
+
+    assert.equal((await service.save(tabId)).tab.dirty, false)
+    const saved = await readIgsPackage(filePath)
+    assert.deepEqual(
+      saved.project.layers.map((layer) => layer.id),
+      [layerIds[1], layerIds[0]],
+    )
+    assert.equal(saved.project.layers[0].opacity, 0.4)
+    assert.equal(saved.project.layers[0].locked, true)
+    assert.equal(saved.project.layers[1].visible, false)
+    assert.equal(saved.manifest.preview.status, 'unavailable')
+    for (const layer of saved.project.layers) {
+      assert.deepEqual(await saved.readMember(layer.asset.path), rasterPng)
+    }
+    await service.close(tabId)
+    const reopened = await service.open(tabId)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind === 'opened') {
+      assert.equal(reopened.tab.dirty, false)
+      assert.deepEqual(
+        reopened.tab.layers.map((layer) => layer.id),
+        [layerIds[1], layerIds[0]],
+      )
+      assert.equal(reopened.tab.layers[0].blendMode, 'multiply')
+      assert.equal(reopened.tab.layers[0].opacity, 0.4)
+      assert.equal(reopened.tab.layers[0].locked, true)
+      assert.equal(reopened.tab.layers[1].visible, false)
+      await service.close(tabId)
+    }
+  })
+})
+
+test('Raster Layer commands reject invalid or locked edits and preserve a clean document on no-op', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const before = await readIgsPackage(filePath)
+    const beforeTabs = service.getOpenTabs()
+    assert.equal(
+      (
+        await service.updateRasterLayer(tabId, layerIds[0], {
+          kind: 'visibility',
+          visible: true,
+        })
+      ).dirty,
+      false,
+    )
+    assert.equal((await service.moveRasterLayer(tabId, layerIds[0], 0)).dirty, false)
+
+    await assert.rejects(
+      service.updateRasterLayer(tabId, randomUUID(), { kind: 'visibility', visible: false }),
+      { code: 'PROJECT_LAYER_NOT_FOUND' },
+    )
+    for (const opacity of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assert.rejects(
+        service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity }),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+    }
+    for (const index of [-1, 2, 0.5]) {
+      await assert.rejects(service.moveRasterLayer(tabId, layerIds[0], index), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    assert.deepEqual(service.getOpenTabs(), beforeTabs)
+    await service.flushAutosave(tabId)
+    assert.deepEqual((await readIgsPackage(filePath)).project, before.project)
+    assert.notEqual(
+      (await shadow.inspect({ projectPath: filePath, savedPackage: before })).status,
+      'recoverable',
+    )
+
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'lock', locked: true })
+    await assert.rejects(
+      service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.5 }),
+      { code: 'PROJECT_LAYER_LOCKED' },
+    )
+    await assert.rejects(service.moveRasterLayer(tabId, layerIds[0], 1), {
+      code: 'PROJECT_LAYER_LOCKED',
+    })
+    assert.equal(service.getOpenTabs()[0].layers[0].opacity, 1)
+    assert.deepEqual(
+      service.getOpenTabs()[0].layers.map((layer) => layer.id),
+      layerIds,
+    )
+  })
+})
+
+test('Save marks an all-hidden or zero-opacity raster Project empty without dropping layer assets', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'visibility', visible: false })
+    await service.updateRasterLayer(tabId, layerIds[1], { kind: 'opacity', opacity: 0 })
+    await service.save(tabId)
+    const empty = await readIgsPackage(filePath)
+    assert.equal(empty.manifest.preview.status, 'empty')
+    assert.equal(empty.manifest.preview.rect, null)
+    assert.equal(empty.project.layers.length, 2)
+    for (const layer of empty.project.layers) {
+      assert.deepEqual(await empty.readMember(layer.asset.path), rasterPng)
+    }
+
+    // One visible nonzero-opacity layer changes only the preview classification; pixels are still
+    // saved intact when the worker is unavailable.
+    await service.updateRasterLayer(tabId, layerIds[1], { kind: 'opacity', opacity: 0.01 })
+    await service.save(tabId)
+    const visible = await readIgsPackage(filePath)
+    assert.equal(visible.manifest.preview.status, 'unavailable')
+    assert.deepEqual(visible.manifest.preview.rect, { height: 2, width: 2, x: 4, y: 0 })
+    assert.deepEqual(await visible.readMember(visible.project.layers[1].asset.path), rasterPng)
   })
 })

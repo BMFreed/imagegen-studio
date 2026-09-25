@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { ProjectTab } from '../../shared/api.js'
+import type { ProjectApi, ProjectTab } from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { DeviceFloppy as SaveIcon } from '@vicons/tabler'
+import { DnDProvider } from '@vue-dnd-kit/core'
 import { NAlert, NButton, NFormItem, NIcon, NInputNumber } from 'naive-ui'
 import { computed, reactive, ref, watch } from 'vue'
 
@@ -22,7 +23,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   applyBbox: [rect: IgsRectV1]
+  moveLayer: [layerId: string, targetIndex: number]
   save: []
+  updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
 }>()
 
 const selectedLayerId = ref<string | null>(null)
@@ -246,7 +249,15 @@ function applyFitBbox() {
         @selectLayer="selectedLayerId = $event"
       />
 
-      <ProjectLayerStack v-model:selectedLayerId="selectedLayerId" :layers="tab.layers" />
+      <DnDProvider :autoScrollViewport="false">
+        <ProjectLayerStack
+          v-model:selectedLayerId="selectedLayerId"
+          :disabled="busy || reloadRequired"
+          :layers="tab.layers"
+          @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
+          @update="(layerId, change) => emit('updateLayer', layerId, change)"
+        />
+      </DnDProvider>
     </div>
   </section>
 </template>
@@ -282,7 +293,7 @@ function applyFitBbox() {
 
 .project-layout {
   display: grid;
-  grid-template-columns: 244px minmax(0, 1fr) 252px;
+  grid-template-columns: 244px minmax(0, 1fr) minmax(280px, 22vw);
   flex: 1 1 auto;
   min-height: 0;
 }
