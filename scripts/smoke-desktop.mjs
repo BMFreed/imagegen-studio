@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { _electron as electron } from '@playwright/test'
 import electronBinary from 'electron'
+
+for (const kind of ['empty', 'unavailable']) {
+  const root = path.join('dist', 'main', 'placeholders', kind)
+  assert.equal(readFileSync(`${root}.png`).subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+  assert.equal(readFileSync(`${root}.webp`).toString('ascii', 8, 12), 'WEBP')
+}
 
 const dataRoot = mkdtempSync(path.join(os.tmpdir(), 'igs-electron-smoke-'))
 const environment = {

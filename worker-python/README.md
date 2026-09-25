@@ -1,0 +1,36 @@
+# ImageGen Studio Python worker
+
+This package is the initial image-import and derivative subprocess for Phase 2A. It does **not** contain inference, CUDA/PyTorch checks, a packaged Linux/NVIDIA runtime, or an installer. Its `derivatives-only` profile must not satisfy the production `linux-nvidia` runtime activation gate.
+
+Run locally with the app-managed development Python selected by `.python-version`:
+
+```bash
+uv sync --locked
+uv run python -I -m imagegen_worker
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run basedpyright src tests
+uv run pytest
+```
+
+The worker is long-lived. It writes one JSON object per line to stdout and reads one command per line from stdin. Stdout carries protocol messages only. It emits `ready` immediately with `protocolVersion: "1"`, `workerVersion`, `pythonVersion`, `runtimeProfile: "derivatives-only"`, and `capabilities: ["image-derivatives", "import-normalization", "self-test"]`. Main must reject incompatible versions/profiles and impose its own startup/request deadlines.
+
+The three command shapes are:
+
+```json
+{"type":"self-test","protocolVersion":"1","requestId":"check-1"}
+{"type":"derive-image","protocolVersion":"1","requestId":"preview-1","input":{"path":"/absolute/immutable/visible-composite.png","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","colorSpace":"srgb"},"output":{"stagingRoot":"/absolute/app-managed/staging","mergedPngPath":"/absolute/app-managed/staging/preview/merged.png","thumbnailWebpPath":"/absolute/app-managed/staging/preview/thumbnail.webp"},"thumbnailMaxSide":256}
+{"type":"normalize-import","protocolVersion":"1","requestId":"import-1","input":{"path":"/absolute/imported/source.png","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"output":{"stagingRoot":"/absolute/app-managed/staging","normalizedPngPath":"/absolute/app-managed/staging/layer.png","originalIccPath":"/absolute/app-managed/staging/original.icc"}}
+```
+
+`self-test-result` confirms only Pillow PNG/WebP round trips and an sRGB ICC transform. `derivative-done` carries `requestId`, `protocolVersion`, and `merged`/`thumbnail` metadata `{byteSize,width,height,sha256,colorSpace:"srgb"}`. `import-done` carries `sourceFormat: "PNG" | "JPEG" | "WEBP"`, `normalized` image metadata of the same shape, and `originalIcc: {byteSize,sha256} | null`. Main already knows the nominated paths and must inspect/validate actual output before publication. `error` carries `requestId` (or `null` for malformed input), `code`, and safe `message`. Neither command writes `.igs` or SQLite or publishes final Project assets.
+
+`normalize-import` accepts frozen PNG, JPEG, or WebP bytes. If an ICC profile is embedded, the worker validates it, converts color pixels to sRGB with Pillow ImageCms using perceptual intent, preserves alpha, and writes **exact original ICC bytes** to the nominated `.icc` staging path. Main can then store those bytes as layer metadata in `.igs`; it must not convert image pixels itself. Untagged RGB, grayscale, and palette images are interpreted as sRGB; untagged CMYK is rejected. Malformed/oversized ICC profiles fail explicitly. The normalized PNG embeds the bundled sRGB ICC profile.
+
+The worker bundles a fixed 588-byte `srgb.icc` instead of generating a profile at startup: lcms-generated profiles contain creation-time bytes and change hash. The package and main-process boundary pin SHA-256 `113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1`; an output with a different embedded ICC is rejected even if the worker reports `colorSpace: "srgb"`. The ICC header's declared profile length must match its embedded bytes, so a padded or malformed source profile fails before publication.
+
+For `derive-image`, main must supply a frozen, canonical, absolute **pre-normalized sRGB** PNG composite and its SHA-256. The compositor must emit a profileless composite; this command refuses an embedded input ICC profile and does not transform pixel colors. Both derivative outputs embed the standard sRGB ICC profile. Both operations read a bounded source byte snapshot and reject a changed hash. Output paths must be distinct, nonexistent, canonical, have the proper extensions, and lie beneath an existing canonical staging root. The worker writes temporary files beside each target and publishes each with an exclusive hard link; a failed group is cleaned up. Main should allocate a unique staging directory per request and discard incomplete staging after a crash. A returned `derivative-done` or `import-done` is not a Save commit.
+
+Provisional defensive ceilings are 64 KiB per command line, 256 MiB source file, 4 MiB embedded ICC profile, 16,384 pixels on either side, 64 million decoded pixels, and thumbnail side 32–1,024. They are implementation guards, **not** measured Project capacity or the final product limits. Source errors leave existing project files untouched. Main owns placeholder selection for empty Projects or unavailable worker, Save/recovery, timeouts/cancellation, and cleanup of staging after process crashes.
+
+The non-sRGB test fixture `tests/fixtures/AdobeRGB1998.icc` comes from the `colord-data` profile set (`data/profiles/*`, Richard Hughes, CC0-1.0); its SHA-256 is `59b0418391ee14b5edc84ece59a51bedbfc10ef912cf038490c2bd0ff48fd1da`.

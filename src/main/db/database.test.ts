@@ -34,7 +34,7 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 2)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 3)
     assert.throws(() =>
       sqlite.prepare('INSERT INTO app_metadata VALUES (?, ?)').run('invalid', Buffer.from([1])),
     )
@@ -52,7 +52,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
     const first = openAppDatabase(root, migrations)
     await first.close()
     writeFileSync(
-      path.join(migrations, '0003_broken.sql'),
+      path.join(migrations, '0004_broken.sql'),
       'CREATE TABLE partial_table (value TEXT) STRICT; INVALID SQL;',
     )
 
@@ -62,7 +62,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 2)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 3)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

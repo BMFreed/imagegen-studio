@@ -121,7 +121,7 @@ test('verified installation survives reopen with exact CivitAI file identity and
     const migrationCount = sqlite
       .prepare<[], { count: number }>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    assert.equal(migrationCount?.count, 2)
+    assert.equal(migrationCount?.count, 3)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

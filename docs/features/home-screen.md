@@ -412,8 +412,10 @@ Preview is for inspection, not editing.
    `Rebuild Preview` with a working worker explicitly replaces embedded
    previews for a clean Project; if it is open and dirty, Home routes to
    Project Save. A cache refresh does not rewrite `.igs`.
-4. If preview files are missing, Home shows fallback state and can rebuild cache
-   from `.igs` when possible.
+4. If a derived cache preview is missing, Home reads the mandatory embedded
+   preview from `.igs` and rebuilds the cache. If an embedded preview is missing,
+   the package is corrupt; Home shows a damaged-project diagnostic rather than
+   presenting a cache rebuild as a repair.
 5. User can zoom/pan.
 6. User can open the project or perform project file actions.
 
@@ -425,12 +427,12 @@ flowchart TD
   B -- "Yes" --> C["Show cached preview"]
   B -- "No" --> D{"thumbnail.webp inside .igs?"}
   D -- "Yes" --> E["Load preview from .igs and refresh cache"]
-  D -- "No" --> H["Show fallback preview"]
+  D -- "No" --> H["Show damaged-project diagnostic"]
   C --> G["Zoom / pan / inspect"]
   E --> G
   F --> P["Rebuild Preview when worker is available"]
   P --> G
-  H --> R["Offer rescan/rebuild when possible"]
+  H --> R["Offer file recovery or relink"]
   R --> I
   G --> I["Open / open in new tab / move / show in folder / overflow actions"]
 ```

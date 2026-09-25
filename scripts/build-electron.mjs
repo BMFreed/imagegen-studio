@@ -33,3 +33,10 @@ await mkdir(migrationsOutDir, { recursive: true });
 await cp('src/main/db/migrations', migrationsOutDir, {
   recursive: true,
 });
+
+const placeholdersOutDir = path.join(outDir, 'main/placeholders');
+await rm(placeholdersOutDir, { force: true, recursive: true });
+await mkdir(placeholdersOutDir, { recursive: true });
+await cp('src/main/projects/placeholders', placeholdersOutDir, {
+  recursive: true,
+});

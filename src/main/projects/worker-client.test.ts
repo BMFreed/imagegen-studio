@@ -1,0 +1,687 @@
+import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+
+import assert from 'node:assert/strict'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, realpathSync } from 'node:fs'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { crc32, deflateSync } from 'node:zlib'
+
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
+import { ProjectSession } from './project-session.js'
+import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
+
+const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..')
+const DEV_PYTHON = path.join(REPOSITORY_ROOT, 'worker-python/.venv/bin/python')
+const ADOBE_ICC = path.join(REPOSITORY_ROOT, 'worker-python/tests/fixtures/AdobeRGB1998.icc')
+const SOURCE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
+  'base64',
+)
+const SOURCE_WEBP = Buffer.from(
+  'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
+  'base64',
+)
+const OUTPUT_PNG_WITH_ICC = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAABdmlDQ1BJQ0MgUHJvZmlsZQAAeJx1kbtLw1AUxn+2im8K6qDiEPCBQwVREEetQ5cipVbwtaSxaYW2hqRFiqvg4lBwEF18Df4HugquCoKgCCLOjr4WkXiuEVrE3nBzfnz3foeTL+CLZIysUzsB2VzejoVD2tz8glb/TCNdtNHLmG441mQ0GqHq+rilRtWbIdWr+r1/V/Ny0jGgpkF4zLDsvLBMQ2QtbyneEu4w0vqy8IFw0JYBhS+VnvD4SXHK4zfFdjw2BT7VU0tVcKKCjbSdFR4U7stmCsbvPOpLWpK52Rmp3bJ7cIgRJoRGggIrZMgzJDUnmf3vG/7xTbMqHkPeFkVscaRIizcoakG6JqWaoiflyVBUuf/N0zFHR7zuLSGoe3Td136o34avkut+Hrru1xH4H+A8V/avSk7j76KXylrfPgQ24PSirCV24GwTOu8t3dZ/JL9sn2nCywm0zkP7NTQteln9nnN8B/F1+UVXsLsHA3I/sPQNa9toO5092CkAAAAUSURBVHicY7TpufOfgYGBgYkBCgAnyAKnqdXrcQAAAABJRU5ErkJggg==',
+  'base64',
+)
+const OUTPUT_WEBP_WITH_ICC = Buffer.from(
+  'UklGRoQCAABXRUJQVlA4WAoAAAAgAAAAAQAAAQAASUNDUEwCAAAAAAJMbGNtcwRAAABtbnRyUkdCIFhZWiAH6gAJABkAEgAjADZhY3NwQVBQTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9tYAAQAAAADTLWxjbXMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtkZXNjAAABCAAAADZjcHJ0AAABQAAAAEx3dHB0AAABjAAAABRjaGFkAAABoAAAACxyWFlaAAABzAAAABRiWFlaAAAB4AAAABRnWFlaAAAB9AAAABRyVFJDAAACCAAAACBnVFJDAAACCAAAACBiVFJDAAACCAAAACBjaHJtAAACKAAAACRtbHVjAAAAAAAAAAEAAAAMZW5VUwAAABoAAAAcAHMAUgBHAEIAIABiAHUAaQBsAHQALQBpAG4AAG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAMAAAABwATgBvACAAYwBvAHAAeQByAGkAZwBoAHQALAAgAHUAcwBlACAAZgByAGUAZQBsAHlYWVogAAAAAAAA9tYAAQAAAADTLXNmMzIAAAAAAAEMQgAABd7///MlAAAHkwAA/ZD///uh///9ogAAA9wAAMBuWFlaIAAAAAAAAG+gAAA49QAAA5BYWVogAAAAAAAAJJ8AAA+EAAC2w1hZWiAAAAAAAABilwAAt4cAABjZcGFyYQAAAAAAAwAAAAJmZgAA8qcAAA1ZAAAT0AAACltjaHJtAAAAAAADAAAAAKPXAABUewAATM0AAJmaAAAmZgAAD1xWUDhMEQAAAC8BQAAAB1DG8pS7/4GI6H8AAA==',
+  'base64',
+)
+const sha256 = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
+
+async function withTemp(run: (directory: string) => Promise<void>): Promise<void> {
+  const directory = await mkdtemp(path.join(tmpdir(), 'igs-worker-client-'))
+  try {
+    await run(directory)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+}
+
+async function fakeWorker(directory: string): Promise<string> {
+  const executable = path.join(directory, 'fake-python')
+  const script = String.raw`#!${process.execPath}
+const mode = process.env.FAKE_MODE
+if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker') process.exit(21)
+const ready = {
+  type: 'ready', protocolVersion: '1', workerVersion: mode === 'bad-version' ? '9.9.9' : '0.1.0',
+  pythonVersion: '3.12.13', runtimeProfile: 'derivatives-only',
+  capabilities: ['image-derivatives', 'import-normalization', 'self-test']
+}
+if (mode === 'silent') { setInterval(() => {}, 1000) }
+else {
+  const startup = JSON.stringify(ready) + '\n'
+  process.stdout.write(mode === 'unsolicited'
+    ? startup + JSON.stringify({type:'self-test-result',protocolVersion:'1',requestId:'unasked'}) + '\n'
+    : startup)
+  process.stdin.setEncoding('utf8')
+  let input = ''
+  process.stdin.on('data', chunk => {
+    input += chunk
+    while (input.includes('\n')) {
+      const newline = input.indexOf('\n')
+      const request = JSON.parse(input.slice(0, newline)); input = input.slice(newline + 1)
+      if (mode === 'hang') continue
+      if (mode === 'crash') process.exit(7)
+      if (mode === 'invalid-json') { process.stdout.write('{bad\n'); continue }
+      if (mode === 'worker-error') {
+        process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'INPUT_HASH_MISMATCH',message:'Input changed.'}) + '\n')
+        continue
+      }
+      if (mode === 'dishonest-output') {
+        const fs = require('node:fs')
+        const merged = Buffer.from(process.env.FAKE_PNG, 'base64')
+        const thumbnail = Buffer.from(process.env.FAKE_WEBP, 'base64')
+        fs.writeFileSync(request.output.mergedPngPath, merged)
+        fs.writeFileSync(request.output.thumbnailWebpPath, thumbnail)
+        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId:request.requestId,merged:{byteSize:merged.length,width:2,height:2,sha256:'0'.repeat(64),colorSpace:'srgb'},thumbnail:{byteSize:thumbnail.length,width:2,height:2,sha256:'0'.repeat(64),colorSpace:'srgb'}}) + '\n')
+        continue
+      }
+      if (mode === 'truthful-derivative') {
+        const fs = require('node:fs')
+        const crypto = require('node:crypto')
+        const merged = Buffer.from(process.env.FAKE_PNG, 'base64')
+        const thumbnail = Buffer.from(process.env.FAKE_WEBP, 'base64')
+        fs.writeFileSync(request.output.mergedPngPath, merged)
+        fs.writeFileSync(request.output.thumbnailWebpPath, thumbnail)
+        const info = (bytes) => ({byteSize:bytes.length,width:2,height:2,sha256:crypto.createHash('sha256').update(bytes).digest('hex'),colorSpace:'srgb'})
+        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId:request.requestId,merged:info(merged),thumbnail:info(thumbnail)}) + '\n')
+        continue
+      }
+      if (mode === 'dishonest-color') {
+        const fs = require('node:fs')
+        const crypto = require('node:crypto')
+        const normalized = Buffer.from(process.env.FAKE_PNG, 'base64')
+        fs.writeFileSync(request.output.normalizedPngPath, normalized)
+        process.stdout.write(JSON.stringify({type:'import-done',protocolVersion:'1',requestId:request.requestId,sourceFormat:'PNG',normalized:{byteSize:normalized.length,width:2,height:2,sha256:crypto.createHash('sha256').update(normalized).digest('hex'),colorSpace:'srgb'},originalIcc:null}) + '\n')
+        continue
+      }
+      const requestId = mode === 'wrong-id' ? 'different-id' : request.requestId
+      if (request.type === 'self-test') {
+        process.stdout.write(JSON.stringify({type:'self-test-result',protocolVersion:'1',requestId,runtimeProfile:'derivatives-only',checks:{pillowVersion:'12.0.0',imageCodecs:['PNG','WEBP'],colorConversion:'srgb'}}) + '\n')
+      } else {
+        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId,merged:{byteSize:1,width:1,height:1,sha256:'0'.repeat(64),colorSpace:'srgb'},thumbnail:{byteSize:1,width:1,height:1,sha256:'0'.repeat(64),colorSpace:'srgb'}}) + '\n')
+      }
+    }
+  })
+}
+`
+  await writeFile(executable, script)
+  await chmod(executable, 0o700)
+  return executable
+}
+
+function insertPngChunk(png: Buffer, chunkType: string, payload: Buffer): Buffer {
+  const type = Buffer.from(chunkType, 'ascii')
+  const chunk = Buffer.alloc(12 + payload.length)
+  chunk.writeUInt32BE(payload.length, 0)
+  type.copy(chunk, 4)
+  payload.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(Buffer.concat([type, payload])), 8 + payload.length)
+  return Buffer.concat([png.subarray(0, 33), chunk, png.subarray(33)])
+}
+
+function insertIcc(png: Buffer, profile: Buffer): Buffer {
+  return insertPngChunk(
+    png,
+    'iCCP',
+    Buffer.concat([Buffer.from('source\0\0', 'ascii'), deflateSync(profile)]),
+  )
+}
+
+function webpWithIcc(profile: Buffer, iccFirst: boolean): Buffer {
+  const chunk = (tag: string, payload: Buffer): Buffer => {
+    const header = Buffer.alloc(8)
+    header.write(tag, 0, 'ascii')
+    header.writeUInt32LE(payload.length, 4)
+    return Buffer.concat([header, payload, Buffer.alloc(payload.length & 1)])
+  }
+  const extended = Buffer.alloc(10)
+  extended[0] = 0x20
+  extended.writeUIntLE(1, 4, 3)
+  extended.writeUIntLE(1, 7, 3)
+  const chunks = iccFirst
+    ? [chunk('ICCP', profile), SOURCE_WEBP.subarray(12)]
+    : [chunk('VP8X', extended), chunk('ICCP', profile), SOURCE_WEBP.subarray(12)]
+  const payload = Buffer.concat([Buffer.from('WEBP'), ...chunks])
+  const riff = Buffer.alloc(8)
+  riff.write('RIFF', 0, 'ascii')
+  riff.writeUInt32LE(payload.length, 4)
+  return Buffer.concat([riff, payload])
+}
+
+function corruptIdat(png: Buffer, kind: 'checksum' | 'compressed-data'): Buffer {
+  const corrupted = Buffer.from(png)
+  let offset = 8
+  while (offset + 12 <= corrupted.length) {
+    const length = corrupted.readUInt32BE(offset)
+    const tag = corrupted.toString('ascii', offset + 4, offset + 8)
+    if (tag === 'IDAT') {
+      if (kind === 'checksum') {
+        corrupted[offset + 8 + length] ^= 1
+      } else {
+        corrupted[offset + 8] = 0xff
+        corrupted.writeUInt32BE(
+          crc32(corrupted.subarray(offset + 4, offset + 8 + length)),
+          offset + 8 + length,
+        )
+      }
+      return corrupted
+    }
+    offset += 12 + length
+  }
+  throw new Error('The PNG fixture has no IDAT chunk.')
+}
+
+function devRuntimeRoot(): string | null {
+  if (!existsSync(DEV_PYTHON)) {
+    return null
+  }
+  const executable = realpathSync(DEV_PYTHON)
+  const partsA = DEV_PYTHON.split(path.sep)
+  const partsB = executable.split(path.sep)
+  let shared = 0
+  while (partsA[shared] === partsB[shared] && shared < partsA.length && shared < partsB.length) {
+    shared++
+  }
+  const root = partsA.slice(0, shared).join(path.sep) || path.sep
+  // The broad common root is acceptable only in this explicit development integration test.
+  return root === path.sep ? null : root
+}
+
+test('fixed executable path, handshake, self-test and protocol failures', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const location = { pythonExecutable, runtimeRoot, stagingBasePath }
+    const client = await ProjectWorkerClient.start(location, {
+      environment: { FAKE_MODE: 'valid' },
+    })
+    try {
+      assert.equal(client.ready.runtimeProfile, 'derivatives-only')
+      assert.deepEqual((await client.selfTest()).imageCodecs, ['PNG', 'WEBP'])
+    } finally {
+      await client.close()
+    }
+    await assert.rejects(
+      ProjectWorkerClient.start(location, { environment: { FAKE_MODE: 'bad-version' } }),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
+    await assert.rejects(
+      ProjectWorkerClient.start(location, { environment: { FAKE_MODE: 'unsolicited' } }),
+      { code: 'PROTOCOL_ERROR' },
+    )
+    await assert.rejects(
+      ProjectWorkerClient.start(location, {
+        environment: { FAKE_MODE: 'silent' },
+        startupTimeoutMs: 50,
+      }),
+      { code: 'STARTUP_TIMEOUT' },
+    )
+    const escaped = path.join(directory, 'escaped-python')
+    await symlink(pythonExecutable, escaped)
+    await assert.rejects(ProjectWorkerClient.start({ ...location, pythonExecutable: escaped }), {
+      code: 'INVALID_PATH',
+    })
+    await assert.rejects(ProjectWorkerClient.start({ ...location, pythonExecutable: 'python3' }), {
+      code: 'INVALID_PATH',
+    })
+  })
+})
+
+test('wrong request ID, malformed JSON, crash and deadline reject the active request', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    for (const [mode, code] of [
+      ['wrong-id', 'PROTOCOL_ERROR'],
+      ['invalid-json', 'PROTOCOL_ERROR'],
+      ['crash', 'WORKER_EXITED'],
+      ['hang', 'REQUEST_TIMEOUT'],
+    ] as const) {
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        { environment: { FAKE_MODE: mode }, requestTimeoutMs: 80 },
+      )
+      try {
+        await assert.rejects(client.selfTest(), { code })
+      } finally {
+        await client.close()
+      }
+    }
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'worker-error' } },
+    )
+    try {
+      await assert.rejects(client.selfTest(), (error: unknown) => {
+        assert.ok(error instanceof ProjectWorkerError)
+        assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+        assert.equal(error.workerCode, 'INPUT_HASH_MISMATCH')
+        return true
+      })
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('worker metadata cannot substitute for missing output or escaped staging path', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    const requestStaging = path.join(stagingBasePath, 'request')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    await mkdir(requestStaging)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'valid' } },
+    )
+    const input = {
+      inputPath: source,
+      inputSha256: sha256(SOURCE_PNG),
+      mergedPngPath: path.join(requestStaging, 'merged.png'),
+      stagingRoot: requestStaging,
+      thumbnailMaxSide: 64,
+      thumbnailWebpPath: path.join(requestStaging, 'thumbnail.webp'),
+    }
+    try {
+      await assert.rejects(
+        client.deriveImage({ ...input, mergedPngPath: path.join(directory, 'outside.png') }),
+        { code: 'INVALID_PATH' },
+      )
+      await assert.rejects(client.deriveImage(input), { code: 'OUTPUT_MISMATCH' })
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('main rejects actual output files when the worker reports a false SHA-256', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    const requestStaging = path.join(stagingBasePath, 'request')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    await mkdir(requestStaging)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      {
+        environment: {
+          FAKE_MODE: 'dishonest-output',
+          FAKE_PNG: OUTPUT_PNG_WITH_ICC.toString('base64'),
+          FAKE_WEBP: OUTPUT_WEBP_WITH_ICC.toString('base64'),
+        },
+      },
+    )
+    try {
+      const mergedPngPath = path.join(requestStaging, 'merged.png')
+      await assert.rejects(
+        client.deriveImage({
+          inputPath: source,
+          inputSha256: sha256(SOURCE_PNG),
+          mergedPngPath,
+          stagingRoot: requestStaging,
+          thumbnailMaxSide: 64,
+          thumbnailWebpPath: path.join(requestStaging, 'thumbnail.webp'),
+        }),
+        { code: 'OUTPUT_MISMATCH' },
+      )
+      assert.deepEqual(await readFile(mergedPngPath), OUTPUT_PNG_WITH_ICC)
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('worker WebP acceptance matches package Save for a truthful ICC-first output', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const profile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const merged = insertIcc(SOURCE_PNG, profile)
+    const project = createEmptyProjectDocumentV1({ title: 'WebP parity' })
+
+    for (const iccFirst of [false, true]) {
+      const label = iccFirst ? 'icc-first' : 'vp8x-first'
+      const stagingRoot = path.join(stagingBasePath, label)
+      await mkdir(stagingRoot)
+      const thumbnail = webpWithIcc(profile, iccFirst)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        {
+          environment: {
+            FAKE_MODE: 'truthful-derivative',
+            FAKE_PNG: merged.toString('base64'),
+            FAKE_WEBP: thumbnail.toString('base64'),
+          },
+        },
+      )
+      const request = {
+        inputPath: source,
+        inputSha256: sha256(SOURCE_PNG),
+        mergedPngPath: path.join(stagingRoot, 'merged.png'),
+        stagingRoot,
+        thumbnailMaxSide: 64,
+        thumbnailWebpPath: path.join(stagingRoot, 'thumbnail.webp'),
+      }
+      try {
+        if (iccFirst) {
+          await assert.rejects(client.deriveImage(request), { code: 'OUTPUT_MISMATCH' })
+          await assert.rejects(
+            saveIgsPackage(path.join(directory, `${label}.igs`), {
+              preview: { merged, rect: null, status: 'empty', thumbnail },
+              project,
+            }),
+            { code: 'INVALID_IMAGE' },
+          )
+        } else {
+          const result = await client.deriveImage(request)
+          assert.equal(result.thumbnail.sha256, sha256(thumbnail))
+          const target = path.join(directory, `${label}.igs`)
+          await saveIgsPackage(target, {
+            preview: { merged, rect: null, status: 'empty', thumbnail },
+            project,
+          })
+          assert.deepEqual((await readIgsPackage(target)).manifest.preview.status, 'empty')
+        }
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('main rejects AdobeRGB output even when the worker truthfully reports its file hash', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    const requestStaging = path.join(stagingBasePath, 'request')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    await mkdir(requestStaging)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const adobeProfile = await readFile(ADOBE_ICC)
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      {
+        environment: {
+          FAKE_MODE: 'dishonest-color',
+          FAKE_PNG: insertIcc(SOURCE_PNG, adobeProfile).toString('base64'),
+        },
+      },
+    )
+    try {
+      await assert.rejects(
+        client.normalizeImport({
+          inputPath: source,
+          inputSha256: sha256(SOURCE_PNG),
+          normalizedPngPath: path.join(requestStaging, 'normalized.png'),
+          originalIccPath: path.join(requestStaging, 'original.icc'),
+          stagingRoot: requestStaging,
+        }),
+        { code: 'OUTPUT_MISMATCH' },
+      )
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('main rejects Display-P3 cICP even when the embedded ICC is pinned sRGB', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    const requestStaging = path.join(stagingBasePath, 'request')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    await mkdir(requestStaging)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const pinnedProfile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const misleading = insertPngChunk(
+      insertIcc(SOURCE_PNG, pinnedProfile),
+      'cICP',
+      Buffer.from([12, 13, 0, 1]),
+    )
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'dishonest-color', FAKE_PNG: misleading.toString('base64') } },
+    )
+    try {
+      await assert.rejects(
+        client.normalizeImport({
+          inputPath: source,
+          inputSha256: sha256(SOURCE_PNG),
+          normalizedPngPath: path.join(requestStaging, 'normalized.png'),
+          originalIccPath: path.join(requestStaging, 'original.icc'),
+          stagingRoot: requestStaging,
+        }),
+        { code: 'OUTPUT_MISMATCH' },
+      )
+    } finally {
+      await client.close()
+    }
+
+    const compatibleStaging = path.join(stagingBasePath, 'compatible')
+    await mkdir(compatibleStaging)
+    const compatible = insertPngChunk(
+      insertIcc(SOURCE_PNG, pinnedProfile),
+      'cICP',
+      Buffer.from([1, 13, 0, 1]),
+    )
+    const control = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'dishonest-color', FAKE_PNG: compatible.toString('base64') } },
+    )
+    try {
+      const result = await control.normalizeImport({
+        inputPath: source,
+        inputSha256: sha256(SOURCE_PNG),
+        normalizedPngPath: path.join(compatibleStaging, 'normalized.png'),
+        originalIccPath: path.join(compatibleStaging, 'original.icc'),
+        stagingRoot: compatibleStaging,
+      })
+      assert.equal(result.normalized.iccSha256, IGS_SRGB_ICC_SHA256)
+    } finally {
+      await control.close()
+    }
+  })
+})
+
+test('main rejects malformed PNG pixels before an imported layer can enter the Project', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const source = path.join(directory, 'source.png')
+    await writeFile(source, SOURCE_PNG)
+    const pinnedProfile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const valid = insertIcc(SOURCE_PNG, pinnedProfile)
+    for (const [name, png] of [
+      ['valid control', valid],
+      ['bad IDAT checksum', corruptIdat(valid, 'checksum')],
+      ['bad compressed pixels with a valid checksum', corruptIdat(valid, 'compressed-data')],
+    ] as const) {
+      const stagingRoot = path.join(stagingBasePath, randomUUID())
+      await mkdir(stagingRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        { environment: { FAKE_MODE: 'dishonest-color', FAKE_PNG: png.toString('base64') } },
+      )
+      try {
+        const request = {
+          inputPath: source,
+          inputSha256: sha256(SOURCE_PNG),
+          normalizedPngPath: path.join(stagingRoot, 'normalized.png'),
+          originalIccPath: path.join(stagingRoot, 'original.icc'),
+          stagingRoot,
+        }
+        if (name === 'valid control') {
+          assert.equal(
+            (await client.normalizeImport(request)).normalized.iccSha256,
+            IGS_SRGB_ICC_SHA256,
+          )
+        } else {
+          await assert.rejects(client.normalizeImport(request), { code: 'OUTPUT_MISMATCH' }, name)
+        }
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test(
+  'development worker round-trips real derivatives and preserves original ICC bytes',
+  {
+    skip: !devRuntimeRoot() || !existsSync(ADOBE_ICC),
+  },
+  async () => {
+    await withTemp(async (directory) => {
+      const stagingBasePath = path.join(directory, 'staging')
+      const deriveRoot = path.join(stagingBasePath, 'derive')
+      const importRoot = path.join(stagingBasePath, 'import')
+      await mkdir(stagingBasePath)
+      await mkdir(deriveRoot)
+      await mkdir(importRoot)
+      const client = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: DEV_PYTHON,
+          runtimeRoot: devRuntimeRoot()!,
+          stagingBasePath,
+        },
+        { requestTimeoutMs: 15_000 },
+      )
+      try {
+        const selfTest = await client.selfTest()
+        assert.equal(selfTest.colorConversion, 'srgb')
+
+        const source = path.join(directory, 'source.png')
+        await writeFile(source, SOURCE_PNG)
+        const derived = await client.deriveImage({
+          inputPath: source,
+          inputSha256: sha256(SOURCE_PNG),
+          mergedPngPath: path.join(deriveRoot, 'merged.png'),
+          stagingRoot: deriveRoot,
+          thumbnailMaxSide: 64,
+          thumbnailWebpPath: path.join(deriveRoot, 'thumbnail.webp'),
+        })
+        assert.equal(derived.merged.width, 2)
+        assert.equal(derived.thumbnail.height, 2)
+        assert.equal(derived.merged.iccSha256, derived.thumbnail.iccSha256)
+        assert.equal(derived.merged.iccSha256, IGS_SRGB_ICC_SHA256)
+        assert.equal(sha256(await readFile(derived.merged.path)), derived.merged.sha256)
+
+        const adobeProfile = await readFile(ADOBE_ICC)
+        const taggedInput = insertIcc(SOURCE_PNG, adobeProfile)
+        const taggedPath = path.join(directory, 'tagged.png')
+        await writeFile(taggedPath, taggedInput)
+        const imported = await client.normalizeImport({
+          inputPath: taggedPath,
+          inputSha256: sha256(taggedInput),
+          normalizedPngPath: path.join(importRoot, 'layer.png'),
+          originalIccPath: path.join(importRoot, 'source.icc'),
+          stagingRoot: importRoot,
+        })
+        assert.equal(imported.sourceFormat, 'PNG')
+        assert.equal(imported.normalized.colorSpace, 'srgb')
+        assert.equal(imported.normalized.iccSha256, IGS_SRGB_ICC_SHA256)
+        assert.equal(imported.normalized.width, 2)
+        assert.ok(imported.originalIcc)
+        assert.deepEqual(await readFile(imported.originalIcc.path), adobeProfile)
+        assert.equal(imported.originalIcc.sha256, sha256(adobeProfile))
+        assert.equal((await lstat(imported.normalized.path)).isFile(), true)
+
+        // Main-process integration harness: worker output -> explicit Project Save -> real ZIP reopen.
+        // This does not exercise the renderer, file picker, autosave or production runtime installer.
+        const workspace = path.join(directory, 'workspace')
+        await mkdir(workspace)
+        const projectPath = path.join(workspace, 'imported.igs')
+        const session = await ProjectSession.create(projectPath, 'Imported image', {
+          placeholdersDir: path.join(REPOSITORY_ROOT, 'src/main/projects/placeholders'),
+          scratchDir: path.join(directory, 'scratch'),
+        })
+        const layerId = randomUUID()
+        const layerPath = `assets/layers/${layerId}.png`
+        const profilePath = `assets/profiles/${imported.originalIcc.sha256}.icc`
+        session.applyDocument({
+          ...session.document,
+          layers: [
+            {
+              asset: {
+                bytes: imported.normalized.byteSize,
+                height: imported.normalized.height,
+                path: layerPath,
+                sha256: imported.normalized.sha256,
+                width: imported.normalized.width,
+              },
+              blendMode: 'normal',
+              id: layerId,
+              kind: 'raster',
+              locked: false,
+              name: 'Adobe RGB source',
+              opacity: 1,
+              sourceIccProfile: {
+                bytes: imported.originalIcc.byteSize,
+                path: profilePath,
+                sha256: imported.originalIcc.sha256,
+              },
+              transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+              visible: true,
+            },
+          ],
+        })
+        const saved = await session.save({
+          assets: {
+            [layerPath]: { sourcePath: imported.normalized.path },
+            [profilePath]: { sourcePath: imported.originalIcc.path },
+          },
+        })
+        assert.equal(saved.committed, true)
+        const reopened = await readIgsPackage(projectPath)
+        assert.equal(reopened.project.colorSpace, 'srgb')
+        assert.deepEqual(await reopened.readMember(profilePath), adobeProfile)
+        assert.equal(sha256(await reopened.readMember(layerPath)), imported.normalized.sha256)
+      } finally {
+        await client.close()
+      }
+    })
+  },
+)

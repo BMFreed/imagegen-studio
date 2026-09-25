@@ -69,8 +69,13 @@ placeholders and records `preview.status=unavailable` in the `.igs` manifest
 when visible raster pixels exist; Project assets, settings and accepted
 results are saved normally. An empty Project instead records `empty`. Home
 shows that a nonempty Project's preview is unavailable rather than presenting
-it as empty. A later explicit Save with a working worker can rebuild previews;
-for an otherwise clean Project, Home's explicit `Rebuild Preview` performs the
+it as empty. Without the worker, a visible layer is conservatively treated as
+potentially nonempty even if its pixels might all be transparent, so the safe
+fallback is `unavailable`. The working compositor determines actual
+composited-pixel bounds when it becomes available.
+
+A later explicit Save with a working worker can rebuild previews; for an
+otherwise clean Project, Home's explicit `Rebuild Preview` performs the
 same atomic package replacement without changing the saved document revision,
 dirty/undo or staging. It serializes with Save and rechecks project identity and
 dirty state just before replacement; failure keeps the saved placeholder.
@@ -177,8 +182,17 @@ Home's `Recovery available` scenario is a separate mock of the intended recovery
 
 [Project tests](../../prototype-app/tests/project.spec.ts) and
 [Home tests](../../prototype-app/tests/home.spec.ts) are prototype evidence sources,
-not evidence of completed production I/O. PP-007 stays publicly unavailable until
-the save/reopen and failure/recovery paths are exercised against real files.
+not evidence of completed production I/O. The Phase 2A main-process package
+tests now exercise filesystem Save/reopen, interrupted replacement, portable
+copy and worker-unavailable placeholders. The main-process autosave coordinator
+tests exercise debounced document recovery, new asset ownership, dirty close,
+and edits crossing an atomic Save, including recovery on either side of its
+commit. A main-process coordinator holds the canonical Project path until the
+tab closes or hands its lease to a replacement after Discard Changes; a second
+tab cannot overwrite the first tab's document shadow. These services are not
+wired through the production Project UI/IPC;
+generation staging recovery remains separate and unimplemented.
+PP-007 therefore stays publicly unavailable.
 The pending process pilot is tracked in [Engineering workflow](../../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
 
 ## Acceptance Criteria

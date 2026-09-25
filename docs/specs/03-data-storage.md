@@ -98,12 +98,53 @@ project.igs
 ├─ assets/
 │  ├─ layers/
 │  ├─ masks/
-│  └─ references/
+│  ├─ references/
+│  └─ profiles/
 └─ provenance/
    └─ generation-*.json
 ```
 
 Формат `.igs` проектируется как ZIP-пакет без обязательной compression. Обычный save может собирать новый archive во временный файл, валидировать его и затем атомарно заменять старый `.igs`.
+
+Первый исполняемый формат фазы 2A использует точный `mimetype` payload
+`application/vnd.imagegen-studio.project+zip` и `schemaVersion: 1` в
+`manifest.json`. Manifest хранит portable `documentId`, `documentRevision`,
+`preview.status` (`rendered`, `empty`, `unavailable`), preview rect и перечень
+member paths с uncompressed byte size и SHA-256. `project.json` хранит тот же
+document ID/revision, title, primary bbox, generation draft, ordered Raster
+Layers с точными asset references и saved last-actual-seed snapshot. ZIP member
+names и ссылки валидируются строго; неизвестное или более новое schema version
+не переписывается молча. В этом первом срезе Smart Patch, Regional Guidance,
+masks и accepted provenance ещё не сериализуются: их добавление требует явной
+schema extension/migration до поддержки production Project. Project и рабочие
+raster assets используют sRGB. При импорте worker приводит pixels с исходным
+ICC к sRGB, а оригинальные ICC bytes сохраняются в
+`assets/profiles/{sha256}.icc` и ссылаются из metadata слоя; одинаковые profiles
+могут разделять один member. Для изображения без ICC нет исходного profile
+asset. EXIF Orientation исходного изображения применяется к пикселям до
+сохранения рабочего raster asset: размеры слоя и preview соответствуют
+ориентированному изображению. Композиция и экспорт первого релиза выполняются в sRGB. Import с
+некорректным ICC нельзя молча трактовать как корректный sRGB; он получает
+явную диагностику. Прототипные artwork fixtures не подтверждают эту конверсию.
+Нормализованный worker output содержит закреплённый sRGB ICC (SHA-256
+`113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1`);
+main сверяет его bytes и совместимость других PNG color chunks. `.igs` v1
+отклоняет встроенный ICC с другим отпечатком и противоречащие PNG color chunks.
+RGB-изображение без ICC и без другого цветового сигнала считается sRGB по
+правилу для untagged RGB; его фактическое исходное пространство невозможно
+доказать только чтением файла. PNG без ICC, но с явными `gAMA`, `cHRM`, `cICP`
+или `sRGB`, принимается лишь тогда, когда все эти chunks совместимы с sRGB;
+иначе import останавливается с диагностикой вместо скрытой подмены цветов.
+Untagged CMYK worker не импортирует. Исходный профиль хранится отдельно от
+рабочего asset.
+
+Пределы первой реализации — защитные engineering ceilings, а не измеренная
+ёмкость продукта: 10 000 ZIP entries, 32 GiB суммарных распакованных данных,
+8 GiB на member, 4 MiB на ICC profile, 4 MiB на manifest JSON,
+16 MiB на project JSON и 32 768 px
+на сторону raster asset. Реальные проекты и Linux/NVIDIA worker должны пройти
+capacity tests до релиза; лимит генерации не выводится из этих потолков и не
+копируется из mock UI.
 
 Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, `predictionType`, display name/version и отсутствующий-resource status после проверки.
 
@@ -111,7 +152,10 @@ project.igs
 На бесконечном Project Canvas их конечный rasterization rect определяется по
 union bounds видимого composited raster content: видимые Raster Layers и
 активные видимые Smart Patch variants. Скрытое содержимое и primary generation
-bbox не расширяют этот rect. Для проекта без видимых raster pixels оба preview
+bbox не расширяют этот rect. `manifest.preview.rect` хранит эти координаты в
+пространстве Canvas; размеры PNG/WebP могут быть меньше из-за downsampling.
+Защитный лимит 32 768 px относится к закодированному изображению и отдельному
+layer asset, а не к ширине/высоте world-space rect. Для проекта без видимых raster pixels оба preview
 артефакта содержат детерминированный placeholder для Home, не «размер canvas»
 и не изображение, доступное для `Export As`; `preview.status=empty` сохраняется
 даже без worker. Default image export использует тот же visible-content bounds
@@ -122,6 +166,15 @@ Save не блокируется отсутствующим или упавши�
 кладёт в **оба** обязательных preview-файла статический, поставляемый с
 приложением placeholder и отмечает в `manifest.json`
 `preview.status=unavailable`; содержимое слоёв и assets сохраняется полностью.
+В этом случае manifest по-прежнему сохраняет world-space rect видимого
+содержимого, даже если он больше разрешённого размера PNG и сами preview-файлы
+содержат статическую заглушку.
+При недоступном worker и compositor main использует консервативные bounds
+видимых Raster Layers: прозрачность отдельных пикселей и взаимное перекрытие
+неизвестны. Поэтому видимый, но полностью прозрачный слой может получить
+`unavailable`; `empty` без worker означает, что нет ни одного потенциально
+видимого raster layer. После восстановления worker актуальный preview
+пересчитывается по действительно видимому composited content.
 Состояния `rendered`, `empty` и `unavailable` различаются в этом поле, чтобы placeholder
 при отказе worker не выдавался за пустой проект или актуальный composite.
 Нельзя повторно использовать старый preview от предыдущей ревизии как новый.
@@ -222,7 +275,7 @@ Queue completion writes candidate assets to application-managed recovery storage
 separate from both the document autosave shadow and the user-owned `.igs`:
 
 ```text
-ImageGen Studio/recovery/generation-staging/{project-id}/{session-id}/
+ImageGen Studio/recovery/generation-staging/{local-project-key}/{session-id}/
 ├─ manifest.json
 └─ assets/
    └─ {candidate-id}.png
@@ -340,6 +393,13 @@ MVP-правило:
 - создание второй вкладки для того же `.igs` запрещено для всех entry points: `Home`, file picker, menu action, drag/drop, deep link.
 - приложение запускается в single-instance режиме через Electron main process, чтобы второй OS-инстанс не мог открыть тот же `.igs` параллельно с первым.
 
+Portable `documentId` inside `.igs` identifies document content, but cannot be
+the sole key for local autosave, staging or the last-seed cursor: copying a file
+copies that id too. App-managed recovery uses a key derived from the canonical
+local project identity/path. A managed move migrates the local key with its
+recovery and cursor records; an independently imported copy receives a distinct
+local key even if the portable `documentId` matches.
+
 Если позже понадобится поддержка symlink-heavy workflow или network paths, identity policy можно расширить через filesystem inode/file id там, где платформа это поддерживает. Для MVP достаточно canonical path + rescan/relink поведения.
 
 ### Валидация `.igs`
@@ -367,12 +427,12 @@ Autosave не должен часто пересобирать полный `.ig
 ```text
 ImageGen Studio/
 └─ autosave/
-   └─ {project-id}/
+   └─ {local-project-key}/
       ├─ manifest.json
-      ├─ project.json
-      ├─ assets/
-      ├─ provenance/
-      └─ autosave-state.json
+      └─ snapshots/
+         └─ {snapshot-id}/
+            ├─ project.json
+            └─ assets/
 ```
 
 Во время работы приложение пишет изменённые части проекта в shadow project directory внутри app data. Это recovery/cache слой, а не пользовательский project file.
@@ -380,7 +440,14 @@ ImageGen Studio/
 Правила autosave:
 
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
-- Raster assets, masks и previews пишутся только по dirty-флагам.
+- Исполняемый v1 shadow хранит изменённые referenced raster assets и исходные
+  ICC, проверяя их size/hash. Masks и future layer types добавляются вместе с
+  расширением формата; derived previews не дублируются в document shadow.
+- Опубликованный `manifest.json` указывает на один проверенный snapshot;
+  незавершённые snapshot directories не являются recovery candidates. При
+  пересечении Save A и последующей правки B manifest закрепляет hashes старой
+  сохранённой ревизии S и конкретной committing A. Recovery принимает B только
+  если текущий `.igs` точно равен S или A.
 - Autosave не изменяет основной `.igs` до явного Save.
 - Обычная запись в shadow directory является внутренним механизмом защиты и не создаёт пользовательский Home status.
 - При запуске приложение проверяет незавершённые document shadow и отдельные staging recovery manifests. Валидный unclean document state или completed staging candidate после неожиданного завершения становится `Recovery available`; прежние pending/running jobs отменяются, а partial outputs не показываются.
@@ -731,12 +798,12 @@ ImageGen Studio/
 ├─ previews/
 │  └─ project-thumbnails/
 ├─ autosave/
-│  └─ {project-id}/
+│  └─ {local-project-key}/
 ├─ logs/
 │  └─ worker/
 └─ temp/
    ├─ downloads/
-   └─ generation-staging/{project-id}/{session-id}/
+   └─ generation-staging/{local-project-key}/{session-id}/
 ```
 
 ## Правила целостности

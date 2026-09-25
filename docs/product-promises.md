@@ -33,7 +33,7 @@
 | PP-004 | Управляемые модели и версии | Обязательный MVP | Пока не обещать | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют |
 | PP-005 | Результат помнит настройки | Обязательный MVP | Пока не обещать | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются | Обязательный MVP | Пока не обещать | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md#vue-prototype-coverage): Save и оба recovery flow пока только mocks/контракты; real filesystem не проверен |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md#vue-prototype-coverage): `.igs` Save/reopen, shadow recovery и Save/автосохранение проверены на файлах; production Project UI, IPC и staging recovery отсутствуют |
 | PP-008 | Результаты принимаются явно | Обязательный MVP | Пока не обещать | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют |
 
 ### Статусы и доказательства
@@ -293,8 +293,10 @@ gaps, перечисленных в supporting contract, и подтвержде
 
 **Продуктовый статус:** принято как обязательный MVP scope.
 
-**Публичный статус:** пока не обещать как готовую возможность — filesystem Save,
-пакетирование и восстановление Project пока не реализованы.
+**Публичный статус:** пока не обещать как готовую возможность — reader/writer
+`.igs`, filesystem Save/reopen и согласованный с Save document shadow проверены
+локальными тестами, но production Project UI/IPC, compositor/export и
+восстановление непринятых результатов ещё не реализованы.
 
 ### Обещание
 

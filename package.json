@@ -13,7 +13,7 @@
     "app:dev": "node scripts/dev-desktop.mjs",
     "app:start": "pnpm run app:build && env -u ELECTRON_RUN_AS_NODE electron .",
     "app:smoke": "pnpm run app:build && node scripts/smoke-desktop.mjs",
-    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/runtime/*.test.mjs",
+    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/shared/projects/*.test.ts",
     "app:db-types": "tsx scripts/generate-db-types.ts",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
@@ -30,13 +30,17 @@
     "better-sqlite3": "^13.0.3",
     "kysely": "^0.29.6",
     "naive-ui": "^2.44.1",
-    "valibot": "1.5.0"
+    "valibot": "1.5.0",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
     "@playwright/test": "^1.61.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.1.0",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "@vicons/tabler": "^0.13.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "electron": "44.4.5",

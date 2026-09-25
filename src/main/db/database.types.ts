@@ -92,6 +92,36 @@ export interface ModelVersionDependency {
   role: string
 }
 
+export interface ProjectIndex {
+  bbox_height: number | null
+  bbox_width: number | null
+  canonical_path: string
+  diagnostic_code: string | null
+  display_name: string
+  document_id: string | null
+  document_revision: string | null
+  file_health: string
+  file_mtime_ns: string | null
+  file_size_bytes: number | null
+  indexed_at: string
+  last_opened_at: string | null
+  local_project_key: string
+  preview_status: string | null
+  search_name: string
+  trashed_at: string | null
+  workspace_id: string
+}
+
+export interface ProjectWorkspace {
+  color: string
+  created_at: string
+  directory_path: string
+  display_name: string
+  id: string
+  is_default: number
+  updated_at: string
+}
+
 export interface SchemaMigrations {
   applied_at: string
   name: string
@@ -106,5 +136,7 @@ export interface DB {
   model_resource: ModelResource
   model_resource_version: ModelResourceVersion
   model_version_dependency: ModelVersionDependency
+  project_index: ProjectIndex
+  project_workspace: ProjectWorkspace
   schema_migrations: SchemaMigrations
 }

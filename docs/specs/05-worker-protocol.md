@@ -45,42 +45,42 @@ Python worker выполняет только текущий job и не зна�
 
 ```ts
 type WorkerJobEnvelopeSketch = {
-  id: string;
-  queueItemId: string;
-  operation: 'generate' | 'smart-patch-generate' | 'upscale'; // upscale is reserved for a follow-up
-  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint' | 'upscale';
+  id: string
+  queueItemId: string
+  operation: 'generate' | 'smart-patch-generate' | 'upscale' // upscale is reserved for a follow-up
+  workflowType: 'txt2img' | 'img2img' | 'inpaint' | 'outpaint' | 'upscale'
   model: {
-    localPath: string;
-    resourceId: string;
-    baseModelFamily?: string;
-    predictionType?: 'epsilon' | 'v_prediction' | 'sample';
-  };
-  prompt: string;
-  negativePrompt?: string;
+    localPath: string
+    resourceId: string
+    baseModelFamily?: string
+    predictionType?: 'epsilon' | 'v_prediction' | 'sample'
+  }
+  prompt: string
+  negativePrompt?: string
   loras?: Array<{
-    localPath: string;
-    resourceId: string;
-    weight: number;
-  }>;
+    localPath: string
+    resourceId: string
+    weight: number
+  }>
   params: {
-    width: number;
-    height: number;
-    steps: number;
-    cfgScale?: number;
-    sampler?: string;
-    scheduler?: string;
-    seed: number; // concrete scheduled seed, not the Seed policy
-  };
+    width: number
+    height: number
+    steps: number
+    cfgScale?: number
+    sampler?: string
+    scheduler?: string
+    seed: number // concrete scheduled seed, not the Seed policy
+  }
   output: {
-    targetPath: string;
-    format: 'png' | 'jpg' | 'webp';
-  };
+    targetPath: string
+    format: 'png' | 'jpg' | 'webp'
+  }
   metadata: {
-    projectId: string;
-    stagingSessionId: string;
-    targetLayerId?: string;
-  };
-};
+    projectId: string
+    stagingSessionId: string
+    targetLayerId?: string
+  }
+}
 ```
 
 Production request должен использовать типизированный discriminated union для
@@ -136,17 +136,17 @@ cannot silently change an already queued batch.
 ```ts
 type WorkerMessage =
   | {
-      type: 'ready';
-      capabilities: string[];
-      protocolVersion: string;
-      pythonVersion: string;
-      runtimeProfile: string;
-      workerVersion: string;
+      type: 'ready'
+      capabilities: string[]
+      protocolVersion: string
+      pythonVersion: string
+      runtimeProfile: string
+      workerVersion: string
     }
   | { type: 'progress'; jobId: string; progress: number; step?: number; totalSteps?: number }
   | { type: 'done'; jobId: string; outputPath: string; seed: number }
   | { type: 'canceled'; jobId: string }
-  | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown };
+  | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown }
 ```
 
 ## Правила протокола
@@ -176,6 +176,14 @@ type WorkerMessage =
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Для Anima worker использует отдельные model loader, Qwen3 text encoder, VAE, LoRA и denoising path. Он проверяет exact installed identities обязательных компонентов перед началом job; ImageGen Studio не выдаёт SDXL single-file загрузчик за универсальный путь для Anima.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
+- Для raster import worker применяет EXIF Orientation, затем преобразует pixels
+  из встроенного ICC в рабочее sRGB. Он возвращает исходные ICC bytes отдельно
+  для metadata слоя и сообщает ошибку при повреждённом профиле. Untagged RGB
+  трактуется как sRGB; PNG с явными не-sRGB `gAMA`/`cHRM`/`cICP` без ICC
+  отклоняется с диагностикой, а untagged CMYK не принимается. Main проверяет формат,
+  размеры, hash и закреплённый sRGB ICC нормализованного output до публикации.
+  Те же sRGB pixels используются compositor и image export первого релиза;
+  color conversion не выполняется скрыто в `.igs` writer.
 - При недоступном ML Worker main может включить в явный Save статические
   bundled preview placeholders и `preview.status=unavailable` в `.igs` manifest. Это
   fallback для сохранения документа, а не альтернативный image processor:
@@ -208,7 +216,7 @@ type WorkerMessage =
 ## Queue item lifecycle
 
 ```ts
-type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
+type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
 ```
 
 Startup rule:

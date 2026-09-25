@@ -66,6 +66,10 @@ Regional Guidance owns a conditioning region/mask, not a generation bbox.
 
 If there is no visible raster content, image export is unavailable with an explanatory empty-state message; the user can still Save the `.igs` project. Custom export rectangles can be designed later. Exporting does not crop source layer assets. This follows InvokeAI's visible-content versus bbox region distinction while adapting it to Smart Patch compositing.
 
+The first release composites and exports in sRGB. Import converts pixels with
+an ICC profile to sRGB and retains the original ICC as layer metadata in
+`.igs`; export does not silently inherit an arbitrary source layer's profile.
+
 An explicit destructive trim/crop of Raster Layer pixel data, if added, is a separate operation from moving a generation bbox or exporting a finite region.
 
 ## Vue Prototype Gap

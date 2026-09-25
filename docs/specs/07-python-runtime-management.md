@@ -107,9 +107,9 @@ ImageGen Studio/
 │  ├─ python/
 │  │  └─ {python-version}-{platform}-{arch}/
 │  ├─ environments/
-│  │  ├─ {worker-version}-{runtime-profile}/
-│  │  ├─ {previous-worker-version}-{runtime-profile}/
-│  │  └─ {next-worker-version}-{runtime-profile}.staging/
+│  │  ├─ {active-runtime-id}/
+│  │  ├─ {previous-runtime-id}/
+│  │  └─ {next-runtime-id}/  # unpublished during install
 │  └─ current-runtime.json
 ├─ cache/
 │  ├─ uv/
@@ -117,6 +117,9 @@ ImageGen Studio/
 └─ logs/
    └─ worker/
 ```
+
+Каждый `runtime-id` обозначает отдельную установку, в том числе повторный
+Repair той же версии; новый environment не занимает путь активного.
 
 `current-runtime.json` содержит identity активного runtime и абсолютный путь к его Python executable. Для переключения не требуется активировать `venv`, изменять глобальный `PATH` или использовать shell startup scripts.
 
@@ -208,7 +211,12 @@ Packaging spike должен подтвердить relocatability полног�
 
 ### 3. Build staging runtime
 
-- создаётся новый `{runtime-id}.staging`;
+- для offline assembly создаётся новый versioned environment сразу по его
+  финальному абсолютному пути `{runtime-id}/`, но с маркером незавершённой
+  установки и без ссылки из `current-runtime.json`; перенос готового `venv`
+  из `.staging` в другой путь не предполагается;
+- готовый bundle можно распаковать во временный каталог и переместить только
+  после проверки relocatability полного Python environment для данного profile;
 - используется только app-managed Python;
 - locked packages устанавливаются из проверенных artifacts;
 - активный environment остаётся нетронутым.
@@ -241,7 +249,8 @@ Python environment packages: main process показывает полный ра
 ### 5. Activate
 
 - worker старой версии корректно останавливается;
-- staging получает финальную versioned identity;
+- проверенный environment уже находится по финальному versioned пути; маркер
+  незавершённой установки снимается перед публикацией pointer;
 - `current-runtime.json` атомарно заменяется через temp file + rename;
 - main process запускает worker по сохранённому абсолютному пути;
 - предыдущий runtime сохраняется до подтверждения успешного запуска новой версии.

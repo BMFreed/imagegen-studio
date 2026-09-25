@@ -25,6 +25,16 @@ try {
   )
   if (result.status !== 0) {
     process.exitCode = result.status ?? 1
+  } else {
+    // Codegen's defaults differ from the repository formatter. Keep regeneration lint-clean.
+    const formatted = spawnSync(
+      'pnpm',
+      ['exec', 'prettier', '--write', 'src/main/db/database.types.ts'],
+      { stdio: 'inherit' },
+    )
+    if (formatted.status !== 0) {
+      process.exitCode = formatted.status ?? 1
+    }
   }
 } finally {
   rmSync(tempRoot, { force: true, recursive: true })
