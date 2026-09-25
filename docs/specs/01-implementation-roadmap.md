@@ -151,10 +151,15 @@ self-test и реальной установки ещё нет. Home показ�
 - Импорт модели по CivitAI URL.
 - Получение metadata и preview перед скачиванием.
 - Установка Anima checkpoint вместе с проверенными Qwen3 encoder и VAE после
-  показа полного объёма всех обязательных файлов и одного подтверждения.
+  показа полного объёма всех обязательных файлов, отдельной лицензии Anima и
+  одного подтверждения. ImageGen Studio остаётся бесплатным open-source
+  приложением, а базовые веса Anima поддерживаются только для некоммерческого
+  использования вне production; веса не входят в дистрибутив приложения.
 - model install/download pipeline с временным файлом и очередью внутри Model Manager, без отдельной Download Manager surface.
 - Проверка size/hash, если данные доступны.
-- Определение и хранение model compatibility metadata, включая `baseModelFamily` и `predictionType`.
+- Хранение model compatibility metadata: `baseModelFamily` определяется из
+  источника, `predictionType` остаётся nullable до проверки моделью в worker на
+  фазе 2; неизвестное значение не подменяется предположением `epsilon`.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
 - Обнаружение доступных CivitAI-версий и явный `Update available` state.
 - Preview и установка новой exact version рядом с уже установленными версиями.
@@ -163,9 +168,8 @@ self-test и реальной установки ещё нет. Home показ�
   которые должен создавать worker, подключаются после фазы 2A. Недоступный
   thumbnail не делает модель установленной или пригодной для генерации.
 - Интерактивный prototype flow и regression coverage для version discovery,
-  side-by-side install и default-version switching. Текущий Model Manager
-  prototype показывает эти controls только presentation-only, поэтому этот flow
-  является первым приоритетом следующего расширения прототипа.
+  side-by-side install и default-version switching. Этот mock flow уже проверяет,
+  что смена default не переписывает существующие exact references.
 
 **Выходная проверка:** модель можно установить локально, увидеть после restart,
 безопасно добавить другую версию и выбрать default. Отмена, ошибка проверки и
@@ -174,6 +178,15 @@ Project/Preset/provenance refs не переписываются; их скво�
 файлами — в фазах 2–3. PP-004 остаётся неполным до worker/load и Project picker.
 Если Linux `safeStorage` даёт `basic_text` или secure provider недоступен,
 token не сохраняется plaintext и требующий его импорт блокируется с объяснением.
+
+**Текущий implementation checkpoint:** production Electron Model Manager уже
+имеет локальную CivitAI URL-установку, проверку и восстановление файлов, версии,
+очередь и явную смену default; Anima checkpoint ставится с закреплёнными
+Qwen3/VAE, а `.pth` upscaler сохраняется без исполнения файла в main process.
+SQLite/filesystem и Electron IPC проверены локальными тестами, а version flow в
+Vue-прототипе — Playwright. Живую загрузку с CivitAI, полный Anima download,
+загрузку моделей worker и выбор в Project эти проверки не подтверждают. По этой
+причине PP-004 остаётся неполным до следующих фаз.
 
 ## Фаза 2A. Runtime, Project document и реальное сохранение
 

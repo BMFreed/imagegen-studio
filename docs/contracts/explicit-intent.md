@@ -114,7 +114,7 @@ flows и не скрывает последствия выбранной ком�
 [Home tests](../prototype-app/tests/home.spec.ts) и
 [Preset tests](../prototype-app/tests/preset-manager.spec.ts) содержат раздельные
 search/create/apply сценарии. [Model Manager](../features/model-manager.md#vue-prototype-coverage)
-показывает отдельный URL install flow, но его download и resource mutations пока
-не интерактивны. Публичный статус требует проверки всех доступных production
+показывает отдельный URL install flow; production Electron flow устанавливает
+ресурс после явного подтверждения, а prototype version lifecycle остаётся mock.
+Публичный статус требует проверки всех доступных production
 entry points, включая клавиатурные действия, пустую выдачу и ошибки.
-

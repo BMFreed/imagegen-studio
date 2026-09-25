@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { NModal, NSplit } from 'naive-ui'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
-import type { ModelResource } from './model-manager.types'
+import type {
+  ModelResource,
+  ModelResourceVersion,
+  ModelVersionInstallActivity,
+} from './model-manager.types'
 
 import { AppLayer } from '../../theme/app-layers'
 import CivitaiImportModal from './CivitaiImportModal.vue'
-import { modelResources, selectedModelId } from './model-manager.mock'
+import { availableModelVersions, modelResources, selectedModelId } from './model-manager.mock'
 import ModelDetailsPanel from './ModelDetailsPanel.vue'
 import ModelManagerHeader from './ModelManagerHeader.vue'
 import ModelManagerNavigation from './ModelManagerNavigation.vue'
 import ModelResourceList from './ModelResourceList.vue'
+import ModelVersionPreviewModal from './ModelVersionPreviewModal.vue'
 
 const selectedId = ref(selectedModelId)
+const resources = ref<ModelResource[]>(structuredClone(modelResources))
 const showImportModal = ref(false)
+const showVersionPreview = ref(false)
 const modelTypeFilter = ref('all')
 const statusFilter = ref('all')
 const searchFilter = ref('')
@@ -22,6 +29,9 @@ const sortValue = ref('name')
 const managerOpen = ref(false)
 const navigationPaneSize = ref<number | string>('220px')
 const resourcePaneSize = ref<number | string>('calc(100% - 520px)')
+const versionInstall = ref<ModelVersionInstallActivity | null>(null)
+const checkedUpdateIds = ref<string[]>([])
+let installTimer: ReturnType<typeof setTimeout> | undefined
 
 defineEmits<{
   close: []
@@ -36,8 +46,8 @@ const hasActiveFilters = computed(
 )
 
 function getSelectedResource(): ModelResource {
-  const resource = modelResources.find((resource) => resource.id === selectedId.value)
-  const fallbackResource = modelResources[0]
+  const resource = resources.value.find((candidate) => candidate.id === selectedId.value)
+  const fallbackResource = resources.value[0]
 
   if (resource) {
     return resource
@@ -51,6 +61,79 @@ function getSelectedResource(): ModelResource {
 }
 
 const selectedResource = computed(getSelectedResource)
+
+function checkForUpdates() {
+  const resource = selectedResource.value
+  const available = availableModelVersions[resource.id]
+  resource.availableVersion =
+    available && !resource.versions?.some((version) => version.id === available.id)
+      ? structuredClone(available)
+      : undefined
+  if (!checkedUpdateIds.value.includes(resource.id)) {
+    checkedUpdateIds.value = [...checkedUpdateIds.value, resource.id]
+  }
+}
+
+function previewAvailableVersion() {
+  if (selectedResource.value.availableVersion) {
+    showVersionPreview.value = true
+  }
+}
+
+function installAvailableVersion() {
+  const resource = selectedResource.value
+  const available = resource.availableVersion
+  if (!available || installTimer) {
+    return
+  }
+
+  showVersionPreview.value = false
+  versionInstall.value = {
+    modelName: resource.name,
+    percentage: 64,
+    status: 'downloading',
+    versionLabel: available.label,
+  }
+
+  installTimer = setTimeout(() => {
+    const installedVersion: ModelResourceVersion = {
+      description: available.description,
+      fileName: available.fileName,
+      id: available.id,
+      isDefault: false,
+      label: available.label,
+      sizeLabel: available.sizeLabel,
+    }
+    resource.versions = [installedVersion, ...(resource.versions ?? [])]
+    resource.availableVersion = undefined
+    versionInstall.value = { ...versionInstall.value!, percentage: 100, status: 'completed' }
+    installTimer = undefined
+  }, 650)
+}
+
+function cancelVersionInstall() {
+  if (!installTimer || !versionInstall.value) {
+    return
+  }
+
+  clearTimeout(installTimer)
+  installTimer = undefined
+  versionInstall.value = { ...versionInstall.value, percentage: 0, status: 'cancelled' }
+}
+
+function setDefaultVersion(versionId: string) {
+  const resource = selectedResource.value
+  const target = resource.versions?.find((version) => version.id === versionId)
+  if (!target) {
+    return
+  }
+
+  for (const version of resource.versions ?? []) {
+    version.isDefault = version.id === versionId
+  }
+  resource.versionLabel = target.label.split(' ')[0]
+  resource.sizeLabel = target.sizeLabel
+}
 
 function resetFilters() {
   modelTypeFilter.value = 'all'
@@ -73,6 +156,10 @@ onMounted(() => {
   void nextTick(() => {
     managerOpen.value = true
   })
+})
+
+onUnmounted(() => {
+  clearTimeout(installTimer)
 })
 </script>
 
@@ -111,8 +198,10 @@ onMounted(() => {
                   v-model:search="searchFilter"
                   v-model:sort="sortValue"
                   :hasActiveFilters
-                  :resources="modelResources"
+                  :resources
                   :selectedId
+                  :versionInstall
+                  @cancelInstall="cancelVersionInstall"
                   @resetFilters="resetFilters"
                   @select="selectedId = $event"
                 />
@@ -120,7 +209,13 @@ onMounted(() => {
             </template>
             <template v-slot:2>
               <aside class="manager-column manager-column--details">
-                <ModelDetailsPanel :resource="selectedResource" />
+                <ModelDetailsPanel
+                  :resource="selectedResource"
+                  :updatesChecked="checkedUpdateIds.includes(selectedResource.id)"
+                  @checkForUpdates="checkForUpdates"
+                  @previewVersion="previewAvailableVersion"
+                  @setDefaultVersion="setDefaultVersion"
+                />
               </aside>
             </template>
           </NSplit>
@@ -129,6 +224,11 @@ onMounted(() => {
     </div>
   </NModal>
   <CivitaiImportModal v-model:show="showImportModal" />
+  <ModelVersionPreviewModal
+    v-model:show="showVersionPreview"
+    :resource="selectedResource"
+    @install="installAvailableVersion"
+  />
 </template>
 
 <style scoped>

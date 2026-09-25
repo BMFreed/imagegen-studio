@@ -1,13 +1,20 @@
 import { ipcChannels } from '../shared/api.js'
 import type { ApiResult, RuntimeStatus } from '../shared/api.js'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
 import { openAppDatabase } from './db/database.js'
+import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
+import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './models/civitai-client.js'
+import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-token-store.js'
+import { ModelDownloader, ModelDownloadError } from './models/model-downloader.js'
+import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
+import { ModelRepository } from './models/model-repository.js'
+import { ModelService, ModelServiceError } from './models/model-service.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
 const moduleDir = __dirname
@@ -72,6 +79,26 @@ if (!gotInstanceLock) {
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
+      const modelRepository = new ModelRepository(database.db)
+      const modelService = new ModelService(
+        modelRepository,
+        new CivitaiClient(),
+        new CivitaiTokenStore(safeStorage, paths.dataRoot),
+        paths.cacheRoot,
+      )
+      const installCoordinator = new ModelInstallCoordinator(
+        modelRepository,
+        modelService,
+        new ModelDownloader(),
+        paths.dataRoot,
+      )
+      let modelStorageAvailable = true
+      try {
+        await installCoordinator.initialize()
+      } catch {
+        modelStorageAvailable = false
+        console.error('Managed model storage is unavailable')
+      }
       let runtimeManager: Pick<
         RuntimeManager,
         'getStatus' | 'install' | 'onStatusChanged' | 'repair'
@@ -140,6 +167,132 @@ if (!gotInstanceLock) {
         }
       })
       window.on('closed', unsubscribeRuntime)
+
+      const modelError = (error: unknown): { code: string; message: string } => {
+        if (
+          error instanceof ModelServiceError ||
+          error instanceof CivitaiClientError ||
+          error instanceof CivitaiTokenStoreError ||
+          error instanceof ModelDownloadError
+        ) {
+          return { code: error.code, message: error.message }
+        }
+        console.error('Model service operation failed')
+        return {
+          code: 'MODEL_INTERNAL_ERROR',
+          message: 'The model service could not complete the action.',
+        }
+      }
+      function registerModelHandler<T>(
+        channel: string,
+        validate: (args: unknown[]) => boolean,
+        handler: (...args: unknown[]) => Promise<T>,
+        requiresStorage = false,
+      ): void {
+        ipcMain.handle(channel, async (event, ...args: unknown[]): Promise<ApiResult<T>> => {
+          if (event.sender !== window.webContents || !validate(args)) {
+            return {
+              error: { code: 'IPC_INVALID_CALLER', message: 'The model request was rejected.' },
+              ok: false,
+            }
+          }
+          if (requiresStorage && !modelStorageAvailable) {
+            return {
+              error: {
+                code: 'MODEL_STORAGE_UNAVAILABLE',
+                message: 'Managed model storage needs repair.',
+              },
+              ok: false,
+            }
+          }
+          try {
+            return { ok: true, value: await handler(...args) }
+          } catch (error) {
+            return { error: modelError(error), ok: false }
+          }
+        })
+      }
+      const noArgs = (args: unknown[]): boolean => args.length === 0
+      const oneString = (args: unknown[]): boolean =>
+        args.length === 1 && typeof args[0] === 'string'
+
+      registerModelHandler(ipcChannels.models.getCatalog, noArgs, () => modelService.getCatalog())
+      registerModelHandler(
+        ipcChannels.models.getStorageSummary,
+        noArgs,
+        () => modelService.getStorageSummary(),
+        true,
+      )
+      registerModelHandler(ipcChannels.models.getInstallJobs, noArgs, () =>
+        installCoordinator.listJobs(),
+      )
+      registerModelHandler(ipcChannels.models.getTokenStatus, noArgs, () =>
+        modelService.getTokenStatus(),
+      )
+      registerModelHandler(ipcChannels.models.saveToken, oneString, (token) =>
+        modelService.saveToken(token as string),
+      )
+      registerModelHandler(ipcChannels.models.removeToken, noArgs, () => modelService.removeToken())
+      registerModelHandler(ipcChannels.models.previewImport, oneString, (url) =>
+        modelService.previewImport(url as string),
+      )
+      registerModelHandler(
+        ipcChannels.models.startInstall,
+        (args) =>
+          args.length === 3 &&
+          typeof args[0] === 'string' &&
+          Number.isSafeInteger(args[1]) &&
+          typeof args[2] === 'boolean',
+        (previewId, fileId, acceptedAnimaLicense) =>
+          installCoordinator.startInstall(
+            previewId as string,
+            fileId as number,
+            acceptedAnimaLicense as boolean,
+          ),
+        true,
+      )
+      registerModelHandler(
+        ipcChannels.models.cancelInstall,
+        oneString,
+        (jobId) => installCoordinator.cancelInstall(jobId as string),
+        true,
+      )
+      registerModelHandler(
+        ipcChannels.models.setDefaultVersion,
+        (args) => args.length === 2 && args.every((arg) => typeof arg === 'string'),
+        async (resourceId, versionId) => {
+          await modelService.setDefaultVersion(resourceId as string, versionId as string)
+        },
+      )
+      registerModelHandler(
+        ipcChannels.models.checkUpdates,
+        (args) => args.length === 1 && Number.isSafeInteger(args[0]),
+        (modelId) => modelService.checkUpdates(modelId as number),
+      )
+      registerModelHandler(ipcChannels.models.openSourceLink, oneString, async (input) => {
+        const url = input as string
+        if (url !== ANIMA_SOURCE_LICENSE.url) {
+          parseCivitaiModelUrl(url)
+        }
+        await shell.openExternal(url)
+      })
+      registerModelHandler(
+        ipcChannels.models.openModelFolder,
+        noArgs,
+        async () => {
+          const message = await shell.openPath(path.join(paths.dataRoot, 'models'))
+          if (message) {
+            throw new ModelServiceError('MODEL_FOLDER_UNAVAILABLE', message)
+          }
+        },
+        true,
+      )
+      const unsubscribeInstall = installCoordinator.onChanged((job) => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(ipcChannels.models.installChanged, job)
+        }
+      })
+      window.on('closed', unsubscribeInstall)
 
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       window.webContents.on('will-attach-webview', (event) => event.preventDefault())

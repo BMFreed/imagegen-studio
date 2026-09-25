@@ -28,9 +28,9 @@
 | ID | Пользовательский результат | Продуктовый статус | Публичный статус | Supporting contract и evidence/gaps |
 | --- | --- | --- | --- | --- |
 | PP-001 | Готовый понятный интерфейс | Принятое направление | Пока не обещать | [Композиция](./contracts/interface-composition.md): prototype shell; production preferences не проверены |
-| PP-002 | Понятное намерение controls | Принятое направление | Пока не обещать | [Явные действия](./contracts/explicit-intent.md): часть flows интерактивна, install — нет |
+| PP-002 | Понятное намерение controls | Принятое направление | Пока не обещать | [Явные действия](./contracts/explicit-intent.md): Model Manager install явный; Project/worker handoff ещё не реализован |
 | PP-003 | Понятные роли и места управления | Принятое направление | Пока не обещать | [Ownership](./contracts/canonical-ownership.md): prototype managers; resource handoff/history неполны |
-| PP-004 | Управляемые модели и версии | Обязательный MVP | Пока не обещать | [Библиотека моделей](./contracts/managed-model-library.md): version lifecycle presentation-only |
+| PP-004 | Управляемые модели и версии | Обязательный MVP | Пока не обещать | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют |
 | PP-005 | Результат помнит настройки | Обязательный MVP | Пока не обещать | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются | Обязательный MVP | Пока не обещать | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены |
 | PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md#vue-prototype-coverage): Save и оба recovery flow пока только mocks/контракты; real filesystem не проверен |
@@ -157,7 +157,11 @@ Autocomplete, явный creatable selector и command palette допустим�
 
 **Продуктовый статус:** принято как обязательный MVP scope.
 
-**Публичный статус:** пока не обещать как готовую возможность — установка, repair и version/update lifecycle пока presentation-only.
+**Публичный статус:** пока не обещать как готовую возможность. В production
+Model Manager реализованы локальная установка из CivitAI URL, проверка целостности,
+repair и независимые версии; их пути проверены с SQLite и файловой системой.
+Загрузка моделей в worker, выбор в Project, связи с Presets и provenance ещё не
+реализованы и не подтверждены сквозным сценарием.
 
 ### Обещание
 

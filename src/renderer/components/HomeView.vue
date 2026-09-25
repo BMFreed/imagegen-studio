@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { FolderOff as EmptyIcon } from '@vicons/tabler'
-import { NEmpty, NIcon } from 'naive-ui'
+import { FolderOff as EmptyIcon, Stack2 as ModelsIcon } from '@vicons/tabler'
+import { NButton, NEmpty, NIcon } from 'naive-ui'
+
+defineEmits<{ manageModels: [] }>()
 </script>
 
 <template>
@@ -8,6 +10,11 @@ import { NEmpty, NIcon } from 'naive-ui'
     <aside aria-label="Workspace navigation" class="workspace-sidebar">
       <h2>Workspaces</h2>
       <div aria-current="page" class="sidebar-item sidebar-item--selected">Projects</div>
+      <h2 class="tools-heading">Tools</h2>
+      <NButton class="sidebar-action" quaternary @click="$emit('manageModels')">
+        <template v-slot:icon><NIcon :component="ModelsIcon" /></template>
+        Manage Models
+      </NButton>
     </aside>
     <div class="project-browser">
       <header class="browser-heading">
@@ -50,6 +57,16 @@ import { NEmpty, NIcon } from 'naive-ui'
 
 .sidebar-item--selected {
   background: var(--app-elevated-hover);
+}
+
+.tools-heading {
+  margin: 28px 8px 15px;
+}
+
+.sidebar-action {
+  width: 100%;
+  justify-content: flex-start;
+  padding-inline: 10px;
 }
 
 .project-browser {

@@ -137,16 +137,19 @@ Local file import и folder scan могут появиться как отдел
 - model selectors получают ресурсы из одной библиотеки Model Manager;
 - model card показывает source metadata, но не редактирует её.
 
-## Текущий статус прототипа
+## Текущее состояние и границы
 
-Vue-прототип уже показывает `Installed Versions`, `Install Version`, `Default`,
-`Set Default`, import preview и компактный install progress. Эти элементы пока
-presentation-only: прототип не обнаруживает обновления, не устанавливает новую
-версию, не меняет default version и не моделирует сохранение exact references.
+Vue-прототип интерактивно моделирует обнаружение новой версии, предпросмотр,
+установку рядом со старой, явную смену default и сохранение прежних точных
+Project/Preset/Result references. Это mock-поведение, а не доказательство
+production persistence.
 
-Интерактивный version/update lifecycle является первым приоритетом при следующем
-расширении Model Manager prototype. До появления реализованного flow и тестов
-PP-004 ограничивает product decisions, но не выдаётся за уже готовую возможность.
+Production Electron Model Manager устанавливает файл из CivitAI URL в managed
+storage, ведёт SQLite-версии и очередь, восстанавливает известную точную версию,
+проверяет целостность и меняет default только явно. Интеграционные тесты
+проверяют SQLite и файловую систему, но не реальную загрузку весов ML worker.
+Project selectors, Preset handoff и accepted-result provenance ещё не подключены;
+PP-004 остаётся неполным и публично не обещается как готовый flow.
 
 ## Связанные contracts и evidence
 
@@ -154,8 +157,9 @@ PP-004 ограничивает product decisions, но не выдаётся з
 ошибки и [prototype gaps](../features/model-manager.md#vue-prototype-coverage);
 [Data Storage](../specs/03-data-storage.md) — persistent resource identity.
 [model-manager.spec.ts](../prototype-app/tests/model-manager.spec.ts) проверяет
-текущие prototype surfaces, но не доказывает download, repair или version update.
+mock version lifecycle, но не доказывает production download или repair.
+`src/main/models/*.test.ts` проверяют локальное хранилище и очередь, но не
+generation worker и Project references.
 Успешное восстановление зависит от доступности exact file у источника и прав
 доступа: если файл удалён или доступ закрыт, приложение объясняет отказ и не
 подменяет версию другой. Metadata остаётся доступной в сохранённых references.
-

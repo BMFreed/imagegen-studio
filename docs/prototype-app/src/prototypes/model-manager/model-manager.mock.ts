@@ -1,6 +1,16 @@
-import type { ModelResource } from './model-manager.types'
+import type { ModelAvailableVersion, ModelResource } from './model-manager.types'
 
 export const selectedModelId = 'illustrious-xl'
+
+export const availableModelVersions: Partial<Record<string, ModelAvailableVersion>> = {
+  'illustrious-xl': {
+    description: 'New CivitAI release. Review the exact file before installing it alongside v1.1.',
+    fileName: 'Illustrious_XL_v1.2.safetensors',
+    id: 'v1-2',
+    label: 'v1.2 main',
+    sizeLabel: '6.7 GB',
+  },
+}
 
 export const modelResources: ModelResource[] = [
   {
@@ -10,6 +20,11 @@ export const modelResources: ModelResource[] = [
     id: 'illustrious-xl',
     name: 'Illustrious XL',
     predictionType: 'v-pred',
+    references: [
+      { id: 'portrait-project', kind: 'Project', label: 'Portrait Study', versionId: 'v1-1' },
+      { id: 'studio-preset', kind: 'Preset', label: 'Studio Portrait', versionId: 'v1-0' },
+      { id: 'portrait-result', kind: 'Result', label: 'Portrait result #12', versionId: 'v1-1' },
+    ],
     sizeLabel: '6.6 GB',
     status: 'installed',
     thumbnailTone: 'green',
@@ -18,6 +33,7 @@ export const modelResources: ModelResource[] = [
     versions: [
       {
         description: 'Default for new selections',
+        fileName: 'Illustrious_XL_v1.1.safetensors',
         id: 'v1-1',
         isDefault: true,
         label: 'v1.1 main',
@@ -25,6 +41,7 @@ export const modelResources: ModelResource[] = [
       },
       {
         description: 'Kept for older projects and snapshots',
+        fileName: 'Illustrious_XL_v1.0.safetensors',
         id: 'v1-0',
         isDefault: false,
         label: 'v1.0 archive',

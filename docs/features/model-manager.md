@@ -24,13 +24,19 @@ Primary reference: InvokeAI Model Manager V2 and backend model management system
 
 Current visual and interaction source of truth: `docs/prototype-app?prototype=model-manager`, plus the same manager opened from Home through `Manage Models`.
 
-The Vue prototype intentionally covers the manager shell and primary browse/import presentation. It implements resource selection, token popover visibility, local filter state/reset, native modal open/close behavior and pane resizing. The resource list, compact install strip and right details pane remain bounded by the manager body and scroll independently even on a short desktop viewport. Model-type/status/base-model filters do not yet filter the mock rows; install/repair, storage, version, update, queue and selected-resource actions are presentational. Empty, loading, invalid-token, invalid-URL, duplicate-install, available-update, failed-download and confirmation states remain required production behavior but do not have dedicated interactive prototype screens.
+The Vue prototype covers the manager shell, browse/import presentation and an
+interactive mock version lifecycle: discover an available version, preview it,
+install it side by side, explicitly change default and keep existing exact
+Project/Preset/Result references unchanged. Resource selection, token popover,
+local filter reset, modal behavior, pane resizing and bounded scrolling are
+also interactive. Model-type/status/base-model filters do not yet filter all
+mock rows; storage, real install/repair, queue advancement, token/error and
+confirmation states are not production evidence from this prototype.
 
-Model versioning is nevertheless mandatory MVP scope. The next Model Manager
-prototype expansion should prioritize the complete version/update lifecycle:
-detect an available CivitAI version, preview and install it side by side, change
-the default for new selections and prove that existing project/preset references
-remain pinned to their exact versions.
+The separate production Electron Model Manager implements local CivitAI URL
+install, exact-version repair, SQLite catalog/queue, manual update check and
+default selection. Worker loading and Project/Preset/Result integration remain
+later-phase work.
 
 Useful InvokeAI areas:
 
@@ -68,6 +74,11 @@ Already fixed project decisions:
 - Illustrious and Anima are the supported MVP checkpoint families. Anima's
   Qwen3 encoder and VAE are installed with its checkpoint as required managed
   dependencies, not left for the user to find and install separately.
+- ImageGen Studio is a free open-source application, but the base Anima weights
+  have separate [CircleStone Non-Commercial License](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md)
+  terms. Anima support is for non-commercial, non-production use only. The app
+  does not bundle those weights; the install preview shows the source, license
+  link and use restriction before the user confirms the download.
 - Model metadata includes `baseModelFamily` and `predictionType`.
 - `predictionType` is compatibility metadata, not a creative user setting.
 - Missing model/LoRA/embedding resources must be diagnosable when applying presets or viewing accepted-result provenance/comparison.
@@ -844,16 +855,12 @@ The current Vue/Naive prototype is authoritative for the visible three-pane comp
 - `Add from CivitAI URL` dialog with a URL field and import preview;
 - compact in-progress install strip.
 
-It does not currently mutate mock results for filters, discover an available
-version, install a model/version, advance the install queue, repair/remove a
-resource, change a default version or simulate token/error/empty states. Those
-remain production acceptance criteria below, not claims about current prototype
-interactivity.
-
-Because versioning is now mandatory MVP scope, the first subsequent interactive
-Model Manager prototype pass should cover `Update available` -> version preview
--> side-by-side install -> optional `Set Default`, including a regression that
-existing exact-version references do not change.
+It now models `Update available` -> version preview -> side-by-side install ->
+optional `Set Default`, with mock Project/Preset/Result references pinned to their
+original exact versions. Cancellation does not apply a late install. Filters do
+not mutate all mock rows, and prototype storage, real download/repair/remove,
+queue advancement, token/error/empty states remain outside this interaction
+coverage. Production acceptance criteria below require separate evidence.
 
 The App Chrome downloads icon is visually present but not wired to Model Manager in the prototype; `Manage Models` on Home and the standalone query are the implemented entry points.
 
@@ -869,8 +876,9 @@ The following criteria describe the production feature; prototype-only coverage 
 - Linux cannot persist a token with `safeStorage`'s `basic_text` backend or a
   plaintext fallback; token setup explains secure-storage unavailability.
 - Anima install preview shows all required companion files and total additional
-  download size; the checkpoint is selectable only after the whole group is
-  verified and registered.
+  download size plus its non-commercial, non-production license restriction;
+  the checkpoint is selectable only after the whole group is verified and
+  registered.
 - User can start model install and see it in an install queue.
 - Download progress is visible and survives Model Manager close/reopen during the app session.
 - Completed install creates SQLite resource records and a managed local file.

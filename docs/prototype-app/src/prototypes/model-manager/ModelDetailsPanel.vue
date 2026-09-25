@@ -4,18 +4,54 @@ import {
   Folder as FolderIcon,
   InfoCircle as InfoIcon,
   Link as LinkIcon,
+  Refresh as RefreshIcon,
   Trash as TrashIcon,
 } from '@vicons/tabler'
 import { NButton, NCard, NIcon, NPopover, NScrollbar, NTag, NTooltip } from 'naive-ui'
+import { computed } from 'vue'
 
 import type { ModelResource } from './model-manager.types'
 
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue'
 import StatusBadge from '../../components/StatusBadge.vue'
 
-defineProps<{
+const props = defineProps<{
   resource: ModelResource
+  updatesChecked: boolean
 }>()
+
+defineEmits<{
+  checkForUpdates: []
+  previewVersion: []
+  setDefaultVersion: [versionId: string]
+}>()
+
+function referenceVersionLabel(versionId: string): string {
+  return (
+    props.resource.versions?.find((version) => version.id === versionId)?.label ??
+    'Unavailable version'
+  )
+}
+
+const defaultFileName = computed(
+  () =>
+    props.resource.versions?.find((version) => version.isDefault)?.fileName ??
+    `${props.resource.name.replaceAll(' ', '_')}.safetensors`,
+)
+
+const usageSummary = computed(() => {
+  const references = props.resource.references
+  if (!references) {
+    return '3 presets, 12 project snapshots'
+  }
+
+  return ['Project', 'Preset', 'Result']
+    .map((kind) => {
+      const count = references.filter((reference) => reference.kind === kind).length
+      return `${count} ${kind.toLowerCase()}${count === 1 ? '' : 's'}`
+    })
+    .join(', ')
+})
 </script>
 
 <template>
@@ -53,13 +89,32 @@ defineProps<{
             <h3>Installed Versions</h3>
           </template>
           <template v-slot:header-extra>
-            <NButton ghost size="small">
-              <template v-slot:icon>
-                <NIcon :component="DownloadIcon" />
-              </template>
-              Install Version
-            </NButton>
+            <div class="version-header-actions">
+              <NButton size="small" tertiary @click="$emit('checkForUpdates')">
+                <template v-slot:icon>
+                  <NIcon :component="RefreshIcon" />
+                </template>
+                Check for updates
+              </NButton>
+              <NButton
+                v-if="resource.availableVersion"
+                ghost
+                size="small"
+                @click="$emit('previewVersion')"
+              >
+                <template v-slot:icon>
+                  <NIcon :component="DownloadIcon" />
+                </template>
+                Install Version
+              </NButton>
+            </div>
           </template>
+          <div v-if="resource.availableVersion" class="available-version">
+            <NTag :bordered="false" size="small" type="info">Update available</NTag>
+            <strong>{{ resource.availableVersion.label }}</strong>
+            <span>{{ resource.availableVersion.sizeLabel }} · CivitAI</span>
+          </div>
+          <p v-else-if="updatesChecked" class="update-check-result">No newer versions found.</p>
           <div class="version-list">
             <NCard
               v-for="version of resource.versions"
@@ -85,10 +140,27 @@ defineProps<{
                     {{ version.description }}
                   </NPopover>
                   <NTag v-if="version.isDefault" type="success">Default</NTag>
-                  <NButton v-else ghost size="small">Set Default</NButton>
+                  <NButton
+                    v-else
+                    ghost
+                    size="small"
+                    @click="$emit('setDefaultVersion', version.id)"
+                  >
+                    Set Default
+                  </NButton>
                 </div>
               </div>
             </NCard>
+          </div>
+          <div v-if="resource.references?.length" class="reference-summary">
+            <strong>Existing uses</strong>
+            <p>Changing the default only affects new selections.</p>
+            <ul aria-label="Existing exact-version references">
+              <li v-for="reference of resource.references" :key="reference.id">
+                <span>{{ reference.kind }} · {{ reference.label }}</span>
+                <span>{{ referenceVersionLabel(reference.versionId) }}</span>
+              </li>
+            </ul>
           </div>
         </NCard>
 
@@ -114,11 +186,11 @@ defineProps<{
             </div>
             <div>
               <dt>File</dt>
-              <dd v-overflow-title>{{ resource.name.replaceAll(' ', '_') }}.safetensors</dd>
+              <dd v-overflow-title>{{ defaultFileName }}</dd>
             </div>
             <div>
               <dt>Used by</dt>
-              <dd v-overflow-title>3 presets, 12 project snapshots</dd>
+              <dd v-overflow-title>{{ usageSummary }}</dd>
             </div>
           </dl>
         </NCard>
@@ -199,6 +271,32 @@ h3 {
   gap: 6px;
 }
 
+.version-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.available-version {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.available-version span:last-child {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.update-check-result {
+  margin-bottom: 10px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
 .version-card {
   background: transparent;
 }
@@ -219,6 +317,41 @@ h3 {
 .version-card p {
   margin-top: 2px;
   font-size: 12px;
+}
+
+.reference-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+}
+
+.reference-summary > strong {
+  font-size: 12px;
+}
+
+.reference-summary p {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.reference-summary ul {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reference-summary li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.reference-summary li span:last-child {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
 }
 
 .metadata-grid {

@@ -1,5 +1,21 @@
 /** The phase-0 renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
+  models: {
+    cancelInstall: 'models:cancel-install',
+    checkUpdates: 'models:check-updates',
+    getCatalog: 'models:get-catalog',
+    getInstallJobs: 'models:get-install-jobs',
+    getStorageSummary: 'models:get-storage-summary',
+    getTokenStatus: 'models:get-token-status',
+    installChanged: 'models:install-changed',
+    openModelFolder: 'models:open-model-folder',
+    openSourceLink: 'models:open-source-link',
+    previewImport: 'models:preview-import',
+    removeToken: 'models:remove-token',
+    saveToken: 'models:save-token',
+    setDefaultVersion: 'models:set-default-version',
+    startInstall: 'models:start-install',
+  },
   runtime: {
     getStatus: 'runtime:get-status',
     install: 'runtime:install',
@@ -22,6 +38,121 @@ export interface ApiError {
 
 export type ApiResult<T> = { error: ApiError; ok: false } | { ok: true; value: T }
 
+export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae'
+export type BaseModelFamily = 'anima' | 'illustrious'
+export type ModelFileStatus = 'corrupt' | 'missing' | 'ready'
+
+export interface ModelVersionView {
+  baseModelFamily: BaseModelFamily | null
+  civitaiFileId: number | null
+  civitaiVersionId: number | null
+  dependencyIssues: string[]
+  fileName: string
+  fileSizeBytes: number
+  fileStatus: ModelFileStatus
+  format: string
+  id: string
+  installedAt: string
+  name: string
+  predictionType: 'epsilon' | 'sample' | 'v_prediction' | null
+  sha256: string
+}
+
+export interface ModelCatalogItem {
+  author: string | null
+  defaultVersionId: string | null
+  description: string | null
+  id: string
+  modelId: number | null
+  name: string
+  previewDataUrl: string | null
+  resourceType: ModelResourceType
+  sourceUrl: string | null
+  trainedWords: string[]
+  versions: ModelVersionView[]
+}
+
+export interface CivitaiTokenStatus {
+  detail: string
+  kind: 'connected' | 'failed' | 'missing' | 'unavailable'
+}
+
+export type ModelImportPreview =
+  | {
+      author: string | null
+      baseModel: string
+      baseModelFamily: BaseModelFamily | null
+      dependencies: {
+        alreadyInstalled: boolean
+        name: string
+        role: 'qwen3_encoder' | 'vae'
+        sizeBytes: number
+      }[]
+      description: string | null
+      files: {
+        alreadyInstalled: boolean
+        fileId: number
+        format: string | null
+        name: string
+        needsRepair: boolean
+        primary: boolean
+        reusesInstalledFile: boolean
+        sha256: string | null
+        sizeEstimateBytes: number | null
+      }[]
+      kind: 'select-file'
+      license: { name: string; summary: string; url: string } | null
+      modelId: number
+      modelName: string
+      previewId: string
+      previewImageDataUrl: string | null
+      resourceType: ModelResourceType
+      totalAdditionalBytes: number | null
+      trainedWords: string[]
+      versionId: number
+      versionName: string
+    }
+  | {
+      kind: 'select-version'
+      modelId: number
+      modelName: string
+      resourceType: ModelResourceType
+      versions: { baseModel: string | null; id: number; name: string }[]
+    }
+
+export interface ModelInstallJobView {
+  bytesDownloaded: number
+  error: ApiError | null
+  id: string
+  modelName: string
+  status: 'canceled' | 'completed' | 'downloading' | 'failed' | 'verifying' | 'waiting'
+  totalBytes: number | null
+  versionName: string
+}
+
+export interface ModelApi {
+  cancelInstall: (jobId: string) => Promise<ApiResult<ModelInstallJobView>>
+  checkUpdates: (
+    modelId: number,
+  ) => Promise<ApiResult<{ availableVersions: { id: number; name: string }[] }>>
+  getCatalog: () => Promise<ApiResult<ModelCatalogItem[]>>
+  getInstallJobs: () => Promise<ApiResult<ModelInstallJobView[]>>
+  getStorageSummary: () => Promise<ApiResult<{ totalBytes: number }>>
+  getTokenStatus: () => Promise<ApiResult<CivitaiTokenStatus>>
+  onInstallChanged: (listener: (job: ModelInstallJobView) => void) => () => void
+  openModelFolder: () => Promise<ApiResult<void>>
+  openSourceLink: (url: string) => Promise<ApiResult<void>>
+  previewImport: (url: string) => Promise<ApiResult<ModelImportPreview>>
+  removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
+  saveToken: (token: string) => Promise<ApiResult<CivitaiTokenStatus>>
+  setDefaultVersion: (resourceId: string, versionId: string) => Promise<ApiResult<void>>
+  startInstall: (
+    previewId: string,
+    fileId: number,
+    acceptedAnimaLicense: boolean,
+  ) => Promise<ApiResult<ModelInstallJobView>>
+}
+
 export interface RuntimeApi {
   getStatus: () => Promise<ApiResult<RuntimeStatus>>
   install: () => Promise<ApiResult<RuntimeStatus>>
@@ -30,6 +161,7 @@ export interface RuntimeApi {
 }
 
 export interface StudioApi {
+  models: ModelApi
   runtime: RuntimeApi
 }
 

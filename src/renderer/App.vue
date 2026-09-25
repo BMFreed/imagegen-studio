@@ -7,10 +7,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import AppChrome from './components/AppChrome.vue'
 import HomeView from './components/HomeView.vue'
+import ModelManager from './components/ModelManager.vue'
 import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 const homeOpen = ref(true)
+const modelManagerOpen = ref(false)
 const status = ref<RuntimeStatus | null>(null)
 const error = ref<string | null>(null)
 const pending = ref<'check' | 'install' | 'repair' | null>(null)
@@ -119,13 +121,14 @@ onBeforeUnmount(() => {
           @install="runAction('install')"
           @repair="runAction('repair')"
         />
-        <HomeView v-if="homeOpen" />
+        <HomeView v-if="homeOpen" @manageModels="modelManagerOpen = true" />
         <NEmpty v-else class="empty-document" description="No document open">
           <template v-slot:extra>
             <NButton type="primary" @click="homeOpen = true">Open Home</NButton>
           </template>
         </NEmpty>
       </main>
+      <ModelManager v-model:show="modelManagerOpen" />
     </div>
   </NConfigProvider>
 </template>

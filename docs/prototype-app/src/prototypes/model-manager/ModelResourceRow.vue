@@ -39,6 +39,9 @@ const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.prima
         <strong v-overflow-title class="resource-title">{{ resource.name }}</strong>
         <p v-overflow-title>{{ resource.description }}</p>
         <div class="resource-meta">
+          <NTag v-if="resource.availableVersion" :bordered="false" size="small" type="info">
+            Update available
+          </NTag>
           <NTag v-for="badge of resource.badges" :key="badge" :bordered="false" size="small">
             {{ badge }}
           </NTag>
@@ -155,6 +158,7 @@ p {
 .resource-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   font-size: 12px;
 }

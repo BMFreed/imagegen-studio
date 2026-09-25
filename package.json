@@ -13,7 +13,7 @@
     "app:dev": "node scripts/dev-desktop.mjs",
     "app:start": "pnpm run app:build && env -u ELECTRON_RUN_AS_NODE electron .",
     "app:smoke": "pnpm run app:build && node scripts/smoke-desktop.mjs",
-    "app:test": "tsx --test src/main/db/database.test.ts src/main/runtime/index.test.mjs",
+    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/runtime/*.test.mjs",
     "app:db-types": "tsx scripts/generate-db-types.ts",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
@@ -29,7 +29,8 @@
     "@vue-dnd-kit/core": "2.4.6",
     "better-sqlite3": "^13.0.3",
     "kysely": "^0.29.6",
-    "naive-ui": "^2.44.1"
+    "naive-ui": "^2.44.1",
+    "valibot": "1.5.0"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",

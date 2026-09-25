@@ -45,6 +45,30 @@ try {
   await window.getByRole('tab', { name: 'Home' }).waitFor({ state: 'detached' })
   await window.getByRole('main').getByRole('button', { name: 'Open Home' }).click()
   await window.getByRole('tab', { name: 'Home' }).waitFor()
+  await window.getByRole('button', { name: 'Manage Models' }).click()
+  await window.getByRole('dialog', { name: 'Model Manager' }).waitFor()
+  if (process.env.IMAGEGEN_SMOKE_MODEL_SCREENSHOT) {
+    await delay(300)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_MODEL_SCREENSHOT })
+  }
+  assert.deepEqual(await window.evaluate(() => window.api.models.getCatalog()), {
+    ok: true,
+    value: [],
+  })
+  assert.deepEqual(await window.evaluate(() => window.api.models.getStorageSummary()), {
+    ok: true,
+    value: { totalBytes: 0 },
+  })
+  assert.equal(await window.evaluate(() => typeof window.api.models.openModelFolder), 'function')
+  assert.deepEqual(await window.evaluate(() => window.api.models.getInstallJobs()), {
+    ok: true,
+    value: [],
+  })
+  const invalidModelRequest = await window.evaluate(() => window.api.models.previewImport('file:///etc/passwd'))
+  assert.equal(invalidModelRequest.ok, false)
+  assert.ok(['CIVITAI_TOKEN_REQUIRED', 'TOKEN_SECURE_STORAGE_UNAVAILABLE'].includes(invalidModelRequest.error.code))
+  await window.getByRole('button', { name: 'Close Model Manager' }).click()
+  await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
 
   const receivedSecondInstance = application.evaluate(
     ({ app }) => new Promise((resolve) => app.once('second-instance', () => resolve(true))),
@@ -70,7 +94,7 @@ try {
       }),
     ])
   }
-  console.log('Desktop smoke passed: Home, keyboard close/reopen, safe runtime IPC, one instance.')
+  console.log('Desktop smoke passed: Home, Model Manager IPC, keyboard navigation, one instance.')
 
   await application.close()
   application = undefined

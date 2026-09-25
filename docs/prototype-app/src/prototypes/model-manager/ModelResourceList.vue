@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { FilterOff as FilterOffIcon, ListDetails as ListIcon, X as XIcon } from '@vicons/tabler'
 import { NButton, NIcon, NInput, NProgress, NScrollbar, NSelect, NText } from 'naive-ui'
+import { computed } from 'vue'
 
-import type { ModelResource } from './model-manager.types'
+import type { ModelResource, ModelVersionInstallActivity } from './model-manager.types'
 
 import ModelResourceRow from './ModelResourceRow.vue'
 
-defineProps<{
+const props = defineProps<{
   hasActiveFilters: boolean
   resources: ModelResource[]
   selectedId: string
+  versionInstall: ModelVersionInstallActivity | null
 }>()
 
 defineEmits<{
+  cancelInstall: []
   resetFilters: []
   select: [id: string]
 }>()
@@ -20,6 +23,36 @@ defineEmits<{
 const searchValue = defineModel<string>('search', { required: true })
 const baseModelValue = defineModel<string>('baseModel', { required: true })
 const sortValue = defineModel<string>('sort', { required: true })
+
+const installTitle = computed(() => {
+  if (!props.versionInstall) {
+    return 'Installing Digital Art XL v0.2'
+  }
+
+  const verb = {
+    cancelled: 'Cancelled',
+    completed: 'Installed',
+    downloading: 'Installing',
+  }[props.versionInstall.status]
+  return `${verb} ${props.versionInstall.modelName} ${props.versionInstall.versionLabel}`
+})
+
+const installSubtitle = computed(() => {
+  switch (props.versionInstall?.status) {
+    case 'cancelled': {
+      return 'The existing versions and default were not changed'
+    }
+    case 'completed': {
+      return 'Added alongside installed versions · choose Set Default separately'
+    }
+    case 'downloading': {
+      return 'Downloading from CivitAI · 64%'
+    }
+    default: {
+      return 'Downloading from CivitAI · 1.4 GB of 2.2 GB'
+    }
+  }
+})
 
 const baseModelOptions = [
   { label: 'All', value: 'all' },
@@ -79,15 +112,23 @@ const sortOptions = [
     </NScrollbar>
 
     <footer class="install-strip">
-      <strong v-overflow-title class="install-title">Installing Digital Art XL v0.2</strong>
+      <strong v-overflow-title class="install-title">{{ installTitle }}</strong>
       <div class="install-progress">
-        <NProgress :percentage="64" :showIndicator="false" type="line" />
+        <NProgress
+          :percentage="versionInstall?.percentage ?? 64"
+          :showIndicator="false"
+          type="line"
+        />
       </div>
-      <span v-overflow-title class="install-subtitle">
-        Downloading from CivitAI · 1.4 GB of 2.2 GB
-      </span>
+      <span v-overflow-title class="install-subtitle">{{ installSubtitle }}</span>
       <div class="install-actions">
-        <NButton size="small" tertiary type="error">
+        <NButton
+          v-if="!versionInstall || versionInstall.status === 'downloading'"
+          size="small"
+          tertiary
+          type="error"
+          @click="$emit('cancelInstall')"
+        >
           <template v-slot:icon>
             <NIcon :component="XIcon" />
           </template>

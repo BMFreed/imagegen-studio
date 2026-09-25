@@ -222,4 +222,102 @@ test.describe('Model Manager prototype', () => {
       path: path.join(screenshotsDir, 'model-manager-import-dialog-1920.png'),
     })
   })
+
+  test('previews an available version, installs it beside the old versions, then changes default explicitly', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ height: 900, width: 1440 })
+    await openModelManager(page)
+
+    const resourceRow = page.locator('.resource-row').filter({ hasText: 'Illustrious XL' })
+    const versions = page.locator('.version-list .version-card')
+    const references = page.getByRole('list', { name: 'Existing exact-version references' })
+    await expect(resourceRow).not.toContainText('Update available')
+    await expect(page.getByRole('button', { name: 'Install Version' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Check for updates' }).click()
+    await expect(resourceRow).toContainText('Update available')
+    await expect(versions).toHaveCount(2)
+    await expect(versions.filter({ hasText: 'v1.1 main' })).toContainText('Default')
+    await expect(
+      references.getByRole('listitem').filter({ hasText: 'Portrait Study' }),
+    ).toContainText('v1.1 main')
+    await expect(
+      references.getByRole('listitem').filter({ hasText: 'Studio Portrait' }),
+    ).toContainText('v1.0 archive')
+
+    await page.getByRole('button', { name: 'Install Version' }).click()
+    const preview = page.getByRole('dialog', { name: 'Install Version' })
+    await expect(preview).toContainText('Illustrious_XL_v1.2.safetensors')
+    await expect(preview).toContainText('6.7 GB')
+    await expect(preview).toContainText('The current default and existing')
+    await expect(versions).toHaveCount(2)
+    await page.screenshot({
+      fullPage: false,
+      path: path.join(screenshotsDir, 'model-manager-version-preview-1440.png'),
+    })
+
+    await preview.getByRole('button', { name: 'Install Version' }).click()
+    await expect(page.locator('.install-strip')).toContainText(
+      'Installing Illustrious XL v1.2 main',
+    )
+    await expect(page.locator('.install-strip')).toContainText('Installed Illustrious XL v1.2 main')
+    await expect(versions).toHaveCount(3)
+    await expect(resourceRow).not.toContainText('Update available')
+    await expect(versions.filter({ hasText: 'v1.1 main' })).toContainText('Default')
+    await expect(versions.filter({ hasText: 'v1.2 main' })).toContainText('Set Default')
+    await page.getByRole('button', { name: 'Check for updates' }).click()
+    await expect(page.getByText('No newer versions found.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Install Version' })).toHaveCount(0)
+
+    await versions
+      .filter({ hasText: 'v1.2 main' })
+      .getByRole('button', { name: 'Set Default' })
+      .click()
+    await expect(versions.filter({ hasText: 'v1.2 main' })).toContainText('Default')
+    await expect(versions.filter({ hasText: 'v1.1 main' })).toContainText('Set Default')
+    await expect(resourceRow).toContainText('v1.2')
+    await expect(resourceRow).toContainText('6.7 GB')
+    await expect(page.locator('.metadata-grid')).toContainText('Illustrious_XL_v1.2.safetensors')
+    await expect(page.locator('.metadata-grid')).toContainText('1 project, 1 preset, 1 result')
+    await expect(
+      references.getByRole('listitem').filter({ hasText: 'Portrait Study' }),
+    ).toContainText('v1.1 main')
+    await expect(
+      references.getByRole('listitem').filter({ hasText: 'Studio Portrait' }),
+    ).toContainText('v1.0 archive')
+    await expect(
+      references.getByRole('listitem').filter({ hasText: 'Portrait result #12' }),
+    ).toContainText('v1.1 main')
+    await page.screenshot({
+      fullPage: false,
+      path: path.join(screenshotsDir, 'model-manager-version-installed-1440.png'),
+    })
+  })
+
+  test('cancels a version install without changing installed versions or the default', async ({
+    page,
+  }) => {
+    await page.clock.install()
+    await openModelManager(page)
+
+    await page.getByRole('button', { name: 'Check for updates' }).click()
+    await page.getByRole('button', { name: 'Install Version' }).click()
+    await page
+      .getByRole('dialog', { name: 'Install Version' })
+      .getByRole('button', {
+        name: 'Install Version',
+      })
+      .click()
+    await page.locator('.install-strip').getByRole('button', { name: 'Cancel' }).click()
+
+    await expect(page.locator('.install-strip')).toContainText('Cancelled Illustrious XL v1.2 main')
+    await page.clock.runFor(1000)
+    await expect(page.locator('.version-list .version-card')).toHaveCount(2)
+    await expect(page.locator('.version-card').filter({ hasText: 'v1.1 main' })).toContainText(
+      'Default',
+    )
+    await expect(page.locator('.resource-row').filter({ hasText: 'Illustrious XL' })).toContainText(
+      'Update available',
+    )
+  })
 })

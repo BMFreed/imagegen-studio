@@ -55,6 +55,12 @@
 
 ## Уже закрытые решения
 
+- ImageGen Studio всегда остаётся бесплатным open-source приложением. Это не
+  меняет лицензию весов Anima: базовый checkpoint распространяется по
+  [CircleStone Non-Commercial License](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md)
+  и поддерживается у нас только для некоммерческого использования вне
+  production. Веса не входят в дистрибутив приложения; перед установкой
+  пользователь видит источник, ограничение и ссылку на условия модели.
 - Setup/status/repair Python runtime встроены в основное окно ImageGen Studio;
   отдельного приложения или окна лаунчера нет. Код Invoke launcher из
   `/home/user/Work/sources/launcher/` можно использовать как reference для
