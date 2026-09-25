@@ -15,7 +15,7 @@ import { ProjectSession } from './project-session.js'
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 
-test('a lost Home index rebuilds from a copied portable .igs and its embedded preview metadata', async () => {
+test('a lost Home index rebuilds from a saved .igs in the same workspace and its preview metadata', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-index-'))
   try {
     const firstDb = openAppDatabase(directory, migrations)

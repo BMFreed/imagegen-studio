@@ -239,17 +239,25 @@ test.describe('Project prototype', () => {
     await expect(page.getByLabel('Unsaved changes')).toBeVisible()
     await page.getByRole('button', { name: 'Undo' }).click()
     await expect(prompt).toHaveText(baseline!)
+    await expect(page.getByLabel('Unsaved changes')).toBeHidden()
     await page.getByRole('button', { name: 'Redo' }).click()
     await expect(prompt).toHaveText('updated project prompt')
+    await expect(page.getByLabel('Unsaved changes')).toBeVisible()
     await page.keyboard.press('Control+s')
     await expect(page.getByText('Project saved')).toBeVisible()
+    await expect(page.getByLabel('Unsaved changes')).toBeHidden()
 
     await prompt.fill('another change')
+    await expect(page.getByLabel('Unsaved changes')).toBeVisible()
     await page.getByRole('button', { name: 'Close Sample Project B.igs' }).click()
     const close = page.getByRole('dialog', { name: 'Close Project' })
     await expect(close).toBeVisible()
     await close.getByRole('button', { name: 'Cancel' }).click()
     await expect(page.locator('[aria-label="Project prototype"]:visible')).toBeVisible()
+    // Undo now returns to the saved revision, not the pre-Save document.
+    await page.getByRole('button', { name: 'Undo' }).click()
+    await expect(prompt).toHaveText('updated project prompt')
+    await expect(page.getByLabel('Unsaved changes')).toBeHidden()
   })
 
   test('opens preset and model flows over the mounted Project', async ({ page }) => {
@@ -498,7 +506,7 @@ test.describe('Project prototype', () => {
     await expect(page.getByText('Move up', { exact: true })).toBeVisible()
   })
 
-  test('opens a real Project from Home and preserves tab state', async ({ page }) => {
+  test('opens the Project prototype from Home and preserves tab state', async ({ page }) => {
     await page.goto('/')
     const projectB = page.getByRole('button', { name: 'Select Sample Project B' })
     await projectB.dblclick()

@@ -2,7 +2,7 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -78,7 +78,7 @@ function rasterLayer(id: string): IgsProjectDocumentV1['layers'][number] {
   }
 }
 
-test('a dirty document survives process restart without changing the saved package', async () => {
+test('a new shadow-store instance recovers dirty data from disk without changing the saved package', async () => {
   await withProject(async ({ autosaveRoot, projectPath, savedDocument, session, store }) => {
     const originalPackage = await readFile(projectPath)
     session.applyDocument({ ...session.document, title: 'Recovered title' })
@@ -133,6 +133,60 @@ test('a dirty document survives process restart without changing the saved packa
     )
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Recovered title')
   })
+})
+
+test('same-named copies in separate workspaces retain independent document recovery', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-shadow-workspaces-'))
+  try {
+    const firstWorkspace = path.join(directory, 'first')
+    const secondWorkspace = path.join(directory, 'second')
+    await mkdir(firstWorkspace)
+    await mkdir(secondWorkspace)
+    const firstPath = path.join(firstWorkspace, 'Portrait.igs')
+    const secondPath = path.join(secondWorkspace, 'Portrait.igs')
+    await ProjectSession.create(firstPath, 'Saved', {
+      placeholdersDir,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    await copyFile(firstPath, secondPath)
+
+    const firstSaved = await readIgsPackage(firstPath)
+    const secondSaved = await readIgsPackage(secondPath)
+    assert.equal(firstSaved.project.documentId, secondSaved.project.documentId)
+    const firstEdit = edit(firstSaved.project, 'First workspace edit')
+    const secondEdit = edit(secondSaved.project, 'Second workspace edit')
+    const autosaveRoot = path.join(directory, 'app-data', 'autosave')
+    const store = new ProjectShadowStore(autosaveRoot)
+    await store.write({
+      document: firstEdit,
+      projectPath: firstPath,
+      savedDocument: firstSaved.project,
+    })
+    await store.write({
+      document: secondEdit,
+      projectPath: secondPath,
+      savedDocument: secondSaved.project,
+    })
+    const reopened = new ProjectShadowStore(autosaveRoot)
+    const firstRecovery = await reopened.inspect({
+      projectPath: firstPath,
+      savedPackage: firstSaved,
+    })
+    const secondRecovery = await reopened.inspect({
+      projectPath: secondPath,
+      savedPackage: secondSaved,
+    })
+    assert.equal(firstRecovery.status, 'recoverable')
+    assert.equal(secondRecovery.status, 'recoverable')
+    if (firstRecovery.status === 'recoverable' && secondRecovery.status === 'recoverable') {
+      assert.equal(firstRecovery.document.title, 'First workspace edit')
+      assert.equal(secondRecovery.document.title, 'Second workspace edit')
+    }
+    assert.equal((await readIgsPackage(firstPath)).project.title, 'Saved')
+    assert.equal((await readIgsPackage(secondPath)).project.title, 'Saved')
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
 })
 
 test('new raster bytes are staged only when referenced and are checked on recovery', async () => {

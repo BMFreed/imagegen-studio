@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { createServer } from 'node:https'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { ANIMA_QWEN3_0_6B_ENCODER } from './anima-manifest.js'
-import { ModelDownloader, ModelDownloadError } from './model-downloader.js'
+import { ModelDownloader, ModelDownloadError, requestPinnedHttps } from './model-downloader.js'
 
 const FILE_URL = 'https://civitai.com/api/download/models/7?fileId=701'
 const PUBLIC_ADDRESSES = async () => ['1.1.1.1']
@@ -19,6 +22,73 @@ async function withStaging(run: (directory: string) => Promise<void>): Promise<v
   } finally {
     await rm(directory, { force: true, recursive: true })
   }
+}
+
+async function withLocalHttps(
+  run: (url: URL, caPath: string) => Promise<void>,
+  bindAddress = '127.0.0.2',
+): Promise<void> {
+  // These checked-in certificates belong only to this loopback test server.
+  const [cert, key] = await Promise.all(
+    ['downloader-server.pem', 'downloader-server.key'].map((name) =>
+      readFile(new URL(`./test-fixtures/${name}`, import.meta.url), 'utf8'),
+    ),
+  )
+  const server = createServer({ cert, key }, (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/octet-stream' })
+    response.end('verified bytes')
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, bindAddress, resolve)
+    })
+    const address = server.address()
+    assert.ok(address && typeof address !== 'string')
+    await run(
+      new URL(`https://localhost:${address.port}/artifact`),
+      fileURLToPath(new URL('./test-fixtures/downloader-ca.pem', import.meta.url)),
+    )
+  } finally {
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+      })
+    }
+  }
+}
+
+async function trustedRequest(
+  url: URL,
+  address: string,
+  caPath: string,
+  autoSelectFamily = true,
+): Promise<unknown> {
+  const harnessPath = fileURLToPath(
+    new URL('./test-fixtures/pinned-https-child.ts', import.meta.url),
+  )
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', harnessPath, url.href, address, String(autoSelectFamily)],
+    {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: caPath },
+      timeout: 5000,
+    },
+  )
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk
+  })
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk
+  })
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  assert.equal(exitCode, 0, stderr)
+  return JSON.parse(stdout) as unknown
 }
 
 function fileResponse(content: string, length = Buffer.byteLength(content)): Response {
@@ -35,6 +105,56 @@ async function expectDownloadError(promise: Promise<unknown>, code: string): Pro
     return true
   })
 }
+
+test('real pinned HTTPS transport rejects an untrusted certificate', async () => {
+  await withLocalHttps(async (url) => {
+    await assert.rejects(requestPinnedHttps(url, {}, '127.0.0.2'), (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.ok(
+        ['SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        ),
+      )
+      return true
+    })
+  })
+})
+
+test('real pinned HTTPS transport reaches the checked IP while verifying the hostname', async () => {
+  await withLocalHttps(async (url, caPath) => {
+    for (const autoSelectFamily of [true, false]) {
+      assert.deepEqual(await trustedRequest(url, '127.0.0.2', caPath, autoSelectFamily), {
+        body: 'verified bytes',
+        ok: true,
+        status: 200,
+      })
+    }
+    assert.deepEqual(await trustedRequest(url, '127.0.0.1', caPath), {
+      code: 'ECONNREFUSED',
+      ok: false,
+    })
+  })
+})
+
+test('a trusted CA does not authorize a different hostname', async () => {
+  await withLocalHttps(async (url, caPath) => {
+    url.hostname = 'other.example'
+    assert.deepEqual(await trustedRequest(url, '127.0.0.2', caPath), {
+      code: 'ERR_TLS_CERT_ALTNAME_INVALID',
+      ok: false,
+    })
+  })
+})
+
+test('real pinned HTTPS transport handles an IPv6 checked address', async () => {
+  await withLocalHttps(async (url, caPath) => {
+    assert.deepEqual(await trustedRequest(url, '::1', caPath), {
+      body: 'verified bytes',
+      ok: true,
+      status: 200,
+    })
+  }, '::1')
+})
 
 test('streams and hashes the selected file, sending Bearer only to CivitAI before a CDN redirect', async () => {
   await withStaging(async (stagingDirectory) => {

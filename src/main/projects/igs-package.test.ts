@@ -7,7 +7,16 @@ import {
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  type FileHandle,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -506,6 +515,66 @@ test('interrupted validated Save leaves previous file readable and removes tempo
     assert.deepEqual(await readFile(targetPath), originalBytes)
     assert.deepEqual((await readIgsPackage(targetPath)).project, first.project)
     assert.deepEqual(await readdir(directory), ['save.igs'])
+  })
+})
+
+test('Save syncs validated ZIP before commit and its directory after commit', async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const targetPath = path.join(directory, 'save.igs')
+    const first = emptyInput('First saved document')
+    await saveIgsPackage(targetPath, first)
+    const originalBytes = await readFile(targetPath)
+
+    // The Save durability contract requires a staged-file flush before rename and a directory
+    // flush after rename. Observe the real writer's handles without replacing its filesystem.
+    const inspectionHandle = await open(directory, 'r')
+    const syncPrototype = Object.getPrototypeOf(inspectionHandle) as FileHandle
+    await inspectionHandle.close()
+    const originalSync = syncPrototype.sync
+    const syncEvents: ('directory' | 'file')[] = []
+    let failSync: 'directory' | 'file' | null = null
+    syncPrototype.sync = async function (this: FileHandle): Promise<void> {
+      const stats = await this.stat()
+      const kind = stats.isDirectory() ? 'directory' : 'file'
+      syncEvents.push(kind)
+      if (kind === failSync) {
+        throw new Error(`injected ${kind} sync failure`)
+      }
+      await originalSync.call(this)
+    }
+    try {
+      const second = emptyInput('Second saved document')
+      const committed = await saveIgsPackage(targetPath, second, {
+        beforeRename: async () => {
+          assert.deepEqual(syncEvents, ['file'])
+          assert.deepEqual(await readFile(targetPath), originalBytes)
+        },
+      })
+      assert.equal(committed.directorySynced, true)
+      assert.deepEqual(syncEvents, ['file', 'directory'])
+      assert.deepEqual((await readIgsPackage(targetPath)).project, second.project)
+
+      syncEvents.length = 0
+      failSync = 'file'
+      const secondBytes = await readFile(targetPath)
+      await assert.rejects(
+        saveIgsPackage(targetPath, emptyInput('Rejected')),
+        /injected file sync failure/,
+      )
+      assert.deepEqual(syncEvents, ['file'])
+      assert.deepEqual(await readFile(targetPath), secondBytes)
+      assert.deepEqual(await readdir(directory), ['save.igs'])
+
+      syncEvents.length = 0
+      failSync = 'directory'
+      const third = emptyInput('Committed, directory sync failed')
+      const committedWithoutDirectorySync = await saveIgsPackage(targetPath, third)
+      assert.deepEqual(syncEvents, ['file', 'directory'])
+      assert.equal(committedWithoutDirectorySync.directorySynced, false)
+      assert.deepEqual((await readIgsPackage(targetPath)).project, third.project)
+    } finally {
+      syncPrototype.sync = originalSync
+    }
   })
 })
 

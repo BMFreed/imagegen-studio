@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -64,6 +64,69 @@ test('a failed SQL migration rolls back without changing the previous schema', a
     )
     assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 3)
     sqlite.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('reopening refuses an installed migration whose SQL changed on disk', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-changed-'))
+  const migrations = path.join(root, 'migrations')
+  cpSync(sourceMigrations, migrations, { recursive: true })
+  const migrationPath = path.join(migrations, '0001_app_metadata.sql')
+  const originalSql = readFileSync(migrationPath, 'utf8')
+  try {
+    const first = openAppDatabase(root, migrations)
+    await first.db.insertInto('app_metadata').values({ key: 'probe', value: 'saved' }).execute()
+    await first.close()
+
+    writeFileSync(migrationPath, `${originalSql}\n-- changed after installation\n`)
+    assert.throws(
+      () => openAppDatabase(root, migrations),
+      /Database migration changed after installation: 0001_app_metadata\.sql/,
+    )
+
+    // A refused reopen must leave the previous database usable once the installed SQL returns.
+    writeFileSync(migrationPath, originalSql)
+    const reopened = openAppDatabase(root, migrations)
+    const row = await reopened.db
+      .selectFrom('app_metadata')
+      .select('value')
+      .where('key', '=', 'probe')
+      .executeTakeFirstOrThrow()
+    assert.equal(row.value, 'saved')
+    await reopened.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('reopening refuses a missing installed migration without discarding the database', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-missing-'))
+  const migrations = path.join(root, 'migrations')
+  cpSync(sourceMigrations, migrations, { recursive: true })
+  const migrationName = '0001_app_metadata.sql'
+  const migrationPath = path.join(migrations, migrationName)
+  try {
+    const first = openAppDatabase(root, migrations)
+    await first.db.insertInto('app_metadata').values({ key: 'probe', value: 'saved' }).execute()
+    await first.close()
+
+    rmSync(migrationPath)
+    assert.throws(
+      () => openAppDatabase(root, migrations),
+      /Missing installed database migration: 0001_app_metadata\.sql/,
+    )
+
+    cpSync(path.join(sourceMigrations, migrationName), migrationPath)
+    const reopened = openAppDatabase(root, migrations)
+    const row = await reopened.db
+      .selectFrom('app_metadata')
+      .select('value')
+      .where('key', '=', 'probe')
+      .executeTakeFirstOrThrow()
+    assert.equal(row.value, 'saved')
+    await reopened.close()
   } finally {
     rmSync(root, { force: true, recursive: true })
   }

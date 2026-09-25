@@ -25,14 +25,6 @@ const SOURCE_WEBP = Buffer.from(
   'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
   'base64',
 )
-const OUTPUT_PNG_WITH_ICC = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAABdmlDQ1BJQ0MgUHJvZmlsZQAAeJx1kbtLw1AUxn+2im8K6qDiEPCBQwVREEetQ5cipVbwtaSxaYW2hqRFiqvg4lBwEF18Df4HugquCoKgCCLOjr4WkXiuEVrE3nBzfnz3foeTL+CLZIysUzsB2VzejoVD2tz8glb/TCNdtNHLmG441mQ0GqHq+rilRtWbIdWr+r1/V/Ny0jGgpkF4zLDsvLBMQ2QtbyneEu4w0vqy8IFw0JYBhS+VnvD4SXHK4zfFdjw2BT7VU0tVcKKCjbSdFR4U7stmCsbvPOpLWpK52Rmp3bJ7cIgRJoRGggIrZMgzJDUnmf3vG/7xTbMqHkPeFkVscaRIizcoakG6JqWaoiflyVBUuf/N0zFHR7zuLSGoe3Td136o34avkut+Hrru1xH4H+A8V/avSk7j76KXylrfPgQ24PSirCV24GwTOu8t3dZ/JL9sn2nCywm0zkP7NTQteln9nnN8B/F1+UVXsLsHA3I/sPQNa9toO5092CkAAAAUSURBVHicY7TpufOfgYGBgYkBCgAnyAKnqdXrcQAAAABJRU5ErkJggg==',
-  'base64',
-)
-const OUTPUT_WEBP_WITH_ICC = Buffer.from(
-  'UklGRoQCAABXRUJQVlA4WAoAAAAgAAAAAQAAAQAASUNDUEwCAAAAAAJMbGNtcwRAAABtbnRyUkdCIFhZWiAH6gAJABkAEgAjADZhY3NwQVBQTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9tYAAQAAAADTLWxjbXMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtkZXNjAAABCAAAADZjcHJ0AAABQAAAAEx3dHB0AAABjAAAABRjaGFkAAABoAAAACxyWFlaAAABzAAAABRiWFlaAAAB4AAAABRnWFlaAAAB9AAAABRyVFJDAAACCAAAACBnVFJDAAACCAAAACBiVFJDAAACCAAAACBjaHJtAAACKAAAACRtbHVjAAAAAAAAAAEAAAAMZW5VUwAAABoAAAAcAHMAUgBHAEIAIABiAHUAaQBsAHQALQBpAG4AAG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAMAAAABwATgBvACAAYwBvAHAAeQByAGkAZwBoAHQALAAgAHUAcwBlACAAZgByAGUAZQBsAHlYWVogAAAAAAAA9tYAAQAAAADTLXNmMzIAAAAAAAEMQgAABd7///MlAAAHkwAA/ZD///uh///9ogAAA9wAAMBuWFlaIAAAAAAAAG+gAAA49QAAA5BYWVogAAAAAAAAJJ8AAA+EAAC2w1hZWiAAAAAAAABilwAAt4cAABjZcGFyYQAAAAAAAwAAAAJmZgAA8qcAAA1ZAAAT0AAACltjaHJtAAAAAAADAAAAAKPXAABUewAATM0AAJmaAAAmZgAAD1xWUDhMEQAAAC8BQAAAB1DG8pS7/4GI6H8AAA==',
-  'base64',
-)
 const sha256 = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
 
 async function withTemp(run: (directory: string) => Promise<void>): Promise<void> {
@@ -74,16 +66,7 @@ else {
         process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'INPUT_HASH_MISMATCH',message:'Input changed.'}) + '\n')
         continue
       }
-      if (mode === 'dishonest-output') {
-        const fs = require('node:fs')
-        const merged = Buffer.from(process.env.FAKE_PNG, 'base64')
-        const thumbnail = Buffer.from(process.env.FAKE_WEBP, 'base64')
-        fs.writeFileSync(request.output.mergedPngPath, merged)
-        fs.writeFileSync(request.output.thumbnailWebpPath, thumbnail)
-        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId:request.requestId,merged:{byteSize:merged.length,width:2,height:2,sha256:'0'.repeat(64),colorSpace:'srgb'},thumbnail:{byteSize:thumbnail.length,width:2,height:2,sha256:'0'.repeat(64),colorSpace:'srgb'}}) + '\n')
-        continue
-      }
-      if (mode === 'truthful-derivative') {
+      if (mode === 'false-merged-sha' || mode === 'false-thumbnail-sha' || mode === 'truthful-derivative') {
         const fs = require('node:fs')
         const crypto = require('node:crypto')
         const merged = Buffer.from(process.env.FAKE_PNG, 'base64')
@@ -91,7 +74,11 @@ else {
         fs.writeFileSync(request.output.mergedPngPath, merged)
         fs.writeFileSync(request.output.thumbnailWebpPath, thumbnail)
         const info = (bytes) => ({byteSize:bytes.length,width:2,height:2,sha256:crypto.createHash('sha256').update(bytes).digest('hex'),colorSpace:'srgb'})
-        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId:request.requestId,merged:info(merged),thumbnail:info(thumbnail)}) + '\n')
+        const mergedInfo = info(merged)
+        const thumbnailInfo = info(thumbnail)
+        if (mode === 'false-merged-sha') mergedInfo.sha256 = '0'.repeat(64)
+        if (mode === 'false-thumbnail-sha') thumbnailInfo.sha256 = '0'.repeat(64)
+        process.stdout.write(JSON.stringify({type:'derivative-done',protocolVersion:'1',requestId:request.requestId,merged:mergedInfo,thumbnail:thumbnailInfo}) + '\n')
         continue
       }
       if (mode === 'dishonest-color') {
@@ -313,43 +300,72 @@ test('worker metadata cannot substitute for missing output or escaped staging pa
   })
 })
 
-test('main rejects actual output files when the worker reports a false SHA-256', async () => {
+test('main rejects false SHA-256 metadata for each actual worker output file', async () => {
   await withTemp(async (directory) => {
     const runtimeRoot = path.join(directory, 'runtime')
     const stagingBasePath = path.join(directory, 'staging')
-    const requestStaging = path.join(stagingBasePath, 'request')
     await mkdir(runtimeRoot)
     await mkdir(stagingBasePath)
-    await mkdir(requestStaging)
     const pythonExecutable = await fakeWorker(runtimeRoot)
     const source = path.join(directory, 'source.png')
     await writeFile(source, SOURCE_PNG)
-    const client = await ProjectWorkerClient.start(
+    const profile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    // Both files are valid sRGB outputs; only the reported digest changes below.
+    const merged = insertIcc(SOURCE_PNG, profile)
+    const thumbnail = webpWithIcc(profile, false)
+    const requestFor = (stagingRoot: string) => ({
+      inputPath: source,
+      inputSha256: sha256(SOURCE_PNG),
+      mergedPngPath: path.join(stagingRoot, 'merged.png'),
+      stagingRoot,
+      thumbnailMaxSide: 64,
+      thumbnailWebpPath: path.join(stagingRoot, 'thumbnail.webp'),
+    })
+    for (const mode of ['false-merged-sha', 'false-thumbnail-sha']) {
+      const stagingRoot = path.join(stagingBasePath, mode)
+      await mkdir(stagingRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        {
+          environment: {
+            FAKE_MODE: mode,
+            FAKE_PNG: merged.toString('base64'),
+            FAKE_WEBP: thumbnail.toString('base64'),
+          },
+        },
+      )
+      try {
+        await assert.rejects(client.deriveImage(requestFor(stagingRoot)), {
+          code: 'OUTPUT_MISMATCH',
+          message: 'The worker image does not match its metadata.',
+        })
+        assert.deepEqual(await readFile(path.join(stagingRoot, 'merged.png')), merged)
+        assert.deepEqual(await readFile(path.join(stagingRoot, 'thumbnail.webp')), thumbnail)
+      } finally {
+        await client.close()
+      }
+    }
+
+    const validStaging = path.join(stagingBasePath, 'valid')
+    await mkdir(validStaging)
+    const control = await ProjectWorkerClient.start(
       { pythonExecutable, runtimeRoot, stagingBasePath },
       {
         environment: {
-          FAKE_MODE: 'dishonest-output',
-          FAKE_PNG: OUTPUT_PNG_WITH_ICC.toString('base64'),
-          FAKE_WEBP: OUTPUT_WEBP_WITH_ICC.toString('base64'),
+          FAKE_MODE: 'truthful-derivative',
+          FAKE_PNG: merged.toString('base64'),
+          FAKE_WEBP: thumbnail.toString('base64'),
         },
       },
     )
     try {
-      const mergedPngPath = path.join(requestStaging, 'merged.png')
-      await assert.rejects(
-        client.deriveImage({
-          inputPath: source,
-          inputSha256: sha256(SOURCE_PNG),
-          mergedPngPath,
-          stagingRoot: requestStaging,
-          thumbnailMaxSide: 64,
-          thumbnailWebpPath: path.join(requestStaging, 'thumbnail.webp'),
-        }),
-        { code: 'OUTPUT_MISMATCH' },
-      )
-      assert.deepEqual(await readFile(mergedPngPath), OUTPUT_PNG_WITH_ICC)
+      const result = await control.deriveImage(requestFor(validStaging))
+      assert.equal(result.merged.sha256, sha256(merged))
+      assert.equal(result.thumbnail.sha256, sha256(thumbnail))
     } finally {
-      await client.close()
+      await control.close()
     }
   })
 })

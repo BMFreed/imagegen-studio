@@ -378,14 +378,25 @@ export class ModelDownloader {
 }
 
 /** Uses the checked IP for the socket while TLS SNI and certificate checks still use the hostname. */
-function requestPinnedHttps(url: URL, options: RequestInit, address: string): Promise<Response> {
+export function requestPinnedHttps(
+  url: URL,
+  options: RequestInit,
+  address: string,
+): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = httpsRequest(
       url,
       {
         agent: false,
         headers: Object.fromEntries(new Headers(options.headers)),
-        lookup: (_hostname, _lookupOptions, callback) => callback(null, address, isIP(address)),
+        lookup: (_hostname, lookupOptions, callback) => {
+          const family = isIP(address)
+          if (lookupOptions.all) {
+            callback(null, [{ address, family }])
+          } else {
+            callback(null, address, family)
+          }
+        },
         method: 'GET',
         rejectUnauthorized: true,
         servername: url.hostname,

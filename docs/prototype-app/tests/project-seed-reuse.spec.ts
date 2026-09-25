@@ -21,7 +21,7 @@ async function selectSeedPolicy(
   await page.keyboard.press('Escape')
 }
 
-test('the last actual seed is recorded only from a completed candidate, outside document history', () => {
+test('the prototype records a completed mock seed outside document history', () => {
   const session = reactive(createProjectScenario('staging'))
   const completed = session.queueItems[0]!
   const candidate = session.staging!.candidates[0]!
