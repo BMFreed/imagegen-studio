@@ -160,7 +160,7 @@ The accepted anchor candidate is resolved deterministically:
 
 That anchor becomes the visible Raster Layer or active Smart Patch variant after acceptance. Focusing an unselected candidate for comparison therefore never changes the selection implicitly.
 
-Acceptance does not need to wait for the full batch. If the user accepts completed candidates while sibling jobs are still pending or running, the confirmation/action copy must explain that the remaining jobs will be canceled and unselected candidates discarded. Confirming ends the staging session, requests cancellation for unfinished sibling jobs and commits only the completed selected candidates into the open Project document and its recovery shadow. The main `.igs` is replaced only by explicit Save.
+Acceptance does not need to wait for the full batch. If the user accepts completed candidates while sibling jobs are still pending or running, the confirmation/action copy must explain that the remaining jobs will be canceled and unselected candidates discarded. Confirming ends the staging session, requests cancellation for unfinished sibling jobs and commits only the completed selected candidates into the open Project document and its recovery shadow. These accepted document changes reach the main `.igs` only through explicit Save. A separate explicit `Rebuild Preview` on a clean Project can replace preview/manifest without changing candidates, accepted layers or provenance.
 
 ## Normal Generation Acceptance
 

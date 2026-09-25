@@ -4,6 +4,15 @@
 
 Renderer отвечает за UI и пользовательские сценарии. Main process отвечает за application layer: SQLite, filesystem, загрузки, app-owned Python runtime, worker process, валидацию команд и нормализацию ошибок.
 
+Установка, проверка состояния и восстановление runtime — часть **того же
+приложения и основного окна**, где находятся Home, Project и Model Manager.
+ImageGen Studio не запускает отдельное приложение-лаунчер и не открывает
+launcher-окно перед основным UI. Если worker ещё не установлен или неисправен,
+основное окно всё равно открывается и показывает доступное действие setup/repair.
+Python worker — фоновый subprocess без собственного пользовательского окна.
+Исходники Invoke launcher в `/home/user/Work/sources/launcher/` служат
+reference для отдельных install mechanisms, а не шаблоном композиции окон.
+
 Renderer не импортирует:
 
 - `fs`;
@@ -144,3 +153,12 @@ Runtime install/repair является main-process operation:
 - нормализует install/runtime failures в доменные DTO.
 
 Renderer может инициировать разрешённую install/repair command и показывать прогресс, но не получает доступ к `uv`, Python, `child_process` или произвольным shell-командам. Полный контракт зафиксирован в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
+
+Обновление Electron-приложения — отдельная main-process operation от обновления
+Python runtime и моделей. Renderer в основном окне запускает проверку версии
+только по нажатию `Проверить обновления`, показывает результат и отдельно
+инициирует установку проверенного app
+package; main process владеет загрузкой, проверкой и передачей пакета
+platform updater'у. Даже при ошибке обновления app data, `.igs`, модели и
+активный runtime не становятся объектом очистки. Точный Linux delivery/update
+mechanism доказывается в [релизной фазе](./01-implementation-roadmap.md#фаза-5-первый-linuxnvidia-релиз).

@@ -176,6 +176,13 @@ type WorkerMessage =
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Для Anima worker использует отдельные model loader, Qwen3 text encoder, VAE, LoRA и denoising path. Он проверяет exact installed identities обязательных компонентов перед началом job; ImageGen Studio не выдаёт SDXL single-file загрузчик за универсальный путь для Anima.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
+- При недоступном ML Worker main может включить в явный Save статические
+  bundled preview placeholders и `preview.status=unavailable` в `.igs` manifest. Это
+  fallback для сохранения документа, а не альтернативный image processor:
+  отдельный preview worker не запускается, реальный derivative main не строит.
+  Для проекта без видимых raster pixels состояние остаётся `empty`. Рабочий
+  worker пересоздаёт previews для следующего явного Save или explicit
+  `Rebuild Preview` чистого Project; фоновая задача не переписывает `.igs`.
 - Worker-код должен быть совместим с BasedPyright и Ruff. Собственные DTO/protocol/model metadata типизируются строго; прямой Diffusers/PyTorch integration изолируется в adapter-слое.
 - Ошибки worker'а не показываются в UI напрямую: main process переводит их в `AppError`.
 - Completed outputs are stored as locally recoverable, unaccepted candidates

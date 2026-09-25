@@ -46,6 +46,11 @@ Project becomes dirty after persistent document mutations such as:
 Queue progress, completed candidates, staging focus/selection and discarded candidates do not mark Project dirty.
 
 If undo returns exactly to the saved revision, dirty may clear using a revision id/hash comparison.
+Saved **document** revision/hash covers project state and accepted assets,
+not preview files, cache metadata or whole ZIP bytes. Explicit `Rebuild Preview`
+can change the package fingerprint/mtime while leaving the document revision,
+dirty state and undo history unchanged; main must recognize its own maintenance
+replacement rather than report an external file conflict.
 
 ## Save
 
@@ -57,6 +62,20 @@ If undo returns exactly to the saved revision, dirty may clear using a revision 
 - updates the saved revision marker, preview and Home index metadata;
 - clears dirty state only after successful replacement;
 - marks/removes the corresponding document recovery shadow as clean.
+
+An unavailable or crashed ML Worker cannot block Save. If current raster
+previews cannot be produced, Save includes the bundled static preview
+placeholders and records `preview.status=unavailable` in the `.igs` manifest
+when visible raster pixels exist; Project assets, settings and accepted
+results are saved normally. An empty Project instead records `empty`. Home
+shows that a nonempty Project's preview is unavailable rather than presenting
+it as empty. A later explicit Save with a working worker can rebuild previews;
+for an otherwise clean Project, Home's explicit `Rebuild Preview` performs the
+same atomic package replacement without changing the saved document revision,
+dirty/undo or staging. It serializes with Save and rechecks project identity and
+dirty state just before replacement; failure keeps the saved placeholder.
+On a dirty open Project, `Rebuild Preview` routes to Project Save instead.
+Neither worker completion nor background cache refresh rewrites the main `.igs`.
 
 Save neither accepts nor discards unaccepted staging candidates. Their separate
 recovery manifest and assets survive a successful Save. Save failure keeps the
@@ -182,5 +201,10 @@ The pending process pilot is tracked in [Engineering workflow](../../engineering
   be exported independently of layer conversion.
 - Undo/redo can clear dirty when it returns to the saved revision.
 - A saved supported `.igs` can be reopened after transfer/import without relying on the original installation's project index or preview cache; unavailable model weights produce diagnostics.
+- Save succeeds with a valid placeholder preview when ML Worker is unavailable;
+  it preserves the full document and marks a nonempty Project's preview
+  unavailable. A clean Project can explicitly `Rebuild Preview` with the
+  restored worker, without fabricating a document edit; a dirty Project must
+  Save its current state.
 - Save success is verified by reopening through the real loader; a write/validation/replacement failure keeps the previous saved package readable and the document dirty.
 - Valid recovery opens for review without replacing the saved package until explicit Save; failed Save does not delete the recoverable shadow.

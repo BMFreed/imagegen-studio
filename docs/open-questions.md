@@ -22,6 +22,16 @@
 - По результатам Linux/NVIDIA packaging и inference tests установить минимальные
   driver/CUDA/VRAM требования; это release qualification, не выбор другого
   inference backend.
+- До релизной фазы выбрать проверяемый Linux app package/update channel:
+  trusted manifest, версия/совместимость, integrity/signature verification,
+  handoff системному installer/updater и поведение при interrupted update.
+  Продуктовое решение о встроенной проверке и установке уже принято; это
+  инженерный контракт доставки, отдельный от Python runtime update. User flow
+  описан в [Application Updates](./features/application-updates.md).
+- До production dynamic batch expansion определить верхний лимит jobs по
+  capacity tests для поддерживаемого Linux/NVIDIA профиля; прототипный лимит
+  не является автоматически production-значением. Freeze/queue и UI должны
+  показывать один и тот же лимит и причину отказа.
 
 ## Можно решить позже
 
@@ -45,6 +55,22 @@
 
 ## Уже закрытые решения
 
+- Setup/status/repair Python runtime встроены в основное окно ImageGen Studio;
+  отдельного приложения или окна лаунчера нет. Код Invoke launcher из
+  `/home/user/Work/sources/launcher/` можно использовать как reference для
+  отдельных механизмов установки, сохраняя наше staged/rollback поведение.
+- Если ML Worker отсутствует или упал, Project Save всё равно сохраняет полный
+  `.igs` с обязательными статическими preview placeholders и manifest state
+  `preview.status=unavailable` для Project с видимыми raster pixels; пустой
+  Project остаётся `empty`. Отдельный preview worker не создаётся. Актуальные
+  previews строит восстановленный worker при следующем явном Save либо
+  `Rebuild Preview` чистого Project.
+- Первый Linux/NVIDIA релиз включает встроенную проверку и установку
+  обновлений самого Electron-приложения из интерфейса. Это отдельный lifecycle
+  от обновления Python runtime и моделей; приложение не удаляет пользовательские
+  `.igs`, модели и app data при update. Проверка выполняется только после
+  нажатия `Проверить обновления`, установка найденного пакета — отдельное
+  явное действие; фоновой проверки при старте нет.
 - Первый релиз поддерживает Linux + NVIDIA. Другие ОС и CPU/AMD/Metal профили
   не входят в первую release matrix.
 - Inference для Illustrious (SDXL architecture) и Anima повторяет полный
@@ -89,8 +115,10 @@
 - PP-007: переносимый `.igs` принадлежит пользователю; Save, dirty state и
   recovery имеют разные роли. Completed unaccepted candidates восстанавливаются
   локально после crash из отдельного app-managed staging manifest/assets;
-  основной `.igs` не меняется до явного Save, а unaccepted staging не
-  переносится вместе с `.igs` даже после Save. Успешный Save не удаляет
+  document content основного `.igs` не меняется до явного Save; отдельный
+  explicit `Rebuild Preview` может обновить только preview/manifest чистого
+  Project. Unaccepted staging не переносится вместе с `.igs` даже после Save.
+  Успешный Save не удаляет
   unaccepted staging. Production persistence
   остаётся обязательным недоказанным flow, а не свойством in-memory prototype.
 - PP-008: генерация даёт temporary candidates; только явное принятие добавляет
@@ -101,8 +129,8 @@
   candidates для recovery. Валидный Smart Patch candidate без target layer
   остаётся видимым как orphaned: Add as Variant недоступен, а явный Add as Raster
   Layer разрешён только при валидных asset/geometry/compositing; иначе доступен
-  Discard. Валидный asset можно отдельно экспортировать через `Save Candidate
-  Image` без acceptance. Автоматической конверсии или retargeting нет.
+  Discard. Валидный asset можно отдельно экспортировать через действие
+  `Save Candidate Image` без acceptance. Автоматической конверсии или retargeting нет.
 - Engineering workflow: risk-based research/review protocols приняты в
   [engineering/](./engineering/README.md). work project command не переносится напрямую;
   собственный review skill проектируется после PP-007/PP-006 пилотов.

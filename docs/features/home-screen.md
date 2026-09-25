@@ -405,21 +405,33 @@ Open projects must still be closed before moving them to Trash. Workspace counte
 Preview is for inspection, not editing.
 
 1. User selects a project card.
-2. Home loads thumbnail/merged preview from cache or `.igs`.
-3. If preview is missing, Home shows fallback state and can rebuild from `.igs` when possible.
-4. User can zoom/pan.
-5. User can open the project or perform project file actions.
+2. Home reads preview state from `.igs` and loads thumbnail/merged preview from
+   cache or package when rendered/empty.
+3. If the manifest marks preview `unavailable` after Save without ML Worker,
+   Home shows the bundled placeholder and a subtle `Preview unavailable` state.
+   `Rebuild Preview` with a working worker explicitly replaces embedded
+   previews for a clean Project; if it is open and dirty, Home routes to
+   Project Save. A cache refresh does not rewrite `.igs`.
+4. If preview files are missing, Home shows fallback state and can rebuild cache
+   from `.igs` when possible.
+5. User can zoom/pan.
+6. User can open the project or perform project file actions.
 
 ```mermaid
 flowchart TD
-  A["Select project card"] --> B{"Cache thumbnail available?"}
+  A["Select project card"] --> S{"Manifest preview state?"}
+  S -- "Unavailable" --> F["Show placeholder and Preview unavailable"]
+  S -- "Rendered / Empty" --> B{"Cache thumbnail available?"}
   B -- "Yes" --> C["Show cached preview"]
   B -- "No" --> D{"thumbnail.webp inside .igs?"}
   D -- "Yes" --> E["Load preview from .igs and refresh cache"]
-  D -- "No" --> F["Show fallback preview"]
+  D -- "No" --> H["Show fallback preview"]
   C --> G["Zoom / pan / inspect"]
   E --> G
-  F --> H["Offer rescan/rebuild when possible"]
+  F --> P["Rebuild Preview when worker is available"]
+  P --> G
+  H --> R["Offer rescan/rebuild when possible"]
+  R --> I
   G --> I["Open / open in new tab / move / show in folder / overflow actions"]
 ```
 
@@ -456,7 +468,8 @@ Home must make file/project problems visible without panic.
 Project conditions are represented by independent dimensions:
 
 - file health: `ready`, `missing`, `corrupt` or `unsupported_schema`;
-- runtime flags: `open`, `recovery_available`, `thumbnail_missing`;
+- runtime/index flags: `open`, `recovery_available`, `thumbnail_missing`,
+  `preview_unavailable` (derived from saved manifest state);
 - workspace availability: `available`, `missing` or `inaccessible`.
 
 `open` is derived from the runtime document-tab registry and is not persisted on the Home project record. Likewise, workspace availability is resolved from the workspace catalog rather than copied into every project.
@@ -472,6 +485,14 @@ State behavior in the current prototype:
 - `thumbnail_missing`: show fallback and rebuild cache if possible.
 - `recovery_available`: show a subtle `Recovery available` marker and route recovery through the project-opening decision dialog.
 - unavailable workspace: show a workspace-level warning and locate/remove options.
+
+Production also distinguishes `preview_unavailable`: show the saved placeholder
+with an explanation; opening remains available and explicit `Rebuild Preview`
+can regenerate embedded previews after worker recovery. A dirty open Project
+uses Save instead; failed rebuild leaves the old valid placeholder and never
+changes dirty/undo. The current prototype has only
+`thumbnailState: 'ready' | 'missing'`; its `Preview unavailable` label and in-memory rebuild currently mix
+cache-miss with this separate saved-manifest condition.
 
 Visible card/Inspector labels use human-facing copies: `Open`, `Recovery available`, `File missing`, `Corrupt project`, `Newer app required`, `Preview unavailable`, `Workspace unavailable` and `In Trash`. Internal enum tokens above are not shown directly.
 
@@ -595,6 +616,14 @@ MVP does not include:
 - Search matches project display names only; sorting supports last opened, name and modified date.
 - Project filtering supports `Open`, `Recovery available` and `Needs attention` without treating independent conditions as one enum.
 - Project cards show thumbnail, name, basic metadata and applicable independent conditions.
+- A Project saved while ML Worker was unavailable remains openable and shows
+  `Preview unavailable`, never a stale thumbnail represented as current.
+- `Rebuild Preview` on a clean Project with a restored worker atomically updates
+  the embedded preview and cache without changing document revision, dirty or
+  undo. It serializes with Save and rechecks open Project identity/dirty just
+  before replacement; a failure keeps the old valid `.igs` and placeholder.
+  The current Vue prototype only flips an in-memory thumbnail state and does
+  not prove this production behavior.
 - Home preview supports zoom and pan without showing inactive generation/canvas controls, and its Inspector can be collapsed.
 - Workspace sidebar and Inspector widths are mouse-resizable within bounded ranges; the Inspector resize handle is unavailable while collapsed.
 - An already-open selected project uses `Switch to Project` and focuses its existing tab.

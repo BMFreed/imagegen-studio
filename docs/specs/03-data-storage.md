@@ -113,8 +113,30 @@ union bounds видимого composited raster content: видимые Raster L
 активные видимые Smart Patch variants. Скрытое содержимое и primary generation
 bbox не расширяют этот rect. Для проекта без видимых raster pixels оба preview
 артефакта содержат детерминированный placeholder для Home, не «размер canvas»
-и не изображение, доступное для `Export As`. Default image export использует
-тот же visible-content bounds rule и в пустом проекте недоступен.
+и не изображение, доступное для `Export As`; `preview.status=empty` сохраняется
+даже без worker. Default image export использует тот же visible-content bounds
+rule и в пустом проекте недоступен.
+
+Save не блокируется отсутствующим или упавшим ML Worker. Когда worker не может
+построить актуальный raster preview для проекта **с видимыми пикселями**, main
+кладёт в **оба** обязательных preview-файла статический, поставляемый с
+приложением placeholder и отмечает в `manifest.json`
+`preview.status=unavailable`; содержимое слоёв и assets сохраняется полностью.
+Состояния `rendered`, `empty` и `unavailable` различаются в этом поле, чтобы placeholder
+при отказе worker не выдавался за пустой проект или актуальный composite.
+Нельзя повторно использовать старый preview от предыдущей ревизии как новый.
+Следующий явный Save с доступным worker пересоздаёт previews и меняет состояние
+на `rendered`. Для чистого Project то же делает явное `Rebuild Preview` из
+Home: main атомарно пересобирает `.igs`, меняя только preview/manifest и cache,
+не меняя document revision, dirty/undo, accepted results или staging.
+Команда сериализуется с Save и непосредственно перед заменой повторно
+проверяет project identity и dirty state; на dirty Project она открывает
+Project для Save, чтобы не записать preview от старой ревизии вместо текущих
+изменений. Document revision/hash нельзя вычислять из всего ZIP package,
+preview bytes или mtime: maintenance rebuild меняет package fingerprint, но
+не документные данные. Ошибка worker/rebuild оставляет старый пакет с placeholder
+читаемым. Main не создаёт производное изображение и не запускает отдельный
+preview worker ради этой ветки.
 
 `ImageGen Studio/previews/project-thumbnails/` используется только как derived cache для быстрого отображения Home. Этот кэш можно удалить и пересобрать из `.igs`. Если cache preview отсутствует или устарел, приложение читает `preview/thumbnail.webp` из `.igs` и обновляет cache entry.
 
@@ -329,6 +351,9 @@ MVP-правило:
 - валидировать `manifest.json` и `project.json` через runtime schema;
 - запретить опасные archive paths вроде `../` и абсолютных путей;
 - проверить наличие обязательных assets, referenced layers, masks и previews;
+- проверить допустимость preview state и формат обязательных preview-файлов;
+  `unavailable` с валидными placeholders не делает сохранённый Project
+  повреждённым;
 - проверить допустимые размеры generation bbox, raster layers, masks и
   распакованных assets, включая лимиты на координаты и общий объём archive;
 - показать понятную ошибку, если файл повреждён, не поддерживается или создан более новой версией приложения.
@@ -743,6 +768,11 @@ ImageGen Studio/
   mutate provenance or current Project state, and the MVP popover exposes no
   Apply/Recall/Restore action.
 - Project thumbnail source of truth хранится внутри `.igs` в `preview/thumbnail.webp`; `previews/project-thumbnails/` является только пересобираемым кэшем.
+- Если ML Worker недоступен, Save сохраняет валидный `.igs` со статическими
+  preview placeholders и `preview.status=unavailable` только при видимых
+  raster pixels; содержимое проекта не теряется. Пустой Project получает
+  `preview.status=empty`. Для чистого Project восстановление актуальных
+  previews доступно через явное `Rebuild Preview` без искусственного dirty.
 - Один и тот же `.igs` нельзя открыть в нескольких `Project` tabs; repeated open фокусирует уже открытую вкладку.
 - Удаление файла вне приложения не удаляет историю: UI показывает fallback.
 - Удаление или перемещение `.igs` вне приложения не должно ломать БД: UI показывает missing project и может предложить relink/rescan workspace.

@@ -20,7 +20,7 @@ The generation target depends on selection/context:
 - Smart Patch Layer target: stage candidates for that self-contained Smart Patch Layer;
 - regional guidance entities: included as conditioning data when supported.
 
-The user can select one or more completed candidates in [GenerationResults](./generation-results.md). Only explicit `Add N as Layers` / `Add N as Variants` adds raster assets and [generation provenance](./generation-provenance.md) to the open Project document and its recovery shadow. The main `.igs` is replaced only by explicit Save.
+The user can select one or more completed candidates in [GenerationResults](./generation-results.md). Only explicit `Add N as Layers` / `Add N as Variants` adds raster assets and [generation provenance](./generation-provenance.md) to the open Project document and its recovery shadow. These document changes reach the main `.igs` only through explicit Save. An explicit `Rebuild Preview` may replace only preview/manifest for a clean Project; it cannot accept candidates or change document content.
 
 Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, the primary generation bbox or a Smart Patch bbox while they are pending.
 

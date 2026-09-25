@@ -18,6 +18,13 @@ Reference-first подход не означает перенос всей ин�
 
 Первый release рассчитан на Linux и NVIDIA GPU. MVP поддерживает два семейства моделей: Illustrious как SDXL-производное и Anima как самостоятельную архитектуру, включая совместимые LoRA для каждого семейства. Это граница **семейств**, а не обещание всех моделей, нод, workflow и адаптеров InvokeAI. В рамках обещанных операций `txt2img`, `img2img`, `inpaint` и `outpaint` используем его подход к сборке и выполнению inference pipeline. Строго типизированная бизнес-логика, очередь и проверка совместимости принадлежат TypeScript; загрузка моделей, conditioning, denoising и создание image derivatives/previews — Python ML Worker. Electron main владеет хранением, путями, загрузками, кэшем файлов и публикацией результатов. Точный исполнимый контракт между ними ещё должен быть спроектирован по [worker protocol](./05-worker-protocol.md).
 
+Установка/repair ML runtime встроены в основное окно, отдельного приложения
+или окна лаунчера нет. Первый release также включает ручное действие
+`Проверить обновления` самого Electron-приложения и отдельное явное действие
+установки новой версии. Проверки при старте/в фоне нет; этот lifecycle
+отделён от Python runtime и моделей. Поведение описано в
+[Application Updates](../features/application-updates.md).
+
 Для SDXL/Illustrious-like checkpoint'ов `.safetensors` остаётся исходным пользовательским файлом: worker загружает его по InvokeAI-пути через Diffusers single-file loading и кэширует загруженные модели/components в RAM/VRAM. Скрытой постоянной конвертации в diffusers-директорию нет. Anima требует совместимые Qwen3 text encoder и VAE: установка показывает полный объём загрузки модели **вместе** с обязательными компонентами и устанавливает их как один набор зависимостей.
 
 Regional text guidance входит в MVP для обоих семейств. Regional reference images доступны только для Illustrious/SDXL; Invoke-style inverse-mask auto-negative не входит ни для одного семейства. Корректная пространственная семантика regional negative text на Anima остаётся обязательным implementation validation gate: до проверки реальной генерацией worker не может молча трактовать его как глобальный negative prompt.

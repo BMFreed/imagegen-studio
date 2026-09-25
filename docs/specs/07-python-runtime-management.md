@@ -22,6 +22,30 @@ runtime artifact и self-test того же pipeline, а не автоматич
 
 Poetry не используется. Одновременное использование Poetry и `uv` создало бы две конкурирующие модели управления окружением и потенциально два lock-файла, не добавляя защиты от частично выполненной установки.
 
+## Встроенный setup и Invoke launcher как reference
+
+Runtime status, setup, progress, repair и diagnostics показываются в основном
+окне ImageGen Studio. Отдельного launcher application/window нет. Main process
+владеет операцией установки, renderer получает только доменные DTO и может
+оставаться доступным без рабочего Python worker. Ручная проверка и явная
+установка обновления самого Electron-приложения тоже находятся в этом окне,
+но используют отдельный
+app-package lifecycle; они не заменяют и не переустанавливают worker runtime.
+
+Локальный reference checkout Invoke launcher:
+`/home/user/Work/sources/launcher/`, проверенный `main` —
+`c267bdb439519216b277a7a8c6ad408b9d79efce` (25.09.2026). Для Linux/NVIDIA
+полезны `download_uv.ts` (download/checksum), `src/main/gpu-detection.ts`
+(advisory GPU probe), `src/main/install-manager.ts` (progress/error lifecycle)
+и `src/main/index.ts` (single-instance). Их поведение нужно проверять на
+закреплённой ревизии перед адаптацией; это source reference, не зависимость.
+Launcher открывает отдельное Invoke-окно после server startup; здесь такой
+переход не нужен. Его repair удаляет `.venv` перед переустановкой, а sync
+использует `--inexact`; оба решения противоречат нашему инварианту staging,
+exact install, self-test и rollback и не должны копироваться. Широкие
+OS/GPU branches и custom Torch index UI не входят в первый Linux/NVIDIA
+release. При переносе кода отдельно проверяются license/NOTICE obligations.
+
 ## Главный инвариант
 
 Неудачная установка не должна повреждать последний рабочий runtime.
@@ -298,6 +322,8 @@ Python worker не обновляет сам себя. Renderer не запус�
 - Первый release artifact и worker self-test покрывают Linux/NVIDIA profile;
   неподдерживаемая OS/device combination не запускает альтернативный inference
   engine и даёт понятную диагностику до установки.
+- Setup/repair работает через основное окно без отдельного launcher app/window;
+  при отсутствующем worker окно остаётся доступным для диагностики.
 - Release/integration checks проверяют реальные Illustrious и Anima generation
   jobs с LoRA и обещанными regional inputs. Anima regional negative text нельзя
   объявлять рабочим без подтверждённой пространственной семантики.

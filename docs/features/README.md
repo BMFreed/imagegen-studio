@@ -28,3 +28,5 @@ For surfaces already implemented in `docs/prototype-app`, the Vue components, mo
 - [Project document lifecycle](./project/document-lifecycle.md) — supporting contract PP-007, portable `.igs`, explicit Save and recovery.
 - [GenerationResults And Staging](./project/generate-mode/generation-results.md) — supporting contract PP-008, explicit acceptance and undo boundaries.
 - [Queue Manager](./queue-manager.md)
+- [Application Updates](./application-updates.md) — ручная проверка и явная
+  установка версии Electron-приложения в первом Linux/NVIDIA релизе.

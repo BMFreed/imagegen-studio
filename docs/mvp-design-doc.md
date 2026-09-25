@@ -1780,7 +1780,10 @@ ImageGen Studio/
 
 - JSON state сохраняется с debounce, ориентировочно 500-1500 ms.
 - Raster assets, masks и previews пишутся только по dirty-флагам.
-- Shadow autosave не изменяет основной `.igs`; его атомарная замена происходит только по явному Save.
+- Shadow autosave не изменяет основной `.igs`; документное содержимое попадает
+  туда только по явному Save. Отдельный explicit `Rebuild Preview` может
+  атомарно заменить только preview/manifest чистого Project без изменения
+  document revision.
 - Нормальная shadow autosave activity не показывается на Home как статус проекта.
 - После неожиданного завершения валидный незавершённый shadow state становится recovery candidate и показывается как `Recovery available`.
 - После успешного обычного save autosave state помечается clean или удаляется.
