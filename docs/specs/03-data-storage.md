@@ -459,7 +459,7 @@ CREATE TABLE generation_images (
 Для MVP `DatabaseSchema` генерируется через `kysely-codegen`:
 
 ```text
-src/electron/main/db/database.types.ts
+src/main/db/database.types.ts
 ```
 
 Предварительный workflow:
@@ -469,7 +469,7 @@ run migrations against local app.sqlite or temp schema db
 ↓
 run kysely-codegen
 ↓
-write src/electron/main/db/database.types.ts
+write src/main/db/database.types.ts
 ↓
 use new Kysely<DatabaseSchema>(...)
 ```

@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .idea/
 docs/prototypes/screenshots/
 docs/prototype-app/dist/

@@ -52,6 +52,34 @@ Main process обязан использовать Electron `app.requestSingleIn
 - Для изображений и моделей передавать ID/пути, а не большие бинарные payload'ы.
 - Каждая event-подписка должна возвращать unsubscribe-функцию.
 
+### Минимальный runtime API фазы 0
+
+`src/shared/api.ts` задаёт типы и разрешённые IPC channels для начального
+`window.api.runtime`. Renderer видит только доменный API:
+
+| Метод                       | Назначение                           | Результат                           |
+| --------------------------- | ------------------------------------ | ----------------------------------- |
+| `getStatus()`               | Прочитать текущую готовность runtime | `Promise<ApiResult<RuntimeStatus>>` |
+| `install()`                 | Запросить установку runtime          | `Promise<ApiResult<RuntimeStatus>>` |
+| `repair()`                  | Запросить восстановление runtime     | `Promise<ApiResult<RuntimeStatus>>` |
+| `onStatusChanged(listener)` | Следить за сменой состояния          | `unsubscribe()`                     |
+
+`RuntimeStatus` различает `not-installed`, `ready`, `needs-repair` и
+`unsupported`; профиль первого релиза — `linux-nvidia` или `null`, когда
+профиль нельзя выбрать. `detail` объясняет состояние без передачи traceback;
+`runtimeId` присутствует только у известного установленного runtime.
+`ApiResult<T>` содержит либо `{ ok: true, value }`, либо
+`{ ok: false, error: { code, message } }`. Ошибки IPC нормализуются и не
+разрешают renderer выбирать произвольный channel. Preload фильтрует форму
+события перед вызовом listener и удаляет только собственную подписку.
+
+В фазе 0 `install` и `repair` могут возвращать доменную ошибку
+`RUNTIME_INSTALL_UNAVAILABLE`, пока проверенный artifact и staged installer
+не реализованы в фазе 2A. Такой ответ не выдаёт runtime за готовый.
+Подписку следует установить до первого `getStatus`, чтобы не пропустить
+изменение между чтением и началом наблюдения. Реальная установка, self-test и
+rollback остаются за main process по [runtime contract](./07-python-runtime-management.md).
+
 ## CQRS-подход для MVP
 
 CQRS здесь нужен как лёгкая дисциплина, а не отдельная enterprise-архитектура.
@@ -63,6 +91,8 @@ workspaces.create
 workspaces.update
 workspaces.removeRegistration
 workspaces.rescan
+runtime.install
+runtime.repair
 projects.create
 projects.importExternal
 projects.rename
@@ -94,6 +124,7 @@ Queries читают состояние:
 
 ```text
 workspaces.getList
+runtime.getStatus
 projects.getIndex
 models.getInstalled
 models.getById
@@ -119,6 +150,7 @@ worker.runtimeInstallProgress
 worker.runtimeInstallFailed
 worker.runtimeActivated
 worker.statusChanged
+runtime.statusChanged
 ```
 
 ## Практическое правило

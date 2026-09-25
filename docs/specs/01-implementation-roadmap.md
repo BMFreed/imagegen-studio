@@ -114,6 +114,32 @@ handoff из Project Apply провести PP-006 review pilot с red→green t
 состояние runtime и типизированную ошибку через безопасный API. Второе
 launcher-окно не появляется. Наличие shell не доказывает готовность worker.
 
+### Текущий baseline реализации фазы 0 (25.09.2026)
+
+В рабочем дереве созданы Electron main/preload/renderer, одно основное окно с
+Home shell, app-owned paths и SQLite bootstrap с `STRICT` migration. Typed
+runtime API находится в `src/shared/api.ts`, `src/preload/index.ts` и
+`src/main/index.ts`; `src/main/runtime/index.ts` создаёт app-owned roots и
+проверяет active-runtime pointer, не обращаясь к системному Python. Проверки
+`pnpm run app:typecheck` и `pnpm run app:test` прошли локально: 10 тестов,
+0 ошибок, включая повторное открытие SQLite, rollback failed migration,
+отклонение повреждённого runtime pointer и typed ошибки install/repair.
+`pnpm run app:smoke` собрал и запустил настоящий Electron: Home, preload IPC,
+закрытие/повторное открытие Home с клавиатуры и повторный запуск с тем же
+`XDG_DATA_HOME`, но другим `XDG_CONFIG_HOME`, работают при одном окне.
+Повреждённый `runtime/` не блокирует Home: renderer получает `needs-repair`.
+
+Это evidence для начального каркаса, а не подтверждение готового runtime или
+полного Home flow. `install` и `repair` пока возвращают
+`RUNTIME_INSTALL_UNAVAILABLE`: проверенного runtime artifact, Python worker,
+self-test и реальной установки ещё нет. Home показывает каркас и placeholder;
+навигация по проектам и файловые действия остаются следующей итерацией
+параллельно фазе 1. Install-operation lock ещё не реализован: текущие команды
+не мутируют файлы и возвращают ошибку; lock обязателен перед реальной
+установкой в фазе 2A. В автоматическом smoke подтверждены событие
+`second-instance`, одно окно и вызов focus-обработчика в коде; фактический
+фокус оконного менеджера на Wayland не измерялся.
+
 ## Фаза 1. Model Manager
 
 Подробный user flow и scope зафиксированы в [Model Manager](../features/model-manager.md).

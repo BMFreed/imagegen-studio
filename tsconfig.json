@@ -8,5 +8,11 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["eslint.config.ts", "prettier.config.ts"]
+  "include": [
+    "eslint.config.ts",
+    "prettier.config.ts",
+    "vite.desktop.config.ts",
+    "src/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }
