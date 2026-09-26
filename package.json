@@ -13,7 +13,7 @@
     "app:dev": "node scripts/dev-desktop.mjs",
     "app:start": "pnpm run app:build && env -u ELECTRON_RUN_AS_NODE electron .",
     "app:smoke": "pnpm run app:build && tsx scripts/smoke-desktop.mjs",
-    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/shared/projects/*.test.ts",
+    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/renderer/components/*.test.ts src/shared/projects/*.test.ts",
     "app:db-types": "tsx scripts/generate-db-types.ts",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",

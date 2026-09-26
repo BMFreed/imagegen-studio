@@ -256,6 +256,18 @@ main копирует видимые asset bytes из текущего snapshot 
 прозрачностью и определяет `txt2img`/`outpaint`/`img2img` по финальной alpha.
 Main валидирует выход; это не запись в `.igs` и не рабочая генерация. Проверки
 и границы результата перечислены в [Phase 2A research](../engineering/phase-2a-project-storage-research.md#frozen-raster-generation-target).
+Узкий Project slice подключает к production UI и typed IPC
+редактирование project-owned `generationDraft`: обычный текст позитивного и
+негативного prompt, а также политику Seed `Fixed`/`Random`/`Reuse` и значение
+`Fixed`. Изменения проходят через документный dirty/shadow/Save/reopen path.
+При правке текста main удаляет прежний embedding ref, если его буквальный
+activation token исчез; повторный ввод токена не вернёт ref без будущего
+resource-aware picker/autocomplete. Новые refs этот UI пока не создаёт.
+Electron smoke проверяет немедленный Save→`.igs`→reopen и Save после native
+window close: последний ввод prompt не теряется в очереди IPC.
+Выбор `Reuse` не означает, что уже доступен фактический seed: operational
+cursor и fallback к сохранённому `.igs` snapshot будут подключены к enqueue в
+фазе 2B, а редактирование draft их не обновляет.
 Это не закрывает фазу: installable Linux/NVIDIA runtime и generation staging
 recovery остаются задачами Phase 2A. Полный frozen job DTO, очередь, inference
 и acceptance относятся к Phase 2B.

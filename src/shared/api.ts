@@ -1,4 +1,6 @@
-import type { IgsRectV1 } from './projects/project-schema.js'
+import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
+
+import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
 /** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
@@ -28,13 +30,17 @@ export const ipcChannels = {
     list: 'projects:list',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
+    prepareWindowClose: 'projects:prepare-window-close',
     rebuildPreview: 'projects:rebuild-preview',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
+    updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
+    windowCloseReady: 'projects:window-close-ready',
+    windowCloseReleased: 'projects:window-close-released',
   },
   runtime: {
     getStatus: 'runtime:get-status',
@@ -72,7 +78,9 @@ export interface ProjectSummary {
 export interface ProjectTab {
   autosaveError: string | null
   dirty: boolean
+  generationDraft: IgsProjectDocumentV1['generationDraft']
   id: string
+  lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
   layers: ProjectRasterLayerView[]
   primaryBbox: IgsRectV1
   storageWarning?: string
@@ -103,6 +111,11 @@ export type ProjectRasterLayerChange =
   | { kind: 'lock'; locked: boolean }
   | { kind: 'opacity'; opacity: number }
   | { kind: 'visibility'; visible: boolean }
+
+export type ProjectGenerationDraftChange =
+  | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
+  | { kind: 'seed'; policy: 'fixed'; value: number }
+  | { kind: 'seed'; policy: 'random' | 'reuse'; value: null }
 
 export type ProjectImportSelection =
   | { fileName: string; importId: string; kind: 'transfer-required'; title: string }
@@ -159,6 +172,7 @@ export interface ProjectApi {
     layerId: string,
     targetIndex: number,
   ) => Promise<ApiResult<ProjectTab>>
+  onBeforeWindowClose: (listener: () => Promise<void>, onCanceled: () => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
@@ -169,6 +183,10 @@ export interface ProjectApi {
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+  updateGenerationDraft: (
+    tabId: string,
+    change: ProjectGenerationDraftChange,
+  ) => Promise<ApiResult<ProjectTab>>
   updateRasterLayer: (
     tabId: string,
     layerId: string,
@@ -302,6 +320,41 @@ export interface StudioApi {
   models: ModelApi
   projects: ProjectApi
   runtime: RuntimeApi
+}
+
+/** The renderer may edit plain text and seed policy, never forge resource sidecars. */
+export function isProjectGenerationDraftChange(
+  input: unknown,
+): input is ProjectGenerationDraftChange {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  const keys = Object.keys(value)
+  if (value.kind === 'positive-prompt' || value.kind === 'negative-prompt') {
+    return (
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('text') &&
+      typeof value.text === 'string' &&
+      value.text.length <= IGS_SAFETY_CEILINGS.textBytes &&
+      new TextEncoder().encode(value.text).length <= IGS_SAFETY_CEILINGS.textBytes
+    )
+  }
+  if (
+    value.kind !== 'seed' ||
+    keys.length !== 3 ||
+    !keys.includes('policy') ||
+    !keys.includes('value')
+  ) {
+    return false
+  }
+  return value.policy === 'fixed'
+    ? typeof value.value === 'number' &&
+        Number.isSafeInteger(value.value) &&
+        value.value >= 0 &&
+        value.value <= 0xff_ff_ff_ff
+    : (value.policy === 'random' || value.policy === 'reuse') && value.value === null
 }
 
 export function isProjectRasterLayerChange(input: unknown): input is ProjectRasterLayerChange {

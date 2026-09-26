@@ -584,6 +584,17 @@ try {
   )
   assert.equal(invalidRasterChange.ok, false)
   assert.equal(invalidRasterChange.error.code, 'IPC_INVALID_CALLER')
+  const invalidDraftChange = await recoveryWindow.evaluate(
+    (tabId) =>
+      window.api.projects.updateGenerationDraft(tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: -1,
+      }),
+    rasterProject.id,
+  )
+  assert.equal(invalidDraftChange.ok, false)
+  assert.equal(invalidDraftChange.error.code, 'IPC_INVALID_CALLER')
 
   await recoveryWindow.getByRole('button', { name: 'Hide Raster smoke layer' }).click()
   await waitForOpenTab(
@@ -682,12 +693,43 @@ try {
     const button = document.querySelector('button[aria-label="Hide Raster smoke layer"]')
     return button instanceof HTMLButtonElement && !button.disabled
   })
+  await recoveryWindow.locator('[aria-label="Seed policy"]').click()
+  await recoveryWindow.getByText('Fixed', { exact: true }).click()
+  const fixedSeed = recoveryWindow.locator('input[aria-label="Fixed seed"]')
+  await fixedSeed.fill('')
+  assert.equal(
+    await recoveryWindow.getByRole('button', { name: 'Save Project' }).isDisabled(),
+    true,
+  )
+  await fixedSeed.fill('73421')
+  await fixedSeed.press('Tab')
+  await fixedSeed.fill('')
+  assert.equal(
+    await recoveryWindow.getByRole('button', { name: 'Save Project' }).isDisabled(),
+    true,
+  )
+  await recoveryWindow.getByRole('heading', { name: 'Generation area' }).click()
+  assert.equal(await fixedSeed.inputValue(), '73421')
+  await recoveryWindow
+    .getByRole('textbox', { name: 'Negative prompt' })
+    .fill('soft focus, artifacts')
+  await recoveryWindow
+    .getByRole('textbox', { name: 'Positive prompt' })
+    .fill('studio portrait, red rim light')
+  if (process.env.IMAGEGEN_SMOKE_PROJECT_SCREENSHOT) {
+    await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_SCREENSHOT })
+  }
+  // Save immediately after typing: it must wait for the serialized draft IPC updates.
   await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
   await waitForOpenTab(
     recoveryWindow,
     rasterProject.id,
     (tab) =>
       !tab.dirty &&
+      tab.generationDraft.positivePrompt.text === 'studio portrait, red rim light' &&
+      tab.generationDraft.negativePrompt.text === 'soft focus, artifacts' &&
+      tab.generationDraft.seed.policy === 'fixed' &&
+      tab.generationDraft.seed.value === 73421 &&
       tab.layers.map((layer) => layer.id).join(',') === `${rasterLayerId},${lowerRasterLayerId}`,
     'Save did not commit the reordered Project',
   )
@@ -704,6 +746,18 @@ try {
     (candidate) => candidate.project.title === rasterTitle,
   )
   assert.ok(savedRasterPackage)
+  assert.equal(
+    savedRasterPackage.project.generationDraft.positivePrompt.text,
+    'studio portrait, red rim light',
+  )
+  assert.equal(
+    savedRasterPackage.project.generationDraft.negativePrompt.text,
+    'soft focus, artifacts',
+  )
+  assert.deepEqual(savedRasterPackage.project.generationDraft.seed, {
+    policy: 'fixed',
+    value: 73421,
+  })
   assert.deepEqual(
     savedRasterPackage.project.layers.map((layer) => layer.id),
     [rasterLayerId, lowerRasterLayerId],
@@ -775,6 +829,15 @@ try {
   assert.equal(editedRaster.value.tab.layers[0].blendMode, 'multiply')
   assert.equal(editedRaster.value.tab.layers[0].visible, true)
   assert.equal(editedRaster.value.tab.layers[0].locked, false)
+  assert.equal(
+    editedRaster.value.tab.generationDraft.positivePrompt.text,
+    'studio portrait, red rim light',
+  )
+  assert.equal(editedRaster.value.tab.generationDraft.negativePrompt.text, 'soft focus, artifacts')
+  assert.deepEqual(editedRaster.value.tab.generationDraft.seed, {
+    policy: 'fixed',
+    value: 73421,
+  })
   assert.equal(editedRaster.value.tab.layers[1].visible, false)
 
   // Exercise the actual Layers action through preload, IPC, native-picker authorization, the
@@ -978,7 +1041,32 @@ try {
     'Desktop smoke passed: Project/image import, Raster controls, canvas pixels and Save/reopen through IPC.',
   )
 
-  await application.close()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  await recoveryWindow
+    .getByRole('textbox', { name: 'Positive prompt' })
+    .fill('saved during native window close')
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBoxSync = () => 0
+  })
+  const nativeWindowClosed = recoveryWindow.waitForEvent('close', { timeout: 20_000 })
+  await application.evaluate(({ app }) => {
+    setTimeout(() => app.quit(), 0)
+  })
+  await nativeWindowClosed
+  const nativeClosedPackages = await Promise.all(
+    readdirSync(projectDir)
+      .filter((entry) => entry.endsWith('.igs'))
+      .map((entry) => readIgsPackage(path.join(projectDir, entry))),
+  )
+  assert.equal(
+    nativeClosedPackages.find((candidate) => candidate.project.title === rasterTitle)?.project
+      .generationDraft.positivePrompt.text,
+    'saved during native window close',
+  )
+  console.log(
+    'Desktop smoke passed: native window close flushes and saves the latest Project draft.',
+  )
   application = undefined
   const runtimeDir = path.join(dataRoot, 'data', 'imagegen-studio', 'runtime')
   const outside = path.join(dataRoot, 'outside')

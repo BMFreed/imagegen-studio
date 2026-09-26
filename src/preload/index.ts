@@ -18,7 +18,7 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
-import type { IgsRectV1 } from '../shared/projects/project-schema.js'
+import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -223,6 +223,8 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isRecord(value) &&
     isProjectId(value.id) &&
     typeof value.title === 'string' &&
+    isGenerationDraft(value.generationDraft) &&
+    isUInt32OrNull(value.lastActualSeedSnapshot) &&
     isProjectRect(value.primaryBbox) &&
     Array.isArray(value.layers) &&
     value.layers.every(isProjectRasterLayerView) &&
@@ -230,6 +232,97 @@ function isProjectTab(value: unknown): value is ProjectTab {
     (value.autosaveError === null || typeof value.autosaveError === 'string') &&
     (value.storageWarning === undefined || typeof value.storageWarning === 'string')
   )
+}
+
+function isUInt32OrNull(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xff_ff_ff_ff)
+  )
+}
+
+function isGenerationDraft(value: unknown): value is IgsProjectDocumentV1['generationDraft'] {
+  if (!isRecord(value) || !isRecord(value.seed) || !isRecord(value.sampling)) {
+    return false
+  }
+  const seed = value.seed
+  const sampling = value.sampling
+  return (
+    isPrompt(value.positivePrompt) &&
+    isPrompt(value.negativePrompt) &&
+    Array.isArray(value.loras) &&
+    value.loras.every(
+      (lora: unknown) =>
+        isRecord(lora) &&
+        typeof lora.enabled === 'boolean' &&
+        typeof lora.weight === 'number' &&
+        Number.isFinite(lora.weight) &&
+        isExactResourceRef(lora.resource, 'lora'),
+    ) &&
+    (value.model === null || isExactResourceRef(value.model, 'checkpoint')) &&
+    (value.vae === null || isExactResourceRef(value.vae, 'vae')) &&
+    (seed.policy === 'fixed' || seed.policy === 'random' || seed.policy === 'reuse') &&
+    isUInt32OrNull(seed.value) &&
+    isNullableNumber(sampling.cfgScale) &&
+    isNullableNumber(sampling.denoisingStrength) &&
+    isNullablePositiveInteger(sampling.steps) &&
+    isNullableString(sampling.sampler) &&
+    isNullableString(sampling.scheduler) &&
+    (value.cfgRescale === undefined ||
+      (typeof value.cfgRescale === 'number' && Number.isFinite(value.cfgRescale))) &&
+    (value.clipSkip === undefined ||
+      (typeof value.clipSkip === 'number' && Number.isSafeInteger(value.clipSkip))) &&
+    (value.vaePrecision === undefined ||
+      ['Auto', 'FP16', 'FP32'].includes(String(value.vaePrecision)))
+  )
+}
+
+function isPrompt(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    Array.isArray(value.embeddingRefs) &&
+    value.embeddingRefs.every(
+      (ref: unknown) =>
+        isRecord(ref) &&
+        typeof ref.token === 'string' &&
+        isExactResourceRef(ref.resource, 'embedding'),
+    )
+  )
+}
+
+function isExactResourceRef(value: unknown, kind: string): boolean {
+  return (
+    isRecord(value) &&
+    value.kind === kind &&
+    typeof value.displayName === 'string' &&
+    typeof value.fileSha256 === 'string' &&
+    typeof value.localModelId === 'string' &&
+    typeof value.localVersionId === 'string' &&
+    typeof value.versionName === 'string' &&
+    (value.baseModelFamily === null ||
+      value.baseModelFamily === 'anima' ||
+      value.baseModelFamily === 'illustrious') &&
+    (value.predictionType === null ||
+      value.predictionType === 'epsilon' ||
+      value.predictionType === 'sample' ||
+      value.predictionType === 'v_prediction') &&
+    [value.civitaiFileId, value.civitaiModelId, value.civitaiVersionId].every(
+      (id) => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id >= 0),
+    )
+  )
+}
+
+function isNullableNumber(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value))
+}
+
+function isNullablePositiveInteger(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+}
+
+function isNullableString(value: unknown): boolean {
+  return value === null || (typeof value === 'string' && value.length > 0)
 }
 
 function isProjectRasterLayerView(value: unknown): value is ProjectRasterLayerView {
@@ -471,6 +564,31 @@ const api: StudioApi = {
         [tabId, layerId, targetIndex],
         isProjectTab,
       ),
+    onBeforeWindowClose(listener, onCanceled) {
+      const handler = (_event: Electron.IpcRendererEvent, requestId: unknown): void => {
+        if (typeof requestId !== 'string') {
+          return
+        }
+        void Promise.resolve()
+          .then(listener)
+          .then(
+            () => ipcRenderer.send(ipcChannels.projects.windowCloseReady, requestId, null),
+            (cause: unknown) =>
+              ipcRenderer.send(
+                ipcChannels.projects.windowCloseReady,
+                requestId,
+                cause instanceof Error ? cause.message : 'The Project draft could not be flushed.',
+              ),
+          )
+      }
+      const releaseHandler = (): void => onCanceled()
+      ipcRenderer.on(ipcChannels.projects.prepareWindowClose, handler)
+      ipcRenderer.on(ipcChannels.projects.windowCloseReleased, releaseHandler)
+      return () => {
+        ipcRenderer.removeListener(ipcChannels.projects.prepareWindowClose, handler)
+        ipcRenderer.removeListener(ipcChannels.projects.windowCloseReleased, releaseHandler)
+      }
+    },
     onTabsChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {
         if (Array.isArray(tabs) && tabs.every(isProjectTab)) {
@@ -490,6 +608,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
+    updateGenerationDraft: (tabId, change) =>
+      invokeProject(ipcChannels.projects.updateGenerationDraft, [tabId, change], isProjectTab),
     updateRasterLayer: (tabId, layerId, change) =>
       invokeProject(ipcChannels.projects.updateRasterLayer, [tabId, layerId, change], isProjectTab),
   },

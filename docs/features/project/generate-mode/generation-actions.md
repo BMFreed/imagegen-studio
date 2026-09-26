@@ -106,6 +106,15 @@ One item runs at a time and the remaining items stay pending. Deterministic comp
 
 Automatic mode derivation uses prototype-only deterministic layer coverage metadata rather than real alpha analysis. Smart Patch selection with an effective mask takes the inpaint path. The derived mode is frozen technical data and is intentionally not shown as a user-facing txt2img/img2img switch or status label.
 
+## Production coverage at the Phase 2A checkpoint
+
+The production Project can store a normal-generation draft's positive and
+negative plain prompt text and Seed policy through Project document edits. A
+separate main-process operation can prepare an exact, frozen raster-only target
+for the primary bbox. Neither operation enqueues a job or runs Generate. There
+is no production candidate, staging session or acceptance path yet; the Vue
+prototype behavior above does not provide evidence for those paths.
+
 ## Acceptance Criteria
 
 - The prototype creates in-memory queue items from frozen project/generation state; production Queue Manager/worker integration remains separate.

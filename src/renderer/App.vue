@@ -2,6 +2,7 @@
 import type {
   ApiResult,
   ProjectApi,
+  ProjectGenerationDraftChange,
   ProjectImportSelection,
   ProjectOpenResult,
   ProjectSaveResult,
@@ -28,11 +29,12 @@ import {
   NRadio,
   NRadioGroup,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw } from 'vue'
 
 import AppChrome from './components/AppChrome.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
+import { ProjectDraftSync } from './components/project-draft-sync.js'
 import ProjectView from './components/ProjectView.vue'
 import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
@@ -49,6 +51,8 @@ const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const projects = ref<ProjectSummary[]>([])
 const projectTabs = ref<ProjectTab[]>([])
+const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+const draftValidity = ref<Record<string, boolean>>({})
 const projectsLoading = ref(false)
 const homeError = ref<string | null>(null)
 const tabErrors = ref<Record<string, string | null>>({})
@@ -72,8 +76,10 @@ const importChoice = ref<'copy' | 'move'>('move')
 const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
 const runtimePending = ref<'check' | 'install' | 'repair' | null>(null)
+const windowClosePending = ref(false)
 let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
+let unsubscribeBeforeWindowClose: (() => void) | undefined
 let projectListRequest = 0
 
 const activeTab = computed(
@@ -136,6 +142,46 @@ function projectApi() {
   return api
 }
 
+const draftSync = new ProjectDraftSync({
+  onAcknowledged(tab) {
+    replaceTab(tab)
+    setTabError(tab.id, null)
+    saveNotices.value = { ...saveNotices.value, [tab.id]: null }
+  },
+  onError(tabId, error) {
+    setTabError(tabId, error.message)
+  },
+  onOverlay(tabId, draft) {
+    const next = { ...generationDraftOverlays.value }
+    if (draft) {
+      next[tabId] = draft
+    } else {
+      delete next[tabId]
+    }
+    generationDraftOverlays.value = next
+  },
+  send: (tabId, change) => apiValue(() => projectApi().updateGenerationDraft(tabId, change)),
+})
+
+function updateGenerationDraft(tabId: string, change: ProjectGenerationDraftChange) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (!tab) {
+    return
+  }
+  draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change)
+}
+
+function setDraftValidity(tabId: string, valid: boolean) {
+  draftValidity.value = { ...draftValidity.value, [tabId]: valid }
+}
+
 function replaceTab(tab: ProjectTab) {
   const index = projectTabs.value.findIndex((candidate) => candidate.id === tab.id)
   if (index >= 0) {
@@ -152,6 +198,9 @@ function focusTab(tab: ProjectTab) {
 }
 
 function removeTab(tabId: string) {
+  draftSync.forget(tabId)
+  const { [tabId]: _closedValidity, ...remainingValidity } = draftValidity.value
+  draftValidity.value = remainingValidity
   projectTabs.value = projectTabs.value.filter((tab) => tab.id !== tabId)
   if (activeDocument.value === tabId) {
     activeDocument.value = homeOpen.value ? 'home' : (projectTabs.value.at(-1)?.id ?? null)
@@ -167,6 +216,11 @@ function removeTab(tabId: string) {
 
 function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   const openIds = new Set(nextTabs.map((tab) => tab.id))
+  for (const tab of projectTabs.value) {
+    if (!openIds.has(tab.id)) {
+      draftSync.forget(tab.id)
+    }
+  }
   projectTabs.value = nextTabs
   if (
     activeDocument.value !== null &&
@@ -185,6 +239,9 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   )
   saveNotices.value = Object.fromEntries(
     Object.entries(saveNotices.value).filter(([id]) => openIds.has(id)),
+  )
+  draftValidity.value = Object.fromEntries(
+    Object.entries(draftValidity.value).filter(([id]) => openIds.has(id)),
   )
 }
 
@@ -484,12 +541,17 @@ function setTabError(tabId: string, message: string | null) {
 }
 
 async function applyBbox(tabId: string, rect: IgsRectV1) {
-  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'bbox', tabId }
   setTabError(tabId, null)
   try {
+    await draftSync.flush(tabId)
     replaceTab(await apiValue(() => projectApi().setPrimaryBbox(tabId, rect)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -504,12 +566,17 @@ async function updateRasterLayer(
   layerId: string,
   change: Parameters<ProjectApi['updateRasterLayer']>[2],
 ) {
-  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'layer', tabId }
   setTabError(tabId, null)
   try {
+    await draftSync.flush(tabId)
     replaceTab(await apiValue(() => projectApi().updateRasterLayer(tabId, layerId, change)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -520,12 +587,17 @@ async function updateRasterLayer(
 }
 
 async function importRasterImage(tabId: string) {
-  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'import-image', tabId }
   setTabError(tabId, null)
   try {
+    await draftSync.flush(tabId)
     const tab = await apiValue(() => projectApi().importRasterImage(tabId))
     if (tab) {
       replaceTab(tab)
@@ -545,12 +617,17 @@ function importActiveRasterImage() {
 }
 
 async function moveRasterLayer(tabId: string, layerId: string, targetIndex: number) {
-  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'layer', tabId }
   setTabError(tabId, null)
   try {
+    await draftSync.flush(tabId)
     replaceTab(await apiValue(() => projectApi().moveRasterLayer(tabId, layerId, targetIndex)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -593,13 +670,23 @@ function saveWarning(outcome: ProjectSaveResult): string | null {
 }
 
 async function saveProject(tabId: string, closeAfter = false) {
-  if (pendingProjectAction.value !== null) {
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
+    return
+  }
+  if (draftValidity.value[tabId] === false) {
+    const message = 'Enter a valid fixed seed before saving this Project.'
+    setTabError(tabId, message)
+    if (closeAfter) {
+      closeError.value = message
+    }
+    activeDocument.value = tabId
     return
   }
   pendingProjectAction.value = { kind: 'save', tabId }
   setTabError(tabId, null)
   closeError.value = null
   try {
+    await draftSync.flush(tabId)
     const outcome = await apiValue(() => projectApi().save(tabId))
     replaceTab(outcome.tab)
     const warning = saveWarning(outcome)
@@ -639,21 +726,31 @@ async function saveProject(tabId: string, closeAfter = false) {
 }
 
 async function requestClose(tabId: string) {
-  if (pendingProjectAction.value !== null) {
-    return
-  }
-  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
-  if (!tab) {
-    return
-  }
-  if (tab.dirty) {
-    closingTabId.value = tabId
-    closeError.value = null
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
     return
   }
   pendingProjectAction.value = { kind: 'close', tabId }
   setTabError(tabId, null)
   try {
+    try {
+      await draftSync.flush(tabId)
+    } catch (cause) {
+      const message = `The draft could not be updated. Save and Close will retry. ${errorMessage(cause)}`
+      setTabError(tabId, message)
+      closeError.value = message
+      closingTabId.value = tabId
+      activeDocument.value = tabId
+      return
+    }
+    const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (!tab) {
+      return
+    }
+    if (tab.dirty) {
+      closingTabId.value = tabId
+      closeError.value = null
+      return
+    }
     await apiValue(() => projectApi().close(tabId))
     removeTab(tabId)
     await refreshProjects()
@@ -675,7 +772,7 @@ function cancelClose() {
 
 async function discardAndClose() {
   const tabId = closingTabId.value
-  if (!tabId || pendingProjectAction.value !== null) {
+  if (!tabId || pendingProjectAction.value !== null || windowClosePending.value) {
     return
   }
   pendingProjectAction.value = { kind: 'discard', tabId }
@@ -754,6 +851,28 @@ onMounted(() => {
   } catch (cause) {
     homeError.value = errorMessage(cause)
   }
+  try {
+    unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
+      async () => {
+        windowClosePending.value = true
+        try {
+          if (Object.values(draftValidity.value).includes(false)) {
+            throw new Error('Enter a valid fixed seed before closing the app.')
+          }
+          await draftSync.flushAll()
+        } catch (cause) {
+          windowClosePending.value = false
+          globalNotice.value = `Window close was canceled because a Project draft could not be updated. ${errorMessage(cause)}`
+          throw cause
+        }
+      },
+      () => {
+        windowClosePending.value = false
+      },
+    )
+  } catch (cause) {
+    globalNotice.value = errorMessage(cause)
+  }
   globalThis.window.addEventListener('keydown', onAppKeydown)
   void runRuntimeAction('check')
   void refreshProjects()
@@ -762,6 +881,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeStatus?.()
   unsubscribeProjectTabs?.()
+  unsubscribeBeforeWindowClose?.()
   globalThis.window.removeEventListener('keydown', onAppKeydown)
 })
 </script>
@@ -814,7 +934,7 @@ onBeforeUnmount(() => {
             :aria-label="`Close ${tab.title}`"
             circle
             class="tab-close"
-            :disabled="pendingProjectAction !== null"
+            :disabled="pendingProjectAction !== null || windowClosePending"
             quaternary
             size="tiny"
             @click.stop="requestClose(tab.id)"
@@ -858,8 +978,11 @@ onBeforeUnmount(() => {
         />
         <ProjectView
           v-else-if="activeTab"
-          :busy="pendingProjectAction !== null"
+          :key="activeTab.id"
+          :busy="pendingProjectAction !== null || windowClosePending"
+          :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
+          :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
           :pending="activeTabPending"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :saveNotice="saveNotices[activeTab.id] ?? null"
@@ -868,7 +991,9 @@ onBeforeUnmount(() => {
           @importImage="importActiveRasterImage"
           @moveLayer="moveActiveRasterLayer"
           @save="saveProject(activeTab.id)"
+          @updateDraft="updateGenerationDraft(activeTab.id, $event)"
           @updateLayer="updateActiveRasterLayer"
+          @validateDraft="setDraftValidity"
         />
         <NEmpty v-else class="empty-document" description="No document open">
           <template v-slot:extra>

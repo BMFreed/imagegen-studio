@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import type { ProjectApi, ProjectTab } from '../../shared/api.js'
+import type { ProjectApi, ProjectGenerationDraftChange, ProjectTab } from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { DeviceFloppy as SaveIcon } from '@vicons/tabler'
 import { DnDProvider } from '@vue-dnd-kit/core'
-import { NAlert, NButton, NFormItem, NIcon, NInputNumber } from 'naive-ui'
-import { computed, reactive, ref, watch } from 'vue'
+import { NAlert, NButton, NFormItem, NIcon, NInputNumber, NSelect } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 
 const props = defineProps<{
   busy: boolean
+  draftPending: boolean
   error: string | null
+  generationDraft: ProjectTab['generationDraft']
   pending: 'bbox' | 'import-image' | 'save' | null
   reloadRequired: boolean
   saveNotice: string | null
@@ -26,8 +29,95 @@ const emit = defineEmits<{
   importImage: []
   moveLayer: [layerId: string, targetIndex: number]
   save: []
+  updateDraft: [change: ProjectGenerationDraftChange]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
+  validateDraft: [tabId: string, valid: boolean]
 }>()
+
+const seedOptions = [
+  { label: 'Random', value: 'random' },
+  { label: 'Fixed', value: 'fixed' },
+  { label: 'Reuse last', value: 'reuse' },
+]
+const fixedSeedInput = ref<number | null>(null)
+const rawFixedSeedInvalid = ref(false)
+const fixedSeedInvalid = computed(
+  () =>
+    props.generationDraft.seed.policy === 'fixed' &&
+    (rawFixedSeedInvalid.value ||
+      fixedSeedInput.value === null ||
+      !Number.isSafeInteger(fixedSeedInput.value) ||
+      fixedSeedInput.value < 0 ||
+      fixedSeedInput.value > 0xff_ff_ff_ff),
+)
+watch(fixedSeedInvalid, (invalid) => emit('validateDraft', props.tab.id, !invalid), {
+  immediate: true,
+})
+onBeforeUnmount(() => emit('validateDraft', props.tab.id, true))
+watch(
+  () => props.generationDraft.seed,
+  (seed) => {
+    if (seed.policy === 'fixed') {
+      fixedSeedInput.value = seed.value
+    }
+  },
+  { immediate: true },
+)
+
+function updateSeedPolicy(policy: string) {
+  if (props.busy || props.reloadRequired || policy === props.generationDraft.seed.policy) {
+    return
+  }
+  if (policy === 'fixed') {
+    const value = fixedSeedInput.value ?? props.tab.lastActualSeedSnapshot ?? 0
+    fixedSeedInput.value = value
+    emit('updateDraft', { kind: 'seed', policy: 'fixed', value })
+  } else if (policy === 'random' || policy === 'reuse') {
+    emit('updateDraft', { kind: 'seed', policy, value: null })
+  }
+}
+
+function updateFixedSeed(value: number | null) {
+  fixedSeedInput.value = value
+  if (
+    props.busy ||
+    props.reloadRequired ||
+    value === null ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > 0xff_ff_ff_ff ||
+    (props.generationDraft.seed.policy === 'fixed' && props.generationDraft.seed.value === value)
+  ) {
+    return
+  }
+  emit('updateDraft', { kind: 'seed', policy: 'fixed', value })
+}
+
+function captureFixedSeedInput(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return
+  }
+  const raw = event.target.value.trim()
+  const value = /^\d+$/.test(raw) ? Number(raw) : null
+  rawFixedSeedInvalid.value =
+    value === null || !Number.isSafeInteger(value) || value > 0xff_ff_ff_ff
+  if (rawFixedSeedInvalid.value) {
+    fixedSeedInput.value = null
+    return
+  }
+  updateFixedSeed(value)
+}
+
+function restoreInvalidFixedSeed() {
+  if (fixedSeedInvalid.value) {
+    const restored = props.generationDraft.seed.value ?? 0
+    rawFixedSeedInvalid.value = false
+    fixedSeedInput.value = restored
+    void nextTick(() => {
+      fixedSeedInput.value = restored
+    })
+  }
+}
 
 const selectedLayerId = ref<string | null>(null)
 watch(
@@ -171,12 +261,15 @@ function applyFitBbox() {
     <div class="project-layout">
       <aside aria-label="Project settings" class="project-settings">
         <div class="document-actions">
-          <span class="document-state" :class="{ 'document-state--dirty': tab.dirty }">
-            {{ tab.dirty ? 'Unsaved changes' : 'Saved' }}
+          <span
+            class="document-state"
+            :class="{ 'document-state--dirty': tab.dirty || draftPending }"
+          >
+            {{ tab.dirty || draftPending ? 'Unsaved changes' : 'Saved' }}
           </span>
           <NButton
             aria-label="Save Project"
-            :disabled="reloadRequired || busy"
+            :disabled="reloadRequired || busy || fixedSeedInvalid"
             :loading="pending === 'save'"
             size="small"
             @click="emit('save')"
@@ -185,64 +278,133 @@ function applyFitBbox() {
             Save
           </NButton>
         </div>
-        <h2>Generation area</h2>
-        <p>Set the position and size of the area used for the next image.</p>
-        <div class="bbox-fields">
-          <NFormItem label="X" :showFeedback="false">
-            <NInputNumber
-              v-model:value="draft.x"
-              :inputProps="{ 'aria-label': 'Generation area X' }"
-              :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
-              :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
-              :showButton="false"
+        <section aria-label="Generation settings" class="settings-section">
+          <h2>Generation</h2>
+          <div class="prompt-field">
+            <span class="field-label">Positive prompt</span>
+            <PlainPromptEditor
+              ariaLabel="Positive prompt"
+              :disabled="busy || reloadRequired"
+              :modelValue="generationDraft.positivePrompt.text"
+              @update:modelValue="emit('updateDraft', { kind: 'positive-prompt', text: $event })"
             />
-          </NFormItem>
-          <NFormItem label="Y" :showFeedback="false">
-            <NInputNumber
-              v-model:value="draft.y"
-              :inputProps="{ 'aria-label': 'Generation area Y' }"
-              :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
-              :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
-              :showButton="false"
+          </div>
+          <div class="prompt-field">
+            <span class="field-label">Negative prompt</span>
+            <PlainPromptEditor
+              ariaLabel="Negative prompt"
+              :disabled="busy || reloadRequired"
+              :modelValue="generationDraft.negativePrompt.text"
+              @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
             />
-          </NFormItem>
-          <NFormItem label="Width" :showFeedback="false">
-            <NInputNumber
-              v-model:value="draft.width"
-              :inputProps="{ 'aria-label': 'Generation area width' }"
-              :max="IGS_SAFETY_CEILINGS.rasterDimension"
-              :min="1"
-              :showButton="false"
-            />
-          </NFormItem>
-          <NFormItem label="Height" :showFeedback="false">
-            <NInputNumber
-              v-model:value="draft.height"
-              :inputProps="{ 'aria-label': 'Generation area height' }"
-              :max="IGS_SAFETY_CEILINGS.rasterDimension"
-              :min="1"
-              :showButton="false"
-            />
-          </NFormItem>
-        </div>
-        <NButton
-          aria-label="Apply generation area"
-          class="apply-bbox"
-          :disabled="!validBbox || !bboxChanged || busy || reloadRequired"
-          :loading="pending === 'bbox'"
-          @click="applyBbox"
-        >
-          Apply
-        </NButton>
-        <NButton
-          aria-label="Fit generation area to visible layers"
-          class="fit-bbox"
-          :disabled="!canFitBbox || busy || reloadRequired"
-          secondary
-          @click="applyFitBbox"
-        >
-          Fit to visible layers
-        </NButton>
+          </div>
+          <div class="seed-fields">
+            <NFormItem label="Seed policy" :showFeedback="false">
+              <NSelect
+                aria-label="Seed policy"
+                :disabled="busy || reloadRequired"
+                :options="seedOptions"
+                size="small"
+                :value="generationDraft.seed.policy"
+                @update:value="updateSeedPolicy"
+              />
+            </NFormItem>
+            <NFormItem
+              v-if="generationDraft.seed.policy === 'fixed'"
+              label="Fixed seed"
+              :showFeedback="false"
+            >
+              <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">
+                <NInputNumber
+                  :disabled="busy || reloadRequired"
+                  :inputProps="{ 'aria-label': 'Fixed seed' }"
+                  :max="0xff_ff_ff_ff"
+                  :min="0"
+                  :precision="0"
+                  :showButton="false"
+                  size="small"
+                  :value="fixedSeedInput"
+                  @blur="restoreInvalidFixedSeed"
+                  @update:value="updateFixedSeed"
+                />
+              </div>
+            </NFormItem>
+          </div>
+          <p v-if="fixedSeedInvalid" class="seed-validation" role="alert">
+            Enter a fixed seed from 0 to 4294967295 before saving.
+          </p>
+          <p
+            v-if="generationDraft.seed.policy === 'reuse' && tab.lastActualSeedSnapshot === null"
+            class="seed-diagnostic"
+            role="status"
+          >
+            No completed generation has a seed to reuse. Generate will be unavailable until one
+            completes.
+          </p>
+          <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
+            Last saved seed: {{ tab.lastActualSeedSnapshot }}
+          </p>
+        </section>
+        <section aria-label="Generation area" class="settings-section">
+          <h2>Generation area</h2>
+          <p>Set the position and size of the area used for the next image.</p>
+          <div class="bbox-fields">
+            <NFormItem label="X" :showFeedback="false">
+              <NInputNumber
+                v-model:value="draft.x"
+                :inputProps="{ 'aria-label': 'Generation area X' }"
+                :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
+                :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
+                :showButton="false"
+              />
+            </NFormItem>
+            <NFormItem label="Y" :showFeedback="false">
+              <NInputNumber
+                v-model:value="draft.y"
+                :inputProps="{ 'aria-label': 'Generation area Y' }"
+                :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
+                :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
+                :showButton="false"
+              />
+            </NFormItem>
+            <NFormItem label="Width" :showFeedback="false">
+              <NInputNumber
+                v-model:value="draft.width"
+                :inputProps="{ 'aria-label': 'Generation area width' }"
+                :max="IGS_SAFETY_CEILINGS.rasterDimension"
+                :min="1"
+                :showButton="false"
+              />
+            </NFormItem>
+            <NFormItem label="Height" :showFeedback="false">
+              <NInputNumber
+                v-model:value="draft.height"
+                :inputProps="{ 'aria-label': 'Generation area height' }"
+                :max="IGS_SAFETY_CEILINGS.rasterDimension"
+                :min="1"
+                :showButton="false"
+              />
+            </NFormItem>
+          </div>
+          <NButton
+            aria-label="Apply generation area"
+            class="apply-bbox"
+            :disabled="!validBbox || !bboxChanged || busy || reloadRequired"
+            :loading="pending === 'bbox'"
+            @click="applyBbox"
+          >
+            Apply
+          </NButton>
+          <NButton
+            aria-label="Fit generation area to visible layers"
+            class="fit-bbox"
+            :disabled="!canFitBbox || busy || reloadRequired"
+            secondary
+            @click="applyFitBbox"
+          >
+            Fit to visible layers
+          </NButton>
+        </section>
       </aside>
 
       <ProjectCanvas
@@ -325,6 +487,46 @@ function applyFitBbox() {
 .project-settings h2 {
   margin: 0;
   font-size: 13px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--app-border);
+}
+
+.prompt-field {
+  display: grid;
+  gap: 5px;
+  margin-top: 13px;
+}
+
+.field-label {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-meta);
+}
+
+.seed-fields {
+  display: grid;
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.seed-fields :deep(.n-select),
+.seed-fields :deep(.n-input-number) {
+  width: 100%;
+}
+
+.fixed-seed-input {
+  width: 100%;
+}
+
+.project-settings .seed-diagnostic {
+  margin: 8px 0 0;
+}
+
+.project-settings .seed-validation {
+  margin: 8px 0 0;
 }
 
 .project-settings p {

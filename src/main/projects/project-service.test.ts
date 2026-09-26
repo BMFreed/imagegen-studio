@@ -1,4 +1,8 @@
-import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import { isProjectGenerationDraftChange } from '../../shared/api.js'
+import {
+  createEmptyProjectDocumentV1,
+  IGS_SAFETY_CEILINGS,
+} from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -353,6 +357,182 @@ test('Project service asks before recovery and restores dirty document without r
     assert.equal((await restarted.save(created.id)).recoveryStatus, 'clean')
     assert.equal((await readIgsPackage(savedPath)).project.primaryBbox.x, -44)
     await restarted.close(created.id)
+  })
+})
+
+test('Project prompt and seed edits survive shadow recovery, Save and reopen without changing the actual seed cursor', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const created = await service.create({ height: 512, title: 'Draft persistence', width: 512 })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    assert.equal(created.lastActualSeedSnapshot, null)
+    assert.deepEqual(created.generationDraft.seed, { policy: 'random', value: null })
+
+    const prompted = await service.updateGenerationDraft(created.id, {
+      kind: 'positive-prompt',
+      text: 'a blue lantern',
+    })
+    assert.equal(prompted.dirty, true)
+    assert.equal(prompted.generationDraft.positivePrompt.text, 'a blue lantern')
+    await service.updateGenerationDraft(created.id, {
+      kind: 'negative-prompt',
+      text: 'blur',
+    })
+    const seeded = await service.updateGenerationDraft(created.id, {
+      kind: 'seed',
+      policy: 'fixed',
+      value: 0xff_ff_ff_ff,
+    })
+    assert.deepEqual(seeded.generationDraft.seed, { policy: 'fixed', value: 0xff_ff_ff_ff })
+    assert.equal(seeded.lastActualSeedSnapshot, null)
+    await service.flushAutosave(created.id)
+    assert.equal((await readIgsPackage(savedPath)).project.generationDraft.positivePrompt.text, '')
+
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.equal(recovered.dirty, true)
+    assert.equal(recovered.generationDraft.positivePrompt.text, 'a blue lantern')
+    assert.equal(recovered.generationDraft.negativePrompt.text, 'blur')
+    assert.deepEqual(recovered.generationDraft.seed, { policy: 'fixed', value: 0xff_ff_ff_ff })
+    assert.equal(recovered.lastActualSeedSnapshot, null)
+
+    const saved = await restarted.save(created.id)
+    assert.equal(saved.tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft,
+      recovered.generationDraft,
+    )
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved Project did not reopen.')
+    }
+    assert.deepEqual(reopened.tab.generationDraft, recovered.generationDraft)
+    assert.equal(
+      (
+        await restarted.updateGenerationDraft(created.id, {
+          kind: 'positive-prompt',
+          text: 'a blue lantern',
+        })
+      ).dirty,
+      false,
+    )
+    assert.equal(
+      (
+        await restarted.updateGenerationDraft(created.id, {
+          kind: 'seed',
+          policy: 'fixed',
+          value: 0xff_ff_ff_ff,
+        })
+      ).dirty,
+      false,
+    )
+    await restarted.close(created.id)
+  })
+})
+
+test('Project prompt text retains only pre-existing embedding refs whose literal token remains', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const externalPath = path.join(dataRoot, 'Embedded prompt.igs')
+    const document = createEmptyProjectDocumentV1({ title: 'Embedded prompt' })
+    const ref = {
+      resource: {
+        baseModelFamily: 'illustrious' as const,
+        civitaiFileId: null,
+        civitaiModelId: null,
+        civitaiVersionId: null,
+        displayName: 'Face embedding',
+        fileSha256: 'a'.repeat(64),
+        kind: 'embedding' as const,
+        localModelId: 'face',
+        localVersionId: 'v1',
+        predictionType: null,
+        versionName: '1',
+      },
+      token: 'face',
+    }
+    document.generationDraft.positivePrompt = { embeddingRefs: [ref], text: 'face' }
+    document.generationDraft.negativePrompt = { embeddingRefs: [ref], text: 'face' }
+    document.generationDraft.sampling.cfgScale = 7.5
+    const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+    await saveIgsPackage(externalPath, {
+      assets: {},
+      preview: { ...placeholders, rect: null, status: 'empty' },
+      project: document,
+    })
+    const selected = await service.selectImport(externalPath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      throw new Error('Expected transfer choice.')
+    }
+    const imported = await service.finishImport(selected.importId, 'copy')
+    assert.equal(imported.result.kind, 'opened')
+    if (imported.result.kind !== 'opened') {
+      throw new Error('Expected imported Project to open.')
+    }
+    const tabId = imported.result.tab.id
+    const retained = await service.updateGenerationDraft(tabId, {
+      kind: 'positive-prompt',
+      text: 'xface face!',
+    })
+    assert.deepEqual(retained.generationDraft.positivePrompt.embeddingRefs, [ref])
+    assert.deepEqual(retained.generationDraft.negativePrompt.embeddingRefs, [ref])
+    assert.equal(retained.generationDraft.sampling.cfgScale, 7.5)
+    const removed = await service.updateGenerationDraft(tabId, {
+      kind: 'positive-prompt',
+      text: 'xface facey',
+    })
+    assert.deepEqual(removed.generationDraft.positivePrompt.embeddingRefs, [])
+    assert.deepEqual(removed.generationDraft.negativePrompt.embeddingRefs, [ref])
+    assert.equal(removed.generationDraft.sampling.cfgScale, 7.5)
+    await service.save(tabId)
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.positivePrompt.embeddingRefs,
+      [],
+    )
+    await service.close(tabId)
+  })
+})
+
+test('Project draft IPC shape and service reject forged refs and invalid seed settings without dirtying', async () => {
+  const invalid = [
+    { embeddingRefs: [], kind: 'positive-prompt', text: 'face' },
+    { kind: 'seed', policy: 'fixed', value: null },
+    { kind: 'seed', policy: 'fixed', value: -1 },
+    { kind: 'seed', policy: 'fixed', value: 4_294_967_296 },
+    { kind: 'seed', policy: 'random', value: 1 },
+    { kind: 'seed', policy: 'reuse', value: 3 },
+    { kind: 'positive-prompt', text: 'é'.repeat(IGS_SAFETY_CEILINGS.textBytes) },
+  ]
+  for (const change of invalid) {
+    assert.equal(isProjectGenerationDraftChange(change), false)
+  }
+  assert.equal(isProjectGenerationDraftChange({ kind: 'seed', policy: 'fixed', value: 0 }), true)
+  assert.equal(isProjectGenerationDraftChange({ kind: 'seed', policy: 'reuse', value: null }), true)
+  await withService(async ({ service }) => {
+    const created = await service.create({ height: 512, title: 'Guarded draft', width: 512 })
+    for (const change of invalid) {
+      await assert.rejects(service.updateGenerationDraft(created.id, change as never), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    assert.equal(service.getOpenTabs()[0].dirty, false)
+    const reuse = await service.updateGenerationDraft(created.id, {
+      kind: 'seed',
+      policy: 'reuse',
+      value: null,
+    })
+    assert.deepEqual(reuse.generationDraft.seed, { policy: 'reuse', value: null })
+    assert.equal(reuse.lastActualSeedSnapshot, null)
+    await service.discardAndClose(created.id)
   })
 })
 

@@ -1,9 +1,19 @@
-import { ipcChannels, isProjectRasterLayerChange } from '../shared/api.js'
-import type { ApiResult, ProjectRasterLayerChange, RuntimeStatus } from '../shared/api.js'
+import {
+  ipcChannels,
+  isProjectGenerationDraftChange,
+  isProjectRasterLayerChange,
+} from '../shared/api.js'
+import type {
+  ApiResult,
+  ProjectGenerationDraftChange,
+  ProjectRasterLayerChange,
+  RuntimeStatus,
+} from '../shared/api.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
@@ -253,6 +263,53 @@ if (!gotInstanceLock) {
       // This also covers Alt+F4 and app.quit(), which do not go through renderer controls.
       let closingAfterResolution = false
       let resolvingClose = false
+      function flushRendererDraftsBeforeClose(): Promise<void> {
+        return new Promise((resolve, reject) => {
+          const requestId = randomUUID()
+          let settled = false
+          const finish = (error: Error | null): void => {
+            if (settled) {
+              return
+            }
+            settled = true
+            clearTimeout(timeout)
+            ipcMain.removeListener(ipcChannels.projects.windowCloseReady, onReady)
+            if (error) {
+              reject(error)
+            } else {
+              resolve()
+            }
+          }
+          const onReady = (
+            event: Electron.IpcMainEvent,
+            responseId: unknown,
+            errorMessage: unknown,
+          ): void => {
+            if (event.sender !== window.webContents || responseId !== requestId) {
+              return
+            }
+            finish(
+              errorMessage === null
+                ? null
+                : new Error(
+                    typeof errorMessage === 'string'
+                      ? errorMessage
+                      : 'The Project draft could not be flushed.',
+                  ),
+            )
+          }
+          const timeout = setTimeout(
+            () => finish(new Error('The Project editor did not respond before closing.')),
+            10_000,
+          )
+          ipcMain.on(ipcChannels.projects.windowCloseReady, onReady)
+          try {
+            window.webContents.send(ipcChannels.projects.prepareWindowClose, requestId)
+          } catch (cause) {
+            finish(cause instanceof Error ? cause : new Error('The Project editor is unavailable.'))
+          }
+        })
+      }
       window.on('close', (event) => {
         if (closingAfterResolution || projectService.getOpenTabs().length === 0) {
           return
@@ -261,23 +318,26 @@ if (!gotInstanceLock) {
         if (resolvingClose) {
           return
         }
-        const dirtyCount = projectService.getOpenTabs().filter((tab) => tab.dirty).length
-        const choice = dirtyCount
-          ? dialog.showMessageBoxSync(window, {
-              buttons: ['Save', 'Discard Changes', 'Cancel'],
-              cancelId: 2,
-              defaultId: 0,
-              detail: `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`,
-              message: 'Close ImageGen Studio?',
-              type: 'question',
-            })
-          : 0
-        if (choice === 2) {
-          return
-        }
         resolvingClose = true
         void (async () => {
           try {
+            // The renderer can still have an unacknowledged prompt/seed edit. Flush it before
+            // main decides whether anything is dirty or starts an explicit Save.
+            await flushRendererDraftsBeforeClose()
+            const dirtyCount = projectService.getOpenTabs().filter((tab) => tab.dirty).length
+            const choice = dirtyCount
+              ? dialog.showMessageBoxSync(window, {
+                  buttons: ['Save', 'Discard Changes', 'Cancel'],
+                  cancelId: 2,
+                  defaultId: 0,
+                  detail: `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`,
+                  message: 'Close ImageGen Studio?',
+                  type: 'question',
+                })
+              : 0
+            if (choice === 2) {
+              return
+            }
             // Keep every tab attached until all requested Saves have committed. If a later Save
             // fails, the window and all tabs remain usable; their snapshots are resynchronized.
             if (choice === 0) {
@@ -307,6 +367,9 @@ if (!gotInstanceLock) {
             )
           } finally {
             resolvingClose = false
+            if (!closingAfterResolution && !window.isDestroyed()) {
+              window.webContents.send(ipcChannels.projects.windowCloseReleased)
+            }
           }
         })()
       })
@@ -546,6 +609,16 @@ if (!gotInstanceLock) {
         ipcChannels.projects.setPrimaryBbox,
         (args) => args.length === 2 && isProjectId(args[0]) && isProjectRect(args[1]),
         (tabId, rect) => projectService.setPrimaryBbox(tabId as string, rect as IgsRectV1),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateGenerationDraft,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectGenerationDraftChange(args[1]),
+        (tabId, change) =>
+          projectService.updateGenerationDraft(
+            tabId as string,
+            change as ProjectGenerationDraftChange,
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.updateRasterLayer,

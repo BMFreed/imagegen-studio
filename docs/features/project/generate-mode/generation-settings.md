@@ -73,6 +73,21 @@ The UI does not display a persistent txt2img/img2img label such as `Canvas conte
 
 If color matching is needed later, design it as a Smart Patch/compositing behavior such as `Match source colors`, not as an always-visible global generation toggle.
 
+## Production coverage at the Phase 2A checkpoint
+
+The production Project settings currently edit only the normal Project's
+positive and negative plain prompt text and Seed `Fixed`/`Random`/`Reuse`
+policy. `Fixed` stores an explicit unsigned 32-bit value; `Random` and `Reuse`
+store no draft value. Changes use the Project document's dirty/shadow/explicit
+Save path and reopen from `.igs`. If a text edit removes an existing embedding
+activation token, main prunes its sidecar ref; retyping the token does not
+restore the ref until resource-aware insertion is implemented. No production
+model/version, LoRA, sampling, VAE, advanced options or Smart Patch-owned draft
+controls are connected yet.
+The chosen Seed policy is a request for a future job, not a completed seed:
+the operational last-actual-seed cursor and fallback to a saved `.igs` snapshot
+still belong to the Phase 2B enqueue/completion path.
+
 ## Vue Prototype Coverage
 
 The current Project settings stack implements:

@@ -149,7 +149,8 @@ Projects; `create` chooses a new file inside the default `Uncategorized`
 workspace, and `open` resolves a validated local project key against that
 workspace's index. Main checks canonical path and workspace ownership before
 opening. The primary bbox remains an independent world-space rectangle, and
-the only document edit exposed by this bridge is its typed rectangle. This is
+the bridge exposes typed bbox, Raster Layer, image import and normal-generation
+prompt/Seed edits rather than an arbitrary document replacement. This remains
 an intentionally narrow Project UI slice, not the final Canvas or layer stack.
 
 Main owns the open-tab registry and one autosave coordinator per canonical
@@ -433,12 +434,60 @@ has no Generate UI entry point yet. This
 source-checkout `derivatives-only` worker is still not the installable
 inference runtime.
 
+## Project generation draft editing
+
+The production Project UI slice edits only the normal Project's
+`generationDraft.positivePrompt.text`, `negativePrompt.text` and Seed policy.
+`Fixed` has an explicit unsigned 32-bit value; `Random` and `Reuse` have a null
+draft value. These are document edits through typed IPC and Project session
+commands, so they participate in dirty state, document shadow recovery and
+explicit `.igs` Save/reopen. The prompt is plain text: the renderer cannot
+forge embedding sidecars, and main retains an existing reference only while its
+literal activation token remains in the edited text. A removed ref is not
+restored if the same token is later retyped: this slice does not offer an
+embedding picker or create new references. It does not edit the model, LoRAs,
+sampling, VAE, advanced options or any Smart Patch-owned draft.
+
+Selecting `Reuse` records the requested policy only; editing the draft does not
+advance the local last-actual-seed cursor or the saved `.igs` snapshot. On a
+future portable open without a local cursor, the saved snapshot may seed that
+cursor as specified by the storage contract. No actual seed is allocated by
+editing the draft. There is no production Generate button, queue, inference
+result, staging recovery, acceptance or accepted
+provenance in this slice. Production support for `Reuse` requires a completed
+candidate or an available saved snapshot and the operational cursor specified
+for Phase 2B. The future Generate action must disable `Reuse` with a reason if
+both sources are absent.
+
+The renderer keeps prompt/Seed changes visible while serialized typed IPC
+updates are in flight. Save, other document commands and normal Project-tab
+close await that queue before acting on main's document. Native window close
+also asks the renderer to flush all pending drafts before main reads dirty tabs
+or presents Save/Discard/Cancel. The reply is tied to that window and a unique
+request id; a flush error or 10-second timeout leaves the window open with an
+error instead of closing over an unacknowledged edit. This protects graceful
+close only; unexpected process termination still relies on the debounced
+document shadow after an edit reaches main.
+
+Validation at this checkpoint: `pnpm run app:test` passed 231/231, including
+service tests that reopen real `.igs` files, recover a dirty document shadow,
+reject forged draft IPC shapes and verify that edits do not advance the actual
+seed snapshot. The runner now includes renderer component tests; its draft-queue
+subset passed 4/4, covering
+serialized typing, failed-send retry and a window-close flush across two open
+Projects. `pnpm run app:smoke` passed in Electron: positive/negative prompts
+and Fixed seed survive immediate Save, actual `.igs` read and reopen; an empty
+Fixed seed disables Save and reverts to the last valid draft value on blur. A separate
+native `app.quit()` path chooses Save immediately after a prompt edit and
+verifies the latest text in the resulting `.igs`. The smoke proves that graceful
+close path, not the timeout/error branches or a production Generate job.
+
 Remaining Phase 2A gaps include generation staging recovery and the
 installable Linux/NVIDIA runtime needed for PNG/JPEG/WebP import, previews and
 target preparation in a packaged application. A full frozen job request with
 exact resources, mask/region inputs, queue identity, inference and accepted
-provenance remains Phase 2B work; the target bytes alone do not make Generate
-functional.
+provenance remains Phase 2B work; the target bytes and editable draft do not
+make Generate functional.
 
 Layer add/delete/rename, undo and production raster editing also remain open;
 the current Raster controls do not complete the wider layer-stack contract.

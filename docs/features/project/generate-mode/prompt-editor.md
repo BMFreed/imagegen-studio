@@ -39,4 +39,20 @@ Embeddings and enabled non-missing LoRA trigger phrases are rendered as restrain
 
 ## Prototype boundary
 
-Token count remains a whitespace-based approximation. Production tokenizer integration, persistent range annotations, production storage migration, wildcard syntax, nested dynamic prompting, and translation remain outside this iteration.
+The prototype token count remains a whitespace-based approximation. Production
+tokenizer integration, persistent range annotations, wildcard syntax, nested
+dynamic prompting and translation remain outside this prototype iteration.
+
+## Production coverage at the Phase 2A checkpoint
+
+The production normal Project currently exposes plain-text CodeMirror editing
+for positive and negative prompts through typed Project IPC. The main process
+retains only pre-existing embedding sidecar refs whose literal activation token
+still appears in the edited text; the renderer cannot create refs in this
+slice. Retyping a removed token does not restore its ref. The production editor
+does not yet provide the prototype's phrase
+selection, attention actions, resource decorations/autocomplete or
+focus-to-blur Project undo transaction. It uses local editor history while
+Project-level undo remains unimplemented. These missing editor behaviors and
+model-aware resource feedback remain product contract work, not evidence of
+completed generation.

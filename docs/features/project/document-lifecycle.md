@@ -105,6 +105,13 @@ Rules:
 - `Esc` maps to `Cancel`;
 - failed Save leaves the close dialog/Project available for recovery.
 
+Before a native window close decides whether any Project is dirty, the renderer
+must flush pending prompt/Seed draft edits through Project IPC. A failed or
+missing acknowledgement cancels that close and keeps the window available; the
+user must not lose text that has not yet reached main's document state. A normal
+Project-tab close and Save likewise wait for pending draft edits before reading
+dirty state or writing `.igs`.
+
 Closing a Project with pending/running jobs or completed unaccepted candidates
 requires an explicit warning, whether the document is dirty or clean. Confirmed
 graceful close cancels that Project's pending/running jobs and discards its
@@ -189,9 +196,21 @@ tests exercise debounced document recovery, new asset ownership, dirty close,
 and edits crossing an atomic Save, including recovery on either side of its
 commit. A main-process coordinator holds the canonical Project path until the
 tab closes or hands its lease to a replacement after Discard Changes; a second
-tab cannot overwrite the first tab's document shadow. These services are not
-wired through the production Project UI/IPC;
+tab cannot overwrite the first tab's document shadow. The production
+Home/Project UI uses typed IPC for Save, recovery and normal Project edits,
+including positive/negative plain prompt text and Seed policy/value in the
+document's generation draft. These draft edits participate in dirty state,
+shadow recovery and explicit Save/reopen; changing the requested policy does
+not advance the separate last-actual-seed cursor. A native window close uses a
+request-scoped main→renderer acknowledgement to flush in-flight draft IPC
+before main reads dirty state. Main accepts the acknowledgement only from that
+window; failure or a bounded timeout keeps the window open with an error.
+Model/LoRA/sampling controls and a production Generate action are not connected yet;
 generation staging recovery remains separate and unimplemented.
+Electron smoke exercises immediate prompt editing followed by native
+`app.quit()` and the Save choice, then reads the latest prompt from the real
+`.igs` package. The timeout/error branch is an implementation guard, not yet an
+end-to-end smoke result.
 PP-007 therefore stays publicly unavailable.
 The pending process pilot is tracked in [Engineering workflow](../../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
 

@@ -1,4 +1,5 @@
 import type {
+  ProjectGenerationDraftChange,
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectOpenResult,
@@ -8,7 +9,7 @@ import type {
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
-import { isProjectRasterLayerChange } from '../../shared/api.js'
+import { isProjectGenerationDraftChange, isProjectRasterLayerChange } from '../../shared/api.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -644,6 +645,43 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async updateGenerationDraft(
+    tabId: string,
+    change: ProjectGenerationDraftChange,
+  ): Promise<ProjectTab> {
+    if (!isProjectGenerationDraftChange(change)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The generation setting is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const draft = document.generationDraft
+    if (change.kind === 'seed') {
+      if (draft.seed.policy === change.policy && draft.seed.value === change.value) {
+        return toTab(tabId, coordinator)
+      }
+      document.generationDraft = { ...draft, seed: { policy: change.policy, value: change.value } }
+    } else {
+      const field = change.kind === 'positive-prompt' ? 'positivePrompt' : 'negativePrompt'
+      const before = draft[field]
+      const embeddingRefs = before.embeddingRefs.filter((ref) =>
+        hasLiteralActivationToken(change.text, ref.token),
+      )
+      if (before.text === change.text && embeddingRefs.length === before.embeddingRefs.length) {
+        return toTab(tabId, coordinator)
+      }
+      document.generationDraft = {
+        ...draft,
+        [field]: { embeddingRefs, text: change.text },
+      }
+    }
+    await coordinator.applyDocument(
+      document,
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   async updateRasterLayer(
     tabId: string,
     layerId: string,
@@ -1003,7 +1041,9 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
   return {
     autosaveError: coordinator.lastAutosaveError?.message ?? null,
     dirty: coordinator.dirty,
+    generationDraft: document.generationDraft,
     id,
+    lastActualSeedSnapshot: document.lastActualSeedSnapshot,
     layers: document.layers.map((layer) => ({
       blendMode: layer.blendMode,
       height: layer.asset.height,
@@ -1019,6 +1059,28 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     primaryBbox: document.primaryBbox,
     title: document.title,
   }
+}
+
+/** Match the prototype editor's literal activation token boundary rule. */
+function hasLiteralActivationToken(text: string, token: string): boolean {
+  if (!token) {
+    return false
+  }
+  let from = 0
+  while (from <= text.length - token.length) {
+    const index = text.indexOf(token, from)
+    if (index < 0) {
+      return false
+    }
+    const end = index + token.length
+    const leftBoundary = !/^\w/u.test(token) || index === 0 || !/\w/u.test(text[index - 1])
+    const rightBoundary = !/\w$/u.test(token) || end === text.length || !/\w/u.test(text[end])
+    if (leftBoundary && rightBoundary) {
+      return true
+    }
+    from = end
+  }
+  return false
 }
 
 function describeRecovery(inspection: ProjectShadowInspection): string {
