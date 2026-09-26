@@ -471,7 +471,7 @@ export class ProjectAutosaveCoordinator {
 
   /** Explicit Save commits `.igs`, then cleans only that revision and rebases any later edit. */
   async save(
-    input: { renderedPreview?: RenderedProjectPreview } = {},
+    input: { emptyPreviewRevision?: string; renderedPreview?: RenderedProjectPreview } = {},
   ): Promise<CoordinatedSaveOutcome> {
     this.assertOpen()
     if (this.activeSave || this.editGate) {
@@ -480,6 +480,16 @@ export class ProjectAutosaveCoordinator {
     this.clearTimer()
     const savingDocument = this.session.document
     const assets = this.changedSources(savingDocument)
+    // Worker derivatives may finish for the revision that preceded the user's latest edit.
+    // Save the captured document anyway, using an honest unavailable/empty placeholder.
+    const preview = {
+      ...(input.emptyPreviewRevision === savingDocument.documentRevision
+        ? { emptyPreviewRevision: input.emptyPreviewRevision }
+        : {}),
+      ...(input.renderedPreview?.documentRevision === savingDocument.documentRevision
+        ? { renderedPreview: input.renderedPreview }
+        : {}),
+    }
     this.editGate = new Promise<void>((resolve) => {
       this.releaseEditGate = resolve
     })
@@ -499,7 +509,7 @@ export class ProjectAutosaveCoordinator {
           )
         }
         this.saveTarget = savingDocument
-        const packageSave = this.session.save({ assets, renderedPreview: input.renderedPreview })
+        const packageSave = this.session.save({ assets, ...preview })
         this.releasePreparedEdits()
         committed = await packageSave
       } catch (error) {

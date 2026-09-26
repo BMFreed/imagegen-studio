@@ -17,6 +17,18 @@ const raster = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
   'base64',
 )
+const sparseRaster = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR4nGNgQAb/GRj+AwAFDQH/OH1KHAAAAABJRU5ErkJggg==',
+  'base64',
+)
+const transparentRaster = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAXfx+gAAAAAASUVORK5CYII=',
+  'base64',
+)
+const croppedPixel = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+  'base64',
+)
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
 async function withSession(
@@ -345,7 +357,137 @@ test('stale or disjoint derivative cannot be presented as the current Project pr
       }),
       { code: 'PROJECT_INVALID_PREVIEW' },
     )
+    await assert.rejects(
+      session.save({
+        renderedPreview: {
+          documentRevision: session.document.documentRevision,
+          merged: raster,
+          rect: { height: 2, width: 2, x: 499_999, y: 0 },
+          thumbnail,
+        },
+      }),
+      { code: 'PROJECT_INVALID_PREVIEW' },
+    )
     assert.equal(session.dirty, true)
     assert.equal((await readIgsPackage(session.filePath)).project.title, 'First')
+  })
+})
+
+test('Save accepts a worker preview cropped to actual alpha bounds inside layer geometry', async () => {
+  await withSession(async (session) => {
+    const id = randomUUID()
+    const assetPath = `assets/layers/${id}.png`
+    session.applyDocument({
+      ...session.document,
+      layers: [
+        {
+          asset: {
+            bytes: sparseRaster.length,
+            height: 2,
+            path: assetPath,
+            sha256: sha256(sparseRaster),
+            width: 2,
+          },
+          blendMode: 'normal',
+          id,
+          kind: 'raster',
+          locked: false,
+          name: 'One visible pixel',
+          opacity: 1,
+          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -10, y: 20 },
+          visible: true,
+        },
+      ],
+    })
+    const revision = session.document.documentRevision
+    const thumbnail = (await readProjectPlaceholders(bundledPlaceholders, 'unavailable')).thumbnail
+    await session.save({
+      assets: { [assetPath]: { bytes: sparseRaster } },
+      renderedPreview: {
+        documentRevision: revision,
+        merged: croppedPixel,
+        rect: { height: 1, width: 1, x: -9, y: 21 },
+        thumbnail,
+      },
+    })
+    const opened = await readIgsPackage(session.filePath)
+    assert.equal(opened.project.documentRevision, revision)
+    assert.equal(opened.manifest.preview.status, 'rendered')
+    assert.deepEqual(opened.manifest.preview.rect, { height: 1, width: 1, x: -9, y: 21 })
+    assert.deepEqual(await opened.readMember('preview/merged.png'), croppedPixel)
+    assert.deepEqual(await opened.readMember(assetPath), sparseRaster)
+  })
+})
+
+test('a revision-bound empty worker result survives Save with transparent raster assets', async () => {
+  await withSession(async (session) => {
+    const id = randomUUID()
+    const assetPath = `assets/layers/${id}.png`
+    session.applyDocument({
+      ...session.document,
+      layers: [
+        {
+          asset: {
+            bytes: transparentRaster.length,
+            height: 2,
+            path: assetPath,
+            sha256: sha256(transparentRaster),
+            width: 2,
+          },
+          blendMode: 'normal',
+          id,
+          kind: 'raster',
+          locked: false,
+          name: 'Transparent layer',
+          opacity: 1,
+          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 8, y: -4 },
+          visible: true,
+        },
+      ],
+    })
+    const revision = session.document.documentRevision
+    session.applyDocument({ ...session.document, title: 'Edited after worker snapshot' })
+    await assert.rejects(
+      session.save({
+        assets: { [assetPath]: { bytes: transparentRaster } },
+        emptyPreviewRevision: revision,
+      }),
+      { code: 'PROJECT_INVALID_PREVIEW' },
+    )
+    assert.equal((await readIgsPackage(session.filePath)).project.title, 'First')
+    assert.equal(session.dirty, true)
+
+    const actualRevision = session.document.documentRevision
+    const thumbnail = (await readProjectPlaceholders(bundledPlaceholders, 'unavailable')).thumbnail
+    await assert.rejects(
+      session.save({
+        assets: { [assetPath]: { bytes: transparentRaster } },
+        emptyPreviewRevision: actualRevision,
+        renderedPreview: {
+          documentRevision: actualRevision,
+          merged: croppedPixel,
+          rect: { height: 1, width: 1, x: 8, y: -4 },
+          thumbnail,
+        },
+      }),
+      { code: 'PROJECT_INVALID_PREVIEW' },
+    )
+    assert.equal((await readIgsPackage(session.filePath)).project.title, 'First')
+    await session.save({
+      assets: { [assetPath]: { bytes: transparentRaster } },
+      emptyPreviewRevision: actualRevision,
+    })
+    const opened = await readIgsPackage(session.filePath)
+    assert.equal(opened.project.documentRevision, actualRevision)
+    assert.equal(opened.manifest.preview.status, 'empty')
+    assert.equal(opened.manifest.preview.rect, null)
+    assert.deepEqual(await opened.readMember(assetPath), transparentRaster)
+
+    session.applyDocument({ ...session.document, title: 'No worker available' })
+    await session.save()
+    const fallback = await readIgsPackage(session.filePath)
+    assert.equal(fallback.manifest.preview.status, 'unavailable')
+    assert.deepEqual(fallback.manifest.preview.rect, { height: 2, width: 2, x: 8, y: -4 })
+    assert.deepEqual(await fallback.readMember(assetPath), transparentRaster)
   })
 })

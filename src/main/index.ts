@@ -112,8 +112,8 @@ if (!gotInstanceLock) {
         },
         shadow: new ProjectShadowStore(path.join(paths.dataRoot, 'autosave')),
       })
-      // The source-checkout worker only exercises image normalization during development and
-      // smoke tests. A packaged release needs the separate Linux/NVIDIA runtime installer.
+      // The source-checkout worker handles import normalization and Project previews during
+      // development and smoke tests. A packaged release needs the Linux/NVIDIA runtime installer.
       const developmentWorkerLocation = developmentImageWorkerLocation({
         isPackaged: app.isPackaged,
         mainDirectory: moduleDir,
@@ -121,6 +121,23 @@ if (!gotInstanceLock) {
         scratchDirectory: path.join(paths.dataRoot, 'scratch'),
         smokeOptIn: process.env.IMAGEGEN_TEST_IMAGE_WORKER,
       })
+      const saveProjectWithPreview = async (tabId: string) => {
+        if (!developmentWorkerLocation) {
+          return await projectService.save(tabId)
+        }
+        let worker: ProjectWorkerClient
+        try {
+          worker = await ProjectWorkerClient.start(developmentWorkerLocation)
+        } catch {
+          console.warn('Project preview worker is unavailable; Save will use placeholders.')
+          return await projectService.save(tabId)
+        }
+        try {
+          return await projectService.save(tabId, worker)
+        } finally {
+          await worker.close().catch(() => undefined)
+        }
+      }
       const layerScratchRoot = path.join(paths.dataRoot, 'scratch', 'layer-responses')
       await mkdir(layerScratchRoot, { recursive: true })
       protocol.handle('igs-layer', async (request) => {
@@ -242,7 +259,7 @@ if (!gotInstanceLock) {
             if (choice === 0) {
               for (const tab of projectService.getOpenTabs()) {
                 if (tab.dirty) {
-                  await projectService.save(tab.id)
+                  await saveProjectWithPreview(tab.id)
                 }
               }
             }
@@ -569,7 +586,7 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
-        projectService.save(tabId as string),
+        saveProjectWithPreview(tabId as string),
       )
       registerProjectHandler(ipcChannels.projects.close, oneProjectId, (tabId) =>
         projectService.close(tabId as string),

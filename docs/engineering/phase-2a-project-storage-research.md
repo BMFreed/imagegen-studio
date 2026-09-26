@@ -5,9 +5,10 @@ Scope: [PP-007](../product-promises.md#pp-007-проект-принадлежи�
 [document lifecycle](../features/project/document-lifecycle.md). This is a
 high-risk data boundary. The storage slice defines an executable v1 format and
 tests Save→reopen and standalone autosave/recovery through real files. The
-production Home/Project bridge uses typed IPC. Generation staging recovery,
-worker-generated previews and the Linux/NVIDIA Python runtime remain separate
-Phase 2A work.
+production Home/Project bridge uses typed IPC. The source-checkout worker now
+renders embedded Project previews during explicit Save in development and the
+Electron smoke test. Generation staging recovery and the installable
+Linux/NVIDIA Python runtime remain separate Phase 2A work.
 
 ## Baseline before implementation and evidence
 
@@ -119,10 +120,9 @@ the rejection path without manufacturing multi-gigabyte fixtures.
    shadow/staging keys. Rebuild of a clean Project must preserve the document
    revision; it must serialize with Save and never accept staging candidates.
 
-The full PP-007 acceptance still requires the production Project tab and IPC,
-real compositor/worker preview generation, UI-connected autosave/recovery,
-generation staging recovery, clean Rebuild Preview and release runtime. These
-gaps remain visible in the promise matrix until exercised.
+The full PP-007 acceptance still requires generation staging recovery, clean
+Rebuild Preview, Home thumbnail display/cache and release runtime. These gaps
+remain visible in the promise matrix until exercised.
 
 The autosave coordinator acquires one process-local lease per canonical Project
 path before inspecting or changing its shadow. This prevents two tabs in the
@@ -259,8 +259,8 @@ invalid, missing and locked commands; clean no-ops; and exact raster asset
 bytes when all layers become hidden or zero-opacity. Without a worker, the saved
 preview is `empty` when no layer is visible with opacity above zero, and
 `unavailable` when one remains. The focused command
-`pnpm exec tsx --test src/main/projects/project-service.test.ts` passed 22/22
-on the current working tree. The current `pnpm run app:smoke` also passed through
+`pnpm exec tsx --test src/main/projects/project-service.test.ts` passed 24/24
+on the preview working tree. The Electron smoke also passed through
 the Electron UI: hide/show changed Canvas pixels, 40% opacity changed the pixel,
 the selected-layer blend control set `multiply`, lock/unlock changed the editor
 state, menu move and pointer drag changed layer order, and Save/reopen preserved
@@ -284,14 +284,60 @@ picker, renderer, IPC and Project document path are production code.
 The earlier raster-display slice was committed
 as `ac7e913`; its recorded checks were `pnpm run app:test` 182/182,
 `pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke`. The focused 19/19
-test run verifies those Raster controls. The current working tree passed
-`pnpm run app:test` 189/189, `pnpm run typecheck`, `pnpm run lint` and
-`pnpm run app:smoke`; none of these checks is release runtime evidence.
+test run verifies those Raster controls. At the raster-import slice, the working
+tree passed `pnpm run app:test` 189/189, `pnpm run typecheck`, `pnpm run lint`
+and `pnpm run app:smoke`; none of these checks is release runtime evidence. The
+newer preview checks are recorded below.
+
+## Worker-rendered Project previews
+
+The production Save path in Electron now freezes each visible Raster Layer asset
+in main-owned scratch, preserving top-first document order, transforms, opacity
+and blend mode. The source-checkout Python worker reads and verifies those
+immutable sRGB inputs, composites them bottom-to-top, and writes a merged PNG
+and WebP thumbnail. Main verifies the response and both files before embedding
+them in `.igs`. A result is bound to the document revision: a late worker result
+for an older edit is discarded, and Save uses placeholders for the actual saved
+revision. Fully transparent visible layers can yield `empty` only when the
+worker has checked their pixels. An absent, failed or over-limit worker yields
+`unavailable` while retaining all document assets. The worker never writes the
+project package or clears dirty state.
+
+The checked entry point is renderer Save → typed IPC → Project service → worker
+client → `.igs` writer/loader. The Electron smoke saved a reordered raster stack
+with opacity and multiply blending, then a new imported Raster Layer. It reopened
+both packages and checked `rendered` preview rects `(-3, 4, 400, 400)` and
+`(-3, -17, 546, 512)`, plus decoded PNG pixels from both the original blue
+layer and the imported image and a decoded 256×256 WebP thumbnail. Service tests separately checked a worker crash
+and an edit arriving during composition by reopening the saved `.igs`; neither
+turned an old/failed preview into a current result. Worker/client/session tests
+cover transparent crop, empty classification, blend order, response validation
+and failure fallback. The current dirty working tree passed `pnpm run app:test`
+195/195, `pnpm run typecheck` and `pnpm run app:smoke`; the Python worker suite
+passed 74/74 with Ruff and BasedPyright. Semantic mutations of layer order,
+preview containment and revision-bound empty classification each made their
+corresponding tests fail in isolated copies. These are local checks, not a
+published or installable runtime.
+
+Independent review found that valid portable `.igs` v1 assets may have untagged
+sRGB pixels, although the first compositor input check required a pinned ICC.
+The source check and worker now accept untagged sRGB PNG/WebP while still
+rejecting contradictory PNG color metadata and non-pinned embedded ICC. The
+real TS→Python round trip checks both untagged formats and pinned outputs.
+
+The provisional resource register for this path is: 64 KiB JSON command,
+256 layers, 256 MiB per encoded source, 64 million decoded pixels per layer,
+128 million aggregate source pixels, a 2,048 px merged raster side and 256 px
+Home thumbnail request. They are implementation safety guards, not measured
+product capacity. A rejected request follows the `unavailable` Save fallback;
+the original `.igs` and recoverable dirty state still follow the existing Save
+transaction rules. Capacity testing with real projects remains necessary before
+release.
 
 Remaining Phase 2A gaps include finite frozen compositor input for generation,
-worker-generated previews, generation staging recovery, clean `Rebuild Preview`,
-the installable Linux/NVIDIA runtime needed for PNG/JPEG/WebP import in a
-packaged application.
+generation staging recovery, clean `Rebuild Preview`, Home thumbnail
+display/cache and the installable Linux/NVIDIA runtime needed for
+PNG/JPEG/WebP import and previews in a packaged application.
 Layer add/delete/rename, undo and production raster editing also remain open;
 the current Raster controls do not complete the wider layer-stack contract.
 The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent

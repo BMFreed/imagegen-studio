@@ -15,15 +15,30 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { crc32, deflateSync } from 'node:zlib'
 import { _electron as electron } from '@playwright/test'
 import electronBinary from 'electron'
 import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
+import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 
-const rasterPng = Buffer.from(
+const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
   'base64',
 )
+const srgbIcc = readFileSync('worker-python/src/imagegen_worker/srgb.icc')
+assert.equal(createHash('sha256').update(srgbIcc).digest('hex'), IGS_SRGB_ICC_SHA256)
+const iccPayload = Buffer.concat([Buffer.from('profile\0\0', 'ascii'), deflateSync(srgbIcc)])
+const iccChunk = Buffer.alloc(12 + iccPayload.length)
+iccChunk.writeUInt32BE(iccPayload.length, 0)
+iccChunk.write('iCCP', 4, 'ascii')
+iccPayload.copy(iccChunk, 8)
+iccChunk.writeUInt32BE(crc32(iccChunk.subarray(4, -4)), iccChunk.length - 4)
+const rasterPng = Buffer.concat([
+  untaggedRasterPng.subarray(0, 33),
+  iccChunk,
+  untaggedRasterPng.subarray(33),
+])
 const rasterWebp = Buffer.from(
   'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
   'base64',
@@ -90,6 +105,29 @@ async function waitForOpenTab(window, tabId, predicate, description) {
     await delay(50)
   }
   throw new Error(`${description}: ${JSON.stringify(last)}`)
+}
+
+async function sampleImageAtWorld(window, bytes, mimeType, rect, worldX, worldY) {
+  return await window.evaluate(
+    async ({ base64, mimeType, rect, worldX, worldY }) => {
+      const image = new Image()
+      await new Promise((resolve, reject) => {
+        image.onload = resolve
+        image.onerror = () => reject(new Error('A saved preview image could not be decoded.'))
+        image.src = `data:${mimeType};base64,${base64}`
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      context.drawImage(image, 0, 0)
+      const x = Math.floor(((worldX - rect.x) * canvas.width) / rect.width)
+      const y = Math.floor(((worldY - rect.y) * canvas.height) / rect.height)
+      const pixel = [...context.getImageData(x, y, 1, 1).data]
+      return { pixel, width: canvas.width, height: canvas.height }
+    },
+    { base64: bytes.toString('base64'), mimeType, rect, worldX, worldY },
+  )
 }
 
 let application
@@ -583,6 +621,52 @@ try {
     [rasterLayerId, lowerRasterLayerId],
   )
   assert.equal(savedRasterPackage.project.layers[0].blendMode, 'multiply')
+  assert.equal(savedRasterPackage.manifest.preview.status, 'rendered')
+  assert.deepEqual(savedRasterPackage.manifest.preview.rect, {
+    x: -3,
+    y: 4,
+    width: 400,
+    height: 400,
+  })
+  const bluePreview = await sampleImageAtWorld(
+    recoveryWindow,
+    await savedRasterPackage.readMember('preview/merged.png'),
+    'image/png',
+    savedRasterPackage.manifest.preview.rect,
+    197,
+    204,
+  )
+  assert.deepEqual(
+    { width: bluePreview.width, height: bluePreview.height },
+    {
+      width: 400,
+      height: 400,
+    },
+  )
+  assert.ok(
+    bluePreview.pixel[2] > bluePreview.pixel[0] + 100 &&
+      bluePreview.pixel[3] >= 80 &&
+      bluePreview.pixel[3] <= 110,
+    `The saved composite lost the blue raster or its 40% opacity: ${bluePreview.pixel}`,
+  )
+  const blueThumbnail = await sampleImageAtWorld(
+    recoveryWindow,
+    await savedRasterPackage.readMember('preview/thumbnail.webp'),
+    'image/webp',
+    savedRasterPackage.manifest.preview.rect,
+    197,
+    204,
+  )
+  assert.deepEqual(
+    { width: blueThumbnail.width, height: blueThumbnail.height },
+    { width: 256, height: 256 },
+  )
+  assert.ok(
+    blueThumbnail.pixel[2] > blueThumbnail.pixel[0] + 100 &&
+      blueThumbnail.pixel[3] >= 80 &&
+      blueThumbnail.pixel[3] <= 110,
+    `The saved thumbnail lost the blue raster or its 40% opacity: ${blueThumbnail.pixel}`,
+  )
   assert.equal(existsSync(externalProject), true)
   assert.deepEqual(readFileSync(externalProject), externalBytes)
   assert.equal(readdirSync(projectDir).filter((entry) => entry.endsWith('.igs')).length, 2)
@@ -717,6 +801,26 @@ try {
   assert.equal(packageWithImage.project.layers[0].id, importedImage.id)
   assert.equal(packageWithImage.project.layers[0].asset.width, 512)
   assert.equal(packageWithImage.project.layers[0].asset.height, 512)
+  assert.equal(packageWithImage.manifest.preview.status, 'rendered')
+  assert.deepEqual(packageWithImage.manifest.preview.rect, {
+    x: -3,
+    y: -17,
+    width: 546,
+    height: 512,
+  })
+  const mergedWithImage = await packageWithImage.readMember('preview/merged.png')
+  const importedPreviewPixel = await sampleImageAtWorld(
+    recoveryWindow,
+    mergedWithImage,
+    'image/png',
+    packageWithImage.manifest.preview.rect,
+    450,
+    300,
+  )
+  assert.deepEqual(
+    { width: importedPreviewPixel.width, height: importedPreviewPixel.height },
+    { width: 546, height: 512 },
+  )
   const normalizedAssetPath = path.join(externalDirectory, 'normalized-import.png')
   await packageWithImage.extractMemberToFile(
     packageWithImage.project.layers[0].asset.path,
@@ -725,6 +829,33 @@ try {
   assert.equal(
     createHash('sha256').update(readFileSync(normalizedAssetPath)).digest('hex'),
     packageWithImage.project.layers[0].asset.sha256,
+  )
+  const importedSourcePixel = await sampleImageAtWorld(
+    recoveryWindow,
+    readFileSync(normalizedAssetPath),
+    'image/png',
+    { x: 31, y: -17, width: 512, height: 512 },
+    450,
+    300,
+  )
+  assert.deepEqual(
+    importedPreviewPixel.pixel,
+    importedSourcePixel.pixel,
+    'The saved composite must contain the imported layer at its world position.',
+  )
+  const rasterOnlyPixel = await sampleImageAtWorld(
+    recoveryWindow,
+    mergedWithImage,
+    'image/png',
+    packageWithImage.manifest.preview.rect,
+    20,
+    200,
+  )
+  assert.ok(
+    rasterOnlyPixel.pixel[2] > rasterOnlyPixel.pixel[0] + 100 &&
+      rasterOnlyPixel.pixel[3] >= 80 &&
+      rasterOnlyPixel.pixel[3] <= 110,
+    `The saved composite lost the raster outside the imported image: ${rasterOnlyPixel.pixel}`,
   )
   await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
   await recoveryWindow.getByRole('tab', { name: 'Home' }).click()

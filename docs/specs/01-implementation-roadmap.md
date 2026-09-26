@@ -237,6 +237,17 @@ Crash recovery открывает shadow для проверки, не пере�
 Неудачный runtime update не ломает предыдущий worker.
 Выполнить [PP-007 research pilot](../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
 
+**Текущий checkpoint Phase 2A (26.09.2026):** production Home/Project IPC,
+`.igs` Save/reopen, document shadow recovery, Raster Layer controls и PNG import
+проверены на реальных файлах. Source-checkout `derivatives-only` worker теперь
+создаёт embedded PNG/WebP Project previews при явном Save: Electron smoke
+проверяет world-space rect и декодированные пиксели после повторного чтения
+`.igs`; отказ worker сохраняет документ с `unavailable` placeholder.
+Подробное evidence — [Phase 2A research](../engineering/phase-2a-project-storage-research.md#worker-rendered-project-previews).
+Это не закрывает фазу: installable Linux/NVIDIA runtime, generation staging
+recovery, clean `Rebuild Preview`, Home thumbnail cache/display и finite frozen
+composite для generation остаются следующими задачами.
+
 ## Фаза 2B. Очередь и первая сквозная генерация
 
 **Зависимости:** 2A, установленная Illustrious-модель из фазы 1, исполнимые

@@ -25,16 +25,16 @@
 Публичный статус относится к готовому продукту. Прототип может доказывать
 взаимодействие, но не заменяет filesystem, worker или persistence evidence.
 
-| ID | Пользовательский результат | Продуктовый статус | Публичный статус | Supporting contract и evidence/gaps |
-| --- | --- | --- | --- | --- |
-| PP-001 | Готовый понятный интерфейс | Принятое направление | Пока не обещать | [Композиция](./contracts/interface-composition.md): prototype shell; production preferences не проверены |
-| PP-002 | Понятное намерение controls | Принятое направление | Пока не обещать | [Явные действия](./contracts/explicit-intent.md): Model Manager install явный; Project/worker handoff ещё не реализован |
-| PP-003 | Понятные роли и места управления | Принятое направление | Пока не обещать | [Ownership](./contracts/canonical-ownership.md): prototype managers; resource handoff/history неполны |
-| PP-004 | Управляемые модели и версии | Обязательный MVP | Пока не обещать | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют |
-| PP-005 | Результат помнит настройки | Обязательный MVP | Пока не обещать | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы |
-| PP-006 | Настройки сохраняются и переиспользуются | Обязательный MVP | Пока не обещать | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#external-import-and-raster-display): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas, Raster Layer controls и PNG import через UI проверены в Electron с dev worker; worker previews, staging recovery и release runtime ещё не подтверждены |
-| PP-008 | Результаты принимаются явно | Обязательный MVP | Пока не обещать | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют |
+| ID     | Пользовательский результат                | Продуктовый статус   | Публичный статус | Supporting contract и evidence/gaps                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------ | ----------------------------------------- | -------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md): prototype shell; production preferences не проверены                                                                                                                                                                                                                                                                                                                    |
+| PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): Model Manager install явный; Project/worker handoff ещё не реализован                                                                                                                                                                                                                                                                                                     |
+| PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): prototype managers; resource handoff/history неполны                                                                                                                                                                                                                                                                                                                       |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют                                                                                                                                                                                                                                                         |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                             |
+| PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                      |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#worker-rendered-project-previews): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas, Raster Layer controls, PNG import и embedded worker previews проверены в Electron с dev worker; staging recovery, Rebuild Preview, Home thumbnails и release runtime ещё не подтверждены |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                      |
 
 ### Статусы и доказательства
 
@@ -302,8 +302,12 @@ Electron проверяет видимость, opacity, blend mode, lock и п�
 виден до Save, его ассет сохраняется в `.igs` и открывается снова; отмена и
 некорректный файл не меняют документ. При этом тест запускает development
 `derivatives-only` worker. JPG/WebP покрыты нормализацией в worker tests, но не
-отдельными UI-прогонами. Не готовы compositor/export, worker previews,
-устанавливаемый Linux/NVIDIA runtime и восстановление непринятых результатов.
+отдельными UI-прогонами. Save с development worker создаёт embedded PNG/WebP
+preview из видимых Raster Layers; Electron smoke проверяет повторное чтение
+`.igs`, world-space rect и реальные пиксели обоих превью. При ошибке worker
+Save сохраняет слои с обозначенным placeholder. Не готовы compositor/export
+для генерации, Home thumbnails, clean Rebuild Preview, устанавливаемый
+Linux/NVIDIA runtime и восстановление непринятых результатов.
 
 ### Обещание
 
@@ -378,17 +382,17 @@ Provenance принятого результата регулируется PP-0
 
 ## Карта покрытия и открытые границы
 
-| Область продукта | Опорные promises / решение |
-| --- | --- |
-| Home, tabs, managers, navigation | PP-001, PP-002, PP-003 |
-| Project files, Save, recovery, Trash | PP-007; PP-001 для переключений |
-| Model install, metadata, versions, missing resources | PP-004; PP-006 для применения preset |
-| Provenance, settings comparison, preset from result | PP-005, PP-006 |
-| Queue, staging, Raster/Smart Patch acceptance, undo | PP-008; PP-007 для сохранения; PP-005 для provenance |
+| Область продукта                                                       | Опорные promises / решение                                                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Home, tabs, managers, navigation                                       | PP-001, PP-002, PP-003                                                                            |
+| Project files, Save, recovery, Trash                                   | PP-007; PP-001 для переключений                                                                   |
+| Model install, metadata, versions, missing resources                   | PP-004; PP-006 для применения preset                                                              |
+| Provenance, settings comparison, preset from result                    | PP-005, PP-006                                                                                    |
+| Queue, staging, Raster/Smart Patch acceptance, undo                    | PP-008; PP-007 для сохранения; PP-005 для provenance                                              |
 | Prompt, autocomplete, dynamic prompts, canvas tools, Regional Guidance | Features, доказывающие PP-001–PP-006 и PP-008; отдельный promise для каждого control не требуется |
-| Local inference, privacy, offline operation | Локальный desktop scope принят; отдельные privacy/offline гарантии требуют data-egress contract |
-| Accessibility, performance | Feature-level требования; отдельные общие гарантии требуют измеримых границ и evidence |
-| Upscale, ControlNet, training, plugins | Отложенный scope; не основание для публичного MVP promise |
+| Local inference, privacy, offline operation                            | Локальный desktop scope принят; отдельные privacy/offline гарантии требуют data-egress contract   |
+| Accessibility, performance                                             | Feature-level требования; отдельные общие гарантии требуют измеримых границ и evidence            |
+| Upscale, ControlNet, training, plugins                                 | Отложенный scope; не основание для публичного MVP promise                                         |
 
 Новый promise нужен, когда появляется самостоятельное устойчивое ожидание
 пользователя, которое не выражается существующими. Это не каталог всех features.
@@ -405,7 +409,7 @@ Supporting contract может поддерживать несколько promi
 - `Supporting contract` — отдельный документ с product, UX, data и architecture
   decisions, prototype gaps и проверяемыми инвариантами;
 - `Публичный статус` — `можно обещать`, `обещать аккуратно` или `пока не
-  обещать`, подтверждённый фактическим состоянием продукта.
+обещать`, подтверждённый фактическим состоянием продукта.
 - `Допустимые исключения` — узкие случаи, не размывающие обещание.
 
 Если новое решение конфликтует с принятым обещанием, конфликт должен быть

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 import platform
 import re
 from dataclasses import dataclass
@@ -13,6 +14,13 @@ from PIL import Image, ImageCms
 from PIL import __version__ as pillow_version
 
 from imagegen_worker import PROTOCOL_VERSION, RUNTIME_PROFILE, WORKER_VERSION
+from imagegen_worker.compositor import (
+    MAX_LAYERS,
+    ComposePreviewRequest,
+    LayerTransform,
+    PreviewLayer,
+    compose_preview,
+)
 from imagegen_worker.derivatives import (
     SRGB_ICC_PROFILE,
     DerivativeError,
@@ -43,6 +51,12 @@ class NormalizeImportCommand:
     imported: NormalizeImportRequest
 
 
+@dataclass(frozen=True)
+class ComposePreviewCommand:
+    request_id: str
+    preview: ComposePreviewRequest
+
+
 def ready_message() -> dict[str, object]:
     return {
         "type": "ready",
@@ -50,7 +64,12 @@ def ready_message() -> dict[str, object]:
         "workerVersion": WORKER_VERSION,
         "pythonVersion": platform.python_version(),
         "runtimeProfile": RUNTIME_PROFILE,
-        "capabilities": ["image-derivatives", "import-normalization", "self-test"],
+        "capabilities": [
+            "image-derivatives",
+            "import-normalization",
+            "preview-composition",
+            "self-test",
+        ],
     }
 
 
@@ -84,7 +103,64 @@ def _path(value: object, label: str) -> Path:
     return Path(value)
 
 
-def parse_request(value: object) -> SelfTestCommand | DeriveImageCommand | NormalizeImportCommand:
+def _number(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a finite number.")
+    try:
+        converted = float(value)
+    except OverflowError as error:
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a finite number.") from error
+    if not math.isfinite(converted):
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a finite number.")
+    return converted
+
+
+def _positive_integer(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a positive integer.")
+    return value
+
+
+def _sha256(value: object, label: str) -> str:
+    if not isinstance(value, str) or not _SHA256_PATTERN.fullmatch(value):
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a lowercase hex digest.")
+    return value
+
+
+def _preview_layer(value: object) -> PreviewLayer:
+    fields = _object(
+        value,
+        "Preview layer",
+        {"path", "sha256", "width", "height", "opacity", "blendMode", "transform"},
+    )
+    transform = _object(
+        fields["transform"],
+        "Layer transform",
+        {"x", "y", "scaleX", "scaleY", "rotationDegrees"},
+    )
+    blend_mode = fields["blendMode"]
+    if blend_mode not in ("normal", "multiply", "screen", "overlay"):
+        raise DerivativeError("INVALID_REQUEST", "Layer blend mode is unsupported.")
+    return PreviewLayer(
+        path=_path(fields["path"], "Layer path"),
+        sha256=_sha256(fields["sha256"], "Layer SHA-256"),
+        width=_positive_integer(fields["width"], "Layer width"),
+        height=_positive_integer(fields["height"], "Layer height"),
+        opacity=_number(fields["opacity"], "Layer opacity"),
+        blend_mode=blend_mode,
+        transform=LayerTransform(
+            x=_number(transform["x"], "Layer x"),
+            y=_number(transform["y"], "Layer y"),
+            scale_x=_number(transform["scaleX"], "Layer scaleX"),
+            scale_y=_number(transform["scaleY"], "Layer scaleY"),
+            rotation_degrees=_number(transform["rotationDegrees"], "Layer rotationDegrees"),
+        ),
+    )
+
+
+def parse_request(
+    value: object,
+) -> SelfTestCommand | DeriveImageCommand | NormalizeImportCommand | ComposePreviewCommand:
     if not isinstance(value, dict):
         raise DerivativeError("INVALID_REQUEST", "Request must be an object.")
     untyped_fields = cast(dict[object, object], value)
@@ -128,6 +204,33 @@ def parse_request(value: object) -> SelfTestCommand | DeriveImageCommand | Norma
                 original_icc_path=_path(
                     output_fields["originalIccPath"], "Original ICC output path"
                 ),
+            ),
+        )
+    if fields.get("type") == "compose-preview":
+        _object(
+            fields,
+            "Preview request",
+            {"type", "requestId", "protocolVersion", "layers", "output", "thumbnailMaxSide"},
+        )
+        raw_layers = fields["layers"]
+        if not isinstance(raw_layers, list):
+            raise DerivativeError("INVALID_REQUEST", "Preview layers must be a bounded array.")
+        layers = cast(list[object], raw_layers)
+        if len(layers) > MAX_LAYERS:
+            raise DerivativeError("INVALID_REQUEST", "Preview layers must be a bounded array.")
+        output_fields = _object(
+            fields["output"], "Output", {"stagingRoot", "mergedPngPath", "thumbnailWebpPath"}
+        )
+        return ComposePreviewCommand(
+            request_id=request_id,
+            preview=ComposePreviewRequest(
+                layers=tuple(_preview_layer(value) for value in layers),
+                staging_root=_path(output_fields["stagingRoot"], "Staging root"),
+                merged_png_path=_path(output_fields["mergedPngPath"], "Merged output path"),
+                thumbnail_webp_path=_path(
+                    output_fields["thumbnailWebpPath"], "Thumbnail output path"
+                ),
+                thumbnail_max_side=_positive_integer(fields["thumbnailMaxSide"], "Thumbnail side"),
             ),
         )
     if fields.get("type") != "derive-image":
@@ -215,6 +318,14 @@ def process_request(value: object) -> dict[str, object]:
             result = create_derivatives(command.derivative)
             return {
                 "type": "derivative-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **result,
+            }
+        if isinstance(command, ComposePreviewCommand):
+            result = compose_preview(command.preview)
+            return {
+                "type": "preview-done",
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **result,

@@ -3,11 +3,12 @@ import {
   isSrgbCompatiblePngColorChunk,
   pngColorChunkLength,
 } from '../../shared/projects/color-profile.js'
+import { IGS_SAFETY_CEILINGS, type IgsPreviewRectV1 } from '../../shared/projects/project-schema.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access, type FileHandle, lstat, open, realpath } from 'node:fs/promises'
+import { access, type FileHandle, lstat, open, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { inflateSync } from 'node:zlib'
 
@@ -21,6 +22,10 @@ const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const MAX_MERGED_BYTES = 256 * 1024 * 1024
 const MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024
 const MAX_NORMALIZED_BYTES = 512 * 1024 * 1024
+const MAX_COMPOSITION_SOURCE_BYTES = 256 * 1024 * 1024
+const MAX_COMPOSITION_SOURCE_PIXELS = 64_000_000
+const MAX_COMPOSITION_TOTAL_SOURCE_PIXELS = 128_000_000
+const MAX_COMPOSITION_LAYERS = 256
 const MAX_ICC_BYTES = 4 * 1024 * 1024
 const MAX_IMAGE_SIDE = 16_384
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -56,6 +61,38 @@ export interface NormalizeImportInput {
   originalIccPath: string
   stagingRoot: string
 }
+
+/** Frozen source layers in Project stack order, topmost first. */
+export interface ComposePreviewInput {
+  layers: {
+    blendMode: 'multiply' | 'normal' | 'overlay' | 'screen'
+    height: number
+    opacity: number
+    path: string
+    sha256: string
+    transform: {
+      rotationDegrees: number
+      scaleX: number
+      scaleY: number
+      x: number
+      y: number
+    }
+    width: number
+  }[]
+  mergedPngPath: string
+  stagingRoot: string
+  thumbnailMaxSide: number
+  thumbnailWebpPath: string
+}
+
+export type ComposePreviewResult =
+  | { merged: null; rect: null; status: 'empty'; thumbnail: null }
+  | {
+      merged: VerifiedWorkerImage
+      rect: IgsPreviewRectV1
+      status: 'rendered'
+      thumbnail: VerifiedWorkerImage
+    }
 
 export interface VerifiedWorkerImage {
   byteSize: number
@@ -105,7 +142,7 @@ type PendingRequest = {
   reject: (error: ProjectWorkerError) => void
   resolve: (message: Record<string, unknown>) => void
   timer: ReturnType<typeof setTimeout>
-  type: 'derivative-done' | 'import-done' | 'self-test-result'
+  type: 'derivative-done' | 'import-done' | 'preview-done' | 'self-test-result'
 }
 
 type OutputPaths = { paths: string[]; stagingRoot: string }
@@ -113,6 +150,8 @@ type OutputPaths = { paths: string[]; stagingRoot: string }
 type InspectedFile = { byteSize: number; sha256: string }
 
 type InspectedImage = { height: number; iccSha256: string; width: number }
+
+type ComposePreviewLayer = ComposePreviewInput['layers'][number]
 
 export class ProjectWorkerError extends Error {
   constructor(
@@ -243,6 +282,109 @@ export class ProjectWorkerClient {
         this.child.kill('SIGKILL')
       }
     }
+  }
+
+  async composePreview(input: ComposePreviewInput): Promise<ComposePreviewResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('preview-composition')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot compose Project previews.',
+        )
+      }
+      if (!Array.isArray(input.layers) || input.layers.length > MAX_COMPOSITION_LAYERS) {
+        throw new ProjectWorkerError(
+          'INVALID_REQUEST',
+          'Preview request is outside the worker range.',
+        )
+      }
+      // Copy the caller-owned snapshot before any await: validating one version and sending
+      // another would make a changed Project look like a successful preview of this revision.
+      const layers = input.layers.map((layer) => {
+        validateCompositionLayer(layer)
+        return {
+          blendMode: layer.blendMode,
+          height: layer.height,
+          opacity: layer.opacity,
+          path: layer.path,
+          sha256: layer.sha256,
+          transform: {
+            rotationDegrees: layer.transform.rotationDegrees,
+            scaleX: layer.transform.scaleX,
+            scaleY: layer.transform.scaleY,
+            x: layer.transform.x,
+            y: layer.transform.y,
+          },
+          width: layer.width,
+        }
+      })
+      if (
+        layers.reduce((total, layer) => total + layer.width * layer.height, 0) >
+        MAX_COMPOSITION_TOTAL_SOURCE_PIXELS
+      ) {
+        throw new ProjectWorkerError(
+          'INVALID_REQUEST',
+          'Preview source pixels exceed the worker limit.',
+        )
+      }
+      const thumbnailMaxSide = input.thumbnailMaxSide
+      if (
+        !Number.isSafeInteger(thumbnailMaxSide) ||
+        thumbnailMaxSide < 32 ||
+        thumbnailMaxSide > 1024
+      ) {
+        throw new ProjectWorkerError(
+          'INVALID_REQUEST',
+          'Thumbnail size is outside the worker range.',
+        )
+      }
+      const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
+        [input.mergedPngPath, '.png'],
+        [input.thumbnailWebpPath, '.webp'],
+      ])
+      for (const layer of layers) {
+        await validateInputPath(layer.path, layer.sha256, paths)
+        await verifyCompositionInput(layer)
+      }
+      const stagedBefore = new Set(await readdir(stagingRoot))
+      const response = await this.request('compose-preview', 'preview-done', {
+        layers,
+        output: {
+          mergedPngPath: paths[0],
+          stagingRoot,
+          thumbnailWebpPath: paths[1],
+        },
+        thumbnailMaxSide,
+      })
+      if (response.status === 'empty') {
+        if (
+          response.rect !== null ||
+          response.merged !== null ||
+          response.thumbnail !== null ||
+          (await pathExists(paths[0])) ||
+          (await pathExists(paths[1])) ||
+          (await readdir(stagingRoot)).some((entry) => !stagedBefore.has(entry))
+        ) {
+          throw this.outputFailure('An empty preview has unexpected output.')
+        }
+        return { merged: null, rect: null, status: 'empty', thumbnail: null }
+      }
+      if (response.status !== 'rendered') {
+        throw this.protocolFailure('The preview status is invalid.')
+      }
+      const rect = validatePreviewRect(response.rect, layers)
+      const merged = await verifyImageOutput(paths[0], response.merged, MAX_MERGED_BYTES, 'png')
+      const thumbnail = await verifyImageOutput(
+        paths[1],
+        response.thumbnail,
+        MAX_THUMBNAIL_BYTES,
+        'webp',
+      )
+      if (merged.iccSha256 !== thumbnail.iccSha256) {
+        throw this.outputFailure('Preview ICC profiles do not match.')
+      }
+      return { merged, rect, status: 'rendered', thumbnail }
+    })
   }
 
   async deriveImage(input: DeriveImageInput): Promise<VerifiedDerivativeResult> {
@@ -498,7 +640,7 @@ export class ProjectWorkerClient {
   }
 
   private request(
-    type: 'derive-image' | 'normalize-import' | 'self-test',
+    type: 'compose-preview' | 'derive-image' | 'normalize-import' | 'self-test',
     resultType: PendingRequest['type'],
     fields: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
@@ -669,6 +811,148 @@ async function validateInputPath(input: string, sha256: string, outputs: string[
     throw new ProjectWorkerError('INVALID_PATH', 'Worker input is unavailable.')
   }
 }
+
+function validateCompositionLayer(layer: ComposePreviewLayer): void {
+  if (
+    typeof layer !== 'object' ||
+    layer === null ||
+    !Number.isSafeInteger(layer.width) ||
+    layer.width < 1 ||
+    layer.width > MAX_IMAGE_SIDE ||
+    !Number.isSafeInteger(layer.height) ||
+    layer.height < 1 ||
+    layer.height > MAX_IMAGE_SIDE ||
+    layer.width * layer.height > MAX_COMPOSITION_SOURCE_PIXELS ||
+    typeof layer.opacity !== 'number' ||
+    !Number.isFinite(layer.opacity) ||
+    layer.opacity < 0 ||
+    layer.opacity > 1 ||
+    !['multiply', 'normal', 'overlay', 'screen'].includes(layer.blendMode) ||
+    typeof layer.path !== 'string' ||
+    !['.png', '.webp'].includes(path.extname(layer.path).toLowerCase()) ||
+    typeof layer.transform !== 'object' ||
+    layer.transform === null
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'A preview layer is invalid.')
+  }
+  const { rotationDegrees, scaleX, scaleY, x, y } = layer.transform
+  if (
+    ![rotationDegrees, scaleX, scaleY, x, y].every(
+      (value) => typeof value === 'number' && Number.isFinite(value),
+    ) ||
+    Math.abs(rotationDegrees) > IGS_SAFETY_CEILINGS.rotationDegrees ||
+    scaleX === 0 ||
+    Math.abs(scaleX) > IGS_SAFETY_CEILINGS.scaleMagnitude ||
+    scaleY === 0 ||
+    Math.abs(scaleY) > IGS_SAFETY_CEILINGS.scaleMagnitude ||
+    Math.abs(x) > IGS_SAFETY_CEILINGS.coordinateMagnitude ||
+    Math.abs(y) > IGS_SAFETY_CEILINGS.coordinateMagnitude
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'A preview layer transform is invalid.')
+  }
+}
+
+async function verifyCompositionInput(layer: ComposePreviewLayer): Promise<void> {
+  const format = path.extname(layer.path).toLowerCase() === '.png' ? 'png' : 'webp'
+  try {
+    const actual = await inspectVerifiedFile(
+      layer.path,
+      MAX_COMPOSITION_SOURCE_BYTES,
+      async (file, byteSize) => {
+        if (format === 'png') {
+          await validateSrgbPngStream(
+            file.createReadStream({ autoClose: false, start: 0 }),
+            layer.path,
+            MAX_COMPOSITION_SOURCE_BYTES,
+            MAX_IMAGE_SIDE,
+          )
+          return inspectPng(file, byteSize, true)
+        }
+        await validateSrgbWebpStream(
+          file.createReadStream({ autoClose: false, start: 0 }),
+          layer.path,
+          MAX_COMPOSITION_SOURCE_BYTES,
+          MAX_IMAGE_SIDE,
+        )
+        return inspectWebp(file, byteSize, true)
+      },
+    )
+    if (
+      actual.sha256 !== layer.sha256 ||
+      actual.width !== layer.width ||
+      actual.height !== layer.height ||
+      actual.iccSha256 !== IGS_SRGB_ICC_SHA256
+    ) {
+      throw new ProjectWorkerError('INVALID_REQUEST', 'A frozen preview input has changed.')
+    }
+  } catch {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'A frozen preview input is invalid or changed.')
+  }
+}
+
+function validatePreviewRect(rawRect: unknown, layers: ComposePreviewLayer[]): IgsPreviewRectV1 {
+  if (typeof rawRect !== 'object' || rawRect === null || Array.isArray(rawRect)) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The rendered preview has no valid bounds.')
+  }
+  const rect = rawRect as Record<string, unknown>
+  const { height, width, x, y } = rect
+  const ceiling = IGS_SAFETY_CEILINGS.previewCoordinateMagnitude
+  if (
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    (width as number) < 1 ||
+    (width as number) > IGS_SAFETY_CEILINGS.previewExtent ||
+    (height as number) < 1 ||
+    (height as number) > IGS_SAFETY_CEILINGS.previewExtent ||
+    (x as number) < -ceiling ||
+    (y as number) < -ceiling ||
+    (x as number) + (width as number) > ceiling ||
+    (y as number) + (height as number) > ceiling
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The rendered preview bounds are invalid.')
+  }
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const layer of layers) {
+    if (layer.opacity === 0) {
+      continue
+    }
+    const { rotationDegrees, scaleX, scaleY, x: originX, y: originY } = layer.transform
+    const radians = (rotationDegrees * Math.PI) / 180
+    const cosine = Math.cos(radians)
+    const sine = Math.sin(radians)
+    for (const [cornerX, cornerY] of [
+      [0, 0],
+      [layer.width, 0],
+      [0, layer.height],
+      [layer.width, layer.height],
+    ]) {
+      const scaledX = cornerX * scaleX
+      const scaledY = cornerY * scaleY
+      const px = originX + scaledX * cosine - scaledY * sine
+      const py = originY + scaledX * sine + scaledY * cosine
+      minX = Math.min(minX, px)
+      minY = Math.min(minY, py)
+      maxX = Math.max(maxX, px)
+      maxY = Math.max(maxY, py)
+    }
+  }
+  if (
+    !Number.isFinite(minX) ||
+    (x as number) < Math.floor(minX) ||
+    (y as number) < Math.floor(minY) ||
+    (x as number) + (width as number) > Math.ceil(maxX) ||
+    (y as number) + (height as number) > Math.ceil(maxY)
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Preview bounds exceed the frozen layers.')
+  }
+  return { height: height as number, width: width as number, x: x as number, y: y as number }
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await lstat(filePath)
@@ -842,7 +1126,11 @@ async function readAt(file: FileHandle, position: number, length: number): Promi
   return buffer
 }
 
-async function inspectPng(file: FileHandle, byteSize: number): Promise<InspectedImage> {
+async function inspectPng(
+  file: FileHandle,
+  byteSize: number,
+  acceptUntaggedSrgb = false,
+): Promise<InspectedImage> {
   if (byteSize < 45 || !(await readAt(file, 0, 8)).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker PNG signature is invalid.')
   }
@@ -925,13 +1213,19 @@ async function inspectPng(file: FileHandle, byteSize: number): Promise<Inspected
     }
     offset = next
   }
-  if (!sawImageData || !sawEnd || !iccSha256 || width < 1 || height < 1) {
+  if (!sawImageData || !sawEnd || (!iccSha256 && !acceptUntaggedSrgb) || width < 1 || height < 1) {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker PNG is incomplete.')
   }
-  return { height, iccSha256, width }
+  // The .igs v1 source contract interprets untagged RGB as sRGB. Output callers keep the
+  // default strict mode, so a worker cannot present an untagged derivative as pinned sRGB.
+  return { height, iccSha256: iccSha256 ?? IGS_SRGB_ICC_SHA256, width }
 }
 
-async function inspectWebp(file: FileHandle, byteSize: number): Promise<InspectedImage> {
+async function inspectWebp(
+  file: FileHandle,
+  byteSize: number,
+  acceptUntaggedSrgb = false,
+): Promise<InspectedImage> {
   if (byteSize < 30) {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker WebP is too small.')
   }
@@ -1008,10 +1302,16 @@ async function inspectWebp(file: FileHandle, byteSize: number): Promise<Inspecte
     }
     offset = next
   }
-  if (offset !== byteSize || !sawImageData || !iccSha256 || width < 1 || height < 1) {
+  if (
+    offset !== byteSize ||
+    !sawImageData ||
+    (!iccSha256 && !acceptUntaggedSrgb) ||
+    width < 1 ||
+    height < 1
+  ) {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker WebP is incomplete.')
   }
-  return { height, iccSha256, width }
+  return { height, iccSha256: iccSha256 ?? IGS_SRGB_ICC_SHA256, width }
 }
 
 function validateIcc(profile: Buffer, requireRgb: boolean): void {

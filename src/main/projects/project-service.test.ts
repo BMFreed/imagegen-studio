@@ -884,6 +884,56 @@ test('Save marks an all-hidden or zero-opacity raster Project empty without drop
   })
 })
 
+test('Save commits the current Project with placeholder previews when composition fails', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.5 })
+    let called = false
+    const saved = await service.save(tabId, {
+      composePreview: async () => {
+        called = true
+        throw new ProjectWorkerError('WORKER_EXITED', 'The image worker exited.')
+      },
+    })
+
+    assert.equal(called, true)
+    assert.equal(saved.committed, true)
+    assert.equal(saved.tab.dirty, false)
+    const packageAfterFailure = await readIgsPackage(filePath)
+    assert.equal(packageAfterFailure.manifest.preview.status, 'unavailable')
+    assert.equal(packageAfterFailure.project.layers[0].opacity, 0.5)
+    for (const layer of packageAfterFailure.project.layers) {
+      assert.deepEqual(await packageAfterFailure.readMember(layer.asset.path), rasterPng)
+    }
+    assert.equal(
+      (await readdir(path.join(dataRoot, 'scratch'))).some((entry) =>
+        entry.startsWith('project-preview-'),
+      ),
+      false,
+      'failed composition must not retain a frozen preview staging directory',
+    )
+  })
+})
+
+test('Save cannot classify a newer Raster Layer edit from an older empty worker result', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const saved = await service.save(tabId, {
+      composePreview: async () => {
+        await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.5 })
+        return { merged: null, rect: null, status: 'empty', thumbnail: null }
+      },
+    })
+
+    assert.equal(saved.committed, true)
+    assert.equal(saved.tab.dirty, false)
+    const reopened = await readIgsPackage(filePath)
+    assert.equal(reopened.project.layers[0].opacity, 0.5)
+    assert.equal(reopened.manifest.preview.status, 'unavailable')
+    assert.deepEqual(await reopened.readMember(reopened.project.layers[0].asset.path), rasterPng)
+  })
+})
+
 test('Project image import adds a top layer at the bbox origin, exposes staged pixels, and survives recovery and Save', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
     const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)

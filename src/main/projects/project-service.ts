@@ -39,6 +39,7 @@ import {
   type ProjectLayerResourceRequest,
   resolveProjectLayerAsset,
 } from './project-layer-resource.js'
+import { buildProjectPreview } from './project-preview.js'
 import { ProjectSession, type ProjectSessionRoots } from './project-session.js'
 import { importRasterLayer } from './raster-import.js'
 
@@ -498,9 +499,38 @@ export class ProjectService {
     return toTab(projectId, coordinator)
   }
 
-  async save(tabId: string): Promise<ProjectSaveResult> {
+  async save(
+    tabId: string,
+    previewWorker?: Pick<ProjectWorkerClient, 'composePreview'>,
+  ): Promise<ProjectSaveResult> {
     const coordinator = this.requireTab(tabId)
-    const saved = await coordinator.save()
+    let renderedPreview: Awaited<ReturnType<typeof buildProjectPreview>> | undefined
+    if (previewWorker) {
+      const document = coordinator.document
+      try {
+        renderedPreview = await buildProjectPreview({
+          document,
+          packagePath: coordinator.filePath,
+          pendingSource: (asset) => coordinator.getCurrentAssetSource(asset),
+          scratchBasePath: this.options.roots.scratchDir,
+          worker: previewWorker,
+        })
+        if (coordinator.document.documentRevision !== document.documentRevision) {
+          renderedPreview = undefined
+        }
+      } catch {
+        // Preview failure is never a reason to lose an otherwise valid document Save. Session Save
+        // still checks every referenced asset and will fail if the document itself is invalid.
+        console.warn('Project preview is unavailable; saving with placeholders.')
+      }
+    }
+    const saved = await coordinator.save(
+      renderedPreview?.kind === 'rendered'
+        ? { renderedPreview: renderedPreview.preview }
+        : renderedPreview?.kind === 'empty'
+          ? { emptyPreviewRevision: renderedPreview.documentRevision }
+          : {},
+    )
     let indexWarning: string | undefined
     try {
       await this.options.repository.indexSaved(coordinator.filePath, UNCATEGORIZED_WORKSPACE_ID)

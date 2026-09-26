@@ -84,7 +84,7 @@ def _validate_paths(request: NormalizeImportRequest) -> tuple[Path, Path, Path]:
     return source, normalized, profile
 
 
-def _png_embedded_color_metadata(source_bytes: bytes) -> tuple[bytes | None, bool]:
+def png_embedded_color_metadata(source_bytes: bytes) -> tuple[bytes | None, bool]:
     """Read PNG color chunks explicitly; Pillow can silently discard or ignore them."""
     if not source_bytes.startswith(PNG_SIGNATURE):
         raise DerivativeError("INVALID_IMAGE", "PNG signature is missing.")
@@ -233,7 +233,7 @@ def _jpeg_embedded_icc(source_bytes: bytes) -> bytes | None:
     return b"".join(fragments[index] for index in range(1, expected_count + 1))
 
 
-def _webp_embedded_icc(source_bytes: bytes) -> bytes | None:
+def webp_embedded_icc(source_bytes: bytes) -> bytes | None:
     """Check RIFF ICCP bytes against the VP8X ICC-present feature flag."""
     if (
         len(source_bytes) < 12
@@ -285,7 +285,7 @@ def _normalize_pixels(source_bytes: bytes) -> tuple[Image.Image, bytes | None, s
     container_icc: bytes | None = None
     if source_bytes.startswith(PNG_SIGNATURE):
         container_format = "PNG"
-        container_icc, has_non_srgb_color_chunk = _png_embedded_color_metadata(source_bytes)
+        container_icc, has_non_srgb_color_chunk = png_embedded_color_metadata(source_bytes)
         if container_icc is None and has_non_srgb_color_chunk:
             raise DerivativeError(
                 "UNSUPPORTED_COLOR_SPACE",
@@ -296,7 +296,7 @@ def _normalize_pixels(source_bytes: bytes) -> tuple[Image.Image, bytes | None, s
         container_icc = _jpeg_embedded_icc(source_bytes)
     elif source_bytes[:4] == b"RIFF" and source_bytes[8:12] == b"WEBP":
         container_format = "WEBP"
-        container_icc = _webp_embedded_icc(source_bytes)
+        container_icc = webp_embedded_icc(source_bytes)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)

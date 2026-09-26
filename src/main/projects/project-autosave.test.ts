@@ -9,6 +9,7 @@ import test from 'node:test'
 
 import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectSession } from './project-session.js'
 import {
   ProjectShadowStore,
@@ -19,6 +20,10 @@ import {
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 const raster = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
+  'base64',
+)
+const transparentRaster = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAXfx+gAAAAAASUVORK5CYII=',
   'base64',
 )
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
@@ -42,7 +47,10 @@ async function withProject(
   }
 }
 
-function withRaster(document: IgsProjectDocumentV1): {
+function withRaster(
+  document: IgsProjectDocumentV1,
+  bytes: Buffer = raster,
+): {
   assetPath: string
   document: IgsProjectDocumentV1
 } {
@@ -55,10 +63,10 @@ function withRaster(document: IgsProjectDocumentV1): {
       layers: [
         {
           asset: {
-            bytes: raster.length,
+            bytes: bytes.length,
             height: 2,
             path: assetPath,
-            sha256: sha256(raster),
+            sha256: sha256(bytes),
             width: 2,
           },
           blendMode: 'normal',
@@ -611,7 +619,7 @@ test('a failed Save leaves its preflight shadow recoverable and the saved packag
     await assert.rejects(
       coordinator.save({
         renderedPreview: {
-          documentRevision: randomUUID(),
+          documentRevision: coordinator.document.documentRevision,
           merged: raster,
           rect: { height: 2, width: 2, x: 0, y: 0 },
           thumbnail: raster,
@@ -626,6 +634,57 @@ test('a failed Save leaves its preflight shadow recoverable and the saved packag
     if (inspection.status === 'recoverable') {
       assert.equal(inspection.document.title, 'Unsaved A')
     }
+  })
+})
+
+test('coordinated Save drops stale worker previews but accepts a current empty result', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const imported = withRaster(coordinator.document, transparentRaster)
+    await coordinator.applyDocument(imported.document, {
+      [imported.assetPath]: { bytes: transparentRaster },
+    })
+    const oldRevision = coordinator.document.documentRevision
+    await coordinator.applyDocument({ ...coordinator.document, title: 'After empty result' })
+    assert.equal(
+      (await coordinator.save({ emptyPreviewRevision: oldRevision })).recovery.status,
+      'clean',
+    )
+    const first = await readIgsPackage(projectPath)
+    assert.equal(first.project.title, 'After empty result')
+    assert.equal(first.manifest.preview.status, 'unavailable')
+    assert.deepEqual(await first.readMember(imported.assetPath), transparentRaster)
+
+    await coordinator.applyDocument({ ...coordinator.document, title: 'After rendered result' })
+    const thumbnail = (await readProjectPlaceholders(roots.placeholdersDir, 'unavailable'))
+      .thumbnail
+    assert.equal(
+      (
+        await coordinator.save({
+          renderedPreview: {
+            documentRevision: oldRevision,
+            merged: raster,
+            rect: { height: 2, width: 2, x: 0, y: 0 },
+            thumbnail,
+          },
+        })
+      ).recovery.status,
+      'clean',
+    )
+    const second = await readIgsPackage(projectPath)
+    assert.equal(second.project.title, 'After rendered result')
+    assert.equal(second.manifest.preview.status, 'unavailable')
+    assert.deepEqual(await second.readMember(imported.assetPath), transparentRaster)
+
+    assert.equal(
+      (await coordinator.save({ emptyPreviewRevision: coordinator.document.documentRevision }))
+        .recovery.status,
+      'clean',
+    )
+    const final = await readIgsPackage(projectPath)
+    assert.equal(final.manifest.preview.status, 'empty')
+    assert.equal(final.manifest.preview.rect, null)
+    assert.deepEqual(await final.readMember(imported.assetPath), transparentRaster)
   })
 })
 

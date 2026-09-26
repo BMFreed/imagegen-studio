@@ -44,6 +44,8 @@ export interface RenderedProjectPreview {
 export interface ProjectSaveInput {
   /** New or changed members; unchanged members are extracted from the saved package. */
   assets?: Readonly<Record<string, IgsAssetSource>>
+  /** The compositor found no visible pixels at this exact revision, including transparent layers. */
+  emptyPreviewRevision?: string
   /** A derivative computed from this exact document revision. */
   renderedPreview?: RenderedProjectPreview
 }
@@ -226,6 +228,21 @@ export class ProjectSession {
     }
 
     const visibleBounds = visibleRasterBounds(project)
+    if (input.renderedPreview && input.emptyPreviewRevision !== undefined) {
+      throw new ProjectSessionError(
+        'PROJECT_INVALID_PREVIEW',
+        'A Project preview cannot be both rendered and empty.',
+      )
+    }
+    if (
+      input.emptyPreviewRevision !== undefined &&
+      input.emptyPreviewRevision !== project.documentRevision
+    ) {
+      throw new ProjectSessionError(
+        'PROJECT_INVALID_PREVIEW',
+        'The empty preview belongs to a different Project revision.',
+      )
+    }
     if (input.renderedPreview && !visibleBounds) {
       throw new ProjectSessionError(
         'PROJECT_INVALID_PREVIEW',
@@ -244,15 +261,16 @@ export class ProjectSession {
     if (
       input.renderedPreview &&
       visibleBounds &&
-      !sameRect(input.renderedPreview.rect, visibleBounds)
+      !containsRect(visibleBounds, input.renderedPreview.rect)
     ) {
       throw new ProjectSessionError(
         'PROJECT_INVALID_PREVIEW',
-        'The preview does not cover this Project’s visible raster bounds.',
+        'The preview lies outside this Project’s visible raster bounds.',
       )
     }
 
-    const placeholderKind = visibleBounds ? 'unavailable' : 'empty'
+    const placeholderKind =
+      input.emptyPreviewRevision !== undefined || !visibleBounds ? 'empty' : 'unavailable'
     const preview: IgsPackageWriteInput['preview'] = input.renderedPreview
       ? {
           merged: input.renderedPreview.merged,
@@ -262,7 +280,7 @@ export class ProjectSession {
         }
       : {
           ...(await readProjectPlaceholders(this.roots.placeholdersDir, placeholderKind)),
-          rect: visibleBounds,
+          rect: placeholderKind === 'empty' ? null : visibleBounds,
           status: placeholderKind,
         }
 
@@ -348,12 +366,18 @@ function contentKey(document: IgsProjectDocumentV1): string {
   return JSON.stringify({ ...document, documentRevision: null })
 }
 
-function sameRect(left: IgsPreviewRectV1, right: IgsPreviewRectV1): boolean {
+function containsRect(outer: IgsPreviewRectV1, inner: IgsPreviewRectV1): boolean {
   return (
-    left.x === right.x &&
-    left.y === right.y &&
-    left.width === right.width &&
-    left.height === right.height
+    Number.isSafeInteger(inner.x) &&
+    Number.isSafeInteger(inner.y) &&
+    Number.isSafeInteger(inner.width) &&
+    Number.isSafeInteger(inner.height) &&
+    inner.width > 0 &&
+    inner.height > 0 &&
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
   )
 }
 

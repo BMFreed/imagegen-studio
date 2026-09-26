@@ -12,7 +12,11 @@ import { crc32, deflateSync } from 'node:zlib'
 
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectSession } from './project-session.js'
-import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
+import {
+  type ComposePreviewInput,
+  ProjectWorkerClient,
+  ProjectWorkerError,
+} from './worker-client.js'
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..')
 const DEV_PYTHON = path.join(REPOSITORY_ROOT, 'worker-python/.venv/bin/python')
@@ -44,7 +48,9 @@ if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker') process.exit(21
 const ready = {
   type: 'ready', protocolVersion: '1', workerVersion: mode === 'bad-version' ? '9.9.9' : '0.1.0',
   pythonVersion: '3.12.13', runtimeProfile: 'derivatives-only',
-  capabilities: ['image-derivatives', 'import-normalization', 'self-test']
+  capabilities: ['image-derivatives', 'import-normalization', 'self-test',
+    ...(String(mode).startsWith('preview-') && mode !== 'preview-no-capability'
+      ? ['preview-composition'] : [])]
 }
 if (mode === 'silent') { setInterval(() => {}, 1000) }
 else {
@@ -64,6 +70,37 @@ else {
       if (mode === 'invalid-json') { process.stdout.write('{bad\n'); continue }
       if (mode === 'worker-error') {
         process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'INPUT_HASH_MISMATCH',message:'Input changed.'}) + '\n')
+        continue
+      }
+      if (request.type === 'compose-preview') {
+        const fs = require('node:fs')
+        const crypto = require('node:crypto')
+        if (mode === 'preview-empty-with-output') {
+          fs.writeFileSync(request.output.mergedPngPath, Buffer.from(process.env.FAKE_PNG, 'base64'))
+        }
+        if (mode === 'preview-empty-with-extra') {
+          fs.writeFileSync(require('node:path').join(request.output.stagingRoot, 'unexpected.tmp'), 'unexpected')
+        }
+        if (mode.startsWith('preview-empty')) {
+          process.stdout.write(JSON.stringify({type:'preview-done',protocolVersion:'1',requestId:request.requestId,status:'empty',rect:null,merged:null,thumbnail:null}) + '\n')
+          continue
+        }
+        if (mode === 'preview-invalid-status') {
+          process.stdout.write(JSON.stringify({type:'preview-done',protocolVersion:'1',requestId:request.requestId,status:'unavailable',rect:null,merged:null,thumbnail:null}) + '\n')
+          continue
+        }
+        const merged = Buffer.from(process.env.FAKE_PNG, 'base64')
+        const thumbnail = Buffer.from(process.env.FAKE_WEBP, 'base64')
+        fs.writeFileSync(request.output.mergedPngPath, merged)
+        fs.writeFileSync(request.output.thumbnailWebpPath, thumbnail)
+        const info = (bytes) => ({byteSize:bytes.length,width:2,height:2,sha256:crypto.createHash('sha256').update(bytes).digest('hex'),colorSpace:'srgb'})
+        const mergedInfo = info(merged)
+        if (mode === 'preview-false-sha') mergedInfo.sha256 = '0'.repeat(64)
+        const origin = request.layers[0].transform
+        const rect = mode === 'preview-outside-rect'
+          ? {x: origin.x + 2,y:origin.y,width:2,height:2}
+          : {x:origin.x,y:origin.y,width:2,height:2}
+        process.stdout.write(JSON.stringify({type:'preview-done',protocolVersion:'1',requestId:request.requestId,status:'rendered',rect,merged:mergedInfo,thumbnail:info(thumbnail)}) + '\n')
         continue
       }
       if (mode === 'false-merged-sha' || mode === 'false-thumbnail-sha' || mode === 'truthful-derivative') {
@@ -370,6 +407,153 @@ test('main rejects false SHA-256 metadata for each actual worker output file', a
   })
 })
 
+test('preview client verifies frozen source identity and accepts bounded rendered or empty results', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const profile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const sourceBytes = insertIcc(SOURCE_PNG, profile)
+    const sourcePath = path.join(directory, 'source.png')
+    await writeFile(sourcePath, sourceBytes)
+    const merged = insertIcc(SOURCE_PNG, profile)
+    const thumbnail = webpWithIcc(profile, false)
+    const requestFor = (stagingRoot: string): ComposePreviewInput => ({
+      layers: [
+        {
+          blendMode: 'normal',
+          height: 2,
+          opacity: 1,
+          path: sourcePath,
+          sha256: sha256(sourceBytes),
+          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 17, y: -3 },
+          width: 2,
+        },
+      ],
+      mergedPngPath: path.join(stagingRoot, 'merged.png'),
+      stagingRoot,
+      thumbnailMaxSide: 64,
+      thumbnailWebpPath: path.join(stagingRoot, 'thumbnail.webp'),
+    })
+    const renderedRoot = path.join(stagingBasePath, 'rendered')
+    await mkdir(renderedRoot)
+    const renderedClient = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      {
+        environment: {
+          FAKE_MODE: 'preview-rendered',
+          FAKE_PNG: merged.toString('base64'),
+          FAKE_WEBP: thumbnail.toString('base64'),
+        },
+      },
+    )
+    try {
+      const request = requestFor(renderedRoot)
+      await assert.rejects(
+        renderedClient.composePreview({
+          ...request,
+          layers: [{ ...request.layers[0], sha256: '0'.repeat(64) }],
+        }),
+        { code: 'INVALID_REQUEST' },
+      )
+      await assert.rejects(
+        renderedClient.composePreview({
+          ...request,
+          layers: [
+            { ...request.layers[0], transform: { ...request.layers[0].transform, scaleX: 0 } },
+          ],
+        }),
+        { code: 'INVALID_REQUEST' },
+      )
+      await assert.rejects(
+        renderedClient.composePreview({
+          ...request,
+          layers: Array.from({ length: 3 }, () => ({
+            ...request.layers[0],
+            height: 8000,
+            width: 8000,
+          })),
+        }),
+        { code: 'INVALID_REQUEST' },
+      )
+      const result = await renderedClient.composePreview(request)
+      assert.equal(result.status, 'rendered')
+      assert.deepEqual(result.rect, { height: 2, width: 2, x: 17, y: -3 })
+      assert.equal(result.merged?.sha256, sha256(merged))
+      assert.equal(result.thumbnail?.sha256, sha256(thumbnail))
+    } finally {
+      await renderedClient.close()
+    }
+
+    const webpSource = webpWithIcc(profile, false)
+    const webpPath = path.join(directory, 'source.webp')
+    await writeFile(webpPath, webpSource)
+    const emptyRoot = path.join(stagingBasePath, 'empty')
+    await mkdir(emptyRoot)
+    const emptyClient = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'preview-empty' } },
+    )
+    try {
+      const request = requestFor(emptyRoot)
+      const result = await emptyClient.composePreview({
+        ...request,
+        layers: [{ ...request.layers[0], path: webpPath, sha256: sha256(webpSource) }],
+      })
+      assert.deepEqual(result, { merged: null, rect: null, status: 'empty', thumbnail: null })
+      assert.equal(existsSync(request.mergedPngPath), false)
+      assert.equal(existsSync(request.thumbnailWebpPath), false)
+    } finally {
+      await emptyClient.close()
+    }
+
+    const legacyRoot = path.join(stagingBasePath, 'legacy')
+    await mkdir(legacyRoot)
+    const legacyClient = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'preview-no-capability' } },
+    )
+    try {
+      await assert.rejects(legacyClient.composePreview(requestFor(legacyRoot)), {
+        code: 'WORKER_VERSION_MISMATCH',
+      })
+      assert.deepEqual((await legacyClient.selfTest()).imageCodecs, ['PNG', 'WEBP'])
+    } finally {
+      await legacyClient.close()
+    }
+
+    for (const [mode, code] of [
+      ['preview-outside-rect', 'OUTPUT_MISMATCH'],
+      ['preview-false-sha', 'OUTPUT_MISMATCH'],
+      ['preview-empty-with-output', 'OUTPUT_MISMATCH'],
+      ['preview-empty-with-extra', 'OUTPUT_MISMATCH'],
+      ['preview-invalid-status', 'PROTOCOL_ERROR'],
+    ] as const) {
+      const stagingRoot = path.join(stagingBasePath, mode)
+      await mkdir(stagingRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        {
+          environment: {
+            FAKE_MODE: mode,
+            FAKE_PNG: merged.toString('base64'),
+            FAKE_WEBP: thumbnail.toString('base64'),
+          },
+        },
+      )
+      try {
+        await assert.rejects(client.composePreview(requestFor(stagingRoot)), { code }, mode)
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
 test('worker WebP acceptance matches package Save for a truthful ICC-first output', async () => {
   await withTemp(async (directory) => {
     const runtimeRoot = path.join(directory, 'runtime')
@@ -594,9 +778,17 @@ test(
       const stagingBasePath = path.join(directory, 'staging')
       const deriveRoot = path.join(stagingBasePath, 'derive')
       const importRoot = path.join(stagingBasePath, 'import')
+      const composeRoot = path.join(stagingBasePath, 'compose')
+      const untaggedPngRoot = path.join(stagingBasePath, 'untagged-png')
+      const untaggedWebpRoot = path.join(stagingBasePath, 'untagged-webp')
+      const emptyRoot = path.join(stagingBasePath, 'empty')
       await mkdir(stagingBasePath)
       await mkdir(deriveRoot)
       await mkdir(importRoot)
+      await mkdir(composeRoot)
+      await mkdir(untaggedPngRoot)
+      await mkdir(untaggedWebpRoot)
+      await mkdir(emptyRoot)
       const client = await ProjectWorkerClient.start(
         {
           pythonExecutable: DEV_PYTHON,
@@ -624,6 +816,62 @@ test(
         assert.equal(derived.merged.iccSha256, derived.thumbnail.iccSha256)
         assert.equal(derived.merged.iccSha256, IGS_SRGB_ICC_SHA256)
         assert.equal(sha256(await readFile(derived.merged.path)), derived.merged.sha256)
+
+        const previewLayer: ComposePreviewInput['layers'][number] = {
+          blendMode: 'normal',
+          height: derived.merged.height,
+          opacity: 1,
+          path: derived.merged.path,
+          sha256: derived.merged.sha256,
+          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 7, y: -4 },
+          width: derived.merged.width,
+        }
+        const preview = await client.composePreview({
+          layers: [previewLayer],
+          mergedPngPath: path.join(composeRoot, 'merged.png'),
+          stagingRoot: composeRoot,
+          thumbnailMaxSide: 64,
+          thumbnailWebpPath: path.join(composeRoot, 'thumbnail.webp'),
+        })
+        assert.equal(preview.status, 'rendered')
+        assert.deepEqual(preview.rect, { height: 2, width: 2, x: 7, y: -4 })
+        assert.equal(preview.merged?.iccSha256, IGS_SRGB_ICC_SHA256)
+        assert.equal(preview.thumbnail?.iccSha256, IGS_SRGB_ICC_SHA256)
+        for (const [inputBytes, inputPath, stagingRoot] of [
+          [SOURCE_PNG, source, untaggedPngRoot],
+          [SOURCE_WEBP, path.join(directory, 'untagged.webp'), untaggedWebpRoot],
+        ] as const) {
+          await writeFile(inputPath, inputBytes)
+          const untagged = await client.composePreview({
+            layers: [{ ...previewLayer, path: inputPath, sha256: sha256(inputBytes) }],
+            mergedPngPath: path.join(stagingRoot, 'merged.png'),
+            stagingRoot,
+            thumbnailMaxSide: 64,
+            thumbnailWebpPath: path.join(stagingRoot, 'thumbnail.webp'),
+          })
+          assert.equal(untagged.status, 'rendered')
+          assert.deepEqual(untagged.rect, preview.rect)
+          assert.equal(untagged.merged?.iccSha256, IGS_SRGB_ICC_SHA256)
+          assert.equal(untagged.thumbnail?.iccSha256, IGS_SRGB_ICC_SHA256)
+        }
+        const empty = await client.composePreview({
+          layers: [
+            {
+              ...previewLayer,
+              opacity: 0,
+              path: derived.thumbnail.path,
+              sha256: derived.thumbnail.sha256,
+            },
+          ],
+          mergedPngPath: path.join(emptyRoot, 'merged.png'),
+          stagingRoot: emptyRoot,
+          thumbnailMaxSide: 64,
+          thumbnailWebpPath: path.join(emptyRoot, 'thumbnail.webp'),
+        })
+        assert.equal(empty.status, 'empty')
+        assert.equal(empty.rect, null)
+        assert.equal(empty.merged, null)
+        assert.equal(empty.thumbnail, null)
 
         const adobeProfile = await readFile(ADOBE_ICC)
         const taggedInput = insertIcc(SOURCE_PNG, adobeProfile)

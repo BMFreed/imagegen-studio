@@ -133,6 +133,32 @@ cannot silently change an already queued batch.
 
 ## Минимальные сообщения worker'а
 
+### Исполнимая граница превью Project в фазе 2A
+
+Для явного Save main передаёт worker'у `compose-preview` с массивом видимых
+Raster Layers **сверху вниз**. Каждый элемент содержит main-owned canonical
+path к замороженному sRGB PNG/WebP, SHA-256, width/height, opacity, blend mode
+(`normal`, `multiply`, `screen`, `overlay`) и transform
+`{x,y,scaleX,scaleY,rotationDegrees}`. Output содержит уникальный app-managed
+`stagingRoot`, заранее назначенные пути `mergedPngPath`/`thumbnailWebpPath` и
+`thumbnailMaxSide`. `preview-done` возвращает либо `rendered` с integer
+world-space `rect` и метаданными двух файлов, либо `empty` с `null`-полями и
+без созданных файлов. Детальный JSON-lines shape и provisional ceilings
+зафиксированы в [worker README](../../worker-python/README.md).
+
+Main повторно проверяет source hash и sRGB-совместимость до отправки; валидные
+untagged RGB assets из `.igs` v1 трактуются как sRGB, а embedded ICC должен
+совпадать с закреплённым sRGB profile. Затем main
+проверяет returned rect внутри геометрии слоёв, содержимое, формат, размеры,
+pinned ICC и hashes обоих output. Он привязывает результат к ревизии Project и лишь
+после этого включает файлы в `.igs` через атомарный Save. Ошибка worker,
+превышение лимита или изменившаяся ревизия ведут к `unavailable` placeholder,
+не к старому превью. Полностью прозрачные слои могут дать `empty` только после
+проверки пикселей worker'ом. Этот путь пока проверен с source-checkout
+`derivatives-only` worker; installable Linux/NVIDIA runtime остаётся отдельной
+задачей. Команда не является generation composite DTO: его frozen bbox/mask и
+inference inputs описаны выше и остаются будущей границей фазы 2B.
+
 ```ts
 type WorkerMessage =
   | {
