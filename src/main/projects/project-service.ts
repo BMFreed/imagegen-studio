@@ -18,12 +18,13 @@ import {
 
 import { randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
-import { link, lstat, open, realpath, unlink } from 'node:fs/promises'
+import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
+import type { ProjectWorkerClient } from './worker-client.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, type ProjectAutosaveOptions } from './project-autosave.js'
@@ -39,6 +40,7 @@ import {
   resolveProjectLayerAsset,
 } from './project-layer-resource.js'
 import { ProjectSession, type ProjectSessionRoots } from './project-session.js'
+import { importRasterLayer } from './raster-import.js'
 
 export type {
   ProjectImportFinishResult,
@@ -91,7 +93,8 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_NOT_FOUND'
       | 'PROJECT_NOT_OPEN'
       | 'PROJECT_NOT_READY'
-      | 'PROJECT_RECOVERY_UNAVAILABLE',
+      | 'PROJECT_RECOVERY_UNAVAILABLE'
+      | 'PROJECT_WORKER_UNAVAILABLE',
     message: string,
   ) {
     super(message)
@@ -330,6 +333,38 @@ export class ProjectService {
 
   hasDirtyTabs(): boolean {
     return [...this.openTabs.values()].some((coordinator) => coordinator.dirty)
+  }
+
+  /** Add a dialog-selected image to the current document, leaving the saved .igs untouched. */
+  async importRasterImage(
+    tabId: string,
+    authorizedSourcePath: string,
+    worker: Pick<ProjectWorkerClient, 'normalizeImport'>,
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    await mkdir(this.options.roots.scratchDir, { recursive: true })
+    const document = coordinator.document
+    const prepared = await importRasterLayer({
+      authorizedSourcePath,
+      getDocument: () => coordinator.document,
+      insertIndex: 0,
+      name: rasterImportName(authorizedSourcePath),
+      position: { x: document.primaryBbox.x, y: document.primaryBbox.y },
+      stagingBasePath: this.options.roots.scratchDir,
+      worker,
+    })
+    try {
+      await coordinator.applyDocument(prepared.document, prepared.assetSources, {
+        expectedDocumentRevision: prepared.baseDocumentRevision,
+      })
+      return toTab(tabId, coordinator)
+    } finally {
+      // Source ownership transfers to the coordinator before applyDocument resolves. A cleanup
+      // failure must not report a committed document edit as a failed import.
+      await prepared.dispose().catch((error: unknown) => {
+        process.emitWarning(`Raster import staging cleanup failed: ${String(error)}`)
+      })
+    }
   }
 
   async initialize(): Promise<void> {
@@ -696,6 +731,26 @@ function assertProjectId(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) {
     throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Project ID is invalid.')
   }
+}
+
+function rasterImportName(sourcePath: string): string {
+  const stem = path.parse(sourcePath).name
+  const normalized = stem
+    .replaceAll(/[\u0000-\u001F\u007F-\u009F]/gu, ' ')
+    .replaceAll(/\s+/gu, ' ')
+    .trim()
+  const candidate = normalized || 'Imported image'
+  let name = ''
+  let bytes = 0
+  for (const character of candidate) {
+    const width = Buffer.byteLength(character, 'utf8')
+    if (bytes + width > IGS_SAFETY_CEILINGS.titleBytes) {
+      break
+    }
+    name += character
+    bytes += width
+  }
+  return name || 'Imported image'
 }
 
 function parseCreateInput(input: unknown): { primaryBbox: IgsRectV1; title: string } {

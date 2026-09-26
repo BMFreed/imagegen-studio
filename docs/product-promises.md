@@ -33,7 +33,7 @@
 | PP-004 | Управляемые модели и версии | Обязательный MVP | Пока не обещать | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют |
 | PP-005 | Результат помнит настройки | Обязательный MVP | Пока не обещать | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются | Обязательный MVP | Пока не обещать | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#external-import-and-raster-display): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas и основные Raster Layer controls проверены на файлах и в Electron; worker previews, staging recovery и release runtime отсутствуют |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP | Пока не обещать | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#external-import-and-raster-display): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas, Raster Layer controls и PNG import через UI проверены в Electron с dev worker; worker previews, staging recovery и release runtime ещё не подтверждены |
 | PP-008 | Результаты принимаются явно | Обязательный MVP | Пока не обещать | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют |
 
 ### Статусы и доказательства
@@ -298,9 +298,12 @@ gaps, перечисленных в supporting contract, и подтвержде
 `.igs` и бесконечный raster Canvas проверены на файлах и в Electron. Изменение
 свойств и порядка Raster Layers прошло сервисные тесты с реальными файлами;
 Electron проверяет видимость, opacity, blend mode, lock и перестановку мышью/через
-меню до Save и после reopen. Не готовы импорт PNG/JPEG/WebP из UI,
-compositor/export, worker previews, runtime и восстановление непринятых
-результатов.
+меню до Save и после reopen. PNG импорт из UI проверен в Electron: новый слой
+виден до Save, его ассет сохраняется в `.igs` и открывается снова; отмена и
+некорректный файл не меняют документ. При этом тест запускает development
+`derivatives-only` worker. JPG/WebP покрыты нормализацией в worker tests, но не
+отдельными UI-прогонами. Не готовы compositor/export, worker previews,
+устанавливаемый Linux/NVIDIA runtime и восстановление непринятых результатов.
 
 ### Обещание
 

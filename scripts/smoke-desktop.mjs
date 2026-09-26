@@ -10,6 +10,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -38,7 +39,9 @@ const dataRoot = mkdtempSync(path.join(os.tmpdir(), 'igs-electron-smoke-'))
 const environment = {
   ...process.env,
   IMAGEGEN_DEV_SERVER_URL: 'http://127.0.0.1:5174',
-  NODE_ENV: 'production',
+  // Permit the source-checkout derivatives worker in this disposable Electron process only.
+  IMAGEGEN_TEST_IMAGE_WORKER: '1',
+  NODE_ENV: 'test',
   XDG_CONFIG_HOME: path.join(dataRoot, 'config'),
   XDG_DATA_HOME: path.join(dataRoot, 'data'),
 }
@@ -158,6 +161,18 @@ try {
   await newProjectDialog.getByRole('button', { name: 'Create Project' }).click()
   await window.getByRole('tab', { name: projectTitle }).waitFor()
 
+  const emptyProjectPicker = application.evaluate(
+    ({ dialog }) =>
+      new Promise((resolve) => {
+        dialog.showOpenDialog = async () => {
+          resolve(true)
+          return { canceled: true, filePaths: [] }
+        }
+      }),
+  )
+  await window.getByRole('button', { name: 'Import image', exact: true }).click()
+  assert.equal(await emptyProjectPicker, true)
+
   const createdProjects = await window.evaluate(() => window.api.projects.list())
   assert.equal(createdProjects.ok, true)
   assert.equal(createdProjects.value.length, 1)
@@ -181,6 +196,8 @@ try {
   assert.equal(unchangedProject.ok, true)
   assert.equal(unchangedProject.value.kind, 'opened')
   assert.deepEqual(unchangedProject.value.tab.primaryBbox, { x: 0, y: 0, width: 640, height: 512 })
+  assert.equal(unchangedProject.value.tab.dirty, false)
+  assert.equal(unchangedProject.value.tab.layers.length, 0)
 
   await window.locator('input[aria-label="Generation area X"]').fill('72')
   await window.locator('input[aria-label="Generation area width"]').fill('704')
@@ -587,9 +604,159 @@ try {
   assert.equal(editedRaster.value.tab.layers[0].visible, true)
   assert.equal(editedRaster.value.tab.layers[0].locked, false)
   assert.equal(editedRaster.value.tab.layers[1].visible, false)
+
+  // Exercise the actual Layers action through preload, IPC, native-picker authorization, the
+  // Python normalizer and the unsaved asset capability. The picker alone is replaced here.
+  await application.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] })
+  })
+  await recoveryWindow.getByRole('button', { name: 'Import image as Raster Layer' }).click()
+  const canceledImageImport = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    rasterProject.id,
+  )
+  assert.equal(canceledImageImport.ok, true)
+  assert.equal(canceledImageImport.value.tab.dirty, false)
+  assert.equal(canceledImageImport.value.tab.layers.length, 2)
+
+  await recoveryWindow.locator('input[aria-label="Generation area X"]').fill('31')
+  await recoveryWindow.locator('input[aria-label="Generation area Y"]').fill('-17')
+  await recoveryWindow.getByRole('button', { name: 'Apply generation area' }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => tab.primaryBbox.x === 31 && tab.primaryBbox.y === -17,
+    'The import placement bbox did not reach the Project tab',
+  )
+  const sourceImage = path.join(externalDirectory, 'Selected image.png')
+  const sourceImageBytes = readFileSync('src/main/projects/placeholders/unavailable.png')
+  writeFileSync(sourceImage, sourceImageBytes)
+  await application.evaluate(({ dialog }, selectedPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, sourceImage)
+  await recoveryWindow.getByRole('button', { name: 'Import image as Raster Layer' }).click()
+  const importedImageTab = await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => tab.dirty && tab.layers.length === 3,
+    'The selected image did not become an unsaved Raster Layer',
+  )
+  const importedImage = importedImageTab.layers[0]
+  assert.equal(importedImage.name, 'Selected image')
+  assert.deepEqual(importedImageTab.primaryBbox, {
+    height: 1024,
+    width: 1024,
+    x: 31,
+    y: -17,
+  })
+  assert.equal(importedImage.transform.x, 31)
+  assert.equal(importedImage.transform.y, -17)
+  assert.deepEqual(
+    importedImageTab.layers.slice(1).map((layer) => layer.id),
+    [rasterLayerId, lowerRasterLayerId],
+  )
+  const stagedImageSize = await recoveryWindow.evaluate(
+    async (url) =>
+      await new Promise((resolve, reject) => {
+        const image = new Image()
+        image.onload = () => resolve({ height: image.naturalHeight, width: image.naturalWidth })
+        image.onerror = () => reject(new Error('The unsaved imported raster did not load.'))
+        image.src = url
+      }),
+    importedImage.imageUrl,
+  )
+  assert.deepEqual(stagedImageSize, { height: 512, width: 512 })
+  await recoveryWindow.waitForFunction(() => {
+    const host = document.querySelector('.canvas-area')
+    const canvas = document.querySelector('[aria-label="Project Canvas"] canvas')
+    if (!(host instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) return false
+    // The imported 512px image reaches x=543, while the prior visible raster ends at x=397.
+    // Sample world (450,300): inside the imported layer, outside every old visible layer.
+    const bounds = { left: -3, right: 543, top: -17, bottom: 495 }
+    const scale = Math.min(
+      1,
+      (host.clientWidth - 128) / (bounds.right - bounds.left),
+      (host.clientHeight - 128) / (bounds.bottom - bounds.top),
+    )
+    const screenX = host.clientWidth / 2 + (450 - (bounds.left + bounds.right) / 2) * scale
+    const screenY = host.clientHeight / 2 + (300 - (bounds.top + bounds.bottom) / 2) * scale
+    const pixel = canvas
+      .getContext('2d')
+      .getImageData(
+        Math.round((screenX * canvas.width) / host.clientWidth),
+        Math.round((screenY * canvas.height) / host.clientHeight),
+        1,
+        1,
+      ).data
+    return pixel[3] > 200
+  })
+  const importedSelection = recoveryWindow.getByRole('button', { name: 'Select Selected image' })
+  await importedSelection.waitFor()
+  assert.equal(await importedSelection.getAttribute('aria-pressed'), 'true')
+  assert.deepEqual(
+    readFileSync(sourceImage),
+    sourceImageBytes,
+    'Import must leave the source unchanged',
+  )
+
+  await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => !tab.dirty && tab.layers[0]?.id === importedImage.id,
+    'Save did not commit the imported Raster Layer',
+  )
+  const packageWithImage = (
+    await Promise.all(
+      readdirSync(projectDir)
+        .filter((entry) => entry.endsWith('.igs'))
+        .map((entry) => readIgsPackage(path.join(projectDir, entry))),
+    )
+  ).find((candidate) => candidate.project.title === rasterTitle)
+  assert.ok(packageWithImage)
+  assert.equal(packageWithImage.project.layers[0].id, importedImage.id)
+  assert.equal(packageWithImage.project.layers[0].asset.width, 512)
+  assert.equal(packageWithImage.project.layers[0].asset.height, 512)
+  const normalizedAssetPath = path.join(externalDirectory, 'normalized-import.png')
+  await packageWithImage.extractMemberToFile(
+    packageWithImage.project.layers[0].asset.path,
+    normalizedAssetPath,
+  )
+  assert.equal(
+    createHash('sha256').update(readFileSync(normalizedAssetPath)).digest('hex'),
+    packageWithImage.project.layers[0].asset.sha256,
+  )
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  const reopenedWithImage = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    rasterProject.id,
+  )
+  assert.equal(reopenedWithImage.ok, true)
+  assert.equal(reopenedWithImage.value.tab.layers[0].id, importedImage.id)
+  assert.equal(reopenedWithImage.value.tab.primaryBbox.x, 31)
+  assert.equal(reopenedWithImage.value.tab.primaryBbox.y, -17)
+  const rejectedImage = path.join(externalDirectory, 'Invalid image.png')
+  writeFileSync(rejectedImage, 'This is not a PNG image.')
+  await application.evaluate(({ dialog }, selectedPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, rejectedImage)
+  await recoveryWindow.getByRole('button', { name: 'Import image as Raster Layer' }).click()
+  await recoveryWindow.getByText('Project action failed').waitFor()
+  const afterRejectedImage = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    rasterProject.id,
+  )
+  assert.equal(afterRejectedImage.ok, true)
+  assert.equal(afterRejectedImage.value.tab.dirty, false)
+  assert.deepEqual(
+    afterRejectedImage.value.tab.layers.map((layer) => layer.id),
+    reopenedWithImage.value.tab.layers.map((layer) => layer.id),
+  )
   await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
   console.log(
-    'Desktop smoke passed: Import, Raster controls, canvas pixels and Save/reopen through IPC.',
+    'Desktop smoke passed: Project/image import, Raster controls, canvas pixels and Save/reopen through IPC.',
   )
 
   await application.close()

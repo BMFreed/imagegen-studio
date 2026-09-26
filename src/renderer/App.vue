@@ -40,7 +40,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme.js'
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type PendingProjectAction =
-  | { kind: 'bbox' | 'close' | 'discard' | 'layer' | 'save'; tabId: string }
+  | { kind: 'bbox' | 'close' | 'discard' | 'import-image' | 'layer' | 'save'; tabId: string }
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open'; projectId: string }
 
@@ -79,12 +79,12 @@ let projectListRequest = 0
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
 )
-const activeTabPending = computed<'bbox' | 'save' | null>(() => {
+const activeTabPending = computed<'bbox' | 'import-image' | 'save' | null>(() => {
   const action = pendingProjectAction.value
   if (
     !activeTab.value ||
     !action ||
-    (action.kind !== 'bbox' && action.kind !== 'save') ||
+    (action.kind !== 'bbox' && action.kind !== 'import-image' && action.kind !== 'save') ||
     action.tabId !== activeTab.value.id
   ) {
     return null
@@ -463,6 +463,31 @@ async function updateRasterLayer(
   }
 }
 
+async function importRasterImage(tabId: string) {
+  if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'import-image', tabId }
+  setTabError(tabId, null)
+  try {
+    const tab = await apiValue(() => projectApi().importRasterImage(tabId))
+    if (tab) {
+      replaceTab(tab)
+      saveNotices.value = { ...saveNotices.value, [tabId]: null }
+    }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function importActiveRasterImage() {
+  if (activeTab.value) {
+    void importRasterImage(activeTab.value.id)
+  }
+}
+
 async function moveRasterLayer(tabId: string, layerId: string, targetIndex: number) {
   if (pendingProjectAction.value !== null || reloadRequiredIds.value.has(tabId)) {
     return
@@ -785,6 +810,7 @@ onBeforeUnmount(() => {
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
           @applyBbox="applyBbox(activeTab.id, $event)"
+          @importImage="importActiveRasterImage"
           @moveLayer="moveActiveRasterLayer"
           @save="saveProject(activeTab.id)"
           @updateLayer="updateActiveRasterLayer"

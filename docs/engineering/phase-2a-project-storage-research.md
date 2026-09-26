@@ -75,8 +75,9 @@ structure before it accepts worker output, using the same validators as `.igs`
 Save. A main-process
 import-service test also runs the real development
 worker through dirty Project state, explicit Save, `.igs` reopen and exact
-original ICC verification. The renderer file picker, pending-asset ownership,
-autosave handoff, visual parity and export remain unverified.
+original ICC verification. The Electron smoke below now covers the file picker,
+pending-asset display on Konva and autosave handoff for a profileless PNG. Full visual
+parity and export remain unverified.
 
 The first raster-only session computes a **conservative** world-space rect from
 transformed, visible layer rectangles. This enables worker-unavailable Save for
@@ -214,9 +215,34 @@ stages the sources, then publishes the document edit. A stale candidate or
 failed source adoption leaves the current document unchanged. The image handler
 serves both saved `.igs` members and currently referenced coordinator-owned
 pending assets through the same revision-scoped capability, reverifying the
-pending bytes before response. The production file-picker/runtime path for
-PNG/JPEG/WebP import is not yet wired, so this before-Save rendering path has
-only focused boundary tests, not a user-flow smoke test.
+pending bytes before response. The production file-picker and IPC are wired;
+the runnable worker is currently the local development `derivatives-only`
+environment, not an installable release runtime.
+
+The import slice connects the Project layer-stack add action to a native
+PNG/JPEG/WebP picker owned by Electron main. The renderer sends neither an
+arbitrary source path nor normalized asset bytes. On successful normalization,
+the new Raster Layer is inserted at index 0 with its top-left at the current
+primary bbox origin, at its normalized pixel size; the bbox itself is unchanged.
+Main publishes the prepared document and verified asset sources through the
+existing revision-guarded autosave coordinator, then refreshes the Project tab
+so the pending layer can render before explicit Save. Cancel, worker failure,
+source change, stale revision and failed asset adoption leave the document
+and existing `.igs` untouched. The Electron smoke verifies cancel and malformed
+source through the UI, including cancel from an empty Project; service tests cover concurrent edits, unsafe sources
+and worker failure. The renderer never supplies a filesystem path.
+
+The existing real-worker import tests run the local development
+`derivatives-only` Python worker. They validate image normalization and some
+filesystem boundaries, but do not establish an installable Linux/NVIDIA
+runtime, startup from app-managed Python or a release inference pipeline. The
+Electron smoke uses this development worker as a bounded integration fixture;
+it is reported separately from production runtime qualification. Local manual
+import testing uses `pnpm run app:dev` with the checkout's Python venv;
+`pnpm run app:start` has no development opt-in. A packaged build returns an
+explicit `PROJECT_WORKER_UNAVAILABLE` until the app-managed runtime installer
+and worker activation are wired. The Project remains open and Save remains
+available with placeholder previews.
 
 Focused real-file service tests cover Copy/Move/Cancel, rename collision,
 source changes, symlinks, post-commit failures and independent recovery keys.
@@ -233,7 +259,7 @@ invalid, missing and locked commands; clean no-ops; and exact raster asset
 bytes when all layers become hidden or zero-opacity. Without a worker, the saved
 preview is `empty` when no layer is visible with opacity above zero, and
 `unavailable` when one remains. The focused command
-`pnpm exec tsx --test src/main/projects/project-service.test.ts` passed 19/19
+`pnpm exec tsx --test src/main/projects/project-service.test.ts` passed 22/22
 on the current working tree. The current `pnpm run app:smoke` also passed through
 the Electron UI: hide/show changed Canvas pixels, 40% opacity changed the pixel,
 the selected-layer blend control set `multiply`, lock/unlock changed the editor
@@ -248,16 +274,24 @@ visually inspected from the smoke screenshot; the 2×2 blue test image appears
 at its world-space transform, with the independent bbox outline visible. The
 smoke also reads a blue center pixel from the Konva scene; a cross-origin
 taint discovered during review was resolved by CORS-enabled custom scheme and
-anonymous image loading. The smoke does not yet exercise a before-Save
-PNG/JPEG/WebP import in the UI. The earlier raster-display slice was committed
+anonymous image loading. The current Electron smoke then chooses a PNG through
+the layer-stack action, confirms the new top layer at the edited bbox origin,
+loads its `igs-layer:` image and samples an opaque Canvas pixel outside the old
+visible layer before Save. It checks the normalized asset in the
+saved `.igs` and reopens it; cancel and malformed-PNG cases leave the tab clean.
+The worker launched from the checkout is a development fixture, while only the
+picker, renderer, IPC and Project document path are production code.
+The earlier raster-display slice was committed
 as `ac7e913`; its recorded checks were `pnpm run app:test` 182/182,
 `pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke`. The focused 19/19
-test run and extended Electron smoke above verify the current Raster controls;
-none of these checks is release evidence.
+test run verifies those Raster controls. The current working tree passed
+`pnpm run app:test` 189/189, `pnpm run typecheck`, `pnpm run lint` and
+`pnpm run app:smoke`; none of these checks is release runtime evidence.
 
 Remaining Phase 2A gaps include finite frozen compositor input for generation,
 worker-generated previews, generation staging recovery, clean `Rebuild Preview`,
-PNG/JPEG/WebP import UI/runtime and the installable Linux/NVIDIA runtime.
+the installable Linux/NVIDIA runtime needed for PNG/JPEG/WebP import in a
+packaged application.
 Layer add/delete/rename, undo and production raster editing also remain open;
 the current Raster controls do not complete the wider layer-stack contract.
 The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent

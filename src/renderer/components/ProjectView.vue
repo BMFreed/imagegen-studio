@@ -15,7 +15,7 @@ import ProjectLayerStack from './ProjectLayerStack.vue'
 const props = defineProps<{
   busy: boolean
   error: string | null
-  pending: 'bbox' | 'save' | null
+  pending: 'bbox' | 'import-image' | 'save' | null
   reloadRequired: boolean
   saveNotice: string | null
   tab: ProjectTab
@@ -23,6 +23,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   applyBbox: [rect: IgsRectV1]
+  importImage: []
   moveLayer: [layerId: string, targetIndex: number]
   save: []
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
@@ -30,14 +31,19 @@ const emit = defineEmits<{
 
 const selectedLayerId = ref<string | null>(null)
 watch(
-  () => props.tab.id,
-  () => {
-    selectedLayerId.value = null
-  },
-)
-watch(
-  () => props.tab.layers,
-  (layers) => {
+  () => [props.tab.id, props.tab.layers] as const,
+  ([tabId, layers], previous) => {
+    if (previous && previous[0] !== tabId) {
+      selectedLayerId.value = null
+      return
+    }
+    const previousLayers = previous?.[1] ?? []
+    const previousIds = new Set(previousLayers.map((layer) => layer.id))
+    const added = layers.filter((layer) => !previousIds.has(layer.id))
+    if (previous && layers.length === previousLayers.length + 1 && added.length === 1) {
+      selectedLayerId.value = added[0]?.id ?? null
+      return
+    }
     if (selectedLayerId.value && !layers.some((layer) => layer.id === selectedLayerId.value)) {
       selectedLayerId.value = null
     }
@@ -253,7 +259,9 @@ function applyFitBbox() {
         <ProjectLayerStack
           v-model:selectedLayerId="selectedLayerId"
           :disabled="busy || reloadRequired"
+          :importing="pending === 'import-image'"
           :layers="tab.layers"
+          @importImage="emit('importImage')"
           @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
           @update="(layerId, change) => emit('updateLayer', layerId, change)"
         />

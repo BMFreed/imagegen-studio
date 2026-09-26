@@ -421,6 +421,12 @@ const api: StudioApi = {
         [importId, choice],
         isProjectImportFinishResult,
       ),
+    importRasterImage: (tabId) =>
+      invokeProject(
+        ipcChannels.projects.importRasterImage,
+        [tabId],
+        (value): value is ProjectTab | null => value === null || isProjectTab(value),
+      ),
     list: () =>
       invokeProject(
         ipcChannels.projects.list,

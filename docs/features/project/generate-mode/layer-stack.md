@@ -156,21 +156,26 @@ Current limitations:
 
 ## Production Project Coverage
 
-The production Project currently displays imported Raster Layers on an infinite
-Konva canvas. The current working tree also connects Raster visibility, lock,
-opacity, blend mode and reorder controls to typed main-process document edits.
+The production Project displays Raster Layers on an infinite Konva canvas. Its
+Layers action can select a PNG/JPEG/WebP through the native picker and add a
+normalized Raster Layer above the existing stack. The current working tree also
+connects Raster visibility, lock, opacity, blend mode and reorder controls to
+typed main-process document edits.
 The selected-layer properties bar owns opacity and blend mode; the shared row
 supplies visibility and lock actions. Layer order is top-first in the document,
 and a locked Raster Layer cannot be moved or have opacity/blend changed until
 unlocked. These edits enter the document shadow and reach `.igs` through Save.
 
-The service/filesystem boundary passed 19/19 focused tests, including real
+The service/filesystem boundary passed 22/22 focused tests, including real
 `.igs` Save/reopen and asset preservation. The Electron smoke passed with actual
 visibility and opacity changes observed on Canvas pixels, selected-layer blend
 mode set to `multiply`, lock/unlock, menu and pointer reorder, then Save/reopen
-of the edited Project. Prototype pointer DnD remains separate evidence.
-Production add/delete/rename, undo, Smart Patch and Regional Guidance behavior,
-raster painting/transforms and worker-generated previews are still open.
+of the edited Project. It also checks the native PNG import, a Canvas pixel
+from the pending image before Save, Save/reopen and rejected-file behavior using
+a development worker.
+Prototype pointer DnD remains separate evidence. Additional layer types,
+delete/rename, undo, Smart Patch and Regional Guidance behavior, raster
+painting/transforms, worker-generated previews and the release runtime remain open.
 
 ## Acceptance Criteria
 

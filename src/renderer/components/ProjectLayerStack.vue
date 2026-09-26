@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import type { ProjectApi, ProjectRasterLayerView } from '../../shared/api.js'
 
+import { Plus } from '@vicons/tabler'
 import { type IDragEvent, makeAutoScroll, makeDroppable, useDnDProvider } from '@vue-dnd-kit/core'
-import { NEmpty, NInputNumber, NSelect } from 'naive-ui'
+import { NButton, NEmpty, NIcon, NInputNumber, NSelect, NTooltip } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import ProjectSortableRasterLayerRow from './ProjectSortableRasterLayerRow.vue'
 
 type RasterLayerChange = Parameters<ProjectApi['updateRasterLayer']>[2]
 
-const props = defineProps<{ disabled: boolean; layers: ProjectRasterLayerView[] }>()
+const props = defineProps<{
+  disabled: boolean
+  importing: boolean
+  layers: ProjectRasterLayerView[]
+}>()
 const emit = defineEmits<{
+  importImage: []
   move: [layerId: string, targetIndex: number]
   update: [layerId: string, change: RasterLayerChange]
 }>()
@@ -141,14 +147,38 @@ makeDroppable(
       </template>
       <span v-else class="selection-placeholder">Select a layer</span>
     </div>
-    <h2>Layers ({{ layers.length }})</h2>
+    <div class="layer-header">
+      <h2>Layers ({{ layers.length }})</h2>
+      <NTooltip trigger="hover">
+        <template v-slot:trigger>
+          <NButton
+            aria-label="Import image as Raster Layer"
+            circle
+            :disabled
+            :loading="importing"
+            quaternary
+            size="small"
+            @click="emit('importImage')"
+          >
+            <template v-slot:icon><NIcon :component="Plus" /></template>
+          </NButton>
+        </template>
+        Import image as Raster Layer
+      </NTooltip>
+    </div>
     <div ref="list" class="layer-list">
       <NEmpty
         v-if="layers.length === 0"
         class="layer-empty"
         description="No Raster Layers yet"
         size="small"
-      />
+      >
+        <template v-slot:extra>
+          <NButton :disabled :loading="importing" size="small" @click="emit('importImage')">
+            Import image
+          </NButton>
+        </template>
+      </NEmpty>
       <ProjectSortableRasterLayerRow
         v-for="(layer, index) of layers"
         :key="layer.id"
@@ -206,8 +236,17 @@ makeDroppable(
   font-size: var(--app-font-size-meta);
 }
 
-.layer-stack h2 {
-  margin: 0 2px 10px;
+.layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  margin: 0 2px 7px;
+}
+
+.layer-header h2 {
+  margin: 0;
   font-size: var(--app-font-size);
   font-weight: 600;
 }

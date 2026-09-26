@@ -42,7 +42,7 @@ The project owns one default bbox for normal generation, separate from every Sma
 
 The existing `Size` controls should edit bbox width/height, aspect ratio and swap; fit-to-visible-layers sets its full x/y/width/height bounds. Numeric x/y belong to bbox precision controls. Canvas handles allow free movement/resize, with positional snapping off by default; coordinates may be negative. Worker/model constraints validate allowable generation dimensions without imposing a canvas boundary. These controls no longer edit a fixed document size.
 
-Adding a Raster Layer to an already open Project never moves or resizes the primary bbox implicitly. The user can explicitly run `Fit BBox to visible layers` when the imported image should become the next generation target.
+Importing an image as a Raster Layer into an already open Project inserts it at the top of the compositing stack. Its initial transform places the image's top-left pixel at the current primary bbox origin (`x`, `y`), using the normalized image's own dimensions without automatically scaling it to the bbox. Import never moves or resizes the primary bbox implicitly. The user can explicitly run `Fit BBox to visible layers` when the imported image should become the next generation target.
 
 The `Size` card's existing aspect catalog remains useful: `Free`, `8:1`, `4:1`, `21:9`, `16:9`, `3:2`, `5:4`, `4:3`, `1:1`, `3:4`, `4:5`, `2:3`, `9:16`, `1:4`, `9:21`, `1:8`. Supported min/max dimensions and any model-specific size multiple constrain the **generation request**, not the canvas or bbox position. The prototype's 64–4096 clamp and grid-8 rounding are mock rules pending worker-specific validation.
 
@@ -80,7 +80,7 @@ The current Project prototype still renders a finite `Project Canvas W × H` fra
 
 - Project Canvas has no fixed width/height or clipping document edge.
 - The primary normal-generation bbox is project-owned, movable and resizable, and may be outside all existing raster content.
-- New Project initializes that bbox at (0, 0) with `Size` dimensions and fits the viewport to it; importing a Raster Layer into an open Project leaves the bbox unchanged until explicit fit or edit.
+- New Project initializes that bbox at (0, 0) with `Size` dimensions and fits the viewport to it; importing a Raster Layer into an open Project places it at the bbox origin on top of the compositing stack and leaves the bbox unchanged until explicit fit or edit.
 - Numeric x/y are available in bbox precision controls; free drag allows negative coordinates and does not snap by default. Only worker/model generation dimensions are constrained.
 - `Size` edits primary generation bbox dimensions, not Project Canvas size; Smart Patch bbox remains layer-owned.
 - Worker mode derives from visible content inside the frozen active bbox, and later canvas edits do not mutate queued jobs.

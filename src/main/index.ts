@@ -18,6 +18,7 @@ import { ModelDownloader, ModelDownloadError } from './models/model-downloader.j
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
+import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
@@ -30,6 +31,8 @@ import {
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
+import { RasterImportError } from './projects/raster-import.js'
+import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
 const moduleDir = __dirname
@@ -108,6 +111,15 @@ if (!gotInstanceLock) {
           scratchDir: path.join(paths.dataRoot, 'scratch'),
         },
         shadow: new ProjectShadowStore(path.join(paths.dataRoot, 'autosave')),
+      })
+      // The source-checkout worker only exercises image normalization during development and
+      // smoke tests. A packaged release needs the separate Linux/NVIDIA runtime installer.
+      const developmentWorkerLocation = developmentImageWorkerLocation({
+        isPackaged: app.isPackaged,
+        mainDirectory: moduleDir,
+        nodeEnv: process.env.NODE_ENV,
+        scratchDirectory: path.join(paths.dataRoot, 'scratch'),
+        smokeOptIn: process.env.IMAGEGEN_TEST_IMAGE_WORKER,
       })
       const layerScratchRoot = path.join(paths.dataRoot, 'scratch', 'layer-responses')
       await mkdir(layerScratchRoot, { recursive: true })
@@ -393,6 +405,8 @@ if (!gotInstanceLock) {
               error instanceof ProjectIndexError ||
               error instanceof ProjectIdentityError ||
               error instanceof ProjectShadowError ||
+              error instanceof RasterImportError ||
+              error instanceof ProjectWorkerError ||
               error instanceof IgsPackageError ||
               error instanceof IgsSchemaError
             ) {
@@ -516,6 +530,43 @@ if (!gotInstanceLock) {
           (args[2] as number) >= 0,
         (tabId, layerId, targetIndex) =>
           projectService.moveRasterLayer(tabId as string, layerId as string, targetIndex as number),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.importRasterImage,
+        oneProjectId,
+        async (tabId) => {
+          if (!projectService.getOpenTabs().some((tab) => tab.id === tabId)) {
+            throw new ProjectServiceError(
+              'PROJECT_NOT_OPEN',
+              'Open the Project before importing an image.',
+            )
+          }
+          if (!developmentWorkerLocation) {
+            throw new ProjectServiceError(
+              'PROJECT_WORKER_UNAVAILABLE',
+              'Set up the image runtime before importing a Raster Layer.',
+            )
+          }
+          const selection = await dialog.showOpenDialog(window, {
+            filters: [{ extensions: ['png', 'jpg', 'jpeg', 'webp'], name: 'Images' }],
+            properties: ['openFile'],
+            title: 'Import image as Raster Layer',
+          })
+          if (selection.canceled || selection.filePaths.length !== 1) {
+            return null
+          }
+          await mkdir(developmentWorkerLocation.stagingBasePath, { recursive: true })
+          const worker = await ProjectWorkerClient.start(developmentWorkerLocation)
+          try {
+            return await projectService.importRasterImage(
+              tabId as string,
+              selection.filePaths[0],
+              worker,
+            )
+          } finally {
+            await worker.close()
+          }
+        },
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
         projectService.save(tabId as string),

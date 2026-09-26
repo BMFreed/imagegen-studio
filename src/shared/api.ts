@@ -24,6 +24,7 @@ export const ipcChannels = {
     create: 'projects:create',
     discardAndClose: 'projects:discard-and-close',
     finishImport: 'projects:finish-import',
+    importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
@@ -143,6 +144,7 @@ export interface ProjectApi {
     importId: string,
     choice: 'copy' | 'move',
   ) => Promise<ApiResult<ProjectImportFinishResult>>
+  importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   moveRasterLayer: (
     tabId: string,
