@@ -29,6 +29,7 @@ import type { ProjectWorkerClient } from './worker-client.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, type ProjectAutosaveOptions } from './project-autosave.js'
+import { buildFrozenGenerationTarget } from './project-generation-target.js'
 import {
   canonicalProjectPath,
   localProjectRecoveryKey,
@@ -475,6 +476,33 @@ export class ProjectService {
     } finally {
       this.opening.delete(projectId)
     }
+  }
+
+  /** Freeze the current normal-generation target entirely in main-owned bytes for a future job. */
+  async prepareNormalGenerationInput(
+    tabId: string,
+    worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+  ): ReturnType<typeof buildFrozenGenerationTarget> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const pendingSources = new Map(
+      document.layers
+        .filter((layer) => layer.visible && layer.opacity > 0)
+        .map(
+          (layer) =>
+            [
+              `${layer.asset.path}:${layer.asset.sha256}`,
+              coordinator.getCurrentAssetSource(layer.asset),
+            ] as const,
+        ),
+    )
+    return await buildFrozenGenerationTarget({
+      document,
+      packagePath: coordinator.filePath,
+      pendingSource: (asset) => pendingSources.get(`${asset.path}:${asset.sha256}`) ?? null,
+      scratchBasePath: this.options.roots.scratchDir,
+      worker,
+    })
   }
 
   /** Rebuild a saved derivative without silently saving document edits or touching recovery. */

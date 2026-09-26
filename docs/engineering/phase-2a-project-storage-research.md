@@ -10,7 +10,8 @@ renders embedded Project previews during explicit Save and clean Rebuild Preview
 in development and the Electron smoke test. Home loads signed thumbnail resources
 from the embedded `.igs` member or a verified disposable cache. Generation
 staging recovery and the installable Linux/NVIDIA Python runtime remain
-separate Phase 2A work.
+separate Phase 2A work. A further raster-only boundary now prepares one finite,
+frozen generation target without starting an inference job.
 
 ## Baseline before implementation and evidence
 
@@ -373,9 +374,72 @@ claim to be empty or offer Open. Repeated Home refresh still validates every
 Projects; a cold thumbnail cache may cause another validation. Capacity with
 large libraries is unmeasured.
 
-Remaining Phase 2A gaps include finite frozen compositor input for generation,
-generation staging recovery and the installable Linux/NVIDIA runtime needed for
-PNG/JPEG/WebP import and previews in a packaged application.
+## Frozen raster generation target
+
+The Save preview is unsuitable as an inference input: it is cropped to visible
+alpha and may be downsampled to 2,048 px. The interactive Konva canvas is a
+mutable renderer view, not an immutable source of pixels. The Phase 2A
+raster-only path therefore captures the open Project document revision,
+generation draft, primary bbox and visible Raster Layer references before its
+first filesystem await. Main copies each referenced saved or pending asset to
+app-owned scratch, checks exact byte length/hash, and passes top-first layers
+to the source-checkout Python worker. Saved members are read under the same
+in-process path lock as Save. The scratch directory is removed on success or
+failure; the returned value owns validated PNG **bytes**, not a path into that
+short-lived directory.
+
+The `compose-target` request uses an explicit integer bbox and one nominated
+PNG output. Unlike `compose-preview`, it writes exactly bbox.width ×
+bbox.height RGBA pixels, including transparent space beyond existing raster
+content. The worker verifies all frozen sources even when a source is outside
+the bbox, applies transforms, opacity, stack order and blend mode, and derives
+`txt2img`, `outpaint` or `img2img` from final alpha. Main reopens and verifies
+the bounded output's hash, exact dimensions, pinned sRGB ICC and actual alpha
+mode before returning it. There is no renderer-provided image, mutation of
+`.igs`/shadow, queue item, staging candidate or provenance in this operation.
+An edit after capture cannot change the returned bbox, draft or composite.
+Worker failure, source tampering and rejected geometry leave the document and
+saved package unchanged; no preview fallback is substituted for an inference
+input.
+
+The parameter register for this new path is: integer bbox origin within the
+Project coordinate ceiling; provisional target limit 2,048 px per side and
+4 million pixels; up to 256 layers and 128 million aggregate source pixels;
+32 MiB main-side encoded target read ceiling. The target limit is enforced
+even for an empty layer stack. These are defensive implementation guards, not
+qualified model-resolution or project-capacity promises. A target above the
+limit gets `IMAGE_TOO_LARGE` rather than silently downsampling; supported
+release resolutions require capacity and inference tests on the chosen
+Linux/NVIDIA artifact.
+
+Evidence at the worker boundary: `uv run pytest -q` passed 85/85, Ruff and
+BasedPyright passed, including a real JSON-lines subprocess, exact PNG/ICC
+inspection, transparent/off-bbox/partial/opaque classification, transforms,
+blend order, limits, source tamper and publication failure cleanup. An
+isolated semantic mutation changed the opaque check from minimum alpha to
+maximum alpha; `test_partial_coverage_and_partial_alpha_are_outpaint` failed
+with `img2img` versus `outpaint`, and the production source was not changed by
+the experiment. The TS worker-client focused suite passed 12/12 and typecheck
+passed, including a real TS→Python target round trip and independent
+recalculation of alpha mode. The focused Project service suite passed 32/32:
+its real `.igs` and pending imported layer reach the real Python worker, and
+an edit to the current bbox during composition does not change the returned
+frozen bbox, bytes or mode; scratch is cleaned. Four focused target-builder
+tests also passed with real packages. The full app suite passed 219/219;
+`pnpm run typecheck`, `pnpm run lint` and Electron `pnpm run app:smoke` passed
+after these changes. The smoke still exercises existing Save, recovery, Home
+thumbnail and import UI paths; the new target builder is a main-only API and
+has no Generate UI entry point yet. This
+source-checkout `derivatives-only` worker is still not the installable
+inference runtime.
+
+Remaining Phase 2A gaps include generation staging recovery and the
+installable Linux/NVIDIA runtime needed for PNG/JPEG/WebP import, previews and
+target preparation in a packaged application. A full frozen job request with
+exact resources, mask/region inputs, queue identity, inference and accepted
+provenance remains Phase 2B work; the target bytes alone do not make Generate
+functional.
+
 Layer add/delete/rename, undo and production raster editing also remain open;
 the current Raster controls do not complete the wider layer-stack contract.
 The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent

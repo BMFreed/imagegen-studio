@@ -16,10 +16,14 @@ from PIL import __version__ as pillow_version
 from imagegen_worker import PROTOCOL_VERSION, RUNTIME_PROFILE, WORKER_VERSION
 from imagegen_worker.compositor import (
     MAX_LAYERS,
+    MAX_WORLD_COORDINATE,
     ComposePreviewRequest,
+    ComposeTargetRequest,
     LayerTransform,
     PreviewLayer,
+    PreviewRect,
     compose_preview,
+    compose_target,
 )
 from imagegen_worker.derivatives import (
     SRGB_ICC_PROFILE,
@@ -57,6 +61,12 @@ class ComposePreviewCommand:
     preview: ComposePreviewRequest
 
 
+@dataclass(frozen=True)
+class ComposeTargetCommand:
+    request_id: str
+    target: ComposeTargetRequest
+
+
 def ready_message() -> dict[str, object]:
     return {
         "type": "ready",
@@ -69,6 +79,7 @@ def ready_message() -> dict[str, object]:
             "import-normalization",
             "preview-composition",
             "self-test",
+            "target-composition",
         ],
     }
 
@@ -127,6 +138,27 @@ def _sha256(value: object, label: str) -> str:
     return value
 
 
+def _target_bbox(value: object) -> PreviewRect:
+    fields = _object(value, "Target bbox", {"x", "y", "width", "height"})
+    x = fields["x"]
+    y = fields["y"]
+    if (
+        isinstance(x, bool)
+        or not isinstance(x, int)
+        or abs(x) > MAX_WORLD_COORDINATE
+        or isinstance(y, bool)
+        or not isinstance(y, int)
+        or abs(y) > MAX_WORLD_COORDINATE
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Target bbox origin must be bounded integers.")
+    return {
+        "x": x,
+        "y": y,
+        "width": _positive_integer(fields["width"], "Target width"),
+        "height": _positive_integer(fields["height"], "Target height"),
+    }
+
+
 def _preview_layer(value: object) -> PreviewLayer:
     fields = _object(
         value,
@@ -160,7 +192,13 @@ def _preview_layer(value: object) -> PreviewLayer:
 
 def parse_request(
     value: object,
-) -> SelfTestCommand | DeriveImageCommand | NormalizeImportCommand | ComposePreviewCommand:
+) -> (
+    SelfTestCommand
+    | DeriveImageCommand
+    | NormalizeImportCommand
+    | ComposePreviewCommand
+    | ComposeTargetCommand
+):
     if not isinstance(value, dict):
         raise DerivativeError("INVALID_REQUEST", "Request must be an object.")
     untyped_fields = cast(dict[object, object], value)
@@ -231,6 +269,28 @@ def parse_request(
                     output_fields["thumbnailWebpPath"], "Thumbnail output path"
                 ),
                 thumbnail_max_side=_positive_integer(fields["thumbnailMaxSide"], "Thumbnail side"),
+            ),
+        )
+    if fields.get("type") == "compose-target":
+        _object(
+            fields,
+            "Target request",
+            {"type", "requestId", "protocolVersion", "layers", "bbox", "output"},
+        )
+        raw_layers = fields["layers"]
+        if not isinstance(raw_layers, list):
+            raise DerivativeError("INVALID_REQUEST", "Target layers must be a bounded array.")
+        layers = cast(list[object], raw_layers)
+        if len(layers) > MAX_LAYERS:
+            raise DerivativeError("INVALID_REQUEST", "Target layers must be a bounded array.")
+        output_fields = _object(fields["output"], "Target output", {"stagingRoot", "targetPngPath"})
+        return ComposeTargetCommand(
+            request_id=request_id,
+            target=ComposeTargetRequest(
+                layers=tuple(_preview_layer(layer) for layer in layers),
+                bbox=_target_bbox(fields["bbox"]),
+                staging_root=_path(output_fields["stagingRoot"], "Staging root"),
+                target_png_path=_path(output_fields["targetPngPath"], "Target PNG output"),
             ),
         )
     if fields.get("type") != "derive-image":
@@ -326,6 +386,14 @@ def process_request(value: object) -> dict[str, object]:
             result = compose_preview(command.preview)
             return {
                 "type": "preview-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **result,
+            }
+        if isinstance(command, ComposeTargetCommand):
+            result = compose_target(command.target)
+            return {
+                "type": "target-done",
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **result,

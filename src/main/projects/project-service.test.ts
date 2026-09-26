@@ -2,6 +2,7 @@ import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-sche
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, realpathSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -26,10 +27,11 @@ import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
-import { type ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
+import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+const devPython = path.resolve('worker-python/.venv/bin/python')
 const rasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
   'base64',
@@ -38,6 +40,24 @@ const previewWebp = Buffer.from(
   'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
   'base64',
 )
+
+function devRuntimeRoot(): string | null {
+  if (!existsSync(devPython)) {
+    return null
+  }
+  const executableParts = realpathSync(devPython).split(path.sep)
+  const requestedParts = devPython.split(path.sep)
+  let common = 0
+  while (
+    common < executableParts.length &&
+    common < requestedParts.length &&
+    executableParts[common] === requestedParts[common]
+  ) {
+    common++
+  }
+  const root = requestedParts.slice(0, common).join(path.sep) || path.sep
+  return root === path.sep ? null : root
+}
 
 function rasterImportWorker(): Pick<ProjectWorkerClient, 'normalizeImport'> {
   return {
@@ -176,6 +196,69 @@ async function withService(
     await rm(dataRoot, { force: true, recursive: true })
   }
 }
+
+test(
+  'Project service freezes an unsaved Raster Layer and bbox before a later edit',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, repository, service }) => {
+      const { filePath, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+      const bbox = { height: 2, width: 3, x: 8, y: -1 }
+      await service.setPrimaryBbox(tabId, bbox)
+      const sourcePath = path.join(dataRoot, 'frozen foreground.png')
+      await writeFile(sourcePath, rasterPng)
+      const imported = await service.importRasterImage(tabId, sourcePath, rasterImportWorker())
+      assert.equal(imported.layers[0].transform.x, bbox.x)
+      const savedRevision = (await readIgsPackage(filePath)).project.documentRevision
+
+      const stagingBasePath = path.join(dataRoot, 'scratch')
+      await mkdir(stagingBasePath, { recursive: true })
+      const worker = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: devPython,
+          runtimeRoot: devRuntimeRoot()!,
+          stagingBasePath,
+        },
+        { requestTimeoutMs: 15_000 },
+      )
+      try {
+        const target = await service.prepareNormalGenerationInput(tabId, {
+          composeTarget: async (input) => {
+            assert.deepEqual(input.bbox, bbox)
+            assert.equal(input.layers.length, 3)
+            for (const layer of input.layers) {
+              assert.deepEqual(await readFile(layer.path), rasterPng)
+            }
+            await service.setPrimaryBbox(tabId, { height: 2, width: 3, x: 50, y: 50 })
+            return await worker.composeTarget(input)
+          },
+        })
+        assert.deepEqual(target.bbox, bbox)
+        assert.equal(target.mode, 'outpaint')
+        assert.equal(target.composite.width, bbox.width)
+        assert.equal(target.composite.height, bbox.height)
+        assert.equal(target.composite.byteSize, target.composite.bytes.length)
+        assert.equal(
+          target.composite.sha256,
+          createHash('sha256').update(target.composite.bytes).digest('hex'),
+        )
+        assert.notEqual(target.documentRevision, savedRevision)
+        assert.deepEqual(service.getOpenTabs()[0].primaryBbox, {
+          height: 2,
+          width: 3,
+          x: 50,
+          y: 50,
+        })
+        assert.equal(
+          (await readdir(stagingBasePath)).some((entry) => entry.startsWith('project-target-')),
+          false,
+        )
+      } finally {
+        await worker.close()
+      }
+    })
+  },
+)
 
 test('Project service creates, edits, saves and reopens an actual .igs with independent bbox coordinates', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {

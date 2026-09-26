@@ -30,6 +30,8 @@ from imagegen_worker.imports import png_embedded_color_metadata, webp_embedded_i
 BlendMode = Literal["normal", "multiply", "screen", "overlay"]
 MAX_LAYERS = 256
 MAX_PREVIEW_SIDE = 2048
+MAX_TARGET_SIDE = 2048
+MAX_TARGET_PIXELS = 4_000_000
 MAX_TOTAL_DECODED_PIXELS = 128_000_000
 MAX_WORLD_COORDINATE = 2_147_483_647
 MAX_LAYER_SCALE = 1024
@@ -66,6 +68,14 @@ class ComposePreviewRequest:
     thumbnail_max_side: int
 
 
+@dataclass(frozen=True)
+class ComposeTargetRequest:
+    layers: tuple[PreviewLayer, ...]
+    bbox: PreviewRect
+    staging_root: Path
+    target_png_path: Path
+
+
 class PreviewRect(TypedDict):
     x: int
     y: int
@@ -78,6 +88,12 @@ class ComposePreviewResult(TypedDict):
     rect: PreviewRect | None
     merged: ArtifactInfo | None
     thumbnail: ArtifactInfo | None
+
+
+class ComposeTargetResult(TypedDict):
+    mode: Literal["txt2img", "outpaint", "img2img"]
+    rect: PreviewRect
+    composite: ArtifactInfo
 
 
 def _validate_output_paths(request: ComposePreviewRequest) -> tuple[Path, Path]:
@@ -101,7 +117,22 @@ def _validate_output_paths(request: ComposePreviewRequest) -> tuple[Path, Path]:
     return merged, thumbnail
 
 
-def _validate_layer(layer: PreviewLayer, outputs: tuple[Path, Path]) -> Path:
+def _validate_target_path(request: ComposeTargetRequest) -> Path:
+    root = canonical_absolute_path(request.staging_root, label="Staging root")
+    if not root.is_dir():
+        raise DerivativeError("INVALID_PATH", "Staging root must be an existing directory.")
+    destination = canonical_absolute_path(request.target_png_path, label="Target output")
+    if destination.suffix.lower() != ".png" or root not in destination.parents:
+        raise DerivativeError("INVALID_PATH", "Target output must be a PNG inside staging.")
+    parent = canonical_absolute_path(destination.parent, label="Output directory")
+    if not parent.is_dir() or os.path.lexists(destination):
+        raise DerivativeError(
+            "OUTPUT_UNAVAILABLE", "Output directory is missing or output already exists."
+        )
+    return destination
+
+
+def _validate_layer(layer: PreviewLayer, outputs: tuple[Path, ...]) -> Path:
     source = canonical_absolute_path(layer.path, label="Layer input")
     if source in outputs:
         raise DerivativeError("INVALID_PATH", "Layer input and preview output must be distinct.")
@@ -313,6 +344,80 @@ def _publish(
         if not succeeded:
             for destination in published:
                 destination.unlink(missing_ok=True)
+
+
+def _publish_target(destination: Path, image: Image.Image) -> ArtifactInfo:
+    temporary: Path | None = None
+    published = False
+    succeeded = False
+    try:
+        temporary = write_temporary_image(image, destination, "PNG")
+        os.link(temporary, destination, follow_symlinks=False)
+        published = True
+        directory_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        result = artifact_info(destination, image)
+        succeeded = True
+        return result
+    except FileExistsError as error:
+        raise DerivativeError("OUTPUT_UNAVAILABLE", "An output path already exists.") from error
+    except OSError as error:
+        raise DerivativeError(
+            "DERIVATIVE_FAILED", "Target composite could not be stored."
+        ) from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        if published and not succeeded:
+            destination.unlink(missing_ok=True)
+
+
+def compose_target(request: ComposeTargetRequest) -> ComposeTargetResult:
+    """Compose exactly the frozen finite bbox; no preview cropping or downsampling."""
+    bbox = request.bbox
+    if (
+        type(bbox["x"]) is not int
+        or type(bbox["y"]) is not int
+        or abs(bbox["x"]) > MAX_WORLD_COORDINATE
+        or abs(bbox["y"]) > MAX_WORLD_COORDINATE
+        or type(bbox["width"]) is not int
+        or type(bbox["height"]) is not int
+        or bbox["width"] < 1
+        or bbox["height"] < 1
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Target bbox must have bounded integer geometry.")
+    if (
+        bbox["width"] > MAX_TARGET_SIDE
+        or bbox["height"] > MAX_TARGET_SIDE
+        or bbox["width"] * bbox["height"] > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("IMAGE_TOO_LARGE", "Target bbox exceeds the worker pixel limit.")
+    if len(request.layers) > MAX_LAYERS:
+        raise DerivativeError("INVALID_REQUEST", "Target has too many layers.")
+    if sum(layer.width * layer.height for layer in request.layers) > MAX_TOTAL_DECODED_PIXELS:
+        raise DerivativeError("IMAGE_TOO_LARGE", "Target inputs exceed the worker pixel budget.")
+    output = _validate_target_path(request)
+    sources = tuple(_validate_layer(layer, (output,)) for layer in request.layers)
+    composite = Image.new("RGBA", (bbox["width"], bbox["height"]))
+    for layer, source in reversed(tuple(zip(request.layers, sources, strict=True))):
+        # Decode every frozen source, including off-bbox and zero-opacity layers, before publishing.
+        image = _decode_layer(source, layer)
+        if layer.opacity == 0:
+            continue
+        rendered = _rasterize(layer, image, bbox, 1.0)
+        composite = _blend(composite, rendered, layer.blend_mode)
+    minimum_alpha, maximum_alpha = composite.getchannel("A").getextrema()
+    mode: Literal["txt2img", "outpaint", "img2img"]
+    if maximum_alpha == 0:
+        mode = "txt2img"
+    elif minimum_alpha == 255:
+        mode = "img2img"
+    else:
+        mode = "outpaint"
+    return {"mode": mode, "rect": bbox, "composite": _publish_target(output, composite)}
 
 
 def compose_preview(request: ComposePreviewRequest) -> ComposePreviewResult:

@@ -115,10 +115,13 @@ integration check на реальных изображениях, подтвер
 пока он не пройден, запрос с таким input не может быть молча исполнен как
 глобальный negative prompt. Unsupported combinations отвергаются до enqueue.
 
-Граница TS/Python для composite, masks, intermediate image transforms, graph
-steps и live previews всё ещё требует исполнимого versioned DTO и проверки
-семейной capability matrix. Этот контракт нельзя вывести из транспортного
-эскиза или считать реализованным по одному наличию Invoke graph builders.
+Для raster-only Project target в фазе 2A есть отдельный versioned
+`compose-target` DTO ниже. Это подготовка пикселей перед заданием, а не полный
+generation request. Граница TS/Python для masks, Smart Patch, intermediate
+image transforms, graph steps и live previews, а также семейная capability
+matrix всё ещё требуют исполнимого DTO фазы 2B. Их нельзя вывести из
+транспортного эскиза или считать реализованными по одному наличию Invoke
+graph builders.
 
 Regional Guidance может быть нужен именно в frozen operational request, чтобы
 job выполнился корректно. По отдельному продуктовому решению он не копируется
@@ -156,8 +159,38 @@ pinned ICC и hashes обоих output. Он привязывает резуль
 не к старому превью. Полностью прозрачные слои могут дать `empty` только после
 проверки пикселей worker'ом. Этот путь пока проверен с source-checkout
 `derivatives-only` worker; installable Linux/NVIDIA runtime остаётся отдельной
-задачей. Команда не является generation composite DTO: его frozen bbox/mask и
-inference inputs описаны выше и остаются будущей границей фазы 2B.
+задачей. Эта команда не является `compose-target`: preview можно обрезать и
+уменьшить, тогда как генерации нужен точный конечный bbox со всей прозрачностью.
+
+### Конечный raster-only target для будущей генерации в фазе 2A
+
+Main фиксирует ревизию документа, primary bbox и видимые Raster Layers. Для
+каждого слоя он копирует сохранённые или ещё не сохранённые asset bytes в своё
+временное хранилище с проверкой SHA-256. `compose-target` получает этот
+top-first список в том же формате, что `compose-preview`, явный целочисленный
+`bbox: {x,y,width,height}` и `output: {stagingRoot,targetPngPath}`. Worker
+проверяет входы и создаёт внутри bbox **точный** 8-bit RGBA PNG с закреплённым
+sRGB ICC: без crop по alpha и без downsample. Пустой список слоёв и видимые
+слои вне bbox дают прозрачный PNG тех же размеров.
+
+`target-done` возвращает заданный bbox как `rect`, `composite` metadata
+`{byteSize,width,height,sha256,colorSpace:"srgb"}` и `mode`. Финальная alpha
+составленного изображения определяет `txt2img` при полностью прозрачном bbox,
+`img2img` при полностью непрозрачном и `outpaint` во всех промежуточных случаях,
+в том числе при частичной прозрачности от opacity или ресемплинга. Main
+проверяет реальные bytes, PNG/ICC/размеры/hash и выводит mode из alpha повторно;
+worker claim не принимается без проверки. Main возвращает проверенные PNG bytes
+и удаляет временный scratch: операция не меняет `.igs`, document shadow,
+staging recovery или очередь.
+
+Предварительный технический потолок — 2,048 px на сторону, 4 млн target pixels,
+256 слоёв и 128 млн aggregate source pixels. Превышение target ceiling даёт
+`IMAGE_TOO_LARGE`, в том числе при пустом проекте; точный target нельзя
+незаметно уменьшить как превью. Это защитные лимиты, **не измеренная ёмкость**
+моделей или публичное обещание размера генерации. В фазе 2B target станет лишь
+одной частью frozen job payload вместе с exact ресурсами, настройками, seed,
+mask/region inputs и операцией модели. `compose-target` сам не запускает
+inference и не публикует candidate.
 
 ```ts
 type WorkerMessage =

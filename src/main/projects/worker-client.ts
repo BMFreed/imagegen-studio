@@ -26,6 +26,9 @@ const MAX_COMPOSITION_SOURCE_BYTES = 256 * 1024 * 1024
 const MAX_COMPOSITION_SOURCE_PIXELS = 64_000_000
 const MAX_COMPOSITION_TOTAL_SOURCE_PIXELS = 128_000_000
 const MAX_COMPOSITION_LAYERS = 256
+const MAX_TARGET_SIDE = 2048
+const MAX_TARGET_PIXELS = 4_000_000
+const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_ICC_BYTES = 4 * 1024 * 1024
 const MAX_IMAGE_SIDE = 16_384
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -85,6 +88,22 @@ export interface ComposePreviewInput {
   thumbnailWebpPath: string
 }
 
+/** One exact, finite crop of the frozen Project stack for a future generation job. */
+export interface ComposeTargetInput {
+  bbox: IgsPreviewRectV1
+  layers: ComposePreviewInput['layers']
+  stagingRoot: string
+  targetPngPath: string
+}
+
+export type ComposeTargetMode = 'img2img' | 'outpaint' | 'txt2img'
+
+export interface ComposeTargetResult {
+  composite: VerifiedWorkerImage
+  mode: ComposeTargetMode
+  rect: IgsPreviewRectV1
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -142,7 +161,7 @@ type PendingRequest = {
   reject: (error: ProjectWorkerError) => void
   resolve: (message: Record<string, unknown>) => void
   timer: ReturnType<typeof setTimeout>
-  type: 'derivative-done' | 'import-done' | 'preview-done' | 'self-test-result'
+  type: 'derivative-done' | 'import-done' | 'preview-done' | 'self-test-result' | 'target-done'
 }
 
 type OutputPaths = { paths: string[]; stagingRoot: string }
@@ -158,6 +177,7 @@ export class ProjectWorkerError extends Error {
     readonly code:
       | 'BUSY'
       | 'CLOSED'
+      | 'IMAGE_TOO_LARGE'
       | 'INVALID_PATH'
       | 'INVALID_REQUEST'
       | 'OUTPUT_MISMATCH'
@@ -292,41 +312,7 @@ export class ProjectWorkerClient {
           'The image worker cannot compose Project previews.',
         )
       }
-      if (!Array.isArray(input.layers) || input.layers.length > MAX_COMPOSITION_LAYERS) {
-        throw new ProjectWorkerError(
-          'INVALID_REQUEST',
-          'Preview request is outside the worker range.',
-        )
-      }
-      // Copy the caller-owned snapshot before any await: validating one version and sending
-      // another would make a changed Project look like a successful preview of this revision.
-      const layers = input.layers.map((layer) => {
-        validateCompositionLayer(layer)
-        return {
-          blendMode: layer.blendMode,
-          height: layer.height,
-          opacity: layer.opacity,
-          path: layer.path,
-          sha256: layer.sha256,
-          transform: {
-            rotationDegrees: layer.transform.rotationDegrees,
-            scaleX: layer.transform.scaleX,
-            scaleY: layer.transform.scaleY,
-            x: layer.transform.x,
-            y: layer.transform.y,
-          },
-          width: layer.width,
-        }
-      })
-      if (
-        layers.reduce((total, layer) => total + layer.width * layer.height, 0) >
-        MAX_COMPOSITION_TOTAL_SOURCE_PIXELS
-      ) {
-        throw new ProjectWorkerError(
-          'INVALID_REQUEST',
-          'Preview source pixels exceed the worker limit.',
-        )
-      }
+      const layers = snapshotCompositionLayers(input.layers)
       const thumbnailMaxSide = input.thumbnailMaxSide
       if (
         !Number.isSafeInteger(thumbnailMaxSide) ||
@@ -384,6 +370,52 @@ export class ProjectWorkerClient {
         throw this.outputFailure('Preview ICC profiles do not match.')
       }
       return { merged, rect, status: 'rendered', thumbnail }
+    })
+  }
+
+  async composeTarget(input: ComposeTargetInput): Promise<ComposeTargetResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('target-composition')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot compose generation targets.',
+        )
+      }
+      // Freeze every caller-owned value before the first await. The worker rechecks each source
+      // hash, so a subsequent file change cannot silently alter this target.
+      const layers = snapshotCompositionLayers(input.layers)
+      const bbox = { ...input.bbox }
+      validateTargetBbox(bbox)
+      const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
+        [input.targetPngPath, '.png'],
+      ])
+      for (const layer of layers) {
+        await validateInputPath(layer.path, layer.sha256, paths)
+        await verifyCompositionInput(layer)
+      }
+      const response = await this.request('compose-target', 'target-done', {
+        bbox,
+        layers,
+        output: { stagingRoot, targetPngPath: paths[0] },
+      })
+      if (!['img2img', 'outpaint', 'txt2img'].includes(response.mode as string)) {
+        throw this.protocolFailure('The generation target mode is invalid.')
+      }
+      validateTargetRect(response.rect, bbox)
+      const composite = await verifyImageOutput(
+        paths[0],
+        response.composite,
+        MAX_TARGET_BYTES,
+        'png',
+      )
+      if (composite.width !== bbox.width || composite.height !== bbox.height) {
+        throw this.outputFailure('The generation target dimensions differ from its frozen bbox.')
+      }
+      const actualMode = await verifyTargetAlphaMode(composite)
+      if (response.mode !== actualMode) {
+        throw this.outputFailure('The generation target mode differs from its pixels.')
+      }
+      return { composite, mode: actualMode, rect: bbox }
     })
   }
 
@@ -588,7 +620,13 @@ export class ProjectWorkerClient {
       }
       clearTimeout(active.timer)
       this.active = null
-      active.reject(new ProjectWorkerError('WORKER_REQUEST_FAILED', message.message, message.code))
+      active.reject(
+        new ProjectWorkerError(
+          message.code === 'IMAGE_TOO_LARGE' ? 'IMAGE_TOO_LARGE' : 'WORKER_REQUEST_FAILED',
+          message.message,
+          message.code,
+        ),
+      )
     } else if (message.type === active.type) {
       clearTimeout(active.timer)
       this.active = null
@@ -640,7 +678,7 @@ export class ProjectWorkerClient {
   }
 
   private request(
-    type: 'compose-preview' | 'derive-image' | 'normalize-import' | 'self-test',
+    type: 'compose-preview' | 'compose-target' | 'derive-image' | 'normalize-import' | 'self-test',
     resultType: PendingRequest['type'],
     fields: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
@@ -787,6 +825,84 @@ function isWithin(parent: string, target: string): boolean {
   )
 }
 
+function snapshotCompositionLayers(input: ComposePreviewInput['layers']): ComposePreviewLayer[] {
+  if (!Array.isArray(input) || input.length > MAX_COMPOSITION_LAYERS) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Composition layer count is outside the worker range.',
+    )
+  }
+  // Copy before any asynchronous source/path validation: callers may still edit Project state.
+  const layers = input.map((layer) => {
+    validateCompositionLayer(layer)
+    return {
+      blendMode: layer.blendMode,
+      height: layer.height,
+      opacity: layer.opacity,
+      path: layer.path,
+      sha256: layer.sha256,
+      transform: {
+        rotationDegrees: layer.transform.rotationDegrees,
+        scaleX: layer.transform.scaleX,
+        scaleY: layer.transform.scaleY,
+        x: layer.transform.x,
+        y: layer.transform.y,
+      },
+      width: layer.width,
+    }
+  })
+  if (
+    layers.reduce((total, layer) => total + layer.width * layer.height, 0) >
+    MAX_COMPOSITION_TOTAL_SOURCE_PIXELS
+  ) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Composition source pixels exceed the worker limit.',
+    )
+  }
+  return layers
+}
+
+function validateTargetBbox(bbox: IgsPreviewRectV1): void {
+  const { height, width, x, y } = bbox
+  if (
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    Math.abs(x) > IGS_SAFETY_CEILINGS.coordinateMagnitude ||
+    Math.abs(y) > IGS_SAFETY_CEILINGS.coordinateMagnitude ||
+    !Number.isSafeInteger(width) ||
+    width < 1 ||
+    !Number.isSafeInteger(height) ||
+    height < 1
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Generation bbox is outside the worker range.')
+  }
+  if (width > MAX_TARGET_SIDE || height > MAX_TARGET_SIDE || width * height > MAX_TARGET_PIXELS) {
+    throw new ProjectWorkerError(
+      'IMAGE_TOO_LARGE',
+      'Generation bbox exceeds the worker pixel limit.',
+    )
+  }
+}
+
+function validateTargetRect(rawRect: unknown, bbox: IgsPreviewRectV1): void {
+  if (typeof rawRect !== 'object' || rawRect === null || Array.isArray(rawRect)) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target rect is invalid.')
+  }
+  const rect = rawRect as Record<string, unknown>
+  if (
+    rect.x !== bbox.x ||
+    rect.y !== bbox.y ||
+    rect.width !== bbox.width ||
+    rect.height !== bbox.height
+  ) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'The generation target rect differs from its bbox.',
+    )
+  }
+}
+
 // Output-verification helpers live below. They consume nominated app-owned paths, never paths
 // supplied by a worker response.
 
@@ -833,7 +949,7 @@ function validateCompositionLayer(layer: ComposePreviewLayer): void {
     typeof layer.transform !== 'object' ||
     layer.transform === null
   ) {
-    throw new ProjectWorkerError('INVALID_REQUEST', 'A preview layer is invalid.')
+    throw new ProjectWorkerError('INVALID_REQUEST', 'A composition layer is invalid.')
   }
   const { rotationDegrees, scaleX, scaleY, x, y } = layer.transform
   if (
@@ -848,7 +964,7 @@ function validateCompositionLayer(layer: ComposePreviewLayer): void {
     Math.abs(x) > IGS_SAFETY_CEILINGS.coordinateMagnitude ||
     Math.abs(y) > IGS_SAFETY_CEILINGS.coordinateMagnitude
   ) {
-    throw new ProjectWorkerError('INVALID_REQUEST', 'A preview layer transform is invalid.')
+    throw new ProjectWorkerError('INVALID_REQUEST', 'A composition layer transform is invalid.')
   }
 }
 
@@ -963,6 +1079,135 @@ async function pathExists(filePath: string): Promise<boolean> {
     }
     throw error
   }
+}
+
+async function verifyTargetAlphaMode(composite: VerifiedWorkerImage): Promise<ComposeTargetMode> {
+  const inspected = await inspectVerifiedFile(
+    composite.path,
+    MAX_TARGET_BYTES,
+    async (file, size) => ({
+      mode: classifyTargetPngAlpha(await readAt(file, 0, size), composite.width, composite.height),
+    }),
+  )
+  if (inspected.sha256 !== composite.sha256 || inspected.byteSize !== composite.byteSize) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'The generation target changed after verification.',
+    )
+  }
+  return inspected.mode
+}
+
+/** Decode only the PNG alpha channel, using its row filters, to verify the worker's mode claim. */
+function classifyTargetPngAlpha(png: Buffer, width: number, height: number): ComposeTargetMode {
+  if (png.length < 45 || !png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target PNG is invalid.')
+  }
+  const headerLength = png.readUInt32BE(8)
+  const header = png.subarray(16, 29)
+  if (
+    headerLength !== 13 ||
+    png.toString('ascii', 12, 16) !== 'IHDR' ||
+    header.readUInt32BE(0) !== width ||
+    header.readUInt32BE(4) !== height ||
+    header[8] !== 8 ||
+    header[9] !== 6 ||
+    header[10] !== 0 ||
+    header[11] !== 0 ||
+    header[12] !== 0
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Generation target must be 8-bit RGBA PNG.')
+  }
+  const compressed: Buffer[] = []
+  let offset = 8
+  while (offset + 12 <= png.length) {
+    const length = png.readUInt32BE(offset)
+    const tag = png.toString('ascii', offset + 4, offset + 8)
+    const next = offset + 12 + length
+    if (next > png.length) {
+      throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target PNG is truncated.')
+    }
+    if (tag === 'IDAT') {
+      compressed.push(png.subarray(offset + 8, offset + 8 + length))
+    }
+    if (tag === 'IEND') {
+      break
+    }
+    offset = next
+  }
+  if (compressed.length === 0) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target PNG has no pixels.')
+  }
+  const rowBytes = width * 4 + 1
+  const expected = rowBytes * height
+  let decoded: Buffer
+  try {
+    decoded = inflateSync(Buffer.concat(compressed), { maxOutputLength: expected })
+  } catch {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target pixels are invalid.')
+  }
+  if (decoded.length !== expected) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The generation target pixel count is invalid.')
+  }
+  let previous = new Uint8Array(width)
+  let current = new Uint8Array(width)
+  let allTransparent = true
+  let allOpaque = true
+  for (let row = 0; row < height; row++) {
+    const rowStart = row * rowBytes
+    const filter = decoded[rowStart]
+    if (filter > 4) {
+      throw new ProjectWorkerError(
+        'OUTPUT_MISMATCH',
+        'The generation target PNG filter is invalid.',
+      )
+    }
+    for (let column = 0; column < width; column++) {
+      const left = column === 0 ? 0 : current[column - 1]
+      const up = previous[column]
+      const upLeft = column === 0 ? 0 : previous[column - 1]
+      let predictor = 0
+      switch (filter) {
+        case 1: {
+          predictor = left
+          break
+        }
+        case 2: {
+          predictor = up
+          break
+        }
+        case 3: {
+          predictor = Math.floor((left + up) / 2)
+          break
+        }
+        case 4: {
+          const p = left + up - upLeft
+          const leftDistance = Math.abs(p - left)
+          const upDistance = Math.abs(p - up)
+          const upperLeftDistance = Math.abs(p - upLeft)
+          predictor =
+            leftDistance <= upDistance && leftDistance <= upperLeftDistance
+              ? left
+              : upDistance <= upperLeftDistance
+                ? up
+                : upLeft
+
+          break
+        }
+        // No default
+      }
+      const alpha = (decoded[rowStart + 1 + column * 4 + 3] + predictor) & 0xff
+      current[column] = alpha
+      if (alpha !== 0) {
+        allTransparent = false
+      }
+      if (alpha !== 255) {
+        allOpaque = false
+      }
+    }
+    ;[previous, current] = [current, previous]
+  }
+  return allTransparent ? 'txt2img' : allOpaque ? 'img2img' : 'outpaint'
 }
 
 async function verifyImageOutput(

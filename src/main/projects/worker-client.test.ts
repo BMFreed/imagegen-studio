@@ -14,6 +14,7 @@ import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectSession } from './project-session.js'
 import {
   type ComposePreviewInput,
+  type ComposeTargetInput,
   ProjectWorkerClient,
   ProjectWorkerError,
 } from './worker-client.js'
@@ -50,7 +51,9 @@ const ready = {
   pythonVersion: '3.12.13', runtimeProfile: 'derivatives-only',
   capabilities: ['image-derivatives', 'import-normalization', 'self-test',
     ...(String(mode).startsWith('preview-') && mode !== 'preview-no-capability'
-      ? ['preview-composition'] : [])]
+      ? ['preview-composition'] : []),
+    ...(String(mode).startsWith('target-') && mode !== 'target-no-capability'
+      ? ['target-composition'] : [])]
 }
 if (mode === 'silent') { setInterval(() => {}, 1000) }
 else {
@@ -70,6 +73,30 @@ else {
       if (mode === 'invalid-json') { process.stdout.write('{bad\n'); continue }
       if (mode === 'worker-error') {
         process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'INPUT_HASH_MISMATCH',message:'Input changed.'}) + '\n')
+        continue
+      }
+      if (mode === 'target-worker-too-large') {
+        process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'IMAGE_TOO_LARGE',message:'Target is too large.'}) + '\n')
+        continue
+      }
+      if (request.type === 'compose-target') {
+        const fs = require('node:fs')
+        const crypto = require('node:crypto')
+        const bytes = Buffer.from(process.env.FAKE_PNG, 'base64')
+        fs.writeFileSync(request.output.targetPngPath, bytes)
+        const composite = {
+          byteSize: bytes.length, width: 2, height: 2,
+          sha256: crypto.createHash('sha256').update(bytes).digest('hex'), colorSpace: 'srgb'
+        }
+        if (mode === 'target-false-sha') composite.sha256 = '0'.repeat(64)
+        const rect = { ...request.bbox }
+        if (mode === 'target-wrong-rect') rect.x += 1
+        const reportedMode = mode === 'target-invalid-mode' ? 'inpaint'
+          : mode === 'target-false-mode' ? 'img2img' : process.env.FAKE_TARGET_MODE
+        process.stdout.write(JSON.stringify({
+          type:'target-done',protocolVersion:'1',requestId:request.requestId,
+          mode:reportedMode,rect,composite
+        }) + '\n')
         continue
       }
       if (request.type === 'compose-preview') {
@@ -157,6 +184,49 @@ function insertIcc(png: Buffer, profile: Buffer): Buffer {
     'iCCP',
     Buffer.concat([Buffer.from('source\0\0', 'ascii'), deflateSync(profile)]),
   )
+}
+
+function rgbaPng(alphas: readonly number[]): Buffer {
+  assert.equal(alphas.length, 4)
+  const pngChunk = (tag: string, payload: Buffer): Buffer => {
+    const header = Buffer.alloc(8)
+    header.writeUInt32BE(payload.length, 0)
+    header.write(tag, 4, 'ascii')
+    const checksum = Buffer.alloc(4)
+    checksum.writeUInt32BE(crc32(Buffer.concat([Buffer.from(tag, 'ascii'), payload])))
+    return Buffer.concat([header, payload, checksum])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(2, 0)
+  header.writeUInt32BE(2, 4)
+  header[8] = 8
+  header[9] = 6
+  const pixels = Buffer.from([
+    0,
+    20,
+    30,
+    40,
+    alphas[0],
+    50,
+    60,
+    70,
+    alphas[1],
+    0,
+    80,
+    90,
+    100,
+    alphas[2],
+    110,
+    120,
+    130,
+    alphas[3],
+  ])
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(pixels)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
 }
 
 function webpWithIcc(profile: Buffer, iccFirst: boolean): Buffer {
@@ -554,6 +624,146 @@ test('preview client verifies frozen source identity and accepts bounded rendere
   })
 })
 
+test('target client freezes sources and verifies the pixel-derived mode for each alpha state', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const profile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const sourceBytes = insertIcc(SOURCE_PNG, profile)
+    const sourcePath = path.join(directory, 'source.png')
+    await writeFile(sourcePath, sourceBytes)
+    const sourceLayer: ComposeTargetInput['layers'][number] = {
+      blendMode: 'normal',
+      height: 2,
+      opacity: 1,
+      path: sourcePath,
+      sha256: sha256(sourceBytes),
+      transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -5, y: 7 },
+      width: 2,
+    }
+    const requestFor = (stagingRoot: string): ComposeTargetInput => ({
+      bbox: { height: 2, width: 2, x: -5, y: 7 },
+      layers: [sourceLayer],
+      stagingRoot,
+      targetPngPath: path.join(stagingRoot, 'target.png'),
+    })
+    for (const [name, alphas, expected] of [
+      ['transparent', [0, 0, 0, 0], 'txt2img'],
+      ['mixed', [255, 0, 255, 0], 'outpaint'],
+      ['antialiased', [255, 128, 255, 255], 'outpaint'],
+      ['opaque', [255, 255, 255, 255], 'img2img'],
+    ] as const) {
+      const stagingRoot = path.join(stagingBasePath, name)
+      await mkdir(stagingRoot)
+      const target = insertIcc(rgbaPng(alphas), profile)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        {
+          environment: {
+            FAKE_MODE: 'target-rendered',
+            FAKE_PNG: target.toString('base64'),
+            FAKE_TARGET_MODE: expected,
+          },
+        },
+      )
+      try {
+        const request = requestFor(stagingRoot)
+        if (name === 'transparent') {
+          await assert.rejects(
+            client.composeTarget({
+              ...request,
+              layers: [{ ...sourceLayer, sha256: '0'.repeat(64) }],
+            }),
+            { code: 'INVALID_REQUEST' },
+          )
+          await assert.rejects(
+            client.composeTarget({ ...request, bbox: { ...request.bbox, width: 2049 } }),
+            { code: 'IMAGE_TOO_LARGE' },
+          )
+          await assert.rejects(
+            client.composeTarget({
+              ...request,
+              bbox: { ...request.bbox, height: 2048, width: 2048 },
+            }),
+            { code: 'IMAGE_TOO_LARGE' },
+          )
+          await assert.rejects(
+            client.composeTarget({
+              ...request,
+              targetPngPath: path.join(directory, 'escaped.png'),
+            }),
+            { code: 'INVALID_PATH' },
+          )
+        }
+        const result = await client.composeTarget(request)
+        assert.equal(result.mode, expected)
+        assert.deepEqual(result.rect, request.bbox)
+        assert.equal(result.composite.sha256, sha256(target))
+        assert.equal(result.composite.iccSha256, IGS_SRGB_ICC_SHA256)
+        assert.deepEqual([result.composite.width, result.composite.height], [2, 2])
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('target client rejects dishonest bounds, pixels, color mode and worker capability', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const profile = await readFile(
+      path.join(REPOSITORY_ROOT, 'worker-python/src/imagegen_worker/srgb.icc'),
+    )
+    const target = insertIcc(rgbaPng([255, 0, 255, 0]), profile)
+    for (const [mode, bytes, code, width] of [
+      ['target-wrong-rect', target, 'OUTPUT_MISMATCH', 2],
+      ['target-false-sha', target, 'OUTPUT_MISMATCH', 2],
+      ['target-false-mode', target, 'OUTPUT_MISMATCH', 2],
+      ['target-invalid-mode', target, 'PROTOCOL_ERROR', 2],
+      ['target-wrong-dimensions', target, 'OUTPUT_MISMATCH', 3],
+      ['target-rgb', insertIcc(SOURCE_PNG, profile), 'OUTPUT_MISMATCH', 2],
+      ['target-no-capability', target, 'WORKER_VERSION_MISMATCH', 2],
+      ['target-worker-too-large', target, 'IMAGE_TOO_LARGE', 2],
+    ] as const) {
+      const stagingRoot = path.join(stagingBasePath, mode)
+      await mkdir(stagingRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        {
+          environment: {
+            FAKE_MODE: mode,
+            FAKE_PNG: bytes.toString('base64'),
+            FAKE_TARGET_MODE: 'outpaint',
+          },
+        },
+      )
+      try {
+        await assert.rejects(
+          client.composeTarget({
+            bbox: { height: 2, width, x: 12, y: -8 },
+            layers: [],
+            stagingRoot,
+            targetPngPath: path.join(stagingRoot, 'target.png'),
+          }),
+          { code },
+          mode,
+        )
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
 test('worker WebP acceptance matches package Save for a truthful ICC-first output', async () => {
   await withTemp(async (directory) => {
     const runtimeRoot = path.join(directory, 'runtime')
@@ -779,6 +989,8 @@ test(
       const deriveRoot = path.join(stagingBasePath, 'derive')
       const importRoot = path.join(stagingBasePath, 'import')
       const composeRoot = path.join(stagingBasePath, 'compose')
+      const targetRoot = path.join(stagingBasePath, 'target')
+      const emptyTargetRoot = path.join(stagingBasePath, 'empty-target')
       const untaggedPngRoot = path.join(stagingBasePath, 'untagged-png')
       const untaggedWebpRoot = path.join(stagingBasePath, 'untagged-webp')
       const emptyRoot = path.join(stagingBasePath, 'empty')
@@ -786,6 +998,8 @@ test(
       await mkdir(deriveRoot)
       await mkdir(importRoot)
       await mkdir(composeRoot)
+      await mkdir(targetRoot)
+      await mkdir(emptyTargetRoot)
       await mkdir(untaggedPngRoot)
       await mkdir(untaggedWebpRoot)
       await mkdir(emptyRoot)
@@ -837,6 +1051,31 @@ test(
         assert.deepEqual(preview.rect, { height: 2, width: 2, x: 7, y: -4 })
         assert.equal(preview.merged?.iccSha256, IGS_SRGB_ICC_SHA256)
         assert.equal(preview.thumbnail?.iccSha256, IGS_SRGB_ICC_SHA256)
+        const generationTarget = await client.composeTarget({
+          bbox: { height: 2, width: 3, x: 7, y: -4 },
+          layers: [previewLayer],
+          stagingRoot: targetRoot,
+          targetPngPath: path.join(targetRoot, 'target.png'),
+        })
+        assert.equal(generationTarget.mode, 'outpaint')
+        assert.deepEqual(generationTarget.rect, { height: 2, width: 3, x: 7, y: -4 })
+        assert.deepEqual(
+          [generationTarget.composite.width, generationTarget.composite.height],
+          [3, 2],
+        )
+        assert.equal(generationTarget.composite.iccSha256, IGS_SRGB_ICC_SHA256)
+        assert.equal(
+          sha256(await readFile(generationTarget.composite.path)),
+          generationTarget.composite.sha256,
+        )
+        const emptyTarget = await client.composeTarget({
+          bbox: { height: 2, width: 2, x: -100, y: 100 },
+          layers: [],
+          stagingRoot: emptyTargetRoot,
+          targetPngPath: path.join(emptyTargetRoot, 'target.png'),
+        })
+        assert.equal(emptyTarget.mode, 'txt2img')
+        assert.equal(emptyTarget.composite.iccSha256, IGS_SRGB_ICC_SHA256)
         for (const [inputBytes, inputPath, stagingRoot] of [
           [SOURCE_PNG, source, untaggedPngRoot],
           [SOURCE_WEBP, path.join(directory, 'untagged.webp'), untaggedWebpRoot],

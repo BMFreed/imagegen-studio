@@ -209,8 +209,11 @@ Model Manager может развиваться параллельно, но р�
   недоступного worker main включает bundled статические placeholders без
   запуска отдельного preview worker.
 - Реальный `.igs` Project tab с бесконечным Canvas, независимым primary bbox,
-  Raster Layer stack и минимальным Konva compositor. Compositor выдаёт finite
-  frozen target input для будущей генерации; полный набор инструментов — фаза 4.
+  Raster Layer stack и минимальным Konva-отображением. Main фиксирует ревизию,
+  bbox и ассеты видимых Raster Layers; отдельная worker-команда строит точный
+  finite RGBA target для будущей генерации. Это raster-only input preparation,
+  а не запуск inference или публикация результата; полный набор инструментов —
+  фаза 4.
 - Явный Save собирает и валидирует временный `.igs`, атомарно заменяет файл и
   синхронизирует производный Home index только после успеха. Reopen и перенос
   проекта не зависят от старого SQLite index/cache.
@@ -237,7 +240,7 @@ Crash recovery открывает shadow для проверки, не пере�
 Неудачный runtime update не ломает предыдущий worker.
 Выполнить [PP-007 research pilot](../engineering/README.md#пилоты-и-дальнейшая-автоматизация).
 
-**Текущий checkpoint Phase 2A (26.09.2026):** production Home/Project IPC,
+**Текущий checkpoint Phase 2A (27.09.2026):** production Home/Project IPC,
 `.igs` Save/reopen, document shadow recovery, Raster Layer controls и PNG import
 проверены на реальных файлах. Source-checkout `derivatives-only` worker теперь
 создаёт embedded PNG/WebP Project previews при явном Save: Electron smoke
@@ -247,8 +250,15 @@ Home показывает проверенные embedded thumbnails через 
 явный `Rebuild Preview` для чистого Project восстанавливает превью без изменения
 document revision, asset bytes и recovery. UI→IPC→worker→`.igs`→Home проверен
 Electron smoke. Подробное evidence — [Phase 2A research](../engineering/phase-2a-project-storage-research.md#home-thumbnails-and-clean-preview-rebuild).
-Это не закрывает фазу: installable Linux/NVIDIA runtime, generation staging
-recovery и finite frozen composite для generation остаются следующими задачами.
+Для normal-generation raster target добавлена отдельная подготовка входа:
+main копирует видимые asset bytes из текущего snapshot в app-owned scratch,
+а source-checkout worker создаёт PNG ровно по frozen primary bbox с исходной
+прозрачностью и определяет `txt2img`/`outpaint`/`img2img` по финальной alpha.
+Main валидирует выход; это не запись в `.igs` и не рабочая генерация. Проверки
+и границы результата перечислены в [Phase 2A research](../engineering/phase-2a-project-storage-research.md#frozen-raster-generation-target).
+Это не закрывает фазу: installable Linux/NVIDIA runtime и generation staging
+recovery остаются задачами Phase 2A. Полный frozen job DTO, очередь, inference
+и acceptance относятся к Phase 2B.
 
 ## Фаза 2B. Очередь и первая сквозная генерация
 
