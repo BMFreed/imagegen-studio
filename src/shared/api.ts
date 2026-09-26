@@ -35,6 +35,7 @@ export const ipcChannels = {
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
+    setGenerationModel: 'projects:set-generation-model',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
     updateGenerationDraft: 'projects:update-generation-draft',
@@ -117,6 +118,9 @@ export type ProjectGenerationDraftChange =
   | { kind: 'seed'; policy: 'fixed'; value: number }
   | { kind: 'seed'; policy: 'random' | 'reuse'; value: null }
 
+/** A renderer selection carries IDs only; main copies exact metadata from its verified registry. */
+export type ProjectGenerationModelSelection = { resourceId: string; versionId: string } | null
+
 export type ProjectImportSelection =
   | { fileName: string; importId: string; kind: 'transfer-required'; title: string }
   | { kind: 'opened'; result: ProjectOpenResult }
@@ -182,6 +186,10 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
+  setGenerationModel: (
+    tabId: string,
+    selection: ProjectGenerationModelSelection,
+  ) => Promise<ApiResult<ProjectTab>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
   updateGenerationDraft: (
     tabId: string,
@@ -355,6 +363,29 @@ export function isProjectGenerationDraftChange(
         value.value >= 0 &&
         value.value <= 0xff_ff_ff_ff
     : (value.policy === 'random' || value.policy === 'reuse') && value.value === null
+}
+
+export function isProjectGenerationModelSelection(
+  input: unknown,
+): input is ProjectGenerationModelSelection {
+  if (input === null) {
+    return true
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  const keys = Object.keys(value)
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  return (
+    keys.length === 2 &&
+    keys.includes('resourceId') &&
+    keys.includes('versionId') &&
+    typeof value.resourceId === 'string' &&
+    typeof value.versionId === 'string' &&
+    uuid.test(value.resourceId) &&
+    uuid.test(value.versionId)
+  )
 }
 
 export function isProjectRasterLayerChange(input: unknown): input is ProjectRasterLayerChange {

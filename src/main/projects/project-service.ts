@@ -632,6 +632,35 @@ export class ProjectService {
     }
   }
 
+  /** Receives only a main-resolved registry ref; the renderer sends IDs to ModelService. */
+  async setGenerationModel(
+    tabId: string,
+    model: IgsProjectDocumentV1['generationDraft']['model'],
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const previous = document.generationDraft.model
+    if (
+      (previous === null && model === null) ||
+      (previous !== null &&
+        model !== null &&
+        previous.localModelId === model.localModelId &&
+        previous.localVersionId === model.localVersionId &&
+        previous.fileSha256 === model.fileSha256)
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: { ...document.generationDraft, model },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   async setPrimaryBbox(tabId: string, rect: IgsRectV1): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     try {

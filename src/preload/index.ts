@@ -606,6 +606,8 @@ const api: StudioApi = {
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
     selectImport: () =>
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
+    setGenerationModel: (tabId, selection) =>
+      invokeProject(ipcChannels.projects.setGenerationModel, [tabId, selection], isProjectTab),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
     updateGenerationDraft: (tabId, change) =>

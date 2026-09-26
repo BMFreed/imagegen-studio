@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ApiResult,
+  ModelCatalogItem,
   ProjectApi,
   ProjectGenerationDraftChange,
   ProjectImportSelection,
@@ -29,7 +30,7 @@ import {
   NRadio,
   NRadioGroup,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref, toRaw } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
 import AppChrome from './components/AppChrome.vue'
 import HomeView from './components/HomeView.vue'
@@ -42,7 +43,10 @@ import { imageGenNaiveTheme } from './theme/naive-theme.js'
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type PendingProjectAction =
-  | { kind: 'bbox' | 'close' | 'discard' | 'import-image' | 'layer' | 'save'; tabId: string }
+  | {
+      kind: 'bbox' | 'close' | 'discard' | 'import-image' | 'layer' | 'model' | 'save'
+      tabId: string
+    }
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open' | 'rebuild'; projectId: string }
 
@@ -51,6 +55,10 @@ const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const projects = ref<ProjectSummary[]>([])
 const projectTabs = ref<ProjectTab[]>([])
+const modelCatalog = ref<ModelCatalogItem[]>([])
+const modelCatalogError = ref<string | null>(null)
+const modelCatalogLoaded = ref(false)
+const modelCatalogLoading = ref(false)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
 const draftValidity = ref<Record<string, boolean>>({})
 const projectsLoading = ref(false)
@@ -80,7 +88,9 @@ const windowClosePending = ref(false)
 let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
 let unsubscribeBeforeWindowClose: (() => void) | undefined
+let unsubscribeModelInstall: (() => void) | undefined
 let projectListRequest = 0
+let modelCatalogRequest = 0
 
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
@@ -89,12 +99,15 @@ const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
 })
-const activeTabPending = computed<'bbox' | 'import-image' | 'save' | null>(() => {
+const activeTabPending = computed<'bbox' | 'import-image' | 'model' | 'save' | null>(() => {
   const action = pendingProjectAction.value
   if (
     !activeTab.value ||
     !action ||
-    (action.kind !== 'bbox' && action.kind !== 'import-image' && action.kind !== 'save') ||
+    (action.kind !== 'bbox' &&
+      action.kind !== 'import-image' &&
+      action.kind !== 'model' &&
+      action.kind !== 'save') ||
     action.tabId !== activeTab.value.id
   ) {
     return null
@@ -142,6 +155,46 @@ function projectApi() {
   return api
 }
 
+async function refreshModelCatalog() {
+  const request = ++modelCatalogRequest
+  modelCatalogLoading.value = true
+  modelCatalogError.value = null
+  try {
+    const api = globalThis.window.api?.models
+    if (!api) {
+      throw new Error('The desktop application connection is unavailable.')
+    }
+    const catalog = await apiValue(() => api.getCatalog())
+    if (request === modelCatalogRequest) {
+      modelCatalog.value = catalog
+      modelCatalogLoaded.value = true
+    }
+  } catch (cause) {
+    if (request === modelCatalogRequest) {
+      modelCatalogError.value = errorMessage(cause)
+    }
+  } finally {
+    if (request === modelCatalogRequest) {
+      modelCatalogLoading.value = false
+    }
+  }
+}
+
+watch(
+  () => activeTab.value?.id,
+  (tabId) => {
+    if (tabId) {
+      void refreshModelCatalog()
+    }
+  },
+)
+
+watch(modelManagerOpen, (open, previous) => {
+  if (previous && !open && activeTab.value) {
+    void refreshModelCatalog()
+  }
+})
+
 const draftSync = new ProjectDraftSync({
   onAcknowledged(tab) {
     replaceTab(tab)
@@ -176,6 +229,31 @@ function updateGenerationDraft(tabId: string, change: ProjectGenerationDraftChan
     return
   }
   draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change)
+}
+
+async function setGenerationModel(
+  tabId: string,
+  selection: { resourceId: string; versionId: string } | null,
+) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'model', tabId }
+  setTabError(tabId, null)
+  try {
+    await draftSync.flush(tabId)
+    replaceTab(await apiValue(() => projectApi().setGenerationModel(tabId, selection)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+    void refreshModelCatalog()
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 function setDraftValidity(tabId: string, valid: boolean) {
@@ -837,6 +915,15 @@ function onAppKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   try {
+    unsubscribeModelInstall = globalThis.window.api?.models.onInstallChanged((job) => {
+      if (job.status === 'completed' && activeTab.value) {
+        void refreshModelCatalog()
+      }
+    })
+  } catch (cause) {
+    modelCatalogError.value = errorMessage(cause)
+  }
+  try {
     unsubscribeStatus = globalThis.window.api?.runtime.onStatusChanged((nextStatus) => {
       status.value = nextStatus
       if (nextStatus.kind === 'ready') {
@@ -879,6 +966,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unsubscribeModelInstall?.()
   unsubscribeStatus?.()
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()
@@ -983,14 +1071,21 @@ onBeforeUnmount(() => {
           :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
           :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
+          :modelCatalog
+          :modelCatalogError
+          :modelCatalogLoaded
+          :modelCatalogLoading
           :pending="activeTabPending"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
+          @manageModels="modelManagerOpen = true"
           @moveLayer="moveActiveRasterLayer"
+          @refreshModels="refreshModelCatalog"
           @save="saveProject(activeTab.id)"
+          @selectModel="setGenerationModel(activeTab.id, $event)"
           @updateDraft="updateGenerationDraft(activeTab.id, $event)"
           @updateLayer="updateActiveRasterLayer"
           @validateDraft="setDraftValidity"

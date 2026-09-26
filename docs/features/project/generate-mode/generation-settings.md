@@ -75,15 +75,23 @@ If color matching is needed later, design it as a Smart Patch/compositing behavi
 
 ## Production coverage at the Phase 2A checkpoint
 
-The production Project settings currently edit only the normal Project's
-positive and negative plain prompt text and Seed `Fixed`/`Random`/`Reuse`
-policy. `Fixed` stores an explicit unsigned 32-bit value; `Random` and `Reuse`
-store no draft value. Changes use the Project document's dirty/shadow/explicit
-Save path and reopen from `.igs`. If a text edit removes an existing embedding
-activation token, main prunes its sidecar ref; retyping the token does not
-restore the ref until resource-aware insertion is implemented. No production
-model/version, LoRA, sampling, VAE, advanced options or Smart Patch-owned draft
-controls are connected yet.
+The production Project settings edit the normal Project's exact installed
+checkpoint/version reference, positive and negative plain prompt text and
+Seed `Fixed`/`Random`/`Reuse` policy. `Fixed` stores an explicit unsigned
+32-bit value; `Random` and `Reuse` store no draft value. Changes use the
+Project document's dirty/shadow/explicit Save path and reopen from `.igs`.
+Model selection passes only resource/version IDs across IPC: main verifies the
+file and required Anima companions before copying the exact registry metadata
+into the Project. Changing Model Manager's Default never changes a saved
+Project reference. If its exact version becomes unavailable, Project keeps
+the saved name/version and shows a diagnostic with access to Model Manager;
+it does not select another version. This selection does not load a model in
+the worker or make Generate available.
+
+If a text edit removes an existing embedding activation token, main prunes its
+sidecar ref; retyping the token does not restore the ref until resource-aware
+insertion is implemented. No production LoRA, sampling, VAE, advanced options
+or Smart Patch-owned draft controls are connected yet.
 The chosen Seed policy is a request for a future job, not a completed seed:
 the operational last-actual-seed cursor and fallback to a saved `.igs` snapshot
 still belong to the Phase 2B enqueue/completion path.
@@ -102,7 +110,7 @@ The current Project settings stack implements:
 - images-per-click as an integer input from 1 through 100 in the fixed Generate bar;
 - an `Advanced Options` disclosure containing VAE, VAE precision and CFG Rescale controls.
 
-VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. Seed offers `Fixed`, `Random` and `Reuse`; `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. Shuffle/advance seed, clip skip and a production Model Manager installed-version registry remain gaps. Generation and seeds are simulated; no inference is performed.
+VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. Seed offers `Fixed`, `Random` and `Reuse`; `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. The prototype still uses fixture models rather than the production Model Manager registry; shuffle/advance seed and clip skip remain gaps. Generation and seeds are simulated; no inference is performed.
 
 Selecting a Smart Patch binds the visible settings to its layer-owned draft. Denoising stays visible and is disabled with an explanation when the effective target has no raster input. The prototype uses deterministic layer coverage metadata for this decision because it has no pixel compositor.
 

@@ -1,24 +1,49 @@
 <script setup lang="ts">
-import type { ProjectApi, ProjectGenerationDraftChange, ProjectTab } from '../../shared/api.js'
+import type {
+  ModelCatalogItem,
+  ProjectApi,
+  ProjectGenerationDraftChange,
+  ProjectTab,
+} from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { DeviceFloppy as SaveIcon } from '@vicons/tabler'
 import { DnDProvider } from '@vue-dnd-kit/core'
-import { NAlert, NButton, NFormItem, NIcon, NInputNumber, NSelect } from 'naive-ui'
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import {
+  NAlert,
+  NButton,
+  NFormItem,
+  NIcon,
+  NInputNumber,
+  NSelect,
+  NTag,
+  type SelectOption,
+} from 'naive-ui'
+import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
+import {
+  checkpointCatalog,
+  planModelResourceSelection,
+  savedModelAvailability,
+  selectableVersion,
+} from './project-model-picker.js'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
+import ProjectModelOption from './ProjectModelOption.vue'
 
 const props = defineProps<{
   busy: boolean
   draftPending: boolean
   error: string | null
   generationDraft: ProjectTab['generationDraft']
-  pending: 'bbox' | 'import-image' | 'save' | null
+  modelCatalog: ModelCatalogItem[]
+  modelCatalogError: string | null
+  modelCatalogLoaded: boolean
+  modelCatalogLoading: boolean
+  pending: 'bbox' | 'import-image' | 'model' | 'save' | null
   reloadRequired: boolean
   saveNotice: string | null
   tab: ProjectTab
@@ -27,12 +52,180 @@ const props = defineProps<{
 const emit = defineEmits<{
   applyBbox: [rect: IgsRectV1]
   importImage: []
+  manageModels: []
   moveLayer: [layerId: string, targetIndex: number]
+  refreshModels: []
   save: []
+  selectModel: [selection: { resourceId: string; versionId: string } | null]
   updateDraft: [change: ProjectGenerationDraftChange]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
   validateDraft: [tabId: string, valid: boolean]
 }>()
+
+const models = computed(() => checkpointCatalog(props.modelCatalog))
+const selectedModel = computed(() => props.generationDraft.model)
+const stagedResourceId = ref<string | null>(null)
+const pickerResourceId = computed(
+  () => stagedResourceId.value ?? selectedModel.value?.localModelId ?? null,
+)
+const selectedResource = computed(() =>
+  models.value.find((resource) => resource.id === pickerResourceId.value),
+)
+const versionValue = computed(() =>
+  stagedResourceId.value && stagedResourceId.value !== selectedModel.value?.localModelId
+    ? null
+    : (selectedModel.value?.localVersionId ?? null),
+)
+watch(
+  [
+    () => props.tab.id,
+    () => props.generationDraft.model?.localModelId,
+    () => props.generationDraft.model?.localVersionId,
+    () => props.generationDraft.model?.fileSha256,
+  ],
+  () => {
+    stagedResourceId.value = null
+  },
+)
+watch(models, (catalog) => {
+  if (
+    stagedResourceId.value &&
+    !catalog.some(
+      (resource) =>
+        resource.id === stagedResourceId.value && resource.versions.some(selectableVersion),
+    )
+  ) {
+    stagedResourceId.value = null
+  }
+})
+const modelStatus = computed(() => savedModelAvailability(selectedModel.value, props.modelCatalog))
+const modelPickerDisabled = computed(
+  () =>
+    props.busy ||
+    props.reloadRequired ||
+    props.modelCatalogLoading ||
+    !props.modelCatalogLoaded ||
+    props.modelCatalogError !== null,
+)
+const modelOptions = computed(() => {
+  const options = models.value.map((resource) => ({
+    disabled: planModelResourceSelection(resource).kind === 'unavailable',
+    label: resource.name,
+    value: resource.id,
+  }))
+  const saved = selectedModel.value
+  if (saved && !options.some((option) => option.value === saved.localModelId)) {
+    options.unshift({ disabled: true, label: saved.displayName, value: saved.localModelId })
+  }
+  return options
+})
+const versionOptions = computed(() => {
+  const saved =
+    selectedResource.value?.id === selectedModel.value?.localModelId ? selectedModel.value : null
+  const options = (selectedResource.value?.versions ?? []).map((version) => ({
+    disabled:
+      !selectableVersion(version) ||
+      (saved?.localVersionId === version.id && modelStatus.value !== 'ready'),
+    label:
+      saved?.localVersionId === version.id && modelStatus.value !== 'ready'
+        ? `${saved.versionName} · unavailable`
+        : `${version.name}${version.fileStatus === 'ready' ? '' : ` · ${version.fileStatus}`}`,
+    value: version.id,
+  }))
+  if (saved && !options.some((option) => option.value === saved.localVersionId)) {
+    options.unshift({
+      disabled: true,
+      label: `${saved.versionName} · unavailable`,
+      value: saved.localVersionId,
+    })
+  }
+  return options
+})
+const modelDiagnostic = computed(() => {
+  if (!selectedModel.value || !props.modelCatalogLoaded || props.modelCatalogError) {
+    return null
+  }
+  if (modelStatus.value === 'missing') {
+    return 'The exact selected model version is no longer installed. Its saved reference is kept in this Project.'
+  }
+  if (modelStatus.value === 'corrupt') {
+    return 'The exact selected model file failed verification. Repair it in Model Manager before generating.'
+  }
+  if (modelStatus.value === 'unknown-family') {
+    return 'The selected model has no supported base model family. Choose a compatible version.'
+  }
+  return null
+})
+
+function selectModelResource(resourceId: string | null) {
+  if (modelPickerDisabled.value) {
+    return
+  }
+  if (resourceId === null) {
+    if (stagedResourceId.value) {
+      stagedResourceId.value = null
+    } else if (selectedModel.value) {
+      emit('selectModel', null)
+    }
+    return
+  }
+  const resource = models.value.find((item) => item.id === resourceId)
+  if (!resource) {
+    return
+  }
+  const plan = planModelResourceSelection(resource)
+  if (plan.kind === 'choose-version') {
+    stagedResourceId.value = resourceId
+  } else if (plan.kind === 'select-default') {
+    stagedResourceId.value = null
+    emit('selectModel', { resourceId, versionId: plan.versionId })
+  }
+}
+
+function selectModelVersion(versionId: string) {
+  if (modelPickerDisabled.value || !selectedResource.value) {
+    return
+  }
+  const version = selectedResource.value.versions.find((item) => item.id === versionId)
+  if (version && selectableVersion(version)) {
+    emit('selectModel', { resourceId: selectedResource.value.id, versionId })
+  }
+}
+
+function renderModelLabel(option: SelectOption) {
+  const resource = models.value.find((item) => item.id === option.value)
+  return resource
+    ? h(ProjectModelOption, {
+        defaultSelectable: planModelResourceSelection(resource).kind === 'select-default',
+        hasReadyVersion: resource.versions.some(selectableVersion),
+        resource,
+        version:
+          resource.versions.find((version) => version.id === resource.defaultVersionId) ?? null,
+      })
+    : String(option.label)
+}
+
+function filterModelOption(pattern: string, option: SelectOption) {
+  const resource = models.value.find((item) => item.id === option.value)
+  if (!resource) {
+    return String(option.label).toLocaleLowerCase().includes(pattern.toLocaleLowerCase())
+  }
+  const query = pattern.trim().toLocaleLowerCase()
+  return [
+    resource.name,
+    ...resource.versions.flatMap((version) => [version.name, version.baseModelFamily ?? '']),
+  ].some((value) => value.toLocaleLowerCase().includes(query))
+}
+
+function renderModelTag({ option }: { option: SelectOption }) {
+  const saved = selectedModel.value
+  return saved && option.value === saved.localModelId ? saved.displayName : String(option.label)
+}
+
+function renderVersionTag({ option }: { option: SelectOption }) {
+  const saved = selectedModel.value
+  return saved && option.value === saved.localVersionId ? saved.versionName : String(option.label)
+}
 
 const seedOptions = [
   { label: 'Random', value: 'random' },
@@ -280,6 +473,96 @@ function applyFitBbox() {
         </div>
         <section aria-label="Generation settings" class="settings-section">
           <h2>Generation</h2>
+          <div class="model-fields">
+            <div class="model-heading">
+              <span class="field-label">Model</span>
+              <div class="model-actions">
+                <NButton
+                  aria-label="Refresh models"
+                  :disabled="modelCatalogLoading"
+                  size="tiny"
+                  text
+                  @click="emit('refreshModels')"
+                >
+                  Refresh
+                </NButton>
+                <NButton aria-label="Manage Models" size="tiny" text @click="emit('manageModels')">
+                  Manage Models
+                </NButton>
+              </div>
+            </div>
+            <NSelect
+              aria-label="Generation model"
+              clearable
+              :disabled="modelPickerDisabled"
+              :filter="filterModelOption"
+              :filterable="models.length > 0"
+              :loading="modelCatalogLoading || pending === 'model'"
+              :options="modelOptions"
+              placeholder="Choose an installed model"
+              :renderLabel="renderModelLabel"
+              :renderTag="renderModelTag"
+              showOnFocus
+              size="small"
+              :value="pickerResourceId"
+              :virtualScroll="false"
+              @update:value="selectModelResource"
+            />
+            <NFormItem label="Version" :showFeedback="false">
+              <NSelect
+                aria-label="Model version"
+                :disabled="modelPickerDisabled || !selectedResource"
+                :loading="pending === 'model'"
+                :options="versionOptions"
+                :placeholder="
+                  selectedResource ? 'Choose an available version' : 'Choose a model first'
+                "
+                :renderTag="renderVersionTag"
+                size="small"
+                :value="versionValue"
+                @update:value="selectModelVersion"
+              />
+            </NFormItem>
+            <p v-if="stagedResourceId" class="model-message" role="status">
+              Choose a version. Current:
+              {{
+                selectedModel
+                  ? `${selectedModel.displayName} · ${selectedModel.versionName}`
+                  : 'None'
+              }}.
+              <NButton
+                aria-label="Cancel model choice"
+                size="tiny"
+                text
+                @click="stagedResourceId = null"
+              >
+                Cancel
+              </NButton>
+            </p>
+            <div v-if="selectedModel && !stagedResourceId" class="model-summary">
+              <NTag :bordered="false" size="tiny">
+                {{
+                  selectedModel.baseModelFamily === 'anima'
+                    ? 'Anima'
+                    : selectedModel.baseModelFamily === 'illustrious'
+                      ? 'Illustrious'
+                      : 'Unknown family'
+                }}
+              </NTag>
+              <span v-if="selectedModel.predictionType" class="model-prediction">
+                Prediction: {{ selectedModel.predictionType }}
+              </span>
+            </div>
+            <p v-if="modelCatalogError" class="model-message" role="alert">
+              Could not check installed models. {{ modelCatalogError }}
+            </p>
+            <p v-else-if="modelDiagnostic" class="model-message" role="status">
+              {{ modelDiagnostic }}
+            </p>
+            <p v-else-if="modelCatalogLoaded && models.length === 0" class="model-message">
+              No checkpoints installed yet.
+            </p>
+          </div>
           <div class="prompt-field">
             <span class="field-label">Positive prompt</span>
             <PlainPromptEditor
@@ -504,6 +787,46 @@ function applyFitBbox() {
 .field-label {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-meta);
+}
+
+.model-fields {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.model-heading,
+.model-actions,
+.model-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-heading {
+  justify-content: space-between;
+}
+
+.model-actions {
+  gap: 6px;
+}
+
+.model-fields :deep(.n-form-item),
+.model-fields :deep(.n-select) {
+  width: 100%;
+}
+
+.model-prediction {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-meta);
+}
+
+.model-summary {
+  flex-wrap: wrap;
+}
+
+.project-settings .model-message {
+  margin: 0;
 }
 
 .seed-fields {

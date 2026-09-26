@@ -35,8 +35,10 @@ confirmation states are not production evidence from this prototype.
 
 The separate production Electron Model Manager implements local CivitAI URL
 install, exact-version repair, SQLite catalog/queue, manual update check and
-default selection. Worker loading and Project/Preset/Result integration remain
-later-phase work.
+default selection. Production Project now selects an installed checkpoint and
+exact version from that catalog and preserves the chosen reference in `.igs`.
+Worker loading, LoRA/VAE/embedding Project controls and Preset/Result handoff
+remain later-phase work.
 
 Useful InvokeAI areas:
 
@@ -544,7 +546,7 @@ type ModelInstallStatus =
   | 'identifying'
   | 'completed'
   | 'failed'
-  | 'canceled';
+  | 'canceled'
 ```
 
 Each install queue row should show:

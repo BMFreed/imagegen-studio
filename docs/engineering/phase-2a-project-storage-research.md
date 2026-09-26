@@ -495,3 +495,47 @@ The final `lstat`/`unlink` pair for Move cannot atomically exclude a concurrent
 external process replacing the selected source path; that concurrency boundary
 needs a separate policy before it can be claimed as supported. PP-007 remains
 an MVP promise with public readiness pending these boundaries.
+
+## Exact installed checkpoint selection in Project
+
+The production Project settings now list checkpoint resources and their
+installed versions from the Model Manager registry. A new selection uses the
+resource's available Default version when possible. If Default is unavailable
+but another version is ready, Project asks the user to choose that version
+explicitly without changing the current document meanwhile. An already saved
+Project reference is never
+replaced because the library Default changed or its exact file disappeared.
+The main process accepts only resource/version IDs, verifies the selected
+file's SHA-256 and required pinned Anima companions, then copies the exact
+identity and source metadata into the Project draft. This is a document edit:
+dirty state, crash shadow, explicit Save and `.igs` reopen use the established
+Project lifecycle. Clearing the selection is explicit.
+
+The real-service tests use the Model Manager SQLite repository and temporary
+managed files to check exact-version Save/reopen, Default independence, missing
+and corrupt files, and clearing. IPC validation and the Electron smoke reject
+forged selection payloads. The focused resolver
+mutation that accepted a missing primary file made the missing/corrupt test
+fail and was reverted. A second mutation that restored full cold catalog
+hashing made the provisional-readiness test fail and was reverted. The full
+`pnpm run app:test` run passed 236/236;
+`pnpm run typecheck`, `pnpm run lint` and `pnpm run app:smoke` passed. The
+Electron smoke selects and switches versions through the Project UI, reads the
+actual saved `.igs`, checks reopening and a missing-file diagnostic. Its seeded
+files are small synthetic bytes; this verifies the selector and persistence
+path, not CivitAI installation of real weights or worker loading/inference.
+To keep a large library usable, catalog loading checks file metadata and
+reuses cached full-verification results without hashing every model file.
+The displayed `ready` is provisional until the exact selection's forced hash
+check; a same-size modified file can fail that check after appearing in the
+catalog. The failure does not change the saved Project selection.
+
+The saved `.igs` contains both local registry IDs and portable CivitAI/version/
+file-hash metadata. This slice does not yet rebind those local IDs after the
+same exact resource is installed on another computer: a copied Project remains
+readable and reports the local selection as unavailable until the user selects
+a local version. Exact portable relinking needs an explicit identity rule and
+separate test before PP-007 can claim that recovery. Generation enqueue must
+recheck exact files at the job boundary; the selector alone cannot guarantee
+that a file remains available later. Phase 2B still owns that job, model
+loading, results and provenance.

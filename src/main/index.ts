@@ -1,11 +1,13 @@
 import {
   ipcChannels,
   isProjectGenerationDraftChange,
+  isProjectGenerationModelSelection,
   isProjectRasterLayerChange,
 } from '../shared/api.js'
 import type {
   ApiResult,
   ProjectGenerationDraftChange,
+  ProjectGenerationModelSelection,
   ProjectRasterLayerChange,
   RuntimeStatus,
 } from '../shared/api.js'
@@ -504,6 +506,7 @@ if (!gotInstanceLock) {
           } catch (error) {
             if (
               error instanceof ProjectServiceError ||
+              error instanceof ModelServiceError ||
               error instanceof ProjectAutosaveError ||
               error instanceof ProjectSessionError ||
               error instanceof ProjectIndexError ||
@@ -604,6 +607,28 @@ if (!gotInstanceLock) {
           (args[1] === 'recover' || args[1] === 'discard'),
         (projectId, decision) =>
           projectService.resolveRecovery(projectId as string, decision as 'discard' | 'recover'),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.setGenerationModel,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectGenerationModelSelection(args[1]),
+        async (tabId, selection) => {
+          const chosen = selection as ProjectGenerationModelSelection
+          if (chosen === null) {
+            return await projectService.setGenerationModel(tabId as string, null)
+          }
+          if (!modelStorageAvailable) {
+            throw new ModelServiceError(
+              'MODEL_STORAGE_UNAVAILABLE',
+              'Managed model storage needs repair.',
+            )
+          }
+          const model = await modelService.resolveGenerationCheckpoint(
+            chosen.resourceId,
+            chosen.versionId,
+          )
+          return await projectService.setGenerationModel(tabId as string, model)
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.setPrimaryBbox,

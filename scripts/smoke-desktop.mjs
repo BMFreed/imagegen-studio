@@ -18,7 +18,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { crc32, deflateSync } from 'node:zlib'
 import { _electron as electron } from '@playwright/test'
 import electronBinary from 'electron'
+import { openAppDatabase } from '../src/main/db/database.ts'
 import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
+import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 
@@ -56,6 +58,80 @@ const environment = {
   XDG_DATA_HOME: path.join(dataRoot, 'data'),
 }
 delete environment.ELECTRON_RUN_AS_NODE
+
+async function seedInstalledCheckpointVersions() {
+  const appDataRoot = path.join(dataRoot, 'data', 'imagegen-studio')
+  const modelRoot = path.join(appDataRoot, 'models')
+  mkdirSync(modelRoot, { recursive: true })
+  const database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  const repository = new ModelRepository(database.db)
+  const publish = async (
+    versionId,
+    fileId,
+    predictionType,
+    modelId = 90_001,
+    displayName = 'Illustrious Smoke Checkpoint',
+  ) => {
+    const filename = `smoke-checkpoint-v${versionId}.safetensors`
+    const managedPath = path.join(modelRoot, filename)
+    const bytes = Buffer.from(`verified smoke checkpoint version ${versionId}`)
+    writeFileSync(managedPath, bytes)
+    return await repository.publishVerifiedInstallation({
+      primary: {
+        file: {
+          managedPath,
+          originalFilename: filename,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          sizeBytes: bytes.length,
+          verifiedAt: new Date().toISOString(),
+        },
+        resource: {
+          creator: 'Smoke fixture',
+          displayName,
+          source: { kind: 'civitai', modelId },
+          sourceMetadata: { source: 'smoke' },
+          type: 'checkpoint',
+        },
+        version: {
+          baseModelFamily: 'illustrious',
+          format: 'safetensors',
+          name: `v${versionId}`,
+          predictionType,
+          source: {
+            expectedSha256: createHash('sha256').update(bytes).digest('hex'),
+            fileId,
+            kind: 'civitai',
+            versionId,
+          },
+          sourceMetadata: { source: 'smoke' },
+        },
+      },
+    })
+  }
+  try {
+    const first = await publish(901, 9_001, 'epsilon')
+    const second = await publish(902, 9_002, 'v_prediction')
+    const alternate = await publish(903, 9_003, 'epsilon', 90_002, 'Alternate Smoke Checkpoint')
+    const unavailableDefault = await publish(
+      904,
+      9_004,
+      'epsilon',
+      90_002,
+      'Alternate Smoke Checkpoint',
+    )
+    await repository.setDefaultVersion(alternate.resourceId, unavailableDefault.versionId)
+    return {
+      alternate,
+      first,
+      firstPath: path.join(modelRoot, 'smoke-checkpoint-v901.safetensors'),
+      second,
+      secondPath: path.join(modelRoot, 'smoke-checkpoint-v902.safetensors'),
+      unavailableDefaultPath: path.join(modelRoot, 'smoke-checkpoint-v904.safetensors'),
+    }
+  } finally {
+    await database.close()
+  }
+}
 
 async function waitForShadowBbox(manifestPath, expectedBbox) {
   const deadline = Date.now() + 15_000
@@ -197,6 +273,7 @@ try {
   )
   await window.getByRole('button', { name: 'Close Model Manager' }).click()
   await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
+  const checkpointVersions = await seedInstalledCheckpointVersions()
 
   const projectTitle = 'Smoke Project'
   await window.getByRole('button', { name: 'New Project' }).first().click()
@@ -264,6 +341,134 @@ try {
   assert.equal(reopenedProject.value.kind, 'opened')
   assert.deepEqual(reopenedProject.value.tab.primaryBbox, { x: 72, y: 0, width: 704, height: 512 })
   assert.equal(reopenedProject.value.tab.dirty, false)
+
+  const projectRegion = window.getByRole('region', { name: `Project ${projectTitle}` })
+  await projectRegion.locator('[aria-label="Generation model"]').click()
+  await window.getByText('Illustrious Smoke Checkpoint', { exact: true }).last().click()
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.model?.localVersionId === checkpointVersions.first.versionId,
+    'The Project model selection did not reach the document',
+  )
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const firstModelPackage = await readIgsPackage(packagePath)
+  assert.equal(
+    firstModelPackage.project.generationDraft.model?.fileSha256,
+    createHash('sha256').update(readFileSync(checkpointVersions.firstPath)).digest('hex'),
+  )
+  assert.equal(
+    firstModelPackage.project.generationDraft.model?.localVersionId,
+    checkpointVersions.first.versionId,
+  )
+
+  const newDefault = await window.evaluate(
+    ({ resourceId, versionId }) => window.api.models.setDefaultVersion(resourceId, versionId),
+    {
+      resourceId: checkpointVersions.first.resourceId,
+      versionId: checkpointVersions.second.versionId,
+    },
+  )
+  assert.equal(newDefault.ok, true)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  assert.equal(
+    (await window.evaluate((id) => window.api.projects.open(id), projectId)).value.tab
+      .generationDraft.model.localVersionId,
+    checkpointVersions.first.versionId,
+    'Changing Model Manager Default must not replace an existing Project reference',
+  )
+  await projectRegion.locator('[aria-label="Model version"]').click()
+  await window.getByText('v902', { exact: true }).last().click()
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.model?.localVersionId === checkpointVersions.second.versionId,
+    'The exact model version change did not reach the document',
+  )
+  if (process.env.IMAGEGEN_SMOKE_PROJECT_MODEL_SCREENSHOT) {
+    await projectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
+    await delay(250)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_MODEL_SCREENSHOT })
+  }
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const selectedModelPackage = await readIgsPackage(packagePath)
+  assert.equal(
+    selectedModelPackage.project.generationDraft.model?.localVersionId,
+    checkpointVersions.second.versionId,
+  )
+  assert.equal(selectedModelPackage.project.generationDraft.model?.predictionType, 'v_prediction')
+  await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
+  await window.getByRole('tab', { name: 'Home' }).click()
+  await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  const reopenedModel = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(reopenedModel.ok, true)
+  assert.equal(
+    reopenedModel.value.tab.generationDraft.model?.localVersionId,
+    checkpointVersions.second.versionId,
+  )
+  const selectedModelBytes = readFileSync(checkpointVersions.secondPath)
+  rmSync(checkpointVersions.secondPath)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  await projectRegion.getByText(/exact selected model version is no longer installed/).waitFor()
+  assert.equal(
+    (await window.evaluate((id) => window.api.projects.open(id), projectId)).value.tab
+      .generationDraft.model.localVersionId,
+    checkpointVersions.second.versionId,
+    'A missing exact file must not silently select the new catalog default',
+  )
+  writeFileSync(checkpointVersions.secondPath, selectedModelBytes)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  await projectRegion
+    .getByText(/exact selected model version is no longer installed/)
+    .waitFor({ state: 'detached' })
+  rmSync(checkpointVersions.unavailableDefaultPath)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  const chooseAlternateResource = async () => {
+    await projectRegion.locator('[aria-label="Generation model"]').click()
+    await window.getByText('Alternate Smoke Checkpoint', { exact: true }).last().click()
+    await projectRegion.getByText(/Choose a version\. Current:/).waitFor()
+  }
+  await chooseAlternateResource()
+  if (process.env.IMAGEGEN_SMOKE_PROJECT_MODEL_CHOICE_SCREENSHOT) {
+    await projectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
+    await delay(250)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_MODEL_CHOICE_SCREENSHOT })
+  }
+  const stagedModelTab = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(stagedModelTab.ok, true)
+  assert.equal(
+    stagedModelTab.value.tab.generationDraft.model?.localVersionId,
+    checkpointVersions.second.versionId,
+  )
+  assert.equal(stagedModelTab.value.tab.dirty, false)
+  await projectRegion.getByRole('button', { name: 'Cancel model choice' }).click()
+  await projectRegion.getByText(/Choose a version\. Current:/).waitFor({ state: 'detached' })
+  await chooseAlternateResource()
+  await projectRegion.locator('[aria-label="Model version"]').click()
+  await window.getByText('v903', { exact: true }).last().click()
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.model?.localVersionId === checkpointVersions.alternate.versionId,
+    'Selecting an available alternate version did not update the Project',
+  )
+  const forgedModelSelection = await window.evaluate(
+    ({ id, resourceId, versionId }) =>
+      window.api.projects.setGenerationModel(id, {
+        fileSha256: 'a'.repeat(64),
+        resourceId,
+        versionId,
+      }),
+    {
+      id: projectId,
+      resourceId: checkpointVersions.first.resourceId,
+      versionId: checkpointVersions.first.versionId,
+    },
+  )
+  assert.equal(forgedModelSelection.ok, false)
+  assert.equal(forgedModelSelection.error.code, 'IPC_INVALID_CALLER')
 
   const receivedSecondInstance = application.evaluate(
     ({ app }) => new Promise((resolve) => app.once('second-instance', () => resolve(true))),

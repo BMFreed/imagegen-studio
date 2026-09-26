@@ -30,7 +30,7 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md): prototype shell; production preferences не проверены                                                                                                                                                                                                                                                                                                                                                           |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): Model Manager install явный; Project/worker handoff ещё не реализован                                                                                                                                                                                                                                                                                                                                            |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): prototype managers; resource handoff/history неполны                                                                                                                                                                                                                                                                                                                                                              |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют                                                                                                                                                                                                                                                                                                |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair и точный Project checkpoint/version ref проверены с SQLite, файлами и Electron; загрузка worker и остальные resource selectors отсутствуют                                                                                                                                                                                                                            |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                                                                    |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                             |
 | PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#project-generation-draft-editing): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed Save/reopen и native-close Save; тесты проверяют frozen target без Generate; staging recovery и release runtime отсутствуют |
@@ -160,8 +160,10 @@ Autocomplete, явный creatable selector и command palette допустим�
 **Публичный статус:** пока не обещать как готовую возможность. В production
 Model Manager реализованы локальная установка из CivitAI URL, проверка целостности,
 repair и независимые версии; их пути проверены с SQLite и файловой системой.
-Загрузка моделей в worker, выбор в Project, связи с Presets и provenance ещё не
-реализованы и не подтверждены сквозным сценарием.
+Production Project выбирает точную установленную версию checkpoint и сохраняет
+проверенную main ссылку в `.igs`; смена Default и исчезновение файла не
+подменяют этот выбор. Загрузка моделей в worker, остальные resource selectors,
+связи с Presets и provenance ещё не реализованы.
 
 ### Обещание
 
@@ -315,6 +317,11 @@ dirty/shadow/явный Save; они не устанавливают факти�
 Electron smoke проверяет немедленный Save→`.igs`→reopen и native `app.quit()` с
 Save сразу после ввода prompt. Некорректный Fixed seed блокирует Save и
 возвращается к последнему валидному значению draft при потере фокуса.
+Project также сохраняет точную выбранную версию установленного checkpoint и
+не заменяет её при смене Default. Скопированный на другой компьютер `.igs`
+пока не сопоставляет сохранённые локальные ID с новой установкой того же
+CivitAI-файла: метаданные остаются читаемыми, явное portable relink ещё не
+реализовано.
 Не готовы полный generation pipeline/export, устанавливаемый
 Linux/NVIDIA runtime и восстановление непринятых результатов. Home загружает
 подписанные thumbnails из проверенного `.igs` или пересобираемого cache.

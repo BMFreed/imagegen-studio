@@ -184,9 +184,11 @@ token не сохраняется plaintext и требующий его имп�
 очередь и явную смену default; Anima checkpoint ставится с закреплёнными
 Qwen3/VAE, а `.pth` upscaler сохраняется без исполнения файла в main process.
 SQLite/filesystem и Electron IPC проверены локальными тестами, а version flow в
-Vue-прототипе — Playwright. Живую загрузку с CivitAI, полный Anima download,
-загрузку моделей worker и выбор в Project эти проверки не подтверждают. По этой
-причине PP-004 остаётся неполным до следующих фаз.
+Vue-прототипе — Playwright. Production Project теперь выбирает установленный
+checkpoint и точную версию через main-verified registry и сохраняет reference
+в `.igs`; смена default не заменяет существующий выбор. Живую загрузку с
+CivitAI, полный Anima download и загрузку моделей worker эти проверки не
+подтверждают. По этой причине PP-004 остаётся неполным до следующих фаз.
 
 ## Фаза 2A. Runtime, Project document и реальное сохранение
 
@@ -265,6 +267,11 @@ activation token исчез; повторный ввод токена не ве�
 resource-aware picker/autocomplete. Новые refs этот UI пока не создаёт.
 Electron smoke проверяет немедленный Save→`.igs`→reopen и Save после native
 window close: последний ввод prompt не теряется в очереди IPC.
+Связь с Model Manager добавляет выбор точной установленной версии checkpoint:
+renderer отправляет только ID ресурса/версии, main заново проверяет файл и
+Anima-компоненты и сохраняет exact ref с SHA/metadata. Electron smoke проверяет
+выбор, смену Default без подмены сохранённой версии, явное переключение версии,
+Save/reopen и диагностику отсутствующего файла. Worker ещё не загружает модель.
 Выбор `Reuse` не означает, что уже доступен фактический seed: operational
 cursor и fallback к сохранённому `.igs` snapshot будут подключены к enqueue в
 фазе 2B, а редактирование draft их не обновляет.

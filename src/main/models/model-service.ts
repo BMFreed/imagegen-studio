@@ -4,6 +4,7 @@ import type {
   ModelImportPreview,
   ModelVersionView,
 } from '../../shared/api.js'
+import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -183,13 +184,16 @@ export class ModelService {
               : [],
             versions: await Promise.all(
               model.versions.map(async (version): Promise<ModelVersionView> => {
-                const primaryStatus = await this.actualFileStatus(version.file)
+                const primaryStatus = await this.catalogFileStatus(version.file)
                 const dependencyIssues: string[] = []
                 if (model.type === 'checkpoint' && version.baseModelFamily === 'anima') {
                   for (const role of ['qwen3_encoder', 'vae'] as const) {
                     const dependencyId = version.dependencyVersionIds[role]
                     const dependency = dependencyId ? versionsById.get(dependencyId) : null
-                    if (!dependency || (await this.actualFileStatus(dependency.file)) !== 'ready') {
+                    if (
+                      !dependency ||
+                      (await this.catalogFileStatus(dependency.file)) !== 'ready'
+                    ) {
                       dependencyIssues.push(role)
                     }
                   }
@@ -440,6 +444,92 @@ export class ModelService {
     return token
   }
 
+  /** Resolve a user-picked exact checkpoint into a portable Project ref, never a renderer claim. */
+  async resolveGenerationCheckpoint(
+    resourceId: string,
+    versionId: string,
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuid.test(resourceId) || !uuid.test(versionId)) {
+      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
+    }
+    const installed = await this.repository.listInstalled()
+    const resource = installed.find((item) => item.id === resourceId)
+    const version = resource?.versions.find((item) => item.id === versionId)
+    if (
+      !resource ||
+      resource.type !== 'checkpoint' ||
+      resource.source.kind !== 'civitai' ||
+      !version ||
+      version.civitaiFileId === null ||
+      version.civitaiVersionId === null
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_UNAVAILABLE',
+        'This checkpoint version is not installed.',
+      )
+    }
+    if (version.baseModelFamily !== 'illustrious' && version.baseModelFamily !== 'anima') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'This checkpoint does not have a supported model family.',
+      )
+    }
+    const status = await this.actualFileStatus(version.file, true)
+    if (status !== 'ready') {
+      throw new ModelServiceError(
+        status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
+        status === 'missing'
+          ? 'The selected checkpoint file is missing.'
+          : 'The selected checkpoint file failed verification.',
+      )
+    }
+    if (version.baseModelFamily === 'anima') {
+      const supported = resolveAnimaDependencies(version.file.sha256)
+      if (!supported.supported) {
+        throw new ModelServiceError(
+          'ANIMA_UNSUPPORTED_CHECKPOINT',
+          'Only the verified Anima Base 1.0 checkpoint is supported in this release.',
+        )
+      }
+      for (const [role, artifact] of [
+        ['qwen3_encoder', ANIMA_QWEN3_0_6B_ENCODER],
+        ['vae', ANIMA_QWEN_IMAGE_VAE],
+      ] as const) {
+        const dependencyId = version.dependencyVersionIds[role]
+        const dependencyResource = installed.find((item) =>
+          item.versions.some((candidate) => candidate.id === dependencyId),
+        )
+        const dependency = dependencyResource?.versions.find((item) => item.id === dependencyId)
+        if (
+          dependencyResource?.type !== role ||
+          dependencyResource.source.kind !== 'supported_dependency' ||
+          dependency?.baseModelFamily !== 'anima' ||
+          dependency.file.sha256 !== artifact.sha256 ||
+          !(await this.isVerifiedFile(dependency.file))
+        ) {
+          throw new ModelServiceError(
+            'ANIMA_DEPENDENCY_UNAVAILABLE',
+            `The required Anima ${role} is missing or failed verification.`,
+          )
+        }
+      }
+    }
+    return {
+      baseModelFamily: version.baseModelFamily,
+      civitaiFileId: version.civitaiFileId,
+      civitaiModelId: resource.source.modelId,
+      civitaiVersionId: version.civitaiVersionId,
+      displayName: resource.displayName,
+      fileSha256: version.file.sha256,
+      kind: 'checkpoint',
+      localModelId: resource.id,
+      localVersionId: version.id,
+      predictionType: version.predictionType,
+      versionName: version.name,
+    }
+  }
+
   async saveToken(token: string): Promise<CivitaiTokenStatus> {
     validateCivitaiToken(token)
     const availability = await this.tokenStore.getAvailability()
@@ -545,6 +635,37 @@ export class ModelService {
           this.fileStatusInFlight.delete(key)
         }
       }
+    } catch (error) {
+      this.fileStatusCache.delete(file.managedPath)
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'corrupt'
+    }
+  }
+
+  /**
+   * Fast browsing status. `ready` is provisional on a cold catalog: SQLite says the file was
+   * verified at install and lstat still matches its size/type, but no bytes are read here. Reuse a
+   * current fingerprint-matched full verification when available. Selecting an exact Project
+   * version, setting a default, and planning repair must still force SHA-256 verification.
+   */
+  private async catalogFileStatus(
+    file: InstalledModelFile,
+  ): Promise<'corrupt' | 'missing' | 'ready'> {
+    if (file.status === 'corrupt') {
+      this.fileStatusCache.delete(file.managedPath)
+      return 'corrupt'
+    }
+    try {
+      const stat = await lstat(file.managedPath, { bigint: true })
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== BigInt(file.sizeBytes)) {
+        this.fileStatusCache.delete(file.managedPath)
+        return 'corrupt'
+      }
+      const cached = this.fileStatusCache.get(file.managedPath)
+      const fingerprint = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
+      if (cached?.fingerprint === fingerprint && cached.sha256 === file.sha256) {
+        return cached.status
+      }
+      return file.status === 'missing' ? 'missing' : 'ready'
     } catch (error) {
       this.fileStatusCache.delete(file.managedPath)
       return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'corrupt'

@@ -728,6 +728,126 @@ test('repairing a missing managed file preserves the exact CivitAI version and d
   )
 })
 
+test('generation checkpoint resolution rejects wrong types, unknown versions, unsupported families and changed bytes', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  await withModelHarness(
+    civitaiApi({ requests }),
+    new ModelDownloader(),
+    async ({ databaseFile, repository, root, service }) => {
+      const publish = async (
+        modelId: number,
+        versionId: number,
+        type: 'checkpoint' | 'lora',
+        family: 'anima' | 'illustrious' | null,
+      ) => {
+        const bytes = Buffer.from(`verified ${type} ${modelId}/${versionId}`)
+        const managedPath = path.join(root, `${modelId}-${versionId}.safetensors`)
+        await writeFile(managedPath, bytes)
+        const digest = sha256(bytes)
+        const published = await repository.publishVerifiedInstallation({
+          primary: {
+            file: {
+              managedPath,
+              originalFilename: `${modelId}-${versionId}.safetensors`,
+              sha256: digest,
+              sizeBytes: bytes.length,
+              verifiedAt: new Date().toISOString(),
+            },
+            resource: {
+              displayName: `${type} ${modelId}`,
+              source: { kind: 'civitai', modelId },
+              sourceMetadata: {},
+              type,
+            },
+            version: {
+              baseModelFamily: family,
+              format: 'SafeTensor',
+              name: `v${versionId}`,
+              source: {
+                expectedSha256: digest,
+                fileId: versionId + 700,
+                kind: 'civitai',
+                versionId,
+              },
+              sourceMetadata: {},
+            },
+          },
+        })
+        return { bytes, managedPath, published }
+      }
+      const good = await publish(100, 10, 'checkpoint', 'illustrious')
+      const lora = await publish(101, 11, 'lora', 'illustrious')
+      const unclassified = await publish(102, 12, 'checkpoint', 'illustrious')
+      const unpinnedAnima = await publish(103, 13, 'checkpoint', 'illustrious')
+      // Simulate a legacy or metadata-incomplete installed row; new selections must reject it.
+      const sqlite = new Database(databaseFile)
+      try {
+        sqlite
+          .prepare('UPDATE model_resource_version SET base_model_family = NULL WHERE id = ?')
+          .run(unclassified.published.versionId)
+        sqlite
+          .prepare("UPDATE model_resource_version SET base_model_family = 'anima' WHERE id = ?")
+          .run(unpinnedAnima.published.versionId)
+      } finally {
+        sqlite.close()
+      }
+      const exact = await service.resolveGenerationCheckpoint(
+        good.published.resourceId,
+        good.published.versionId,
+      )
+      assert.equal(exact.fileSha256, sha256(good.bytes))
+      assert.equal(exact.predictionType, null)
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(good.published.resourceId, lora.published.versionId),
+        { code: 'MODEL_VERSION_UNAVAILABLE' },
+      )
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(lora.published.resourceId, lora.published.versionId),
+        { code: 'MODEL_VERSION_UNAVAILABLE' },
+      )
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(
+          unclassified.published.resourceId,
+          unclassified.published.versionId,
+        ),
+        { code: 'MODEL_FAMILY_UNSUPPORTED' },
+      )
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(
+          unpinnedAnima.published.resourceId,
+          unpinnedAnima.published.versionId,
+        ),
+        { code: 'ANIMA_UNSUPPORTED_CHECKPOINT' },
+      )
+      await writeFile(good.managedPath, Buffer.concat([good.bytes, Buffer.from('x')]))
+      const wrongSize = (await service.getCatalog()).find(
+        (item) => item.id === good.published.resourceId,
+      )
+      assert.equal(wrongSize?.versions[0]?.fileStatus, 'corrupt')
+      await writeFile(good.managedPath, good.bytes)
+      await writeFile(good.managedPath, Buffer.alloc(good.bytes.length, 0x78))
+      // Browsing is stat-only on a cold fingerprint; exact selection must detect same-size edits.
+      const provisional = (await service.getCatalog()).find(
+        (item) => item.id === good.published.resourceId,
+      )
+      assert.equal(provisional?.versions[0]?.fileStatus, 'ready')
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(good.published.resourceId, good.published.versionId),
+        { code: 'MODEL_FILE_CORRUPT' },
+      )
+      const verified = (await service.getCatalog()).find(
+        (item) => item.id === good.published.resourceId,
+      )
+      assert.equal(verified?.versions[0]?.fileStatus, 'corrupt')
+      await rm(good.managedPath)
+      await assert.rejects(
+        service.resolveGenerationCheckpoint(good.published.resourceId, good.published.versionId),
+        { code: 'MODEL_FILE_MISSING' },
+      )
+    },
+  )
+})
+
 test('repair replaces a same-size corrupted file and preserves its resource and version identity', async () => {
   const bytes = Buffer.from('checkpoint bytes with intact size')
   const corruptBytes = Buffer.alloc(bytes.length, 0x58)
@@ -763,9 +883,10 @@ test('repair replaces a same-size corrupted file and preserves its resource and 
       await writeFile(originalVersion.file.managedPath, corruptBytes)
       assert.equal((await stat(originalVersion.file.managedPath)).size, bytes.length)
       assert.notDeepEqual(await readFile(originalVersion.file.managedPath), bytes)
-      assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'corrupt')
+      assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'ready')
 
       const repairPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'corrupt')
       assert.equal(repairPreview.files[0]?.alreadyInstalled, false)
       assert.equal(repairPreview.files[0]?.needsRepair, true)
       assert.equal(repairPreview.files[0]?.reusesInstalledFile, false)

@@ -1,4 +1,7 @@
-import { isProjectGenerationDraftChange } from '../../shared/api.js'
+import {
+  isProjectGenerationDraftChange,
+  isProjectGenerationModelSelection,
+} from '../../shared/api.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -23,6 +26,10 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
+import { CivitaiClient } from '../models/civitai-client.js'
+import { CivitaiTokenStore } from '../models/civitai-token-store.js'
+import { ModelRepository } from '../models/model-repository.js'
+import { ModelService } from '../models/model-service.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
@@ -177,6 +184,8 @@ async function openTwoLayerProject(
 async function withService(
   run: (context: {
     dataRoot: string
+    modelRepository: ModelRepository
+    modelService: ModelService
     repository: ProjectIndexRepository
     service: ProjectService
     shadow: ProjectShadowStore
@@ -184,6 +193,20 @@ async function withService(
 ): Promise<void> {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-service-'))
   const database = openAppDatabase(dataRoot, migrations)
+  const modelRepository = new ModelRepository(database.db)
+  const modelService = new ModelService(
+    modelRepository,
+    new CivitaiClient(),
+    new CivitaiTokenStore(
+      {
+        decryptStringAsync: async () => ({ result: '', shouldReEncrypt: false }),
+        encryptStringAsync: async () => Buffer.alloc(0),
+        getSelectedStorageBackend: () => 'gnome_libsecret',
+        isAsyncEncryptionAvailable: async () => true,
+      },
+      dataRoot,
+    ),
+  )
   const repository = new ProjectIndexRepository(database.db)
   const shadow = new ProjectShadowStore(path.join(dataRoot, 'autosave'))
   const service = new ProjectService({
@@ -194,7 +217,7 @@ async function withService(
     shadow,
   })
   try {
-    await run({ dataRoot, repository, service, shadow })
+    await run({ dataRoot, modelRepository, modelService, repository, service, shadow })
   } finally {
     await database.close()
     await rm(dataRoot, { force: true, recursive: true })
@@ -436,6 +459,142 @@ test('Project prompt and seed edits survive shadow recovery, Save and reopen wit
     )
     await restarted.close(created.id)
   })
+})
+
+test('Project keeps a registry-selected exact checkpoint through shadow, Save, default change and missing file', async () => {
+  await withService(
+    async ({ dataRoot, modelRepository, modelService, repository, service, shadow }) => {
+      const created = await service.create({ height: 512, title: 'Exact model', width: 512 })
+      const savedPath = (await repository.listProjects())[0].canonicalPath
+      const publishVersion = async (versionId: number) => {
+        const bytes = Buffer.from(`verified checkpoint v${versionId}`)
+        const managedPath = path.join(dataRoot, `checkpoint-${versionId}.safetensors`)
+        await writeFile(managedPath, bytes)
+        const digest = createHash('sha256').update(bytes).digest('hex')
+        const published = await modelRepository.publishVerifiedInstallation({
+          primary: {
+            file: {
+              managedPath,
+              originalFilename: `checkpoint-${versionId}.safetensors`,
+              sha256: digest,
+              sizeBytes: bytes.length,
+              verifiedAt: new Date().toISOString(),
+            },
+            resource: {
+              displayName: 'Portrait checkpoint',
+              source: { kind: 'civitai', modelId: 42 },
+              sourceMetadata: {},
+              type: 'checkpoint',
+            },
+            version: {
+              baseModelFamily: 'illustrious',
+              format: 'SafeTensor',
+              name: `v${versionId}`,
+              predictionType: null,
+              source: {
+                expectedSha256: digest,
+                fileId: versionId + 700,
+                kind: 'civitai',
+                versionId,
+              },
+              sourceMetadata: {},
+            },
+          },
+        })
+        return { managedPath, published, sha256: digest }
+      }
+      const first = await publishVersion(7)
+      const second = await publishVersion(8)
+      assert.equal(first.published.resourceId, second.published.resourceId)
+
+      const selection = {
+        resourceId: first.published.resourceId,
+        versionId: first.published.versionId,
+      }
+      assert.equal(isProjectGenerationModelSelection(selection), true)
+      assert.equal(
+        isProjectGenerationModelSelection({ ...selection, fileSha256: first.sha256 }),
+        false,
+      )
+      assert.equal(
+        isProjectGenerationModelSelection({ ...selection, managedPath: first.managedPath }),
+        false,
+      )
+      assert.equal(isProjectGenerationModelSelection(null), true)
+      const exactRef = await modelService.resolveGenerationCheckpoint(
+        selection.resourceId,
+        selection.versionId,
+      )
+      assert.deepEqual(exactRef, {
+        baseModelFamily: 'illustrious',
+        civitaiFileId: 707,
+        civitaiModelId: 42,
+        civitaiVersionId: 7,
+        displayName: 'Portrait checkpoint',
+        fileSha256: first.sha256,
+        kind: 'checkpoint',
+        localModelId: selection.resourceId,
+        localVersionId: selection.versionId,
+        predictionType: null,
+        versionName: 'v7',
+      })
+      const selected = await service.setGenerationModel(created.id, exactRef)
+      assert.equal(selected.dirty, true)
+      assert.deepEqual(selected.generationDraft.model, exactRef)
+      assert.deepEqual(selected.generationDraft.seed, { policy: 'random', value: null })
+      await service.flushAutosave(created.id)
+      const oldSaved = await readIgsPackage(savedPath)
+      assert.equal(oldSaved.project.generationDraft.model, null)
+      const recovery = await shadow.inspect({ projectPath: savedPath, savedPackage: oldSaved })
+      assert.equal(recovery.status, 'recoverable')
+      if (recovery.status !== 'recoverable') {
+        throw new Error('The exact model did not reach the recovery shadow.')
+      }
+      assert.deepEqual(recovery.document.generationDraft.model, exactRef)
+
+      const saved = await service.save(created.id)
+      assert.equal(saved.tab.dirty, false)
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.model, exactRef)
+      await modelService.setDefaultVersion(second.published.resourceId, second.published.versionId)
+      assert.equal(
+        (await modelRepository.listInstalled())[0].defaultVersionId,
+        second.published.versionId,
+      )
+      await service.close(created.id)
+      const reopened = await service.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('The saved Project did not reopen.')
+      }
+      assert.deepEqual(reopened.tab.generationDraft.model, exactRef)
+      assert.equal((await service.setGenerationModel(created.id, exactRef)).dirty, false)
+
+      await service.close(created.id)
+      await rm(first.managedPath)
+      const withMissingFile = await service.open(created.id)
+      assert.equal(withMissingFile.kind, 'opened')
+      if (withMissingFile.kind !== 'opened') {
+        throw new Error('The Project with a missing model did not open.')
+      }
+      assert.deepEqual(withMissingFile.tab.generationDraft.model, exactRef)
+      await assert.rejects(
+        modelService.resolveGenerationCheckpoint(selection.resourceId, selection.versionId),
+        { code: 'MODEL_FILE_MISSING' },
+      )
+      assert.equal(service.getOpenTabs()[0].dirty, false)
+      assert.equal((await service.setGenerationModel(created.id, null)).dirty, true)
+      assert.equal((await service.setGenerationModel(created.id, null)).generationDraft.model, null)
+      await service.save(created.id)
+      await service.close(created.id)
+      const cleared = await service.open(created.id)
+      assert.equal(cleared.kind, 'opened')
+      if (cleared.kind === 'opened') {
+        assert.equal(cleared.tab.generationDraft.model, null)
+        assert.equal((await service.setGenerationModel(created.id, null)).dirty, false)
+        await service.close(created.id)
+      }
+    },
+  )
 })
 
 test('Project prompt text retains only pre-existing embedding refs whose literal token remains', async () => {
