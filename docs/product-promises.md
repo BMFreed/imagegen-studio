@@ -33,7 +33,7 @@
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): локальные install/version/repair проверены через SQLite и файлы; worker и Project selectors отсутствуют                                                                                                                                                                                                                                                         |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                             |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                      |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#worker-rendered-project-previews): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas, Raster Layer controls, PNG import и embedded worker previews проверены в Electron с dev worker; staging recovery, Rebuild Preview, Home thumbnails и release runtime ещё не подтверждены |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#home-thumbnails-and-clean-preview-rebuild): Save/reopen, recovery, Move/Copy `.igs`, raster Canvas, Raster Layer controls, PNG import, embedded previews, Home thumbnails и clean Rebuild Preview проверены в Electron с dev worker; staging recovery и release runtime ещё не подтверждены |
 | PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                      |
 
 ### Статусы и доказательства
@@ -306,8 +306,11 @@ Electron проверяет видимость, opacity, blend mode, lock и п�
 preview из видимых Raster Layers; Electron smoke проверяет повторное чтение
 `.igs`, world-space rect и реальные пиксели обоих превью. При ошибке worker
 Save сохраняет слои с обозначенным placeholder. Не готовы compositor/export
-для генерации, Home thumbnails, clean Rebuild Preview, устанавливаемый
-Linux/NVIDIA runtime и восстановление непринятых результатов.
+для генерации, устанавливаемый Linux/NVIDIA runtime и восстановление
+непринятых результатов. Home теперь загружает подписанные thumbnails из
+проверенного `.igs` или пересобираемого cache. Clean Rebuild Preview проверен
+через UI→IPC→development worker→`.igs`: исходный документ и ассеты остаются
+неизменными, а worker failure сохраняет прежний пакет.
 
 ### Обещание
 

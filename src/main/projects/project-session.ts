@@ -50,6 +50,10 @@ export interface ProjectSaveInput {
   renderedPreview?: RenderedProjectPreview
 }
 
+export type ProjectRebuildPreviewInput =
+  | { emptyPreviewRevision: string; renderedPreview?: never }
+  | { emptyPreviewRevision?: never; renderedPreview: RenderedProjectPreview }
+
 export interface ProjectSaveOutcome {
   /** Rename/link committed the new `.igs`; derived index synchronization is a separate step. */
   committed: true
@@ -62,6 +66,7 @@ export interface ProjectSaveOutcome {
 export class ProjectSessionError extends Error {
   constructor(
     readonly code:
+      | 'PROJECT_DIRTY'
       | 'PROJECT_EXTERNAL_CHANGE'
       | 'PROJECT_INVALID_EDIT'
       | 'PROJECT_INVALID_PREVIEW'
@@ -185,6 +190,96 @@ export class ProjectSession {
     this.current = parseProjectDocumentV1({ ...candidate, documentRevision: revision })
   }
 
+  /**
+   * Replace only derived previews in a clean saved Project. Unlike Save, a missing or failed
+   * derivative is an error: maintenance must not replace a valid package with a placeholder.
+   */
+  async rebuildPreview(
+    input: ProjectRebuildPreviewInput,
+    options: { beforeReplace?: () => void } = {},
+  ): Promise<ProjectSaveOutcome> {
+    if (savingPaths.has(this.filePath)) {
+      throw new ProjectSessionError(
+        'PROJECT_SAVE_IN_PROGRESS',
+        'A Save for this Project is already running.',
+      )
+    }
+    this.assertRebuildReady()
+    const project = this.saved
+    assertPreviewInput(project, input, true)
+    savingPaths.add(this.filePath)
+    try {
+      return await withProjectPathLock(this.filePath, async () => {
+        this.assertRebuildReady()
+        const preview: IgsPackageWriteInput['preview'] = input.renderedPreview
+          ? {
+              merged: input.renderedPreview.merged,
+              rect: input.renderedPreview.rect,
+              status: 'rendered',
+              thumbnail: input.renderedPreview.thumbnail,
+            }
+          : {
+              ...(await readProjectPlaceholders(this.roots.placeholdersDir, 'empty')),
+              rect: null,
+              status: 'empty',
+            }
+
+        await mkdir(this.roots.scratchDir, { recursive: true })
+        const scratch = await mkdtemp(
+          path.join(await realpath(this.roots.scratchDir), 'igs-rebuild-'),
+        )
+        try {
+          const projectJson = await this.savedPackage.readMember('project.json')
+          const assets: Record<string, IgsAssetSource> = {}
+          const memberPaths = new Set(
+            project.layers.flatMap((layer) => [
+              layer.asset.path,
+              ...(layer.sourceIccProfile ? [layer.sourceIccProfile.path] : []),
+            ]),
+          )
+          let index = 0
+          for (const memberPath of memberPaths) {
+            const destination = path.join(scratch, `${index++}.member`)
+            await this.savedPackage.extractMemberToFile(memberPath, destination)
+            assets[memberPath] = { sourcePath: destination }
+          }
+          const written = await saveIgsPackage(
+            this.filePath,
+            { assets, preview, project, projectJson },
+            {
+              beforeRename: async () => {
+                if (
+                  (await canonicalProjectPath(this.filePath)) !== this.filePath ||
+                  (await fileFingerprint(this.filePath)) !== this.savedFingerprint
+                ) {
+                  throw new ProjectSessionError(
+                    'PROJECT_EXTERNAL_CHANGE',
+                    'The saved Project changed before its preview could be rebuilt.',
+                  )
+                }
+                this.assertRebuildReady()
+                options.beforeReplace?.()
+                this.assertRebuildReady()
+              },
+            },
+          )
+          await this.refreshCommittedPackage(project)
+          return {
+            committed: true,
+            directorySynced: written.directorySynced,
+            reloadRequired: this.reloadRequired,
+          }
+        } finally {
+          await rm(scratch, { force: true, recursive: true }).catch((error: unknown) => {
+            process.emitWarning(`Project preview rebuild cleanup failed: ${String(error)}`)
+          })
+        }
+      })
+    } finally {
+      savingPaths.delete(this.filePath)
+    }
+  }
+
   /** Explicit Save. Candidate staging is not part of the input or the `.igs`. */
   async save(input: ProjectSaveInput = {}): Promise<ProjectSaveOutcome> {
     if (savingPaths.has(this.filePath)) {
@@ -204,6 +299,40 @@ export class ProjectSession {
       )
     } finally {
       savingPaths.delete(this.filePath)
+    }
+  }
+
+  private assertRebuildReady(): void {
+    if (this.reloadRequired) {
+      throw new ProjectSessionError('PROJECT_RELOAD_REQUIRED', 'Reopen the saved Project first.')
+    }
+    if (this.dirty || this.current.documentRevision !== this.saved.documentRevision) {
+      throw new ProjectSessionError(
+        'PROJECT_DIRTY',
+        'Save the Project changes before rebuilding its preview.',
+      )
+    }
+  }
+
+  private async refreshCommittedPackage(project: IgsProjectDocumentV1): Promise<void> {
+    try {
+      const before = await fileFingerprint(this.filePath)
+      const reopened = await readIgsPackage(this.filePath)
+      const fingerprint = await fileFingerprint(this.filePath)
+      if (
+        before !== fingerprint ||
+        reopened.project.documentId !== project.documentId ||
+        reopened.project.documentRevision !== project.documentRevision
+      ) {
+        throw new ProjectSessionError(
+          'PROJECT_EXTERNAL_CHANGE',
+          'The Project changed immediately after its package replacement.',
+        )
+      }
+      this.savedPackage = reopened
+      this.savedFingerprint = fingerprint
+    } catch {
+      this.reloadRequired = true
     }
   }
 
@@ -227,47 +356,7 @@ export class ProjectSession {
       }
     }
 
-    const visibleBounds = visibleRasterBounds(project)
-    if (input.renderedPreview && input.emptyPreviewRevision !== undefined) {
-      throw new ProjectSessionError(
-        'PROJECT_INVALID_PREVIEW',
-        'A Project preview cannot be both rendered and empty.',
-      )
-    }
-    if (
-      input.emptyPreviewRevision !== undefined &&
-      input.emptyPreviewRevision !== project.documentRevision
-    ) {
-      throw new ProjectSessionError(
-        'PROJECT_INVALID_PREVIEW',
-        'The empty preview belongs to a different Project revision.',
-      )
-    }
-    if (input.renderedPreview && !visibleBounds) {
-      throw new ProjectSessionError(
-        'PROJECT_INVALID_PREVIEW',
-        'An empty Project cannot have a rendered preview.',
-      )
-    }
-    if (
-      input.renderedPreview &&
-      input.renderedPreview.documentRevision !== project.documentRevision
-    ) {
-      throw new ProjectSessionError(
-        'PROJECT_INVALID_PREVIEW',
-        'The preview belongs to a different Project revision.',
-      )
-    }
-    if (
-      input.renderedPreview &&
-      visibleBounds &&
-      !containsRect(visibleBounds, input.renderedPreview.rect)
-    ) {
-      throw new ProjectSessionError(
-        'PROJECT_INVALID_PREVIEW',
-        'The preview lies outside this Project’s visible raster bounds.',
-      )
-    }
+    const visibleBounds = assertPreviewInput(project, input, false)
 
     const placeholderKind =
       input.emptyPreviewRevision !== undefined || !visibleBounds ? 'empty' : 'unavailable'
@@ -316,25 +405,7 @@ export class ProjectSession {
       if (contentKey(this.current) === contentKey(project)) {
         this.current = project
       }
-      try {
-        const before = await fileFingerprint(this.filePath)
-        const reopened = await readIgsPackage(this.filePath)
-        const fingerprint = await fileFingerprint(this.filePath)
-        if (
-          before !== fingerprint ||
-          reopened.project.documentId !== project.documentId ||
-          reopened.project.documentRevision !== project.documentRevision
-        ) {
-          throw new ProjectSessionError(
-            'PROJECT_EXTERNAL_CHANGE',
-            'The Project changed immediately after Save.',
-          )
-        }
-        this.savedPackage = reopened
-        this.savedFingerprint = fingerprint
-      } catch {
-        this.reloadRequired = true
-      }
+      await this.refreshCommittedPackage(project)
       return {
         committed: true,
         directorySynced: result.directorySynced,
@@ -348,6 +419,61 @@ export class ProjectSession {
       })
     }
   }
+}
+
+function assertPreviewInput(
+  project: IgsProjectDocumentV1,
+  input: Pick<ProjectSaveInput, 'emptyPreviewRevision' | 'renderedPreview'>,
+  requireExplicit: boolean,
+): IgsPreviewRectV1 | null {
+  const visibleBounds = visibleRasterBounds(project)
+  if (input.renderedPreview && input.emptyPreviewRevision !== undefined) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'A Project preview cannot be both rendered and empty.',
+    )
+  }
+  if (requireExplicit && !input.renderedPreview && input.emptyPreviewRevision === undefined) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'A rebuilt Project preview requires an exact derivative.',
+    )
+  }
+  if (
+    input.emptyPreviewRevision !== undefined &&
+    input.emptyPreviewRevision !== project.documentRevision
+  ) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'The empty preview belongs to a different Project revision.',
+    )
+  }
+  if (input.renderedPreview && !visibleBounds) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'An empty Project cannot have a rendered preview.',
+    )
+  }
+  if (
+    input.renderedPreview &&
+    input.renderedPreview.documentRevision !== project.documentRevision
+  ) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'The preview belongs to a different Project revision.',
+    )
+  }
+  if (
+    input.renderedPreview &&
+    visibleBounds &&
+    !containsRect(visibleBounds, input.renderedPreview.rect)
+  ) {
+    throw new ProjectSessionError(
+      'PROJECT_INVALID_PREVIEW',
+      'The preview lies outside this Project’s visible raster bounds.',
+    )
+  }
+  return visibleBounds
 }
 
 function assetsCount(assets: Record<string, IgsAssetSource>): number {

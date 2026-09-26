@@ -100,6 +100,7 @@ export interface ProjectIndex {
   display_name: string
   document_id: string | null
   document_revision: string | null
+  file_fingerprint: string | null
   file_health: string
   file_mtime_ns: string | null
   file_size_bytes: number | null
@@ -107,6 +108,7 @@ export interface ProjectIndex {
   last_opened_at: string | null
   local_project_key: string
   preview_status: string | null
+  preview_thumbnail_sha256: string | null
   search_name: string
   trashed_at: string | null
   workspace_id: string

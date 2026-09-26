@@ -1,10 +1,14 @@
+import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
+import { readIgsPackage } from './igs-package.js'
+import { localProjectRecoveryKey } from './project-identity.js'
 import {
   ProjectIndexError,
   ProjectIndexRepository,
@@ -31,6 +35,17 @@ test('a lost Home index rebuilds from a saved .igs in the same workspace and its
     const indexed = await firstIndex.indexSaved(filePath, workspace.id)
     assert.equal(indexed.displayName, 'Renamed Project')
     assert.equal(indexed.previewStatus, 'empty')
+    const saved = await readIgsPackage(filePath)
+    const thumbnailSha256 = createHash('sha256')
+      .update(await saved.readMember('preview/thumbnail.webp'))
+      .digest('hex')
+    assert.equal(indexed.thumbnailSha256, thumbnailSha256)
+    assert.ok(indexed.fileFingerprint)
+    assert.equal(
+      (await firstIndex.getProject(indexed.localProjectKey))?.thumbnailSha256,
+      thumbnailSha256,
+    )
+    assert.equal(await firstIndex.getProject(`project-v1-${'0'.repeat(64)}`), null)
     assert.equal(indexed.documentRevision, session.document.documentRevision)
     await firstIndex.markOpened(session.filePath)
     assert.ok((await firstIndex.indexSaved(filePath, workspace.id)).lastOpenedAt)
@@ -47,9 +62,92 @@ test('a lost Home index rebuilds from a saved .igs in the same workspace and its
       assert.equal(rows[0].documentId, session.document.documentId)
       assert.equal(rows[0].documentRevision, session.document.documentRevision)
       assert.equal(rows[0].previewStatus, 'empty')
+      assert.equal(rows[0].thumbnailSha256, thumbnailSha256)
+      assert.ok(rows[0].fileFingerprint)
       assert.deepEqual([rows[0].bboxWidth, rows[0].bboxHeight], [1024, 1024])
     } finally {
       await rebuiltDb.close()
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test('thumbnail migration preserves an existing v3 Home row and rescan fills derived preview identity', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-index-migrate-'))
+  try {
+    const legacyMigrations = path.join(directory, 'legacy-migrations')
+    await mkdir(legacyMigrations)
+    for (const name of ['0001_app_metadata.sql', '0002_models.sql', '0003_projects.sql']) {
+      await copyFile(path.join(migrations, name), path.join(legacyMigrations, name))
+    }
+    const legacy = openAppDatabase(directory, legacyMigrations)
+    await legacy.close()
+
+    const workspacePath = path.join(directory, 'workspaces', 'Uncategorized')
+    await mkdir(workspacePath, { recursive: true })
+    const filePath = path.join(workspacePath, 'Legacy Project.igs')
+    const session = await ProjectSession.create(filePath, 'Legacy Project', {
+      placeholdersDir,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    const file = await stat(filePath, { bigint: true })
+    const projectId = localProjectRecoveryKey(filePath)
+    const openedAt = '2025-01-02T03:04:05.000Z'
+    const sqlite = new Database(path.join(directory, 'database', 'app.sqlite'))
+    try {
+      sqlite
+        .prepare(
+          `INSERT INTO project_workspace
+           (id, display_name, directory_path, color, is_default, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run('uncategorized', 'Uncategorized', workspacePath, 'teal', 1, openedAt, openedAt)
+      sqlite
+        .prepare(
+          `INSERT INTO project_index
+           (local_project_key, canonical_path, workspace_id, document_id, document_revision,
+            display_name, search_name, bbox_width, bbox_height, preview_status, file_health,
+            diagnostic_code, file_size_bytes, file_mtime_ns, last_opened_at, trashed_at, indexed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          projectId,
+          filePath,
+          'uncategorized',
+          session.document.documentId,
+          session.document.documentRevision,
+          session.document.title,
+          'legacy project',
+          session.document.primaryBbox.width,
+          session.document.primaryBbox.height,
+          'empty',
+          'ready',
+          null,
+          Number(file.size),
+          file.mtimeNs.toString(),
+          openedAt,
+          null,
+          openedAt,
+        )
+    } finally {
+      sqlite.close()
+    }
+
+    const upgraded = openAppDatabase(directory, migrations)
+    try {
+      const index = new ProjectIndexRepository(upgraded.db)
+      const before = await index.getProject(projectId)
+      assert.equal(before?.thumbnailSha256, null)
+      assert.equal(before?.fileFingerprint, null)
+      assert.equal(before?.lastOpenedAt, openedAt)
+      const [after] = await index.scanWorkspace('uncategorized')
+      assert.equal(after.localProjectKey, projectId)
+      assert.ok(after.thumbnailSha256)
+      assert.ok(after.fileFingerprint)
+      assert.equal(after.lastOpenedAt, openedAt)
+    } finally {
+      await upgraded.close()
     }
   } finally {
     await rm(directory, { force: true, recursive: true })
@@ -69,11 +167,15 @@ test('Home rescan diagnoses corrupt and missing files without inventing Project 
     assert.equal(corrupt[0].fileHealth, 'corrupt')
     assert.equal(corrupt[0].documentId, null)
     assert.equal(corrupt[0].previewStatus, null)
+    assert.equal(corrupt[0].thumbnailSha256, null)
+    assert.equal(corrupt[0].fileFingerprint, null)
     await rm(invalidPath)
     const missing = await index.scanWorkspace(workspace.id)
     assert.equal(missing.length, 1)
     assert.equal(missing[0].fileHealth, 'missing')
     assert.equal(missing[0].diagnosticCode, 'FILE_MISSING')
+    assert.equal(missing[0].thumbnailSha256, null)
+    assert.equal(missing[0].fileFingerprint, null)
   } finally {
     await database.close()
     await rm(directory, { force: true, recursive: true })

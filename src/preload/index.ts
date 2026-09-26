@@ -10,6 +10,7 @@ import type {
   ProjectImportSelection,
   ProjectOpenResult,
   ProjectRasterLayerView,
+  ProjectRebuildResult,
   ProjectSaveResult,
   ProjectSummary,
   ProjectTab,
@@ -289,10 +290,32 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
     ['corrupt', 'missing', 'ready', 'unsupported_schema'].includes(String(value.health)) &&
     (value.previewStatus === null ||
       ['empty', 'rendered', 'unavailable'].includes(String(value.previewStatus))) &&
+    (value.thumbnailUrl === null || isProjectThumbnailUrl(value.thumbnailUrl)) &&
     (value.bbox === null || isProjectDimensions(value.bbox)) &&
     ['invalid', 'none', 'recoverable', 'stale'].includes(String(value.recoveryStatus)) &&
     (value.recoveryReason === undefined || typeof value.recoveryReason === 'string')
   )
+}
+
+function isProjectThumbnailUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.startsWith('igs-preview://thumbnail/')) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'igs-preview:' &&
+      url.hostname === 'thumbnail' &&
+      /^\/project-v1-[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\.webp$/.test(url.pathname) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.port === '' &&
+      url.hash === '' &&
+      url.search === ''
+    )
+  } catch {
+    return false
+  }
 }
 
 function isProjectOpenResult(value: unknown): value is ProjectOpenResult {
@@ -319,6 +342,15 @@ function isProjectSaveResult(value: unknown): value is ProjectSaveResult {
     typeof value.reloadRequired === 'boolean' &&
     ['clean', 'dirty', 'failed'].includes(String(value.recoveryStatus)) &&
     (value.recoveryError === undefined || typeof value.recoveryError === 'string') &&
+    (value.indexWarning === undefined || typeof value.indexWarning === 'string')
+  )
+}
+
+function isProjectRebuildResult(value: unknown): value is ProjectRebuildResult {
+  return (
+    isRecord(value) &&
+    value.committed === true &&
+    typeof value.directorySynced === 'boolean' &&
     (value.indexWarning === undefined || typeof value.indexWarning === 'string')
   )
 }
@@ -449,6 +481,8 @@ const api: StudioApi = {
       return () => ipcRenderer.removeListener(ipcChannels.projects.tabsChanged, handler)
     },
     open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
+    rebuildPreview: (projectId) =>
+      invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),

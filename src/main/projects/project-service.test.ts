@@ -34,6 +34,10 @@ const rasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
   'base64',
 )
+const previewWebp = Buffer.from(
+  'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
+  'base64',
+)
 
 function rasterImportWorker(): Pick<ProjectWorkerClient, 'normalizeImport'> {
   return {
@@ -51,6 +55,47 @@ function rasterImportWorker(): Pick<ProjectWorkerClient, 'normalizeImport'> {
         },
         originalIcc: null,
         sourceFormat: 'PNG',
+      }
+    },
+  }
+}
+
+/** Write actual worker output files so the service must ingest them through the production path. */
+function previewWorker(
+  afterInput?: () => Promise<void>,
+): Pick<ProjectWorkerClient, 'composePreview'> {
+  return {
+    composePreview: async ({ layers, mergedPngPath, thumbnailWebpPath }) => {
+      assert.equal(layers.length, 2)
+      for (const layer of layers) {
+        assert.deepEqual(await readFile(layer.path), rasterPng)
+      }
+      await afterInput?.()
+      await Promise.all([
+        writeFile(mergedPngPath, rasterPng),
+        writeFile(thumbnailWebpPath, previewWebp),
+      ])
+      return {
+        merged: {
+          byteSize: rasterPng.length,
+          colorSpace: 'srgb',
+          height: 2,
+          iccSha256: '113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1',
+          path: mergedPngPath,
+          sha256: createHash('sha256').update(rasterPng).digest('hex'),
+          width: 2,
+        },
+        rect: { height: 2, width: 2, x: 0, y: 0 },
+        status: 'rendered',
+        thumbnail: {
+          byteSize: previewWebp.length,
+          colorSpace: 'srgb',
+          height: 2,
+          iccSha256: '113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1',
+          path: thumbnailWebpPath,
+          sha256: createHash('sha256').update(previewWebp).digest('hex'),
+          width: 2,
+        },
       }
     },
   }
@@ -145,6 +190,7 @@ test('Project service creates, edits, saves and reopens an actual .igs with inde
     const indexed = (await repository.listProjects())[0]
     assert.equal(indexed.localProjectKey, created.id)
     assert.equal(indexed.previewStatus, 'empty')
+    assert.ok((await service.list())[0]?.thumbnailUrl?.startsWith('igs-preview://thumbnail/'))
     assert.equal((await readIgsPackage(indexed.canonicalPath)).project.primaryBbox.width, 768)
 
     const changed = await service.setPrimaryBbox(created.id, {
@@ -867,6 +913,7 @@ test('Save marks an all-hidden or zero-opacity raster Project empty without drop
     await service.save(tabId)
     const empty = await readIgsPackage(filePath)
     assert.equal(empty.manifest.preview.status, 'empty')
+    assert.ok((await service.list())[0]?.thumbnailUrl?.startsWith('igs-preview://thumbnail/'))
     assert.equal(empty.manifest.preview.rect, null)
     assert.equal(empty.project.layers.length, 2)
     for (const layer of empty.project.layers) {
@@ -879,6 +926,7 @@ test('Save marks an all-hidden or zero-opacity raster Project empty without drop
     await service.save(tabId)
     const visible = await readIgsPackage(filePath)
     assert.equal(visible.manifest.preview.status, 'unavailable')
+    assert.ok((await service.list())[0]?.thumbnailUrl?.startsWith('igs-preview://thumbnail/'))
     assert.deepEqual(visible.manifest.preview.rect, { height: 2, width: 2, x: 4, y: 0 })
     assert.deepEqual(await visible.readMember(visible.project.layers[1].asset.path), rasterPng)
   })
@@ -931,6 +979,230 @@ test('Save cannot classify a newer Raster Layer edit from an older empty worker 
     assert.equal(reopened.project.layers[0].opacity, 0.5)
     assert.equal(reopened.manifest.preview.status, 'unavailable')
     assert.deepEqual(await reopened.readMember(reopened.project.layers[0].asset.path), rasterPng)
+  })
+})
+
+test('Rebuild Preview repairs a closed Project through the real package and index without changing document or assets', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    await service.close(tabId)
+    const before = await readIgsPackage(filePath)
+    const documentBytes = await before.readMember('project.json')
+    const assetBytes = await Promise.all(
+      before.project.layers.map((layer) => before.readMember(layer.asset.path)),
+    )
+    const beforeIndex = (await repository.listProjects())[0]
+    assert.equal(before.manifest.preview.status, 'unavailable')
+
+    const rebuilt = await service.rebuildPreview(tabId, previewWorker())
+    assert.equal(rebuilt.committed, true)
+    assert.equal(rebuilt.indexWarning, undefined)
+    const after = await readIgsPackage(filePath)
+    assert.equal(after.manifest.preview.status, 'rendered')
+    assert.deepEqual(after.manifest.preview.rect, { height: 2, width: 2, x: 0, y: 0 })
+    assert.deepEqual(await after.readMember('preview/merged.png'), rasterPng)
+    assert.deepEqual(await after.readMember('preview/thumbnail.webp'), previewWebp)
+    assert.deepEqual(after.project, before.project)
+    assert.deepEqual(await after.readMember('project.json'), documentBytes)
+    for (const [index, layer] of after.project.layers.entries()) {
+      assert.deepEqual(await after.readMember(layer.asset.path), assetBytes[index])
+    }
+    const indexed = (await repository.listProjects())[0]
+    assert.equal(indexed.previewStatus, 'rendered')
+    assert.equal(indexed.thumbnailSha256, createHash('sha256').update(previewWebp).digest('hex'))
+    assert.notEqual(indexed.thumbnailSha256, beforeIndex.thumbnailSha256)
+    const home = (await service.list())[0]
+    assert.equal(home.previewStatus, 'rendered')
+    assert.ok(home.thumbnailUrl?.startsWith('igs-preview://thumbnail/'))
+    assert.deepEqual(service.getOpenTabs(), [])
+  })
+})
+
+test('Rebuild Preview keeps a clean open tab usable for a later edit and Save', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const before = service.getOpenTabs()[0]
+    const revision = (await readIgsPackage(filePath)).project.documentRevision
+    const rebuilt = await service.rebuildPreview(tabId, previewWorker())
+    assert.equal(rebuilt.committed, true)
+    assert.deepEqual(service.getOpenTabs(), [before])
+    const previewed = await readIgsPackage(filePath)
+    assert.equal(previewed.project.documentRevision, revision)
+    assert.equal(previewed.manifest.preview.status, 'rendered')
+
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.4 })
+    const saved = await service.save(tabId)
+    assert.equal(saved.committed, true)
+    assert.equal(saved.tab.dirty, false)
+    const after = await readIgsPackage(filePath)
+    assert.equal(after.project.layers[0].opacity, 0.4)
+    assert.deepEqual(await after.readMember(after.project.layers[0].asset.path), rasterPng)
+    assert.equal((await repository.listProjects())[0].previewStatus, 'unavailable')
+  })
+})
+
+test('Save and a second rebuild cannot replace a Project while its preview worker is running', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const oldPackage = await readFile(filePath)
+    let signalStarted: () => void = () => undefined
+    let releaseWorker: () => void = () => undefined
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
+    const held = new Promise<void>((resolve) => {
+      releaseWorker = resolve
+    })
+    const rebuilding = service.rebuildPreview(
+      tabId,
+      previewWorker(async () => {
+        signalStarted()
+        await held
+      }),
+    )
+    try {
+      await started
+      await assert.rejects(service.save(tabId), { code: 'PROJECT_REBUILD_IN_PROGRESS' })
+      await assert.rejects(service.rebuildPreview(tabId, previewWorker()), {
+        code: 'PROJECT_REBUILD_IN_PROGRESS',
+      })
+      assert.deepEqual(await readFile(filePath), oldPackage)
+    } finally {
+      releaseWorker()
+    }
+    await rebuilding
+    assert.equal((await readIgsPackage(filePath)).manifest.preview.status, 'rendered')
+    assert.equal((await service.save(tabId)).committed, true)
+  })
+})
+
+test('Rebuild Preview refuses a dirty Project before worker composition and preserves its recovery', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const before = await readFile(filePath)
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.4 })
+    await service.flushAutosave(tabId)
+    let composed = false
+    await assert.rejects(
+      service.rebuildPreview(tabId, {
+        composePreview: async () => {
+          composed = true
+          throw new Error('A dirty Project must never reach the worker.')
+        },
+      }),
+      { code: 'PROJECT_DIRTY' },
+    )
+    assert.equal(composed, false)
+    assert.deepEqual(await readFile(filePath), before)
+    assert.equal(service.getOpenTabs()[0].dirty, true)
+    assert.equal(
+      (
+        await shadow.inspect({
+          projectPath: filePath,
+          savedPackage: await readIgsPackage(filePath),
+        })
+      ).status,
+      'recoverable',
+    )
+  })
+})
+
+test('Rebuild Preview rejects pending recovery after a restart without asking the worker or replacing .igs', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.4 })
+    await service.flushAutosave(tabId)
+    const before = await readFile(filePath)
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.list())[0].recoveryStatus, 'recoverable')
+    let composed = false
+    await assert.rejects(
+      restarted.rebuildPreview(tabId, {
+        composePreview: async () => {
+          composed = true
+          throw new Error('Recovery must block composition.')
+        },
+      }),
+      { code: 'PROJECT_RECOVERY_REQUIRED' },
+    )
+    assert.equal(composed, false)
+    assert.deepEqual(await readFile(filePath), before)
+    assert.equal(
+      (
+        await shadow.inspect({
+          projectPath: filePath,
+          savedPackage: await readIgsPackage(filePath),
+        })
+      ).status,
+      'recoverable',
+    )
+  })
+})
+
+test('Rebuild Preview worker failure leaves a closed Project and Home index unchanged', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const { filePath, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    await service.close(tabId)
+    const before = await readFile(filePath)
+    const indexBefore = (await repository.listProjects())[0]
+    let composed = false
+    await assert.rejects(
+      service.rebuildPreview(tabId, {
+        composePreview: async () => {
+          composed = true
+          throw new ProjectWorkerError('WORKER_EXITED', 'The preview worker exited.')
+        },
+      }),
+      { code: 'WORKER_EXITED' },
+    )
+    assert.equal(composed, true)
+    assert.deepEqual(await readFile(filePath), before)
+    const after = await readIgsPackage(filePath)
+    assert.equal(after.manifest.preview.status, 'unavailable')
+    const indexAfter = (await repository.listProjects())[0]
+    assert.equal(indexAfter.previewStatus, indexBefore.previewStatus)
+    assert.equal(indexAfter.thumbnailSha256, indexBefore.thumbnailSha256)
+    assert.equal(
+      (await readdir(path.join(dataRoot, 'scratch'))).some((entry) =>
+        entry.startsWith('project-preview-'),
+      ),
+      false,
+    )
+  })
+})
+
+test('Rebuild Preview cannot commit a worker result after a newer Project edit', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { filePath, layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+    const before = await readFile(filePath)
+    await assert.rejects(
+      service.rebuildPreview(
+        tabId,
+        previewWorker(async () => {
+          await service.updateRasterLayer(tabId, layerIds[0], { kind: 'opacity', opacity: 0.4 })
+        }),
+      ),
+      { code: 'PROJECT_DIRTY' },
+    )
+    assert.deepEqual(await readFile(filePath), before)
+    assert.equal(service.getOpenTabs()[0].dirty, true)
+    assert.equal(service.getOpenTabs()[0].layers[0].opacity, 0.4)
+    await service.flushAutosave(tabId)
+    assert.equal(
+      (
+        await shadow.inspect({
+          projectPath: filePath,
+          savedPackage: await readIgsPackage(filePath),
+        })
+      ).status,
+      'recoverable',
+    )
   })
 })
 

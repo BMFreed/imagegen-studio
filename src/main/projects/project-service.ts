@@ -3,6 +3,7 @@ import type {
   ProjectImportSelection,
   ProjectOpenResult,
   ProjectRasterLayerChange,
+  ProjectRebuildResult,
   ProjectSaveResult,
   ProjectSummary,
   ProjectTab,
@@ -39,8 +40,13 @@ import {
   type ProjectLayerResourceRequest,
   resolveProjectLayerAsset,
 } from './project-layer-resource.js'
+import { projectThumbnailImageUrl } from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
-import { ProjectSession, type ProjectSessionRoots } from './project-session.js'
+import {
+  type ProjectRebuildPreviewInput,
+  ProjectSession,
+  type ProjectSessionRoots,
+} from './project-session.js'
 import { importRasterLayer } from './raster-import.js'
 
 export type {
@@ -94,7 +100,10 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_NOT_FOUND'
       | 'PROJECT_NOT_OPEN'
       | 'PROJECT_NOT_READY'
+      | 'PROJECT_REBUILD_IN_PROGRESS'
+      | 'PROJECT_RECOVERY_REQUIRED'
       | 'PROJECT_RECOVERY_UNAVAILABLE'
+      | 'PROJECT_SAVE_IN_PROGRESS'
       | 'PROJECT_WORKER_UNAVAILABLE',
     message: string,
   ) {
@@ -112,6 +121,8 @@ export class ProjectService {
   private readonly opening = new Map<string, Promise<ProjectOpenResult>>()
   private readonly openTabs = new Map<string, ProjectAutosaveCoordinator>()
   private readonly pendingImports = new Map<string, PendingProjectImport>()
+  private readonly rebuilding = new Map<string, Promise<unknown>>()
+  private readonly saving = new Map<string, Promise<ProjectSaveResult>>()
 
   constructor(private readonly options: ProjectServiceOptions) {}
 
@@ -121,6 +132,14 @@ export class ProjectService {
   }
 
   async close(tabId: string): Promise<void> {
+    const rebuilding = this.rebuilding.get(tabId)
+    if (rebuilding) {
+      await rebuilding.catch(() => undefined)
+    }
+    const saving = this.saving.get(tabId)
+    if (saving) {
+      await saving.catch(() => undefined)
+    }
     const coordinator = this.requireTab(tabId)
     if (coordinator.dirty) {
       throw new ProjectServiceError(
@@ -176,6 +195,14 @@ export class ProjectService {
   }
 
   async discardAndClose(tabId: string): Promise<void> {
+    const rebuilding = this.rebuilding.get(tabId)
+    if (rebuilding) {
+      await rebuilding.catch(() => undefined)
+    }
+    const saving = this.saving.get(tabId)
+    if (saving) {
+      await saving.catch(() => undefined)
+    }
     const coordinator = this.requireTab(tabId)
     const clean = await coordinator.discardChanges(this.options.roots)
     // discardChanges transfers the exclusive path lease to its returned coordinator.
@@ -429,6 +456,10 @@ export class ProjectService {
 
   async open(projectId: string): Promise<ProjectOpenResult> {
     assertProjectId(projectId)
+    const rebuilding = this.rebuilding.get(projectId)
+    if (rebuilding) {
+      await rebuilding.catch(() => undefined)
+    }
     const existing = this.openTabs.get(projectId)
     if (existing) {
       return { kind: 'opened', tab: toTab(projectId, existing) }
@@ -446,8 +477,33 @@ export class ProjectService {
     }
   }
 
+  /** Rebuild a saved derivative without silently saving document edits or touching recovery. */
+  async rebuildPreview(
+    projectId: string,
+    worker: Pick<ProjectWorkerClient, 'composePreview'>,
+  ): Promise<ProjectRebuildResult> {
+    assertProjectId(projectId)
+    if (this.rebuilding.has(projectId)) {
+      throw new ProjectServiceError(
+        'PROJECT_REBUILD_IN_PROGRESS',
+        'This Project preview is already rebuilding.',
+      )
+    }
+    const rebuilding = this.rebuildOne(projectId, worker)
+    this.rebuilding.set(projectId, rebuilding)
+    try {
+      return await rebuilding
+    } finally {
+      this.rebuilding.delete(projectId)
+    }
+  }
+
   async resolveRecovery(projectId: string, decision: 'discard' | 'recover'): Promise<ProjectTab> {
     assertProjectId(projectId)
+    const rebuilding = this.rebuilding.get(projectId)
+    if (rebuilding) {
+      await rebuilding.catch(() => undefined)
+    }
     if (decision !== 'recover' && decision !== 'discard') {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose a recovery action.')
     }
@@ -503,52 +559,21 @@ export class ProjectService {
     tabId: string,
     previewWorker?: Pick<ProjectWorkerClient, 'composePreview'>,
   ): Promise<ProjectSaveResult> {
-    const coordinator = this.requireTab(tabId)
-    let renderedPreview: Awaited<ReturnType<typeof buildProjectPreview>> | undefined
-    if (previewWorker) {
-      const document = coordinator.document
-      try {
-        renderedPreview = await buildProjectPreview({
-          document,
-          packagePath: coordinator.filePath,
-          pendingSource: (asset) => coordinator.getCurrentAssetSource(asset),
-          scratchBasePath: this.options.roots.scratchDir,
-          worker: previewWorker,
-        })
-        if (coordinator.document.documentRevision !== document.documentRevision) {
-          renderedPreview = undefined
-        }
-      } catch {
-        // Preview failure is never a reason to lose an otherwise valid document Save. Session Save
-        // still checks every referenced asset and will fail if the document itself is invalid.
-        console.warn('Project preview is unavailable; saving with placeholders.')
-      }
+    if (this.rebuilding.has(tabId)) {
+      throw new ProjectServiceError(
+        'PROJECT_REBUILD_IN_PROGRESS',
+        'Wait for the Project preview rebuild to finish before saving.',
+      )
     }
-    const saved = await coordinator.save(
-      renderedPreview?.kind === 'rendered'
-        ? { renderedPreview: renderedPreview.preview }
-        : renderedPreview?.kind === 'empty'
-          ? { emptyPreviewRevision: renderedPreview.documentRevision }
-          : {},
-    )
-    let indexWarning: string | undefined
+    if (this.saving.has(tabId)) {
+      throw new ProjectServiceError('PROJECT_SAVE_IN_PROGRESS', 'This Project is already saving.')
+    }
+    const saving = this.saveOne(tabId, previewWorker)
+    this.saving.set(tabId, saving)
     try {
-      await this.options.repository.indexSaved(coordinator.filePath, UNCATEGORIZED_WORKSPACE_ID)
-    } catch {
-      // The .igs has already committed. Reporting Save as failed would invite a second Save and
-      // misstate the saved revision; a later Home scan rebuilds this derived row.
-      indexWarning = 'The Project was saved, but its Home index could not be updated.'
-    }
-    return {
-      committed: true,
-      directorySynced: saved.directorySynced,
-      recoveryStatus: saved.recovery.status,
-      reloadRequired: saved.reloadRequired,
-      tab: toTab(tabId, coordinator),
-      ...(saved.recovery.status === 'failed'
-        ? { recoveryError: saved.recovery.error.message }
-        : {}),
-      ...(indexWarning ? { indexWarning } : {}),
+      return await saving
+    } finally {
+      this.saving.delete(tabId)
     }
   }
 
@@ -687,6 +712,84 @@ export class ProjectService {
     return { kind: 'opened', tab: toTab(projectId, coordinator) }
   }
 
+  private async rebuildOne(
+    projectId: string,
+    worker: Pick<ProjectWorkerClient, 'composePreview'>,
+  ): Promise<ProjectRebuildResult> {
+    await this.opening.get(projectId)?.catch(() => undefined)
+    await this.saving.get(projectId)?.catch(() => undefined)
+    const record = await this.requireReadyRecord(projectId)
+    const coordinator = this.openTabs.get(projectId)
+    if (coordinator?.dirty) {
+      throw new ProjectServiceError(
+        'PROJECT_DIRTY',
+        'Save the Project changes before rebuilding its preview.',
+      )
+    }
+    if (!coordinator) {
+      const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
+        record.canonicalPath,
+        this.options.shadow,
+      )
+      if (inspection.status !== 'absent' && inspection.status !== 'clean') {
+        throw new ProjectServiceError(
+          'PROJECT_RECOVERY_REQUIRED',
+          'Resolve the Project recovery state before rebuilding its preview.',
+        )
+      }
+    }
+    const session = coordinator
+      ? null
+      : await ProjectSession.open(record.canonicalPath, this.options.roots, record.canonicalPath)
+    const document = coordinator?.document ?? session!.document
+    const preview = await buildProjectPreview({
+      document,
+      packagePath: record.canonicalPath,
+      pendingSource: () => null,
+      scratchBasePath: this.options.roots.scratchDir,
+      worker,
+    })
+    const input: ProjectRebuildPreviewInput =
+      preview.kind === 'rendered'
+        ? { renderedPreview: preview.preview }
+        : { emptyPreviewRevision: preview.documentRevision }
+    const committed = coordinator
+      ? await coordinator.rebuildPreview(input, {
+          beforeReplace: () => {
+            if (this.openTabs.get(projectId) !== coordinator) {
+              throw new ProjectServiceError(
+                'PROJECT_REBUILD_IN_PROGRESS',
+                'The Project tab changed while its preview was rebuilding.',
+              )
+            }
+          },
+        })
+      : await session!.rebuildPreview(input, {
+          beforeReplace: () => {
+            if (this.openTabs.has(projectId) || this.opening.has(projectId)) {
+              throw new ProjectServiceError(
+                'PROJECT_REBUILD_IN_PROGRESS',
+                'The Project opened while its preview was rebuilding.',
+              )
+            }
+          },
+        })
+    let indexWarning: string | undefined
+    try {
+      await this.options.repository.indexSaved(record.canonicalPath, UNCATEGORIZED_WORKSPACE_ID)
+    } catch {
+      indexWarning = 'The Home index could not be refreshed.'
+    }
+    if (committed.reloadRequired) {
+      indexWarning = `${indexWarning ? `${indexWarning} ` : ''}Reopen the Project before editing it.`
+    }
+    return {
+      committed: true,
+      directorySynced: committed.directorySynced,
+      ...(indexWarning ? { indexWarning } : {}),
+    }
+  }
+
   private async requireReadyRecord(projectId: string): Promise<ProjectIndexRecord> {
     await this.initialize()
     const records = await this.options.repository.scanWorkspace(UNCATEGORIZED_WORKSPACE_ID)
@@ -724,6 +827,59 @@ export class ProjectService {
     return coordinator
   }
 
+  private async saveOne(
+    tabId: string,
+    previewWorker?: Pick<ProjectWorkerClient, 'composePreview'>,
+  ): Promise<ProjectSaveResult> {
+    const coordinator = this.requireTab(tabId)
+    let renderedPreview: Awaited<ReturnType<typeof buildProjectPreview>> | undefined
+    if (previewWorker) {
+      const document = coordinator.document
+      try {
+        renderedPreview = await buildProjectPreview({
+          document,
+          packagePath: coordinator.filePath,
+          pendingSource: (asset) => coordinator.getCurrentAssetSource(asset),
+          scratchBasePath: this.options.roots.scratchDir,
+          worker: previewWorker,
+        })
+        if (coordinator.document.documentRevision !== document.documentRevision) {
+          renderedPreview = undefined
+        }
+      } catch {
+        // Preview failure is never a reason to lose an otherwise valid document Save. Session Save
+        // still checks every referenced asset and will fail if the document itself is invalid.
+        console.warn('Project preview is unavailable; saving with placeholders.')
+      }
+    }
+    const saved = await coordinator.save(
+      renderedPreview?.kind === 'rendered'
+        ? { renderedPreview: renderedPreview.preview }
+        : renderedPreview?.kind === 'empty'
+          ? { emptyPreviewRevision: renderedPreview.documentRevision }
+          : {},
+    )
+    let indexWarning: string | undefined
+    try {
+      await this.options.repository.indexSaved(coordinator.filePath, UNCATEGORIZED_WORKSPACE_ID)
+    } catch {
+      // The .igs has already committed. Reporting Save as failed would invite a second Save and
+      // misstate the saved revision; a later Home scan rebuilds this derived row.
+      indexWarning = 'The Project was saved, but its Home index could not be updated.'
+    }
+    return {
+      committed: true,
+      directorySynced: saved.directorySynced,
+      recoveryStatus: saved.recovery.status,
+      reloadRequired: saved.reloadRequired,
+      tab: toTab(tabId, coordinator),
+      ...(saved.recovery.status === 'failed'
+        ? { recoveryError: saved.recovery.error.message }
+        : {}),
+      ...(indexWarning ? { indexWarning } : {}),
+    }
+  }
+
   private async toSummary(record: ProjectIndexRecord): Promise<ProjectSummary> {
     let recoveryStatus: ProjectSummary['recoveryStatus'] = 'none'
     let recoveryReason: string | undefined
@@ -751,6 +907,10 @@ export class ProjectService {
       id: record.localProjectKey,
       previewStatus: record.previewStatus,
       recoveryStatus,
+      thumbnailUrl:
+        record.fileHealth === 'ready' && record.thumbnailSha256
+          ? projectThumbnailImageUrl(record.localProjectKey, record.thumbnailSha256)
+          : null,
       title: record.displayName,
       ...(recoveryReason ? { recoveryReason } : {}),
     }

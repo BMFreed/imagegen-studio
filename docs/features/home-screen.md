@@ -626,6 +626,11 @@ MVP does not include:
   before replacement; a failure keeps the old valid `.igs` and placeholder.
   The current Vue prototype only flips an in-memory thumbnail state and does
   not prove this production behavior.
+  The production Home list now loads the embedded thumbnail through a signed
+  local resource and offers the explicit rebuild action for `unavailable`
+  previews; Electron smoke verifies the resulting package and visible image.
+  The broader card selection, Inspector zoom/pan, workspace controls and
+  filters in this contract remain outside that production slice.
 - Home preview supports zoom and pan without showing inactive generation/canvas controls, and its Inspector can be collapsed.
 - Workspace sidebar and Inspector widths are mouse-resizable within bounded ranges; the Inspector resize handle is unavailable while collapsed.
 - An already-open selected project uses `Switch to Project` and focuses its existing tab.

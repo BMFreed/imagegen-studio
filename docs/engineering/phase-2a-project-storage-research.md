@@ -6,9 +6,11 @@ Scope: [PP-007](../product-promises.md#pp-007-проект-принадлежи�
 high-risk data boundary. The storage slice defines an executable v1 format and
 tests Save→reopen and standalone autosave/recovery through real files. The
 production Home/Project bridge uses typed IPC. The source-checkout worker now
-renders embedded Project previews during explicit Save in development and the
-Electron smoke test. Generation staging recovery and the installable
-Linux/NVIDIA Python runtime remain separate Phase 2A work.
+renders embedded Project previews during explicit Save and clean Rebuild Preview
+in development and the Electron smoke test. Home loads signed thumbnail resources
+from the embedded `.igs` member or a verified disposable cache. Generation
+staging recovery and the installable Linux/NVIDIA Python runtime remain
+separate Phase 2A work.
 
 ## Baseline before implementation and evidence
 
@@ -120,9 +122,8 @@ the rejection path without manufacturing multi-gigabyte fixtures.
    shadow/staging keys. Rebuild of a clean Project must preserve the document
    revision; it must serialize with Save and never accept staging candidates.
 
-The full PP-007 acceptance still requires generation staging recovery, clean
-Rebuild Preview, Home thumbnail display/cache and release runtime. These gaps
-remain visible in the promise matrix until exercised.
+The full PP-007 acceptance still requires generation staging recovery and
+release runtime. These gaps remain visible in the promise matrix until exercised.
 
 The autosave coordinator acquires one process-local lease per canonical Project
 path before inspecting or changing its shadow. This prevents two tabs in the
@@ -312,7 +313,7 @@ layer and the imported image and a decoded 256×256 WebP thumbnail. Service test
 and an edit arriving during composition by reopening the saved `.igs`; neither
 turned an old/failed preview into a current result. Worker/client/session tests
 cover transparent crop, empty classification, blend order, response validation
-and failure fallback. The current dirty working tree passed `pnpm run app:test`
+and failure fallback. At the Save-preview slice, the dirty working tree passed `pnpm run app:test`
 195/195, `pnpm run typecheck` and `pnpm run app:smoke`; the Python worker suite
 passed 74/74 with Ruff and BasedPyright. Semantic mutations of layer order,
 preview containment and revision-bound empty classification each made their
@@ -334,9 +335,46 @@ the original `.igs` and recoverable dirty state still follow the existing Save
 transaction rules. Capacity testing with real projects remains necessary before
 release.
 
+## Home thumbnails and clean preview rebuild
+
+This Phase 2A slice indexes the embedded `preview/thumbnail.webp` SHA and
+the current `.igs` fingerprint in SQLite migration `0004_project_thumbnails.sql`.
+Home receives a process-lifetime signed `igs-preview` URL for ready Projects,
+including their saved empty/unavailable placeholders. The protocol checks the
+current indexed file identity before serving bytes. It hashes cached bytes;
+on a cache miss or corruption it reads the verified member from `.igs` and
+repopulates the disposable cache. A stale
+URL cannot serve pixels after the package changes. The renderer falls back to
+an icon and a diagnostic if loading fails.
+
+For a Project whose saved preview is `unavailable`, Home offers `Rebuild Preview`.
+The source-checkout worker composes an exact-revision derivative from saved
+Raster Layers. Main atomically rewrites only the preview and manifest; the
+original `project.json`, layer/ICC assets, document revision and recovery state
+remain untouched. A dirty open Project is directed to Save, pending recovery
+must be resolved first, and worker failure leaves the original package valid.
+Rebuild serializes with Save and checks project identity and dirty state before
+replacement. Home refreshes its derived index after commit; a post-commit index
+failure is reported as a warning, not as a failed rebuild.
+
+Evidence: the app suite passes 212/212 tests, including real `.igs`/SQLite/
+shadow service tests for clean open/closed rebuild, dirty/recovery refusal,
+worker failure, a concurrent edit, and cache identity. `pnpm run typecheck`
+and Electron `pnpm run app:smoke` pass. The smoke enters through Home UI and
+IPC, loads the thumbnail in an actual `<img>`, rebuilds an unavailable preview
+with the development worker, and reopens `.igs` to compare raw `project.json`,
+referenced raster asset bytes and document revision. Isolated semantic
+mutations of the thumbnail identity guard, dirty check and Home index refresh
+made their corresponding tests fail. These checks do not validate a packaged
+runtime. Independent review found and fixed two presentation gaps: unavailable
+and empty saved placeholders now display, while unhealthy Projects no longer
+claim to be empty or offer Open. Repeated Home refresh still validates every
+`.igs` during index scan and a second time when checking recovery for closed
+Projects; a cold thumbnail cache may cause another validation. Capacity with
+large libraries is unmeasured.
+
 Remaining Phase 2A gaps include finite frozen compositor input for generation,
-generation staging recovery, clean `Rebuild Preview`, Home thumbnail
-display/cache and the installable Linux/NVIDIA runtime needed for
+generation staging recovery and the installable Linux/NVIDIA runtime needed for
 PNG/JPEG/WebP import and previews in a packaged application.
 Layer add/delete/rename, undo and production raster editing also remain open;
 the current Raster controls do not complete the wider layer-stack contract.

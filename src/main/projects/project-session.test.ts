@@ -491,3 +491,137 @@ test('a revision-bound empty worker result survives Save with transparent raster
     assert.deepEqual(await fallback.readMember(assetPath), transparentRaster)
   })
 })
+
+test('Rebuild Preview changes only embedded derivatives and keeps a clean session saveable', async () => {
+  await withSession(async (session) => {
+    const id = randomUUID()
+    const assetPath = `assets/layers/${id}.png`
+    session.applyDocument({
+      ...session.document,
+      layers: [
+        {
+          asset: {
+            bytes: raster.length,
+            height: 2,
+            path: assetPath,
+            sha256: sha256(raster),
+            width: 2,
+          },
+          blendMode: 'normal',
+          id,
+          kind: 'raster',
+          locked: false,
+          name: 'Source',
+          opacity: 1,
+          transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 13, y: -9 },
+          visible: true,
+        },
+      ],
+    })
+    await session.save({ assets: { [assetPath]: { bytes: raster } } })
+    const before = await readIgsPackage(session.filePath)
+    assert.equal(before.manifest.preview.status, 'unavailable')
+    const documentBytes = await before.readMember('project.json')
+    const assetBytes = await before.readMember(assetPath)
+    const revision = before.project.documentRevision
+    const thumbnail = (await readProjectPlaceholders(bundledPlaceholders, 'unavailable')).thumbnail
+
+    const rebuilt = await session.rebuildPreview({
+      renderedPreview: {
+        documentRevision: revision,
+        merged: raster,
+        rect: { height: 2, width: 2, x: 13, y: -9 },
+        thumbnail,
+      },
+    })
+    assert.deepEqual(rebuilt, { committed: true, directorySynced: true, reloadRequired: false })
+    assert.equal(session.dirty, false)
+    assert.equal(session.document.documentRevision, revision)
+    const after = await readIgsPackage(session.filePath)
+    assert.equal(after.manifest.preview.status, 'rendered')
+    assert.deepEqual(after.manifest.preview.rect, { height: 2, width: 2, x: 13, y: -9 })
+    assert.deepEqual(await after.readMember('preview/merged.png'), raster)
+    assert.deepEqual(await after.readMember('project.json'), documentBytes)
+    assert.deepEqual(await after.readMember(assetPath), assetBytes)
+
+    session.applyDocument({ ...session.document, title: 'Edited after maintenance' })
+    await session.save()
+    const subsequent = await readIgsPackage(session.filePath)
+    assert.equal(subsequent.project.title, 'Edited after maintenance')
+    assert.equal(session.dirty, false)
+  })
+})
+
+test('Rebuild Preview requires an exact derivative and never falls back to a placeholder', async () => {
+  await withSession(async (session) => {
+    const bytes = await readFile(session.filePath)
+    const projectJson = await (await readIgsPackage(session.filePath)).readMember('project.json')
+    const revision = session.document.documentRevision
+    await assert.rejects(session.rebuildPreview({} as never), {
+      code: 'PROJECT_INVALID_PREVIEW',
+    })
+    await assert.rejects(session.rebuildPreview({ emptyPreviewRevision: randomUUID() }), {
+      code: 'PROJECT_INVALID_PREVIEW',
+    })
+    assert.deepEqual(await readFile(session.filePath), bytes)
+    await session.rebuildPreview({ emptyPreviewRevision: revision })
+    assert.deepEqual(
+      await (await readIgsPackage(session.filePath)).readMember('project.json'),
+      projectJson,
+    )
+    assert.equal((await readIgsPackage(session.filePath)).manifest.preview.status, 'empty')
+  })
+})
+
+test('Rebuild Preview rejects dirty or externally replaced documents without touching them', async () => {
+  await withSession(async (session, directory) => {
+    const revision = session.document.documentRevision
+    const original = await readFile(session.filePath)
+    session.applyDocument({ ...session.document, title: 'Unsaved edit' })
+    await assert.rejects(session.rebuildPreview({ emptyPreviewRevision: revision }), {
+      code: 'PROJECT_DIRTY',
+    })
+    assert.deepEqual(await readFile(session.filePath), original)
+    session.applyDocument({ ...session.document, title: 'First' })
+
+    const other = await ProjectSession.open(session.filePath, {
+      placeholdersDir: bundledPlaceholders,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    other.applyDocument({ ...other.document, title: 'External edit' })
+    await other.save()
+    const external = await readFile(session.filePath)
+    await assert.rejects(session.rebuildPreview({ emptyPreviewRevision: revision }))
+    assert.deepEqual(await readFile(session.filePath), external)
+    assert.equal((await readIgsPackage(session.filePath)).project.title, 'External edit')
+  })
+})
+
+test('Rebuild Preview aborts before replacement if the Project turns dirty or the service guard fails', async () => {
+  await withSession(async (session) => {
+    const revision = session.document.documentRevision
+    const original = await readFile(session.filePath)
+    await assert.rejects(
+      session.rebuildPreview(
+        { emptyPreviewRevision: revision },
+        {
+          beforeReplace: () => {
+            throw new Error('Worker result no longer applies.')
+          },
+        },
+      ),
+      /Worker result no longer applies/,
+    )
+    assert.deepEqual(await readFile(session.filePath), original)
+
+    await assert.rejects(
+      session.rebuildPreview(
+        { emptyPreviewRevision: revision },
+        { beforeReplace: () => session.applyDocument({ ...session.document, title: 'Late edit' }) },
+      ),
+      { code: 'PROJECT_DIRTY' },
+    )
+    assert.deepEqual(await readFile(session.filePath), original)
+    assert.equal(session.dirty, true)
+  })
+})

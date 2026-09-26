@@ -32,10 +32,12 @@ export interface ProjectIndexRecord {
   displayName: string
   documentId: string | null
   documentRevision: string | null
+  fileFingerprint: string | null
   fileHealth: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
   lastOpenedAt: string | null
   localProjectKey: string
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
+  thumbnailSha256: string | null
   workspaceId: string
 }
 
@@ -90,6 +92,20 @@ export class ProjectIndexRepository {
     return stored
   }
 
+  /** Resolve a Home resource without scanning every Project in the workspace again. */
+  async getProject(projectId: string): Promise<ProjectIndexRecord | null> {
+    if (!/^project-v1-[a-f0-9]{64}$/.test(projectId)) {
+      return null
+    }
+    const row = await this.db
+      .selectFrom('project_index')
+      .selectAll()
+      .where('local_project_key', '=', projectId)
+      .where('trashed_at', 'is', null)
+      .executeTakeFirst()
+    return row ? indexRecord(row) : null
+  }
+
   async indexSaved(filePath: string, workspaceId: string): Promise<ProjectIndexRecord> {
     const canonicalPath = await canonicalProjectPath(filePath)
     return await withProjectPathLock(
@@ -104,20 +120,7 @@ export class ProjectIndexRepository {
       query = query.where('workspace_id', '=', workspaceId)
     }
     const rows = await query.orderBy('last_opened_at', 'desc').orderBy('display_name').execute()
-    return rows.map((row) => ({
-      bboxHeight: row.bbox_height,
-      bboxWidth: row.bbox_width,
-      canonicalPath: row.canonical_path,
-      diagnosticCode: row.diagnostic_code,
-      displayName: row.display_name,
-      documentId: row.document_id,
-      documentRevision: row.document_revision,
-      fileHealth: row.file_health as ProjectIndexRecord['fileHealth'],
-      lastOpenedAt: row.last_opened_at,
-      localProjectKey: row.local_project_key,
-      previewStatus: row.preview_status as ProjectIndexRecord['previewStatus'],
-      workspaceId: row.workspace_id,
-    }))
+    return rows.map(indexRecord)
   }
 
   async markOpened(canonicalPath: string): Promise<void> {
@@ -252,6 +255,12 @@ export class ProjectIndexRepository {
     const now = new Date().toISOString()
     const key = localProjectRecoveryKey(canonicalPath)
     const project = packageResult.project
+    const thumbnailSha256 = packageResult.manifest.members.find(
+      (member) => member.path === 'preview/thumbnail.webp',
+    )?.sha256
+    if (!thumbnailSha256) {
+      throw new ProjectIndexError('INDEX_FILE_CHANGED', 'The Project preview is unavailable.')
+    }
     const values = {
       bbox_height: project.primaryBbox.height,
       bbox_width: project.primaryBbox.width,
@@ -260,12 +269,14 @@ export class ProjectIndexRepository {
       display_name: project.title,
       document_id: project.documentId,
       document_revision: project.documentRevision,
+      file_fingerprint: after.fingerprint,
       file_health: 'ready',
       file_mtime_ns: after.mtimeNs,
       file_size_bytes: after.size,
       indexed_at: now,
       local_project_key: key,
       preview_status: packageResult.manifest.preview.status,
+      preview_thumbnail_sha256: thumbnailSha256,
       search_name: normalizeSearchName(project.title),
       workspace_id: workspaceId,
     } as const
@@ -281,11 +292,13 @@ export class ProjectIndexRepository {
           display_name: values.display_name,
           document_id: values.document_id,
           document_revision: values.document_revision,
+          file_fingerprint: values.file_fingerprint,
           file_health: values.file_health,
           file_mtime_ns: values.file_mtime_ns,
           file_size_bytes: values.file_size_bytes,
           indexed_at: now,
           preview_status: values.preview_status,
+          preview_thumbnail_sha256: values.preview_thumbnail_sha256,
           search_name: values.search_name,
           workspace_id: values.workspace_id,
         }),
@@ -304,10 +317,12 @@ export class ProjectIndexRepository {
       displayName: project.title,
       documentId: project.documentId,
       documentRevision: project.documentRevision,
+      fileFingerprint: after.fingerprint,
       fileHealth: 'ready',
       lastOpenedAt: indexed.last_opened_at,
       localProjectKey: key,
       previewStatus: packageResult.manifest.preview.status,
+      thumbnailSha256,
       workspaceId,
     }
   }
@@ -341,6 +356,7 @@ export class ProjectIndexRepository {
         display_name: name,
         document_id: existing?.document_id ?? null,
         document_revision: existing?.document_revision ?? null,
+        file_fingerprint: null,
         file_health: health,
         file_mtime_ns: null,
         file_size_bytes: null,
@@ -348,6 +364,7 @@ export class ProjectIndexRepository {
         last_opened_at: existing?.last_opened_at ?? null,
         local_project_key: key,
         preview_status: existing?.preview_status ?? null,
+        preview_thumbnail_sha256: null,
         search_name: normalizeSearchName(name),
         trashed_at: existing?.trashed_at ?? null,
         workspace_id: workspaceId,
@@ -355,13 +372,34 @@ export class ProjectIndexRepository {
       .onConflict((conflict) =>
         conflict.column('local_project_key').doUpdateSet({
           diagnostic_code: diagnosticCode,
+          file_fingerprint: null,
           file_health: health,
           file_mtime_ns: null,
           file_size_bytes: null,
           indexed_at: now,
+          preview_thumbnail_sha256: null,
         }),
       )
       .execute()
+  }
+}
+
+function indexRecord(row: DB['project_index']): ProjectIndexRecord {
+  return {
+    bboxHeight: row.bbox_height,
+    bboxWidth: row.bbox_width,
+    canonicalPath: row.canonical_path,
+    diagnosticCode: row.diagnostic_code,
+    displayName: row.display_name,
+    documentId: row.document_id,
+    documentRevision: row.document_revision,
+    fileFingerprint: row.file_fingerprint,
+    fileHealth: row.file_health as ProjectIndexRecord['fileHealth'],
+    lastOpenedAt: row.last_opened_at,
+    localProjectKey: row.local_project_key,
+    previewStatus: row.preview_status as ProjectIndexRecord['previewStatus'],
+    thumbnailSha256: row.preview_thumbnail_sha256,
+    workspaceId: row.workspace_id,
   }
 }
 

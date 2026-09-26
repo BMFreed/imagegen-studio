@@ -42,7 +42,7 @@ type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required
 type PendingProjectAction =
   | { kind: 'bbox' | 'close' | 'discard' | 'import-image' | 'layer' | 'save'; tabId: string }
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
-  | { kind: 'open'; projectId: string }
+  | { kind: 'open' | 'rebuild'; projectId: string }
 
 const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
@@ -79,6 +79,10 @@ let projectListRequest = 0
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
 )
+const pendingHomeAction = computed(() => {
+  const action = pendingProjectAction.value
+  return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
+})
 const activeTabPending = computed<'bbox' | 'import-image' | 'save' | null>(() => {
   const action = pendingProjectAction.value
   if (
@@ -306,6 +310,58 @@ async function openProject(projectId: string) {
     } else {
       focusTab(result.tab)
       await refreshProjects()
+    }
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function rebuildProjectPreview(projectId: string) {
+  if (pendingProjectAction.value !== null) {
+    return
+  }
+  const openTab = projectTabs.value.find((tab) => tab.id === projectId)
+  if (openTab?.dirty) {
+    focusTab(openTab)
+    globalNotice.value = 'Save Project to rebuild its preview.'
+    return
+  }
+
+  pendingProjectAction.value = { kind: 'rebuild', projectId }
+  homeError.value = null
+  try {
+    const result = await projectApi().rebuildPreview(projectId)
+    if (!result.ok) {
+      if (result.error.code === 'PROJECT_DIRTY') {
+        const dirtyTab = projectTabs.value.find((tab) => tab.id === projectId)
+        if (dirtyTab) {
+          focusTab(dirtyTab)
+          globalNotice.value = 'Save Project to rebuild its preview.'
+        } else {
+          homeError.value = 'Save Project to rebuild its preview.'
+        }
+      } else if (result.error.code === 'PROJECT_WORKER_UNAVAILABLE') {
+        homeError.value = `Rebuild Preview needs an available image worker. ${result.error.message}`
+      } else {
+        homeError.value = result.error.message
+      }
+      return
+    }
+
+    await refreshProjects()
+    const warnings: string[] = []
+    if (!result.value.directorySynced) {
+      warnings.push('The preview was rebuilt, but disk synchronization could not be confirmed.')
+    }
+    if (result.value.indexWarning) {
+      warnings.push(
+        `The preview was rebuilt. Home may show outdated project details. ${result.value.indexWarning}`,
+      )
+    }
+    if (warnings.length > 0) {
+      globalNotice.value = warnings.join(' ')
     }
   } catch (cause) {
     homeError.value = errorMessage(cause)
@@ -791,14 +847,13 @@ onBeforeUnmount(() => {
           v-if="activeDocument === 'home' && homeOpen"
           :error="homeError"
           :loading="projectsLoading"
-          :pendingProjectId="
-            pendingProjectAction?.kind === 'open' ? pendingProjectAction.projectId : null
-          "
+          :pendingAction="pendingHomeAction"
           :projects
           @createProject="beginNewProject"
           @importProject="selectImport"
           @manageModels="modelManagerOpen = true"
           @openProject="openProject"
+          @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
         />
         <ProjectView

@@ -39,11 +39,6 @@ const rasterPng = Buffer.concat([
   iccChunk,
   untaggedRasterPng.subarray(33),
 ])
-const rasterWebp = Buffer.from(
-  'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoCAAIAAUAmJaACdLoB+AAETAAA/q4X/0mzxNnibPkkf/OwbEu14AAA',
-  'base64',
-)
-
 for (const kind of ['empty', 'unavailable']) {
   const root = path.join('dist', 'main', 'placeholders', kind)
   assert.equal(readFileSync(`${root}.png`).subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
@@ -128,6 +123,20 @@ async function sampleImageAtWorld(window, bytes, mimeType, rect, worldX, worldY)
     },
     { base64: bytes.toString('base64'), mimeType, rect, worldX, worldY },
   )
+}
+
+async function waitForHomeThumbnail(window, projectTitle) {
+  const row = window.getByRole('listitem').filter({ hasText: projectTitle })
+  const thumbnail = row.locator('img')
+  await thumbnail.waitFor()
+  await window.waitForFunction((title) => {
+    const projectRow = [...document.querySelectorAll('.project-row')].find((candidate) =>
+      candidate.textContent?.includes(title),
+    )
+    const image = projectRow?.querySelector('img')
+    return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0
+  }, projectTitle)
+  return await thumbnail.getAttribute('src')
 }
 
 let application
@@ -377,10 +386,10 @@ try {
       [lowerRasterAssetPath]: { bytes: rasterPng },
     },
     preview: {
-      merged: rasterPng,
+      merged: readFileSync('dist/main/placeholders/unavailable.png'),
       rect: { height: 400, width: 400, x: -3, y: 4 },
-      status: 'rendered',
-      thumbnail: rasterWebp,
+      status: 'unavailable',
+      thumbnail: readFileSync('dist/main/placeholders/unavailable.webp'),
     },
     project: {
       ...rasterDocument,
@@ -450,12 +459,91 @@ try {
   assert.equal(afterImport.value.length, 2)
   const rasterProject = afterImport.value.find((project) => project.title === rasterTitle)
   assert.ok(rasterProject && rasterProject.id !== projectId)
+  assert.equal(rasterProject.previewStatus, 'unavailable')
+  assert.match(rasterProject.thumbnailUrl, /^igs-preview:\/\/thumbnail\//)
+
+  const importedPackages = await Promise.all(
+    readdirSync(projectDir)
+      .filter((entry) => entry.endsWith('.igs'))
+      .map(async (entry) => ({
+        entry,
+        package: await readIgsPackage(path.join(projectDir, entry)),
+      })),
+  )
+  const importedRasterPackage = importedPackages.find(
+    (candidate) => candidate.package.project.title === rasterTitle,
+  )
+  assert.ok(importedRasterPackage)
+  const rasterPackagePath = path.join(projectDir, importedRasterPackage.entry)
+  const preRebuildDocument = await importedRasterPackage.package.readMember('project.json')
+  const preRebuildAssets = await Promise.all(
+    [rasterAssetPath, lowerRasterAssetPath].map((member) =>
+      importedRasterPackage.package.readMember(member),
+    ),
+  )
+  const preRebuildPlaceholder = await importedRasterPackage.package.readMember('preview/merged.png')
+  const preRebuildRevision = importedRasterPackage.package.project.documentRevision
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  const rasterHomeRow = recoveryWindow.getByRole('listitem').filter({ hasText: rasterTitle })
+  await rasterHomeRow.getByText('Preview unavailable').waitFor()
+  assert.equal(await waitForHomeThumbnail(recoveryWindow, rasterTitle), rasterProject.thumbnailUrl)
+  await rasterHomeRow.getByRole('button', { name: `Rebuild preview for ${rasterTitle}` }).click()
+  await rasterHomeRow.getByText('Saved preview').waitFor()
+  const rebuiltThumbnailUrl = await waitForHomeThumbnail(recoveryWindow, rasterTitle)
+  assert.equal(
+    await rasterHomeRow.getByRole('button', { name: `Rebuild preview for ${rasterTitle}` }).count(),
+    0,
+  )
+  const afterRebuildSummary = await recoveryWindow.evaluate(() => window.api.projects.list())
+  assert.equal(afterRebuildSummary.ok, true)
+  const rebuiltProjectSummary = afterRebuildSummary.value.find(
+    (project) => project.id === rasterProject.id,
+  )
+  assert.equal(rebuiltProjectSummary?.previewStatus, 'rendered')
+  assert.match(rebuiltProjectSummary.thumbnailUrl, /^igs-preview:\/\/thumbnail\//)
+  assert.notEqual(rebuiltProjectSummary.thumbnailUrl, rasterProject.thumbnailUrl)
+  assert.equal(rebuiltThumbnailUrl, rebuiltProjectSummary.thumbnailUrl)
+  const rebuiltPackage = await readIgsPackage(rasterPackagePath)
+  assert.equal(rebuiltPackage.manifest.preview.status, 'rendered')
+  assert.deepEqual(rebuiltPackage.manifest.preview.rect, {
+    x: -3,
+    y: 4,
+    width: 400,
+    height: 400,
+  })
+  assert.equal(rebuiltPackage.project.documentRevision, preRebuildRevision)
+  assert.deepEqual(await rebuiltPackage.readMember('project.json'), preRebuildDocument)
+  for (const [index, member] of [rasterAssetPath, lowerRasterAssetPath].entries()) {
+    assert.deepEqual(await rebuiltPackage.readMember(member), preRebuildAssets[index])
+  }
+  const rebuiltComposite = await rebuiltPackage.readMember('preview/merged.png')
+  assert.equal(rebuiltComposite.equals(preRebuildPlaceholder), false)
+  const rebuiltPixel = await sampleImageAtWorld(
+    recoveryWindow,
+    rebuiltComposite,
+    'image/png',
+    rebuiltPackage.manifest.preview.rect,
+    197,
+    204,
+  )
+  assert.ok(
+    rebuiltPixel.pixel[2] > rebuiltPixel.pixel[0] + 100 && rebuiltPixel.pixel[3] > 240,
+    `Rebuild Preview did not composite the saved layer: ${rebuiltPixel.pixel}`,
+  )
+  assert.deepEqual(readFileSync(externalProject), externalBytes)
+  await rasterHomeRow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  console.log(
+    'Desktop smoke passed: Home thumbnail and clean preview rebuild preserve Project bytes.',
+  )
+
   const rasterTab = await recoveryWindow.evaluate(
     (id) => window.api.projects.open(id),
     rasterProject.id,
   )
   assert.equal(rasterTab.ok, true)
   assert.equal(rasterTab.value.kind, 'opened')
+  assert.equal(rasterTab.value.tab.dirty, false)
   assert.equal(rasterTab.value.tab.layers.length, 2)
   const layerUrl = rasterTab.value.tab.layers[0].imageUrl
   const imageSize = await recoveryWindow.evaluate(

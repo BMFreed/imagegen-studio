@@ -186,6 +186,31 @@ test('Save, portable copy, reopen, edit and Save again use the real ZIP loader',
   })
 })
 
+test('a preview-only package rewrite keeps the original project.json bytes', async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const target = path.join(directory, 'preview-maintenance.igs')
+    const project = createEmptyProjectDocumentV1({ title: 'Unchanged document' })
+    const projectJson = Buffer.from(JSON.stringify(project, null, 2), 'utf8')
+    await saveIgsPackage(target, {
+      preview: { merged: PNG, rect: null, status: 'empty', thumbnail: WEBP },
+      project,
+      projectJson,
+    })
+    const original = await readIgsPackage(target)
+    assert.deepEqual(await original.readMember('project.json'), projectJson)
+
+    await assert.rejects(
+      saveIgsPackage(target, {
+        preview: { merged: PNG, rect: null, status: 'empty', thumbnail: WEBP },
+        project,
+        projectJson: Buffer.from(JSON.stringify({ ...project, title: 'Wrong document' })),
+      }),
+      { code: 'MEMBER_MISMATCH' },
+    )
+    assert.deepEqual(await (await readIgsPackage(target)).readMember('project.json'), projectJson)
+  })
+})
+
 test('worker-unavailable raster Save keeps exact asset bytes and both required previews', async () => {
   await inTemporaryDirectory(async (directory) => {
     const project = rasterProject()

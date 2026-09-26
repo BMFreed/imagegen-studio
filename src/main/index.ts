@@ -5,7 +5,7 @@ import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
 import { mkdirSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -28,6 +28,10 @@ import {
   streamSavedProjectLayer,
   streamStagedProjectLayer,
 } from './projects/project-layer-resource.js'
+import {
+  parseProjectThumbnailImageUrl,
+  readProjectThumbnail,
+} from './projects/project-preview-resource.js'
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
@@ -44,6 +48,10 @@ protocol.registerSchemesAsPrivileged([
   {
     privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
     scheme: 'igs-layer',
+  },
+  {
+    privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
+    scheme: 'igs-preview',
   },
 ])
 const gotInstanceLock = app.requestSingleInstanceLock()
@@ -103,9 +111,10 @@ if (!gotInstanceLock) {
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
+      const projectRepository = new ProjectIndexRepository(database.db)
       const projectService = new ProjectService({
         dataRoot: paths.dataRoot,
-        repository: new ProjectIndexRepository(database.db),
+        repository: projectRepository,
         roots: {
           placeholdersDir: path.join(moduleDir, 'placeholders'),
           scratchDir: path.join(paths.dataRoot, 'scratch'),
@@ -164,6 +173,21 @@ if (!gotInstanceLock) {
         } catch {
           return new Response('Layer unavailable.', { status: 503 })
         }
+      })
+      const thumbnailCacheRoot = path.join(
+        await realpath(paths.dataRoot),
+        'previews',
+        'project-thumbnails',
+      )
+      protocol.handle('igs-preview', async (request) => {
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { status: 405 })
+        }
+        const resource = parseProjectThumbnailImageUrl(request.url)
+        if (!resource) {
+          return new Response('Project thumbnail not found.', { status: 404 })
+        }
+        return await readProjectThumbnail(resource, projectRepository, thumbnailCacheRoot)
       })
       try {
         await projectService.initialize()
@@ -587,6 +611,32 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
         saveProjectWithPreview(tabId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.rebuildPreview,
+        oneProjectId,
+        async (projectId) => {
+          if (!developmentWorkerLocation) {
+            throw new ProjectServiceError(
+              'PROJECT_WORKER_UNAVAILABLE',
+              'Set up the image runtime before rebuilding a Project preview.',
+            )
+          }
+          let worker: ProjectWorkerClient
+          try {
+            worker = await ProjectWorkerClient.start(developmentWorkerLocation)
+          } catch {
+            throw new ProjectServiceError(
+              'PROJECT_WORKER_UNAVAILABLE',
+              'The image worker could not start. The saved Project was not changed.',
+            )
+          }
+          try {
+            return await projectService.rebuildPreview(projectId as string, worker)
+          } finally {
+            await worker.close().catch(() => undefined)
+          }
+        },
       )
       registerProjectHandler(ipcChannels.projects.close, oneProjectId, (tabId) =>
         projectService.close(tabId as string),

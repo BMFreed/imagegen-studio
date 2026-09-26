@@ -9,12 +9,12 @@ import {
   Refresh as RefreshIcon,
 } from '@vicons/tabler'
 import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   error: string | null
   loading: boolean
-  pendingProjectId: string | null
+  pendingAction: { kind: 'open' | 'rebuild'; projectId: string } | null
   projects: ProjectSummary[]
 }>()
 
@@ -23,10 +23,42 @@ defineEmits<{
   importProject: []
   manageModels: []
   openProject: [projectId: string]
+  rebuildPreview: [projectId: string]
   refresh: []
 }>()
 
 const search = ref('')
+const failedThumbnailUrls = ref<Set<string>>(new Set())
+watch(
+  () => props.projects,
+  () => {
+    // A fresh list is an explicit retry after a transient cache or protocol failure.
+    failedThumbnailUrls.value = new Set()
+  },
+)
+
+function showThumbnail(project: ProjectSummary): boolean {
+  return (
+    project.health === 'ready' &&
+    project.thumbnailUrl !== null &&
+    !failedThumbnailUrls.value.has(project.thumbnailUrl)
+  )
+}
+
+function markThumbnailFailed(url: string | null): void {
+  if (url !== null) {
+    failedThumbnailUrls.value = new Set([...failedThumbnailUrls.value, url])
+  }
+}
+
+function canRebuildPreview(project: ProjectSummary): boolean {
+  return (
+    project.health === 'ready' &&
+    project.previewStatus === 'unavailable' &&
+    project.recoveryStatus === 'none'
+  )
+}
+
 const visibleProjects = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
   return query
@@ -34,16 +66,22 @@ const visibleProjects = computed(() => {
     : props.projects
 })
 
-function previewLabel(project: ProjectSummary): string {
+function previewLabel(project: ProjectSummary): string | null {
+  if (project.health !== 'ready') {
+    return null
+  }
   switch (project.previewStatus) {
+    case 'empty': {
+      return 'Empty project'
+    }
     case 'rendered': {
-      return 'Saved preview'
+      return showThumbnail(project) ? 'Saved preview' : 'Preview could not be displayed'
     }
     case 'unavailable': {
       return 'Preview unavailable'
     }
     default: {
-      return 'Empty project'
+      return null
     }
   }
 }
@@ -159,7 +197,15 @@ function recoveryLabel(project: ProjectSummary): string | null {
             role="listitem"
           >
             <div aria-hidden="true" class="project-thumbnail">
-              <NIcon :component="FolderIcon" />
+              <img
+                v-if="showThumbnail(project)"
+                alt=""
+                decoding="async"
+                loading="lazy"
+                :src="project.thumbnailUrl ?? undefined"
+                @error="markThumbnailFailed(project.thumbnailUrl)"
+              />
+              <NIcon v-else :component="FolderIcon" />
             </div>
             <div class="project-details">
               <div class="project-name-line">
@@ -175,22 +221,38 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 <span v-if="project.bbox">
                   {{ project.bbox.width }} × {{ project.bbox.height }}
                 </span>
-                <span>{{ previewLabel(project) }}</span>
+                <span v-if="previewLabel(project)">{{ previewLabel(project) }}</span>
               </div>
               <span v-if="project.recoveryReason" class="project-diagnostic">
                 {{ project.recoveryReason }}
               </span>
             </div>
-            <NButton
-              :aria-label="`Open ${project.title}`"
-              class="open-project"
-              :disabled="pendingProjectId !== null && pendingProjectId !== project.id"
-              :loading="pendingProjectId === project.id"
-              size="small"
-              @click="$emit('openProject', project.id)"
-            >
-              Open
-            </NButton>
+            <div class="project-actions">
+              <NButton
+                v-if="canRebuildPreview(project)"
+                :aria-label="`Rebuild preview for ${project.title}`"
+                :disabled="pendingAction !== null"
+                :loading="
+                  pendingAction?.kind === 'rebuild' && pendingAction.projectId === project.id
+                "
+                quaternary
+                size="small"
+                @click="$emit('rebuildPreview', project.id)"
+              >
+                <template v-slot:icon><NIcon :component="RefreshIcon" /></template>
+                Rebuild Preview
+              </NButton>
+              <NButton
+                :aria-label="`Open ${project.title}`"
+                class="open-project"
+                :disabled="pendingAction !== null || project.health !== 'ready'"
+                :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
+                size="small"
+                @click="$emit('openProject', project.id)"
+              >
+                Open
+              </NButton>
+            </div>
           </article>
         </div>
       </div>
@@ -334,6 +396,14 @@ function recoveryLabel(project: ProjectSummary): string | null {
   color: var(--app-text-muted);
   background: var(--app-chrome);
   font-size: 24px;
+  overflow: hidden;
+}
+
+.project-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .project-details {
@@ -359,7 +429,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
   white-space: nowrap;
 }
 
-.open-project {
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   justify-self: end;
 }
 </style>

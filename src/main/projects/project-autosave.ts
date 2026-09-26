@@ -11,8 +11,10 @@ import type { ProjectShadowCommit, ProjectShadowInspection } from './project-sha
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import {
+  type ProjectRebuildPreviewInput,
   type ProjectSaveOutcome,
   ProjectSession,
+  ProjectSessionError,
   type ProjectSessionRoots,
   type RenderedProjectPreview,
 } from './project-session.js'
@@ -467,6 +469,33 @@ export class ProjectAutosaveCoordinator {
     return 'sourcePath' in pending.source
       ? { sourcePath: pending.source.sourcePath }
       : { bytes: Buffer.from(pending.source.bytes) }
+  }
+
+  /** Keep document edits behind the same gate while preview-only maintenance commits. */
+  async rebuildPreview(
+    input: ProjectRebuildPreviewInput,
+    options: { beforeReplace?: () => void } = {},
+  ): Promise<ProjectSaveOutcome> {
+    this.assertOpen()
+    if (this.activeSave || this.editGate) {
+      throw new ProjectAutosaveError('SAVE_IN_PROGRESS', 'Wait for Project Save to finish.')
+    }
+    if (this.session.dirty) {
+      throw new ProjectSessionError(
+        'PROJECT_DIRTY',
+        'Save the Project changes before rebuilding its preview.',
+      )
+    }
+    this.editGate = new Promise<void>((resolve) => {
+      this.releaseEditGate = resolve
+    })
+    try {
+      await this.pendingWrite
+      this.assertOpen()
+      return await this.session.rebuildPreview(input, options)
+    } finally {
+      this.releasePreparedEdits()
+    }
   }
 
   /** Explicit Save commits `.igs`, then cleans only that revision and rebases any later edit. */

@@ -24,6 +24,7 @@ import { link, lstat, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { type Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { isDeepStrictEqual } from 'node:util'
 import { crc32, createInflate, type Inflate, inflateSync } from 'node:zlib'
 import * as yauzl from 'yauzl'
 import * as yazl from 'yazl'
@@ -64,6 +65,8 @@ export interface IgsPackageWriteInput {
     thumbnail: Buffer
   }
   project: IgsProjectDocumentV1
+  /** Keep the exact validated document member during preview-only maintenance. */
+  projectJson?: Buffer
 }
 
 export interface IgsPackageReadResult {
@@ -848,7 +851,24 @@ export async function saveIgsPackage(
   }
 
   const sources = new Map<string, SourceScan>()
-  const projectJson = Buffer.from(JSON.stringify(project), 'utf8')
+  const projectJson = input.projectJson ?? Buffer.from(JSON.stringify(project), 'utf8')
+  if (input.projectJson) {
+    if (projectJson.length > limits.projectJsonBytes) {
+      throw new IgsPackageError('PACKAGE_LIMIT', 'The Project document member is too large.')
+    }
+    let suppliedProject: IgsProjectDocumentV1
+    try {
+      suppliedProject = parseProjectDocumentV1(JSON.parse(projectJson.toString('utf8')))
+    } catch {
+      throw new IgsPackageError(
+        'MEMBER_MISMATCH',
+        'The supplied Project document member is invalid.',
+      )
+    }
+    if (!isDeepStrictEqual(suppliedProject, project)) {
+      throw new IgsPackageError('MEMBER_MISMATCH', 'The supplied Project document member differs.')
+    }
+  }
   sources.set('project.json', await scanAssetSource('project.json', { bytes: projectJson }, limits))
   sources.set(
     'preview/thumbnail.webp',

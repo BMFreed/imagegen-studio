@@ -243,10 +243,12 @@ Crash recovery открывает shadow для проверки, не пере�
 создаёт embedded PNG/WebP Project previews при явном Save: Electron smoke
 проверяет world-space rect и декодированные пиксели после повторного чтения
 `.igs`; отказ worker сохраняет документ с `unavailable` placeholder.
-Подробное evidence — [Phase 2A research](../engineering/phase-2a-project-storage-research.md#worker-rendered-project-previews).
+Home показывает проверенные embedded thumbnails через пересобираемый cache;
+явный `Rebuild Preview` для чистого Project восстанавливает превью без изменения
+document revision, asset bytes и recovery. UI→IPC→worker→`.igs`→Home проверен
+Electron smoke. Подробное evidence — [Phase 2A research](../engineering/phase-2a-project-storage-research.md#home-thumbnails-and-clean-preview-rebuild).
 Это не закрывает фазу: installable Linux/NVIDIA runtime, generation staging
-recovery, clean `Rebuild Preview`, Home thumbnail cache/display и finite frozen
-composite для generation остаются следующими задачами.
+recovery и finite frozen composite для generation остаются следующими задачами.
 
 ## Фаза 2B. Очередь и первая сквозная генерация
 

@@ -28,6 +28,7 @@ export const ipcChannels = {
     list: 'projects:list',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
+    rebuildPreview: 'projects:rebuild-preview',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
@@ -64,6 +65,7 @@ export interface ProjectSummary {
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
   recoveryReason?: string
   recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale'
+  thumbnailUrl: string | null
   title: string
 }
 
@@ -131,6 +133,12 @@ export interface ProjectSaveResult {
   tab: ProjectTab
 }
 
+export interface ProjectRebuildResult {
+  committed: true
+  directorySynced: boolean
+  indexWarning?: string
+}
+
 export interface ProjectApi {
   cancelImport: (importId: string) => Promise<ApiResult<void>>
   close: (tabId: string) => Promise<ApiResult<void>>
@@ -153,6 +161,7 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab>>
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
+  rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
   resolveRecovery: (
     projectId: string,
     decision: 'discard' | 'recover',
