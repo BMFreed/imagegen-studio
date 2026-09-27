@@ -2,6 +2,7 @@ import type {
   ProjectGenerationDraftChange,
   ProjectImportFinishResult,
   ProjectImportSelection,
+  ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectRasterLayerChange,
   ProjectRebuildResult,
@@ -133,6 +134,40 @@ export class ProjectService {
   private readonly saving = new Map<string, Promise<ProjectSaveResult>>()
 
   constructor(private readonly options: ProjectServiceOptions) {}
+
+  /** Resource metadata is resolved and verified in main, never supplied by the renderer. */
+  async addGenerationLora(
+    tabId: string,
+    resource: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+  ): Promise<ProjectTab> {
+    if (resource.kind !== 'lora') {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Expected a LoRA resource.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (
+      document.generationDraft.loras.some(
+        (lora) => lora.resource.localModelId === resource.localModelId,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'This LoRA is already in the stack. Remove it before choosing another version.',
+      )
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          loras: [...document.generationDraft.loras, { enabled: true, resource, weight: 0.7 }],
+        },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
 
   /** Cancel never changes the chosen external file or the managed workspace. */
   cancelImport(importId: string): void {
@@ -598,6 +633,24 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async removeGenerationLora(tabId: string, identity: ProjectLoraIdentity): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const index = this.loraIndex(document, identity)
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          loras: document.generationDraft.loras.filter((_, current) => current !== index),
+        },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   async resolveRecovery(projectId: string, decision: 'discard' | 'recover'): Promise<ProjectTab> {
     assertProjectId(projectId)
     const rebuilding = this.rebuilding.get(projectId)
@@ -756,6 +809,23 @@ export class ProjectService {
     const document = coordinator.document
     const draft = document.generationDraft
     switch (change.kind) {
+      case 'lora-enabled':
+      case 'lora-weight': {
+        const index = this.loraIndex(document, change)
+        const lora = draft.loras[index]
+        const field = change.kind === 'lora-enabled' ? 'enabled' : 'weight'
+        if (lora[field] === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          loras: draft.loras.map((entry, current) =>
+            current === index ? { ...entry, [field]: change.value } : entry,
+          ),
+        }
+        break
+      }
+
       case 'sampling-cfg-scale': {
         if (draft.sampling.cfgScale === change.value) {
           return toTab(tabId, coordinator)
@@ -867,6 +937,22 @@ export class ProjectService {
       { expectedDocumentRevision: document.documentRevision },
     )
     return toTab(tabId, coordinator)
+  }
+
+  private loraIndex(document: IgsProjectDocumentV1, identity: ProjectLoraIdentity): number {
+    const matches = document.generationDraft.loras.flatMap((lora, index) =>
+      lora.resource.localModelId === identity.resourceId &&
+      lora.resource.localVersionId === identity.versionId
+        ? [index]
+        : [],
+    )
+    if (matches.length !== 1) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The selected LoRA row is unavailable or ambiguous.',
+      )
+    }
+    return matches[0]
   }
 
   private async markOpenedBestEffort(filePath: string): Promise<void> {

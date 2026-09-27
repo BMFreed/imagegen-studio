@@ -30,10 +30,10 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точный Project checkpoint и явный relink после переноса `.igs` проверены с SQLite, файлами и Electron; загрузка worker и остальные selectors отсутствуют                                                                                                                                                                                                                   |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove и явный checkpoint relink после переноса `.igs` проверены с SQLite, файлами и Electron; загрузка worker, embedding/VAE selectors и portable LoRA relink отсутствуют                                                                                                                                                                                                                   |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                                                                |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, exact LoRA stack, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
 | PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                                                         |
 
 ### Статусы и доказательства
@@ -172,7 +172,11 @@ Production Project выбирает точную установленную ве
 подменяют этот выбор. После переноса `.igs` пользователь может явно связать
 сохранённую версию с точной установленной копией CivitAI-файла; меняются только
 локальные ID, а правка сохраняется обычным Save. Загрузка моделей в worker,
-остальные resource selectors, связи с Presets и provenance ещё не реализованы.
+embedding/VAE selectors, связи с Presets и provenance ещё не реализованы.
+Project LoRA stack уже хранит точную проверенную версию, вес и enabled state;
+добавление/удаление не переписывают prompt или embedding refs. Выбор и Save
+проверены через Electron, recovery — через реальную SQLite/файловую систему.
+Portable relink для LoRA и её применение в inference ещё не реализованы.
 
 ### Обещание
 
@@ -333,6 +337,10 @@ Project предлагает явно связать сохранённую ве
 CivitAI-файлом. Проверка идентичности файла выполняется в main; меняются только
 локальные ID, и результат проходит dirty/shadow/явный Save. Открытие проекта
 само по себе ссылку не меняет.
+LoRA stack также проходит dirty/shadow/Save/reopen: версии не заменяются при
+смене Default или исчезновении файла; правки веса/enabled и удаление сохраняют
+prompt и embedding refs. [Проверки LoRA](./engineering/phase-2a-project-storage-research.md#project-lora-stack-validation)
+не доказывают её загрузку и применение в ML pipeline.
 Не готовы полный generation pipeline/export, устанавливаемый
 Linux/NVIDIA runtime и восстановление непринятых результатов. Home загружает
 подписанные thumbnails из проверенного `.igs` или пересобираемого cache.

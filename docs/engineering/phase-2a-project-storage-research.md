@@ -590,3 +590,88 @@ model-specific sampler/capability validation or Generate action in this slice;
 the existing nullable draft schema does not establish suitable values for
 Illustrious or Anima. That qualification belongs to the executable Phase 2B/2C
 job contract.
+
+## Project LoRA stack: implementation research
+
+Scope: exact installed LoRA selection, enabled/weight edits and removal in the
+production Project. Contracts: [LoRA selector](../features/project/generate-mode/lora-selector.md),
+[settings](../features/project/generate-mode/generation-settings.md), PP-004/PP-007.
+Risk: high at the resource/IPC and `.igs` boundary; no archive format change.
+
+Confirmed before implementation: the document already stores exact LoRA refs,
+finite weights and enabled flags. Model Manager installs LoRA, but only the
+prototype exposes its stack. Checkpoint selection already verifies registry
+identity and actual file bytes in main. Renderer draft synchronization serializes
+edits and flushes them before Save/model actions/native close.
+
+Chosen path: renderer sends IDs to main → ModelService verifies the exact LoRA
+file → ProjectService appends the verified ref → existing autosave/session writer.
+Enabled/weight changes carry an existing row identity, never replacement metadata.
+Add/remove flush pending draft edits first. One resource has one stack entry;
+another version requires explicit removal and selection. Initial weight is 0.7,
+as in the approved prototype. Existing finite weights are preserved, without
+introducing a new archive constraint. Unknown compatibility remains a warning;
+known mismatches are shown locally and must fail future generation preflight.
+Checkpoint-only Anima dependency checks must not apply to Anima LoRA files.
+
+Invariants: prompt text/embedding refs never change with LoRA actions; manager
+default changes never retarget a saved ref; removed/corrupt files keep their saved
+entry and permit disable/removal. Stale row edits fail rather than touching a
+neighbor. Autosave keeps `.igs` unchanged until Save. Pending edits for different
+LoRA rows cannot overwrite each other, and Save waits for their acknowledgements.
+
+Validation plan: real registry/files + ProjectService → recovery/Save/reopen;
+wrong kind/unknown version/corrupt bytes; strict IPC rejects forged refs and NaN;
+real Electron selection/weight/toggle/remove/prompt preservation; semantic mutation
+of persisted LoRA weight must fail the persistence test. Regression includes
+checkpoint Anima validation and existing draft/save flows. Inference, portable
+LoRA relinking, trigger highlighting/completion and presets remain later slices.
+
+### Project LoRA stack validation
+
+Self-review of the working tree based on `dc468b5`, 27.09.2026. This is not a
+blind review or evidence of ML inference.
+
+- `project-service.test.ts`: actual installed-resource rows, files, ProjectService,
+  ProjectDraftSync, shadow store, archive writer/loader and simulated restart.
+  Two rows receive overlapping weight/enabled edits; flush retains both rows'
+  latest values. Recovery and explicit Save/reopen preserve exact refs, negative
+  weight and disabled state; a Default change and missing file do not retarget
+  them. Stale row edits, duplicates and forged/non-finite draft changes fail.
+  Removal changes only the selected entry. Existing prompt import test also
+  checks nonempty embedding sidecars survive add/weight/disable/remove.
+- `model-service.test.ts`: shared resolver verifies resource kind, version
+  ownership and actual bytes. Checkpoint Anima dependency verification still
+  runs; Anima LoRA does not require checkpoint component identities. Catalog
+  tests distinguish each installed version's own trigger words from Default.
+- Electron smoke: UI selection → IPC → saved archive; finite negative and `1e-7`
+  weights, disabled state, visible Added entries that cannot be added again,
+  invalid IPC payload rejection, missing-resource warning/removal and unchanged
+  positive/negative text. Existing seven smoke scenarios still pass, including
+  crash recovery and native close flush/Save. Installed files are tiny fixtures,
+  not inference-capable model weights; no live CivitAI request is claimed.
+- Visual self-review using `ui-audit`: actual Electron screenshots at 1380×900
+  and 900×620, open dropdown and collapsed stack. Weight moved to a labelled
+  second row because the production panel is narrower than the prototype;
+  long names retain a full title, controls and scrolling remain accessible.
+  Screenshots inspected locally: `/tmp/igs-lora-stack.png` and
+  `/tmp/igs-lora-stack-small.png`. Not a complete accessibility audit.
+- Two semantic mutations separately failed their intended assertions: replacing
+  every edited weight with 0.7 broke independent-row persistence; omitting the
+  resource-kind guard allowed a checkpoint as LoRA and broke the rejection test.
+  Both mutations were reverted before the final green runs.
+- Full checks: typecheck; lint; 246 app tests; 142 prototype tests; seven Electron
+  smoke scenarios; app build (existing >500 kB chunk-size warning).
+
+The full smoke also exposed a neighboring Home race: after closing a Project,
+Home could display enabled Open/Rebuild controls while main's close/list refresh
+was still pending, and App silently ignored the click. Home now receives the
+same global Project busy state used by App's command guard, so enabled state
+matches whether an action can run. The close→Home→open→edit→native-close scenario
+passed after the fix, without inserting a sleep at that transition.
+
+The only added scalar default is the prototype's existing LoRA weight 0.7. IPC
+identity strings use the existing document `titleBytes` bound (1024 bytes), not
+a new persistence limit. This slice changes neither `.igs` schema nor Save/
+recovery failure handling. Runtime installation, inference, trigger completion,
+portable LoRA relink and preset integration remain open roadmap work.

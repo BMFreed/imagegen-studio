@@ -12,6 +12,7 @@ import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
+  busy: boolean
   error: string | null
   loading: boolean
   pendingAction: { kind: 'open' | 'rebuild'; projectId: string } | null
@@ -125,11 +126,21 @@ function recoveryLabel(project: ProjectSummary): string | null {
   <section aria-label="Home" class="home-view">
     <aside aria-label="Workspace navigation" class="workspace-sidebar">
       <h2>Workspace</h2>
-      <NButton class="sidebar-action new-project" type="primary" @click="$emit('createProject')">
+      <NButton
+        class="sidebar-action new-project"
+        :disabled="busy"
+        type="primary"
+        @click="$emit('createProject')"
+      >
         <template v-slot:icon><NIcon :component="PlusIcon" /></template>
         New Project
       </NButton>
-      <NButton class="sidebar-action import-project" quaternary @click="$emit('importProject')">
+      <NButton
+        class="sidebar-action import-project"
+        :disabled="busy"
+        quaternary
+        @click="$emit('importProject')"
+      >
         <template v-slot:icon><NIcon :component="ImportIcon" /></template>
         Import Project
       </NButton>
@@ -178,7 +189,9 @@ function recoveryLabel(project: ProjectSummary): string | null {
           <NEmpty description="No projects yet">
             <template v-slot:icon><NIcon :component="FolderIcon" /></template>
             <template v-slot:extra>
-              <NButton secondary @click="$emit('createProject')">New Project</NButton>
+              <NButton :disabled="busy" secondary @click="$emit('createProject')">
+                New Project
+              </NButton>
             </template>
           </NEmpty>
         </div>
@@ -231,7 +244,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
               <NButton
                 v-if="canRebuildPreview(project)"
                 :aria-label="`Rebuild preview for ${project.title}`"
-                :disabled="pendingAction !== null"
+                :disabled="busy"
                 :loading="
                   pendingAction?.kind === 'rebuild' && pendingAction.projectId === project.id
                 "
@@ -245,7 +258,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
               <NButton
                 :aria-label="`Open ${project.title}`"
                 class="open-project"
-                :disabled="pendingAction !== null || project.health !== 'ready'"
+                :disabled="busy || project.health !== 'ready'"
                 :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
                 size="small"
                 @click="$emit('openProject', project.id)"

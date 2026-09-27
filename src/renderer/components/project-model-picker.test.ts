@@ -34,6 +34,7 @@ function version(
     name: id,
     predictionType: 'epsilon',
     sha256,
+    trainedWords: [],
   }
 }
 

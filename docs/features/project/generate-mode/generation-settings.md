@@ -167,3 +167,9 @@ If the user selects a v-prediction model, Generate should use the model metadata
 ## Resource selection presentation
 
 Model choices show a preview, base model and version. LoRA choices also show trigger words; search matches the name, base model and triggers. Already added LoRAs remain visible but disabled. Selecting a LoRA does not insert its triggers into the prompt. The same rich option component is used in Project and the preset payload editor; the collapsed selector remains a compact text control. Preview artwork is a local illustrative fixture, not a generated sample or installed model asset.
+
+Production LoRA selection/editing is now covered separately in
+[LoRA selector](./lora-selector.md#production-coverage-27092026): exact versions,
+weights, enabled state and removal persist through document recovery/Save. This
+extends the draft controls only; inference and resource-aware prompt completion
+are not yet available.

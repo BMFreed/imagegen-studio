@@ -2,12 +2,14 @@ import {
   ipcChannels,
   isProjectGenerationDraftChange,
   isProjectGenerationModelSelection,
+  isProjectLoraIdentity,
   isProjectRasterLayerChange,
 } from '../shared/api.js'
 import type {
   ApiResult,
   ProjectGenerationDraftChange,
   ProjectGenerationModelSelection,
+  ProjectLoraIdentity,
   ProjectRasterLayerChange,
   RuntimeStatus,
 } from '../shared/api.js'
@@ -607,6 +609,34 @@ if (!gotInstanceLock) {
           (args[1] === 'recover' || args[1] === 'discard'),
         (projectId, decision) =>
           projectService.resolveRecovery(projectId as string, decision as 'discard' | 'recover'),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.addGenerationLora,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          args[1] !== null &&
+          isProjectGenerationModelSelection(args[1]),
+        async (tabId, selection) => {
+          if (!modelStorageAvailable) {
+            throw new ModelServiceError(
+              'MODEL_STORAGE_UNAVAILABLE',
+              'Managed model storage needs repair.',
+            )
+          }
+          const chosen = selection as ProjectLoraIdentity
+          const resource = await modelService.resolveGenerationLora(
+            chosen.resourceId,
+            chosen.versionId,
+          )
+          return projectService.addGenerationLora(tabId as string, resource)
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.removeGenerationLora,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]),
+        (tabId, identity) =>
+          projectService.removeGenerationLora(tabId as string, identity as ProjectLoraIdentity),
       )
       registerProjectHandler(
         ipcChannels.projects.setGenerationModel,

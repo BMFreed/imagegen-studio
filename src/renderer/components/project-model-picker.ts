@@ -54,7 +54,9 @@ export function savedModelAvailability(
   if (!saved) {
     return 'none'
   }
-  const resource = checkpointCatalog(catalog).find((item) => item.id === saved.localModelId)
+  const resource = catalog.find(
+    (item) => item.resourceType === saved.kind && item.id === saved.localModelId,
+  )
   const version = resource?.versions.find((item) => item.id === saved.localVersionId)
   if (
     !resource ||

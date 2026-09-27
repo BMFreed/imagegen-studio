@@ -215,6 +215,11 @@ export class ModelService {
                   name: version.name,
                   predictionType: version.predictionType,
                   sha256: version.file.sha256,
+                  trainedWords: Array.isArray(version.sourceMetadata.trainedWords)
+                    ? version.sourceMetadata.trainedWords.filter(
+                        (word): word is string => typeof word === 'string',
+                      )
+                    : [],
                 }
               }),
             ),
@@ -449,85 +454,14 @@ export class ModelService {
     resourceId: string,
     versionId: string,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    if (!uuid.test(resourceId) || !uuid.test(versionId)) {
-      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
-    }
-    const installed = await this.repository.listInstalled()
-    const resource = installed.find((item) => item.id === resourceId)
-    const version = resource?.versions.find((item) => item.id === versionId)
-    if (
-      !resource ||
-      resource.type !== 'checkpoint' ||
-      resource.source.kind !== 'civitai' ||
-      !version ||
-      version.civitaiFileId === null ||
-      version.civitaiVersionId === null
-    ) {
-      throw new ModelServiceError(
-        'MODEL_VERSION_UNAVAILABLE',
-        'This checkpoint version is not installed.',
-      )
-    }
-    if (version.baseModelFamily !== 'illustrious' && version.baseModelFamily !== 'anima') {
-      throw new ModelServiceError(
-        'MODEL_FAMILY_UNSUPPORTED',
-        'This checkpoint does not have a supported model family.',
-      )
-    }
-    const status = await this.actualFileStatus(version.file, true)
-    if (status !== 'ready') {
-      throw new ModelServiceError(
-        status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
-        status === 'missing'
-          ? 'The selected checkpoint file is missing.'
-          : 'The selected checkpoint file failed verification.',
-      )
-    }
-    if (version.baseModelFamily === 'anima') {
-      const supported = resolveAnimaDependencies(version.file.sha256)
-      if (!supported.supported) {
-        throw new ModelServiceError(
-          'ANIMA_UNSUPPORTED_CHECKPOINT',
-          'Only the verified Anima Base 1.0 checkpoint is supported in this release.',
-        )
-      }
-      for (const [role, artifact] of [
-        ['qwen3_encoder', ANIMA_QWEN3_0_6B_ENCODER],
-        ['vae', ANIMA_QWEN_IMAGE_VAE],
-      ] as const) {
-        const dependencyId = version.dependencyVersionIds[role]
-        const dependencyResource = installed.find((item) =>
-          item.versions.some((candidate) => candidate.id === dependencyId),
-        )
-        const dependency = dependencyResource?.versions.find((item) => item.id === dependencyId)
-        if (
-          dependencyResource?.type !== role ||
-          dependencyResource.source.kind !== 'supported_dependency' ||
-          dependency?.baseModelFamily !== 'anima' ||
-          dependency.file.sha256 !== artifact.sha256 ||
-          !(await this.isVerifiedFile(dependency.file))
-        ) {
-          throw new ModelServiceError(
-            'ANIMA_DEPENDENCY_UNAVAILABLE',
-            `The required Anima ${role} is missing or failed verification.`,
-          )
-        }
-      }
-    }
-    return {
-      baseModelFamily: version.baseModelFamily,
-      civitaiFileId: version.civitaiFileId,
-      civitaiModelId: resource.source.modelId,
-      civitaiVersionId: version.civitaiVersionId,
-      displayName: resource.displayName,
-      fileSha256: version.file.sha256,
-      kind: 'checkpoint',
-      localModelId: resource.id,
-      localVersionId: version.id,
-      predictionType: version.predictionType,
-      versionName: version.name,
-    }
+    return this.resolveGenerationResource(resourceId, versionId, 'checkpoint')
+  }
+
+  async resolveGenerationLora(
+    resourceId: string,
+    versionId: string,
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    return this.resolveGenerationResource(resourceId, versionId, 'lora')
   }
 
   /** Bind a portable Project reference to this installation only by its exact source/file identity. */
@@ -780,6 +714,97 @@ export class ModelService {
       }
     } catch {
       return null
+    }
+  }
+
+  private async resolveGenerationResource(
+    resourceId: string,
+    versionId: string,
+    kind: 'checkpoint' | 'lora',
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    const label = kind === 'checkpoint' ? 'checkpoint' : 'LoRA'
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuid.test(resourceId) || !uuid.test(versionId)) {
+      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
+    }
+    const installed = await this.repository.listInstalled()
+    const resource = installed.find((item) => item.id === resourceId)
+    const version = resource?.versions.find((item) => item.id === versionId)
+    if (
+      !resource ||
+      resource.type !== kind ||
+      resource.source.kind !== 'civitai' ||
+      !version ||
+      version.civitaiFileId === null ||
+      version.civitaiVersionId === null
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_UNAVAILABLE',
+        `This ${label} version is not installed.`,
+      )
+    }
+    if (
+      kind === 'checkpoint' &&
+      version.baseModelFamily !== 'illustrious' &&
+      version.baseModelFamily !== 'anima'
+    ) {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'This checkpoint does not have a supported model family.',
+      )
+    }
+    const status = await this.actualFileStatus(version.file, true)
+    if (status !== 'ready') {
+      throw new ModelServiceError(
+        status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
+        status === 'missing'
+          ? `The selected ${label} file is missing.`
+          : `The selected ${label} file failed verification.`,
+      )
+    }
+    if (kind === 'checkpoint' && version.baseModelFamily === 'anima') {
+      const supported = resolveAnimaDependencies(version.file.sha256)
+      if (!supported.supported) {
+        throw new ModelServiceError(
+          'ANIMA_UNSUPPORTED_CHECKPOINT',
+          'Only the verified Anima Base 1.0 checkpoint is supported in this release.',
+        )
+      }
+      for (const [role, artifact] of [
+        ['qwen3_encoder', ANIMA_QWEN3_0_6B_ENCODER],
+        ['vae', ANIMA_QWEN_IMAGE_VAE],
+      ] as const) {
+        const dependencyId = version.dependencyVersionIds[role]
+        const dependencyResource = installed.find((item) =>
+          item.versions.some((candidate) => candidate.id === dependencyId),
+        )
+        const dependency = dependencyResource?.versions.find((item) => item.id === dependencyId)
+        if (
+          dependencyResource?.type !== role ||
+          dependencyResource.source.kind !== 'supported_dependency' ||
+          dependency?.baseModelFamily !== 'anima' ||
+          dependency.file.sha256 !== artifact.sha256 ||
+          !(await this.isVerifiedFile(dependency.file))
+        ) {
+          throw new ModelServiceError(
+            'ANIMA_DEPENDENCY_UNAVAILABLE',
+            `The required Anima ${role} is missing or failed verification.`,
+          )
+        }
+      }
+    }
+    return {
+      baseModelFamily: version.baseModelFamily,
+      civitaiFileId: version.civitaiFileId,
+      civitaiModelId: resource.source.modelId,
+      civitaiVersionId: version.civitaiVersionId,
+      displayName: resource.displayName,
+      fileSha256: version.file.sha256,
+      kind,
+      localModelId: resource.id,
+      localVersionId: version.id,
+      predictionType: version.predictionType,
+      versionName: version.name,
     }
   }
 

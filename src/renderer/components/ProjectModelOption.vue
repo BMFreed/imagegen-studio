@@ -2,15 +2,18 @@
 import type { ModelCatalogItem, ModelVersionView } from '../../shared/api.js'
 
 defineProps<{
+  added?: boolean
   defaultSelectable: boolean
   hasReadyVersion: boolean
   resource: ModelCatalogItem
+  statusLabel?: string
+  triggerPhrases?: string[]
   version: ModelVersionView | null
 }>()
 </script>
 
 <template>
-  <div class="model-option">
+  <div class="model-option" :class="{ 'model-option--added': added }">
     <img
       v-if="resource.previewDataUrl"
       alt=""
@@ -29,14 +32,21 @@ defineProps<{
               : 'Unknown family'
         }}
         · {{ version.name }} ·
-        {{ defaultSelectable ? 'Default' : hasReadyVersion ? 'Choose version' : 'Unavailable' }}
+        {{
+          statusLabel ??
+          (defaultSelectable ? 'Default' : hasReadyVersion ? 'Choose version' : 'Unavailable')
+        }}
       </small>
       <small v-else>{{ hasReadyVersion ? 'Choose version' : 'No available versions' }}</small>
+      <small v-if="triggerPhrases?.length">{{ triggerPhrases.join(', ') }}</small>
     </span>
   </div>
 </template>
 
 <style scoped>
+.model-option--added {
+  opacity: 0.55;
+}
 .model-option {
   display: flex;
   align-items: center;

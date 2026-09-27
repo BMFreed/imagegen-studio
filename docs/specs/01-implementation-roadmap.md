@@ -43,6 +43,7 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 Сверка кода, IPC, SQLite migrations и прототипа выполнена на `73196af`
 (27.09.2026); последующая UI-доработка описана в
 [desktop UI review](../engineering/desktop-ui-layout-review.md).
+LoRA draft добавлен следующим срезом поверх `dc468b5`: [границы и проверки](../engineering/phase-2a-project-storage-research.md#project-lora-stack-validation).
 Строка «есть» означает указанный сценарий, а не завершение всей фазы.
 Исторические checkpoints ниже сохраняют дату и границы своих проверок.
 
@@ -53,7 +54,7 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
-| Generation draft | Exact checkpoint, plain prompts, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, autocomplete; фактический Seed Reuse | 2B–2C |
+| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove), plain prompts, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, autocomplete, portable LoRA relink; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
 | Generate/results | Подготовка raster input на service/worker boundary; UI generation пока только mock | Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |

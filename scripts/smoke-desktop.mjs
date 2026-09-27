@@ -23,7 +23,11 @@ import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
-import { checkHomeLayout, checkModelManagerLayout, checkNewProjectResolution } from './desktop-layout-checks.mjs'
+import {
+  checkHomeLayout,
+  checkModelManagerLayout,
+  checkNewProjectResolution,
+} from './desktop-layout-checks.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -72,6 +76,7 @@ async function seedInstalledCheckpointVersions() {
     predictionType,
     modelId = 90_001,
     displayName = 'Illustrious Smoke Checkpoint',
+    resourceType = 'checkpoint',
   ) => {
     const filename = `smoke-checkpoint-v${versionId}.safetensors`
     const managedPath = path.join(modelRoot, filename)
@@ -91,7 +96,7 @@ async function seedInstalledCheckpointVersions() {
           displayName,
           source: { kind: 'civitai', modelId },
           sourceMetadata: { source: 'smoke' },
-          type: 'checkpoint',
+          type: resourceType,
         },
         version: {
           baseModelFamily: 'illustrious',
@@ -104,7 +109,10 @@ async function seedInstalledCheckpointVersions() {
             kind: 'civitai',
             versionId,
           },
-          sourceMetadata: { source: 'smoke' },
+          sourceMetadata: {
+            source: 'smoke',
+            trainedWords: resourceType === 'lora' ? [`trigger ${versionId}`] : [],
+          },
         },
       },
     })
@@ -121,8 +129,13 @@ async function seedInstalledCheckpointVersions() {
       'Alternate Smoke Checkpoint',
     )
     await repository.setDefaultVersion(alternate.resourceId, unavailableDefault.versionId)
+    const lora = await publish(905, 9_005, null, 90_003, 'Smoke Detail LoRA', 'lora')
+    const loraSecond = await publish(906, 9_006, null, 90_003, 'Smoke Detail LoRA', 'lora')
     return {
       alternate,
+      lora,
+      loraSecond,
+      loraPath: path.join(modelRoot, 'smoke-checkpoint-v905.safetensors'),
       first,
       firstPath: path.join(modelRoot, 'smoke-checkpoint-v901.safetensors'),
       second,
@@ -372,6 +385,108 @@ try {
     firstModelPackage.project.generationDraft.model?.localVersionId,
     checkpointVersions.first.versionId,
   )
+
+  const lorasRegion = projectRegion.getByRole('region', { name: 'LoRAs', exact: true })
+  const positive = projectRegion.getByRole('textbox', { name: 'Positive prompt', exact: true })
+  const negative = projectRegion.getByRole('textbox', { name: 'Negative prompt', exact: true })
+  await positive.fill('trigger 905, portrait')
+  await negative.fill('trigger 905, blur')
+  await lorasRegion.locator('[aria-label="Add LoRA"]').click()
+  await window.getByText('trigger 905', { exact: true }).last().click()
+  await lorasRegion.getByRole('article', { name: 'LoRA Smoke Detail LoRA' }).waitFor()
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.loras.length === 1,
+    'LoRA selection did not reach main',
+  )
+  const weightInput = lorasRegion.getByRole('textbox', { name: 'Smoke Detail LoRA weight' })
+  await weightInput.fill('-0.35')
+  await lorasRegion.getByRole('switch', { name: 'Enable Smoke Detail LoRA' }).click()
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const loraPackage = await readIgsPackage(packagePath)
+  assert.equal(loraPackage.project.generationDraft.loras[0].weight, -0.35)
+  assert.equal(loraPackage.project.generationDraft.loras[0].enabled, false)
+  assert.equal(
+    loraPackage.project.generationDraft.loras[0].resource.localVersionId,
+    checkpointVersions.lora.versionId,
+  )
+  assert.equal(loraPackage.project.generationDraft.positivePrompt.text, 'trigger 905, portrait')
+  assert.equal(loraPackage.project.generationDraft.negativePrompt.text, 'trigger 905, blur')
+  const invalidLora = await window.evaluate(
+    async ({ id, selection }) => {
+      return [
+        await window.api.projects.addGenerationLora(id, {
+          ...selection,
+          fileSha256: '0'.repeat(64),
+        }),
+        await window.api.projects.updateGenerationDraft(id, {
+          ...selection,
+          kind: 'lora-weight',
+          value: Infinity,
+        }),
+        await window.api.projects.removeGenerationLora(id, { ...selection, kind: 'lora' }),
+      ]
+    },
+    {
+      id: projectId,
+      selection: {
+        resourceId: checkpointVersions.lora.resourceId,
+        versionId: checkpointVersions.lora.versionId,
+      },
+    },
+  )
+  assert.ok(invalidLora.every((result) => !result.ok && result.error.code === 'IPC_INVALID_CALLER'))
+  await lorasRegion.locator('[aria-label="Add LoRA"]').click()
+  assert.equal(await window.getByText('trigger 906', { exact: true }).count(), 1)
+  const addedOption = window.locator('.n-base-select-option').filter({ hasText: 'trigger 905' })
+  assert.match(await addedOption.innerText(), /Added/)
+  if (process.env.IMAGEGEN_SMOKE_LORA_SCREENSHOT) {
+    await delay(250)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_LORA_SCREENSHOT })
+  }
+  await addedOption.click({ force: true })
+  const afterDuplicateClick = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(afterDuplicateClick.value.tab.generationDraft.loras.length, 1)
+  assert.equal(
+    afterDuplicateClick.value.tab.generationDraft.loras[0].resource.localVersionId,
+    checkpointVersions.lora.versionId,
+  )
+  await window.keyboard.press('Escape')
+  if (process.env.IMAGEGEN_SMOKE_LORA_SCREENSHOT) {
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(900, 620),
+    )
+    await lorasRegion.scrollIntoViewIfNeeded()
+    await delay(250)
+    await window.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_LORA_SCREENSHOT.replace('.png', '-small.png'),
+    })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
+  }
+  await weightInput.fill('1e-7')
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  assert.equal((await readIgsPackage(packagePath)).project.generationDraft.loras[0].weight, 1e-7)
+  const loraBytes = readFileSync(checkpointVersions.loraPath)
+  rmSync(checkpointVersions.loraPath)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  await lorasRegion.getByText('Exact version unavailable.', { exact: false }).waitFor()
+  await lorasRegion.getByRole('button', { name: 'Remove Smoke Detail LoRA' }).click()
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.loras.length === 0,
+    'Missing LoRA was not removed',
+  )
+  assert.equal(await positive.innerText(), 'trigger 905, portrait')
+  assert.equal(await negative.innerText(), 'trigger 905, blur')
+  writeFileSync(checkpointVersions.loraPath, loraBytes)
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
 
   const newDefault = await window.evaluate(
     ({ resourceId, versionId }) => window.api.models.setDefaultVersion(resourceId, versionId),

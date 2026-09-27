@@ -349,6 +349,15 @@ test('a newer CivitAI version installs beside the first and changes default only
       const secondVersion = resource.versions.find((version) => version.civitaiVersionId === 8)!
       assert.equal(resource.defaultVersionId, firstVersion.id)
       assert.deepEqual((await service.getCatalog())[0]?.trainedWords, ['portrait'])
+      const exactVersionTriggers = (await service.getCatalog())[0]?.versions
+      assert.deepEqual(
+        exactVersionTriggers?.find((version) => version.id === firstVersion.id)?.trainedWords,
+        ['portrait'],
+      )
+      assert.deepEqual(
+        exactVersionTriggers?.find((version) => version.id === secondVersion.id)?.trainedWords,
+        ['cinematic light', 'portrait v2'],
+      )
       assert.deepEqual(await readFile(firstVersion.file.managedPath), firstBytes)
       assert.deepEqual(await readFile(secondVersion.file.managedPath), secondBytes)
       assert.deepEqual((await service.checkUpdates(42)).availableVersions, [])
@@ -777,6 +786,40 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
       }
       const good = await publish(100, 10, 'checkpoint', 'illustrious')
       const lora = await publish(101, 11, 'lora', 'illustrious')
+      const loraRef = await service.resolveGenerationLora(
+        lora.published.resourceId,
+        lora.published.versionId,
+      )
+      assert.equal(loraRef.kind, 'lora')
+      assert.equal(loraRef.fileSha256, sha256(lora.bytes))
+      await assert.rejects(
+        service.resolveGenerationLora(good.published.resourceId, good.published.versionId),
+        { code: 'MODEL_VERSION_UNAVAILABLE' },
+      )
+      await assert.rejects(
+        service.resolveGenerationLora(lora.published.resourceId, good.published.versionId),
+        { code: 'MODEL_VERSION_UNAVAILABLE' },
+      )
+      const animaLora = await publish(104, 14, 'lora', 'anima')
+      assert.equal(
+        (
+          await service.resolveGenerationLora(
+            animaLora.published.resourceId,
+            animaLora.published.versionId,
+          )
+        ).baseModelFamily,
+        'anima',
+      )
+      await writeFile(lora.managedPath, Buffer.alloc(lora.bytes.length, 0x78))
+      await assert.rejects(
+        service.resolveGenerationLora(lora.published.resourceId, lora.published.versionId),
+        { code: 'MODEL_FILE_CORRUPT' },
+      )
+      await rm(lora.managedPath)
+      await assert.rejects(
+        service.resolveGenerationLora(lora.published.resourceId, lora.published.versionId),
+        { code: 'MODEL_FILE_MISSING' },
+      )
       const unclassified = await publish(102, 12, 'checkpoint', 'illustrious')
       const unpinnedAnima = await publish(103, 13, 'checkpoint', 'illustrious')
       // Simulate a legacy or metadata-incomplete installed row; new selections must reject it.

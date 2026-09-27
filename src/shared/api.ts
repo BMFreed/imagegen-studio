@@ -21,6 +21,7 @@ export const ipcChannels = {
     startInstall: 'models:start-install',
   },
   projects: {
+    addGenerationLora: 'projects:add-generation-lora',
     cancelImport: 'projects:cancel-import',
     close: 'projects:close',
     create: 'projects:create',
@@ -33,6 +34,7 @@ export const ipcChannels = {
     prepareWindowClose: 'projects:prepare-window-close',
     rebuildPreview: 'projects:rebuild-preview',
     relinkGenerationModel: 'projects:relink-generation-model',
+    removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
@@ -114,7 +116,14 @@ export type ProjectRasterLayerChange =
   | { kind: 'opacity'; opacity: number }
   | { kind: 'visibility'; visible: boolean }
 
+export interface ProjectLoraIdentity {
+  resourceId: string
+  versionId: string
+}
+
 export type ProjectGenerationDraftChange =
+  | (ProjectLoraIdentity & { kind: 'lora-enabled'; value: boolean })
+  | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
   | { kind: 'sampling-steps'; value: number | null }
@@ -160,6 +169,10 @@ export interface ProjectRebuildResult {
 }
 
 export interface ProjectApi {
+  addGenerationLora: (
+    tabId: string,
+    selection: NonNullable<ProjectGenerationModelSelection>,
+  ) => Promise<ApiResult<ProjectTab>>
   cancelImport: (importId: string) => Promise<ApiResult<void>>
   close: (tabId: string) => Promise<ApiResult<void>>
   create: (options: {
@@ -184,6 +197,10 @@ export interface ProjectApi {
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
   relinkGenerationModel: (tabId: string) => Promise<ApiResult<ProjectTab>>
+  removeGenerationLora: (
+    tabId: string,
+    identity: ProjectLoraIdentity,
+  ) => Promise<ApiResult<ProjectTab>>
   resolveRecovery: (
     projectId: string,
     decision: 'discard' | 'recover',
@@ -224,6 +241,7 @@ export interface ModelVersionView {
   name: string
   predictionType: 'epsilon' | 'sample' | 'v_prediction' | null
   sha256: string
+  trainedWords: string[]
 }
 
 export interface ModelCatalogItem {
@@ -343,6 +361,16 @@ export function isProjectGenerationDraftChange(
   }
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
+  if (value.kind === 'lora-enabled' || value.kind === 'lora-weight') {
+    return (
+      keys.length === 4 &&
+      keys.includes('value') &&
+      isProjectLoraIdentity({ resourceId: value.resourceId, versionId: value.versionId }) &&
+      (value.kind === 'lora-enabled'
+        ? typeof value.value === 'boolean'
+        : typeof value.value === 'number' && Number.isFinite(value.value))
+    )
+  }
   if (value.kind === 'positive-prompt' || value.kind === 'negative-prompt') {
     return (
       keys.length === 2 &&
@@ -441,4 +469,21 @@ declare global {
   interface Window {
     api: StudioApi
   }
+}
+
+/** Existing portable refs can carry IDs from another installation. No metadata is accepted here. */
+export function isProjectLoraIdentity(input: unknown): input is ProjectLoraIdentity {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  return (
+    Object.keys(value).length === 2 &&
+    typeof value.resourceId === 'string' &&
+    value.resourceId.trim().length > 0 &&
+    new TextEncoder().encode(value.resourceId).length <= IGS_SAFETY_CEILINGS.titleBytes &&
+    typeof value.versionId === 'string' &&
+    value.versionId.trim().length > 0 &&
+    new TextEncoder().encode(value.versionId).length <= IGS_SAFETY_CEILINGS.titleBytes
+  )
 }

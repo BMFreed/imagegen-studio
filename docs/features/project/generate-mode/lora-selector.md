@@ -29,3 +29,27 @@ Active phrases appear in the first autocomplete section, ahead of embeddings and
 ## Validation and persistence
 
 LoRA trigger text never blocks Apply or Generate merely because its source LoRA is disabled, missing, or removed. Presets and prompt provenance store only the text; the actual LoRA stack continues to persist independently with resource metadata and weights.
+
+## Production coverage (27.09.2026)
+
+Electron Project now selects an exact installed LoRA version through the verified
+main-process model registry. The selector shows the resource preview, version,
+model family and that version's trigger words; it searches those fields and marks
+already-added resources. Known incompatible versions cannot be newly selected;
+unknown family is explicitly labelled. One resource has one stack entry. Choosing
+another version is an explicit remove/add operation; changing Model Manager's
+Default never changes an existing Project ref.
+
+New entries start enabled at weight 0.7, matching the prototype. Weight and enabled
+edits use serialized draft updates; add/remove and Save flush those updates first.
+The document accepts finite weights, including negative and very small values;
+this is persistence support, not a claim that every value is suitable for inference.
+Invalid input is shown locally and cannot be saved; blur restores the last valid
+value. Missing/corrupt versions retain their exact saved identity and can still be
+disabled or removed. Model changes preserve the stack and show local compatibility
+warnings. LoRA actions preserve both prompt text and embedding sidecars.
+
+The stack participates in dirty state, document shadow recovery and explicit
+`.igs` Save/reopen. Portable LoRA relinking, trigger highlighting/autocomplete,
+presets and actual inference/preflight remain unimplemented. Evidence and test
+boundaries: [Phase 2A research](../../../engineering/phase-2a-project-storage-research.md#project-lora-stack-validation).

@@ -5,6 +5,7 @@ import type {
   ProjectApi,
   ProjectGenerationDraftChange,
   ProjectImportSelection,
+  ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectSaveResult,
   ProjectSummary,
@@ -256,6 +257,14 @@ async function runGenerationModelAction(
   } finally {
     pendingProjectAction.value = null
   }
+}
+
+function addGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
+  return runGenerationModelAction(tabId, () => projectApi().addGenerationLora(tabId, identity))
+}
+
+function removeGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
+  return runGenerationModelAction(tabId, () => projectApi().removeGenerationLora(tabId, identity))
 }
 
 function setGenerationModel(
@@ -1065,6 +1074,7 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"
           :loading="projectsLoading"
           :pendingAction="pendingHomeAction"
@@ -1091,12 +1101,14 @@ onBeforeUnmount(() => {
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
+          @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
           @manageModels="modelManagerOpen = true"
           @moveLayer="moveActiveRasterLayer"
           @refreshModels="refreshModelCatalog"
           @relinkModel="relinkGenerationModel(activeTab.id)"
+          @removeLora="removeGenerationLora(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @updateDraft="updateGenerationDraft(activeTab.id, $event)"

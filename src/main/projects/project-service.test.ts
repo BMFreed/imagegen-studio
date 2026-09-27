@@ -25,6 +25,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { ProjectDraftSync } from '../../renderer/components/project-draft-sync.js'
 import { openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
@@ -956,6 +957,27 @@ test('Project prompt text retains only pre-existing embedding refs whose literal
       throw new Error('Expected imported Project to open.')
     }
     const tabId = imported.result.tab.id
+    const loraResource = { ...ref.resource, kind: 'lora' as const, localModelId: 'lora-face' }
+    const loraIdentity = {
+      resourceId: loraResource.localModelId,
+      versionId: loraResource.localVersionId,
+    }
+    const addedLora = await service.addGenerationLora(tabId, loraResource)
+    const weightedLora = await service.updateGenerationDraft(tabId, {
+      ...loraIdentity,
+      kind: 'lora-weight',
+      value: 0.4,
+    })
+    const disabledLora = await service.updateGenerationDraft(tabId, {
+      ...loraIdentity,
+      kind: 'lora-enabled',
+      value: false,
+    })
+    const removedLora = await service.removeGenerationLora(tabId, loraIdentity)
+    for (const tab of [addedLora, weightedLora, disabledLora, removedLora]) {
+      assert.deepEqual(tab.generationDraft.positivePrompt, document.generationDraft.positivePrompt)
+      assert.deepEqual(tab.generationDraft.negativePrompt, document.generationDraft.negativePrompt)
+    }
     const retained = await service.updateGenerationDraft(tabId, {
       kind: 'positive-prompt',
       text: 'xface face!',
@@ -2145,4 +2167,201 @@ test('Project image import refuses an unsafe source or worker failure without di
       { code: 'PROJECT_NOT_OPEN' },
     )
   })
+})
+
+test('exact LoRA stack edits preserve prompts through autosave recovery, Save, reopen and removal', async () => {
+  await withService(
+    async ({ dataRoot, modelRepository, modelService, repository, service, shadow }) => {
+      const publish = async (modelId: number, versionId: number) => {
+        const bytes = Buffer.from(`LoRA ${modelId}/${versionId}`)
+        const managedPath = path.join(dataRoot, `lora-${versionId}.safetensors`)
+        await writeFile(managedPath, bytes)
+        const sha256 = createHash('sha256').update(bytes).digest('hex')
+        const ids = await modelRepository.publishVerifiedInstallation({
+          primary: {
+            file: {
+              managedPath,
+              originalFilename: path.basename(managedPath),
+              sha256,
+              sizeBytes: bytes.length,
+              verifiedAt: new Date().toISOString(),
+            },
+            resource: {
+              displayName: `LoRA ${modelId}`,
+              source: { kind: 'civitai', modelId },
+              sourceMetadata: {},
+              type: 'lora',
+            },
+            version: {
+              baseModelFamily: 'illustrious',
+              format: 'SafeTensor',
+              name: `v${versionId}`,
+              source: {
+                expectedSha256: sha256,
+                fileId: versionId + 1000,
+                kind: 'civitai',
+                versionId,
+              },
+              sourceMetadata: {},
+            },
+          },
+        })
+        return {
+          ids: { resourceId: ids.resourceId, versionId: ids.versionId },
+          managedPath,
+          ref: await modelService.resolveGenerationLora(ids.resourceId, ids.versionId),
+        }
+      }
+      const first = await publish(51, 51)
+      const anotherVersion = await publish(51, 52)
+      const neighbor = await publish(53, 53)
+      const created = await service.create({ height: 512, title: 'LoRA persistence', width: 512 })
+      const savedPath = (await repository.listProjects())[0].canonicalPath
+      await service.updateGenerationDraft(created.id, {
+        kind: 'positive-prompt',
+        text: 'trigger phrase, portrait',
+      })
+      const baseline = await service.updateGenerationDraft(created.id, {
+        kind: 'negative-prompt',
+        text: 'trigger phrase, blur',
+      })
+      await service.addGenerationLora(created.id, first.ref)
+      await service.addGenerationLora(created.id, neighbor.ref)
+      await assert.rejects(service.addGenerationLora(created.id, anotherVersion.ref), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+      await assert.rejects(
+        service.addGenerationLora(created.id, { ...first.ref, kind: 'checkpoint' }),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      let acknowledged = service.getOpenTabs().find((tab) => tab.id === created.id)!
+      let release: (() => void) | undefined
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let firstSend = true
+      const sync = new ProjectDraftSync({
+        onAcknowledged: (tab) => {
+          acknowledged = tab
+        },
+        onError: (error) => {
+          assert.fail(String(error))
+        },
+        onOverlay: () => {},
+        send: async (id, change) => {
+          if (firstSend) {
+            firstSend = false
+            await gate
+          }
+          return service.updateGenerationDraft(id, change)
+        },
+      })
+      sync.change(acknowledged, { kind: 'lora-weight', ...first.ids, value: 0.25 })
+      sync.change(acknowledged, { kind: 'lora-weight', ...neighbor.ids, value: 0.9 })
+      sync.change(acknowledged, { kind: 'lora-weight', ...first.ids, value: 0.45 })
+      sync.change(acknowledged, { kind: 'lora-enabled', ...first.ids, value: false })
+      const flushed = sync.flush(created.id)
+      release?.()
+      await flushed
+      assert.deepEqual(
+        acknowledged.generationDraft.loras.map(({ enabled, weight }) => ({ enabled, weight })),
+        [
+          { enabled: false, weight: 0.45 },
+          { enabled: true, weight: 0.9 },
+        ],
+      )
+      await service.updateGenerationDraft(created.id, {
+        kind: 'lora-weight',
+        ...neighbor.ids,
+        value: 0.7,
+      })
+      const weightChange = { kind: 'lora-weight' as const, ...first.ids, value: -0.35 }
+      assert.equal(isProjectGenerationDraftChange(weightChange), true)
+      for (const invalid of [
+        { ...weightChange, value: NaN },
+        { ...weightChange, value: Infinity },
+        { ...weightChange, resource: first.ref },
+        { ...weightChange, value: '0.3' },
+        { ...weightChange, resourceId: '' },
+      ]) {
+        assert.equal(isProjectGenerationDraftChange(invalid), false)
+        await assert.rejects(
+          service.updateGenerationDraft(created.id, invalid as typeof weightChange),
+          { code: 'PROJECT_INVALID_INPUT' },
+        )
+      }
+      await service.updateGenerationDraft(created.id, weightChange)
+      const changed = await service.updateGenerationDraft(created.id, {
+        kind: 'lora-enabled',
+        ...first.ids,
+        value: false,
+      })
+      assert.deepEqual(changed.generationDraft.loras, [
+        { enabled: false, resource: first.ref, weight: -0.35 },
+        { enabled: true, resource: neighbor.ref, weight: 0.7 },
+      ])
+      assert.deepEqual(
+        changed.generationDraft.positivePrompt,
+        baseline.generationDraft.positivePrompt,
+      )
+      assert.deepEqual(
+        changed.generationDraft.negativePrompt,
+        baseline.generationDraft.negativePrompt,
+      )
+      await modelRepository.setDefaultVersion(first.ids.resourceId, anotherVersion.ids.versionId)
+      await service.flushAutosave(created.id)
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.loras, [])
+      const restarted = new ProjectService({
+        autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+        dataRoot,
+        repository,
+        roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+        shadow,
+      })
+      assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+      const recovered = await restarted.resolveRecovery(created.id, 'recover')
+      assert.deepEqual(recovered.generationDraft, changed.generationDraft)
+      await restarted.save(created.id)
+      const saved = await readIgsPackage(savedPath)
+      assert.deepEqual(saved.project.generationDraft, changed.generationDraft)
+      // Repeating the same value is a genuine no-op (no new dirty revision).
+      assert.equal((await restarted.updateGenerationDraft(created.id, weightChange)).dirty, false)
+      await restarted.close(created.id)
+      await rm(first.managedPath)
+      const reopened = await restarted.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('LoRA project did not reopen')
+      }
+      assert.deepEqual(reopened.tab.generationDraft, changed.generationDraft)
+      await assert.rejects(
+        restarted.updateGenerationDraft(created.id, {
+          ...weightChange,
+          versionId: anotherVersion.ids.versionId,
+        }),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      const removed = await restarted.removeGenerationLora(created.id, first.ids)
+      assert.deepEqual(removed.generationDraft.loras, [
+        { enabled: true, resource: neighbor.ref, weight: 0.7 },
+      ])
+      assert.deepEqual(
+        removed.generationDraft.positivePrompt,
+        baseline.generationDraft.positivePrompt,
+      )
+      assert.deepEqual(
+        removed.generationDraft.negativePrompt,
+        baseline.generationDraft.negativePrompt,
+      )
+      await assert.rejects(restarted.removeGenerationLora(created.id, first.ids), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+      await restarted.save(created.id)
+      assert.deepEqual(
+        (await readIgsPackage(savedPath)).project.generationDraft,
+        removed.generationDraft,
+      )
+      await restarted.close(created.id)
+    },
+  )
 })

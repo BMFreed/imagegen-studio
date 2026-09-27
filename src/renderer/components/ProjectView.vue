@@ -3,6 +3,7 @@ import type {
   ModelCatalogItem,
   ProjectApi,
   ProjectGenerationDraftChange,
+  ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
@@ -36,6 +37,7 @@ import {
 } from './project-model-picker.js'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
+import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
 import ResolutionControl from './ResolutionControl.vue'
 
@@ -55,12 +57,14 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   importImage: []
   manageModels: []
   moveLayer: [layerId: string, targetIndex: number]
   refreshModels: []
   relinkModel: []
+  removeLora: [identity: ProjectLoraIdentity]
   save: []
   selectModel: [selection: { resourceId: string; versionId: string } | null]
   updateDraft: [change: ProjectGenerationDraftChange]
@@ -270,8 +274,13 @@ const samplingStepsInvalid = computed(
 const samplingCfgScaleInvalid = computed(
   () => parseCfgScale(samplingCfgScaleText.value).kind === 'invalid',
 )
+const lorasValid = ref(true)
 const draftInvalid = computed(
-  () => fixedSeedInvalid.value || samplingStepsInvalid.value || samplingCfgScaleInvalid.value,
+  () =>
+    !lorasValid.value ||
+    fixedSeedInvalid.value ||
+    samplingStepsInvalid.value ||
+    samplingCfgScaleInvalid.value,
 )
 watch(draftInvalid, (invalid) => emit('validateDraft', props.tab.id, !invalid), {
   immediate: true,
@@ -716,6 +725,17 @@ function applyFitBbox() {
               @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
             />
           </div>
+          <ProjectLoraStack
+            :catalog="modelCatalog"
+            :catalogReady="modelCatalogLoaded && !modelCatalogError"
+            :disabled="busy || reloadRequired"
+            :draft="generationDraft"
+            :loading="modelCatalogLoading"
+            @add="emit('addLora', $event)"
+            @change="emit('updateDraft', $event)"
+            @remove="emit('removeLora', $event)"
+            @validity="lorasValid = $event"
+          />
           <div class="sampling-fields">
             <NFormItem label="Steps" :showFeedback="false">
               <div class="sampling-input" @input.capture="captureSamplingStepsInput">

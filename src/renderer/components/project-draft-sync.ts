@@ -8,13 +8,11 @@ export interface ProjectDraftSyncOptions {
 }
 type GenerationDraft = ProjectTab['generationDraft']
 
-type DraftField = ProjectGenerationDraftChange['kind']
-
 interface DraftState {
   desired: GenerationDraft
   disposed: boolean
   error: Error | null
-  pending: Set<DraftField>
+  pending: Map<string, ProjectGenerationDraftChange>
   running: Promise<void> | null
   tabId: string
 }
@@ -32,7 +30,7 @@ export class ProjectDraftSync {
         desired: structuredClone(tab.generationDraft),
         disposed: false,
         error: null,
-        pending: new Set(),
+        pending: new Map(),
         running: null,
         tabId: tab.id,
       }
@@ -45,7 +43,7 @@ export class ProjectDraftSync {
       return
     }
     state.error = null
-    state.pending.add(change.kind)
+    state.pending.set(changeKey(change), change)
     this.options.onOverlay(tab.id, structuredClone(state.desired))
     this.start(state)
   }
@@ -98,11 +96,11 @@ export class ProjectDraftSync {
 
   private async run(state: DraftState): Promise<void> {
     while (state.pending.size > 0 && !state.disposed) {
-      const field = state.pending.values().next().value
-      if (!field) {
+      const entry = state.pending.entries().next().value
+      if (!entry) {
         break
       }
-      const change = changeForField(field, state.desired)
+      const [field, change] = entry
       state.pending.delete(field)
       try {
         const tab = await this.options.send(state.tabId, change)
@@ -114,7 +112,9 @@ export class ProjectDraftSync {
         if (state.disposed) {
           return
         }
-        state.pending.add(field)
+        if (!state.pending.has(field)) {
+          state.pending.set(field, change)
+        }
         state.error = cause instanceof Error ? cause : new Error('The draft could not be updated.')
         this.options.onError(state.tabId, state.error)
         return
@@ -144,6 +144,28 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'lora-enabled' || change.kind === 'lora-weight') {
+    const lora = draft.loras.find(
+      (entry) =>
+        entry.resource.localModelId === change.resourceId &&
+        entry.resource.localVersionId === change.versionId,
+    )
+    if (!lora) {
+      return false
+    }
+    if (change.kind === 'lora-enabled') {
+      if (lora.enabled === change.value) {
+        return false
+      }
+      lora.enabled = change.value
+    } else {
+      if (lora.weight === change.value) {
+        return false
+      }
+      lora.weight = change.value
+    }
+    return true
+  }
   if (change.kind === 'positive-prompt') {
     if (draft.positivePrompt.text === change.text) {
       return false
@@ -182,21 +204,8 @@ function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChang
   return false
 }
 
-function changeForField(field: DraftField, draft: GenerationDraft): ProjectGenerationDraftChange {
-  if (field === 'positive-prompt') {
-    return { kind: field, text: draft.positivePrompt.text }
-  }
-  if (field === 'negative-prompt') {
-    return { kind: field, text: draft.negativePrompt.text }
-  }
-  if (field === 'sampling-steps') {
-    return { kind: field, value: draft.sampling.steps }
-  }
-  if (field === 'sampling-cfg-scale') {
-    return { kind: field, value: draft.sampling.cfgScale }
-  }
-  const seed = draft.seed
-  return seed.policy === 'fixed'
-    ? { kind: 'seed', policy: 'fixed', value: seed.value ?? 0 }
-    : { kind: 'seed', policy: seed.policy, value: null }
+function changeKey(change: ProjectGenerationDraftChange): string {
+  return change.kind === 'lora-enabled' || change.kind === 'lora-weight'
+    ? JSON.stringify([change.kind, change.resourceId, change.versionId])
+    : change.kind
 }
