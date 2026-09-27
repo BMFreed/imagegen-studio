@@ -1,9 +1,13 @@
+@import './prompt-editor.css';
+
 :root {
   color-scheme: dark;
   --app-chrome: #101014;
   --app-surface: #18181c;
   --app-elevated: #202024;
   --app-elevated-hover: #232327;
+  --app-floating-surface: #3b3b40;
+  --app-floating-surface-hover: #48484e;
   --app-border: #343437;
   --app-text: #dbdbdc;
   --app-text-muted: #9b9ba0;

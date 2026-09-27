@@ -16,7 +16,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { crc32, deflateSync } from 'node:zlib'
-import { _electron as electron } from '@playwright/test'
+import { _electron as electron, expect } from '@playwright/test'
 import electronBinary from 'electron'
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
@@ -391,6 +391,7 @@ try {
   const negative = projectRegion.getByRole('textbox', { name: 'Negative prompt', exact: true })
   await positive.fill('trigger 905, portrait')
   await negative.fill('trigger 905, blur')
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
   await lorasRegion.locator('[aria-label="Add LoRA"]').click()
   await window.getByText('trigger 905', { exact: true }).last().click()
   await lorasRegion.getByRole('article', { name: 'LoRA Smoke Detail LoRA' }).waitFor()
@@ -401,8 +402,70 @@ try {
     'LoRA selection did not reach main',
   )
   const weightInput = lorasRegion.getByRole('textbox', { name: 'Smoke Detail LoRA weight' })
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveText('trigger 905')
+  await expect(negative.locator('.cm-prompt-lora-trigger')).toHaveText('trigger 905')
+  // Exact-version context survives a catalog Default change and never rewrites the prompt.
+  const loraDefault = await window.evaluate(
+    (selection) => window.api.models.setDefaultVersion(selection.resourceId, selection.versionId),
+    checkpointVersions.loraSecond,
+  )
+  assert.equal(loraDefault.ok, true)
+  await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveText('trigger 905')
+  await positive.locator('.cm-prompt-lora-trigger').hover()
+  await expect(window.locator('.prompt-resource-tooltip')).toContainText('LoRA · Trigger: trigger 905')
+  await expect(window.locator('.prompt-resource-tooltip')).toContainText('Smoke Detail LoRA')
+
+  await positive.fill('portrait, trigger 90, untouched')
+  await positive.press('Control+Home')
+  await positive.press('ArrowRight')
+  // Place the caret immediately before the second comma, leaving the following phrase intact.
+  for (let index = 1; index < 'portrait, trigger 90'.length; index += 1) {
+    await positive.press('ArrowRight')
+  }
+  await positive.press('Control+Space')
+  const triggerOption = window.getByRole('option').filter({ hasText: 'trigger 905' })
+  await expect(triggerOption).toBeVisible()
+  await expect(window.getByRole('option').filter({ hasText: 'trigger 906' })).toHaveCount(0)
+  if (process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT) {
+    await window.mouse.move(600, 200)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT })
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 620))
+    await window.waitForFunction(() => window.innerWidth === 900)
+    await expect(triggerOption).toBeVisible()
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT.replace('.png', '-small.png') })
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1380, 900))
+    await window.waitForFunction(() => window.innerWidth === 1380)
+  }
+  await triggerOption.click()
+  await expect(positive).toHaveText('portrait, trigger 905, untouched')
+  await positive.press('Control+z')
+  await expect(positive).toHaveText('portrait, trigger 90, untouched')
+  await positive.press('Control+Shift+Z')
+  await expect(positive).toHaveText('portrait, trigger 905, untouched')
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const completedPromptPackage = await readIgsPackage(packagePath)
+  assert.deepEqual(completedPromptPackage.project.generationDraft.positivePrompt, {
+    embeddingRefs: [], text: 'portrait, trigger 905, untouched',
+  })
+  assert.equal(completedPromptPackage.project.generationDraft.loras[0].resource.localVersionId, checkpointVersions.lora.versionId)
+  // Automatic completion must survive optimistic draft/IPC updates while typing.
+  await negative.fill('')
+  await negative.pressSequentially('tr')
+  await expect(triggerOption).toBeVisible()
+  // CodeMirror deliberately ignores acceptance keys for 75 ms after opening.
+  // This wait crosses that UI interaction guard; persistence waits use observable state.
+  await delay(100)
+  await negative.press('Enter')
+  await expect(negative).toHaveText('trigger 905')
+  await positive.fill('trigger 905, portrait')
+  await negative.fill('trigger 905, blur')
+  await negative.press('Escape')
   await weightInput.fill('-0.35')
   await lorasRegion.getByRole('switch', { name: 'Enable Smoke Detail LoRA' }).click()
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
+  await expect(negative.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
   await projectRegion.getByRole('button', { name: 'Save Project' }).click()
   await projectRegion.getByText('Saved', { exact: true }).waitFor()
   const loraPackage = await readIgsPackage(packagePath)
@@ -414,6 +477,9 @@ try {
   )
   assert.equal(loraPackage.project.generationDraft.positivePrompt.text, 'trigger 905, portrait')
   assert.equal(loraPackage.project.generationDraft.negativePrompt.text, 'trigger 905, blur')
+  assert.deepEqual(loraPackage.project.generationDraft.positivePrompt.embeddingRefs, [])
+  assert.deepEqual(loraPackage.project.generationDraft.negativePrompt.embeddingRefs, [])
+  assert.deepEqual(Object.keys(loraPackage.project.generationDraft.positivePrompt).sort(), ['embeddingRefs', 'text'])
   const invalidLora = await window.evaluate(
     async ({ id, selection }) => {
       return [
@@ -472,9 +538,13 @@ try {
   await projectRegion.getByText('Saved', { exact: true }).waitFor()
   assert.equal((await readIgsPackage(packagePath)).project.generationDraft.loras[0].weight, 1e-7)
   const loraBytes = readFileSync(checkpointVersions.loraPath)
+  await lorasRegion.getByRole('switch', { name: 'Enable Smoke Detail LoRA' }).click()
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveText('trigger 905')
   rmSync(checkpointVersions.loraPath)
   await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
   await lorasRegion.getByText('Exact version unavailable.', { exact: false }).waitFor()
+  await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
+  await expect(negative.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
   await lorasRegion.getByRole('button', { name: 'Remove Smoke Detail LoRA' }).click()
   await waitForOpenTab(
     window,

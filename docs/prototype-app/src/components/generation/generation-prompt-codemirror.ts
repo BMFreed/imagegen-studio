@@ -1,3 +1,5 @@
+import { loraCompletionFragment } from '../../../../../src/shared/projects/lora-triggers'
+
 import {
   type Completion,
   type CompletionSection,
@@ -18,6 +20,7 @@ import type {
 
 import { getPromptAutocompleteSuggestions } from './generation-autocomplete.utils'
 import {
+  activePromptLoraSources,
   findTopLevelPromptPhraseRange,
   getPromptEmbeddingMatches,
   getPromptLoraTriggerMatches,
@@ -41,6 +44,11 @@ export function createPromptCompletionSource(getters: {
   return (context) => {
     const fragment = context.matchBefore(/[^\s,\n]*/)
     const query = fragment?.text ?? ''
+    const loraFragment = loraCompletionFragment(
+      context.state.doc.toString(),
+      context.pos,
+      activePromptLoraSources(getters.loras()),
+    )
     const danbooruFragment = findDanbooruFragment(
       context.state.doc.toString(),
       context.pos,
@@ -49,6 +57,7 @@ export function createPromptCompletionSource(getters: {
     if (
       !context.explicit &&
       normalizePromptSearchValue(query).length < 2 &&
+      normalizePromptSearchValue(loraFragment.text).length < 2 &&
       normalizePromptSearchValue(danbooruFragment.text).length < 2
     ) {
       return null
@@ -59,6 +68,7 @@ export function createPromptCompletionSource(getters: {
       danbooruTags: getters.danbooruTags(),
       embeddings: getters.embeddings(),
       explicit: context.explicit,
+      loraQuery: loraFragment.text,
       loras: getters.loras(),
       polarity: getters.polarity(),
       query,
@@ -72,7 +82,12 @@ export function createPromptCompletionSource(getters: {
       from: fragment?.from ?? context.pos,
       options: suggestions.map<Completion>((suggestion) => ({
         apply(view, completion, from, to) {
-          const applyFrom = suggestion.group === 'danbooru' ? danbooruFragment.from : from
+          const applyFrom =
+            suggestion.group === 'danbooru'
+              ? danbooruFragment.from
+              : suggestion.group === 'loras'
+                ? loraFragment.from
+                : from
           const effects = suggestion.embedding
             ? [
                 addPromptEmbeddingEffect.of({

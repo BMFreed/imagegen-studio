@@ -35,6 +35,7 @@ import {
   savedModelAvailability,
   selectableVersion,
 } from './project-model-picker.js'
+import { projectPromptLoraSources } from './project-prompt-context.js'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
@@ -74,6 +75,13 @@ const emit = defineEmits<{
 }>()
 
 const models = computed(() => checkpointCatalog(props.modelCatalog))
+const promptLoraSources = computed(() =>
+  projectPromptLoraSources(
+    props.generationDraft.loras,
+    props.modelCatalog,
+    props.modelCatalogLoaded && !props.modelCatalogLoading && !props.modelCatalogError,
+  ),
+)
 const selectedModel = computed(() => props.generationDraft.model)
 const stagedResourceId = ref<string | null>(null)
 const pickerResourceId = computed(
@@ -713,6 +721,10 @@ function applyFitBbox() {
             <PlainPromptEditor
               ariaLabel="Positive prompt"
               :disabled="busy || reloadRequired"
+              :embeddingTokens="
+                generationDraft.positivePrompt.embeddingRefs.map((ref) => ref.token)
+              "
+              :loraSources="promptLoraSources"
               :modelValue="generationDraft.positivePrompt.text"
               @update:modelValue="emit('updateDraft', { kind: 'positive-prompt', text: $event })"
             />
@@ -722,6 +734,10 @@ function applyFitBbox() {
             <PlainPromptEditor
               ariaLabel="Negative prompt"
               :disabled="busy || reloadRequired"
+              :embeddingTokens="
+                generationDraft.negativePrompt.embeddingRefs.map((ref) => ref.token)
+              "
+              :loraSources="promptLoraSources"
               :modelValue="generationDraft.negativePrompt.text"
               @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
             />

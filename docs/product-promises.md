@@ -30,10 +30,10 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove и явный checkpoint/LoRA relink после переноса `.igs` проверены с SQLite, файлами и Electron; загрузка worker, embedding/VAE selectors отсутствуют                                                                                                                                                                                                                   |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove, exact-version trigger autocomplete/подсветка и явный checkpoint/LoRA relink после переноса `.igs` проверены с SQLite, файлами и Electron; загрузка worker, embedding/VAE selectors отсутствуют                                                                                                                                                                                                                   |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                                                                |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, exact LoRA stack/relink, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, LoRA trigger completion → text Save, exact LoRA stack/relink, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
 | PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                                                         |
 
 ### Статусы и доказательства
@@ -178,7 +178,11 @@ Project LoRA stack уже хранит точную проверенную ве�
 проверены через Electron, recovery — через реальную SQLite/файловую систему.
 Portable relink для LoRA проверен на двух библиотеках SQLite и в Electron:
 только локальные ID меняются после проверки точного CivitAI-файла; настройки
-и metadata остаются прежними. Применение LoRA в inference ещё не реализовано.
+и metadata остаются прежними. В Electron prompt подсказки и подсветка берут
+триггеры выбранной точной версии, независимо от Default. Disable/remove и потеря
+файла убирают контекст, сохраняя текст; неизвестное семейство не подтверждает
+совместимость. [Проверки prompt](./engineering/project-lora-prompt-research.md).
+Применение LoRA в inference ещё не реализовано.
 
 ### Обещание
 
@@ -343,6 +347,9 @@ LoRA stack также проходит dirty/shadow/Save/reopen: версии н
 смене Default или исчезновении файла; правки веса/enabled и удаление сохраняют
 prompt и embedding refs. Явный relink после переноса `.igs` меняет только локальные
 ID LoRA, отвергает повреждённый файл и устаревший ответ после правки/закрытия.
+LoRA completion вставляет обычный текст: Electron Save и настоящий `.igs` loader
+проверяют результат без LoRA ownership или новых embedding refs.
+[Проверки prompt](./engineering/project-lora-prompt-research.md).
 [Проверки LoRA](./engineering/phase-2a-project-storage-research.md#project-lora-stack-validation)
 не доказывают её загрузку и применение в ML pipeline.
 Не готовы полный generation pipeline/export, устанавливаемый

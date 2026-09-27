@@ -1,3 +1,5 @@
+import { suggestLoraTriggers } from '../../../../../src/shared/projects/lora-triggers'
+
 import type { DanbooruTagMock } from './generation-prompt.utils'
 import type {
   GenerationEmbeddingResourceRef,
@@ -5,7 +7,7 @@ import type {
   GenerationPromptPolarity,
 } from './generation.types'
 
-import { normalizePromptSearchValue } from './generation-prompt.utils'
+import { activePromptLoraSources, normalizePromptSearchValue } from './generation-prompt.utils'
 
 export interface PromptAutocompleteSuggestion {
   detail: string
@@ -20,6 +22,7 @@ export function getPromptAutocompleteSuggestions(args: {
   danbooruTags: DanbooruTagMock[]
   embeddings: GenerationEmbeddingResourceRef[]
   explicit: boolean
+  loraQuery?: string
   loras: GenerationLora[]
   polarity: GenerationPromptPolarity
   query: string
@@ -30,31 +33,15 @@ export function getPromptAutocompleteSuggestions(args: {
   )
   const browsingLocalResources = args.explicit && query.length === 0
 
-  const triggerMap = new Map<string, { names: string[]; sourceIds: string[]; text: string }>()
-  for (const lora of args.loras.filter((item) => item.enabled && !item.resource.missing)) {
-    for (const phrase of lora.resource.triggerPhrases) {
-      if (
-        !browsingLocalResources &&
-        !Number.isFinite(matchScore(query, phrase, lora.resource.name))
-      ) {
-        continue
-      }
-      const key = normalizePromptSearchValue(phrase)
-      const current = triggerMap.get(key) ?? { names: [], sourceIds: [], text: phrase }
-      current.names.push(lora.resource.name)
-      current.sourceIds.push(lora.resource.id)
-      triggerMap.set(key, current)
-    }
-  }
-  const loras = [...triggerMap.values()]
-    .sort((left, right) => matchScore(query, left.text) - matchScore(query, right.text))
-    .slice(0, 5)
-    .map<PromptAutocompleteSuggestion>((item) => ({
-      detail: item.names.join(', '),
-      group: 'loras',
-      id: `lora:${item.sourceIds.join('+')}:${item.text}`,
-      label: item.text,
-    }))
+  const loras = suggestLoraTriggers(
+    args.loraQuery ?? query,
+    activePromptLoraSources(args.loras),
+  ).map<PromptAutocompleteSuggestion>((item) => ({
+    detail: item.sources.map((source) => source.name).join(', '),
+    group: 'loras',
+    id: `lora:${item.sources.map((source) => source.id).join('+')}:${item.phrase}`,
+    label: item.phrase,
+  }))
 
   const embeddings = args.embeddings
     .filter((item) => !item.missing)

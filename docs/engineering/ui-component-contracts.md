@@ -113,3 +113,18 @@ Production layout и общий size-control проходят также чер�
 `pnpm run app:smoke`: настоящий renderer и native window, empty/populated/error
 состояния Model Manager, 900×620 / 1440×900 / 1920×1080, Create с последующим
 чтением `.igs`. UI-проверка не доказывает живую загрузку CivitAI или inference.
+
+## LoRA-контекст редактора prompt
+
+Общие [правила сопоставления и подсказок](../../src/shared/projects/lora-triggers.ts)
+принимают `LoraTriggerSource[]` (id, name, version, phrases). Владелец передаёт
+только активные доступные источники. Production-адаптер
+[`project-prompt-context.ts`](../../src/renderer/components/project-prompt-context.ts)
+берёт `trainedWords` точной сохранённой версии, а не Default ресурса.
+`PlainPromptEditor` принимает `loraSources` и `embeddingTokens`; text остаётся
+обычным `defineModel<string>`. Редактор не разрешает ресурсы и не создаёт refs.
+Прототип сохраняет собственные embedding/selection/history adapters, используя
+те же LoRA-правила. [Popup CSS](../../src/renderer/styles/prompt-editor.css)
+общий: tooltips портируются в body, поэтому оформление находится вне scoped CSS.
+Изменения проверяются Node rules/adapter tests, prototype Project/Preset/Apply
+flows и Electron smoke; границы описаны в [review](./project-lora-prompt-research.md).

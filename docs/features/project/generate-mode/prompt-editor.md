@@ -50,9 +50,16 @@ for positive and negative prompts through typed Project IPC. The main process
 retains only pre-existing embedding sidecar refs whose literal activation token
 still appears in the edited text; the renderer cannot create refs in this
 slice. Retyping a removed token does not restore its ref. The production editor
-does not yet provide the prototype's phrase
-selection, attention actions, resource decorations/autocomplete or
-focus-to-blur Project undo transaction. It uses local editor history while
+now provides exact-version LoRA trigger decorations, metadata hover and
+autocomplete through shared phrase rules. These only add authoring context:
+completion inserts ordinary text, while disabling/removing a LoRA never changes
+text. Existing embedding sidecar ranges exclude LoRA decoration. The editor does
+not yet provide the prototype's phrase selection, attention actions, embedding
+diagnostics/insertion, Danbooru suggestions or focus-to-blur Project undo transaction. It uses local editor history while
 Project-level undo remains unimplemented. These missing editor behaviors and
 model-aware resource feedback remain product contract work, not evidence of
 completed generation.
+
+LoRA context and portable popup styling are shared with the prototype without
+importing mock embedding resolution into the production editor. Checked behavior
+and remaining scope: [Project prompt review](../../../engineering/project-lora-prompt-research.md).

@@ -35,3 +35,14 @@ CodeMirror completion sections provide group headings. The tooltip layer is tele
 ## Persistence boundary
 
 Autocomplete is an authoring aid, not a stored annotation system. Prompt persistence contains plain text plus embedding refs only. LoRA phrase ownership and Danbooru ranking/category/post-count metadata are recomputed context and are never stored with prompt text. The current tag list is an in-memory prototype; the production SQLite tag index is outside this iteration.
+
+## Production coverage (27.09.2026)
+
+Electron implements the Active LoRA triggers section for both prompt polarities:
+exact-version phrases, normalized multi-word suffix search, two-character typing
+threshold, Ctrl+Space browsing, keyboard/mouse selection, local Undo/Redo and
+plain-text Save. A missing, corrupt, disabled or unlinked version contributes no
+suggestions. The popup is rendered outside the settings scroll container and
+shares its styling with the prototype. The production embedding and Danbooru
+sections, action rail and onboarding hint are still pending.
+[Validation](../../../engineering/project-lora-prompt-research.md).

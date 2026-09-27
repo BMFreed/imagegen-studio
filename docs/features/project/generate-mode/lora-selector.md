@@ -62,8 +62,20 @@ it does not establish inference compatibility.
 Duplicate detection uses local and portable resource identity, so transferred
 rows are marked Added in the selector too. Existing duplicates are preserved
 and must be explicitly resolved before linking. A late response after any
-Project edit, row removal or close/reopen is rejected. Trigger highlighting/
-autocomplete, presets and actual inference/preflight remain unimplemented. Evidence and test
+Project edit, row removal or close/reopen is rejected. Presets and actual
+inference/preflight remain unimplemented. Evidence and test
 boundaries: [Phase 2A research](../../../engineering/phase-2a-project-storage-research.md#project-lora-stack-validation).
 
 Portable relinking evidence: [LoRA relink review](../../../engineering/phase-2a-project-storage-research.md#portable-lora-relinking-validation).
+
+Production positive and negative prompts now decorate and suggest triggers from
+that exact installed version. Changing Default does not switch the phrases;
+disabled, missing, corrupt or not-yet-linked rows supply no context. Catalog
+loading/error hides context until availability is known. Unknown family can
+still supply authoring context; this does not certify inference compatibility.
+Automatic suggestions start at two normalized characters; Ctrl+Space browses
+active phrases. A completion inserts plain text, supports local Undo/Redo and
+passes through the existing draft/Save path. Both renderers share matching,
+source aggregation and ranking rules. Stored embedding tokens take precedence
+over LoRA decoration; production embedding insertion/diagnostics are still pending.
+Evidence: [Project prompt review](../../../engineering/project-lora-prompt-research.md).

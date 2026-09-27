@@ -1,3 +1,9 @@
+import {
+  type LoraTriggerSource,
+  matchLoraTriggers,
+} from '../../../../../src/shared/projects/lora-triggers'
+import { findTopLevelPromptPhraseRange } from '../../../../../src/shared/projects/prompt-text'
+
 import type {
   DanbooruTagCategory,
   GenerationEmbeddingResourceRef,
@@ -6,6 +12,12 @@ import type {
   GenerationPromptEmbeddingRef,
   GenerationPromptSelection,
 } from './generation.types'
+
+export {
+  findTopLevelPromptPhraseRange,
+  normalizePromptSearchValue,
+  splitTopLevelPromptPhrases,
+} from '../../../../../src/shared/projects/prompt-text'
 
 export interface DanbooruTagMock {
   aliases: string[]
@@ -61,96 +73,6 @@ export function parseLegacyPromptString(
   _danbooruTags: DanbooruTagMock[] = [],
 ): GenerationPrompt {
   return reconcilePromptEmbeddingRefs(createGenerationPrompt(value), resources)
-}
-
-export function normalizePromptSearchValue(value: string): string {
-  return value.trim().toLocaleLowerCase().replaceAll('_', ' ').replaceAll(/\s+/g, ' ')
-}
-
-export function splitTopLevelPromptPhrases(text: string): PromptPhraseRange[] {
-  const ranges: PromptPhraseRange[] = []
-  let start = 0
-  let escaped = false
-  let roundDepth = 0
-  let squareDepth = 0
-  let braceDepth = 0
-
-  const push = (end: number) => {
-    let from = start
-    let to = end
-    while (from < to && /\s/.test(text[from]!)) {
-      from += 1
-    }
-    while (to > from && /\s/.test(text[to - 1]!)) {
-      to -= 1
-    }
-    ranges.push({ from, to })
-  }
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]!
-    if (escaped) {
-      escaped = false
-      continue
-    }
-    if (char === '\\') {
-      escaped = true
-      continue
-    }
-    switch (char) {
-      case '(': {
-        roundDepth += 1
-        break
-      }
-      case ')': {
-        roundDepth = Math.max(0, roundDepth - 1)
-        break
-      }
-      case '[': {
-        squareDepth += 1
-        break
-      }
-      case ']': {
-        squareDepth = Math.max(0, squareDepth - 1)
-        break
-      }
-      case '{': {
-        braceDepth += 1
-        break
-      }
-      case '}': {
-        {
-          braceDepth = Math.max(0, braceDepth - 1)
-          // No default
-        }
-        break
-      }
-    }
-
-    if (
-      (char === ',' || char === '\n') &&
-      roundDepth === 0 &&
-      squareDepth === 0 &&
-      braceDepth === 0
-    ) {
-      push(index)
-      start = index + 1
-    }
-  }
-  push(text.length)
-  return ranges
-}
-
-export function findTopLevelPromptPhraseRange(text: string, position: number): PromptPhraseRange {
-  const clamped = Math.max(0, Math.min(text.length, position))
-  const ranges = splitTopLevelPromptPhrases(text)
-  const containing = ranges.find((range) => clamped >= range.from && clamped <= range.to)
-  if (containing) {
-    return containing
-  }
-  return (
-    ranges.find((range) => clamped < range.from) ?? ranges.at(-1) ?? { from: clamped, to: clamped }
-  )
 }
 
 export function adjustPromptAttention(
@@ -237,27 +159,27 @@ export function getPromptEmbeddingMatches(
   return discardOverlappingMatches(candidates)
 }
 
+export function activePromptLoraSources(loras: GenerationLora[]): LoraTriggerSource[] {
+  return loras
+    .filter((lora) => lora.enabled && !lora.resource.missing)
+    .map((lora) => ({
+      id: lora.resource.id,
+      name: lora.resource.name,
+      phrases: lora.resource.triggerPhrases,
+      version: lora.resource.version,
+    }))
+}
+
 export function getPromptLoraTriggerMatches(
   text: string,
   loras: GenerationLora[],
 ): PromptLoraTriggerMatch[] {
-  const active = loras.filter((lora) => lora.enabled && !lora.resource.missing)
-  const grouped = new Map<string, { loras: GenerationLora[]; phrase: string }>()
-  for (const lora of active) {
-    for (const phrase of lora.resource.triggerPhrases) {
-      const key = normalizePromptSearchValue(phrase)
-      const current = grouped.get(key) ?? { loras: [], phrase }
-      current.loras.push(lora)
-      grouped.set(key, current)
-    }
-  }
-
-  const candidates = [...grouped.values()]
-    .sort((left, right) => right.phrase.length - left.phrase.length)
-    .flatMap((entry) =>
-      flexiblePhraseMatches(text, entry.phrase).map(({ from, to }) => ({ ...entry, from, to })),
-    )
-  return discardOverlappingMatches(candidates)
+  return matchLoraTriggers(text, activePromptLoraSources(loras)).map((match) => ({
+    from: match.from,
+    loras: match.sources.map((source) => loras.find((lora) => lora.resource.id === source.id)!),
+    phrase: match.phrase,
+    to: match.to,
+  }))
 }
 
 export function getPromptEmbeddingRefs(
@@ -354,29 +276,6 @@ function literalTokenMatches(text: string, token: string): PromptPhraseRange[] {
   return matches
 }
 
-function flexiblePhraseMatches(text: string, phrase: string): PromptPhraseRange[] {
-  const source = phrase
-    .trim()
-    .split(/[\s_]+/)
-    .map(escapeRegExp)
-    .join(String.raw`[\s_]+`)
-  if (!source) {
-    return []
-  }
-  const expression = new RegExp(source, 'giu')
-  const matches: PromptPhraseRange[] = []
-  for (const match of text.matchAll(expression)) {
-    const from = match.index
-    const to = from + match[0].length
-    const leftBoundary = !/^\w/u.test(phrase) || from === 0 || !/\w/u.test(text[from - 1]!)
-    const rightBoundary = !/\w$/u.test(phrase) || to === text.length || !/\w/u.test(text[to]!)
-    if (leftBoundary && rightBoundary) {
-      matches.push({ from, to })
-    }
-  }
-  return matches
-}
-
 function discardOverlappingMatches<T extends PromptPhraseRange>(matches: T[]): T[] {
   const accepted: T[] = []
   for (const match of matches.sort((left, right) => left.from - right.from || right.to - left.to)) {
@@ -385,10 +284,6 @@ function discardOverlappingMatches<T extends PromptPhraseRange>(matches: T[]): T
     }
   }
   return accepted.sort((left, right) => left.from - right.from)
-}
-
-function escapeRegExp(value: string) {
-  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
 }
 
 function cloneJson<T>(value: T): T {

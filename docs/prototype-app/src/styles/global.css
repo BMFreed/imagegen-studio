@@ -1,3 +1,5 @@
+@import '../../../../src/renderer/styles/prompt-editor.css';
+
 :root {
   color-scheme: dark;
   --app-chrome: #101014;
@@ -19,14 +21,6 @@
   --status-warning-soft: #f2c97d12;
   --status-warning-text: #e8c47f;
   --app-selection: #4674a766;
-  --prompt-resource-surface: #7697c51c;
-  --prompt-resource-border: #86a8d4a8;
-  --prompt-warning-surface: #f2c97d18;
-  --prompt-context-surface: rgb(181 140 255 / 14%);
-  --prompt-context-border: rgb(181 140 255 / 72%);
-  --prompt-editor-focus-border: #7ee787;
-  --prompt-editor-focus-shadow: rgb(100 227 110 / 30%);
-  --prompt-editor-focus-surface: rgb(20 51 25 / 0.1);
   --app-radius: 3px;
   --app-font-size: 13px;
   --app-font-size-meta: 12px;
@@ -59,77 +53,8 @@ body .n-modal-mask {
   backdrop-filter: blur(8px);
 }
 
-body .cm-tooltip {
-  z-index: 5000;
-}
-
-body .cm-tooltip.cm-tooltip-autocomplete {
-  overflow: hidden;
-  max-width: min(420px, calc(100vw - 32px));
-  color: var(--app-text) !important;
-  background: var(--app-floating-surface) !important;
-  border: 1px solid var(--app-border) !important;
-  border-radius: var(--app-radius);
-}
-
-body .cm-tooltip-autocomplete > ul {
-  max-height: 280px !important;
-  padding: 3px 0 !important;
-  color: var(--app-text);
-  background: transparent;
-  font-family: inherit !important;
-}
-
-body .cm-tooltip-autocomplete > ul > li {
-  min-height: 24px;
-  padding: 3px 8px !important;
-  color: var(--app-text);
-  background: transparent;
-  line-height: 18px !important;
-}
-
-body .cm-tooltip-autocomplete > ul > li[aria-selected='true'] {
-  color: var(--app-text) !important;
-  background: var(--app-floating-surface-hover) !important;
-  box-shadow: inset 2px 0 0 var(--workspace-green);
-}
-
-body .cm-tooltip-autocomplete completion-section {
-  padding: 5px 8px 3px !important;
-  color: var(--app-text-muted);
-  border-bottom: 1px solid var(--app-border) !important;
-  opacity: 1 !important;
-  font-size: var(--app-font-size-meta);
-  font-weight: 600;
-}
-
-body .cm-tooltip-autocomplete .cm-completionDetail {
-  color: var(--app-text-muted);
-  font-style: normal;
-}
-
-body .cm-tooltip-autocomplete .cm-completionIcon {
-  color: var(--app-text-muted);
-  opacity: 1;
-}
-
-body .cm-tooltip-autocomplete .cm-completionMatchedText {
-  color: var(--workspace-green);
-  text-decoration: none;
-}
-
 body .prompt-help {
   width: min(330px, calc(100vw - 32px));
-}
-
-.prompt-resource-tooltip {
-  max-width: 360px;
-  padding: 6px 8px;
-  color: var(--app-text);
-  background: var(--app-elevated);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  font-size: var(--app-font-size-meta);
 }
 
 :root {

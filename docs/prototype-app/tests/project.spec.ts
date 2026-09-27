@@ -356,6 +356,15 @@ test.describe('Project prototype', () => {
     await expect(resourceTooltip).toContainText('LoRA · Trigger: painterly')
     await expect(resourceTooltip).toContainText('Sources: Digital Art v0.1')
 
+    await prompt.fill('portrait, digital a')
+    await page
+      .getByRole('option')
+      .filter({ has: page.getByText('digital art', { exact: true }) })
+      .click()
+    await expect(prompt).toHaveText('portrait, digital art')
+    await expect(loraTrigger).toHaveText('digital art')
+    await prompt.fill('painterly')
+
     const loraWeightInput = page.getByRole('textbox', { exact: true, name: 'Digital Art weight' })
     const loraWeight = page.locator('.n-input-number').filter({ has: loraWeightInput })
     await loraWeightInput.fill('0.65')
