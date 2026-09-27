@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Audit"
+  short_description: "Проверка вёрстки и иерархии действий в интерфейсе"
+  default_prompt: "Используй $ui-audit: проверь указанный участок интерфейса и составь отчёт без исправлений."

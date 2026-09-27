@@ -8,6 +8,7 @@
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.
+- [UI audit skill](../../.codex/skills/ui-audit/SKILL.md) — локальная проверка вёрстки и базовых правил дизайна по скриншотам и live UI; аудит завершается отчётом, исправления выполняются по запросу. [Чек-лист](../../.codex/skills/ui-audit/references/visual-checklist.md) содержит основания и исключения, [runtime guide](../../.codex/skills/ui-audit/references/runtime.md) — запуск Electron с временной библиотекой и входы в Vue-прототип.
 - [Desktop UI layout review](./desktop-ui-layout-review.md) — Home, Model Manager, общий редактор размера и карта оставшейся production-реализации.
 - [UI kit experiment](./ui-kit-experiment.md) — завершённый замер 18 реализаций: прямой Naive, общий API поверх Naive и Vue/HTML; первые и финальные версии, стоимость подготовки и границы вывода.
 - [UI context experiment](./ui-context-experiment.md) — завершённый пилот на 24

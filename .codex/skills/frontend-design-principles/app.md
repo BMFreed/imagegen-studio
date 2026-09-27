@@ -4,6 +4,15 @@ Guidance for dashboards, admin interfaces, internal tools, and SaaS products. Th
 
 Users live in these interfaces. They return daily, learn the patterns, build muscle memory. The design should disappear — enabling work without friction or distraction.
 
+## Role of this guide
+
+These are general recommendations for decisions not already settled by product or
+component contracts. Preserve approved design choices when reviewing existing UI.
+For ImageGen Studio, follow the [source precedence rules](../ui-audit/references/visual-checklist.md#приоритет-источников):
+contracts define requirements, the audit checklist turns them into checks, and this
+guide fills gaps. Report unresolved conflicts between applicable requirements instead
+of silently choosing one.
+
 
 ## Design Directions
 
@@ -102,7 +111,7 @@ Beyond the universal anti-patterns:
 
 - **Decorative gradients** — gradients for visual interest rather than meaning
 - **Excessive white space** — generous spacing is good; wasted space is not
-- **Competing visual hierarchies** — one thing should be primary
+- **Competing visual hierarchies** — avoid competing high-emphasis actions within the same task context. A separate modal or Inspector flow may have its own primary action; not every view needs one.
 - **Fancy fonts in UI** — save expression for marketing
 - **Animation for delight** — in work tools, animation is for feedback
 - **Color without meaning** — every colored element should communicate something

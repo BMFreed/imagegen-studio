@@ -40,8 +40,9 @@
 
 ## Design guidance
 
-- For UI/design work, read `.codex/skills/frontend-design-principles/`.
-- For ImageGen Studio app screens, use the skill's `app.md` guidance.
+- For UI audits, visual checks, or requests to inspect and fix a broken screen/element, use [ui-audit](.codex/skills/ui-audit/SKILL.md). A user does not need to provide a CSS diagnosis. Audit-only requests end with findings; change UI only when the user's request authorizes fixes.
+- Use its [visual checklist](.codex/skills/ui-audit/references/visual-checklist.md) to judge the named area in context. Inspect actual screenshots and relevant interaction states; passing code checks alone does not verify appearance.
+- For new UI/design work, read `.codex/skills/frontend-design-principles/`; for ImageGen Studio app screens, use its `app.md` guidance. Existing-interface audits and local fixes preserve the approved design and do not start the skill's new design-direction/palette approval workflow.
 - This `AGENTS.md` takes precedence over the skill for implementation constraints.
 
 ## Checks
