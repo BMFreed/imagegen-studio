@@ -24,6 +24,7 @@ import {
 } from 'naive-ui'
 import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
 import PlainPromptEditor from './PlainPromptEditor.vue'
@@ -61,7 +62,7 @@ const emit = defineEmits<{
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   importImage: []
-  manageModels: []
+  manageModels: [focus: ModelManagerFocus | null]
   moveLayer: [layerId: string, targetIndex: number]
   refreshModels: []
   relinkLora: [identity: ProjectLoraIdentity]
@@ -83,6 +84,20 @@ const promptLoraSources = computed(() =>
   ),
 )
 const selectedModel = computed(() => props.generationDraft.model)
+function openModelManager() {
+  const model = selectedModel.value
+  emit(
+    'manageModels',
+    model
+      ? {
+          resourceId: model.localModelId,
+          resourceName: model.displayName,
+          versionId: model.localVersionId,
+          versionName: model.versionName,
+        }
+      : null,
+  )
+}
 const stagedResourceId = ref<string | null>(null)
 const pickerResourceId = computed(
   () => stagedResourceId.value ?? selectedModel.value?.localModelId ?? null,
@@ -623,7 +638,7 @@ function applyFitBbox() {
                 >
                   Refresh
                 </NButton>
-                <NButton aria-label="Manage Models" size="tiny" text @click="emit('manageModels')">
+                <NButton aria-label="Manage Models" size="tiny" text @click="openModelManager">
                   Manage Models
                 </NButton>
               </div>

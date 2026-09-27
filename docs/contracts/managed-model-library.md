@@ -191,6 +191,18 @@ smoke проверяет действие из импортированного 
 mock version lifecycle, но не доказывает production download или repair.
 `src/main/models/*.test.ts` проверяют локальное хранилище и очередь, но не
 generation worker и Project references.
+
+В Electron Project `Manage Models` передаёт локальные ID выбранного checkpoint
+и версии: менеджер показывает нужную карточку даже после других фильтров,
+помечает версию как `Selected in Project` отдельно от библиотечного `Default`.
+Детали версии (файл, prediction type, trigger words) относятся к выбранной
+версии, даже если Default другой.
+
+Отсутствующий локальный ID объясняется предупреждением, без подстановки другой
+модели. Desktop smoke проходит через Project UI и реальный каталог SQLite и
+проверяет, что переход не меняет Project reference или dirty state. Обратный
+переход из менеджера, другие resource selectors и worker load ещё отсутствуют.
+
 Успешное восстановление зависит от доступности exact file у источника и прав
 доступа: если файл удалён или доступ закрыт, приложение объясняет отказ и не
 подменяет версию другой. Metadata остаётся доступной в сохранённых references.

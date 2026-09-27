@@ -56,7 +56,7 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Область | Есть в Electron из исходников | Осталось в принятом MVP | Фаза завершения |
 | --- | --- | --- | --- |
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
-| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group | Hard remove с reference/job diagnostics; resource handoff; реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
+| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group; Project → Manager focus на выбранных checkpoint и версии | Hard remove с reference/job diagnostics; обратный и остальные resource handoff; реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
@@ -402,8 +402,10 @@ LoRA для обеих семейств.
   и unavailable states. Smart Patch использует ту же проекцию после фазы 4;
   mask/bbox/source context не подменяет settings. Подготовить проекцию для
   `Save Preset from Result` без преждевременного создания самого пресета.
-- Закрыть реальное взаимодействие Model Manager и Project picker, локальные
-  thumbnails для installed resources и version/default references.
+- Довести реальное взаимодействие Model Manager и Project picker: Project →
+  Manager focus точных checkpoint/версии уже проверен в Electron; остаются
+  обратный переход, другие resource selectors, локальные thumbnails installed
+  resources и version/default references.
 
 **Выходная проверка:** реальные Illustrious и Anima `txt2img`/`img2img` jobs
 с LoRA проходят от Project UI через queue/worker до staging и явного Add.
@@ -513,8 +515,9 @@ Home можно развивать после document storage 2A; remove resour
   требуют явной отмены, Preset/result refs — подтверждения. Shared Anima
   components и content-addressed файлы живых версий сохраняются. Существующие
   Projects/Presets/provenance сохраняют copied identity и показывают missing.
-- Завершить `Open in Models` и обратный переход к исходному Project/Apply,
-  все обещанные resource selectors и thumbnails installed resources.
+- Завершить `Open in Models` для остальных контекстов и обратный переход к
+  исходному Project/Apply; Project → Manager для выбранного checkpoint уже есть.
+  Довести все обещанные resource selectors и thumbnails installed resources.
 - Реализовать [image export](../features/project/generate-mode/image-and-bounding-box.md#export-and-crop-boundary):
   `Export As` по visible-content bounds, включая активные Smart Patch variants;
   отдельный `Export Generation BBox`, sRGB, понятный отказ на пустом содержимом.

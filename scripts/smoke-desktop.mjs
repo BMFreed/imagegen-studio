@@ -395,7 +395,10 @@ try {
   await projectRegion.getByRole('button', { name: 'Save Project' }).click()
   await projectRegion.getByText('Saved', { exact: true }).waitFor()
   const actionPackage = await readIgsPackage(packagePath)
-  assert.equal(actionPackage.project.generationDraft.positivePrompt.text, '(alpha phrase)+, beta word')
+  assert.equal(
+    actionPackage.project.generationDraft.positivePrompt.text,
+    '(alpha phrase)+, beta word',
+  )
   assert.equal(actionPackage.project.generationDraft.negativePrompt.text, '(soft lighting)-, blur')
   await checkPromptDiagnostics({ window, application, projectRegion })
   await projectRegion.getByRole('button', { name: 'Save Project' }).click()
@@ -434,7 +437,9 @@ try {
   await projectRegion.getByRole('button', { name: 'Refresh models' }).click()
   await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveText('trigger 905')
   await positive.locator('.cm-prompt-lora-trigger').hover()
-  await expect(window.locator('.prompt-resource-tooltip')).toContainText('LoRA · Trigger: trigger 905')
+  await expect(window.locator('.prompt-resource-tooltip')).toContainText(
+    'LoRA · Trigger: trigger 905',
+  )
   await expect(window.locator('.prompt-resource-tooltip')).toContainText('Smoke Detail LoRA')
 
   await positive.fill('portrait, trigger 90, untouched')
@@ -444,19 +449,27 @@ try {
   for (let index = 1; index < 'portrait, trigger 90'.length; index += 1) {
     await positive.press('ArrowRight')
   }
-  await projectRegion.getByRole('region', { name: 'Positive prompt editor', exact: true })
-    .getByRole('button', { name: 'Browse prompt suggestions' }).click()
+  await projectRegion
+    .getByRole('region', { name: 'Positive prompt editor', exact: true })
+    .getByRole('button', { name: 'Browse prompt suggestions' })
+    .click()
   const triggerOption = window.getByRole('option').filter({ hasText: 'trigger 905' })
   await expect(triggerOption).toBeVisible()
   await expect(window.getByRole('option').filter({ hasText: 'trigger 906' })).toHaveCount(0)
   if (process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT) {
     await window.mouse.move(600, 200)
     await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT })
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 620))
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(900, 620),
+    )
     await window.waitForFunction(() => window.innerWidth === 900)
     await expect(triggerOption).toBeVisible()
-    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT.replace('.png', '-small.png') })
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1380, 900))
+    await window.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_PROMPT_SCREENSHOT.replace('.png', '-small.png'),
+    })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
     await window.waitForFunction(() => window.innerWidth === 1380)
   }
   await triggerOption.click()
@@ -469,9 +482,13 @@ try {
   await projectRegion.getByText('Saved', { exact: true }).waitFor()
   const completedPromptPackage = await readIgsPackage(packagePath)
   assert.deepEqual(completedPromptPackage.project.generationDraft.positivePrompt, {
-    embeddingRefs: [], text: 'portrait, trigger 905, untouched',
+    embeddingRefs: [],
+    text: 'portrait, trigger 905, untouched',
   })
-  assert.equal(completedPromptPackage.project.generationDraft.loras[0].resource.localVersionId, checkpointVersions.lora.versionId)
+  assert.equal(
+    completedPromptPackage.project.generationDraft.loras[0].resource.localVersionId,
+    checkpointVersions.lora.versionId,
+  )
   // Automatic completion must survive optimistic draft/IPC updates while typing.
   await negative.fill('')
   await negative.pressSequentially('tr')
@@ -501,7 +518,10 @@ try {
   assert.equal(loraPackage.project.generationDraft.negativePrompt.text, 'trigger 905, blur')
   assert.deepEqual(loraPackage.project.generationDraft.positivePrompt.embeddingRefs, [])
   assert.deepEqual(loraPackage.project.generationDraft.negativePrompt.embeddingRefs, [])
-  assert.deepEqual(Object.keys(loraPackage.project.generationDraft.positivePrompt).sort(), ['embeddingRefs', 'text'])
+  assert.deepEqual(Object.keys(loraPackage.project.generationDraft.positivePrompt).sort(), [
+    'embeddingRefs',
+    'text',
+  ])
   const invalidLora = await window.evaluate(
     async ({ id, selection }) => {
       return [
@@ -595,6 +615,71 @@ try {
     checkpointVersions.first.versionId,
     'Changing Model Manager Default must not replace an existing Project reference',
   )
+  const beforeModelHandoff = (
+    await window.evaluate((id) => window.api.projects.open(id), projectId)
+  ).value.tab
+  await projectRegion.getByRole('button', { name: 'Manage Models' }).click()
+  const focusedManager = window.getByRole('dialog', { name: 'Model Manager' })
+  await focusedManager
+    .getByRole('complementary', { name: 'Model details' })
+    .locator('h2')
+    .filter({ hasText: 'Illustrious Smoke Checkpoint' })
+    .waitFor()
+  const focusedResourceRow = focusedManager
+    .locator('.resource-row')
+    .filter({ hasText: 'Illustrious Smoke Checkpoint' })
+  await expect(focusedResourceRow.getByRole('button')).toHaveAttribute('aria-pressed', 'true')
+  await expect(focusedManager.locator('.version-row').filter({ hasText: 'v901' })).toContainText(
+    'Selected in Project',
+  )
+  await expect(focusedManager.locator('.version-row').filter({ hasText: 'v902' })).toContainText(
+    'Default',
+  )
+  await expect(focusedManager.locator('.metadata-list dd').first()).toHaveText('v901')
+  await expect(focusedManager.locator('.metadata-list dd').nth(1)).toContainText('v901')
+  await checkModelManagerLayout(application, window)
+  const focusedVersionFits = await focusedManager
+    .locator('.version-row--project')
+    .evaluate((row) => {
+      const bounds = row.getBoundingClientRect()
+      const actions = row.querySelector('.version-actions').getBoundingClientRect()
+      return actions.right <= bounds.right + 1
+    })
+  assert.equal(focusedVersionFits, true, 'Project version actions must fit the details pane')
+  if (process.env.IMAGEGEN_SMOKE_FOCUSED_MODEL_SCREENSHOT) {
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_FOCUSED_MODEL_SCREENSHOT })
+  }
+  await focusedManager
+    .getByRole('complementary', { name: 'Model filters' })
+    .getByRole('button', { name: /^LoRA / })
+    .click()
+  await focusedManager.getByPlaceholder('Search installed models').fill('Smoke Detail LoRA')
+  await focusedManager
+    .getByRole('complementary', { name: 'Model details' })
+    .locator('h2')
+    .filter({ hasText: 'Smoke Detail LoRA' })
+    .waitFor()
+  await focusedManager.getByRole('button', { name: 'Close Model Manager' }).click()
+  await focusedManager.waitFor({ state: 'detached' })
+  await projectRegion.getByRole('button', { name: 'Manage Models' }).click()
+  await focusedManager
+    .getByRole('complementary', { name: 'Model details' })
+    .locator('h2')
+    .filter({ hasText: 'Illustrious Smoke Checkpoint' })
+    .waitFor()
+  await expect(focusedResourceRow.getByRole('button')).toHaveAttribute('aria-pressed', 'true')
+  await expect(focusedManager.locator('.version-row').filter({ hasText: 'v901' })).toContainText(
+    'Selected in Project',
+  )
+  await focusedManager.getByRole('button', { name: 'Close Model Manager' }).click()
+  await focusedManager.waitFor({ state: 'detached' })
+  const afterModelHandoff = (await window.evaluate((id) => window.api.projects.open(id), projectId))
+    .value.tab
+  assert.deepEqual(
+    afterModelHandoff.generationDraft.model,
+    beforeModelHandoff.generationDraft.model,
+  )
+  assert.equal(afterModelHandoff.dirty, beforeModelHandoff.dirty)
   await projectRegion.locator('[aria-label="Model version"]').click()
   await window.getByText('v902', { exact: true }).last().click()
   await waitForOpenTab(
@@ -1563,6 +1648,17 @@ try {
   await portableProjectRegion
     .getByRole('button', { name: 'Link installed version', exact: true })
     .waitFor()
+  await portableProjectRegion.getByRole('button', { name: 'Manage Models' }).click()
+  const missingManager = recoveryWindow.getByRole('dialog', { name: 'Model Manager' })
+  await missingManager.getByText('Project model unavailable', { exact: true }).waitFor()
+  await expect(missingManager.locator('.resource-row--selected')).toHaveCount(0)
+  await missingManager.getByRole('button', { name: 'Close Model Manager' }).click()
+  await missingManager.waitFor({ state: 'detached' })
+  assert.deepEqual(
+    (await recoveryWindow.evaluate((id) => window.api.projects.open(id), portableProject.id)).value
+      .tab.generationDraft.model,
+    copiedModelRef,
+  )
   if (process.env.IMAGEGEN_SMOKE_PROJECT_RELINK_SCREENSHOT) {
     await portableProjectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
     await delay(250)

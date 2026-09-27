@@ -38,9 +38,12 @@ import {
   NTooltip,
   useThemeVars,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+import type { ModelManagerFocus } from './model-manager-focus.js'
 
 const show = defineModel<boolean>('show', { required: true })
+const props = defineProps<{ focus: ModelManagerFocus | null }>()
 // Naive's active color is available through its theme API, not an app-shell token.
 const themeVars = useThemeVars()
 const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }))
@@ -79,6 +82,7 @@ const jobs = ref<ModelInstallJobView[]>([])
 const storageBytes = ref<number | null>(null)
 const tokenStatus = ref<CivitaiTokenStatus | null>(null)
 const selectedId = ref<string | null>(null)
+const managerShell = ref<HTMLElement | null>(null)
 const typeFilter = ref<TypeFilter>('all')
 const statusFilter = ref<StatusFilter>('all')
 const search = ref('')
@@ -319,11 +323,42 @@ const visibleCatalog = computed(() => {
     return left.name.localeCompare(right.name)
   })
 })
-const selectedResource = computed(
+const selectedResource = computed(() => {
+  const selected = visibleCatalog.value.find((resource) => resource.id === selectedId.value)
+  if (selected) {
+    return selected
+  }
+  if (
+    props.focus?.resourceId === selectedId.value &&
+    !catalog.value.some((resource) => resource.id === selectedId.value)
+  ) {
+    return null
+  }
+  return visibleCatalog.value[0] ?? null
+})
+const detailVersion = computed(() => {
+  const resource = selectedResource.value
+  if (!resource) {
+    return null
+  }
+  if (props.focus?.resourceId === resource.id) {
+    return resource.versions.find((version) => version.id === props.focus?.versionId) ?? null
+  }
+  return versionFor(resource)
+})
+const focusedModelMissing = computed(
   () =>
-    visibleCatalog.value.find((resource) => resource.id === selectedId.value) ??
-    visibleCatalog.value[0] ??
-    null,
+    props.focus !== null &&
+    selectedId.value === props.focus.resourceId &&
+    !loading.value &&
+    !error.value &&
+    !catalog.value.some((resource) => resource.id === props.focus?.resourceId),
+)
+const focusedVersionMissing = computed(
+  () =>
+    props.focus !== null &&
+    selectedResource.value?.id === props.focus.resourceId &&
+    !selectedResource.value.versions.some((version) => version.id === props.focus?.versionId),
 )
 const duplicateResource = computed(() => {
   const selection = filePreview.value
@@ -392,7 +427,11 @@ async function loadCatalog() {
     () => requireApi().getCatalog(),
     (nextCatalog) => {
       catalog.value = nextCatalog
-      if (selectedId.value && !nextCatalog.some((resource) => resource.id === selectedId.value)) {
+      if (
+        selectedId.value &&
+        selectedId.value !== props.focus?.resourceId &&
+        !nextCatalog.some((resource) => resource.id === selectedId.value)
+      ) {
         selectedId.value = null
       }
     },
@@ -690,7 +729,22 @@ function jobCancelable(job: ModelInstallJobView): boolean {
 
 watch(show, (visible) => {
   if (visible) {
-    void loadAll()
+    if (props.focus) {
+      resetFilters()
+      selectedId.value = props.focus.resourceId
+    }
+    void loadAll().then(async () => {
+      if (!show.value || !props.focus) {
+        return
+      }
+      await nextTick()
+      managerShell.value
+        ?.querySelector('.resource-row--selected')
+        ?.scrollIntoView({ block: 'nearest' })
+      managerShell.value
+        ?.querySelector('.version-row--project')
+        ?.scrollIntoView({ block: 'nearest' })
+    })
   } else {
     importOpen.value = false
     tokenPopoverOpen.value = false
@@ -741,7 +795,13 @@ onBeforeUnmount(() => {
     :maskClosable="false"
     transform-origin="center"
   >
-    <div aria-label="Model Manager" aria-modal="true" class="manager-shell" role="dialog">
+    <div
+      ref="managerShell"
+      aria-label="Model Manager"
+      aria-modal="true"
+      class="manager-shell"
+      role="dialog"
+    >
       <header class="manager-header">
         <div class="title-line">
           <h1>Model Manager</h1>
@@ -838,6 +898,26 @@ onBeforeUnmount(() => {
         </NAlert>
         <NAlert v-else-if="notice" key="n-alert-2" closable type="success" @close="notice = null">
           {{ notice }}
+        </NAlert>
+      </div>
+      <div v-if="focusedModelMissing || focusedVersionMissing" class="manager-feedback">
+        <NAlert
+          v-if="focusedModelMissing"
+          key="focused-model-missing"
+          title="Project model unavailable"
+          type="warning"
+        >
+          {{ focus?.resourceName }} is not in this model library. The Project selection is
+          unchanged.
+        </NAlert>
+        <NAlert
+          v-else
+          key="focused-version-missing"
+          title="Project version unavailable"
+          type="warning"
+        >
+          {{ focus?.versionName }} is not installed for {{ focus?.resourceName }}. The Project
+          selection is unchanged.
         </NAlert>
       </div>
 
@@ -1094,16 +1174,16 @@ onBeforeUnmount(() => {
                           {{ resourceStatus(selectedResource) }}
                         </NTag>
                         <NTag size="small">{{ selectedResource.resourceType }}</NTag>
-                        <NTag v-if="versionFor(selectedResource)?.baseModelFamily" size="small">
-                          {{ versionFor(selectedResource)?.baseModelFamily }}
+                        <NTag v-if="detailVersion?.baseModelFamily" size="small">
+                          {{ detailVersion.baseModelFamily }}
                         </NTag>
                         <NTag
-                          v-if="versionFor(selectedResource)?.predictionType"
+                          v-if="detailVersion?.predictionType"
                           key="n-tag-2"
                           size="small"
                           type="info"
                         >
-                          {{ versionFor(selectedResource)?.predictionType }}
+                          {{ detailVersion.predictionType }}
                         </NTag>
                       </div>
                     </NCard>
@@ -1126,6 +1206,11 @@ onBeforeUnmount(() => {
                           v-for="version of selectedResource.versions"
                           :key="version.id"
                           class="version-row"
+                          :class="{
+                            'version-row--project':
+                              focus?.resourceId === selectedResource.id &&
+                              focus.versionId === version.id,
+                          }"
                         >
                           <div class="version-main">
                             <strong>{{ version.name }}</strong>
@@ -1138,7 +1223,19 @@ onBeforeUnmount(() => {
                           </div>
                           <div class="version-actions">
                             <NTag
+                              v-if="
+                                focus?.resourceId === selectedResource.id &&
+                                focus.versionId === version.id
+                              "
+                              key="selected-in-project"
+                              size="small"
+                              type="info"
+                            >
+                              Selected in Project
+                            </NTag>
+                            <NTag
                               v-if="selectedResource.defaultVersionId === version.id"
+                              key="n-tag-2"
                               size="small"
                               type="success"
                             >
@@ -1156,7 +1253,7 @@ onBeforeUnmount(() => {
                               size="small"
                               @click="
                                 openVersionImport(
-                                  selectedResource.modelId!,
+                                  selectedResource!.modelId!,
                                   version.civitaiVersionId!,
                                   version.civitaiFileId!,
                                 )
@@ -1199,14 +1296,10 @@ onBeforeUnmount(() => {
                         </div>
                       </div>
                     </NCard>
-                    <NCard v-if="selectedResource.trainedWords.length" size="small">
+                    <NCard v-if="detailVersion?.trainedWords.length" size="small">
                       <template v-slot:header><h3>Trigger Words</h3></template>
                       <div class="detail-tags">
-                        <NTag
-                          v-for="word of selectedResource.trainedWords"
-                          :key="word"
-                          size="small"
-                        >
+                        <NTag v-for="word of detailVersion.trainedWords" :key="word" size="small">
                           {{ word }}
                         </NTag>
                       </div>
@@ -1215,10 +1308,10 @@ onBeforeUnmount(() => {
                       <template v-slot:header><h3>Metadata</h3></template>
                       <dl class="metadata-list">
                         <dt>Version</dt>
-                        <dd>{{ versionFor(selectedResource)?.name ?? '—' }}</dd>
+                        <dd>{{ detailVersion?.name ?? '—' }}</dd>
                         <dt>File</dt>
-                        <dd :title="versionFor(selectedResource)?.fileName">
-                          {{ versionFor(selectedResource)?.fileName ?? '—' }}
+                        <dd :title="detailVersion?.fileName">
+                          {{ detailVersion?.fileName ?? '—' }}
                         </dd>
                       </dl>
                     </NCard>

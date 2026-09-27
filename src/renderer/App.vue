@@ -32,6 +32,7 @@ import {
 } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
+import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
 import AppChrome from './components/AppChrome.vue'
@@ -56,6 +57,7 @@ type PendingProjectAction =
 const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
+const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
 const projectTabs = ref<ProjectTab[]>([])
 const modelCatalog = ref<ModelCatalogItem[]>([])
@@ -98,6 +100,10 @@ let modelCatalogRequest = 0
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
 )
+function openModelManager(focus: ModelManagerFocus | null = null) {
+  modelManagerFocus.value = focus
+  modelManagerOpen.value = true
+}
 const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
@@ -1085,7 +1091,7 @@ onBeforeUnmount(() => {
           :projects
           @createProject="beginNewProject"
           @importProject="selectImport"
-          @manageModels="modelManagerOpen = true"
+          @manageModels="openModelManager()"
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
@@ -1108,7 +1114,7 @@ onBeforeUnmount(() => {
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
-          @manageModels="modelManagerOpen = true"
+          @manageModels="openModelManager($event)"
           @moveLayer="moveActiveRasterLayer"
           @refreshModels="refreshModelCatalog"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
@@ -1127,7 +1133,7 @@ onBeforeUnmount(() => {
         </NEmpty>
       </main>
 
-      <ModelManager v-model:show="modelManagerOpen" />
+      <ModelManager v-model:show="modelManagerOpen" :focus="modelManagerFocus" />
 
       <NModal
         :closeOnEsc="pendingProjectAction?.kind !== 'import-finish'"
