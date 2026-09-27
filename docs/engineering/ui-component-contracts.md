@@ -1,10 +1,12 @@
-# Общие UI-компоненты прототипа
+# Общие UI-компоненты
 
-Это публичный контракт повторяемых элементов `docs/prototype-app`. Перед правкой
+Это публичный контракт повторяемых элементов Electron renderer и `docs/prototype-app`. Перед правкой
 откройте сам компонент и его потребителей: сигнатура в коде остаётся источником
 точных типов. Компоненты решают задачи представления; состояние Project и команды
 остаются у владельца сущности. Браузерные проверки ниже доказывают поведение
 Vue-прототипа, а не готовность production UI.
+Общий редактор размера используется в обоих контурах; его production-проводка
+проверяется отдельно через Electron.
 
 | Роль               | Компонент                                                                                                 | Текущий потребитель                                                                        |
 | ------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -12,9 +14,24 @@ Vue-прототипа, а не готовность production UI.
 | Поверхность слоя   | [`ProjectEntitySurface.vue`](../prototype-app/src/prototypes/project/ProjectEntitySurface.vue)            | Raster, Smart Patch и Regional rows                                                        |
 | Выбор ресурса      | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue) | Project Settings, LoRA stack, Preset editor                                                |
 | Поле с подписью    | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
+| Размер и пропорции | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue) | Electron New Project/Project bbox; prototype New Project/Project Size |
 
 ## Публичный API и инварианты
 
+- **Размер и пропорции:** `v-model: ResolutionSize` (`width`/`height`: `number | null`)
+  и `v-model:aspectRatio: AspectRatioState`; обязательный `max`, опциональные
+  `min` (1), `step` (8), `disabled`, `widthLabel`, `heightLabel`, `swapLabel`.
+  Слот `actions` добавляет контекстный Fit. Preset соотношения включает lock,
+  изменение стороны с lock сохраняет пропорцию в пределах bounds; swap меняет
+  стороны и preset; ручной unlock оставляет текущие размеры. SVG preview
+  отражает текущие размеры. Очистка input передаёт `null`, а не сохраняет
+  скрыто прежнее значение: блокировка Apply/Create принадлежит форме.
+  Внешнее изменение bbox с другой пропорцией снимает lock, не откатывая bbox.
+  Компонент не знает ProjectSession, IPC, undo или preset payload. Production
+  владелец применяет размер только через Create/Apply; prototype wrapper —
+  через свою существующую команду. `max` задаёт владелец: предел `.igs` не
+  является обещанием доступной GPU resolution. Общие TS-типы и алгоритмы
+  находятся в [`resolution-control.ts`](../../src/renderer/components/resolution-control.ts).
 - **Действие с иконкой:** обязательные `icon: Component` и `label: string`;
   опциональные `compact`, `disabled`, `loading`, `pressed`, `tooltip` и
   `badge: { dot?, value }`; событие `click`. Кнопка занимает 32 px, в `compact`
@@ -67,6 +84,21 @@ Vue-прототипа, а не готовность production UI.
 5. Проверяйте размеры обычного и компактного действия отдельно: hit area,
    статический размер места под иконку и видимый рисунок. Рамка вращающегося SVG
    (`getBoundingClientRect()`) может расти из-за анимации без роста рисунка.
+6. Не переопределяйте внутреннюю композицию Naive ради размещения компонента.
+   Для центрирования `NEmpty` используйте внешний контейнер: `display: block`
+   на его корне разрывает штатную flex-композицию icon/description/extra.
+   Для ограниченного по высоте `NCard` используйте `contentScrollable` и
+   `footer` slot; `overflow: auto` на корне захватывает геометрию popup follower
+   у вложенного `NSelect`. Для `NSplit` используйте публичные `pane1Style` /
+   `pane2Style` и bounds, проверяя сжатие всего окна после ручного resize.
+7. У основного контекста одно доминирующее заполненное действие. Повторный
+   shortcut в empty state — `secondary`, вспомогательный setup/repair —
+   нейтральный `secondary`, компактные инструменты — `quaternary` по смыслу.
+   Модальный flow имеет собственное primary подтверждение. Это иерархия
+   действий, а не запрет нескольких кнопок на экране; отдельный Inspector
+   может иметь своё основное действие согласно Home contract. Используйте
+   [публичные Button props Naive](https://github.com/tusen-ai/naive-ui/blob/main/src/button/demos/enUS/index.demo-entry.md)
+   (`type`, `secondary`, `tertiary`, `quaternary`), а не имитируйте варианты CSS.
 
 Проверки входят через настоящие страницы прототипа:
 [`icon-button.spec.ts`](../prototype-app/tests/icon-button.spec.ts),
@@ -76,3 +108,8 @@ Vue-прототипа, а не готовность production UI.
 [`labeled-control.spec.ts`](../prototype-app/tests/labeled-control.spec.ts).
 После правки Vue/TypeScript запускайте `pnpm run typecheck`, после изменения UI —
 `pnpm run prototype:test`.
+Production layout и общий size-control проходят также через
+[`desktop-layout-checks.mjs`](../../scripts/desktop-layout-checks.mjs) в
+`pnpm run app:smoke`: настоящий renderer и native window, empty/populated/error
+состояния Model Manager, 900×620 / 1440×900 / 1920×1080, Create с последующим
+чтением `.igs`. UI-проверка не доказывает живую загрузку CivitAI или inference.

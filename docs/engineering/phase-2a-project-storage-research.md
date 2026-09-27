@@ -9,8 +9,8 @@ production Home/Project bridge uses typed IPC. The source-checkout worker now
 renders embedded Project previews during explicit Save and clean Rebuild Preview
 in development and the Electron smoke test. Home loads signed thumbnail resources
 from the embedded `.igs` member or a verified disposable cache. Generation
-staging recovery and the installable Linux/NVIDIA Python runtime remain
-separate Phase 2A work. A further raster-only boundary now prepares one finite,
+staging recovery remains Phase 2B work; the installable Linux/NVIDIA Python
+runtime remains Phase 2A work. A further raster-only boundary now prepares one finite,
 frozen generation target without starting an inference job.
 
 ## Baseline before implementation and evidence
@@ -482,9 +482,9 @@ native `app.quit()` path chooses Save immediately after a prompt edit and
 verifies the latest text in the resulting `.igs`. The smoke proves that graceful
 close path, not the timeout/error branches or a production Generate job.
 
-Remaining Phase 2A gaps include generation staging recovery and the
-installable Linux/NVIDIA runtime needed for PNG/JPEG/WebP import, previews and
-target preparation in a packaged application. A full frozen job request with
+The remaining Phase 2A gap is the installable Linux/NVIDIA runtime needed for
+PNG/JPEG/WebP import, previews and target preparation in a packaged application.
+Generation staging recovery and a full frozen job request with
 exact resources, mask/region inputs, queue identity, inference and accepted
 provenance remains Phase 2B work; the target bytes and editable draft do not
 make Generate functional.

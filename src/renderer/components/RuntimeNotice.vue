@@ -75,7 +75,7 @@ const description = computed(() => {
         key="n-button-1"
         :disabled="pending !== null"
         :loading="pending === 'install'"
-        type="primary"
+        secondary
         @click="emit('install')"
       >
         Set up
@@ -85,7 +85,7 @@ const description = computed(() => {
         key="n-button-2"
         :disabled="pending !== null"
         :loading="pending === 'repair'"
-        type="primary"
+        secondary
         @click="emit('repair')"
       >
         Repair
@@ -100,6 +100,8 @@ const description = computed(() => {
 <style scoped>
 .runtime-notice {
   display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
   padding: 14px 24px;
@@ -150,5 +152,7 @@ const description = computed(() => {
   align-items: center;
   flex: 0 0 auto;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 </style>

@@ -23,6 +23,7 @@ import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
+import { checkHomeLayout, checkModelManagerLayout, checkNewProjectResolution } from './desktop-layout-checks.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -239,12 +240,14 @@ try {
     'RUNTIME_INSTALL_UNAVAILABLE',
   )
   assert.equal(await window.evaluate(() => typeof window.require), 'undefined')
+  await checkHomeLayout(application, window)
   await window.getByRole('button', { name: 'Close Home' }).press('Space')
   await window.getByRole('tab', { name: 'Home' }).waitFor({ state: 'detached' })
   await window.getByRole('main').getByRole('button', { name: 'Open Home' }).click()
   await window.getByRole('tab', { name: 'Home' }).waitFor()
   await window.getByRole('button', { name: 'Manage Models' }).click()
   await window.getByRole('dialog', { name: 'Model Manager' }).waitFor()
+  await checkModelManagerLayout(application, window)
   if (process.env.IMAGEGEN_SMOKE_MODEL_SCREENSHOT) {
     await delay(300)
     await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_MODEL_SCREENSHOT })
@@ -274,14 +277,21 @@ try {
   await window.getByRole('button', { name: 'Close Model Manager' }).click()
   await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
   const checkpointVersions = await seedInstalledCheckpointVersions()
+  await window.getByRole('button', { name: 'Manage Models' }).click()
+  await window.getByText('Illustrious Smoke Checkpoint', { exact: true }).first().waitFor()
+  await checkModelManagerLayout(application, window)
+  await window.getByRole('button', { name: 'Check updates', exact: true }).click()
+  await window.locator('.manager-feedback').waitFor()
+  await checkModelManagerLayout(application, window)
+  await window.getByRole('button', { name: 'Close Model Manager' }).click()
+  await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
 
   const projectTitle = 'Smoke Project'
   await window.getByRole('button', { name: 'New Project' }).first().click()
   const newProjectDialog = window.getByRole('dialog', { name: 'New Project' })
   await newProjectDialog.waitFor()
   await newProjectDialog.locator('input[aria-label="Project name"]').fill(projectTitle)
-  await newProjectDialog.locator('input[aria-label="Project width"]').fill('640')
-  await newProjectDialog.locator('input[aria-label="Project height"]').fill('512')
+  await checkNewProjectResolution(window)
   await newProjectDialog.getByRole('button', { name: 'Create Project' }).click()
   await window.getByRole('tab', { name: projectTitle }).waitFor()
 

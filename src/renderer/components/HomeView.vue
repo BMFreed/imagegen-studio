@@ -171,24 +171,24 @@ function recoveryLabel(project: ProjectSummary): string | null {
           placeholder="Search projects"
         />
 
-        <NSpin v-if="loading && projects.length === 0" class="browser-loading" size="small" />
-        <NEmpty
-          v-else-if="projects.length === 0"
-          key="n-empty-1"
-          class="browser-empty"
-          description="No projects yet"
-        >
-          <template v-slot:icon><NIcon :component="FolderIcon" /></template>
-          <template v-slot:extra>
-            <NButton type="primary" @click="$emit('createProject')">New Project</NButton>
-          </template>
-        </NEmpty>
-        <NEmpty
-          v-else-if="visibleProjects.length === 0"
-          key="n-empty-2"
-          class="browser-empty"
-          description="No projects match your search"
-        />
+        <div v-if="loading && projects.length === 0" class="browser-state">
+          <NSpin size="small" />
+        </div>
+        <div v-else-if="projects.length === 0" class="browser-state">
+          <NEmpty description="No projects yet">
+            <template v-slot:icon><NIcon :component="FolderIcon" /></template>
+            <template v-slot:extra>
+              <NButton secondary @click="$emit('createProject')">New Project</NButton>
+            </template>
+          </NEmpty>
+        </div>
+        <div v-else-if="visibleProjects.length === 0" class="browser-state">
+          <NEmpty description="No projects match your search">
+            <template v-slot:extra>
+              <NButton secondary @click="search = ''">Clear search</NButton>
+            </template>
+          </NEmpty>
+        </div>
         <div v-else class="project-list" role="list">
           <article
             v-for="project of visibleProjects"
@@ -270,6 +270,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
 }
 
 .workspace-sidebar {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--app-border) transparent;
+  scrollbar-width: thin;
   padding: 21px 12px;
   border-right: 1px solid var(--app-border);
 }
@@ -349,8 +353,13 @@ function recoveryLabel(project: ProjectSummary): string | null {
 }
 
 .browser-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
   overflow: auto;
+  scrollbar-color: var(--app-border) transparent;
+  scrollbar-width: thin;
   padding: 22px 24px 36px;
 }
 
@@ -359,14 +368,16 @@ function recoveryLabel(project: ProjectSummary): string | null {
 }
 
 .project-search {
+  flex: 0 0 auto;
   max-width: 440px;
   margin-bottom: 18px;
 }
 
-.browser-loading,
-.browser-empty {
-  display: block;
-  margin: 56px auto;
+.browser-state {
+  display: grid;
+  flex: 1 0 180px;
+  place-items: center;
+  padding: 24px;
 }
 
 .project-list {
@@ -434,5 +445,17 @@ function recoveryLabel(project: ProjectSummary): string | null {
   align-items: center;
   gap: 6px;
   justify-self: end;
+}
+
+@media (max-width: 1100px) {
+  .home-view {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+
+  .project-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 160px;
+  }
 }
 </style>

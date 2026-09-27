@@ -203,15 +203,17 @@ commit. A main-process coordinator holds the canonical Project path until the
 tab closes or hands its lease to a replacement after Discard Changes; a second
 tab cannot overwrite the first tab's document shadow. The production
 Home/Project UI uses typed IPC for Save, recovery and normal Project edits,
-including positive/negative plain prompt text and Seed policy/value in the
+including positive/negative plain prompt text, Seed policy/value, Steps and CFG in the
 document's generation draft. These draft edits participate in dirty state,
 shadow recovery and explicit Save/reopen; changing the requested policy does
 not advance the separate last-actual-seed cursor. A native window close uses a
 request-scoped main→renderer acknowledgement to flush in-flight draft IPC
 before main reads dirty state. Main accepts the acknowledgement only from that
 window; failure or a bounded timeout keeps the window open with an error.
-Model/LoRA/sampling controls and a production Generate action are not connected yet;
-generation staging recovery remains separate and unimplemented.
+The exact installed checkpoint/version selector and explicit portable relink
+also use this document path. LoRA/VAE/embedding selectors, sampler/scheduler,
+denoising and advanced controls are not connected yet. Production Generate
+and generation staging recovery remain separate and unimplemented.
 Electron smoke exercises immediate prompt editing followed by native
 `app.quit()` and the Save choice, then reads the latest prompt from the real
 `.igs` package. The timeout/error branch is an implementation guard, not yet an

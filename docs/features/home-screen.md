@@ -107,6 +107,17 @@ The primary Home actions live at the top of the Workspace Sidebar:
 
 `New Project` is the primary action for the Home/workspace context. The selected-project preview may also show a primary `Open Project` action, because it belongs to a separate selected-project context. This is allowed in the current prototype: the two primary buttons answer different user questions.
 
+An empty-state `New Project` shortcut is secondary to the sidebar action.
+An engine setup/repair notice also uses a neutral secondary action while Home
+remains usable. An open creation/import dialog has its own primary confirmation.
+Do not split an empty-state icon, message and shortcut into independent layout
+items: they form one centered group within the project browser.
+
+New Project and Project generation-area editing share the same resolution
+control: aspect presets, width/height, ratio lock, swap and proportional preview.
+Creation initializes the generation bbox; it does not establish finite canvas
+bounds. Project-specific Fit actions stay with the editor that owns their context.
+
 Normal healthy runtime state should not be shown as technical text. Avoid labels like `Worker ready`, `readonly`, `direct .igs files only` or `last scan`. Only show engine/model/worker state when it needs user attention, and use user-facing language such as `Generation is starting` or `Generation is unavailable`.
 
 Home should not show a permanent app-readiness panel. Queue, downloads and settings are compact icon buttons in the app chrome. Recovery and scan details live in dedicated flows or overflow menus, not as default Home content.

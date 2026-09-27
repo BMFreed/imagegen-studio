@@ -1,3 +1,4 @@
+import type { AspectRatioState } from '../../../../../src/renderer/components/resolution-control'
 import type {
   GenerationPayload,
   GenerationPromptEmbeddingRef,
@@ -9,23 +10,6 @@ export type ProjectScenarioId =
 
 export type ProjectArtworkTone = 'blue' | 'emerald' | 'rose' | 'violet'
 export type DerivedGenerationMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img'
-export type ProjectAspectRatioId =
-  | '1:1'
-  | '1:4'
-  | '1:8'
-  | '16:9'
-  | '2:3'
-  | '21:9'
-  | '3:2'
-  | '3:4'
-  | '4:1'
-  | '4:3'
-  | '4:5'
-  | '5:4'
-  | '8:1'
-  | '9:16'
-  | '9:21'
-  | 'free'
 export type ProjectTool =
   | 'bbox'
   | 'brush'
@@ -54,11 +38,7 @@ export interface ProjectDynamicPromptSettings {
   seedBehavior: 'per-iteration' | 'per-prompt'
 }
 
-export interface ProjectAspectRatioState {
-  id: ProjectAspectRatioId
-  locked: boolean
-  value: number
-}
+export type ProjectAspectRatioState = AspectRatioState
 
 export interface GenerationProvenance {
   dynamicPrompt: ProjectDynamicPromptSettings

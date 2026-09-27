@@ -175,7 +175,9 @@ from the pending image before Save, Save/reopen and rejected-file behavior using
 a development worker.
 Prototype pointer DnD remains separate evidence. Additional layer types,
 delete/rename, undo, Smart Patch and Regional Guidance behavior, raster
-painting/transforms, worker-generated previews and the release runtime remain open.
+painting/transforms and the release runtime remain open. Project composite
+previews and Home thumbnails already work with the development image worker;
+this does not establish packaged runtime or installed-model derivative support.
 
 ## Acceptance Criteria
 

@@ -130,6 +130,8 @@ Opinionated-интерфейс не означает запрет на любу�
 Проверки находятся в [home.spec.ts](../prototype-app/tests/home.spec.ts) и
 [project.spec.ts](../prototype-app/tests/project.spec.ts).
 Это исходники проверок, а не свидетельство последнего успешного прогона.
-Production shell и сохранение preferences между запусками ещё требуют проверки.
+Electron shell, базовые Home/Project и Model Manager уже используют реальные
+команды. [Desktop UI review](../engineering/desktop-ui-layout-review.md)
+фиксирует проверенный layout на трёх размерах окна. Полный Home, Preset Manager
+и сохранение layout preferences между запусками ещё не подтверждены.
 За файл, Save и recovery отвечает [PP-007](../product-promises.md#pp-007-проект-принадлежит-пользователю).
-

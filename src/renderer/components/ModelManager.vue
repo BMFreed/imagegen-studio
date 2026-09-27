@@ -841,7 +841,13 @@ onBeforeUnmount(() => {
         </NAlert>
       </div>
 
-      <NSplit v-model:size="navigationPaneSize" class="manager-body" max="300px" min="190px">
+      <NSplit
+        v-model:size="navigationPaneSize"
+        class="manager-body"
+        max="300px"
+        min="190px"
+        :pane1Style="{ minWidth: '190px', maxWidth: 'min(300px, 25%)' }"
+      >
         <template v-slot:1>
           <aside aria-label="Model filters" class="manager-navigation">
             <section class="navigation-section">
@@ -890,7 +896,8 @@ onBeforeUnmount(() => {
             v-model:size="resourcePaneSize"
             class="manager-content-split"
             :max="0.78"
-            min="380px"
+            min="320px"
+            :pane1Style="{ minWidth: '320px', maxWidth: 'calc(100% - 280px)' }"
           >
             <template v-slot:1>
               <section aria-label="Installed models" class="resource-panel">
@@ -984,7 +991,7 @@ onBeforeUnmount(() => {
                       <NButton v-if="catalog.length" key="n-button-1" @click="resetFilters">
                         Reset filters
                       </NButton>
-                      <NButton v-else key="n-button-2" type="primary" @click="openImport()">
+                      <NButton v-else key="n-button-2" secondary @click="openImport()">
                         Add from CivitAI URL
                       </NButton>
                     </template>
@@ -1244,6 +1251,7 @@ onBeforeUnmount(() => {
       aria-labelledby="model-import-title"
       aria-modal="true"
       class="import-dialog"
+      contentScrollable
       role="dialog"
       size="small"
     >
@@ -1472,6 +1480,7 @@ onBeforeUnmount(() => {
       </div>
       <template v-slot:footer>
         <div class="import-actions">
+          <NButton @click="importOpen = false">Cancel</NButton>
           <NButton
             :disabled="!canInstall || busy !== null"
             :loading="busy === 'install'"
@@ -1489,7 +1498,6 @@ onBeforeUnmount(() => {
                   : `Install ${filePreview?.versionName ?? 'model'}`
             }}
           </NButton>
-          <NButton tertiary @click="importOpen = false">Cancel</NButton>
         </div>
       </template>
     </NCard>
@@ -1498,8 +1506,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .manager-shell {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   width: min(1440px, calc(100vw - 64px));
   height: min(890px, calc(100vh - 32px));
   min-height: 0;
@@ -1510,6 +1518,7 @@ onBeforeUnmount(() => {
 }
 .manager-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -1529,6 +1538,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .manager-feedback {
+  flex: 0 0 auto;
   padding: 8px 14px 0;
 }
 .manager-body,
@@ -1537,6 +1547,10 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: 100%;
 }
+.manager-body {
+  flex: 1 1 0;
+  height: auto;
+}
 .manager-navigation {
   display: flex;
   flex-direction: column;
@@ -1544,6 +1558,8 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: auto;
+  scrollbar-color: var(--app-border) transparent;
+  scrollbar-width: thin;
   padding: 18px;
 }
 .navigation-section {
@@ -1796,6 +1812,7 @@ onBeforeUnmount(() => {
 }
 .details-scroll h2 {
   font-size: 18px;
+  overflow-wrap: anywhere;
 }
 .details-scroll h3 {
   margin: 0;
@@ -1896,7 +1913,6 @@ onBeforeUnmount(() => {
 .import-dialog {
   width: min(610px, calc(100vw - 90px));
   max-height: min(780px, calc(100vh - 60px));
-  overflow: auto;
 }
 .dialog-title {
   display: grid;
@@ -1962,5 +1978,29 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1100px) {
+  .manager-shell {
+    width: calc(100vw - 24px);
+  }
+
+  .manager-header {
+    gap: 12px;
+    padding-inline: 16px;
+  }
+
+  .title-line h1 {
+    font-size: 18px;
+  }
+
+  .version-row {
+    flex-wrap: wrap;
+  }
+
+  .version-actions {
+    margin-left: auto;
+  }
 }
 </style>

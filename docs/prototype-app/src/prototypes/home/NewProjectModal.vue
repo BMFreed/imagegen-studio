@@ -11,7 +11,6 @@ import {
   NFormItem,
   NIcon,
   NInput,
-  NInputNumber,
   NModal,
   NScrollbar,
   NSelect,
@@ -20,12 +19,17 @@ import {
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import type {
+  AspectRatioState,
+  ResolutionSize,
+} from '../../../../../src/renderer/components/resolution-control'
+import type {
   PresetApplicationDraft,
   PresetPayload,
   PresetSectionKey,
 } from '../presets/presets.types'
 import type { HomeProjectRecord, HomeWorkspace, NewProjectDraft } from './home.types'
 
+import ResolutionControl from '../../../../../src/renderer/components/ResolutionControl.vue'
 import PresetPayloadEditor from '../presets/PresetPayloadEditor.vue'
 import { presetCatalog } from '../presets/presets.catalog'
 import { presetEditorResources } from '../presets/presets.mock'
@@ -51,16 +55,16 @@ const emit = defineEmits<{
 
 const show = defineModel<boolean>('show', { required: true })
 
-const draft = reactive<NewProjectDraft>({
-  height: 1024,
+const draft = reactive<Omit<NewProjectDraft, 'height' | 'width'>>({
   name: '',
-  width: 1024,
   workspaceId: props.defaultWorkspaceId,
 })
 const presetDraft = ref<PresetApplicationDraft>()
 const sourcePayload = ref<PresetPayload>()
 const expandedSections = ref<PresetSectionKey[]>([])
 const formRef = ref<FormInst>()
+const aspect = ref<AspectRatioState>({ id: 'free', locked: false, value: 1 })
+const resolution = ref<ResolutionSize>({ height: 1024, width: 1024 })
 
 const textToImagePresets = computed(() =>
   presetCatalog.value.filter((preset) => preset.workflow === 'textToImage'),
@@ -102,9 +106,7 @@ const selectedPresetHasMissingResource = computed(() =>
     ),
   ),
 )
-const canvasSize = computed(
-  () => presetDraft.value?.payload.size ?? { height: draft.height, width: draft.width },
-)
+const canvasSize = computed(() => presetDraft.value?.payload.size ?? resolution.value)
 const nameError = computed(() => validateProjectName(draft.name, draft.workspaceId, props.projects))
 const formRules: FormRules = {
   name: {
@@ -118,6 +120,8 @@ const formRules: FormRules = {
 const valid = computed(
   () =>
     !nameError.value &&
+    canvasSize.value.width !== null &&
+    canvasSize.value.height !== null &&
     canvasSize.value.width >= 256 &&
     canvasSize.value.height >= 256 &&
     canvasSize.value.width <= 4096 &&
@@ -135,22 +139,22 @@ watch(show, (visible) => {
   }
   Object.assign(draft, {
     generationPresetId: undefined,
-    height: 1024,
     name: '',
-    width: 1024,
     workspaceId: props.defaultWorkspaceId,
   })
   presetDraft.value = undefined
   sourcePayload.value = undefined
   expandedSections.value = []
+  aspect.value = { id: 'free', locked: false, value: 1 }
+  resolution.value = { height: 1024, width: 1024 }
   void nextTick(() => formRef.value?.restoreValidation())
 })
 
 function selectPreset(presetId: string) {
   if (presetId === 'none') {
     draft.generationPresetId = undefined
-    draft.width = 1024
-    draft.height = 1024
+    resolution.value = { height: 1024, width: 1024 }
+    aspect.value = { id: 'free', locked: false, value: 1 }
     presetDraft.value = undefined
     sourcePayload.value = undefined
     expandedSections.value = []
@@ -227,15 +231,16 @@ function selectedPayload(): PresetPayload | undefined {
 }
 
 function submitProject() {
-  if (!valid.value) {
+  const { height, width } = canvasSize.value
+  if (!valid.value || height === null || width === null) {
     return
   }
   emit('create', {
     generationPayload: selectedPayload(),
     generationPresetId: draft.generationPresetId,
-    height: canvasSize.value.height,
+    height,
     name: draft.name,
-    width: canvasSize.value.width,
+    width,
     workspaceId: draft.workspaceId,
   })
   show.value = false
@@ -355,26 +360,15 @@ function createProject() {
               </PresetPayloadEditor>
             </template>
 
-            <div v-else class="size-fields">
-              <NFormItem label="Canvas width">
-                <NInputNumber
-                  v-model:value="draft.width"
-                  :inputProps="{ 'aria-label': 'Canvas width' }"
-                  :max="4096"
-                  :min="256"
-                  :step="64"
-                />
-              </NFormItem>
-              <NFormItem label="Canvas height">
-                <NInputNumber
-                  v-model:value="draft.height"
-                  :inputProps="{ 'aria-label': 'Canvas height' }"
-                  :max="4096"
-                  :min="256"
-                  :step="64"
-                />
-              </NFormItem>
-            </div>
+            <ResolutionControl
+              v-else
+              v-model="resolution"
+              v-model:aspectRatio="aspect"
+              heightLabel="Canvas height"
+              :max="4096"
+              :min="256"
+              widthLabel="Canvas width"
+            />
           </div>
         </NForm>
       </NScrollbar>
@@ -441,16 +435,6 @@ function createProject() {
 
 .preset-toolbar .n-text {
   margin-right: auto;
-}
-
-.size-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.size-fields :deep(.n-input-number) {
-  width: 100%;
 }
 
 .modal-actions {

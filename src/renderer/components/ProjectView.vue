@@ -23,6 +23,8 @@ import {
 } from 'naive-ui'
 import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import type { ResolutionSize } from './resolution-control'
+
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
@@ -35,6 +37,7 @@ import {
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
+import ResolutionControl from './ResolutionControl.vue'
 
 const props = defineProps<{
   busy: boolean
@@ -456,6 +459,11 @@ const draft = reactive<{
   y: null,
 })
 
+const draftSize = computed<ResolutionSize>({
+  get: () => ({ height: draft.height, width: draft.width }),
+  set: (size) => Object.assign(draft, size),
+})
+
 watch(
   () => props.tab.primaryBbox,
   (bbox) => Object.assign(draft, bbox),
@@ -809,25 +817,15 @@ function applyFitBbox() {
                 :showButton="false"
               />
             </NFormItem>
-            <NFormItem label="Width" :showFeedback="false">
-              <NInputNumber
-                v-model:value="draft.width"
-                :inputProps="{ 'aria-label': 'Generation area width' }"
-                :max="IGS_SAFETY_CEILINGS.rasterDimension"
-                :min="1"
-                :showButton="false"
-              />
-            </NFormItem>
-            <NFormItem label="Height" :showFeedback="false">
-              <NInputNumber
-                v-model:value="draft.height"
-                :inputProps="{ 'aria-label': 'Generation area height' }"
-                :max="IGS_SAFETY_CEILINGS.rasterDimension"
-                :min="1"
-                :showButton="false"
-              />
-            </NFormItem>
           </div>
+          <ResolutionControl
+            v-model="draftSize"
+            class="bbox-size"
+            :disabled="busy || reloadRequired"
+            heightLabel="Generation area height"
+            :max="IGS_SAFETY_CEILINGS.rasterDimension"
+            widthLabel="Generation area width"
+          />
           <NButton
             aria-label="Apply generation area"
             class="apply-bbox"
@@ -905,7 +903,7 @@ function applyFitBbox() {
 
 .project-layout {
   display: grid;
-  grid-template-columns: 244px minmax(0, 1fr) minmax(280px, 22vw);
+  grid-template-columns: 280px minmax(0, 1fr) minmax(280px, 22vw);
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -913,6 +911,8 @@ function applyFitBbox() {
 .project-settings {
   min-width: 0;
   overflow: auto;
+  scrollbar-color: var(--app-border) transparent;
+  scrollbar-width: thin;
   padding: 14px 12px;
   border-right: 1px solid var(--app-border);
   background: var(--app-surface);
@@ -1045,6 +1045,10 @@ function applyFitBbox() {
 
 .bbox-fields :deep(.n-input-number) {
   width: 100%;
+}
+
+.bbox-size {
+  margin-top: 14px;
 }
 
 .apply-bbox {

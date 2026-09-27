@@ -27,9 +27,9 @@
 
 | ID     | Пользовательский результат                | Продуктовый статус   | Публичный статус | Supporting contract и evidence/gaps                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------ | ----------------------------------------- | -------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md): prototype shell; production preferences не проверены                                                                                                                                                                                                                                                                                                                                                       |
-| PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): Model Manager install явный; Project/worker handoff ещё не реализован                                                                                                                                                                                                                                                                                                                                        |
-| PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): prototype managers; resource handoff/history неполны                                                                                                                                                                                                                                                                                                                                                          |
+| PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
+| PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; Generate/Apply и полный resource handoff отсутствуют |
+| PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точный Project checkpoint и явный relink после переноса `.igs` проверены с SQLite, файлами и Electron; загрузка worker и остальные selectors отсутствуют                                                                                                                                                                                                                   |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): queue freeze, comparison и result-to-preset проверяются на mocks; storage/hashes не реализованы                                                                                                                                                                                                                                                                |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
@@ -70,7 +70,9 @@ Supporting contract указывает UI/entry points, проверки, изв
 
 **Продуктовый статус:** принято как продуктовое направление.
 
-**Публичный статус:** пока не обещать как готовую возможность — штатная композиция показана прототипом; production shell и persistence preferences ещё не подтверждены.
+**Публичный статус:** пока не обещать как готовую возможность — Electron shell,
+базовые Home/Project и Model Manager уже подключены; полный Home, сохранение
+preferences и production Preset Manager ещё не подтверждены.
 
 ### Обещание
 
@@ -98,7 +100,10 @@ Supporting contract указывает UI/entry points, проверки, изв
 
 **Продуктовый статус:** принято как продуктовое направление.
 
-**Публичный статус:** пока не обещать как готовую возможность — search/create/apply частично интерактивны; полный install flow и production entry points ещё не подтверждены.
+**Публичный статус:** пока не обещать как готовую возможность — Create/Import/Save,
+Model Manager install/repair и выбор exact checkpoint используют production
+команды; Generate/Apply и полный resource handoff ещё не подключены. Локальные
+проверки install не доказывают живую загрузку CivitAI в release-сборке.
 
 ### Обещание
 
@@ -128,7 +133,9 @@ Autocomplete, явный creatable selector и command palette допустим�
 
 **Продуктовый статус:** принято как продуктовое направление.
 
-**Публичный статус:** пока не обещать как готовую возможность — основные managers и Project представлены прототипом; production handoff и history ещё не подтверждены.
+**Публичный статус:** пока не обещать как готовую возможность — базовые Home/Project
+и Model Manager работают через production команды; Preset Manager остаётся
+прототипом, полный resource handoff и история результатов ещё не подключены.
 
 ### Обещание
 

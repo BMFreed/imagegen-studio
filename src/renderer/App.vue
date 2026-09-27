@@ -25,18 +25,20 @@ import {
   NFormItem,
   NIcon,
   NInput,
-  NInputNumber,
   NModal,
   NRadio,
   NRadioGroup,
 } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
+import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
+
 import AppChrome from './components/AppChrome.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
 import ProjectView from './components/ProjectView.vue'
+import ResolutionControl from './components/ResolutionControl.vue'
 import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
@@ -75,8 +77,8 @@ const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
 const newProjectName = ref('')
-const newProjectWidth = ref<number | null>(1024)
-const newProjectHeight = ref<number | null>(1024)
+const newProjectSize = ref<ResolutionSize>({ height: 1024, width: 1024 })
+const newProjectAspect = ref<AspectRatioState>({ id: 'free', locked: false, value: 1 })
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importChoice = ref<'copy' | 'move'>('move')
@@ -122,8 +124,8 @@ const canCreateProject = computed(
     newProjectName.value.trim().length > 0 &&
     new TextEncoder().encode(newProjectName.value.trim()).length <=
       IGS_SAFETY_CEILINGS.titleBytes &&
-    validDimension(newProjectWidth.value) &&
-    validDimension(newProjectHeight.value),
+    validDimension(newProjectSize.value.width) &&
+    validDimension(newProjectSize.value.height),
 )
 
 function validDimension(value: number | null): value is number {
@@ -403,8 +405,8 @@ async function refreshProjects() {
 
 function beginNewProject() {
   newProjectName.value = ''
-  newProjectWidth.value = 1024
-  newProjectHeight.value = 1024
+  newProjectSize.value = { height: 1024, width: 1024 }
+  newProjectAspect.value = { id: 'free', locked: false, value: 1 }
   newProjectError.value = null
   showNewProject.value = true
 }
@@ -413,8 +415,7 @@ async function createProject() {
   if (!canCreateProject.value || pendingProjectAction.value !== null) {
     return
   }
-  const width = newProjectWidth.value
-  const height = newProjectHeight.value
+  const { height, width } = newProjectSize.value
   if (!validDimension(width) || !validDimension(height)) {
     return
   }
@@ -1121,6 +1122,7 @@ onBeforeUnmount(() => {
         <NCard
           aria-label="Import Project"
           class="dialog-card"
+          contentScrollable
           role="dialog"
           size="small"
           title="Import Project"
@@ -1158,11 +1160,12 @@ onBeforeUnmount(() => {
         <NCard
           aria-label="New Project"
           class="dialog-card"
+          contentScrollable
           role="dialog"
           size="small"
           title="New Project"
         >
-          <form @submit.prevent="createProject">
+          <form id="new-project-form" @submit.prevent="createProject">
             <NAlert v-if="newProjectError" class="dialog-error" type="error">
               {{ newProjectError }}
             </NAlert>
@@ -1175,38 +1178,37 @@ onBeforeUnmount(() => {
                 placeholder="Untitled Project"
               />
             </NFormItem>
-            <div class="create-dimensions">
-              <NFormItem label="Width">
-                <NInputNumber
-                  v-model:value="newProjectWidth"
-                  :inputProps="{ 'aria-label': 'Project width' }"
-                  :max="IGS_SAFETY_CEILINGS.rasterDimension"
-                  :min="1"
-                />
-              </NFormItem>
-              <NFormItem label="Height">
-                <NInputNumber
-                  v-model:value="newProjectHeight"
-                  :inputProps="{ 'aria-label': 'Project height' }"
-                  :max="IGS_SAFETY_CEILINGS.rasterDimension"
-                  :min="1"
-                />
-              </NFormItem>
-            </div>
-            <div class="dialog-actions">
+            <section aria-label="Initial generation area" class="create-dimensions">
+              <h3>Generation area</h3>
+              <ResolutionControl
+                v-model="newProjectSize"
+                v-model:aspectRatio="newProjectAspect"
+                :disabled="pendingProjectAction !== null"
+                heightLabel="Project height"
+                :max="IGS_SAFETY_CEILINGS.rasterDimension"
+                widthLabel="Project width"
+              />
+              <p class="dialog-secondary">
+                Sets the first generation area. The canvas is unbounded.
+              </p>
+            </section>
+          </form>
+          <template v-slot:footer>
+            <div class="dialog-actions dialog-actions--footer">
               <NButton :disabled="pendingProjectAction !== null" @click="showNewProject = false">
                 Cancel
               </NButton>
               <NButton
                 attrType="submit"
                 :disabled="!canCreateProject || pendingProjectAction !== null"
+                form="new-project-form"
                 :loading="pendingProjectAction?.kind === 'create'"
                 type="primary"
               >
                 Create Project
               </NButton>
             </div>
-          </form>
+          </template>
         </NCard>
       </NModal>
 
@@ -1219,6 +1221,7 @@ onBeforeUnmount(() => {
         <NCard
           aria-label="Recovery available"
           class="dialog-card"
+          contentScrollable
           role="dialog"
           size="small"
           title="Recovery available"
@@ -1267,6 +1270,7 @@ onBeforeUnmount(() => {
         <NCard
           aria-label="Unsaved changes"
           class="dialog-card"
+          contentScrollable
           role="dialog"
           size="small"
           title="Unsaved changes"
@@ -1385,6 +1389,7 @@ onBeforeUnmount(() => {
 
 .dialog-card {
   width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
 }
 
 .dialog-card p {
@@ -1402,12 +1407,17 @@ onBeforeUnmount(() => {
 
 .create-dimensions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
-.create-dimensions :deep(.n-input-number) {
-  width: 100%;
+.create-dimensions h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.create-dimensions p {
+  margin: 0;
 }
 
 .dialog-actions {
@@ -1416,5 +1426,9 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+.dialog-actions--footer {
+  margin-top: 0;
 }
 </style>

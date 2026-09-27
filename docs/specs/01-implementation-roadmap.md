@@ -38,6 +38,44 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 результатом и проверками ниже. Параллельные исследования и UI-доработки не
 повышают [публичный статус обещаний](../product-promises.md) без production evidence.
 
+## Текущая карта реализации и оставшихся работ
+
+Сверка кода, IPC, SQLite migrations и прототипа выполнена на `73196af`
+(27.09.2026); последующая UI-доработка описана в
+[desktop UI review](../engineering/desktop-ui-layout-review.md).
+Строка «есть» означает указанный сценарий, а не завершение всей фазы.
+Исторические checkpoints ниже сохраняют дату и границы своих проверок.
+
+| Область | Есть в Electron из исходников | Осталось в принятом MVP | Фаза завершения |
+| --- | --- | --- | --- |
+| Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
+| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group | Hard remove с reference/job diagnostics; resource handoff; реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
+| Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
+| Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
+| Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
+| Generation draft | Exact checkpoint, plain prompts, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, autocomplete; фактический Seed Reuse | 2B–2C |
+| Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
+| Generate/results | Подготовка raster input на service/worker boundary; UI generation пока только mock | Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
+| Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
+| Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
+
+Проверяемые точки входа: [Electron App](../../src/renderer/App.vue),
+[Home](../../src/renderer/components/HomeView.vue),
+[Model Manager](../../src/renderer/components/ModelManager.vue),
+[Project](../../src/renderer/components/ProjectView.vue),
+[Project service](../../src/main/projects/project-service.ts),
+[worker protocol](../../worker-python/src/imagegen_worker/protocol.py).
+Для сквозных проверок — [desktop smoke](../../scripts/smoke-desktop.mjs);
+результаты прогона и подмены указаны в evidence-документах, а не выводятся из
+самого наличия тестов.
+
+Dev worker намеренно не подключается при `app.isPackaged`: в этой сборке импорт
+растра и Rebuild Preview пока недоступны, а Save использует placeholder.
+Source-checkout smoke не подтверждает устанавливаемый релиз, живой CivitAI
+download, системный keyring или inference на GPU. Прототипные managers,
+queue/staging и Canvas tools не считаются production-реализацией.
+
 ## Документационный трек перед production-разработкой
 
 Vue/Naive prototype уже закрыл базовую интерактивную проработку Home, Model
@@ -164,6 +202,9 @@ self-test и реальной установки ещё нет. Home показ�
 - Обнаружение доступных CivitAI-версий и явный `Update available` state.
 - Preview и установка новой exact version рядом с уже установленными версиями.
 - Явный `Set Default` только для новых selections без изменения existing references.
+- Hard remove установленного ресурса остаётся обязательным MVP-пунктом.
+  Его реализация с проверкой jobs, Presets и provenance назначена фазе 4 после
+  появления этих владельцев; текущая установка/repair не закрывает lifecycle.
 - CivitAI preview показывается из metadata/источника; локальные derivatives,
   которые должен создавать worker, подключаются после фазы 2A. Недоступный
   thumbnail не делает модель установленной или пригодной для генерации.
@@ -284,9 +325,9 @@ inference worker остаётся отдельной задачей Phase 2B/2C.
 Выбор `Reuse` не означает, что уже доступен фактический seed: operational
 cursor и fallback к сохранённому `.igs` snapshot будут подключены к enqueue в
 фазе 2B, а редактирование draft их не обновляет.
-Это не закрывает фазу: installable Linux/NVIDIA runtime и generation staging
-recovery остаются задачами Phase 2A. Полный frozen job DTO, очередь, inference
-и acceptance относятся к Phase 2B.
+Это не закрывает фазу: installable Linux/NVIDIA runtime остаётся задачей Phase
+2A. Generation staging recovery, полный frozen job DTO, очередь, inference
+и acceptance относятся к Phase 2B; document shadow recovery уже реализован.
 
 ## Фаза 2B. Очередь и первая сквозная генерация
 
@@ -310,6 +351,9 @@ generation DTO и source map из документационного трека.
   сначала переходят в document/shadow; main `.igs` меняется только при явном
   Save или explicit preview rebuild чистого Project. Только принятый
   результат попадает в производную историю.
+- `Save Candidate Image` экспортирует валидные pixels отдельным явным
+  действием, в том числе для orphaned candidate; не принимает candidate в
+  Project и не удаляет его recovery record.
 - После durable candidate publication и validated completion сохранить
   фактический seed в отдельном Project-scoped recovery cursor атомарно с
   queue completion; после сбоя reconciliate незавершённую транзакцию. Cancel,
@@ -441,6 +485,42 @@ regional mask открывается после переноса `.igs`; реа�
 reference image блокируется до enqueue. Raster/Smart Patch comparison и
 result-to-preset используют одну portable projection. `Generate` остаётся
 основным действием, отдельные `Create` и Upscale не возвращаются в MVP.
+
+### Завершение Home, Model Manager и экспорта
+
+Эти пункты входят в фазу 4 и обязательны перед фазой 5. Их не закрывают
+базовый Home shell фазы 0, installation flow фазы 1 или наличие прототипа.
+Home можно развивать после document storage 2A; remove resources требует
+реальных очередей 2B, provenance 2C и пресетов 3.
+
+- Перенести [Home contract](../features/home-screen.md) на реальные команды:
+  создание/переименование/цвет workspaces, снятие регистрации без удаления
+  папки/проектов, выбранная workspace и cross-workspace
+  Projects, sort/Status filtering/grid-list/Inspector, rename/move/reveal
+  Project, rescan/locate недоступных путей и состояние unavailable workspace.
+- App-managed Project Trash: move/restore/permanent delete, запрет отправки
+  открытого Project в Trash и согласованность файлов с производным индексом.
+  Не смешивать этот lifecycle с удалёнными пресетами или моделями.
+- Завершить [Remove Local Resource](../features/model-manager.md#remove-local-resource):
+  hard delete без model Trash; running job блокирует удаление, pending jobs
+  требуют явной отмены, Preset/result refs — подтверждения. Shared Anima
+  components и content-addressed файлы живых версий сохраняются. Существующие
+  Projects/Presets/provenance сохраняют copied identity и показывают missing.
+- Завершить `Open in Models` и обратный переход к исходному Project/Apply,
+  все обещанные resource selectors и thumbnails installed resources.
+- Реализовать [image export](../features/project/generate-mode/image-and-bounding-box.md#export-and-crop-boundary):
+  `Export As` по visible-content bounds, включая активные Smart Patch variants;
+  отдельный `Export Generation BBox`, sRGB, понятный отказ на пустом содержимом.
+  Export не изменяет слой, bbox, dirty state или основную `.igs`.
+
+**Выходная проверка:** Home операции проверены через UI→IPC→файлы/SQLite и
+restart, с missing/unavailable workspace и закрытым/открытым Project.
+Удаление модели проверено с running/pending jobs, ссылками из Preset/result
+и общим companion-файлом; после удаления saved results читаются, Apply даёт
+missing-resource diagnostic. Экспорт проверяет декодированные pixels, точные
+границы и sRGB metadata для отрицательных координат, скрытых слоёв и активного
+Smart Patch; соседний control case подтверждает неизменность Project/`.igs`.
+UI всех этих действий проверен в поддерживаемом диапазоне размеров окна.
 
 ## Фаза 5. Первый Linux/NVIDIA релиз
 

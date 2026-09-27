@@ -155,6 +155,28 @@ test.describe('Home prototype', () => {
     await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
   })
 
+  test('creates a project with the shared aspect controls and rejects an incomplete size', async ({
+    page,
+  }) => {
+    await openHome(page, '?prototype=home&scenario=first-run')
+    await page.getByRole('button', { exact: true, name: 'New Project' }).first().click()
+    const dialog = page.getByRole('dialog', { exact: true, name: 'New Project' })
+    await dialog.getByLabel('Project name', { exact: true }).fill('Landscape study')
+    await dialog.getByLabel('Aspect ratio', { exact: true }).click()
+    await page.locator('.n-base-select-option').filter({ hasText: /^4:3$/ }).click()
+    await dialog.getByLabel('Canvas width', { exact: true }).fill('1024')
+    await expect(dialog.getByLabel('Canvas height', { exact: true })).toHaveValue('768')
+    await dialog.getByLabel('Canvas width', { exact: true }).fill('')
+    await expect(dialog.getByRole('button', { exact: true, name: 'Create Project' })).toBeDisabled()
+    await dialog.getByLabel('Canvas width', { exact: true }).fill('1024')
+    await dialog.getByRole('button', { exact: true, name: 'Create Project' }).click()
+    await expect(page.getByRole('tab', { name: 'Landscape study.igs' })).toBeVisible()
+    await expect(dialog).toBeHidden()
+    const project = page.getByRole('region', { exact: true, name: 'Project prototype' })
+    await expect(project.getByLabel('Canvas width', { exact: true })).toHaveValue('1024')
+    await expect(project.getByLabel('Canvas height', { exact: true })).toHaveValue('768')
+  })
+
   test('creates a project with a generation preset warning', async ({ page }) => {
     await openHome(page)
     await page.getByRole('button', { name: 'New Project' }).first().click()

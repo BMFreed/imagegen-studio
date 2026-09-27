@@ -200,6 +200,8 @@ makeDroppable(
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  scrollbar-color: var(--app-border) transparent;
+  scrollbar-width: thin;
   padding: 9px;
   border-left: 1px solid var(--app-border);
   background: var(--app-surface);

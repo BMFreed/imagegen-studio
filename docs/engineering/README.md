@@ -7,7 +7,8 @@
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
-- [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты прототипа, их владельцы, API и browser checks.
+- [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.
+- [Desktop UI layout review](./desktop-ui-layout-review.md) — Home, Model Manager, общий редактор размера и карта оставшейся production-реализации.
 - [UI kit experiment](./ui-kit-experiment.md) — завершённый замер 18 реализаций: прямой Naive, общий API поверх Naive и Vue/HTML; первые и финальные версии, стоимость подготовки и границы вывода.
 - [UI context experiment](./ui-context-experiment.md) — завершённый пилот на 24
   изолированных агентах: влияние справок об API и композиции, результаты и ограничения.

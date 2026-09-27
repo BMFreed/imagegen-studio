@@ -161,4 +161,6 @@ Contextual picker, read-only projection, summary или deep link допусти
 [Preset tests](../prototype-app/tests/preset-manager.spec.ts).
 Production resource handoff, global queue и accepted-result history ещё не
 доказываются этими mocks. Любой новый entry point должен вести к тому же owner.
-
+Базовые Electron Home/Project и Model Manager уже подключены через реальные
+команды; их текущие границы отделены от прототипных возможностей в
+[карте реализации](../specs/01-implementation-roadmap.md#текущая-карта-реализации-и-оставшихся-работ).
