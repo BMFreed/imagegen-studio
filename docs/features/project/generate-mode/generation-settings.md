@@ -172,5 +172,7 @@ Production LoRA selection/editing is now covered separately in
 [LoRA selector](./lora-selector.md#production-coverage-27092026): exact versions,
 weights, enabled state, removal and explicit portable relinking persist through
 document recovery/Save. This
-extends the draft controls only; inference and resource-aware prompt completion
-are not yet available.
+extends the draft controls only; inference is not yet available. Exact-version
+LoRA trigger completion and prompt editing actions are connected in Electron;
+embedding insertion/diagnostics and Danbooru completion remain pending. See
+[Prompt Editor](./prompt-editor.md#production-coverage-at-the-phase-2a-checkpoint).

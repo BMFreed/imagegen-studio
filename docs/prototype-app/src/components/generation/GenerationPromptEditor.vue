@@ -15,6 +15,10 @@ import type {
 } from './generation.types'
 
 import {
+  applyPromptAttention,
+  promptAttentionKeymap,
+} from '../../../../../src/renderer/components/prompt-editing-codemirror'
+import {
   addPromptEmbeddingEffect,
   createPromptCompletionSource,
   createPromptResourceExtensions,
@@ -22,7 +26,6 @@ import {
   tripleClickPhraseSelection,
 } from './generation-prompt-codemirror'
 import {
-  adjustPromptAttention,
   findTopLevelPromptPhraseRange,
   getPromptEmbeddingMatches,
   reconcilePromptEmbeddingRefs,
@@ -126,6 +129,7 @@ function createView() {
           autocompletion({ activateOnTyping: true, override: [completionSource] }),
         ),
         keymap.of([
+          ...promptAttentionKeymap,
           ...completionKeymap,
           ...(props.historyMode === 'local' ? historyKeymap : []),
           ...defaultKeymap,
@@ -166,23 +170,7 @@ function reconfigureResources() {
 }
 
 function applyAttention(direction: -1 | 1) {
-  if (!view) {
-    return false
-  }
-  const current = view.state.selection.main
-  const result = adjustPromptAttention(
-    view.state.doc.toString(),
-    { anchor: current.anchor, head: current.head },
-    direction,
-  )
-  if (result.text === view.state.doc.toString()) {
-    return false
-  }
-  view.dispatch({
-    changes: { from: 0, insert: result.text, to: view.state.doc.length },
-    selection: EditorSelection.single(result.selection.anchor, result.selection.head),
-  })
-  return true
+  return view ? applyPromptAttention(view, direction) : false
 }
 
 function focus() {

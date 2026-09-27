@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { AlertTriangle, InfoCircle, X } from '@vicons/tabler'
-import { NButton, NIcon, NPopover, NText, NTooltip, useMessage } from 'naive-ui'
+import { AlertTriangle } from '@vicons/tabler'
+import { NIcon, NText, NTooltip, useMessage } from 'naive-ui'
 import { computed, ref } from 'vue'
 
 import type {
@@ -10,6 +10,8 @@ import type {
 import type { GenerationPromptEditorHandle } from '../../components/generation/GenerationPromptEditor.vue'
 import type { ProjectSession } from './project.types'
 
+import PromptEditorActions from '../../../../../src/renderer/components/PromptEditorActions.vue'
+import PromptEditorHelp from '../../../../../src/renderer/components/PromptEditorHelp.vue'
 import {
   cloneGenerationPrompt,
   countPromptTokens,
@@ -22,9 +24,7 @@ import GenerationPromptEditor from '../../components/generation/GenerationPrompt
 import { presetEditorResources } from '../presets/presets.mock'
 import { beginProjectEdit, commitActiveProjectEdit, updateProjectEdit } from './project-history'
 import { getActiveGenerationDraft } from './project.utils'
-import ProjectPromptActions from './ProjectPromptActions.vue'
 
-const HINT_STORAGE_KEY = 'imagegen-studio.prompt-editor-hint-dismissed.v1'
 const props = defineProps<{
   field: 'negativePrompt' | 'prompt'
   session: ProjectSession
@@ -35,12 +35,6 @@ const message = useMessage()
 const editor = ref<GenerationPromptEditorHandle>()
 const editorFocused = ref(false)
 const selection = ref<GenerationPromptSelection>({ anchor: 0, head: 0 })
-const hintDismissed = ref(localStorage.getItem(HINT_STORAGE_KEY) === '1')
-const hintOpen = ref(false)
-const hintLines = [
-  'Triple-click selects a comma-separated phrase.',
-  'Ctrl/Cmd+Space browses embeddings and LoRA triggers.',
-]
 const value = computed(
   () => getActiveGenerationDraft(props.session).payload[props.field] ?? createGenerationPrompt(),
 )
@@ -54,7 +48,8 @@ const transactionKey = computed(() => {
 })
 const attentionTargetAvailable = computed(() => {
   if (selection.value.anchor !== selection.value.head) {
-    return true
+    const { anchor, head } = selection.value
+    return Boolean(serialized.value.slice(Math.min(anchor, head), Math.max(anchor, head)).trim())
   }
   const range = findTopLevelPromptPhraseRange(serialized.value, selection.value.head)
   return Boolean(serialized.value.slice(range.from, range.to).trim())
@@ -74,13 +69,10 @@ function update(next: GenerationPrompt) {
 function handleFocus() {
   beginEdit()
   editorFocused.value = true
-  hintDismissed.value = localStorage.getItem(HINT_STORAGE_KEY) === '1'
-  hintOpen.value = !hintDismissed.value
 }
 
 function handleBlur() {
   editorFocused.value = false
-  hintOpen.value = false
   commitActiveProjectEdit(props.session)
 }
 
@@ -100,88 +92,19 @@ function clear() {
   selection.value = { anchor: 0, head: 0 }
   editor.value?.focus()
 }
-
-function dismissHint() {
-  localStorage.setItem(HINT_STORAGE_KEY, '1')
-  hintDismissed.value = true
-  hintOpen.value = false
-}
-
-function handleInfoMouseDown(event: MouseEvent) {
-  if (!hintDismissed.value) {
-    event.preventDefault()
-  }
-}
-
-function handleInfoClick() {
-  if (!hintDismissed.value) {
-    editor.value?.focus()
-  }
-}
-
-function showDismissedHint() {
-  if (hintDismissed.value) {
-    hintOpen.value = true
-  }
-}
-
-function hideDismissedHint() {
-  if (hintDismissed.value) {
-    hintOpen.value = false
-  }
-}
-
-function hotkey(event: KeyboardEvent) {
-  if (!(event.ctrlKey || event.metaKey) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) {
-    return
-  }
-  event.preventDefault()
-  attention(event.key === 'ArrowUp' ? 1 : -1)
-}
 </script>
 
 <template>
-  <section
-    class="prompt-card"
-    :class="{ 'prompt-card--focused': editorFocused }"
-    @keydown.capture="hotkey"
-  >
+  <section class="prompt-card" :class="{ 'prompt-card--focused': editorFocused }">
     <header class="prompt-meta">
       <strong>{{ title }}</strong>
       <NText depth="3">{{ tokenCount }} tokens</NText>
-      <NPopover :show="hintOpen" trigger="manual">
-        <template v-slot:trigger>
-          <NButton
-            :aria-label="`About ${title} editor`"
-            circle
-            class="prompt-info"
-            quaternary
-            size="tiny"
-            @blur="hideDismissedHint"
-            @click="handleInfoClick"
-            @focus="showDismissedHint"
-            @mousedown="handleInfoMouseDown"
-            @mouseenter="showDismissedHint"
-            @mouseleave="hideDismissedHint"
-          >
-            <template v-slot:icon><NIcon :component="InfoCircle" /></template>
-          </NButton>
-        </template>
-        <div class="prompt-help">
-          <span v-for="line of hintLines" :key="line">{{ line }}</span>
-          <NButton
-            v-if="!hintDismissed"
-            class="prompt-help__dismiss"
-            size="tiny"
-            text
-            @click="dismissHint"
-            @mousedown.prevent
-          >
-            <template v-slot:icon><NIcon :component="X" /></template>
-            Don't show again
-          </NButton>
-        </div>
-      </NPopover>
+      <PromptEditorHelp
+        completionSources="embeddings and LoRA triggers"
+        :editorFocused
+        :title
+        @focusEditor="editor?.focus()"
+      />
       <NTooltip v-if="warning">
         <template v-slot:trigger>
           <NIcon
@@ -208,9 +131,11 @@ function hotkey(event: KeyboardEvent) {
       @focus="handleFocus"
       @update:modelValue="update($event)"
     />
-    <ProjectPromptActions
+    <PromptEditorActions
       :attentionTargetAvailable
       class="prompt-actions-rail"
+      dynamicPreviewAvailable
+      :empty="!serialized"
       @browse="editor?.openAutocomplete()"
       @clear="clear"
       @copy="copy"
@@ -224,7 +149,7 @@ function hotkey(event: KeyboardEvent) {
 <style scoped>
 .prompt-card {
   position: relative;
-  min-height: 0;
+  min-height: 164px;
   overflow: hidden;
   background: var(--app-surface);
   border: 1px solid var(--app-border);
@@ -233,6 +158,9 @@ function hotkey(event: KeyboardEvent) {
     background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.prompt-card :deep(.generation-prompt-editor) {
+  min-height: max(164px, calc(var(--prompt-minimum-lines) * 20px + 18px));
 }
 .prompt-card--focused {
   background: var(--prompt-editor-focus-surface);
@@ -256,9 +184,6 @@ function hotkey(event: KeyboardEvent) {
 .prompt-meta .n-text {
   font-size: var(--app-font-size-meta);
 }
-.prompt-info {
-  color: var(--app-text-muted);
-}
 .prompt-warning {
   flex: 0 0 auto;
   color: var(--status-warning);
@@ -268,14 +193,5 @@ function hotkey(event: KeyboardEvent) {
   z-index: 2;
   top: 7px;
   right: 5px;
-}
-.prompt-help {
-  display: grid;
-  gap: 3px;
-  font-size: var(--app-font-size-meta);
-}
-.prompt-help__dismiss {
-  justify-self: end;
-  margin-top: 6px;
 }
 </style>

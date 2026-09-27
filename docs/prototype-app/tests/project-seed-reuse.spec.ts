@@ -108,6 +108,10 @@ test('Reuse waits for a completed output and freezes the cursor with the request
   await preview.getByRole('button', { name: 'Close' }).click()
   await count.fill('2')
   await count.press('Enter')
+  await expect(count).toHaveValue('2')
+  await expect(page.getByRole('textbox', { exact: true, name: 'Prompt' })).toHaveText(
+    'portrait {red|blue}',
+  )
   await generate.click()
   await page.clock.runFor(2500)
   await page.getByRole('button', { name: 'Result selection actions' }).click()

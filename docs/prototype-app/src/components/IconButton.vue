@@ -12,10 +12,11 @@ const props = withDefaults(
     icon: Component
     label: string
     loading?: boolean
+    preserveFocus?: boolean
     pressed?: boolean
     tooltip?: string
   }>(),
-  { compact: false, disabled: false, loading: false },
+  { compact: false, disabled: false, loading: false, preserveFocus: false },
 )
 
 const emit = defineEmits<{ click: [] }>()
@@ -113,6 +114,7 @@ function onClick() {
             :themeOverrides="buttonTheme"
             :type="pressed ? 'primary' : 'default'"
             @click="onClick"
+            @mousedown="preserveFocus && $event.preventDefault()"
           >
             <template v-slot:icon>
               <NIcon :component="icon" :size="18" />

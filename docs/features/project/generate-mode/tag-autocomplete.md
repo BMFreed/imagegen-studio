@@ -44,5 +44,7 @@ threshold, Ctrl+Space browsing, keyboard/mouse selection, local Undo/Redo and
 plain-text Save. A missing, corrupt, disabled or unlinked version contributes no
 suggestions. The popup is rendered outside the settings scroll container and
 shares its styling with the prototype. The production embedding and Danbooru
-sections, action rail and onboarding hint are still pending.
-[Validation](../../../engineering/project-lora-prompt-research.md).
+sections are still pending. The shared action rail now opens the same LoRA
+suggestions, and onboarding/help lists only the implemented sources.
+[LoRA validation](../../../engineering/project-lora-prompt-research.md),
+[action/help validation](../../../engineering/project-prompt-actions-research.md).

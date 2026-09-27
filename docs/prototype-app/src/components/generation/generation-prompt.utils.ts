@@ -2,7 +2,6 @@ import {
   type LoraTriggerSource,
   matchLoraTriggers,
 } from '../../../../../src/shared/projects/lora-triggers'
-import { findTopLevelPromptPhraseRange } from '../../../../../src/shared/projects/prompt-text'
 
 import type {
   DanbooruTagCategory,
@@ -10,10 +9,10 @@ import type {
   GenerationLora,
   GenerationPrompt,
   GenerationPromptEmbeddingRef,
-  GenerationPromptSelection,
 } from './generation.types'
 
 export {
+  adjustPromptAttention,
   findTopLevelPromptPhraseRange,
   normalizePromptSearchValue,
   splitTopLevelPromptPhrases,
@@ -29,11 +28,6 @@ export interface DanbooruTagMock {
 export interface PromptPhraseRange {
   from: number
   to: number
-}
-
-export interface PromptAttentionResult {
-  selection: GenerationPromptSelection
-  text: string
 }
 
 export interface PromptEmbeddingMatch extends PromptPhraseRange {
@@ -73,31 +67,6 @@ export function parseLegacyPromptString(
   _danbooruTags: DanbooruTagMock[] = [],
 ): GenerationPrompt {
   return reconcilePromptEmbeddingRefs(createGenerationPrompt(value), resources)
-}
-
-export function adjustPromptAttention(
-  text: string,
-  selection: GenerationPromptSelection,
-  direction: -1 | 1,
-): PromptAttentionResult {
-  const selectionFrom = Math.min(selection.anchor, selection.head)
-  const selectionTo = Math.max(selection.anchor, selection.head)
-  const target =
-    selectionFrom === selectionTo
-      ? findTopLevelPromptPhraseRange(text, selection.head)
-      : { from: selectionFrom, to: selectionTo }
-  if (target.from === target.to || !text.slice(target.from, target.to).trim()) {
-    return { selection, text }
-  }
-
-  const source = text.slice(target.from, target.to)
-  const replacement = adjustAttentionFragment(source, direction)
-  const nextText = text.slice(0, target.from) + replacement + text.slice(target.to)
-  const forward = selection.anchor <= selection.head
-  const nextSelection = forward
-    ? { anchor: target.from, head: target.from + replacement.length }
-    : { anchor: target.from + replacement.length, head: target.from }
-  return { selection: nextSelection, text: nextText }
 }
 
 export function reconcilePromptEmbeddingRefs(
@@ -203,26 +172,6 @@ export function promptHasAmbiguousEmbedding(
 
 export function countPromptTokens(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0
-}
-
-function adjustAttentionFragment(source: string, direction: -1 | 1): string {
-  const numeric = source.match(/^\((.*)\)(-?\d+(?:\.\d+)?)$/s)
-  if (numeric) {
-    const next = Math.round((Number(numeric[2]) + direction * 0.1) * 10) / 10
-    return Math.abs(next - 1) < 0.001 ? numeric[1]! : `(${numeric[1]})${next.toFixed(1)}`
-  }
-
-  const suffix = source.match(/[+-]+$/)?.[0] ?? ''
-  const base = suffix ? source.slice(0, -suffix.length) : source
-  const marker = direction > 0 ? '+' : '-'
-  const opposite = direction > 0 ? '-' : '+'
-  const nextSuffix = suffix.endsWith(opposite) ? suffix.slice(0, -1) : `${suffix}${marker}`
-  const helperWrapped = /^\([^()]*[\s\n][^()]*\)$/.test(base)
-  if (!nextSuffix) {
-    return helperWrapped ? base.slice(1, -1) : base
-  }
-  const adjustedBase = /\s/.test(base) && !helperWrapped ? `(${base})` : base
-  return `${adjustedBase}${nextSuffix}`
 }
 
 function resourceTokens(resources: GenerationEmbeddingResourceRef[]) {

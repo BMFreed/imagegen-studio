@@ -27,6 +27,8 @@ import {
   normalizePromptSearchValue,
 } from './generation-prompt.utils'
 
+export { tripleClickPhraseSelection } from '../../../../../src/renderer/components/prompt-editing-codemirror'
+
 export const addPromptEmbeddingEffect = StateEffect.define<GenerationPromptEmbeddingRef>()
 
 const completionSections = {
@@ -194,25 +196,6 @@ export function createPromptResourceExtensions(args: {
 
 export function promptTooltipParent(): Extension {
   return tooltips({ parent: document.body, position: 'fixed' })
-}
-
-export function tripleClickPhraseSelection(): Extension {
-  return EditorView.mouseSelectionStyle.of((view, event) => {
-    if (event.detail !== 3 || event.shiftKey) {
-      return null
-    }
-    const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
-    if (position === null) {
-      return null
-    }
-    return {
-      get() {
-        const range = findTopLevelPromptPhraseRange(view.state.doc.toString(), position)
-        return EditorSelection.single(range.from, range.to)
-      },
-      update() {},
-    }
-  })
 }
 
 function findDanbooruFragment(text: string, position: number, tags: DanbooruTagMock[]) {

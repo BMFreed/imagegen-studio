@@ -28,6 +28,7 @@ import {
   checkModelManagerLayout,
   checkNewProjectResolution,
 } from './desktop-layout-checks.mjs'
+import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -389,6 +390,12 @@ try {
   const lorasRegion = projectRegion.getByRole('region', { name: 'LoRAs', exact: true })
   const positive = projectRegion.getByRole('textbox', { name: 'Positive prompt', exact: true })
   const negative = projectRegion.getByRole('textbox', { name: 'Negative prompt', exact: true })
+  await checkPromptActions({ window, application, projectRegion })
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const actionPackage = await readIgsPackage(packagePath)
+  assert.equal(actionPackage.project.generationDraft.positivePrompt.text, '(alpha phrase)+, beta word')
+  assert.equal(actionPackage.project.generationDraft.negativePrompt.text, '(soft lighting)-, blur')
   await positive.fill('trigger 905, portrait')
   await negative.fill('trigger 905, blur')
   await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
@@ -423,7 +430,8 @@ try {
   for (let index = 1; index < 'portrait, trigger 90'.length; index += 1) {
     await positive.press('ArrowRight')
   }
-  await positive.press('Control+Space')
+  await projectRegion.getByRole('region', { name: 'Positive prompt editor', exact: true })
+    .getByRole('button', { name: 'Browse prompt suggestions' }).click()
   const triggerOption = window.getByRole('option').filter({ hasText: 'trigger 905' })
   await expect(triggerOption).toBeVisible()
   await expect(window.getByRole('option').filter({ hasText: 'trigger 906' })).toHaveCount(0)

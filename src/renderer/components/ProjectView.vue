@@ -717,7 +717,6 @@ function applyFitBbox() {
             </div>
           </div>
           <div class="prompt-field">
-            <span class="field-label">Positive prompt</span>
             <PlainPromptEditor
               ariaLabel="Positive prompt"
               :disabled="busy || reloadRequired"
@@ -726,11 +725,11 @@ function applyFitBbox() {
               "
               :loraSources="promptLoraSources"
               :modelValue="generationDraft.positivePrompt.text"
+              polarity="positive"
               @update:modelValue="emit('updateDraft', { kind: 'positive-prompt', text: $event })"
             />
           </div>
           <div class="prompt-field">
-            <span class="field-label">Negative prompt</span>
             <PlainPromptEditor
               ariaLabel="Negative prompt"
               :disabled="busy || reloadRequired"
@@ -739,6 +738,7 @@ function applyFitBbox() {
               "
               :loraSources="promptLoraSources"
               :modelValue="generationDraft.negativePrompt.text"
+              polarity="negative"
               @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
             />
           </div>

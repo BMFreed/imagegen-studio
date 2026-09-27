@@ -15,6 +15,7 @@ Vue-прототипа, а не готовность production UI.
 | Выбор ресурса      | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue) | Project Settings, LoRA stack, Preset editor                                                |
 | Поле с подписью    | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
 | Размер и пропорции | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue) | Electron New Project/Project bbox; prototype New Project/Project Size |
+| Действия и справка prompt | [`PromptEditorActions.vue`](../../src/renderer/components/PromptEditorActions.vue), [`PromptEditorHelp.vue`](../../src/renderer/components/PromptEditorHelp.vue) | Electron PlainPromptEditor; prototype ProjectPromptCard |
 
 ## Публичный API и инварианты
 
@@ -33,12 +34,16 @@ Vue-прототипа, а не готовность production UI.
   является обещанием доступной GPU resolution. Общие TS-типы и алгоритмы
   находятся в [`resolution-control.ts`](../../src/renderer/components/resolution-control.ts).
 - **Действие с иконкой:** обязательные `icon: Component` и `label: string`;
-  опциональные `compact`, `disabled`, `loading`, `pressed`, `tooltip` и
+  опциональные `compact`, `disabled`, `loading`, `preserveFocus`, `pressed`, `tooltip` и
   `badge: { dot?, value }`; событие `click`. Кнопка занимает 32 px, в `compact`
   — 24 px; место под иконку и её CSS-размер — 18 px. `label` остаётся доступным
   именем, `tooltip` меняет только подсказку (по умолчанию она равна `label`).
   `disabled` и `loading` не запускают команду. Tooltip вынесен в портал за
   пределы контейнера с `overflow: hidden`.
+  `preserveFocus` (по умолчанию false) предотвращает pointer-mousedown focus
+  transfer только на нативной кнопке: редактор сохраняет выделение для команды.
+  Клавиатурный Tab/Enter остаётся доступным. Не включайте его на открытии
+  модальных окон: после закрытия модалки фокус должен вернуться к её trigger.
 - **Поверхность слоя:** [`EntityRowController`](../prototype-app/src/prototypes/project/project-entity-row.ts)
   передаёт `state` (`name`, `summary`, `selected`, `visible`, `locked`, необязательный
   `warning`), `menu`, `select`, `toggleVisible`, `toggleLock` и необязательный
@@ -128,3 +133,29 @@ Production layout и общий size-control проходят также чер�
 общий: tooltips портируются в body, поэтому оформление находится вне scoped CSS.
 Изменения проверяются Node rules/adapter tests, prototype Project/Preset/Apply
 flows и Electron smoke; границы описаны в [review](./project-lora-prompt-research.md).
+
+## Действия и справка редактора prompt
+
+`PromptEditorActions` — компонент представления: обязательный
+`attentionTargetAvailable`, опциональные `disabled`, `empty`,
+`dynamicPreviewAvailable` (все false по умолчанию); события `browse`, `increase`,
+`decrease`, `copy`, `clear`, `dynamicPreview`. Он не читает Project, текст,
+clipboard или CodeMirror. Владелец вычисляет непустую цель attention и исполняет
+команду. Dynamic preview показывается только при явно подключённом обработчике
+и флаге. Все действия используют `IconButton compact` (24/18 px); минимальная
+высота карточки должна вмещать всю панель. Browse/attention/clear сохраняют
+фокус редактора; открытие modal следует обычному focus lifecycle.
+
+`PromptEditorHelp` принимает `title`, `editorFocused`, `completionSources` и
+испускает `focusEditor`. Он владеет лишь состоянием справки и локальным
+предпочтением скрыть onboarding. Владелец перечисляет реально подключённые
+источники: Electron — LoRA triggers, prototype — embeddings and LoRA triggers.
+Обычная Info-справка доступна после отключения onboarding через hover/focus.
+
+[Общие правила](../../src/shared/projects/prompt-text.ts) работают с обычным
+текстом и диапазонами. [CodeMirror adapter](../../src/renderer/components/prompt-editing-codemirror.ts)
+применяет attention только к выделению/фразе, уважает read-only и выделяет
+локальные undo steps. Он не управляет Project history или embedding refs.
+Prototype сохраняет свою document history; Electron пока имеет local text undo.
+[Проверки](./project-prompt-actions-research.md): реальные EditorState/history,
+Electron pointer/keyboard, clipboard, сохранённый `.igs`, prototype consumers.

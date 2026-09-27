@@ -4,7 +4,7 @@
 
 Positive Prompt and Negative Prompt use the shared `GenerationPromptEditor`, a plain-text editor built directly on the modular CodeMirror 6 runtime. `GenerationPrompt.text` is the only source of truth for authored content and order. The editor does not use prompt chips, stable token IDs, a language grammar, `basicSetup`, or a Vue CodeMirror wrapper.
 
-The Project card keeps the existing compact composition: title and approximate token count at the top left, an Info action beside the metadata, a vertical action rail on the right, about nine visible positive lines and four negative lines, line wrapping, and CSS vertical resize.
+The Project card keeps the existing compact composition: title and approximate token count at the top left, an Info action beside the metadata, a vertical action rail on the right, about nine visible positive lines and at least four negative lines, line wrapping, and CSS vertical resize. The card's minimum height must also fit every action at the shared compact button size; actions must not be clipped when the editor is empty.
 
 ## Editing and selection
 
@@ -29,9 +29,10 @@ The first prompt focus opens a controlled onboarding popover:
 ```text
 Triple-click selects a comma-separated phrase.
 Ctrl/Cmd+Space browses embeddings and LoRA triggers.
+Ctrl/Cmd+Up / Down adjusts attention.
 ```
 
-The hint deliberately omits ordinary typing and native double-click word selection, keeping only the editor-specific gestures. It stays visible only while a prompt editor is focused. Its text-style `Don't show again` action stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. The same compact help layout, without the action row, remains available from the Info button through an ordinary hover/focus popover.
+The hint deliberately omits ordinary typing and native double-click word selection, keeping only the editor-specific gestures. It names only completion sources supported by that editor. It stays visible only while a prompt editor is focused. Its text-style `Don't show again` action stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. After dismissal the same compact help layout, without the action row, remains available from the Info button through an ordinary hover/focus popover.
 
 ## Resource-aware text
 
@@ -53,13 +54,25 @@ slice. Retyping a removed token does not restore its ref. The production editor
 now provides exact-version LoRA trigger decorations, metadata hover and
 autocomplete through shared phrase rules. These only add authoring context:
 completion inserts ordinary text, while disabling/removing a LoRA never changes
-text. Existing embedding sidecar ranges exclude LoRA decoration. The editor does
-not yet provide the prototype's phrase selection, attention actions, embedding
-diagnostics/insertion, Danbooru suggestions or focus-to-blur Project undo transaction. It uses local editor history while
-Project-level undo remains unimplemented. These missing editor behaviors and
-model-aware resource feedback remain product contract work, not evidence of
-completed generation.
+text. Existing embedding sidecar ranges exclude LoRA decoration.
+
+Triple-click phrase selection, attention buttons and Ctrl/Cmd+Up/Down now use
+the same rules and CodeMirror commands as the prototype. Shared action/help
+components provide suggestion browsing, Copy, Clear, first-focus onboarding and
+ordinary Info help. Empty/whitespace attention targets and read-only editors do
+not mutate text. Actions preserve the selected range; Clear and attention are
+separate local undo steps. Explicit Save persists their text through the existing
+Project IPC and real `.igs` writer/loader.
+
+Embedding diagnostics/insertion, Danbooru suggestions, tokenizer counts, dynamic
+preview and focus-to-blur Project undo remain pending in Electron. It uses local
+text history: undoing Clear restores text, but does not recreate an embedding
+sidecar ref already pruned by main. Full document undo, including resource refs,
+is a separate implementation boundary. Production help therefore names only
+LoRA triggers and the action rail omits dynamic preview. These gaps remain
+product contract work, not evidence of completed generation.
 
 LoRA context and portable popup styling are shared with the prototype without
 importing mock embedding resolution into the production editor. Checked behavior
-and remaining scope: [Project prompt review](../../../engineering/project-lora-prompt-research.md).
+and remaining scope: [LoRA prompt review](../../../engineering/project-lora-prompt-research.md)
+and [editing actions review](../../../engineering/project-prompt-actions-research.md).
