@@ -5,6 +5,7 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -18,6 +19,7 @@ import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
+import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { prepareNormalTxt2Img } from './project-generation-preparation.js'
 import { ProjectIndexRepository } from './project-index.js'
@@ -183,6 +185,7 @@ async function importProject(
   service: ProjectService,
   dataRoot: string,
   input: {
+    bbox?: { height: number; width: number; x: number; y: number }
     draft?: Partial<IgsProjectDocumentV1['generationDraft']>
     model: ExactRef
     name: string
@@ -190,7 +193,7 @@ async function importProject(
   },
 ): Promise<{ document: IgsProjectDocumentV1; tabId: string }> {
   const empty = createEmptyProjectDocumentV1({
-    primaryBbox: { height: 2, width: 2, x: 7, y: -3 },
+    primaryBbox: input.bbox ?? { height: 2, width: 2, x: 7, y: -3 },
     title: input.name,
   })
   const layerId = randomUUID()
@@ -327,7 +330,10 @@ test(
         })
         assert.deepEqual(prepared.context.sampling, {
           cfgScale: 7.5,
+          invokeScheduler: null,
           requestedSeedPolicy: 'fixed',
+          sampler: null,
+          scheduler: null,
           seed: 0xff_ff_ff_ff,
           steps: 24,
         })
@@ -507,6 +513,20 @@ test(
           name: 'unqualified-sampler',
         },
         {
+          code: 'GENERATION_SAMPLING_UNSUPPORTED',
+          draft: {
+            sampling: { ...goodSampling, sampler: 'DPM++ 2M', scheduler: 'Exponential' },
+          },
+          name: 'unsupported-scheduler-pair',
+        },
+        {
+          code: 'GENERATION_SAMPLING_UNSUPPORTED',
+          draft: {
+            sampling: { ...goodSampling, sampler: 'Euler a', scheduler: 'Karras' },
+          },
+          name: 'unsupported-ancestral-karras-pair',
+        },
+        {
           code: 'GENERATION_SEED_UNAVAILABLE',
           draft: { seed: { policy: 'reuse', value: null } },
           name: 'reuse-without-cursor',
@@ -557,6 +577,23 @@ test(
       assert.equal(disabledPrepared.context.model.reference.localVersionId, model.localVersionId)
       await service.discardAndClose(disabled.tabId)
 
+      const qualifiedPair = await importProject(service, dataRoot, {
+        draft: {
+          sampling: { ...goodSampling, sampler: 'Euler a', scheduler: 'Normal' },
+        },
+        model,
+        name: 'qualified-scheduler-pair',
+      })
+      const qualifiedPrepared = await service.prepareNormalTxt2ImgContext(
+        qualifiedPair.tabId,
+        worker,
+        modelService,
+      )
+      assert.equal(qualifiedPrepared.context.sampling.invokeScheduler, 'euler_a')
+      assert.equal(qualifiedPrepared.context.sampling.sampler, 'Euler a')
+      assert.equal(qualifiedPrepared.context.sampling.scheduler, 'Normal')
+      await service.discardAndClose(qualifiedPair.tabId)
+
       const random = await importProject(service, dataRoot, {
         draft: { seed: { policy: 'random', value: null } },
         model,
@@ -570,11 +607,260 @@ test(
       )
       assert.deepEqual(randomPrepared.context.sampling, {
         cfgScale: 7.5,
+        invokeScheduler: null,
         requestedSeedPolicy: 'random',
+        sampler: null,
+        scheduler: null,
         seed: 0,
         steps: 24,
       })
       await service.discardAndClose(random.tabId)
+    })
+  },
+)
+
+test(
+  'real Project target becomes a bounded Illustrious request only for a qualified worker',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const installed = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('one exact checkpoint for the request boundary'),
+        civitaiModelId: 710,
+        civitaiVersionId: 711,
+        kind: 'checkpoint',
+      })
+      const model = await modelService.resolveGenerationCheckpoint(
+        installed.published.resourceId,
+        installed.published.versionId,
+      )
+      const { tabId } = await importProject(service, dataRoot, {
+        bbox: { height: 64, width: 64, x: -32, y: 16 },
+        draft: {
+          sampling: {
+            cfgScale: 7.5,
+            denoisingStrength: null,
+            sampler: 'DPM++ 2M',
+            scheduler: 'Karras',
+            steps: 24,
+          },
+        },
+        model,
+        name: 'qualified-job-request',
+      })
+      const prepared = await service.prepareNormalTxt2ImgContext(tabId, worker, modelService)
+      const scratchBasePath = path.join(dataRoot, 'inference-scratch')
+      let called = false
+      await assert.rejects(
+        withIllustriousTxt2ImgRequest({
+          modelService,
+          prepared,
+          ready: worker.ready,
+          scratchBasePath,
+          use: async () => {
+            called = true
+          },
+        }),
+        { code: 'INFERENCE_UNAVAILABLE' },
+      )
+      assert.equal(called, false)
+      assert.equal(existsSync(scratchBasePath), false)
+
+      const ready = {
+        capabilities: ['illustrious-txt2img'],
+        protocolVersion: '1',
+        runtimeProfile: 'linux-nvidia',
+        workerVersion: '0.2.0',
+      }
+      await assert.rejects(
+        withIllustriousTxt2ImgRequest({
+          modelService,
+          prepared,
+          ready: { ...ready, workerVersion: '0.1.0' },
+          scratchBasePath,
+          use: async () => {
+            called = true
+          },
+        }),
+        { code: 'INFERENCE_UNAVAILABLE' },
+      )
+      assert.equal(called, false)
+      assert.equal(existsSync(scratchBasePath), false)
+
+      const invalidCases: {
+        code: string
+        mutate: (context: typeof prepared.context) => void
+      }[] = [
+        {
+          code: 'GENERATION_SAMPLING_REQUIRED',
+          mutate: (context) => {
+            context.sampling.invokeScheduler = null
+            context.sampling.sampler = null
+            context.sampling.scheduler = null
+          },
+        },
+        {
+          code: 'GENERATION_PARAMETER_UNSUPPORTED',
+          mutate: (context) => {
+            context.sampling.cfgScale = 0.5
+          },
+        },
+        {
+          code: 'GENERATION_PARAMETER_UNSUPPORTED',
+          mutate: (context) => {
+            context.sampling.cfgScale = 30.1
+          },
+        },
+        {
+          code: 'GENERATION_PARAMETER_UNSUPPORTED',
+          mutate: (context) => {
+            context.sampling.steps = 201
+          },
+        },
+        {
+          code: 'GENERATION_TARGET_UNSUPPORTED',
+          mutate: (context) => {
+            context.bbox.width = 63
+          },
+        },
+        {
+          code: 'GENERATION_PREDICTION_UNAVAILABLE',
+          mutate: (context) => {
+            context.model.reference.predictionType = null
+          },
+        },
+        {
+          code: 'GENERATION_PARAMETER_UNSUPPORTED',
+          mutate: (context) => {
+            context.prompts.positive = 'invalid\uD800'
+          },
+        },
+      ]
+      for (const scenario of invalidCases) {
+        const context = structuredClone(prepared.context)
+        scenario.mutate(context)
+        await assert.rejects(
+          withIllustriousTxt2ImgRequest({
+            modelService,
+            prepared: { context, targetPngBytes: prepared.targetPngBytes },
+            ready,
+            scratchBasePath,
+            use: async () => {
+              called = true
+            },
+          }),
+          { code: scenario.code },
+        )
+      }
+      assert.equal(called, false)
+      assert.equal(existsSync(scratchBasePath), false)
+
+      const boundaryContext = structuredClone(prepared.context)
+      boundaryContext.sampling.steps = 200
+      boundaryContext.sampling.cfgScale = 30
+      await withIllustriousTxt2ImgRequest({
+        modelService,
+        prepared: { context: boundaryContext, targetPngBytes: prepared.targetPngBytes },
+        ready,
+        scratchBasePath,
+        use: async (request) => {
+          assert.equal(request.job.sampling.steps, 200)
+          assert.equal(request.job.sampling.cfgScale, 30)
+        },
+      })
+      assert.deepEqual(await readdir(scratchBasePath), [])
+
+      await assert.rejects(
+        withIllustriousTxt2ImgRequest({
+          modelService,
+          prepared,
+          ready,
+          scratchBasePath,
+          use: async (request) => {
+            assert.equal(existsSync(request.job.target.path), true)
+            throw new Error('dispatch failed')
+          },
+        }),
+        /dispatch failed/,
+      )
+      assert.deepEqual(await readdir(scratchBasePath), [])
+
+      const modelBytes = await readFile(installed.managedPath)
+      const changedModelBytes = Buffer.from(modelBytes)
+      changedModelBytes[0] ^= 1
+      await writeFile(installed.managedPath, changedModelBytes)
+      await assert.rejects(
+        withIllustriousTxt2ImgRequest({
+          modelService,
+          prepared,
+          ready,
+          scratchBasePath,
+          use: async () => {
+            called = true
+          },
+        }),
+        { code: 'MODEL_FILE_CORRUPT' },
+      )
+      assert.equal(called, false)
+      assert.deepEqual(await readdir(scratchBasePath), [])
+      await writeFile(installed.managedPath, modelBytes)
+
+      const originalPrompt = prepared.context.prompts.positive
+      const originalBytes = Buffer.from(prepared.targetPngBytes)
+      let materializedTarget = ''
+      const requestId = await withIllustriousTxt2ImgRequest({
+        modelService: {
+          resolveVerifiedGenerationCheckpointForPlan: async (saved) => {
+            prepared.context.prompts.positive = 'changed during model verification'
+            prepared.targetPngBytes.fill(0)
+            return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
+          },
+        },
+        prepared,
+        ready,
+        scratchBasePath,
+        use: async (request) => {
+          materializedTarget = request.job.target.path
+          assert.equal(request.job.checkpoint.path, installed.managedPath)
+          assert.equal(request.job.checkpoint.sha256, installed.reference.fileSha256)
+          assert.equal(request.job.checkpoint.predictionType, 'epsilon')
+          assert.deepEqual(request.job.bbox, { height: 64, width: 64, x: -32, y: 16 })
+          assert.equal(request.job.prompts.positive, originalPrompt)
+          assert.deepEqual(request.job.sampling, {
+            cfgScale: 7.5,
+            scheduler: 'dpmpp_2m_k',
+            seed: 0xff_ff_ff_ff,
+            steps: 24,
+          })
+          assert.deepEqual(await readFile(request.job.target.path), originalBytes)
+          assert.equal(request.job.target.sha256, sha256(originalBytes))
+          assert.equal(existsSync(request.job.output.pngPath), false)
+          assert.equal(path.dirname(request.job.output.pngPath), request.job.output.stagingRoot)
+
+          // The source-checkout Python worker recognizes this exact TS request, but refuses
+          // execution because its real handshake is still derivatives-only.
+          const result = spawnSync(devPython, ['-I', '-m', 'imagegen_worker'], {
+            cwd: path.resolve('worker-python'),
+            encoding: 'utf8',
+            env: { LANG: 'C.UTF-8' },
+            input: `${JSON.stringify(request)}\n`,
+            timeout: 15_000,
+          })
+          assert.equal(result.status, 0, result.stderr)
+          const messages = result.stdout
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+          assert.equal(messages[0].runtimeProfile, 'derivatives-only')
+          assert.equal(messages[1].requestId, request.requestId)
+          assert.equal(messages[1].code, 'INFERENCE_UNAVAILABLE')
+          assert.equal(existsSync(request.job.output.pngPath), false)
+          return request.requestId
+        },
+      })
+      assert.match(requestId, /^[0-9a-f-]{36}$/)
+      assert.equal(existsSync(materializedTarget), false)
+      assert.deepEqual(await readdir(scratchBasePath), [])
     })
   },
 )

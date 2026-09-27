@@ -4,7 +4,10 @@ import type { IgsProjectDocumentV1, IgsRectV1 } from '../../shared/projects/proj
 import { createHash, randomBytes } from 'node:crypto'
 
 import type { ModelService } from '../models/model-service.js'
+import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
+
+import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 
 /** Main-owned snapshot, deliberately distinct from a qualified worker request or queue row. */
 export interface FrozenNormalTxt2ImgPreparationV1 {
@@ -22,7 +25,10 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
   }
   sampling: {
     cfgScale: number
+    invokeScheduler: IllustriousSchedulerKey | null
     requestedSeedPolicy: SeedPolicy
+    sampler: string | null
+    scheduler: string | null
     seed: number
     steps: number
   }
@@ -60,6 +66,7 @@ export class GenerationPreparationError extends Error {
 /** Reject unsupported draft settings before invoking an image worker. Recheck the frozen draft too. */
 export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generationDraft']): {
   cfgScale: number
+  invokeScheduler: IllustriousSchedulerKey | null
   model: ExactCheckpoint
   steps: number
 } {
@@ -97,14 +104,17 @@ export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generati
     )
   }
   const { sampling } = draft
-  if (
-    sampling.denoisingStrength !== null ||
-    sampling.sampler !== null ||
-    sampling.scheduler !== null
-  ) {
+  if (sampling.denoisingStrength !== null) {
     throw new GenerationPreparationError(
       'GENERATION_SAMPLING_UNSUPPORTED',
-      'Denoising, sampler and scheduler settings require a qualified inference pipeline.',
+      'Denoising strength is not supported for this txt2img preparation.',
+    )
+  }
+  const schedulerSelection = resolveIllustriousScheduler(sampling.sampler, sampling.scheduler)
+  if (schedulerSelection.kind === 'unsupported') {
+    throw new GenerationPreparationError(
+      'GENERATION_SAMPLING_UNSUPPORTED',
+      'The selected sampler and scheduler pair is not supported by the first Illustrious pipeline.',
     )
   }
   if (
@@ -126,7 +136,12 @@ export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generati
       'Reuse needs the durable last actual seed cursor, which is not connected yet.',
     )
   }
-  return { cfgScale: sampling.cfgScale, model, steps: sampling.steps }
+  return {
+    cfgScale: sampling.cfgScale,
+    invokeScheduler: schedulerSelection.kind === 'supported' ? schedulerSelection.key : null,
+    model,
+    steps: sampling.steps,
+  }
 }
 
 /**
@@ -151,7 +166,7 @@ export async function prepareNormalTxt2Img(input: {
   const bbox = { ...target.bbox }
   const composite = { ...target.composite, bytes: Buffer.from(target.composite.bytes) }
   const { documentId, documentRevision } = target
-  const { cfgScale, model, steps } = validateNormalTxt2ImgDraft(draft)
+  const { cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(draft)
   const actualSeed =
     draft.seed.policy === 'fixed'
       ? draft.seed.value
@@ -193,7 +208,10 @@ export async function prepareNormalTxt2Img(input: {
       },
       sampling: {
         cfgScale,
+        invokeScheduler,
         requestedSeedPolicy: draft.seed.policy,
+        sampler: draft.sampling.sampler,
+        scheduler: draft.sampling.scheduler,
         seed: actualSeed,
         steps,
       },

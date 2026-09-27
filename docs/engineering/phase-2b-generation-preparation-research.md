@@ -25,13 +25,16 @@ bytes, records the Project document ID/revision, bbox, prompts, Steps/CFG and
 a concrete uint32 seed with its requested policy. `Fixed` uses the explicit
 value; `Random` draws a new value. `Reuse` is rejected until the durable
 Project-scoped last-actual-seed cursor is connected. Active LoRAs, embedding
-refs, VAE, advanced options, non-txt2img target modes and nonnull sampler,
-scheduler or denoising settings are rejected explicitly. Known-invalid draft
-settings are rejected before invoking image composition and rechecked against
-the captured document afterwards. Disabled LoRAs are
+refs, VAE, advanced options, non-txt2img target modes and nonnull denoising
+strength are rejected explicitly. Sampler/scheduler may be both unset or one
+of the explicit [qualified pairs](./phase-2b-illustrious-request-research.md);
+an incomplete or unknown pair is rejected. Known-invalid draft settings are
+rejected before invoking image composition and rechecked against the captured
+document afterwards. Disabled LoRAs are
 not operational inputs and do not block this narrow preparation.
 
-The returned JSON-compatible context has a separate copied PNG byte buffer.
+The returned JSON-compatible context captures the selected pair and mapped
+Invoke scheduler key when present, alongside a separate copied PNG byte buffer.
 It has **no queue ID or staging destination** and is deliberately not a worker
 DTO. The temporary target path is never retained. A later enqueue step must
 materialize the bytes in app-managed storage, validate a qualified

@@ -16,6 +16,8 @@ from PIL import __version__ as pillow_version
 from imagegen_worker import PROTOCOL_VERSION, RUNTIME_PROFILE, WORKER_VERSION
 from imagegen_worker.compositor import (
     MAX_LAYERS,
+    MAX_TARGET_PIXELS,
+    MAX_TARGET_SIDE,
     MAX_WORLD_COORDINATE,
     ComposePreviewRequest,
     ComposeTargetRequest,
@@ -26,6 +28,7 @@ from imagegen_worker.compositor import (
     compose_target,
 )
 from imagegen_worker.derivatives import (
+    PINNED_SRGB_ICC_SHA256,
     SRGB_ICC_PROFILE,
     DerivativeError,
     DerivativeRequest,
@@ -34,6 +37,10 @@ from imagegen_worker.derivatives import (
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
 
 MAX_MESSAGE_BYTES = 64 * 1024
+MAX_GENERATION_PROMPT_BYTES = 16_384
+MAX_GENERATION_TARGET_BYTES = 32 * 1024 * 1024
+MAX_GENERATION_STEPS = 200
+MAX_GENERATION_CFG_SCALE = 30
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -65,6 +72,13 @@ class ComposePreviewCommand:
 class ComposeTargetCommand:
     request_id: str
     target: ComposeTargetRequest
+
+
+@dataclass(frozen=True)
+class GenerateIllustriousTxt2ImgCommand:
+    """Validated request identity; inference inputs are intentionally not executable yet."""
+
+    request_id: str
 
 
 def ready_message() -> dict[str, object]:
@@ -114,6 +128,13 @@ def _path(value: object, label: str) -> Path:
     return Path(value)
 
 
+def _absolute_path(value: object, label: str) -> Path:
+    parsed = _path(value, label)
+    if not parsed.is_absolute() or ".." in parsed.parts:
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be an absolute, normalized path.")
+    return parsed
+
+
 def _number(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise DerivativeError("INVALID_REQUEST", f"{label} must be a finite number.")
@@ -159,6 +180,101 @@ def _target_bbox(value: object) -> PreviewRect:
     }
 
 
+def _generate_illustrious_txt2img(
+    value: object, request_id: str
+) -> GenerateIllustriousTxt2ImgCommand:
+    job = _object(
+        value,
+        "Generation job",
+        {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
+    )
+    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
+
+    checkpoint = _object(job["checkpoint"], "Checkpoint", {"path", "sha256", "predictionType"})
+    _absolute_path(checkpoint["path"], "Checkpoint path")
+    _sha256(checkpoint["sha256"], "Checkpoint SHA-256")
+    prediction_type = checkpoint["predictionType"]
+    if not isinstance(prediction_type, str) or prediction_type not in (
+        "epsilon",
+        "v_prediction",
+        "sample",
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Checkpoint prediction type is unsupported.")
+
+    target = _object(
+        job["target"],
+        "Target",
+        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
+    )
+    target_path = _absolute_path(target["path"], "Target path")
+    _sha256(target["sha256"], "Target SHA-256")
+    if _sha256(target["iccSha256"], "Target ICC SHA-256") != PINNED_SRGB_ICC_SHA256:
+        raise DerivativeError("INVALID_REQUEST", "Target ICC profile is unsupported.")
+    target_byte_size = _positive_integer(target["byteSize"], "Target byte size")
+    if target_byte_size > MAX_GENERATION_TARGET_BYTES:
+        raise DerivativeError("INVALID_REQUEST", "Target byte size exceeds the provisional limit.")
+    width = _positive_integer(target["width"], "Target width")
+    height = _positive_integer(target["height"], "Target height")
+    bbox = _target_bbox(job["bbox"])
+    if (
+        width != bbox["width"]
+        or height != bbox["height"]
+        or width % 8 != 0
+        or height % 8 != 0
+        or width > MAX_TARGET_SIDE
+        or height > MAX_TARGET_SIDE
+        or width * height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Generation dimensions are unsupported.")
+
+    prompts = _object(job["prompts"], "Prompts", {"positive", "negative"})
+    if not isinstance(prompts["positive"], str) or not isinstance(prompts["negative"], str):
+        raise DerivativeError("INVALID_REQUEST", "Generation prompts must be strings.")
+    try:
+        prompt_sizes = (
+            len(prompts["positive"].encode("utf-8")),
+            len(prompts["negative"].encode("utf-8")),
+        )
+    except UnicodeEncodeError as error:
+        raise DerivativeError(
+            "INVALID_REQUEST", "Generation prompts must be valid UTF-8."
+        ) from error
+    if any(size > MAX_GENERATION_PROMPT_BYTES for size in prompt_sizes):
+        raise DerivativeError("INVALID_REQUEST", "Generation prompt exceeds the provisional limit.")
+
+    sampling = _object(job["sampling"], "Sampling", {"steps", "cfgScale", "seed", "scheduler"})
+    steps = _positive_integer(sampling["steps"], "Sampling steps")
+    if steps > MAX_GENERATION_STEPS:
+        raise DerivativeError("INVALID_REQUEST", "Sampling steps exceed the provisional limit.")
+    cfg_scale = _number(sampling["cfgScale"], "CFG scale")
+    if cfg_scale < 1 or cfg_scale > MAX_GENERATION_CFG_SCALE:
+        raise DerivativeError("INVALID_REQUEST", "CFG scale is outside the supported range.")
+    seed = sampling["seed"]
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
+        raise DerivativeError("INVALID_REQUEST", "Seed must be an unsigned 32-bit integer.")
+    scheduler = sampling["scheduler"]
+    if not isinstance(scheduler, str) or scheduler not in (
+        "dpmpp_2m_k",
+        "dpmpp_2m",
+        "euler_a",
+        "dpmpp_sde_k",
+        "dpmpp_sde",
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Generation scheduler is unsupported.")
+
+    output = _object(job["output"], "Output", {"stagingRoot", "pngPath"})
+    staging_root = _absolute_path(output["stagingRoot"], "Output staging root")
+    png_path = _absolute_path(output["pngPath"], "Output PNG path")
+    if target_path.parent != staging_root or target_path.suffix != ".png":
+        raise DerivativeError("INVALID_REQUEST", "Target PNG must be a direct staging child.")
+    if png_path.parent != staging_root or png_path.suffix != ".png":
+        raise DerivativeError("INVALID_REQUEST", "Output PNG must be a direct staging child.")
+    if png_path == target_path:
+        raise DerivativeError("INVALID_REQUEST", "Output PNG must not replace the target PNG.")
+    return GenerateIllustriousTxt2ImgCommand(request_id=request_id)
+
+
 def _preview_layer(value: object) -> PreviewLayer:
     fields = _object(
         value,
@@ -198,6 +314,7 @@ def parse_request(
     | NormalizeImportCommand
     | ComposePreviewCommand
     | ComposeTargetCommand
+    | GenerateIllustriousTxt2ImgCommand
 ):
     if not isinstance(value, dict):
         raise DerivativeError("INVALID_REQUEST", "Request must be an object.")
@@ -213,6 +330,13 @@ def parse_request(
     if fields.get("type") == "self-test":
         _object(fields, "Self-test request", {"type", "requestId", "protocolVersion"})
         return SelfTestCommand(request_id)
+    if fields.get("type") == "generate-illustrious-txt2img":
+        _object(
+            fields,
+            "Generation request",
+            {"type", "requestId", "protocolVersion", "job"},
+        )
+        return _generate_illustrious_txt2img(fields["job"], request_id)
     if fields.get("type") == "normalize-import":
         _object(
             fields,
@@ -374,6 +498,12 @@ def process_request(value: object) -> dict[str, object]:
                 "runtimeProfile": RUNTIME_PROFILE,
                 "checks": _self_test(),
             }
+        if isinstance(command, GenerateIllustriousTxt2ImgCommand):
+            return error_message(
+                command.request_id,
+                "INFERENCE_UNAVAILABLE",
+                "This worker does not support image generation.",
+            )
         if isinstance(command, DeriveImageCommand):
             result = create_derivatives(command.derivative)
             return {

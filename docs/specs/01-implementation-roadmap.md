@@ -62,7 +62,7 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
-| Generate/results | Frozen raster target и main-only подготовка exact Illustrious txt2img context с проверкой модели, настроек и конкретным seed; UI generation пока только mock | Исполнимый worker DTO и pipeline, Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, подготовка exact Illustrious txt2img context и строгий TS/Python request boundary с временным PNG; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, durable job input, Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -377,6 +377,12 @@ generation DTO и source map из документационного трека.
 версии checkpoint и конкретного Fixed/Random seed. Это ещё не очередь и не
 worker DTO: sampler/scheduler, installable runtime, inference и публикация
 candidate остаются незавершёнными. `Reuse` ждёт durable seed cursor.
+
+**Следующий request checkpoint:** [Illustrious `txt2img` boundary](../engineering/phase-2b-illustrious-request-research.md)
+проверяет sampler/scheduler, CFG, размер, prediction type и capability, временно
+материализует target PNG и формирует версионированный запрос. Python
+`derivatives-only` worker распознаёт его, но отвечает `INFERENCE_UNAVAILABLE`;
+постоянный input, исполнимый GPU pipeline и очередь ещё не подключены.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

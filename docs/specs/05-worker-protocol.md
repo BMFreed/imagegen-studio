@@ -139,9 +139,15 @@ cannot silently change an already queued batch.
 он фиксирует точную модель, Project target, prompts, Steps/CFG и конкретный
 Fixed/Random seed. Это отдельный тип с copied PNG bytes вне JSON context, а
 не сообщение worker'у или запись очереди. Он отвергает `Reuse` до подключения
-durable cursor и не назначает sampler/scheduler без квалифицированного pipeline.
-Материализация immutable asset, capability validation и исполнимый DTO всё ещё
-нужны перед enqueue.
+durable cursor. Явно выбранную поддерживаемую пару sampler/scheduler он сохраняет
+вместе с Invoke scheduler key; если оба поля не заданы, контекст остаётся
+неразрешённым. [Первый request boundary](../engineering/phase-2b-illustrious-request-research.md)
+требует пару, CFG ≥ 1, размер кратный 8, известный prediction type и
+`linux-nvidia` inference capability с подходящей версией worker. Пока запрос
+ограничен 200 Steps, CFG 30 и 16 КиБ UTF-8 на каждый prompt как защитными
+транспортными/операционными границами. Он создаёт только краткоживущий scratch
+lease: durable immutable asset, реальный inference worker, queue и candidate
+publication всё ещё нужны перед Generate.
 
 ## Минимальные сообщения worker'а
 
