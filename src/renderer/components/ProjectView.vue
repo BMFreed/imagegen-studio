@@ -6,6 +6,10 @@ import type {
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
+import {
+  ILLUSTRIOUS_SCHEDULER_PAIRS,
+  isIllustriousSamplingDraftPair,
+} from '../../shared/projects/illustrious-scheduler.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -274,6 +278,80 @@ const seedOptions = [
   { label: 'Fixed', value: 'fixed' },
   { label: 'Reuse last', value: 'reuse' },
 ]
+const illustriousSamplingUnavailable = computed(
+  () => selectedModel.value !== null && selectedModel.value.baseModelFamily !== 'illustrious',
+)
+const samplingFamilyNotice = computed(() => {
+  if (selectedModel.value?.baseModelFamily === 'anima') {
+    return 'These sampler/scheduler options are for Illustrious. Anima generation is not connected yet.'
+  }
+  return illustriousSamplingUnavailable.value
+    ? 'These sampler/scheduler options require a model verified as Illustrious.'
+    : null
+})
+const samplerOptions = computed(() => {
+  const options = [...new Set(ILLUSTRIOUS_SCHEDULER_PAIRS.map((pair) => pair.sampler))].map(
+    (value) => ({ label: value, value }),
+  )
+  const saved = props.generationDraft.sampling.sampler
+  return saved && !options.some((option) => option.value === saved)
+    ? [{ disabled: true, label: `${saved} · unavailable`, value: saved }, ...options]
+    : options
+})
+const schedulerOptions = computed(() => {
+  const sampler = props.generationDraft.sampling.sampler
+  const options = ILLUSTRIOUS_SCHEDULER_PAIRS.filter((pair) => pair.sampler === sampler).map(
+    (pair) => ({ label: pair.scheduler, value: pair.scheduler }),
+  )
+  const saved = props.generationDraft.sampling.scheduler
+  return saved && !options.some((option) => option.value === saved)
+    ? [{ disabled: true, label: `${saved} · unavailable`, value: saved }, ...options]
+    : options
+})
+const samplingPairDiagnostic = computed(() => {
+  const { sampler, scheduler } = props.generationDraft.sampling
+  if (sampler === null && scheduler === null) {
+    return null
+  }
+  if (!isIllustriousSamplingDraftPair(sampler, scheduler)) {
+    return 'This saved pair is outside the first Illustrious options. Choose a supported pair.'
+  }
+  return scheduler === null ? 'Choose a scheduler to complete this sampling pair.' : null
+})
+
+function updateSampler(sampler: string | null) {
+  if (props.busy || props.reloadRequired || illustriousSamplingUnavailable.value) {
+    return
+  }
+  const scheduler =
+    sampler !== null &&
+    isIllustriousSamplingDraftPair(sampler, props.generationDraft.sampling.scheduler)
+      ? props.generationDraft.sampling.scheduler
+      : null
+  if (
+    !isIllustriousSamplingDraftPair(sampler, scheduler) ||
+    (sampler === props.generationDraft.sampling.sampler &&
+      scheduler === props.generationDraft.sampling.scheduler)
+  ) {
+    return
+  }
+  emit('updateDraft', { kind: 'sampling-pair', sampler, scheduler })
+}
+
+function updateScheduler(scheduler: string | null) {
+  const sampler = props.generationDraft.sampling.sampler
+  if (
+    props.busy ||
+    props.reloadRequired ||
+    illustriousSamplingUnavailable.value ||
+    !isIllustriousSamplingDraftPair(sampler, scheduler) ||
+    scheduler === props.generationDraft.sampling.scheduler
+  ) {
+    return
+  }
+  emit('updateDraft', { kind: 'sampling-pair', sampler, scheduler })
+}
+
 const fixedSeedInput = ref<number | null>(null)
 const rawFixedSeedInvalid = ref(false)
 const fixedSeedInvalid = computed(
@@ -770,6 +848,43 @@ function applyFitBbox() {
             @validity="lorasValid = $event"
           />
           <div class="sampling-fields">
+            <NFormItem label="Sampler" :showFeedback="false">
+              <NSelect
+                aria-label="Sampler"
+                clearable
+                :disabled="busy || reloadRequired || illustriousSamplingUnavailable"
+                :options="samplerOptions"
+                placeholder="Choose sampler"
+                size="small"
+                :value="generationDraft.sampling.sampler"
+                @update:value="updateSampler"
+              />
+            </NFormItem>
+            <NFormItem label="Scheduler" :showFeedback="false">
+              <NSelect
+                aria-label="Scheduler"
+                clearable
+                :disabled="
+                  busy ||
+                  reloadRequired ||
+                  illustriousSamplingUnavailable ||
+                  generationDraft.sampling.sampler === null
+                "
+                :options="schedulerOptions"
+                placeholder="Choose scheduler"
+                size="small"
+                :value="generationDraft.sampling.scheduler"
+                @update:value="updateScheduler"
+              />
+            </NFormItem>
+          </div>
+          <p v-if="samplingPairDiagnostic" class="sampling-validation" role="status">
+            {{ samplingPairDiagnostic }}
+          </p>
+          <p v-if="samplingFamilyNotice" class="sampling-validation" role="status">
+            {{ samplingFamilyNotice }}
+          </p>
+          <div class="sampling-fields">
             <NFormItem label="Steps" :showFeedback="false">
               <div class="sampling-input" @input.capture="captureSamplingStepsInput">
                 <NInputNumber
@@ -1062,7 +1177,8 @@ function applyFitBbox() {
 
 .sampling-input,
 .sampling-fields :deep(.n-input),
-.sampling-fields :deep(.n-input-number) {
+.sampling-fields :deep(.n-input-number),
+.sampling-fields :deep(.n-select) {
   width: 100%;
 }
 

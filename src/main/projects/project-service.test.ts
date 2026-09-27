@@ -534,6 +534,22 @@ test('Project sampling edits survive shadow recovery, Save and reopen independen
       cfgScale: 7.5,
       steps: 35,
     })
+    const partialPair = await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-pair',
+      sampler: 'DPM++ 2M',
+      scheduler: null,
+    })
+    assert.equal(partialPair.generationDraft.sampling.scheduler, null)
+    const selectedPair = await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-pair',
+      sampler: 'DPM++ 2M',
+      scheduler: 'Karras',
+    })
+    assert.deepEqual(selectedPair.generationDraft.sampling, {
+      ...cfgScale.generationDraft.sampling,
+      sampler: 'DPM++ 2M',
+      scheduler: 'Karras',
+    })
     await service.flushAutosave(created.id)
     assert.deepEqual(
       (await readIgsPackage(savedPath)).project.generationDraft.sampling,
@@ -550,7 +566,7 @@ test('Project sampling edits survive shadow recovery, Save and reopen independen
     assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
     const recovered = await restarted.resolveRecovery(created.id, 'recover')
     assert.equal(recovered.dirty, true)
-    assert.deepEqual(recovered.generationDraft.sampling, cfgScale.generationDraft.sampling)
+    assert.deepEqual(recovered.generationDraft.sampling, selectedPair.generationDraft.sampling)
     assert.deepEqual(
       (await readIgsPackage(savedPath)).project.generationDraft.sampling,
       originalSampling,
@@ -559,7 +575,7 @@ test('Project sampling edits survive shadow recovery, Save and reopen independen
     assert.equal((await restarted.save(created.id)).tab.dirty, false)
     assert.deepEqual(
       (await readIgsPackage(savedPath)).project.generationDraft.sampling,
-      cfgScale.generationDraft.sampling,
+      selectedPair.generationDraft.sampling,
     )
     await restarted.close(created.id)
     const reopened = await restarted.open(created.id)
@@ -567,7 +583,17 @@ test('Project sampling edits survive shadow recovery, Save and reopen independen
     if (reopened.kind !== 'opened') {
       throw new Error('Saved Project did not reopen.')
     }
-    assert.deepEqual(reopened.tab.generationDraft.sampling, cfgScale.generationDraft.sampling)
+    assert.deepEqual(reopened.tab.generationDraft.sampling, selectedPair.generationDraft.sampling)
+    assert.equal(
+      (
+        await restarted.updateGenerationDraft(created.id, {
+          kind: 'sampling-pair',
+          sampler: 'DPM++ 2M',
+          scheduler: 'Karras',
+        })
+      ).dirty,
+      false,
+    )
     assert.equal(
       (
         await restarted.updateGenerationDraft(created.id, {
@@ -587,6 +613,12 @@ test('Project sampling edits survive shadow recovery, Save and reopen independen
       false,
     )
 
+    const clearedPair = await restarted.updateGenerationDraft(created.id, {
+      kind: 'sampling-pair',
+      sampler: null,
+      scheduler: null,
+    })
+    assert.equal(clearedPair.dirty, true)
     const clearedSteps = await restarted.updateGenerationDraft(created.id, {
       kind: 'sampling-steps',
       value: null,
@@ -1030,6 +1062,10 @@ test('Project draft IPC shape and service reject forged refs and invalid scalar 
     { kind: 'sampling-cfg-scale', value: Number.NaN },
     { kind: 'sampling-cfg-scale', value: '7.5' },
     { kind: 'sampling-cfg-scale', loras: [], value: 7.5 },
+    { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Karras' },
+    { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: 'Exponential' },
+    { kind: 'sampling-pair', sampler: null, scheduler: 'Normal' },
+    { kind: 'sampling-pair', model: 'forged', sampler: 'Euler a', scheduler: null },
     { kind: 'positive-prompt', text: 'é'.repeat(IGS_SAFETY_CEILINGS.textBytes) },
   ]
   for (const change of invalid) {
@@ -1045,6 +1081,22 @@ test('Project draft IPC shape and service reject forged refs and invalid scalar 
   )
   assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: null }), true)
   assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: 0 }), true)
+  assert.equal(
+    isProjectGenerationDraftChange({ kind: 'sampling-pair', sampler: null, scheduler: null }),
+    true,
+  )
+  assert.equal(
+    isProjectGenerationDraftChange({ kind: 'sampling-pair', sampler: 'Euler a', scheduler: null }),
+    true,
+  )
+  assert.equal(
+    isProjectGenerationDraftChange({
+      kind: 'sampling-pair',
+      sampler: 'DPM++ SDE',
+      scheduler: 'Karras',
+    }),
+    true,
+  )
   assert.equal(
     isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: Number.MAX_VALUE }),
     true,

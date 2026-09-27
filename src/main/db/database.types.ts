@@ -12,6 +12,23 @@ export interface AppMetadata {
   value: string
 }
 
+export interface GenerationCandidateReceipt {
+  actual_seed: number
+  candidate_id: string
+  canonical_project_path: string
+  completed_at: string | null
+  completion_order: Generated<number | null>
+  expected_status_sequence: number
+  frozen_payload_sha256: string
+  image_byte_size: number
+  image_sha256: string
+  local_project_key: string
+  queue_item_id: string
+  reserved_at: string
+  staging_session_id: string
+  status: string
+}
+
 export interface GenerationQueueItem {
   batch_id: string
   canonical_project_path: string
@@ -29,6 +46,14 @@ export interface GenerationQueueItem {
   started_at: string | null
   status: string
   status_sequence: Generated<number>
+  updated_at: string
+}
+
+export interface GenerationSeedCursor {
+  actual_seed: number
+  candidate_id: string
+  completion_order: number
+  local_project_key: string
   updated_at: string
 }
 
@@ -152,7 +177,9 @@ export interface SchemaMigrations {
 
 export interface DB {
   app_metadata: AppMetadata
+  generation_candidate_receipt: GenerationCandidateReceipt
   generation_queue_item: GenerationQueueItem
+  generation_seed_cursor: GenerationSeedCursor
   local_model_file: LocalModelFile
   model_install_artifact: ModelInstallArtifact
   model_install_job: ModelInstallJob

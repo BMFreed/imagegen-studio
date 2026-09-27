@@ -108,12 +108,22 @@ Automatic mode derivation uses prototype-only deterministic layer coverage metad
 
 ## Production coverage at the Phase 2A checkpoint
 
-The production Project can store a normal-generation draft's positive and
-negative plain prompt text and Seed policy through Project document edits. A
-separate main-process operation can prepare an exact, frozen raster-only target
-for the primary bbox. Neither operation enqueues a job or runs Generate. There
-is no production candidate, staging session or acceptance path yet; the Vue
-prototype behavior above does not provide evidence for those paths.
+At this earlier checkpoint, the production Project could store a normal-generation
+draft's positive and negative plain prompt text and Seed policy through Project
+document edits. A separate main-process operation could prepare an exact,
+frozen raster-only target for the primary bbox. Neither operation enqueued a job
+or ran Generate; no production candidate, staging session or acceptance path
+existed then.
+
+## Current production boundary: Phase 2B repository checkpoint
+
+The Project now saves an explicit Illustrious sampler/scheduler draft pair, and
+main can enqueue one frozen Illustrious `txt2img` input in SQLite. The queue
+repository can claim it; given a qualifying provisional output, the separate
+staging repository can publish/recover a temporary candidate and advance the
+Project's actual-seed cursor. The production Project still has no Generate
+action, worker inference, queue dispatcher or candidate preview/acceptance UI.
+Prototype interactions above do not prove those flows.
 
 ## Acceptance Criteria
 

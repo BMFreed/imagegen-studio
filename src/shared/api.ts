@@ -1,5 +1,6 @@
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
 
+import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
 /** Renderer contract. System APIs remain in Electron main. */
@@ -127,6 +128,7 @@ export type ProjectGenerationDraftChange =
   | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
+  | { kind: 'sampling-pair'; sampler: string | null; scheduler: string | null }
   | { kind: 'sampling-steps'; value: number | null }
   | { kind: 'seed'; policy: 'fixed'; value: number }
   | { kind: 'seed'; policy: 'random' | 'reuse'; value: null }
@@ -396,6 +398,15 @@ export function isProjectGenerationDraftChange(
     return value.kind === 'sampling-steps'
       ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && value.value >= 1
       : typeof value.value === 'number' && Number.isFinite(value.value) && value.value >= 0
+  }
+  if (value.kind === 'sampling-pair') {
+    return (
+      keys.length === 3 &&
+      keys.includes('kind') &&
+      keys.includes('sampler') &&
+      keys.includes('scheduler') &&
+      isIllustriousSamplingDraftPair(value.sampler, value.scheduler)
+    )
   }
   if (
     value.kind !== 'seed' ||

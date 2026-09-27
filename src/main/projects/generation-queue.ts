@@ -163,6 +163,7 @@ export interface FrozenQueuedIllustriousTxt2ImgV1 {
 
 export interface QueuedGenerationItem {
   batchId: string
+  cancelRequested: boolean
   createdAt: string
   id: string
   localProjectKey: string
@@ -178,9 +179,16 @@ export interface VerifiedQueuedInput {
   targetPath: string
 }
 
+export interface NormalizedQueueFailure {
+  code: string
+  message: string
+}
+
 export interface GenerationQueueTestHooks {
   /** Failure after durable directory publication, before SQLite insertion. */
   afterInputPublish?: () => Promise<void>
+  /** Pause after frozen-input verification, before the cross-instance claim CAS. */
+  beforeClaimUpdate?: (itemId: string) => Promise<void>
 }
 
 type WorkerJobWithoutPaths = Omit<IllustriousTxt2ImgRequestV1['job'], 'output' | 'target'> & {
@@ -199,9 +207,11 @@ interface InputManifestV1 {
 export class GenerationQueueError extends Error {
   constructor(
     readonly code:
+      | 'QUEUE_FAILURE_INVALID'
       | 'QUEUE_INPUT_INVALID'
       | 'QUEUE_ITEM_NOT_FOUND'
       | 'QUEUE_PROJECT_IDENTITY_CHANGED'
+      | 'QUEUE_STATUS_CONFLICT'
       | 'QUEUE_STORAGE_UNSAFE',
     message: string,
   ) {
@@ -231,6 +241,180 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Application data root is invalid.')
     }
     this.root = path.join(dataRoot, 'generation-inputs')
+  }
+
+  /** Called by the processor only after the canceled worker has actually exited. */
+  async acknowledgeCanceledRunning(
+    id: string,
+    expectedStatusSequence: number,
+  ): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    return await this.serialize(async () => {
+      const now = new Date().toISOString()
+      const canceled = await this.db
+        .updateTable('generation_queue_item')
+        .set({
+          error_message: 'The job was canceled.',
+          finished_at: now,
+          status: 'canceled',
+          status_sequence: sql<number>`status_sequence + 1`,
+          updated_at: now,
+        })
+        .where('id', '=', id)
+        .where('status', '=', 'running')
+        .where('error_code', '=', 'USER_CANCELED')
+        .where('status_sequence', '=', expectedStatusSequence)
+        .returningAll()
+        .executeTakeFirst()
+      if (canceled) {
+        return toItem(canceled)
+      }
+      await this.requireRow(id)
+      throw statusConflict()
+    })
+  }
+
+  /**
+   * A pending job can stop immediately. A running job keeps the sole worker slot until the
+   * processor observes worker exit and acknowledges cancellation.
+   */
+  async cancel(id: string, expectedStatusSequence?: number): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    if (expectedStatusSequence !== undefined) {
+      validateExpectedSequence(expectedStatusSequence)
+    }
+    return await this.serialize(async () => {
+      for (;;) {
+        const row = await this.requireRow(id)
+        if (
+          expectedStatusSequence !== undefined &&
+          row.status_sequence !== expectedStatusSequence
+        ) {
+          throw statusConflict()
+        }
+        if (
+          row.error_code === 'USER_CANCELED' &&
+          (row.status === 'running' || row.status === 'canceled')
+        ) {
+          return toItem(row)
+        }
+        if (row.status !== 'pending' && row.status !== 'running') {
+          return toItem(row)
+        }
+        if (row.error_code !== null) {
+          throw statusConflict()
+        }
+        const running = row.status === 'running'
+        const now = new Date().toISOString()
+        const canceled = await this.db
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: 'USER_CANCELED',
+            error_message: running ? 'Cancellation requested.' : 'The job was canceled.',
+            finished_at: running ? null : now,
+            status: running ? 'running' : 'canceled',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('id', '=', id)
+          .where('status', '=', row.status)
+          .where('status_sequence', '=', row.status_sequence)
+          .where('error_code', 'is', null)
+          .returningAll()
+          .executeTakeFirst()
+        if (canceled) {
+          return toItem(canceled)
+        }
+        if (expectedStatusSequence !== undefined) {
+          throw statusConflict()
+        }
+      }
+    })
+  }
+
+  /**
+   * Verify the oldest pending input before taking the sole running slot. The conditional SQLite
+   * update also excludes a running row claimed through another repository instance.
+   */
+  async claimNextPending(): Promise<VerifiedQueuedInput | null> {
+    return await this.serialize(async () => {
+      for (;;) {
+        const running = await this.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .where('status', '=', 'running')
+          .executeTakeFirst()
+        if (running) {
+          return null
+        }
+        const pending = await this.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('status', '=', 'pending')
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+          .executeTakeFirst()
+        if (!pending) {
+          return null
+        }
+
+        let verified: VerifiedQueuedInput
+        try {
+          verified = await this.verifyRow(pending)
+        } catch (error) {
+          if (!(error instanceof GenerationQueueError) || error.code !== 'QUEUE_INPUT_INVALID') {
+            throw error
+          }
+          // A corrupt frozen input cannot be dispatched. Mark only the still-pending revision
+          // failed, preserving its files and allowing the next valid item to progress.
+          const now = new Date().toISOString()
+          await this.db
+            .updateTable('generation_queue_item')
+            .set({
+              error_code: 'QUEUE_INPUT_INVALID',
+              error_message: 'The frozen queue input is invalid.',
+              finished_at: now,
+              status: 'failed',
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', pending.id)
+            .where('status', '=', 'pending')
+            .where('status_sequence', '=', pending.status_sequence)
+            .returning('id')
+            .executeTakeFirst()
+          continue
+        }
+
+        await this.testHooks.beforeClaimUpdate?.(pending.id)
+        const now = new Date().toISOString()
+        const claimed = await this.db
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: null,
+            error_message: null,
+            started_at: now,
+            status: 'running',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('id', '=', pending.id)
+          .where('status', '=', 'pending')
+          .where('status_sequence', '=', pending.status_sequence)
+          .where('frozen_payload_json', '=', pending.frozen_payload_json)
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .returningAll()
+          .executeTakeFirst()
+        if (claimed) {
+          return { ...verified, item: toItem(claimed) }
+        }
+      }
+    })
   }
 
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
@@ -345,6 +529,7 @@ export class GenerationQueueRepository {
           .execute()
         return {
           batchId,
+          cancelRequested: false,
           createdAt: now,
           id,
           localProjectKey,
@@ -381,82 +566,45 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** A worker failure is accepted only for the exact running revision it was started for. */
+  async failRunning(
+    id: string,
+    expectedStatusSequence: number,
+    error: NormalizedQueueFailure,
+  ): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    const failure = validateNormalizedFailure(error)
+    return await this.serialize(async () => {
+      const now = new Date().toISOString()
+      const failed = await this.db
+        .updateTable('generation_queue_item')
+        .set({
+          error_code: failure.code,
+          error_message: failure.message,
+          finished_at: now,
+          status: 'failed',
+          status_sequence: sql<number>`status_sequence + 1`,
+          updated_at: now,
+        })
+        .where('id', '=', id)
+        .where('status', '=', 'running')
+        .where('error_code', 'is', null)
+        .where('status_sequence', '=', expectedStatusSequence)
+        .returningAll()
+        .executeTakeFirst()
+      if (failed) {
+        return toItem(failed)
+      }
+      await this.requireRow(id)
+      throw statusConflict()
+    })
+  }
+
   /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
   async loadVerifiedInput(id: string): Promise<VerifiedQueuedInput> {
-    if (!UUID_PATTERN.test(id)) {
-      throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
-    }
-    return await this.serialize(async () => {
-      const row = await this.db
-        .selectFrom('generation_queue_item')
-        .selectAll()
-        .where('id', '=', id)
-        .executeTakeFirst()
-      if (!row) {
-        throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
-      }
-      const root = await this.ensureRoot()
-      const directory = path.join(root, id)
-      const entry = await lstat(directory).catch(() => null)
-      if (!entry?.isDirectory() || entry.isSymbolicLink()) {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'The queued input is missing or unsafe.',
-        )
-      }
-      const payloadBytes = Buffer.from(row.frozen_payload_json, 'utf8')
-      if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'The frozen queue payload is invalid.',
-        )
-      }
-      const payload = parsePayload(row.frozen_payload_json)
-      if (
-        payload.context.documentId !== row.document_id ||
-        payload.context.documentRevision !== row.document_revision ||
-        !path.isAbsolute(row.canonical_project_path) ||
-        path.resolve(row.canonical_project_path) !== row.canonical_project_path ||
-        localProjectRecoveryKey(row.canonical_project_path) !== row.local_project_key
-      ) {
-        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue context changed.')
-      }
-      const expectedManifest: InputManifestV1 = {
-        payloadSha256: sha256(payloadBytes),
-        queueInputVersion: QUEUE_INPUT_VERSION,
-        queueItemId: id,
-        targetByteSize: payload.workerJob.target.byteSize,
-        targetFile: 'target.png',
-        targetSha256: payload.workerJob.target.sha256,
-      }
-      const manifestBytes = await readStableFile(path.join(directory, 'manifest.json'), null, null)
-      if (manifestBytes.length > MAX_MANIFEST_BYTES) {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'The queued input manifest is invalid.',
-        )
-      }
-      let manifest: unknown
-      try {
-        manifest = JSON.parse(manifestBytes.toString('utf8'))
-      } catch {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'The queued input manifest is invalid.',
-        )
-      }
-      if (!isDeepStrictEqual(manifest, expectedManifest)) {
-        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input manifest changed.')
-      }
-      const targetPath = path.join(directory, 'target.png')
-      const targetBytes = await readStableFile(
-        targetPath,
-        payload.workerJob.target.byteSize,
-        payload.workerJob.target.sha256,
-      )
-      await validateTargetPng(targetBytes, payload.context)
-      return { item: toItem(row), payload, targetPath }
-    })
+    validateQueueId(id)
+    return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
   }
 
   /** Restart never resumes old work; registered inputs remain for a future explicit retry. */
@@ -471,8 +619,16 @@ export class GenerationQueueRepository {
         const result = await transaction
           .updateTable('generation_queue_item')
           .set({
-            error_code: 'APP_RESTART',
-            error_message: 'The application closed before this job completed.',
+            error_code: sql<string>`CASE
+              WHEN status = 'running' AND error_code = 'USER_CANCELED'
+                THEN 'USER_CANCELED'
+              ELSE 'APP_RESTART'
+            END`,
+            error_message: sql<string>`CASE
+              WHEN status = 'running' AND error_code = 'USER_CANCELED'
+                THEN 'The job was canceled.'
+              ELSE 'The application closed before this job completed.'
+            END`,
             finished_at: now,
             status: 'canceled',
             status_sequence: sql<number>`status_sequence + 1`,
@@ -535,6 +691,18 @@ export class GenerationQueueRepository {
     return canonical
   }
 
+  private async requireRow(id: string): Promise<Selectable<GenerationQueueItem>> {
+    const row = await this.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', id)
+      .executeTakeFirst()
+    if (!row) {
+      throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+    }
+    return row
+  }
+
   private async serialize<T>(operation: () => Promise<T>): Promise<T> {
     const prior = this.pendingOperation
     let release!: () => void
@@ -548,6 +716,99 @@ export class GenerationQueueRepository {
       release()
     }
   }
+
+  private async verifyRow(row: Selectable<GenerationQueueItem>): Promise<VerifiedQueuedInput> {
+    const id = row.id
+    const root = await this.ensureRoot()
+    const directory = path.join(root, id)
+    const entry = await lstat(directory).catch(() => null)
+    if (!entry?.isDirectory() || entry.isSymbolicLink()) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The queued input is missing or unsafe.',
+      )
+    }
+    const payloadBytes = Buffer.from(row.frozen_payload_json, 'utf8')
+    if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+    }
+    const payload = parsePayload(row.frozen_payload_json)
+    if (
+      payload.context.documentId !== row.document_id ||
+      payload.context.documentRevision !== row.document_revision ||
+      !path.isAbsolute(row.canonical_project_path) ||
+      path.resolve(row.canonical_project_path) !== row.canonical_project_path ||
+      localProjectRecoveryKey(row.canonical_project_path) !== row.local_project_key
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue context changed.')
+    }
+    const expectedManifest: InputManifestV1 = {
+      payloadSha256: sha256(payloadBytes),
+      queueInputVersion: QUEUE_INPUT_VERSION,
+      queueItemId: id,
+      targetByteSize: payload.workerJob.target.byteSize,
+      targetFile: 'target.png',
+      targetSha256: payload.workerJob.target.sha256,
+    }
+    const manifestBytes = await readStableFile(path.join(directory, 'manifest.json'), null, null)
+    if (manifestBytes.length > MAX_MANIFEST_BYTES) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input manifest is invalid.')
+    }
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(manifestBytes.toString('utf8'))
+    } catch {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input manifest is invalid.')
+    }
+    if (!isDeepStrictEqual(manifest, expectedManifest)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input manifest changed.')
+    }
+    const targetPath = path.join(directory, 'target.png')
+    const targetBytes = await readStableFile(
+      targetPath,
+      payload.workerJob.target.byteSize,
+      payload.workerJob.target.sha256,
+    )
+    await validateTargetPng(targetBytes, payload.context)
+    return { item: toItem(row), payload, targetPath }
+  }
+}
+
+function validateQueueId(id: string): void {
+  if (!UUID_PATTERN.test(id)) {
+    throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+  }
+}
+
+function validateExpectedSequence(sequence: number): void {
+  if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence >= Number.MAX_SAFE_INTEGER) {
+    throw statusConflict()
+  }
+}
+
+function statusConflict(): GenerationQueueError {
+  return new GenerationQueueError(
+    'QUEUE_STATUS_CONFLICT',
+    'The queue item changed before this operation completed.',
+  )
+}
+
+function validateNormalizedFailure(error: NormalizedQueueFailure): NormalizedQueueFailure {
+  const code = error?.code
+  const message = error?.message
+  if (
+    typeof code !== 'string' ||
+    !/^[A-Z][A-Z0-9_]{0,63}$/.test(code) ||
+    code === 'APP_RESTART' ||
+    code === 'USER_CANCELED' ||
+    typeof message !== 'string' ||
+    message.length < 1 ||
+    Buffer.byteLength(message, 'utf8') > 1024 ||
+    /[\u0000-\u001F\u007F]/.test(message)
+  ) {
+    throw new GenerationQueueError('QUEUE_FAILURE_INVALID', 'The worker failure is invalid.')
+  }
+  return { code, message }
 }
 
 function validateSnapshot(
@@ -757,16 +1018,20 @@ async function syncDirectory(directory: string): Promise<void> {
 
 function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {
   if (
-    row.status !== 'pending' &&
-    row.status !== 'running' &&
-    row.status !== 'completed' &&
-    row.status !== 'failed' &&
-    row.status !== 'canceled'
+    !Number.isSafeInteger(row.status_sequence) ||
+    row.status_sequence < 0 ||
+    row.status_sequence >= Number.MAX_SAFE_INTEGER ||
+    (row.status !== 'pending' &&
+      row.status !== 'running' &&
+      row.status !== 'completed' &&
+      row.status !== 'failed' &&
+      row.status !== 'canceled')
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue status is invalid.')
   }
   return {
     batchId: row.batch_id,
+    cancelRequested: row.status === 'running' && row.error_code === 'USER_CANCELED',
     createdAt: row.created_at,
     id: row.id,
     localProjectKey: row.local_project_key,

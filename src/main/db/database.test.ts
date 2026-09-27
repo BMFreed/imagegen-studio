@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import {
   chmodSync,
@@ -31,6 +32,8 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
   const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-'))
   try {
     const first = openAppDatabase(root, sourceMigrations)
+    const synchronous = await sql<{ synchronous: number }>`PRAGMA synchronous`.execute(first.db)
+    assert.equal(synchronous.rows[0]?.synchronous, 2)
     await first.db.insertInto('app_metadata').values({ key: 'probe', value: 'saved' }).execute()
     assert.equal(statSync(`${first.filePath}-wal`).mode & 0o777, 0o600)
     assert.equal(statSync(`${first.filePath}-shm`).mode & 0o777, 0o600)
@@ -48,7 +51,7 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 5)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 6)
     assert.equal(statSync(root).mode & 0o777, 0o700)
     assert.equal(statSync(path.join(root, 'database')).mode & 0o777, 0o700)
     assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
@@ -177,7 +180,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 5)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 6)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

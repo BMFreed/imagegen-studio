@@ -34,6 +34,9 @@ export function openAppDatabase(dataRoot: string, migrationsDir: string): AppDat
     // SQLite may have just created the main file; lock down its mode before migrations write data.
     ensurePrivateSqliteFiles(filePath)
     sqlite.pragma('journal_mode = WAL')
+    // Candidate manifests reach disk before queue completion and the seed cursor. Do not let a
+    // different SQLite build's default weaken the durability of that second commit boundary.
+    sqlite.pragma('synchronous = FULL')
     sqlite.pragma('foreign_keys = ON')
     applySqlMigrations(sqlite, migrationsDir)
     // WAL/SHM files may be created during migration. Their containing directory is private too.

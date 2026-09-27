@@ -230,6 +230,25 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
+## Current production boundary: Phase 2B repository checkpoint
+
+Main now stores one frozen Illustrious `txt2img` input and a SQLite `pending`
+item. The queue repository verifies that input before claiming the one
+`running` database slot; a corrupt input becomes `failed` without blocking the
+next pending item. Failure and cancellation use a status sequence so a late
+worker result cannot silently overwrite a newer decision. A running cancel is
+recorded as a request while the item still holds that slot; only an explicit
+acknowledgement after observed worker exit may release it. On restart, former
+`pending`/`running` items become `canceled`.
+
+A separate app-owned staging repository validates a provisional sRGB PNG,
+publishes an asset and manifest before a SQLite completion transaction, and
+reconciles that crash window on startup. The completed candidate and actual
+seed remain outside `.igs` and independent of queue-row retention. This is a
+repository/bootstrap boundary: the renderer has no Generate or Queue Manager
+action, and the worker processor, cancel signal/exit acknowledgement, progress,
+retry, pruning and candidate acceptance are still unconnected.
+
 ## Queue Manager UI
 
 Queue Manager is an app-level surface, not a permanent Project sidebar.

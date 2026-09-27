@@ -16,7 +16,7 @@ import { crc32, deflateSync } from 'node:zlib'
 import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 
 import { openAppDatabase } from '../db/database.js'
-import { GenerationQueueRepository } from './generation-queue.js'
+import { GenerationQueueRepository, type QueuedGenerationItem } from './generation-queue.js'
 import {
   type IllustriousTxt2ImgRequestV1,
   withIllustriousTxt2ImgRequest,
@@ -143,6 +143,348 @@ async function inQualifiedLease<T>(
     use,
   })
 }
+
+async function enqueueFixture(
+  root: string,
+  queue: GenerationQueueRepository,
+  prepared: PreparedNormalTxt2Img,
+  projectPath: string,
+): Promise<QueuedGenerationItem> {
+  return await inQualifiedLease(
+    root,
+    prepared,
+    async (request) =>
+      await queue.enqueueIllustriousTxt2Img({
+        prepared,
+        projectPath,
+        request,
+        stagingSessionId: randomUUID(),
+      }),
+  )
+}
+
+test('claim verifies durable input before moving a pending row to running across reopen', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-claim-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    const reopened = new GenerationQueueRepository(second.db, root)
+    const claimed = await reopened.claimNextPending()
+    assert.ok(claimed)
+    assert.equal(claimed.item.id, pending.id)
+    assert.equal(claimed.item.status, 'running')
+    assert.equal(claimed.item.statusSequence, 1)
+    assert.equal(claimed.payload.context.prompts.positive, 'a frozen blue lantern')
+    assert.equal(
+      sha256(await readFile(claimed.targetPath)),
+      claimed.payload.workerJob.target.sha256,
+    )
+    assert.equal(await reopened.claimNextPending(), null)
+    const row = await second.db
+      .selectFrom('generation_queue_item')
+      .select(['started_at', 'finished_at', 'status', 'status_sequence'])
+      .where('id', '=', pending.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(row.status, 'running')
+    assert.equal(row.status_sequence, 1)
+    assert.ok(row.started_at)
+    assert.equal(row.finished_at, null)
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('two repository instances cannot claim a second job while one is running', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-parallel-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const second = openAppDatabase(root, migrations)
+    let enteredResolve!: (id: string) => void
+    const entered = new Promise<string>((resolve) => {
+      enteredResolve = resolve
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const queueA = new GenerationQueueRepository(first.db, root, {
+      beforeClaimUpdate: async (id) => {
+        enteredResolve(id)
+        await gate
+      },
+    })
+    const queueB = new GenerationQueueRepository(second.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const pendingA = await enqueueFixture(root, queueB, prepared, projectPath)
+    const pendingB = await enqueueFixture(root, queueB, prepared, projectPath)
+    await first.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2000-01-01T00:00:00.000Z' })
+      .where('id', '=', pendingA.id)
+      .execute()
+    await first.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2001-01-01T00:00:00.000Z' })
+      .where('id', '=', pendingB.id)
+      .execute()
+
+    const firstClaim = queueA.claimNextPending()
+    assert.equal(await entered, pendingA.id)
+    // Change only ordering while A holds a verified snapshot. B can now claim a different row;
+    // A must still refuse its own CAS because B already occupies the sole running slot.
+    await second.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2100-01-01T00:00:00.000Z' })
+      .where('id', '=', pendingA.id)
+      .execute()
+    let running
+    try {
+      running = await queueB.claimNextPending()
+    } finally {
+      release()
+    }
+    assert.ok(running)
+    assert.equal(running.item.id, pendingB.id)
+    assert.equal(await firstClaim, null)
+    assert.equal(running.item.statusSequence, 1)
+    assert.equal(await queueB.claimNextPending(), null)
+    const statuses = await first.db
+      .selectFrom('generation_queue_item')
+      .select(['id', 'status'])
+      .execute()
+    assert.equal(statuses.filter((item) => item.status === 'running').length, 1)
+    assert.equal(statuses.filter((item) => item.status === 'pending').length, 1)
+
+    const requested = await queueB.cancel(running.item.id, running.item.statusSequence)
+    assert.equal(requested.status, 'running')
+    assert.equal(requested.cancelRequested, true)
+    assert.equal(requested.statusSequence, 2)
+    assert.equal(await queueA.claimNextPending(), null)
+    const canceled = await queueB.acknowledgeCanceledRunning(running.item.id, 2)
+    assert.equal(canceled.status, 'canceled')
+    assert.equal(canceled.statusSequence, 3)
+    const next = await queueA.claimNextPending()
+    assert.ok(next)
+    assert.equal(next.item.id, pendingA.id)
+    assert.equal(next.item.statusSequence, 1)
+    await first.close()
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('cancel and worker failure enforce sequence guards across pending, running and terminal rows', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-cancel-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceledPending = await queue.cancel(pending.id, 0)
+    assert.equal(canceledPending.status, 'canceled')
+    assert.equal(canceledPending.statusSequence, 1)
+    assert.deepEqual(await queue.cancel(pending.id, 1), canceledPending)
+    await assert.rejects(queue.cancel(pending.id, 0), { code: 'QUEUE_STATUS_CONFLICT' })
+
+    const secondPending = await enqueueFixture(root, queue, prepared, projectPath)
+    const running = await queue.claimNextPending()
+    assert.ok(running)
+    assert.equal(running.item.id, secondPending.id)
+    await assert.rejects(queue.cancel(running.item.id, 0), { code: 'QUEUE_STATUS_CONFLICT' })
+    const requested = await queue.cancel(running.item.id, 1)
+    assert.equal(requested.status, 'running')
+    assert.equal(requested.cancelRequested, true)
+    assert.equal(requested.statusSequence, 2)
+    assert.deepEqual(await queue.cancel(running.item.id, 2), requested)
+    await assert.rejects(queue.cancel(running.item.id, 1), { code: 'QUEUE_STATUS_CONFLICT' })
+    await assert.rejects(
+      queue.failRunning(running.item.id, 1, { code: 'WORKER_FAILED', message: 'Late failure.' }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    await assert.rejects(
+      queue.failRunning(running.item.id, 2, { code: 'WORKER_FAILED', message: 'Late failure.' }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    await assert.rejects(queue.acknowledgeCanceledRunning(running.item.id, 1), {
+      code: 'QUEUE_STATUS_CONFLICT',
+    })
+    const canceledRunning = await queue.acknowledgeCanceledRunning(running.item.id, 2)
+    assert.equal(canceledRunning.status, 'canceled')
+    assert.equal(canceledRunning.cancelRequested, false)
+    assert.equal(canceledRunning.statusSequence, 3)
+    assert.deepEqual(await queue.cancel(running.item.id, 3), canceledRunning)
+    await assert.rejects(queue.cancel(running.item.id, 2), { code: 'QUEUE_STATUS_CONFLICT' })
+    const canceledRow = await first.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code', 'finished_at'])
+      .where('id', '=', running.item.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(canceledRow.status, 'canceled')
+    assert.equal(canceledRow.status_sequence, 3)
+    assert.equal(canceledRow.error_code, 'USER_CANCELED')
+    assert.ok(canceledRow.finished_at)
+    await first.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('restart preserves explicit cancel request and does not revive an unfinished worker', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-cancel-restart-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const requestedJob = await enqueueFixture(root, queue, prepared, projectPath)
+    const pendingJob = await enqueueFixture(root, queue, prepared, projectPath)
+    const running = await queue.claimNextPending()
+    assert.ok(running)
+    assert.equal(running.item.id, requestedJob.id)
+    const requested = await queue.cancel(running.item.id, 1)
+    assert.equal(requested.status, 'running')
+    assert.equal(requested.cancelRequested, true)
+    assert.equal(await queue.claimNextPending(), null)
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    const restarted = new GenerationQueueRepository(second.db, root)
+    const persistedRequest = await restarted.loadVerifiedInput(requestedJob.id)
+    assert.equal(persistedRequest.item.status, 'running')
+    assert.equal(persistedRequest.item.cancelRequested, true)
+    assert.equal(persistedRequest.item.statusSequence, 2)
+    assert.equal(await restarted.claimNextPending(), null)
+    assert.deepEqual(await restarted.recoverAfterRestart(), {
+      canceledCount: 2,
+      orphanedDirectoriesRemoved: 0,
+    })
+    const rows = await second.db
+      .selectFrom('generation_queue_item')
+      .select(['id', 'status', 'status_sequence', 'error_code'])
+      .where('id', 'in', [requestedJob.id, pendingJob.id])
+      .execute()
+    assert.deepEqual(
+      rows.find((row) => row.id === requestedJob.id),
+      {
+        error_code: 'USER_CANCELED',
+        id: requestedJob.id,
+        status: 'canceled',
+        status_sequence: 3,
+      },
+    )
+    assert.deepEqual(
+      rows.find((row) => row.id === pendingJob.id),
+      {
+        error_code: 'APP_RESTART',
+        id: pendingJob.id,
+        status: 'canceled',
+        status_sequence: 1,
+      },
+    )
+    assert.equal(await restarted.claimNextPending(), null)
+    await assert.rejects(restarted.acknowledgeCanceledRunning(requestedJob.id, 2), {
+      code: 'QUEUE_STATUS_CONFLICT',
+    })
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('failed running job records normalized error; a late failure cannot change it', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-worker-error-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    await assert.rejects(
+      queue.failRunning(pending.id, 0, { code: 'WORKER_FAILED', message: 'Failed.' }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    const running = await queue.claimNextPending()
+    assert.ok(running)
+    await assert.rejects(
+      queue.failRunning(running.item.id, 0, { code: 'WORKER_FAILED', message: 'Stale failure.' }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    assert.equal((await queue.loadVerifiedInput(running.item.id)).item.status, 'running')
+    await assert.rejects(
+      queue.failRunning(running.item.id, 1, { code: 'USER_CANCELED', message: 'Spoofed.' }),
+      { code: 'QUEUE_FAILURE_INVALID' },
+    )
+    const failed = await queue.failRunning(running.item.id, 1, {
+      code: 'WORKER_FAILED',
+      message: 'The worker exited.',
+    })
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.statusSequence, 2)
+    await assert.rejects(
+      queue.failRunning(running.item.id, 1, { code: 'WORKER_FAILED', message: 'Late failure.' }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    const row = await first.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code', 'error_message'])
+      .where('id', '=', pending.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(row, {
+      error_code: 'WORKER_FAILED',
+      error_message: 'The worker exited.',
+      status: 'failed',
+      status_sequence: 2,
+    })
+    await first.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('corrupt frozen input fails without claiming a slot or blocking the next valid job', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-claim-corrupt-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const { prepared, projectPath } = await fixture(root)
+    const corrupt = await enqueueFixture(root, queue, prepared, projectPath)
+    const valid = await enqueueFixture(root, queue, prepared, projectPath)
+    await first.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2000-01-01T00:00:00.000Z' })
+      .where('id', '=', corrupt.id)
+      .execute()
+    const frozen = await queue.loadVerifiedInput(corrupt.id)
+    await writeFile(frozen.targetPath, 'corrupt pixels')
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    const reopened = new GenerationQueueRepository(second.db, root)
+    const claimed = await reopened.claimNextPending()
+    assert.ok(claimed)
+    assert.equal(claimed.item.id, valid.id)
+    assert.equal(claimed.item.status, 'running')
+    const damaged = await second.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', corrupt.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(damaged, {
+      error_code: 'QUEUE_INPUT_INVALID',
+      status: 'failed',
+      status_sequence: 1,
+    })
+    assert.ok((await readdir(path.dirname(frozen.targetPath))).includes('target.png'))
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 test('qualified request becomes durable input and a pending SQLite row, then cancels on restart', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-'))

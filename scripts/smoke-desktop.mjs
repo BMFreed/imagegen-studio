@@ -1281,6 +1281,48 @@ try {
   await recoveryWindow
     .getByRole('textbox', { name: 'Positive prompt' })
     .fill('studio portrait, red rim light')
+  assert.deepEqual(
+    (
+      await waitForOpenTab(
+        recoveryWindow,
+        rasterProject.id,
+        (tab) => tab.generationDraft.sampling.sampler === null,
+        'New Project unexpectedly selected a sampler',
+      )
+    ).generationDraft.sampling,
+    {
+      cfgScale: null,
+      denoisingStrength: null,
+      sampler: null,
+      scheduler: null,
+      steps: null,
+    },
+  )
+  await recoveryWindow.locator('[aria-label="Sampler"]').click()
+  await recoveryWindow.getByText('DPM++ 2M', { exact: true }).last().click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      tab.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+      tab.generationDraft.sampling.scheduler === null,
+    'Choosing a sampler unexpectedly selected a scheduler',
+  )
+  await recoveryWindow.locator('[aria-label="Scheduler"]').click()
+  await recoveryWindow.getByText('Karras', { exact: true }).last().click()
+  await recoveryWindow.locator('[aria-label="Sampler"]').click()
+  await recoveryWindow.getByText('Euler a', { exact: true }).last().click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      tab.generationDraft.sampling.sampler === 'Euler a' &&
+      tab.generationDraft.sampling.scheduler === null,
+    'Changing sampler kept an incompatible scheduler',
+  )
+  await recoveryWindow.locator('[aria-label="Scheduler"]').click()
+  assert.equal(await recoveryWindow.getByText('Karras', { exact: true }).count(), 0)
+  await recoveryWindow.getByText('Normal', { exact: true }).last().click()
   await cfgScaleInput.fill('5.5')
   await stepsInput.fill('30')
   if (process.env.IMAGEGEN_SMOKE_PROJECT_SCREENSHOT) {
@@ -1299,6 +1341,8 @@ try {
       tab.generationDraft.seed.value === 73421 &&
       tab.generationDraft.sampling.steps === 30 &&
       tab.generationDraft.sampling.cfgScale === 5.5 &&
+      tab.generationDraft.sampling.sampler === 'Euler a' &&
+      tab.generationDraft.sampling.scheduler === 'Normal' &&
       tab.layers.map((layer) => layer.id).join(',') === `${rasterLayerId},${lowerRasterLayerId}`,
     'Save did not commit the reordered Project',
   )
@@ -1346,6 +1390,8 @@ try {
   })
   assert.equal(savedRasterPackage.project.generationDraft.sampling.steps, 30)
   assert.equal(savedRasterPackage.project.generationDraft.sampling.cfgScale, 1e-7)
+  assert.equal(savedRasterPackage.project.generationDraft.sampling.sampler, 'Euler a')
+  assert.equal(savedRasterPackage.project.generationDraft.sampling.scheduler, 'Normal')
   assert.deepEqual(
     savedRasterPackage.project.layers.map((layer) => layer.id),
     [rasterLayerId, lowerRasterLayerId],

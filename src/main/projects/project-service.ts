@@ -922,6 +922,19 @@ export class ProjectService {
         }
         break
       }
+      case 'sampling-pair': {
+        if (
+          draft.sampling.sampler === change.sampler &&
+          draft.sampling.scheduler === change.scheduler
+        ) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          sampling: { ...draft.sampling, sampler: change.sampler, scheduler: change.scheduler },
+        }
+        break
+      }
       case 'sampling-steps': {
         if (draft.sampling.steps === change.value) {
           return toTab(tabId, coordinator)

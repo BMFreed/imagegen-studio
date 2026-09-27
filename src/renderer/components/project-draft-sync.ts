@@ -194,6 +194,17 @@ function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChang
     draft.sampling.steps = change.value
     return true
   }
+  if (change.kind === 'sampling-pair') {
+    if (
+      draft.sampling.sampler === change.sampler &&
+      draft.sampling.scheduler === change.scheduler
+    ) {
+      return false
+    }
+    draft.sampling.sampler = change.sampler
+    draft.sampling.scheduler = change.scheduler
+    return true
+  }
   if (change.kind === 'sampling-cfg-scale') {
     if (draft.sampling.cfgScale === change.value) {
       return false

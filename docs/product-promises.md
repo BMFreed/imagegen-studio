@@ -31,10 +31,10 @@
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove, exact-version trigger autocomplete/подсветка, явный checkpoint/LoRA relink и Project → Manager focus проверены с SQLite, файлами и Electron; [exact-hash manifest](./engineering/phase-2b-model-compatibility-manifest.md) квалифицирует один официальный Illustrious v0.1 checkpoint, но Anima record, загрузка worker, embedding/VAE selectors и обратный handoff отсутствуют |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; main готовит Illustrious txt2img context и строгий worker request, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md) сохраняет durable input/SQLite row; renderer Generate, inference, dispatch, accepted provenance/storage ещё не реализованы |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md) и [candidate receipt](./engineering/phase-2b-candidate-publication-research.md); renderer Generate, inference, accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, LoRA trigger completion и [prompt actions](./engineering/project-prompt-actions-research.md) → text Save, exact LoRA stack/relink, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                                                         |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; staging repository пока не подключён к Project UI, release runtime отсутствует |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance и production repository для validated candidate/seed recovery; worker inference, renderer staging и принятие результата в `.igs` ещё не подключены |
 
 ### Статусы и доказательства
 
@@ -233,10 +233,12 @@ Local import может появиться отдельным flow; подроб
 и создания пресета покрыт прототипом; production provenance/storage не доказаны.
 Main подготавливает проверенный контекст одного Illustrious `txt2img`:
 точный checkpoint, Project target, prompts, Steps/CFG и фактический Fixed/Random
-seed. Отдельный durable enqueue checkpoint сохраняет immutable input и SQLite
-`pending` row; startup отменяет прежние незавершённые jobs. Это не принятый
-результат и не сохранённое provenance; renderer Generate, dispatch и генерации
-пока нет.
+seed. Production Project также сохраняет явно выбранную пару sampler/scheduler,
+без скрытого default. Durable enqueue сохраняет immutable input и SQLite
+`pending` row; startup отменяет прежние незавершённые jobs. Candidate repository
+может опубликовать проверенный временный output и сохранить фактический seed,
+но это не принятый результат и не provenance. Renderer Generate, dispatch,
+реальной генерации и acceptance пока нет.
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
 worker отвечает `INFERENCE_UNAVAILABLE`. Результат и его provenance не создаются.
@@ -355,7 +357,8 @@ Save сохраняет слои с обозначенным placeholder. Raster
 теперь строится из frozen bbox и видимых слоёв отдельной worker-командой,
 без принятия результата или изменения `.igs`; это пока не работающая
 генерация. В production Project можно редактировать обычный текст позитивного
-и негативного prompt, политику Seed, значение Fixed seed, Steps и CFG scale
+и негативного prompt, политику Seed, значение Fixed seed, явную пару
+sampler/scheduler, Steps и CFG scale
 как часть `generationDraft`. Эти правки принадлежат документу и проходят через
 dirty/shadow/явный Save; они не устанавливают фактический seed для `Reuse`.
 Electron smoke проверяет немедленный Save→`.igs`→reopen и native `app.quit()` с
@@ -382,7 +385,8 @@ text Undo/Redo работают в Electron. Это не общий Project undo
 [Проверки LoRA](./engineering/phase-2a-project-storage-research.md#project-lora-stack-validation)
 не доказывают её загрузку и применение в ML pipeline.
 Не готовы полный generation pipeline/export, устанавливаемый
-Linux/NVIDIA runtime и восстановление непринятых результатов. Home загружает
+Linux/NVIDIA runtime и пользовательский flow восстановления непринятых
+результатов; локальный staging repository пока не подключён к Project UI. Home загружает
 подписанные thumbnails из проверенного `.igs` или пересобираемого cache.
 Clean Rebuild Preview проверен
 через UI→IPC→development worker→`.igs`: исходный документ и ассеты остаются
@@ -425,7 +429,9 @@ Clean Rebuild Preview проверен
 **Продуктовый статус:** принято как обязательный MVP scope.
 
 **Публичный статус:** пока не обещать как готовую возможность — acceptance и
-undo показаны на in-memory candidates, production worker/storage отсутствуют.
+undo показаны на in-memory candidates. Main имеет локальный recovery repository
+для проверенного кандидата и seed, но worker inference и пользовательские
+preview/acceptance/storage handoff отсутствуют.
 
 ### Обещание
 

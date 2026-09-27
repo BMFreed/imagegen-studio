@@ -38,6 +38,12 @@ function apply(tab: ProjectTab, change: ProjectGenerationDraftChange): ProjectTa
 
       break
     }
+    case 'sampling-pair': {
+      next.generationDraft.sampling.sampler = change.sampler
+      next.generationDraft.sampling.scheduler = change.scheduler
+
+      break
+    }
     case 'sampling-steps': {
       next.generationDraft.sampling.steps = change.value
 
@@ -155,6 +161,53 @@ test('Steps and CFG scale stay independent during rapid edits and Save flush', a
   await sync.flush(saved.id)
   assert.equal(saved.generationDraft.sampling.steps, null)
   assert.equal(saved.generationDraft.sampling.cfgScale, null)
+})
+
+test('sampler and scheduler edits stay paired through pending draft overlay and flush', async () => {
+  let saved = projectTab()
+  const sent: ProjectGenerationDraftChange[] = []
+  const overlays: (ProjectTab['generationDraft'] | null)[] = []
+  let releaseFirst: (() => void) | undefined
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => {
+      saved = tab
+    },
+    onError: () => assert.fail('Unexpected draft error'),
+    onOverlay: (_tabId, draft) => overlays.push(draft),
+    send: async (_tabId, change) => {
+      sent.push(change)
+      if (sent.length === 1) {
+        await first
+      }
+      saved = apply(saved, change)
+      return saved
+    },
+  })
+
+  sync.change(saved, { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: null })
+  sync.change(saved, { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: 'Karras' })
+  assert.deepEqual(
+    {
+      sampler: overlays.at(-1)?.sampling.sampler,
+      scheduler: overlays.at(-1)?.sampling.scheduler,
+    },
+    { sampler: 'DPM++ 2M', scheduler: 'Karras' },
+  )
+  assert.deepEqual(sent, [{ kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: null }])
+
+  const flush = sync.flush(saved.id)
+  releaseFirst?.()
+  await flush
+  assert.deepEqual(sent, [
+    { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: null },
+    { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: 'Karras' },
+  ])
+  assert.equal(saved.generationDraft.sampling.sampler, 'DPM++ 2M')
+  assert.equal(saved.generationDraft.sampling.scheduler, 'Karras')
+  assert.equal(overlays.at(-1), null)
 })
 
 test('new edit after failed request restarts even before the failed run settles', async () => {

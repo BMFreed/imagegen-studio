@@ -18,7 +18,6 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
-import { once } from 'node:events'
 import { type BigIntStats, createReadStream, createWriteStream } from 'node:fs'
 import { link, lstat, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -122,6 +121,10 @@ class PngStructureValidator implements ImageStructureValidator {
   private pending = Buffer.alloc(0)
   private sawIdat = false
   private sawIend = false
+  private scanlinePasses: { dataBytes: number; rows: number }[] = []
+  private scanlinePassIndex = 0
+  private scanlineRowIndex = 0
+  private scanlineRowOffset = 0
   private state: 'chunk-crc' | 'chunk-data' | 'chunk-header' | 'done' | 'signature' = 'signature'
   private stoppedIdat = false
 
@@ -188,10 +191,13 @@ class PngStructureValidator implements ImageStructureValidator {
           }
           if (this.chunkType === 'IDAT') {
             if (this.inflateFailure) {
-              throw this.invalid('Invalid PNG compressed image.')
+              throw this.inflateError()
             }
-            if (!this.inflator!.write(part)) {
-              await once(this.inflator!, 'drain')
+            try {
+              await this.writeIdat(part)
+            } catch {
+              await this.inflateDone
+              throw this.inflateError()
             }
           }
           this.pending = this.pending.subarray(size)
@@ -300,9 +306,22 @@ class PngStructureValidator implements ImageStructureValidator {
     }
     this.inflator!.end()
     await this.inflateDone
-    if (this.inflateFailure || this.decodedBytes !== this.expectedDecodedBytes) {
+    if (this.inflateFailure) {
+      throw this.inflateError()
+    }
+    if (
+      this.decodedBytes !== this.expectedDecodedBytes ||
+      this.scanlinePassIndex !== this.scanlinePasses.length
+    ) {
       throw this.invalid('Invalid PNG compressed image.')
     }
+  }
+
+  private inflateError(): IgsPackageError {
+    const failure = this.inflateFailure
+    return failure instanceof IgsPackageError
+      ? failure
+      : this.invalid('Invalid PNG compressed image.')
   }
 
   private invalid(message: string): IgsPackageError {
@@ -317,6 +336,7 @@ class PngStructureValidator implements ImageStructureValidator {
         if (this.decodedBytes > this.expectedDecodedBytes) {
           throw this.invalid('PNG decoded data exceeds dimensions.')
         }
+        this.validateScanlineFilters(chunk)
       }
     })().catch((error: unknown) => {
       this.inflateFailure = error instanceof Error ? error : this.invalid('Invalid PNG stream.')
@@ -377,10 +397,14 @@ class PngStructureValidator implements ImageStructureValidator {
     ) {
       throw this.invalid('Unsupported or invalid PNG IHDR.')
     }
-    const passBytes = (passWidth: number, passHeight: number): number =>
-      passWidth === 0 || passHeight === 0
-        ? 0
-        : passHeight * (1 + Math.ceil((passWidth * channels * bitDepth) / 8))
+    const passBytes = (passWidth: number, passHeight: number): number => {
+      if (passWidth === 0 || passHeight === 0) {
+        return 0
+      }
+      const dataBytes = Math.ceil((passWidth * channels * bitDepth) / 8)
+      this.scanlinePasses.push({ dataBytes, rows: passHeight })
+      return passHeight * (1 + dataBytes)
+    }
     if (this.ihdr[12] === 0) {
       this.expectedDecodedBytes = passBytes(width, height)
     } else {
@@ -402,6 +426,63 @@ class PngStructureValidator implements ImageStructureValidator {
     if (this.expectedDecodedBytes > this.limits.archiveUncompressedBytes) {
       throw new IgsPackageError('PACKAGE_LIMIT', `Decoded PNG is too large: ${this.memberPath}`)
     }
+  }
+
+  private validateScanlineFilters(chunk: Buffer): void {
+    let offset = 0
+    while (offset < chunk.length) {
+      const pass = this.scanlinePasses[this.scanlinePassIndex]
+      if (!pass) {
+        throw this.invalid('PNG decoded data exceeds dimensions.')
+      }
+      if (this.scanlineRowOffset === 0) {
+        if (chunk[offset] > 4) {
+          throw this.invalid('Invalid PNG scanline filter.')
+        }
+        offset++
+        this.scanlineRowOffset = 1
+      }
+      const dataBytes = Math.min(pass.dataBytes + 1 - this.scanlineRowOffset, chunk.length - offset)
+      offset += dataBytes
+      this.scanlineRowOffset += dataBytes
+      if (this.scanlineRowOffset === pass.dataBytes + 1) {
+        this.scanlineRowOffset = 0
+        this.scanlineRowIndex++
+        if (this.scanlineRowIndex === pass.rows) {
+          this.scanlinePassIndex++
+          this.scanlineRowIndex = 0
+        }
+      }
+    }
+  }
+
+  private writeIdat(part: Buffer): Promise<void> {
+    const inflator = this.inflator!
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      const cleanup = (): void => {
+        inflator.off('close', onClose)
+        inflator.off('error', onError)
+      }
+      const settle = (error?: Error | null): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        cleanup()
+        if (error) {
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+      const onClose = (): void => settle(this.invalid('PNG inflater closed before IDAT completed.'))
+      const onError = (error: Error): void => settle(error)
+      // A malformed zlib stream can close without a write callback or `drain`.
+      inflator.once('close', onClose)
+      inflator.once('error', onError)
+      inflator.write(part, (error: Error | null | undefined) => settle(error))
+    })
   }
 }
 

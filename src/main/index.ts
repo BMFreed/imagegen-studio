@@ -34,6 +34,7 @@ import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
 import { GenerationQueueRepository } from './projects/generation-queue.js'
+import { GenerationStagingRepository } from './projects/generation-staging.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
@@ -127,12 +128,13 @@ if (!gotInstanceLock) {
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
       try {
-        // Old jobs never resume automatically. This also reconciles interrupted input publication
-        // before any future queue processor can see the database.
+        // Old jobs never resume automatically. Reconcile manifest-first candidate publication
+        // after queue restart cancellation and before any future processor can use the database.
         await new GenerationQueueRepository(database.db, paths.dataRoot).recoverAfterRestart()
+        await new GenerationStagingRepository(database.db, paths.dataRoot).recoverAfterRestart()
       } catch (error) {
         // No generation processor is active in this checkpoint; keep document/model access alive.
-        console.error('Generation queue recovery is unavailable', error)
+        console.error('Generation recovery is unavailable', error)
       }
       const projectRepository = new ProjectIndexRepository(database.db)
       const projectService = new ProjectService({

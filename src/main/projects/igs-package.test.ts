@@ -25,7 +25,12 @@ import { crc32, deflateSync } from 'node:zlib'
 import * as yauzl from 'yauzl'
 import * as yazl from 'yazl'
 
-import { IgsPackageError, readIgsPackage, saveIgsPackage } from './igs-package.js'
+import {
+  IgsPackageError,
+  readIgsPackage,
+  saveIgsPackage,
+  validateSrgbPngStream,
+} from './igs-package.js'
 
 // Real encoded 2x2 images. Preview production is injected by the caller, never faked by the ZIP layer.
 const PNG = Buffer.from(
@@ -54,6 +59,44 @@ function pngWithIcc(png: Buffer, profile: Buffer): Buffer {
     'iCCP',
     Buffer.concat([Buffer.from('profile\0\0', 'ascii'), deflateSync(profile)]),
   )
+}
+
+function pngFromScanlines(decoded: Buffer, interlaced: boolean, width = 8, height = 8): Buffer {
+  const chunk = (type: string, payload: Buffer): Buffer => {
+    const tag = Buffer.from(type, 'ascii')
+    const header = Buffer.alloc(8)
+    header.writeUInt32BE(payload.length, 0)
+    tag.copy(header, 4)
+    const checksum = Buffer.alloc(4)
+    checksum.writeUInt32BE(crc32(Buffer.concat([tag, payload])))
+    return Buffer.concat([header, payload, checksum])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8 // bits per sample
+  ihdr[9] = 6 // RGBA
+  ihdr[12] = interlaced ? 1 : 0
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(decoded)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+async function validatePngInChunks(
+  png: Buffer,
+  chunkBytes = 7,
+  maxBytes = 1024,
+  maxDimension = 8,
+): Promise<void> {
+  async function* chunks(): AsyncIterable<Buffer> {
+    for (let offset = 0; offset < png.length; offset += chunkBytes) {
+      yield png.subarray(offset, offset + chunkBytes)
+    }
+  }
+  await validateSrgbPngStream(chunks(), 'candidate.png', maxBytes, maxDimension)
 }
 
 function webpWithIcc(webp: Buffer, profile: Buffer): Buffer {
@@ -506,6 +549,94 @@ test('profileless PNG preview accepts sRGB-compatible color signaling', async ()
     }
   })
 })
+
+for (const fixture of [
+  {
+    interlaced: false,
+    invalidFilterOffset: 99, // fourth row: three preceding 33-byte scanlines
+    name: 'noninterlaced',
+    rowBytes: Array.from({ length: 8 }, () => 32),
+  },
+  {
+    interlaced: true,
+    invalidFilterOffset: 88, // second row of pass 6, after eight complete scanlines
+    name: 'Adam7 interlaced',
+    // Actual 8x8 RGBA Adam7 scanlines, in PNG pass order.
+    rowBytes: [4, 4, 8, 8, 8, 16, 16, 16, 16, 16, 16, 32, 32, 32, 32],
+  },
+]) {
+  test(`PNG scanline filters reject invalid value in ${fixture.name} image`, async () => {
+    const decoded = Buffer.concat(fixture.rowBytes.map((bytes) => Buffer.alloc(bytes + 1)))
+    for (let filter = 0; filter <= 4; filter++) {
+      const validDecoded = Buffer.from(decoded)
+      validDecoded[fixture.invalidFilterOffset] = filter
+      await validatePngInChunks(pngFromScanlines(validDecoded, fixture.interlaced))
+    }
+
+    const invalidDecoded = Buffer.from(decoded)
+    invalidDecoded[fixture.invalidFilterOffset] = 5 // PNG filter methods are only 0..4.
+    const invalid = pngFromScanlines(invalidDecoded, fixture.interlaced)
+    await assert.rejects(validatePngInChunks(invalid), {
+      code: 'INVALID_IMAGE',
+      message: /PNG scanline filter/,
+    })
+  })
+}
+
+test(
+  'invalid scanline filter in a large IDAT fails without waiting for inflater drain',
+  {
+    timeout: 10_000,
+  },
+  async () => {
+    const width = 256
+    const height = 256
+    const stride = 1 + width * 4
+    const decoded = Buffer.alloc(height * stride)
+    let state = 0x12_34_56_78
+    for (let row = 0; row < height; row++) {
+      for (let pixelByte = 1; pixelByte < stride; pixelByte++) {
+        state ^= state << 13
+        state ^= state >>> 17
+        state ^= state << 5
+        decoded[row * stride + pixelByte] = state & 0xff
+      }
+    }
+    const valid = pngFromScanlines(decoded, false, width, height)
+    assert.ok(valid.length > 64 * 1024)
+    await validatePngInChunks(valid, valid.length, valid.length, width)
+
+    decoded[0] = 5
+    const invalid = pngFromScanlines(decoded, false, width, height)
+    assert.ok(invalid.length > 64 * 1024)
+    await assert.rejects(validatePngInChunks(invalid, invalid.length, invalid.length, width), {
+      code: 'INVALID_IMAGE',
+      message: /PNG scanline filter/,
+    })
+  },
+)
+
+test(
+  'malformed compressed IDAT with a valid chunk checksum settles instead of hanging',
+  { timeout: 10_000 },
+  async () => {
+    const valid = pngFromScanlines(Buffer.alloc(8 * 33), false)
+    await validatePngInChunks(valid, valid.length)
+
+    const invalid = Buffer.from(valid)
+    const idatOffset = 8 + 12 + 13 // PNG signature and IHDR chunk
+    assert.equal(invalid.toString('ascii', idatOffset + 4, idatOffset + 8), 'IDAT')
+    const idatBytes = invalid.readUInt32BE(idatOffset)
+    invalid[idatOffset + 8] = 0xff // Invalid zlib header, but a valid PNG chunk CRC.
+    invalid.writeUInt32BE(
+      crc32(invalid.subarray(idatOffset + 4, idatOffset + 8 + idatBytes)),
+      idatOffset + 8 + idatBytes,
+    )
+    await assert.rejects(validatePngInChunks(invalid, invalid.length), {
+      code: 'INVALID_IMAGE',
+    })
+  },
+)
 
 test('createOnly preserves an existing unrelated Project at the same path', async () => {
   await inTemporaryDirectory(async (directory) => {

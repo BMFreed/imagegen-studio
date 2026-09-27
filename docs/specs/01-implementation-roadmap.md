@@ -58,11 +58,11 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
 | Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group; Project → Manager focus на выбранных checkpoint и версии; exact-hash compatibility manifest для официального Illustrious v0.1 | Hard remove с reference/job diagnostics; обратный и остальные resource handoff; Anima compatibility record, реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
-| Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
+| Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate | Подключить staging recovery к Project UI, acceptance, provenance и accepted history | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
-| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
+| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite `pending` row с restart cancellation; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, queue dispatch/actions, Generate, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue repository с claim/cancel/failure; repository публикации первого проверенного candidate, seed cursor и restart reconciliation; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, queue processor/dispatch и UI actions, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -377,12 +377,11 @@ generation DTO и source map из документационного трека.
   получают `canceled`, валидные completed candidates восстанавливаются даже
   после успешного Save. Повторный late event не оживляет закрытую сессию.
 
-**Текущий подготовительный checkpoint:** main может собрать
+**Подготовительный checkpoint:** main может собрать
 [проверенный контекст](../engineering/phase-2b-generation-preparation-research.md)
 одного Illustrious `txt2img` из замороженного Project target, точной локальной
-версии checkpoint и конкретного Fixed/Random seed. Это ещё не очередь и не
-worker DTO: sampler/scheduler, installable runtime, inference и публикация
-candidate остаются незавершёнными. `Reuse` ждёт durable seed cursor.
+версии checkpoint и конкретного Fixed/Random seed. На этом раннем этапе ещё
+не было очереди и worker DTO; последующие checkpoints ниже расширяют границу.
 
 **Request checkpoint:** [Illustrious `txt2img` boundary](../engineering/phase-2b-illustrious-request-research.md)
 проверяет sampler/scheduler, CFG, размер, prediction type и capability, временно
@@ -395,9 +394,23 @@ candidate остаются незавершёнными. `Reuse` ждёт durabl
 SHA-256/размеру и авторскому prediction type. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
 сохраняют один замороженный Illustrious `txt2img` как app-owned input и
 `pending` row; Electron startup отменяет старые `pending`/`running` rows и
-сверяет orphan input directories. Это пока repository/bootstrap boundary:
-renderer Generate, dispatch, GPU pipeline, output/candidate publication,
-queue UI/actions и фактический seed cursor не подключены.
+сверяет orphan input directories.
+
+**Queue lifecycle и candidate publication checkpoint:** Project позволяет
+выбрать sampler/scheduler из явных пар для первого Illustrious slice без
+скрытого default; выбор проходит IPC, shadow и `.igs` Save/reopen. Queue
+repository проверяет frozen input до claim, удерживает единственный running
+слот при запросе отмены до подтверждённого выхода worker и защищает failure
+от устаревшей sequence. [Candidate publication](../engineering/phase-2b-candidate-publication-research.md)
+валидирует sRGB PNG, публикует app-owned manifest/asset раньше SQLite
+completion и actual-seed cursor с проверкой той же sequence, а затем
+восстанавливает этот crash window при Electron startup. Это всё ещё
+repository/bootstrap boundary: renderer Generate,
+worker dispatch/GPU pipeline, Queue Manager UI, staging preview/acceptance,
+retry/prune, quota/discard и подключение `Reuse` остаются незавершёнными.
+Перед подключением processor требуется наблюдаемое завершение дочернего
+процесса до acknowledgement отмены: текущий `ProjectWorkerClient.close()`
+после `SIGKILL` не дожидается события `exit` и сам по себе не освобождает слот.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

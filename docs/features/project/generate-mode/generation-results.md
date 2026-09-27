@@ -253,6 +253,22 @@ Undo removes the accepted project mutation; it does not reconstruct the previous
 
 It is not a permanent right sidebar and does not replace Queue Manager or the layer stack.
 
+## Production repository checkpoint
+
+Main has a separate local recovery store for one completed Illustrious
+`txt2img` candidate. Publication checks the frozen queue item and output PNG,
+durably writes the asset and session manifest, then atomically marks the queue
+item complete and advances the Project's actual-seed cursor in SQLite. Startup
+reconciles a manifest published just before a crash; a user-canceled or corrupt
+output is not exposed. A verified candidate remains listable after its queue
+row is pruned. The Electron startup invokes this reconciliation after queue
+recovery.
+
+The production renderer does not yet list or accept these candidates. No
+worker inference, candidate preview/resource URL, acceptance, provenance,
+export, session discard or storage quota/cleanup is connected. The repository
+checkpoint therefore does not fulfill the user-facing PP-008 flow.
+
 ## Vue Prototype Coverage
 
 The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The floating strip supports focus, checkbox selection, Select all completed/Clear selection in a menu, previous/next, preview visibility, Discard All and context-specific multi-accept labels. Preview navigation scrolls the thumbnail strip to keep the focused candidate in view; it does not change acceptance selection.
