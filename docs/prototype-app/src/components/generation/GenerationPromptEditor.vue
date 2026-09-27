@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { inspectPromptSyntax } from '../../../../../src/shared/projects/prompt-diagnostics'
+
 import { autocompletion, completionKeymap, startCompletion } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { Compartment, EditorSelection, EditorState, type StateEffect } from '@codemirror/state'
@@ -14,10 +16,12 @@ import type {
   GenerationPromptSelection,
 } from './generation.types'
 
+import { promptSyntaxExtensions } from '../../../../../src/renderer/components/prompt-diagnostics-codemirror'
 import {
   applyPromptAttention,
   promptAttentionKeymap,
 } from '../../../../../src/renderer/components/prompt-editing-codemirror'
+import PromptDiagnosticsIndicator from '../../../../../src/renderer/components/PromptDiagnosticsIndicator.vue'
 import {
   addPromptEmbeddingEffect,
   createPromptCompletionSource,
@@ -48,8 +52,9 @@ const props = withDefaults(
     loras: GenerationLora[]
     minimumLines?: number
     polarity: GenerationPromptPolarity
+    showSyntaxStatus?: boolean
   }>(),
-  { minimumLines: 4 },
+  { minimumLines: 4, showSyntaxStatus: true },
 )
 const emit = defineEmits<{ blur: []; focus: [] }>()
 const prompt = defineModel<GenerationPrompt>({ required: true })
@@ -66,6 +71,7 @@ let syncingExternal = false
 const matches = computed(() => getPromptEmbeddingMatches(prompt.value, props.embeddings))
 const missingMatches = computed(() => matches.value.filter((match) => match.ref?.resource.missing))
 const ambiguousMatches = computed(() => matches.value.filter((match) => match.ambiguous))
+const syntaxReport = computed(() => inspectPromptSyntax(prompt.value.text))
 
 const completionSource = createPromptCompletionSource({
   danbooruTags: () => props.danbooruTags,
@@ -119,6 +125,7 @@ function createView() {
           { dark: true },
         ),
         tripleClickPhraseSelection(),
+        promptSyntaxExtensions,
         promptTooltipParent(),
         readOnlyCompartment.of([
           EditorState.readOnly.of(Boolean(props.disabled)),
@@ -283,6 +290,9 @@ void attentionTargetAvailable
     :class="{ 'generation-prompt-editor--disabled': disabled }"
     :style="{ '--prompt-minimum-lines': minimumLines }"
   >
+    <div v-if="showSyntaxStatus" class="syntax-status">
+      <PromptDiagnosticsIndicator :report="syntaxReport" :title="ariaLabel" />
+    </div>
     <div ref="host" class="generation-prompt-editor__host" />
     <div
       v-if="missingMatches.length || ambiguousMatches.length"
@@ -302,11 +312,18 @@ void attentionTargetAvailable
 
 <style scoped>
 .generation-prompt-editor {
+  position: relative;
   min-height: calc(var(--prompt-minimum-lines) * 20px + 18px);
   max-height: 420px;
   overflow: hidden;
   resize: vertical;
   color: var(--app-text);
+}
+.syntax-status {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  right: 5px;
 }
 .generation-prompt-editor__host {
   height: 100%;

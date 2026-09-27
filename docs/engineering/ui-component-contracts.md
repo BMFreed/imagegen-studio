@@ -159,3 +159,22 @@ clipboard или CodeMirror. Владелец вычисляет непусту�
 Prototype сохраняет свою document history; Electron пока имеет local text undo.
 [Проверки](./project-prompt-actions-research.md): реальные EditorState/history,
 Electron pointer/keyboard, clipboard, сохранённый `.igs`, prototype consumers.
+
+## Диагностика синтаксиса prompt
+
+[`PromptDiagnosticsIndicator`](../../src/renderer/components/PromptDiagnosticsIndicator.vue)
+принимает `report: PromptSyntaxReport` и `title`. Это локальный status control,
+который показывает список по click/keyboard; он не изменяет текст и не управляет
+Save/Generate. Общие [правила](../../src/shared/projects/prompt-diagnostics.ts)
+возвращают диапазоны, severity, message и явный `truncated` при превышении
+100 отображаемых issues. [CodeMirror extension](../../src/renderer/components/prompt-diagnostics-codemirror.ts)
+кэширует отчёт на document state, рисует подчёркивания и показывает hover hints.
+Статус остаётся доступным в read-only редакторе.
+
+`GenerationPromptEditor.showSyntaxStatus` по умолчанию true; ProjectPromptCard
+отключает внутренний индикатор и помещает тот же компонент в существующую
+строку metadata. Остальные потребители получают встроенный status без знания
+Project. CSS marks/tooltips используют общий `prompt-editor.css` и токены
+`--prompt-syntax-error` / `--prompt-syntax-warning`; Naive button severity задаётся
+публичным `type`. Нельзя превращать syntax report в resource validation error.
+[Проверки и ограничения](./project-prompt-diagnostics-research.md).

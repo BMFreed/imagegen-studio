@@ -7,6 +7,8 @@
   --prompt-editor-focus-border: #7ee787;
   --prompt-editor-focus-shadow: rgb(100 227 110 / 30%);
   --prompt-editor-focus-surface: rgb(20 51 25 / 0.1);
+  --prompt-syntax-error: #e88080;
+  --prompt-syntax-warning: #f2c97d;
 }
 
 body .cm-tooltip {
@@ -78,5 +80,22 @@ body .cm-tooltip-autocomplete .cm-completionMatchedText {
   background: var(--app-elevated);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
+  font-size: var(--app-font-size-meta);
+}
+
+/* Shared CodeMirror marks: non-blocking hints, not resource validation. */
+.cm-prompt-syntax-error {
+  text-decoration: underline wavy var(--prompt-syntax-error);
+  text-underline-offset: 3px;
+}
+.cm-prompt-syntax-warning {
+  text-decoration: underline wavy var(--prompt-syntax-warning);
+  text-underline-offset: 3px;
+}
+.prompt-syntax-tooltip {
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: var(--app-font-size-meta);
 }

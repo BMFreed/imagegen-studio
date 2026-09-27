@@ -51,9 +51,37 @@ Severity:
 
 Diagnostics must not appear as global app errors. They belong to the prompt field that contains the issue.
 
-## Vue Prototype Coverage
+## Implemented coverage (27.09.2026)
 
-The prototype places token count and a local warning icon in the prompt header. The `errors` scenario triggers a deterministic `Check prompt weights` tooltip when serialized prompt text contains the mock `(broken` marker. It does not yet implement a general parser, range underlines, severity levels, quick fixes or a production tokenizer. Missing embedding resources are a separate token-local warning and block Generate through prompt validation.
+Electron and the Vue prototype use the same conservative text inspection and
+CodeMirror extension. They check nested `()`, `[]`, `{}`, escaped characters,
+unclosed/unexpected/mismatched delimiters, malformed `(phrase:weight)` and
+numeric `(phrase)weight` suffixes. Finite signed decimal/exponent values are
+accepted without imposing model-specific ranges. `+`/`-` attention markers,
+dynamic alternatives, escaped colons, URL schemes and ordinary punctuation are
+not treated as malformed weights. Multiple top-level colons are left to the
+pipeline parser instead of guessing a language grammar.
+
+Structure issues have a red wavy underline; suspicious weights use amber.
+Hover over the marked range explains the issue. A compact header button opens
+the diagnostic list by pointer or keyboard, using text labels as well as color.
+Project places it beside Info (and the prototype's approximate token count);
+prototype Preset/Apply/New Project editors show it inside their editor surface.
+Popovers/hover tooltips are outside scroll clipping. Reports are capped at 100
+displayed issues with explicit truncation feedback; this is a UI work ceiling,
+not a model or prompt-length limit.
+
+Derived reports update on typing, external replacement, Undo and reopen. They
+never modify authored text, sidecars, selection, undo history, dirty state or
+validation. Electron saves malformed text through the existing `.igs` path;
+prototype Generate/Apply remain available with syntax hints alone. Missing or
+ambiguous embedding resources remain separate blocking resource diagnostics.
+
+The mock `(broken` check has been removed. Production tokenizer/counts,
+pipeline-aware parsing, quick fixes and a pre-generation warning are still
+pending. The production inference entry point does not yet exist; non-blocking
+Generate evidence currently applies only to the prototype.
+[Implementation and verification](../../../engineering/project-prompt-diagnostics-research.md).
 
 ## Acceptance Criteria
 

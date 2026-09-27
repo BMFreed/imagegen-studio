@@ -48,6 +48,8 @@ LoRA draft добавлен в `a188cd2`: [границы и проверки](.
 LoRA-контекст prompt перенесён в Electron: [проверки](../engineering/project-lora-prompt-research.md).
 Выделение фраз, attention, Copy/Clear и общая справка редактора также подключены:
 [проверки и границы local undo](../engineering/project-prompt-actions-research.md).
+Добавлены общие неблокирующие syntax diagnostics prompt:
+[проверки](../engineering/project-prompt-diagnostics-research.md).
 Строка «есть» означает указанный сценарий, а не завершение всей фазы.
 Исторические checkpoints ниже сохраняют дату и границы своих проверок.
 
@@ -58,7 +60,7 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
-| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear и общей справкой, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
+| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
 | Generate/results | Подготовка raster input на service/worker boundary; UI generation пока только mock | Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |

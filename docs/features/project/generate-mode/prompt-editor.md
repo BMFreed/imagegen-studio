@@ -64,6 +64,11 @@ not mutate text. Actions preserve the selected range; Clear and attention are
 separate local undo steps. Explicit Save persists their text through the existing
 Project IPC and real `.igs` writer/loader.
 
+[Syntax diagnostics](./prompt-diagnostics.md#implemented-coverage-27092026) now
+mark bracket/weight issues and expose local explanations in both editors. They
+are advisory derived state: malformed text remains editable and saveable without
+automatic fixes or persisted annotations.
+
 Embedding diagnostics/insertion, Danbooru suggestions, tokenizer counts, dynamic
 preview and focus-to-blur Project undo remain pending in Electron. It uses local
 text history: undoing Clear restores text, but does not recreate an embedding
@@ -75,4 +80,5 @@ product contract work, not evidence of completed generation.
 LoRA context and portable popup styling are shared with the prototype without
 importing mock embedding resolution into the production editor. Checked behavior
 and remaining scope: [LoRA prompt review](../../../engineering/project-lora-prompt-research.md)
-and [editing actions review](../../../engineering/project-prompt-actions-research.md).
+[editing actions review](../../../engineering/project-prompt-actions-research.md),
+[syntax diagnostics review](../../../engineering/project-prompt-diagnostics-research.md).

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LoraTriggerSource } from '../../shared/projects/lora-triggers.js'
+import { inspectPromptSyntax } from '../../shared/projects/prompt-diagnostics.js'
 import { findTopLevelPromptPhraseRange } from '../../shared/projects/prompt-text.js'
 
 import {
@@ -13,6 +14,7 @@ import { Compartment, EditorState, Transaction } from '@codemirror/state'
 import { EditorView, keymap, tooltips } from '@codemirror/view'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { promptSyntaxExtensions } from './prompt-diagnostics-codemirror.js'
 import {
   applyPromptAttention,
   clearPromptTransaction,
@@ -20,6 +22,7 @@ import {
   tripleClickPhraseSelection,
 } from './prompt-editing-codemirror.js'
 import { loraCompletionSource, loraContextExtensions } from './prompt-lora-codemirror.js'
+import PromptDiagnosticsIndicator from './PromptDiagnosticsIndicator.vue'
 import PromptEditorActions from './PromptEditorActions.vue'
 import PromptEditorHelp from './PromptEditorHelp.vue'
 
@@ -35,6 +38,7 @@ const host = ref<HTMLElement | null>(null)
 const focused = ref(false)
 const selection = ref({ anchor: 0, head: 0 })
 const copyStatus = ref('')
+const syntaxReport = computed(() => inspectPromptSyntax(text.value))
 const attentionAvailable = computed(() => {
   const selected = selection.value
   const range =
@@ -111,6 +115,7 @@ onMounted(() => {
       extensions: [
         EditorView.lineWrapping,
         tripleClickPhraseSelection(),
+        promptSyntaxExtensions,
         tooltips({ parent: document.body, position: 'fixed' }),
         context.of(loraContextExtensions(props.loraSources, props.embeddingTokens)),
         completion.of(completionExtensions()),
@@ -223,6 +228,7 @@ onBeforeUnmount(() => {
         :title="ariaLabel"
         @focusEditor="focus"
       />
+      <PromptDiagnosticsIndicator :report="syntaxReport" :title="ariaLabel" />
       <span class="copy-status" role="status">{{ copyStatus }}</span>
     </header>
     <div ref="host" class="prompt-host" />

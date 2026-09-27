@@ -29,6 +29,7 @@ import {
   checkNewProjectResolution,
 } from './desktop-layout-checks.mjs'
 import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
+import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -396,6 +397,19 @@ try {
   const actionPackage = await readIgsPackage(packagePath)
   assert.equal(actionPackage.project.generationDraft.positivePrompt.text, '(alpha phrase)+, beta word')
   assert.equal(actionPackage.project.generationDraft.negativePrompt.text, '(soft lighting)-, blur')
+  await checkPromptDiagnostics({ window, application, projectRegion })
+  await projectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await projectRegion.getByText('Saved', { exact: true }).waitFor()
+  const diagnosticPackage = await readIgsPackage(packagePath)
+  assert.equal(diagnosticPackage.project.generationDraft.positivePrompt.text, '(soft light')
+  assert.equal(diagnosticPackage.project.generationDraft.negativePrompt.text, '(blur:abc)')
+  assert.deepEqual(diagnosticPackage.project.generationDraft.positivePrompt.embeddingRefs, [])
+  await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
+  await window.getByRole('tab', { name: projectTitle }).waitFor({ state: 'detached' })
+  await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  await expect(positive).toHaveText('(soft light')
+  await expect(positive.locator('.cm-prompt-syntax-error')).toHaveText('(')
+  await expect(negative.locator('.cm-prompt-syntax-warning')).toHaveText('abc')
   await positive.fill('trigger 905, portrait')
   await negative.fill('trigger 905, blur')
   await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)

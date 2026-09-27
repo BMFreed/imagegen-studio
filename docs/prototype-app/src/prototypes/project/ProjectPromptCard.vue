@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { AlertTriangle } from '@vicons/tabler'
-import { NIcon, NText, NTooltip, useMessage } from 'naive-ui'
+import { inspectPromptSyntax } from '../../../../../src/shared/projects/prompt-diagnostics'
+
+import { NText, useMessage } from 'naive-ui'
 import { computed, ref } from 'vue'
 
 import type {
@@ -10,6 +11,7 @@ import type {
 import type { GenerationPromptEditorHandle } from '../../components/generation/GenerationPromptEditor.vue'
 import type { ProjectSession } from './project.types'
 
+import PromptDiagnosticsIndicator from '../../../../../src/renderer/components/PromptDiagnosticsIndicator.vue'
 import PromptEditorActions from '../../../../../src/renderer/components/PromptEditorActions.vue'
 import PromptEditorHelp from '../../../../../src/renderer/components/PromptEditorHelp.vue'
 import {
@@ -40,7 +42,7 @@ const value = computed(
 )
 const serialized = computed(() => serializeGenerationPrompt(value.value))
 const tokenCount = computed(() => countPromptTokens(serialized.value))
-const warning = computed(() => serialized.value.includes('(broken'))
+const syntaxReport = computed(() => inspectPromptSyntax(serialized.value))
 const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? [])
 const transactionKey = computed(() => {
   const selected = props.session.ui.selection
@@ -105,16 +107,7 @@ function clear() {
         :title
         @focusEditor="editor?.focus()"
       />
-      <NTooltip v-if="warning">
-        <template v-slot:trigger>
-          <NIcon
-            aria-label="Check prompt weights"
-            class="prompt-warning"
-            :component="AlertTriangle"
-          />
-        </template>
-        Check prompt weights
-      </NTooltip>
+      <PromptDiagnosticsIndicator :report="syntaxReport" :title />
     </header>
     <GenerationPromptEditor
       ref="editor"
@@ -127,6 +120,7 @@ function clear() {
       :minimumLines="field === 'prompt' ? 9 : 4"
       :modelValue="value"
       :polarity="field === 'prompt' ? 'positive' : 'negative'"
+      :showSyntaxStatus="false"
       @blur="handleBlur"
       @focus="handleFocus"
       @update:modelValue="update($event)"
@@ -183,10 +177,6 @@ function clear() {
 }
 .prompt-meta .n-text {
   font-size: var(--app-font-size-meta);
-}
-.prompt-warning {
-  flex: 0 0 auto;
-  color: var(--status-warning);
 }
 .prompt-actions-rail {
   position: absolute;
