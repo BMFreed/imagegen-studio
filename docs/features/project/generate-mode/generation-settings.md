@@ -85,8 +85,11 @@ file and required Anima companions before copying the exact registry metadata
 into the Project. Changing Model Manager's Default never changes a saved
 Project reference. If its exact version becomes unavailable, Project keeps
 the saved name/version and shows a diagnostic with access to Model Manager;
-it does not select another version. This selection does not load a model in
-the worker or make Generate available.
+it does not select another version. A copied `.igs` with obsolete local IDs
+can explicitly link the same installed CivitAI checkpoint when main verifies
+the exact portable identity and file; this changes only local IDs in the
+document. Selection and relinking do not load a model in the worker or make
+Generate available.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
@@ -120,7 +123,10 @@ The selected model controls which fields are visible.
 
 Unsupported controls should be hidden or disabled with a clear reason.
 
-The selected model version is project-local state. The prototype selects exact version refs from shared generation fixtures (including Illustrious v1.1 and v1.0); the production registry connection to Model Manager remains required.
+The selected model version is project-local state. The prototype selects exact
+version refs from shared generation fixtures (including Illustrious v1.1 and
+v1.0); production Project selects installed checkpoints from the Model Manager
+registry. The inference worker still needs to consume and verify that reference.
 
 Model versioning is mandatory MVP scope under PP-004. Interactive selection of
 an exact installed version should therefore be implemented alongside the first
@@ -134,7 +140,7 @@ Rules:
 - existing `.igs` projects preserve their exact selected version;
 - changing the version in Generate updates the current project settings and future jobs for that project;
 - changing Model Manager's default version must not silently rewrite open projects, presets or accepted-result provenance;
-- if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager.
+- if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager; if the same exact version exists under different local IDs, offer an explicit verified link.
 
 If the user selects a v-prediction model, Generate should use the model metadata to pass the correct prediction type to the worker and store it in accepted-result provenance. This is a model compatibility behavior, not a separate user-facing generation mode.
 

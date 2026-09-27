@@ -29,7 +29,11 @@ import type { ProjectShadowInspection } from './project-shadow.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
-import { ProjectAutosaveCoordinator, type ProjectAutosaveOptions } from './project-autosave.js'
+import {
+  ProjectAutosaveCoordinator,
+  ProjectAutosaveError,
+  type ProjectAutosaveOptions,
+} from './project-autosave.js'
 import { buildFrozenGenerationTarget } from './project-generation-target.js'
 import {
   canonicalProjectPath,
@@ -99,6 +103,8 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_INVALID_INPUT'
       | 'PROJECT_LAYER_LOCKED'
       | 'PROJECT_LAYER_NOT_FOUND'
+      | 'PROJECT_MODEL_NOT_SELECTED'
+      | 'PROJECT_MODEL_RELINK_MISMATCH'
       | 'PROJECT_NOT_FOUND'
       | 'PROJECT_NOT_OPEN'
       | 'PROJECT_NOT_READY'
@@ -525,6 +531,71 @@ export class ProjectService {
     } finally {
       this.rebuilding.delete(projectId)
     }
+  }
+
+  /**
+   * Resolve the current saved ref through a main-owned registry; an in-flight edit cannot win a
+   * newer revision.
+   */
+  async relinkGenerationModel(
+    tabId: string,
+    resolve: (
+      saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+    ) => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>>,
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const saved = document.generationDraft.model
+    if (!saved) {
+      throw new ProjectServiceError(
+        'PROJECT_MODEL_NOT_SELECTED',
+        'Choose a checkpoint before linking an installed version.',
+      )
+    }
+    const resolved = await resolve(saved)
+    if (
+      resolved.kind !== 'checkpoint' ||
+      resolved.civitaiModelId !== saved.civitaiModelId ||
+      resolved.civitaiVersionId !== saved.civitaiVersionId ||
+      resolved.civitaiFileId !== saved.civitaiFileId ||
+      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase() ||
+      resolved.baseModelFamily !== saved.baseModelFamily
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_MODEL_RELINK_MISMATCH',
+        'The installed checkpoint does not match the exact Project reference.',
+      )
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while linking its model.',
+      )
+    }
+    // Relink only local registry IDs. Copied display and prediction metadata are frozen Project data.
+    const linked = {
+      ...saved,
+      localModelId: resolved.localModelId,
+      localVersionId: resolved.localVersionId,
+    }
+    if (
+      saved.localModelId === linked.localModelId &&
+      saved.localVersionId === linked.localVersionId
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: { ...document.generationDraft, model: linked },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
   }
 
   async resolveRecovery(projectId: string, decision: 'discard' | 'recover'): Promise<ProjectTab> {

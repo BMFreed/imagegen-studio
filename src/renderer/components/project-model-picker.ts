@@ -7,6 +7,11 @@ export type ModelResourceSelectionPlan =
   | { kind: 'select-default'; versionId: string }
   | { kind: 'unavailable' }
 
+export interface PortableModelRelinkCandidate {
+  resource: ModelCatalogItem
+  version: ModelVersionView
+}
+
 type SavedModel = NonNullable<ProjectTab['generationDraft']['model']>
 
 export function checkpointCatalog(catalog: ModelCatalogItem[]): ModelCatalogItem[] {
@@ -66,4 +71,40 @@ export function savedModelAvailability(
     return version.fileStatus
   }
   return version.baseModelFamily === null ? 'unknown-family' : 'ready'
+}
+
+/** A catalog match is only a suggestion. Main must verify the file before relinking. */
+export function portableModelRelinkCandidate(
+  saved: SavedModel | null,
+  catalog: ModelCatalogItem[],
+): PortableModelRelinkCandidate | null {
+  if (
+    !saved ||
+    savedModelAvailability(saved, catalog) === 'ready' ||
+    saved.civitaiModelId === null ||
+    saved.civitaiVersionId === null ||
+    saved.civitaiFileId === null ||
+    saved.baseModelFamily === null
+  ) {
+    return null
+  }
+
+  const matches = checkpointCatalog(catalog).flatMap((resource) =>
+    resource.versions
+      .filter(
+        (version) =>
+          resource.modelId === saved.civitaiModelId &&
+          version.civitaiVersionId === saved.civitaiVersionId &&
+          version.civitaiFileId === saved.civitaiFileId &&
+          version.sha256.toLowerCase() === saved.fileSha256.toLowerCase() &&
+          version.baseModelFamily === saved.baseModelFamily,
+      )
+      .map((version) => ({ resource, version })),
+  )
+  const match = matches.length === 1 ? matches[0]! : null
+  return match &&
+    selectableVersion(match.version) &&
+    (match.resource.id !== saved.localModelId || match.version.id !== saved.localVersionId)
+    ? match
+    : null
 }

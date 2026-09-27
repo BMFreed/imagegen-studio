@@ -2,7 +2,7 @@ import type { ModelImportPreview, ModelInstallJobView } from '../../shared/api.j
 
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -844,6 +844,90 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
         service.resolveGenerationCheckpoint(good.published.resourceId, good.published.versionId),
         { code: 'MODEL_FILE_MISSING' },
       )
+    },
+  )
+})
+
+test('portable checkpoint linking requires the same CivitAI file identity and bytes, then verifies the installed file', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  await withModelHarness(
+    civitaiApi({ requests }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const bytes = Buffer.from('portable illustrious checkpoint bytes')
+      const managedPath = path.join(root, 'portable.safetensors')
+      await writeFile(managedPath, bytes)
+      const digest = sha256(bytes)
+      const published = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: 'portable.safetensors',
+            sha256: digest,
+            sizeBytes: bytes.length,
+            verifiedAt: new Date().toISOString(),
+          },
+          resource: {
+            displayName: 'Destination checkpoint',
+            source: { kind: 'civitai', modelId: 427 },
+            sourceMetadata: {},
+            type: 'checkpoint',
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'SafeTensor',
+            name: 'Destination version',
+            predictionType: 'v_prediction',
+            source: {
+              expectedSha256: digest,
+              fileId: 882,
+              kind: 'civitai',
+              versionId: 881,
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+      const local = await service.resolveGenerationCheckpoint(
+        published.resourceId,
+        published.versionId,
+      )
+      const portable = {
+        ...local,
+        displayName: 'Original checkpoint name',
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        predictionType: null,
+        versionName: 'Original version name',
+      }
+      assert.deepEqual(await service.resolvePortableGenerationCheckpoint(portable), {
+        ...portable,
+        localModelId: local.localModelId,
+        localVersionId: local.localVersionId,
+      })
+      for (const mismatch of [
+        { ...portable, civitaiModelId: 428 },
+        { ...portable, civitaiVersionId: 880 },
+        { ...portable, civitaiFileId: 883 },
+        { ...portable, fileSha256: 'f'.repeat(64) },
+        { ...portable, baseModelFamily: 'anima' as const },
+      ]) {
+        await assert.rejects(service.resolvePortableGenerationCheckpoint(mismatch), {
+          code: 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
+        })
+      }
+      await assert.rejects(
+        service.resolvePortableGenerationCheckpoint({ ...portable, civitaiFileId: null }),
+        { code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE' },
+      )
+      await writeFile(managedPath, Buffer.alloc(bytes.length, 0x78))
+      await assert.rejects(service.resolvePortableGenerationCheckpoint(portable), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await rm(managedPath)
+      await assert.rejects(service.resolvePortableGenerationCheckpoint(portable), {
+        code: 'MODEL_FILE_MISSING',
+      })
     },
   )
 })

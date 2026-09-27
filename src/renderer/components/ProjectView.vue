@@ -27,6 +27,7 @@ import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
   checkpointCatalog,
   planModelResourceSelection,
+  portableModelRelinkCandidate,
   savedModelAvailability,
   selectableVersion,
 } from './project-model-picker.js'
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   manageModels: []
   moveLayer: [layerId: string, targetIndex: number]
   refreshModels: []
+  relinkModel: []
   save: []
   selectModel: [selection: { resourceId: string; versionId: string } | null]
   updateDraft: [change: ProjectGenerationDraftChange]
@@ -99,6 +101,11 @@ watch(models, (catalog) => {
   }
 })
 const modelStatus = computed(() => savedModelAvailability(selectedModel.value, props.modelCatalog))
+const relinkCandidate = computed(() =>
+  props.modelCatalogLoaded && props.modelCatalogError === null
+    ? portableModelRelinkCandidate(selectedModel.value, props.modelCatalog)
+    : null,
+)
 const modelPickerDisabled = computed(
   () =>
     props.busy ||
@@ -146,6 +153,9 @@ const modelDiagnostic = computed(() => {
     return null
   }
   if (modelStatus.value === 'missing') {
+    if (relinkCandidate.value) {
+      return "This Project's model needs linking on this computer."
+    }
     return 'The exact selected model version is no longer installed. Its saved reference is kept in this Project.'
   }
   if (modelStatus.value === 'corrupt') {
@@ -562,6 +572,22 @@ function applyFitBbox() {
             <p v-else-if="modelCatalogLoaded && models.length === 0" class="model-message">
               No checkpoints installed yet.
             </p>
+            <div v-if="relinkCandidate && !stagedResourceId" class="model-relink">
+              <p class="model-message">
+                Matching version: {{ relinkCandidate.resource.name }} ·
+                {{ relinkCandidate.version.name }}.
+              </p>
+              <NButton
+                aria-label="Link installed version"
+                :disabled="modelPickerDisabled"
+                :loading="pending === 'model'"
+                secondary
+                size="small"
+                @click="emit('relinkModel')"
+              >
+                Link installed version
+              </NButton>
+            </div>
           </div>
           <div class="prompt-field">
             <span class="field-label">Positive prompt</span>
@@ -827,6 +853,12 @@ function applyFitBbox() {
 
 .project-settings .model-message {
   margin: 0;
+}
+
+.model-relink {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
 }
 
 .seed-fields {

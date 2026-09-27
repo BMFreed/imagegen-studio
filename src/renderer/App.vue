@@ -231,9 +231,9 @@ function updateGenerationDraft(tabId: string, change: ProjectGenerationDraftChan
   draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change)
 }
 
-async function setGenerationModel(
+async function runGenerationModelAction(
   tabId: string,
-  selection: { resourceId: string; versionId: string } | null,
+  request: () => Promise<ApiResult<ProjectTab>>,
 ) {
   if (
     pendingProjectAction.value !== null ||
@@ -246,7 +246,7 @@ async function setGenerationModel(
   setTabError(tabId, null)
   try {
     await draftSync.flush(tabId)
-    replaceTab(await apiValue(() => projectApi().setGenerationModel(tabId, selection)))
+    replaceTab(await apiValue(request))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
     setTabError(tabId, errorMessage(cause))
@@ -254,6 +254,17 @@ async function setGenerationModel(
   } finally {
     pendingProjectAction.value = null
   }
+}
+
+function setGenerationModel(
+  tabId: string,
+  selection: { resourceId: string; versionId: string } | null,
+) {
+  return runGenerationModelAction(tabId, () => projectApi().setGenerationModel(tabId, selection))
+}
+
+function relinkGenerationModel(tabId: string) {
+  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationModel(tabId))
 }
 
 function setDraftValidity(tabId: string, valid: boolean) {
@@ -1084,6 +1095,7 @@ onBeforeUnmount(() => {
           @manageModels="modelManagerOpen = true"
           @moveLayer="moveActiveRasterLayer"
           @refreshModels="refreshModelCatalog"
+          @relinkModel="relinkGenerationModel(activeTab.id)"
           @save="saveProject(activeTab.id)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @updateDraft="updateGenerationDraft(activeTab.id, $event)"

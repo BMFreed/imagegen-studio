@@ -1246,6 +1246,105 @@ try {
     'Desktop smoke passed: Project/image import, Raster controls, canvas pixels and Save/reopen through IPC.',
   )
 
+  // A copied .igs carries portable CivitAI/file identity, but its former machine's local IDs
+  // must remain untouched until the user explicitly links the same installed checkpoint.
+  const portableTitle = 'Portable Model Smoke'
+  const portableFile = path.join(externalDirectory, `${portableTitle}.igs`)
+  const portableDocument = createEmptyProjectDocumentV1({ title: portableTitle })
+  assert.ok(selectedModelPackage.project.generationDraft.model)
+  const copiedModelRef = {
+    ...selectedModelPackage.project.generationDraft.model,
+    localModelId: randomUUID(),
+    localVersionId: randomUUID(),
+  }
+  await saveIgsPackage(portableFile, {
+    assets: {},
+    preview: {
+      merged: readFileSync('dist/main/placeholders/empty.png'),
+      rect: null,
+      status: 'empty',
+      thumbnail: readFileSync('dist/main/placeholders/empty.webp'),
+    },
+    project: {
+      ...portableDocument,
+      generationDraft: { ...portableDocument.generationDraft, model: copiedModelRef },
+    },
+  })
+  const portableSourceBytes = readFileSync(portableFile)
+  await application.evaluate(({ dialog }, selectedPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, portableFile)
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: 'Import Project' }).click()
+  const portableImportDialog = recoveryWindow.getByRole('dialog', { name: 'Import Project' })
+  await portableImportDialog.getByText('Keep the original and copy it here').click()
+  await portableImportDialog.getByRole('button', { name: 'Copy and Open' }).click()
+  await portableImportDialog.waitFor({ state: 'detached' })
+  await recoveryWindow.getByRole('tab', { name: portableTitle }).waitFor()
+  const portableProject = (
+    await recoveryWindow.evaluate(() => window.api.projects.list())
+  ).value.find((project) => project.title === portableTitle)
+  assert.ok(portableProject)
+  const portableProjectRegion = recoveryWindow.getByRole('region', {
+    name: `Project ${portableTitle}`,
+  })
+  await portableProjectRegion.getByRole('button', { name: 'Link installed version' }).waitFor()
+  if (process.env.IMAGEGEN_SMOKE_PROJECT_RELINK_SCREENSHOT) {
+    await portableProjectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
+    await delay(250)
+    await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_RELINK_SCREENSHOT })
+  }
+  const beforeModelRelink = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    portableProject.id,
+  )
+  assert.equal(beforeModelRelink.ok, true)
+  assert.equal(
+    beforeModelRelink.value.tab.generationDraft.model?.localVersionId,
+    copiedModelRef.localVersionId,
+  )
+  assert.equal(beforeModelRelink.value.tab.dirty, false)
+  await portableProjectRegion.getByRole('button', { name: 'Link installed version' }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    portableProject.id,
+    (tab) =>
+      tab.generationDraft.model?.localModelId === checkpointVersions.first.resourceId &&
+      tab.generationDraft.model?.localVersionId === checkpointVersions.second.versionId,
+    'The copied Project was not linked to the exact installed checkpoint',
+  )
+  const linkedTab = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    portableProject.id,
+  )
+  assert.equal(linkedTab.ok, true)
+  assert.equal(linkedTab.value.tab.dirty, true)
+  assert.deepEqual(
+    {
+      ...linkedTab.value.tab.generationDraft.model,
+      localModelId: copiedModelRef.localModelId,
+      localVersionId: copiedModelRef.localVersionId,
+    },
+    copiedModelRef,
+    'Relinking may update local IDs only, not saved portable or prediction metadata',
+  )
+  await portableProjectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await portableProjectRegion.getByText('Saved', { exact: true }).waitFor()
+  await recoveryWindow.getByRole('button', { name: `Close ${portableTitle}` }).click()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${portableTitle}` }).click()
+  await waitForOpenTab(
+    recoveryWindow,
+    portableProject.id,
+    (tab) =>
+      tab.generationDraft.model?.localVersionId === checkpointVersions.second.versionId &&
+      !tab.dirty,
+    'The exact linked model did not survive Save and reopen',
+  )
+  assert.deepEqual(readFileSync(portableFile), portableSourceBytes)
+  await recoveryWindow.getByRole('button', { name: `Close ${portableTitle}` }).click()
+  console.log('Desktop smoke passed: imported Project explicitly links its exact installed model.')
+
   await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
   await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
   await recoveryWindow

@@ -30,6 +30,11 @@ results and their provenance. Project indexes and preview caches can be rebuilt;
 they are not required as the sole copy of the saved project. Model weights stay
 in the reusable library: moving a project may require installing its exact
 resources, and missing resources must remain understandable from copied metadata.
+For a saved checkpoint whose local registry IDs came from another machine,
+Project may explicitly link the same installed CivitAI model/version/file,
+SHA-256 and base family after main verifies its bytes and required dependencies. This updates
+only the document's local IDs through the ordinary dirty/shadow/Save lifecycle;
+opening a copied `.igs` never performs the relink silently.
 
 ## Dirty State
 

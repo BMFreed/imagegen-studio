@@ -601,6 +601,8 @@ const api: StudioApi = {
     open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
+    relinkGenerationModel: (tabId) =>
+      invokeProject(ipcChannels.projects.relinkGenerationModel, [tabId], isProjectTab),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),

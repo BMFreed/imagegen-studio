@@ -224,6 +224,43 @@ async function withService(
   }
 }
 
+async function publishPortableCheckpoint(
+  repository: ModelRepository,
+  dataRoot: string,
+  bytes: Buffer,
+  displayName: string,
+  predictionType: 'epsilon' | 'v_prediction',
+) {
+  const managedPath = path.join(dataRoot, 'portable-checkpoint.safetensors')
+  await writeFile(managedPath, bytes)
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  return await repository.publishVerifiedInstallation({
+    primary: {
+      file: {
+        managedPath,
+        originalFilename: 'portable-checkpoint.safetensors',
+        sha256: digest,
+        sizeBytes: bytes.length,
+        verifiedAt: new Date().toISOString(),
+      },
+      resource: {
+        displayName,
+        source: { kind: 'civitai', modelId: 927 },
+        sourceMetadata: {},
+        type: 'checkpoint',
+      },
+      version: {
+        baseModelFamily: 'illustrious',
+        format: 'SafeTensor',
+        name: `${displayName} version`,
+        predictionType,
+        source: { expectedSha256: digest, fileId: 929, kind: 'civitai', versionId: 928 },
+        sourceMetadata: {},
+      },
+    },
+  })
+}
+
 test(
   'Project service freezes an unsaved Raster Layer and bbox before a later edit',
   { skip: !devRuntimeRoot() },
@@ -595,6 +632,173 @@ test('Project keeps a registry-selected exact checkpoint through shadow, Save, d
       }
     },
   )
+})
+
+test('a copied .igs explicitly links the same installed checkpoint across local libraries without rewriting frozen metadata', async () => {
+  const bytes = Buffer.from('one exact portable checkpoint in two managed libraries')
+  await withService(async (origin) => {
+    const originInstalled = await publishPortableCheckpoint(
+      origin.modelRepository,
+      origin.dataRoot,
+      bytes,
+      'Original name',
+      'epsilon',
+    )
+    const created = await origin.service.create({
+      height: 512,
+      title: 'Portable model',
+      width: 512,
+    })
+    const originalRef = await origin.modelService.resolveGenerationCheckpoint(
+      originInstalled.resourceId,
+      originInstalled.versionId,
+    )
+    let resolvedWithoutSelection = false
+    await assert.rejects(
+      origin.service.relinkGenerationModel(created.id, async () => {
+        resolvedWithoutSelection = true
+        return originalRef
+      }),
+      { code: 'PROJECT_MODEL_NOT_SELECTED' },
+    )
+    assert.equal(resolvedWithoutSelection, false)
+    assert.equal(origin.service.getOpenTabs()[0].dirty, false)
+    await origin.service.setGenerationModel(created.id, originalRef)
+    await origin.service.save(created.id)
+    const originPath = (await origin.repository.listProjects())[0].canonicalPath
+    const portableBytes = await readFile(originPath)
+    await origin.service.close(created.id)
+
+    await withService(async (destination) => {
+      const destinationInstalled = await publishPortableCheckpoint(
+        destination.modelRepository,
+        destination.dataRoot,
+        bytes,
+        'Different local name',
+        'v_prediction',
+      )
+      assert.notEqual(destinationInstalled.resourceId, originInstalled.resourceId)
+      assert.notEqual(destinationInstalled.versionId, originInstalled.versionId)
+      const incomingPath = path.join(destination.dataRoot, 'From another computer.igs')
+      await writeFile(incomingPath, portableBytes)
+      const selection = await destination.service.selectImport(incomingPath)
+      assert.equal(selection.kind, 'transfer-required')
+      if (selection.kind !== 'transfer-required') {
+        throw new Error('Expected a portable Project import choice.')
+      }
+      const imported = await destination.service.finishImport(selection.importId, 'copy')
+      assert.equal(imported.result.kind, 'opened')
+      if (imported.result.kind !== 'opened') {
+        throw new Error('Expected the imported Project to open.')
+      }
+      const tabId = imported.result.tab.id
+      const savedPath = (await destination.repository.listProjects())[0]?.canonicalPath
+      assert.ok(savedPath)
+      assert.equal(imported.result.tab.dirty, false)
+      assert.deepEqual(imported.result.tab.generationDraft.model, originalRef)
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.model, originalRef)
+
+      await assert.rejects(
+        destination.service.relinkGenerationModel(tabId, async (saved) => ({
+          ...(await destination.modelService.resolvePortableGenerationCheckpoint(saved)),
+          civitaiVersionId: 999,
+        })),
+        { code: 'PROJECT_MODEL_RELINK_MISMATCH' },
+      )
+      assert.equal(destination.service.getOpenTabs()[0].dirty, false)
+
+      let releaseResolver!: () => void
+      let signalResolverStarted!: () => void
+      const resolverGate = new Promise<void>((resolve) => {
+        releaseResolver = resolve
+      })
+      const resolverStarted = new Promise<void>((resolve) => {
+        signalResolverStarted = resolve
+      })
+      const staleRelink = destination.service.relinkGenerationModel(tabId, async (saved) => {
+        signalResolverStarted()
+        await resolverGate
+        return await destination.modelService.resolvePortableGenerationCheckpoint(saved)
+      })
+      await resolverStarted
+      await destination.service.updateGenerationDraft(tabId, {
+        kind: 'positive-prompt',
+        text: 'An edit made while the exact file is being verified',
+      })
+      releaseResolver()
+      await assert.rejects(staleRelink, { code: 'EDIT_CONFLICT' })
+      assert.deepEqual(destination.service.getOpenTabs()[0].generationDraft.model, originalRef)
+
+      const linked = await destination.service.relinkGenerationModel(tabId, async (saved) => ({
+        ...(await destination.modelService.resolvePortableGenerationCheckpoint(saved)),
+        displayName: 'Untrusted destination title',
+        predictionType: 'sample',
+        versionName: 'Untrusted destination version',
+      }))
+      const linkedRef = {
+        ...originalRef,
+        localModelId: destinationInstalled.resourceId,
+        localVersionId: destinationInstalled.versionId,
+      }
+      assert.equal(linked.dirty, true)
+      assert.deepEqual(linked.generationDraft.model, linkedRef)
+      assert.equal(linked.generationDraft.model?.predictionType, 'epsilon')
+      assert.equal(
+        linked.generationDraft.positivePrompt.text,
+        'An edit made while the exact file is being verified',
+      )
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.model, originalRef)
+      await destination.service.flushAutosave(tabId)
+      const recovery = await destination.shadow.inspect({
+        projectPath: savedPath,
+        savedPackage: await readIgsPackage(savedPath),
+      })
+      assert.equal(recovery.status, 'recoverable')
+      if (recovery.status === 'recoverable') {
+        assert.deepEqual(recovery.document.generationDraft.model, linkedRef)
+      }
+      await destination.service.save(tabId)
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.model, linkedRef)
+      await destination.service.close(tabId)
+      const reopened = await destination.service.open(tabId)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind === 'opened') {
+        assert.deepEqual(reopened.tab.generationDraft.model, linkedRef)
+        assert.equal(reopened.tab.dirty, false)
+        assert.equal(
+          (
+            await destination.service.relinkGenerationModel(tabId, (saved) =>
+              destination.modelService.resolvePortableGenerationCheckpoint(saved),
+            )
+          ).dirty,
+          false,
+        )
+        let releaseNoop!: () => void
+        let signalNoopStarted!: () => void
+        const noopGate = new Promise<void>((resolve) => {
+          releaseNoop = resolve
+        })
+        const noopStarted = new Promise<void>((resolve) => {
+          signalNoopStarted = resolve
+        })
+        const staleNoop = destination.service.relinkGenerationModel(tabId, async (saved) => {
+          signalNoopStarted()
+          await noopGate
+          return await destination.modelService.resolvePortableGenerationCheckpoint(saved)
+        })
+        await noopStarted
+        await destination.service.updateGenerationDraft(tabId, {
+          kind: 'negative-prompt',
+          text: 'Newer edit before a no-op relink resolves',
+        })
+        releaseNoop()
+        await assert.rejects(staleNoop, { code: 'EDIT_CONFLICT' })
+        assert.deepEqual(destination.service.getOpenTabs()[0].generationDraft.model, linkedRef)
+        await destination.service.save(tabId)
+        await destination.service.close(tabId)
+      }
+    })
+  })
 })
 
 test('Project prompt text retains only pre-existing embedding refs whose literal token remains', async () => {

@@ -32,6 +32,7 @@ export const ipcChannels = {
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
     rebuildPreview: 'projects:rebuild-preview',
+    relinkGenerationModel: 'projects:relink-generation-model',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     selectImport: 'projects:select-import',
@@ -180,6 +181,7 @@ export interface ProjectApi {
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
+  relinkGenerationModel: (tabId: string) => Promise<ApiResult<ProjectTab>>
   resolveRecovery: (
     projectId: string,
     decision: 'discard' | 'recover',

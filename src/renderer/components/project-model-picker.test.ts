@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import {
   checkpointCatalog,
   planModelResourceSelection,
+  portableModelRelinkCandidate,
   readyDefaultVersion,
   savedModelAvailability,
   selectableVersion,
@@ -152,5 +153,112 @@ test('a saved exact file remains selected across default changes and reports los
       resource(second.id, [{ ...first, baseModelFamily: 'anima' }]),
     ]),
     'missing',
+  )
+})
+
+test('portable relink is suggested only for one ready exact identity at a different local ID', () => {
+  const saved = savedModel()
+  const match = {
+    ...resource('other-default', [version('version-local', shaA, 'ready')]),
+    id: 'model-local',
+  }
+  const candidate = portableModelRelinkCandidate(saved, [match])
+  assert.equal(candidate?.resource.id, 'model-local')
+  assert.equal(candidate?.version.id, 'version-local')
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...match, versions: [{ ...match.versions[0]!, predictionType: 'v_prediction' }] },
+    ])?.version.id,
+    'version-local',
+    'prediction metadata is not part of portable byte identity',
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...match, defaultVersionId: 'another-default', name: 'Renamed locally' },
+    ])?.version.id,
+    'version-local',
+    'display names and catalog defaults are not portable identity',
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      resource('version-a', [version('version-a', shaA, 'ready')]),
+    ]),
+    null,
+  )
+  assert.equal(portableModelRelinkCandidate(saved, [match, { ...match, id: 'second-local' }]), null)
+  assert.equal(portableModelRelinkCandidate(null, [match]), null)
+})
+
+test('portable relink refuses partial, mismatched, or unavailable metadata', () => {
+  const saved = savedModel()
+  const exact = version('local-version', shaA, 'ready')
+  const installed = { ...resource(exact.id, [exact]), id: 'local-resource' }
+  assert.equal(portableModelRelinkCandidate({ ...saved, civitaiModelId: null }, [installed]), null)
+  assert.equal(
+    portableModelRelinkCandidate({ ...saved, civitaiVersionId: null }, [installed]),
+    null,
+  )
+  assert.equal(portableModelRelinkCandidate({ ...saved, civitaiFileId: null }, [installed]), null)
+  assert.equal(portableModelRelinkCandidate({ ...saved, baseModelFamily: null }, [installed]), null)
+  assert.equal(portableModelRelinkCandidate(saved, [{ ...installed, modelId: 22 }]), null)
+  assert.equal(portableModelRelinkCandidate(saved, [{ ...installed, resourceType: 'lora' }]), null)
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...installed, versions: [{ ...exact, civitaiVersionId: 33 }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...installed, versions: [{ ...exact, civitaiFileId: 44 }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [{ ...installed, versions: [{ ...exact, sha256: shaB }] }]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...installed, versions: [{ ...exact, baseModelFamily: 'anima' }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...installed, versions: [{ ...exact, fileStatus: 'missing' }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...installed, versions: [{ ...exact, fileStatus: 'corrupt' }] },
+    ]),
+    null,
+  )
+
+  const oldVersion = version('version-a', shaA, 'missing')
+  const oldInstallation = resource(oldVersion.id, [oldVersion])
+  assert.equal(portableModelRelinkCandidate(saved, [oldInstallation]), null)
+  assert.equal(portableModelRelinkCandidate(saved, [oldInstallation, installed]), null)
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      resource(oldVersion.id, [{ ...oldVersion, fileStatus: 'corrupt' }]),
+      installed,
+    ]),
+    null,
+    'main treats two exact registry identities as ambiguous even when one file is corrupt',
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      installed,
+      {
+        ...installed,
+        id: 'corrupt-duplicate',
+        versions: [{ ...exact, fileStatus: 'corrupt', id: 'corrupt-version' }],
+      },
+    ]),
+    null,
+    'a ready plus corrupt duplicate must not show an action that main will reject',
   )
 })

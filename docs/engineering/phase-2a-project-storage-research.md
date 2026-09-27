@@ -531,11 +531,36 @@ check; a same-size modified file can fail that check after appearing in the
 catalog. The failure does not change the saved Project selection.
 
 The saved `.igs` contains both local registry IDs and portable CivitAI/version/
-file-hash metadata. This slice does not yet rebind those local IDs after the
-same exact resource is installed on another computer: a copied Project remains
-readable and reports the local selection as unavailable until the user selects
-a local version. Exact portable relinking needs an explicit identity rule and
-separate test before PP-007 can claim that recovery. Generation enqueue must
-recheck exact files at the job boundary; the selector alone cannot guarantee
-that a file remains available later. Phase 2B still owns that job, model
+file-hash metadata. The explicit Project action below binds that portable
+identity to a new local installation. Generation enqueue must still
+recheck exact files at the job boundary; model selection and relinking cannot
+guarantee that a file remains available later. Phase 2B owns that job, model
 loading, results and provenance.
+
+## Explicit portable checkpoint relink
+
+When a copied `.igs` points to local model IDs from another computer, Project
+keeps its saved reference readable and does not change it on Open or catalog
+refresh. If the managed library has exactly one matching CivitAI checkpoint
+version, the UI offers `Link installed version`. A catalog match is only an
+advisory suggestion: main independently compares model, version and file IDs,
+SHA-256 and base family, then force-verifies the file and pinned Anima
+companions. Name, Default version and prediction metadata are not identity
+keys. Relinking changes only the two local IDs in the open Project; original
+display, version and prediction metadata remain frozen. The edit uses the
+existing dirty/shadow/Save path. A concurrent document edit or ambiguous,
+missing or corrupt candidate leaves the saved reference unchanged.
+
+Service tests use two separate SQLite libraries with different local IDs and
+a copied real `.igs`, then check the open document, shadow, Save and reopen.
+Wrong portable identity, corrupt bytes and stale revision/no-op paths are
+negative controls. Two isolated semantic mutations—removing exact version
+checks and bypassing the no-op revision guard—made their tests fail and were
+reverted. `pnpm run app:test` passed 240/240; `pnpm run typecheck`,
+`pnpm run lint` and `pnpm run app:smoke` passed. The Electron smoke imports an
+`.igs` with old local IDs, checks that Open leaves it clean and unchanged,
+clicks the explicit action, then verifies only the local IDs changed and that
+Save/reopen persists them. The smoke uses small synthetic checkpoint bytes;
+it does not prove real Anima loading or inference. This relink covers managed
+checkpoints only; LoRA, VAE, embedding and arbitrary local-file relink remain
+separate work.

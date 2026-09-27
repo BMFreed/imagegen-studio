@@ -631,6 +631,21 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(
+        ipcChannels.projects.relinkGenerationModel,
+        oneProjectId,
+        async (tabId) => {
+          if (!modelStorageAvailable) {
+            throw new ModelServiceError(
+              'MODEL_STORAGE_UNAVAILABLE',
+              'Managed model storage needs repair.',
+            )
+          }
+          return await projectService.relinkGenerationModel(tabId as string, (saved) =>
+            modelService.resolvePortableGenerationCheckpoint(saved),
+          )
+        },
+      )
+      registerProjectHandler(
         ipcChannels.projects.setPrimaryBbox,
         (args) => args.length === 2 && isProjectId(args[0]) && isProjectRect(args[1]),
         (tabId, rect) => projectService.setPrimaryBbox(tabId as string, rect as IgsRectV1),
