@@ -30,8 +30,8 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove, exact-version trigger autocomplete/подсветка, явный checkpoint/LoRA relink и Project → Manager focus точных checkpoint/версии проверены с SQLite, файлами и Electron; загрузка worker, embedding/VAE selectors и обратный handoff отсутствуют                                                                                                                                                                                                                   |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock queue freeze, comparison и result-to-preset; main готовит Illustrious txt2img context и строгий worker request, но inference, queue, accepted provenance/storage ещё не реализованы |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove, exact-version trigger autocomplete/подсветка, явный checkpoint/LoRA relink и Project → Manager focus проверены с SQLite, файлами и Electron; [exact-hash manifest](./engineering/phase-2b-model-compatibility-manifest.md) квалифицирует один официальный Illustrious v0.1 checkpoint, но Anima record, загрузка worker, embedding/VAE selectors и обратный handoff отсутствуют |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; main готовит Illustrious txt2img context и строгий worker request, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md) сохраняет durable input/SQLite row; renderer Generate, inference, dispatch, accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
 | PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG, LoRA trigger completion и [prompt actions](./engineering/project-prompt-actions-research.md) → text Save, exact LoRA stack/relink, native-close Save и явный relink checkpoint после переноса; staging recovery и release runtime отсутствуют |
 | PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#vue-prototype-coverage): mock acceptance; durable candidate recovery и worker/storage ещё отсутствуют                                                                                                                                                                                                                                                                                         |
@@ -181,6 +181,11 @@ Project → Model Manager теперь фокусирует выбранный c
 точную версию без смены Default или Project reference; Electron smoke проверяет
 повторное открытие после фильтров и предупреждение при отсутствующем локальном
 ID. Обратный переход и прочий resource handoff остаются открытыми.
+Для Illustrious/SDXL Generate допускает только exact checkpoint SHA-256 с
+проверенным app-owned manifest `predictionType`. Сейчас manifest содержит один
+официальный Illustrious v0.1 checkpoint; соответствующая CivitAI install
+сохраняет подтверждённый тип, а unlisted файлы остаются с `null` и не
+квалифицируются для inference. Anima требует отдельной rectified-flow записи.
 
 Project LoRA stack уже хранит точную проверенную версию, вес и enabled state;
 добавление/удаление не переписывают prompt или embedding refs. Выбор и Save
@@ -226,13 +231,17 @@ Local import может появиться отдельным flow; подроб
 
 **Публичный статус:** пока не обещать как готовую возможность — flow сравнения
 и создания пресета покрыт прототипом; production provenance/storage не доказаны.
-Main уже подготавливает проверенный контекст одного Illustrious `txt2img`
-до очереди: точный checkpoint, Project target, prompts, Steps/CFG и фактический
-Fixed/Random seed. Это не принятый результат и не сохранённое provenance;
-самой очереди и генерации пока нет.
+Main подготавливает проверенный контекст одного Illustrious `txt2img`:
+точный checkpoint, Project target, prompts, Steps/CFG и фактический Fixed/Random
+seed. Отдельный durable enqueue checkpoint сохраняет immutable input и SQLite
+`pending` row; startup отменяет прежние незавершённые jobs. Это не принятый
+результат и не сохранённое provenance; renderer Generate, dispatch и генерации
+пока нет.
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
 worker отвечает `INFERENCE_UNAVAILABLE`. Результат и его provenance не создаются.
+Для произвольного CivitAI checkpoint неизвестный `predictionType` остаётся
+блокирующим до появления проверенного exact-hash manifest.
 
 ### Обещание
 

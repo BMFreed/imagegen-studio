@@ -109,7 +109,11 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
   )
-  if (verified.managedPath !== context.model.managedPath) {
+  if (
+    verified.managedPath !== context.model.managedPath ||
+    verified.reference.fileSha256 !== context.model.reference.fileSha256 ||
+    verified.reference.predictionType !== qualified.predictionType
+  ) {
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',
       'The exact checkpoint path changed after preparation.',

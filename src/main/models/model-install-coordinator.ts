@@ -445,7 +445,14 @@ export class ModelInstallCoordinator {
           baseModelFamily: preview.baseModelFamily,
           format: extension === '.safetensors' ? (file.format ?? 'SafeTensor') : 'PyTorch',
           name: preview.versionName,
-          predictionType: null,
+          predictionType:
+            preview.resourceType === 'checkpoint'
+              ? this.modelService.qualifiedPredictionTypeForVerifiedCheckpoint({
+                  baseModelFamily: preview.baseModelFamily,
+                  sha256: staged.sha256,
+                  sizeBytes: staged.sizeBytes,
+                })
+              : null,
           source: {
             expectedSha256: file.sha256,
             fileId: file.fileId,

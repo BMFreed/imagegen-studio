@@ -146,8 +146,11 @@ durable cursor. Явно выбранную поддерживаемую пар�
 `linux-nvidia` inference capability с подходящей версией worker. Пока запрос
 ограничен 200 Steps, CFG 30 и 16 КиБ UTF-8 на каждый prompt как защитными
 транспортными/операционными границами. Он создаёт только краткоживущий scratch
-lease: durable immutable asset, реальный inference worker, queue и candidate
-publication всё ещё нужны перед Generate.
+lease. Отдельный [durable enqueue checkpoint](../engineering/phase-2b-durable-enqueue-research.md)
+копирует проверенный target в app-owned input store и создаёт SQLite `pending`
+row с frozen context (до 128 КиБ); startup отменяет незавершённые rows. Queue
+dispatch/actions, реальный inference worker и candidate publication всё ещё
+нужны перед Generate.
 
 ## Минимальные сообщения worker'а
 
@@ -246,7 +249,7 @@ type WorkerMessage =
   показывается как отклонение для диагностики; именно оно становится следующим
   `Reuse` cursor и записывается в provenance при acceptance.
 - Worker должен поддерживать cancel request на безопасных границах, особенно во время denoising steps.
-- `predictionType` — compatibility-параметр модели, а не художественная настройка. Worker должен использовать его при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`.
+- `predictionType` — compatibility-параметр Illustrious/SDXL, а не художественная настройка. Main допускает этот pipeline к Generate только с exact checkpoint SHA-256 в проверенном app-owned manifest. CivitAI metadata или удачная загрузка файла worker'ом не дают оснований подставить `epsilon`; unknown блокирует job до enqueue. Worker использует подтверждённый тип при настройке scheduler/denoising. Для `v_prediction` нельзя молча запускать модель как `epsilon`. Anima проверяется отдельной exact-hash записью rectified-flow capability и не получает фиктивный SDXL prediction mode.
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Для Anima worker использует отдельные model loader, Qwen3 text encoder, VAE, LoRA и denoising path. Он проверяет exact installed identities обязательных компонентов перед началом job; ImageGen Studio не выдаёт SDXL single-file загрузчик за универсальный путь для Anima.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.

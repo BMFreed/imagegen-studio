@@ -168,7 +168,7 @@
 - Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
 - Preset resource diagnostics: PP-006 требует visible warning до mutation и hard block только для выбранных секций с missing model/LoRA/VAE/embedding. Standalone и Project-integrated mock Apply уже показывают текстовую диагностику и учитывают nested resources. Production resource registry, persistent storage и handoff `Open in Models` остаются незавершёнными; mock не доказывает готовность PP-006 в приложении.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
-- Model compatibility: `predictionType` (`epsilon`, `v_prediction`, `sample`) хранится как metadata модели, передаётся worker'у и сохраняется в accepted-result provenance.
+- Model compatibility: для Illustrious/SDXL `predictionType` (`epsilon`, `v_prediction`, `sample`) берётся только из проверенного app-owned манифеста по exact checkpoint SHA-256, передаётся worker'у и сохраняется в accepted-result provenance. CivitAI metadata и эвристика по весам не считаются подтверждением. Anima требует отдельной exact-hash записи rectified-flow capability, а не SDXL prediction mode. Отсутствие подходящей записи блокирует Generate, но не установку модели.
 - Model versioning: MVP обнаруживает доступные CivitAI-версии, устанавливает
   новую exact version рядом со старой, позволяет явно выбрать default для новых
   selections и никогда не переписывает существующие Projects, Presets или

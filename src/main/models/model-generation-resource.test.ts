@@ -7,10 +7,16 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import type { CheckpointCompatibilityFingerprint } from './model-compatibility-manifest.js'
+
 import { openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from './civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from './civitai-token-store.js'
-import { ModelRepository, type VerifiedModelArtifact } from './model-repository.js'
+import {
+  type ModelPredictionType,
+  ModelRepository,
+  type VerifiedModelArtifact,
+} from './model-repository.js'
 import { ModelService } from './model-service.js'
 
 type ExactCheckpoint = NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
@@ -29,19 +35,35 @@ async function withInstalledCheckpoints(
     firstPath: string
     firstRef: ExactCheckpoint
     repository: ModelRepository
+    root: string
     secondPath: string
     secondRef: ExactCheckpoint
     service: ModelService
+    setFirstStoredPredictionType: (value: ModelPredictionType | null) => Promise<void>
   }) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-resource-'))
   const database = openAppDatabase(root, migrations)
   try {
     const repository = new ModelRepository(database.db)
+    const fixtureModels: readonly { bytes: Buffer; predictionType: ModelPredictionType }[] = [
+      { bytes: Buffer.from('verified checkpoint version 7'), predictionType: 'epsilon' },
+      { bytes: Buffer.from('verified checkpoint version 8'), predictionType: 'v_prediction' },
+    ]
+    const testManifest: readonly CheckpointCompatibilityFingerprint[] = fixtureModels.map(
+      ({ bytes, predictionType }) => ({
+        baseModelFamily: 'illustrious',
+        predictionType,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sizeBytes: bytes.length,
+      }),
+    )
     const service = new ModelService(
       repository,
       new CivitaiClient(),
       new CivitaiTokenStore(storage, root),
+      undefined,
+      testManifest,
     )
     const modelsDir = path.join(root, 'models')
     await mkdir(modelsDir)
@@ -93,14 +115,27 @@ async function withInstalledCheckpoints(
 
     const first = await install(7, 701, 'epsilon')
     const second = await install(8, 801, 'v_prediction')
+    await database.db
+      .updateTable('model_resource_version')
+      .set({ prediction_type: null })
+      .where('id', '=', first.ref.localVersionId)
+      .execute()
     await run({
       firstBytes: first.bytes,
       firstPath: first.path,
       firstRef: first.ref,
       repository,
+      root,
       secondPath: second.path,
       secondRef: second.ref,
       service,
+      setFirstStoredPredictionType: async (value) => {
+        await database.db
+          .updateTable('model_resource_version')
+          .set({ prediction_type: value })
+          .where('id', '=', first.ref.localVersionId)
+          .execute()
+      },
     })
   } finally {
     await database.close()
@@ -128,10 +163,46 @@ test('generation plan resolves the saved exact checkpoint after Default changes'
       assert.notEqual(resolved.managedPath, secondPath)
       assert.deepEqual(await readFile(resolved.managedPath), firstBytes)
       assert.deepEqual(resolved.reference, firstRef)
+      assert.equal(
+        (await repository.listInstalled())
+          .flatMap((item) => item.versions)
+          .find((item) => item.id === firstRef.localVersionId)?.predictionType,
+        null,
+      )
+      assert.equal(
+        (
+          await service.resolveVerifiedGenerationCheckpointForPlan({
+            ...firstRef,
+            predictionType: null,
+          })
+        ).reference.predictionType,
+        'epsilon',
+      )
       assert.deepEqual(saved, {
         ...firstRef,
         displayName: 'Older saved label',
         versionName: 'Older version name',
+      })
+    },
+  )
+})
+
+test('generation plan refuses an unlisted file or a stored prediction conflicting with exact bytes', async () => {
+  await withInstalledCheckpoints(
+    async ({ firstRef, repository, root, service, setFirstStoredPredictionType }) => {
+      const unqualified = new ModelService(
+        repository,
+        new CivitaiClient(),
+        new CivitaiTokenStore(storage, root),
+        undefined,
+        [],
+      )
+      await assert.rejects(unqualified.resolveVerifiedGenerationCheckpointForPlan(firstRef), {
+        code: 'MODEL_PREDICTION_UNQUALIFIED',
+      })
+      await setFirstStoredPredictionType('v_prediction')
+      await assert.rejects(service.resolveVerifiedGenerationCheckpointForPlan(firstRef), {
+        code: 'MODEL_VERSION_MISMATCH',
       })
     },
   )

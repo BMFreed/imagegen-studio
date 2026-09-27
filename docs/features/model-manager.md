@@ -81,8 +81,12 @@ Already fixed project decisions:
   terms. Anima support is for non-commercial, non-production use only. The app
   does not bundle those weights; the install preview shows the source, license
   link and use restriction before the user confirms the download.
-- Model metadata includes `baseModelFamily` and `predictionType`.
-- `predictionType` is compatibility metadata, not a creative user setting.
+- Model metadata includes `baseModelFamily` and nullable `predictionType`.
+- `predictionType` is Illustrious/SDXL compatibility metadata, not a creative
+  user setting. For its inference, it must come from a verified app-owned
+  manifest keyed by exact checkpoint SHA-256. Anima's rectified-flow path needs
+  a separate family-specific manifest entry. Unqualified models can be
+  installed but cannot generate.
 - Missing model/LoRA/embedding resources must be diagnosable when applying presets or viewing accepted-result provenance/comparison.
 
 ## ImageGen Studio Decision

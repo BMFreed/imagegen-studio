@@ -56,13 +56,13 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Область | Есть в Electron из исходников | Осталось в принятом MVP | Фаза завершения |
 | --- | --- | --- | --- |
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
-| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group; Project → Manager focus на выбранных checkpoint и версии | Hard remove с reference/job diagnostics; обратный и остальные resource handoff; реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
+| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group; Project → Manager focus на выбранных checkpoint и версии; exact-hash compatibility manifest для официального Illustrious v0.1 | Hard remove с reference/job diagnostics; обратный и остальные resource handoff; Anima compatibility record, реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink | Provenance и accepted history, staging recovery отдельно от document shadow | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
-| Generate/results | Frozen raster target, подготовка exact Illustrious txt2img context и строгий TS/Python request boundary с временным PNG; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, durable job input, Generate, SQLite queue, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite `pending` row с restart cancellation; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, queue dispatch/actions, Generate, candidates/staging recovery, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -203,8 +203,12 @@ self-test и реальной установки ещё нет. Home показ�
 - model install/download pipeline с временным файлом и очередью внутри Model Manager, без отдельной Download Manager surface.
 - Проверка size/hash, если данные доступны.
 - Хранение model compatibility metadata: `baseModelFamily` определяется из
-  источника, `predictionType` остаётся nullable до проверки моделью в worker на
-  фазе 2; неизвестное значение не подменяется предположением `epsilon`.
+  источника; для Illustrious/SDXL `predictionType` остаётся nullable, пока для
+  точного SHA-256 файла нет проверенного app-owned манифеста. Форма весов и
+  успешная загрузка worker'ом не доказывают training objective; неизвестное
+  значение не подменяется предположением `epsilon`. Anima требует своей
+  exact-hash записи rectified-flow capability. Установить неподтверждённый
+  файл можно, запускать inference с ним в первом релизе нельзя.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
 - Обнаружение доступных CivitAI-версий и явный `Update available` state.
 - Preview и установка новой exact version рядом с уже установленными версиями.
@@ -345,7 +349,9 @@ generation DTO и source map из документационного трека.
   immutable input и владеет файлами/очередью; worker выполняет model loading,
   conditioning и denoising. Реально загрузить установленный в фазе 1 exact
   Illustrious checkpoint и показывать несовместимость, которую metadata не
-  могла доказать при установке.
+  могла доказать при установке. К inference допускаются лишь checkpoints с
+  проверенным по точному SHA-256 app-owned манифестом `predictionType`; worker
+  также проверяет архитектуру/загрузку и не выводит training objective из весов.
 - SQLite-backed Queue Manager в main process, frozen job payloads и
   progress/done/error events. Cancel pending/running, retry failed/canceled и
   delete/prune terminal rows не затрагивают валидный staging manifest.
@@ -378,11 +384,20 @@ generation DTO и source map из документационного трека.
 worker DTO: sampler/scheduler, installable runtime, inference и публикация
 candidate остаются незавершёнными. `Reuse` ждёт durable seed cursor.
 
-**Следующий request checkpoint:** [Illustrious `txt2img` boundary](../engineering/phase-2b-illustrious-request-research.md)
+**Request checkpoint:** [Illustrious `txt2img` boundary](../engineering/phase-2b-illustrious-request-research.md)
 проверяет sampler/scheduler, CFG, размер, prediction type и capability, временно
 материализует target PNG и формирует версионированный запрос. Python
 `derivatives-only` worker распознаёт его, но отвечает `INFERENCE_UNAVAILABLE`;
-постоянный input, исполнимый GPU pipeline и очередь ещё не подключены.
+этот scratch lease не является долговечным input или завершённой генерацией.
+
+**Durable enqueue checkpoint:** [точный manifest](../engineering/phase-2b-model-compatibility-manifest.md)
+квалифицирует один официальный Illustrious v0.1 checkpoint по вычисленным
+SHA-256/размеру и авторскому prediction type. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
+сохраняют один замороженный Illustrious `txt2img` как app-owned input и
+`pending` row; Electron startup отменяет старые `pending`/`running` rows и
+сверяет orphan input directories. Это пока repository/bootstrap boundary:
+renderer Generate, dispatch, GPU pipeline, output/candidate publication,
+queue UI/actions и фактический seed cursor не подключены.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат
@@ -405,6 +420,10 @@ LoRA для обеих семейств.
   textual-inversion embeddings через текстовый prompt + sidecar refs и
   `clipSkip` согласно capability matrix: неподдерживаемая моделью опция
   отвергается до enqueue, а не игнорируется.
+- Для Anima подготовить отдельную проверенную запись exact checkpoint в
+  compatibility manifest с подтверждённой rectified-flow архитектурой и
+  capabilities; первая Illustrious-запись и её SDXL `predictionType` не
+  квалифицируют Anima по семейству или имени.
 - Валидировать exact model/component/LoRA refs и семейные capabilities до
   enqueue; unsupported input блокируется с понятным сообщением, без silent
   fallback. Frozen job сохраняет все фактически использованные operational

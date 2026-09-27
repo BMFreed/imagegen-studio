@@ -15,6 +15,7 @@ import type { CivitaiImportPreview } from './civitai-client.js'
 import type { CivitaiClient } from './civitai-client.js'
 import type { CivitaiTokenStore } from './civitai-token-store.js'
 import type {
+  BaseModelFamily,
   InstalledModelFile,
   ModelRepository,
   ModelResourceType as StoredResourceType,
@@ -28,6 +29,11 @@ import {
   resolveAnimaDependencies,
 } from './anima-manifest.js'
 import { validateCivitaiToken } from './civitai-token-store.js'
+import {
+  CHECKPOINT_COMPATIBILITY_MANIFEST,
+  type CheckpointCompatibilityFingerprint,
+  qualifiedCheckpointPredictionType,
+} from './model-compatibility-manifest.js'
 
 const PREVIEW_TTL_MS = 10 * 60_000
 const PUBLICATION_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -73,6 +79,7 @@ export class ModelService {
     readonly civitai: CivitaiClient,
     readonly tokenStore: CivitaiTokenStore,
     private readonly cacheRoot?: string,
+    private readonly compatibilityManifest: readonly CheckpointCompatibilityFingerprint[] = CHECKPOINT_COMPATIBILITY_MANIFEST,
   ) {}
 
   async checkUpdates(
@@ -436,6 +443,15 @@ export class ModelService {
     }
   }
 
+  /** Call only with a file whose bytes were hashed by the installer or this service. */
+  qualifiedPredictionTypeForVerifiedCheckpoint(file: {
+    baseModelFamily: BaseModelFamily | null
+    sha256: string
+    sizeBytes: number
+  }) {
+    return qualifiedCheckpointPredictionType(file, this.compatibilityManifest)
+  }
+
   async removeToken(): Promise<CivitaiTokenStatus> {
     await this.tokenStore.removeToken()
     return this.getTokenStatus()
@@ -506,15 +522,37 @@ export class ModelService {
       saved.civitaiVersionId !== reference.civitaiVersionId ||
       saved.civitaiFileId !== reference.civitaiFileId ||
       saved.fileSha256 !== reference.fileSha256 ||
-      saved.baseModelFamily !== reference.baseModelFamily ||
-      saved.predictionType !== reference.predictionType
+      saved.baseModelFamily !== reference.baseModelFamily
     ) {
       throw new ModelServiceError(
         'MODEL_VERSION_MISMATCH',
         'The installed checkpoint no longer matches this Project exact version.',
       )
     }
-    return resolved
+    const qualified = this.qualifiedPredictionTypeForVerifiedCheckpoint({
+      baseModelFamily: reference.baseModelFamily,
+      sha256: reference.fileSha256,
+      sizeBytes: resolved.fileSizeBytes,
+    })
+    if (!qualified) {
+      throw new ModelServiceError(
+        'MODEL_PREDICTION_UNQUALIFIED',
+        'This exact checkpoint is not in the verified compatibility manifest.',
+      )
+    }
+    if (
+      (reference.predictionType !== null && reference.predictionType !== qualified) ||
+      (saved.predictionType !== null && saved.predictionType !== qualified)
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The checkpoint prediction type conflicts with its verified compatibility record.',
+      )
+    }
+    return {
+      managedPath: resolved.managedPath,
+      reference: { ...reference, predictionType: qualified },
+    }
   }
 
   async saveToken(token: string): Promise<CivitaiTokenStatus> {
@@ -717,6 +755,7 @@ export class ModelService {
     versionId: string,
     kind: 'checkpoint' | 'lora',
   ): Promise<{
+    fileSizeBytes: number
     managedPath: string
     reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
   }> {
@@ -792,6 +831,7 @@ export class ModelService {
       }
     }
     return {
+      fileSizeBytes: version.file.sizeBytes,
       managedPath: version.file.managedPath,
       reference: {
         baseModelFamily: version.baseModelFamily,

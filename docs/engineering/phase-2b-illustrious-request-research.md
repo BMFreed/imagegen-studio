@@ -56,7 +56,7 @@ generation capability.
 | Width/height divisible by 8 and CFG ≥ 1                                           | Checked Invoke SDXL noise and denoise requirements; qualified request only, not `.igs` draft authoring.                                                        |
 | Steps 1–200 and CFG 1–30                                                          | Provisional local-work ceiling for the first request boundary, not an Invoke or model limit; reject before worker I/O.                                         |
 | 16 KiB UTF-8 bytes per prompt, 64 KiB JSON line                                   | Provisional first transport bound; the existing worker has a 64 KiB line ceiling. Oversize is an explicit error.                                               |
-| `epsilon`, `v_prediction` or `sample` prediction type                             | Exact non-null metadata required. Current ordinary CivitAI install records `null`, so real model qualification or explicit metadata confirmation remains open. |
+| `epsilon`, `v_prediction` or `sample` prediction type                             | Exact non-null metadata required. Ordinary CivitAI checkpoints remain `null` unless their verified bytes match the [app-owned compatibility manifest](./phase-2b-model-compatibility-manifest.md); unknown files cannot pass this request boundary. |
 
 [Project integration tests](../../src/main/projects/project-generation-preparation.test.ts)
 enter through a real copied `.igs`, SQLite catalog, model file and Python

@@ -13,6 +13,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import type { CheckpointCompatibilityFingerprint } from '../models/model-compatibility-manifest.js'
+
 import { openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
@@ -69,6 +71,21 @@ async function withService(
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-preparation-'))
   const database = openAppDatabase(dataRoot, migrations)
   const modelRepository = new ModelRepository(database.db)
+  const compatibilityManifest: readonly CheckpointCompatibilityFingerprint[] = [
+    'first exact Illustrious checkpoint',
+    'second exact Illustrious checkpoint',
+    'one exact model for failure cases',
+    'one exact checkpoint for the request boundary',
+    'checkpoint whose bytes can change in place',
+  ].map((value) => {
+    const bytes = Buffer.from(value)
+    return {
+      baseModelFamily: 'illustrious',
+      predictionType: 'epsilon',
+      sha256: sha256(bytes),
+      sizeBytes: bytes.length,
+    }
+  })
   const modelService = new ModelService(
     modelRepository,
     new CivitaiClient(),
@@ -81,6 +98,8 @@ async function withService(
       },
       dataRoot,
     ),
+    undefined,
+    compatibilityManifest,
   )
   const projectRepository = new ProjectIndexRepository(database.db)
   const service = new ProjectService({
@@ -281,13 +300,18 @@ test(
           first.published.versionId,
         )
         const { document, tabId } = await importProject(service, dataRoot, {
-          model: exact,
+          model: { ...exact, predictionType: null },
           name: 'frozen-context',
         })
         const indexed = (await projectRepository.listProjects())[0]
         assert.equal(
           (await readIgsPackage(indexed.canonicalPath)).project.documentRevision,
           document.documentRevision,
+        )
+        assert.equal(
+          (await readIgsPackage(indexed.canonicalPath)).project.generationDraft.model
+            ?.predictionType,
+          null,
         )
 
         const prepared = await service.prepareNormalTxt2ImgContext(
@@ -683,6 +707,26 @@ test(
           },
         }),
         { code: 'INFERENCE_UNAVAILABLE' },
+      )
+      assert.equal(called, false)
+      assert.equal(existsSync(scratchBasePath), false)
+
+      await assert.rejects(
+        withIllustriousTxt2ImgRequest({
+          modelService: {
+            resolveVerifiedGenerationCheckpointForPlan: async (saved) => ({
+              managedPath: installed.managedPath,
+              reference: { ...saved, predictionType: 'v_prediction' },
+            }),
+          },
+          prepared,
+          ready,
+          scratchBasePath,
+          use: async () => {
+            called = true
+          },
+        }),
+        { code: 'GENERATION_INPUT_CHANGED' },
       )
       assert.equal(called, false)
       assert.equal(existsSync(scratchBasePath), false)

@@ -45,8 +45,17 @@ MVP использует CivitAI URL как первый поддерживае�
 
 Source metadata загружается из CivitAI и остаётся source-owned информацией. В неё
 входят доступные источнику имя, автор, resource type, версия, base model family,
-prediction type, описание, preview, trigger words или activation tokens, file
-identity, размер, hash и source link.
+описание, preview, trigger words или activation tokens, file identity, размер,
+hash и source link. CivitAI не даёт надёжный `predictionType` для произвольного
+Illustrious/SDXL checkpoint. Для такого inference этот compatibility-параметр
+берётся только из проверенного app-owned манифеста, привязанного к точному
+SHA-256 локального файла. Anima использует отдельный rectified-flow pipeline:
+для неё потребуется собственная запись точного checkpoint и семейных
+capabilities, без выдуманного SDXL `predictionType`. Без подходящей семейной
+записи модель может быть установлена и показана в библиотеке, но Generate с
+ней блокируется с объяснением; `epsilon` по умолчанию не назначается.
+Обновление манифеста не меняет file identity, уже сохранённые Project
+references или прошлое provenance.
 
 Пользователь может управлять эксплуатационным поведением ресурса:
 
@@ -71,7 +80,8 @@ accepted-result provenance, не изменяется при refresh, rename, up
   новую версию рядом со старой;
 - несколько версий одной модели могут быть установлены одновременно;
 - пользователь явно выбирает `Default` для новых model selections;
-- Generate позволяет явно выбрать любую установленную версию;
+- Project позволяет явно выбрать любую установленную версию; Generate с ней
+  доступен только после проверки соответствующей exact-hash семейной записи;
 - изменение default version не переписывает существующие Projects, Presets или
   provenance;
 - старую установленную версию можно снова выбрать без восстановления backup;
@@ -148,6 +158,10 @@ Local file import и folder scan могут появиться как отдел
 - default version влияет только на новые selections;
 - существующие Projects, Presets и provenance сохраняют exact version identity;
 - missing или corrupted version можно диагностировать и восстановить;
+- checkpoint с неизвестным exact SHA-256 можно установить и выбрать, но
+  Generate блокируется с объяснением до появления подходящей семейной записи в
+  проверенном app-owned compatibility manifest; режим Illustrious/SDXL не
+  выводится из имени, CivitAI ID или модели того же семейства;
 - model selectors получают ресурсы из одной библиотеки Model Manager;
 - model card показывает source metadata, но не редактирует её.
 

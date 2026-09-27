@@ -146,7 +146,7 @@ Untagged CMYK worker не импортирует. Исходный профил�
 capacity tests до релиза; лимит генерации не выводится из этих потолков и не
 копируется из mock UI.
 
-Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, `predictionType`, display name/version и отсутствующий-resource status после проверки.
+Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, nullable `predictionType`, display name/version и отсутствующий-resource status после проверки. Старое `null` в Project reference не меняется скрыто при появлении точного compatibility manifest; подтверждённое значение фиксируется в operational job/provenance.
 
 `preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они едут вместе с project file и являются источником истины для project preview.
 На бесконечном Project Canvas их конечный rasterization rect определяется по
@@ -645,8 +645,11 @@ interface PresetResourceRef {
 
 interface PresetModelRef extends PresetResourceRef {
   baseModel: string
-  predictionType: 'epsilon' | 'v-pred'
+  predictionType: 'epsilon' | 'v_prediction' | 'sample' | null
 }
+
+// A preset may retain an unknown model mode; Apply can restore the selection,
+// while Generate still requires an exact file in its verified family manifest.
 
 interface PresetLora {
   enabled: boolean

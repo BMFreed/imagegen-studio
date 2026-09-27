@@ -1,6 +1,18 @@
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -20,6 +32,8 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
   try {
     const first = openAppDatabase(root, sourceMigrations)
     await first.db.insertInto('app_metadata').values({ key: 'probe', value: 'saved' }).execute()
+    assert.equal(statSync(`${first.filePath}-wal`).mode & 0o777, 0o600)
+    assert.equal(statSync(`${first.filePath}-shm`).mode & 0o777, 0o600)
     await first.close()
 
     const second = openAppDatabase(root, sourceMigrations)
@@ -34,11 +48,112 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 4)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 5)
+    assert.equal(statSync(root).mode & 0o777, 0o700)
+    assert.equal(statSync(path.join(root, 'database')).mode & 0o777, 0o700)
+    assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
     assert.throws(() =>
       sqlite.prepare('INSERT INTO app_metadata VALUES (?, ?)').run('invalid', Buffer.from([1])),
     )
     sqlite.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('existing shared app data root, database directory and file become private on reopen', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-private-'))
+  try {
+    const first = openAppDatabase(root, sourceMigrations)
+    await first.db
+      .insertInto('app_metadata')
+      .values({ key: 'secret', value: 'frozen prompt' })
+      .execute()
+    await first.close()
+    const directory = path.join(root, 'database')
+    chmodSync(root, 0o775)
+    chmodSync(directory, 0o775)
+    chmodSync(first.filePath, 0o644)
+
+    const reopened = openAppDatabase(root, sourceMigrations)
+    assert.equal(statSync(root).mode & 0o777, 0o700)
+    assert.equal(statSync(directory).mode & 0o777, 0o700)
+    assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
+    assert.equal(
+      (
+        await reopened.db
+          .selectFrom('app_metadata')
+          .select('value')
+          .where('key', '=', 'secret')
+          .executeTakeFirstOrThrow()
+      ).value,
+      'frozen prompt',
+    )
+    await reopened.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('a symlinked app data root uses canonical private storage', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-data-alias-'))
+  try {
+    const actual = path.join(root, 'actual-data')
+    const alias = path.join(root, 'data-alias')
+    mkdirSync(actual)
+    symlinkSync(actual, alias)
+    const database = openAppDatabase(alias, sourceMigrations)
+    assert.equal(database.filePath, path.join(actual, 'database', 'app.sqlite'))
+    assert.equal(statSync(actual).mode & 0o777, 0o700)
+    assert.equal(statSync(path.join(actual, 'database')).mode & 0o777, 0o700)
+    await database.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('database bootstrap refuses symlinks and multiply linked SQLite files', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-unsafe-'))
+  try {
+    const outside = path.join(root, 'outside')
+    mkdirSync(outside)
+    symlinkSync(outside, path.join(root, 'database'))
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database directory/,
+    )
+    rmSync(path.join(root, 'database'))
+
+    const first = openAppDatabase(root, sourceMigrations)
+    await first.close()
+    const moved = path.join(outside, 'app.sqlite')
+    renameSync(first.filePath, moved)
+    symlinkSync(moved, first.filePath)
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database file/,
+    )
+    rmSync(first.filePath)
+    renameSync(moved, first.filePath)
+
+    const walSentinel = path.join(outside, 'wal-sentinel')
+    writeFileSync(walSentinel, 'unrelated file')
+    rmSync(`${first.filePath}-wal`, { force: true })
+    symlinkSync(walSentinel, `${first.filePath}-wal`)
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database file/,
+    )
+    assert.equal(readFileSync(walSentinel, 'utf8'), 'unrelated file')
+    rmSync(`${first.filePath}-wal`)
+
+    const hardlink = path.join(outside, 'app-hardlink.sqlite')
+    linkSync(first.filePath, hardlink)
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database file/,
+    )
+    rmSync(hardlink)
   } finally {
     rmSync(root, { force: true, recursive: true })
   }
@@ -62,7 +177,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 4)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 5)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

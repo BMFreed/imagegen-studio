@@ -12,6 +12,26 @@ export interface AppMetadata {
   value: string
 }
 
+export interface GenerationQueueItem {
+  batch_id: string
+  canonical_project_path: string
+  created_at: string
+  document_id: string
+  document_revision: string
+  error_code: string | null
+  error_message: string | null
+  finished_at: string | null
+  frozen_payload_json: string
+  id: string
+  local_project_key: string
+  operation: string
+  staging_session_id: string
+  started_at: string | null
+  status: string
+  status_sequence: Generated<number>
+  updated_at: string
+}
+
 export interface LocalModelFile {
   id: string
   managed_path: string
@@ -132,6 +152,7 @@ export interface SchemaMigrations {
 
 export interface DB {
   app_metadata: AppMetadata
+  generation_queue_item: GenerationQueueItem
   local_model_file: LocalModelFile
   model_install_artifact: ModelInstallArtifact
   model_install_job: ModelInstallJob

@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
+import type { CheckpointCompatibilityFingerprint } from './model-compatibility-manifest.js'
+
 import { openAppDatabase } from '../db/database.js'
 import { ANIMA_BASE_1_0_CHECKPOINT, ANIMA_BASE_1_0_TOTAL_BYTES } from './anima-manifest.js'
 import { CivitaiClient } from './civitai-client.js'
@@ -142,6 +144,7 @@ async function withModelHarness(
     root: string
     service: ModelService
   }) => Promise<void>,
+  compatibilityManifest?: readonly CheckpointCompatibilityFingerprint[],
 ): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'igs-model-flow-'))
   const database = openAppDatabase(root, migrations)
@@ -151,6 +154,8 @@ async function withModelHarness(
       repository,
       new CivitaiClient(api),
       new CivitaiTokenStore(safeStorage(), root),
+      undefined,
+      compatibilityManifest,
     )
     const coordinator = new ModelInstallCoordinator(repository, service, downloader, root)
     await coordinator.initialize()
@@ -261,6 +266,7 @@ test('exact preview file installs into managed storage, survives DB reopen, and 
       assert.equal(installed[0]?.versions[0]?.civitaiVersionId, 7)
       assert.equal(installed[0]?.versions[0]?.civitaiFileId, 701)
       assert.equal(installed[0]?.versions[0]?.file.status, 'ready')
+      assert.equal(installed[0]?.versions[0]?.predictionType, null)
       assert.equal(installed[0]?.defaultVersionId, installed[0]?.versions[0]?.id)
       const managedFile = installed[0]?.versions[0]?.file.managedPath
       assert.ok(managedFile?.startsWith(path.join(root, 'models') + path.sep))
@@ -293,6 +299,46 @@ test('exact preview file installs into managed storage, survives DB reopen, and 
         await reopened.close()
       }
     },
+  )
+})
+
+test('CivitAI install stores manifest prediction only for the exact verified checkpoint bytes', async () => {
+  const bytes = Buffer.from('verified manifest fixture checkpoint')
+  const digest = sha256(bytes)
+  const manifest: readonly CheckpointCompatibilityFingerprint[] = [
+    {
+      baseModelFamily: 'illustrious',
+      predictionType: 'epsilon',
+      sha256: digest,
+      sizeBytes: bytes.length,
+    },
+  ]
+  const downloader = new ModelDownloader({
+    resolveAddresses: PUBLIC_ADDRESSES,
+    transport: async () =>
+      new Response(bytes, { headers: { 'content-type': 'application/octet-stream' } }),
+  })
+  await withModelHarness(
+    civitaiApi({ fileHash: digest, requests: [] }),
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const job = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(job.status, 'completed', job.error?.message ?? '')
+      const [resource] = await repository.listInstalled()
+      const version = resource.versions[0]
+      assert.equal(version.predictionType, 'epsilon')
+      assert.equal(version.file.sha256, digest)
+      const saved = await service.resolveGenerationCheckpoint(resource.id, version.id)
+      const planned = await service.resolveVerifiedGenerationCheckpointForPlan({
+        ...saved,
+        predictionType: null,
+      })
+      assert.equal(planned.reference.predictionType, 'epsilon')
+    },
+    manifest,
   )
 })
 

@@ -16,9 +16,12 @@ finite RGBA pixels at the frozen bbox. Main re-reads and checks output hash,
 dimensions and sRGB metadata. This is raster input preparation, not inference.
 
 The saved Project model reference pins a local resource/version, CivitAI
-model/version/file, SHA-256, family and prediction type. Model Manager Default
+model/version/file, SHA-256, family and nullable prediction type. Model Manager Default
 can change independently. A catalog row marked `ready` is insufficient for a
 job: the file must be force-hashed against the saved exact version in main.
+The later [exact-file compatibility manifest](./phase-2b-model-compatibility-manifest.md)
+may enrich a saved `null` only in the frozen Illustrious plan, without silently
+editing `.igs`; an unknown or contradictory mode cannot be dispatched.
 
 The new preparation boundary joins these two verified inputs, copies the PNG
 bytes, records the Project document ID/revision, bbox, prompts, Steps/CFG and
@@ -36,11 +39,11 @@ not operational inputs and do not block this narrow preparation.
 The returned JSON-compatible context captures the selected pair and mapped
 Invoke scheduler key when present, alongside a separate copied PNG byte buffer.
 It has **no queue ID or staging destination** and is deliberately not a worker
-DTO. The temporary target path is never retained. A later enqueue step must
-materialize the bytes in app-managed storage, validate a qualified
-sampler/scheduler and worker capability set, recheck the model file before
-dispatch, and atomically create its queue/staging records. The current
-Pillow-only worker cannot run this context.
+DTO. The temporary target path is never retained. The later
+[durable enqueue checkpoint](./phase-2b-durable-enqueue-research.md) materializes
+the bytes in app-managed storage after request validation and creates one
+SQLite `pending` row; it still has no dispatch or candidate staging record.
+The current Pillow-only worker cannot run this context.
 
 ## Failure and regression checks
 
@@ -56,6 +59,7 @@ The [Project integration tests](../../src/main/projects/project-generation-prepa
 enter through ProjectService with a real `.igs`, SQLite and the checkout image
 worker when its development environment exists. The
 [model resolver tests](../../src/main/models/model-generation-resource.test.ts)
-use real catalog rows and files. Neither test group proves an installable
-inference runtime, enqueue or candidate publication; those remain in the
+use real catalog rows and files. Separate queue tests exercise SQLite/file
+reopen. These test groups do not prove an installable inference runtime,
+renderer Generate, dispatch or candidate publication; those remain in the
 [Phase 2B roadmap](../specs/01-implementation-roadmap.md#фаза-2b-очередь-и-первая-сквозная-генерация).

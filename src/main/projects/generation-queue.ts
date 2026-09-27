@@ -1,0 +1,778 @@
+import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+
+import type { Kysely, Selectable } from 'kysely'
+
+import { sql } from 'kysely'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm } from 'node:fs/promises'
+import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import * as v from 'valibot'
+
+import type { DB, GenerationQueueItem } from '../db/database.types.js'
+import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type {
+  FrozenNormalTxt2ImgPreparationV1,
+  PreparedNormalTxt2Img,
+} from './project-generation-preparation.js'
+
+import { validateSrgbPngStream } from './igs-package.js'
+import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+
+const MAX_TARGET_BYTES = 32 * 1024 * 1024
+const MAX_PAYLOAD_BYTES = 128 * 1024
+const MAX_MANIFEST_BYTES = 4096
+const QUEUE_INPUT_VERSION = 1
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const UuidSchema = v.pipe(v.string(), v.uuid())
+const Sha256Schema = v.pipe(v.string(), v.regex(SHA256_PATTERN))
+const NonemptySchema = v.pipe(v.string(), v.nonEmpty())
+const SafeUIntSchema = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
+const Uint32Schema = v.pipe(v.number(), v.safeInteger(), v.minValue(0), v.maxValue(0xff_ff_ff_ff))
+const TargetBytesSchema = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(1),
+  v.maxValue(MAX_TARGET_BYTES),
+)
+const PromptSchema = v.pipe(v.string(), v.maxBytes(16 * 1024))
+const PositionSchema = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(-IGS_SAFETY_CEILINGS.coordinateMagnitude),
+  v.maxValue(IGS_SAFETY_CEILINGS.coordinateMagnitude),
+)
+const TargetSideSchema = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(8),
+  v.maxValue(2048),
+  v.check((side) => side % 8 === 0),
+)
+const BboxSchema = v.pipe(
+  v.strictObject({
+    height: TargetSideSchema,
+    width: TargetSideSchema,
+    x: PositionSchema,
+    y: PositionSchema,
+  }),
+  v.check((bbox) => bbox.width * bbox.height <= 4_000_000),
+)
+const PromptsSchema = v.strictObject({ negative: PromptSchema, positive: PromptSchema })
+const PredictionTypeSchema = v.picklist(['epsilon', 'sample', 'v_prediction'])
+const SchedulerKeySchema = v.picklist([
+  'dpmpp_2m_k',
+  'dpmpp_2m',
+  'euler_a',
+  'dpmpp_sde_k',
+  'dpmpp_sde',
+])
+const ExactCheckpointSchema = v.strictObject({
+  baseModelFamily: v.literal('illustrious'),
+  civitaiFileId: v.nullable(SafeUIntSchema),
+  civitaiModelId: v.nullable(SafeUIntSchema),
+  civitaiVersionId: v.nullable(SafeUIntSchema),
+  displayName: NonemptySchema,
+  fileSha256: Sha256Schema,
+  kind: v.literal('checkpoint'),
+  localModelId: NonemptySchema,
+  localVersionId: NonemptySchema,
+  predictionType: PredictionTypeSchema,
+  versionName: NonemptySchema,
+})
+const FrozenContextSchema = v.strictObject({
+  bbox: BboxSchema,
+  documentId: UuidSchema,
+  documentRevision: UuidSchema,
+  kind: v.literal('normal-txt2img-preparation'),
+  model: v.strictObject({ managedPath: NonemptySchema, reference: ExactCheckpointSchema }),
+  prompts: PromptsSchema,
+  sampling: v.strictObject({
+    cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
+    invokeScheduler: SchedulerKeySchema,
+    requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
+    sampler: NonemptySchema,
+    scheduler: NonemptySchema,
+    seed: Uint32Schema,
+    steps: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(200)),
+  }),
+  schemaVersion: v.literal(1),
+  target: v.strictObject({
+    byteSize: TargetBytesSchema,
+    colorSpace: v.literal('srgb'),
+    format: v.literal('png'),
+    height: TargetSideSchema,
+    iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+    sha256: Sha256Schema,
+    width: TargetSideSchema,
+  }),
+})
+const WorkerJobSchema = v.strictObject({
+  bbox: BboxSchema,
+  checkpoint: v.strictObject({
+    path: NonemptySchema,
+    predictionType: PredictionTypeSchema,
+    sha256: Sha256Schema,
+  }),
+  prompts: PromptsSchema,
+  sampling: v.strictObject({
+    cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
+    scheduler: SchedulerKeySchema,
+    seed: Uint32Schema,
+    steps: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(200)),
+  }),
+  schemaVersion: v.literal(1),
+  target: v.strictObject({
+    byteSize: TargetBytesSchema,
+    height: TargetSideSchema,
+    iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+    sha256: Sha256Schema,
+    width: TargetSideSchema,
+  }),
+})
+const SourceRequestSchema = v.strictObject({
+  job: v.strictObject({
+    ...WorkerJobSchema.entries,
+    output: v.strictObject({ pngPath: NonemptySchema, stagingRoot: NonemptySchema }),
+    target: v.strictObject({ ...WorkerJobSchema.entries.target.entries, path: NonemptySchema }),
+  }),
+  protocolVersion: v.literal('1'),
+  requestId: UuidSchema,
+  type: v.literal('generate-illustrious-txt2img'),
+})
+const FrozenPayloadSchema = v.strictObject({
+  context: FrozenContextSchema,
+  kind: v.literal('illustrious-txt2img'),
+  originRequestId: UuidSchema,
+  schemaVersion: v.literal(1),
+  workerJob: WorkerJobSchema,
+})
+
+/** One frozen request and context. A dispatch attempt must assign fresh output and request paths. */
+export interface FrozenQueuedIllustriousTxt2ImgV1 {
+  context: FrozenNormalTxt2ImgPreparationV1
+  kind: 'illustrious-txt2img'
+  originRequestId: string
+  schemaVersion: 1
+  workerJob: WorkerJobWithoutPaths
+}
+
+export interface QueuedGenerationItem {
+  batchId: string
+  createdAt: string
+  id: string
+  localProjectKey: string
+  projectPath: string
+  stagingSessionId: string
+  status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running'
+  statusSequence: number
+}
+
+export interface VerifiedQueuedInput {
+  item: QueuedGenerationItem
+  payload: FrozenQueuedIllustriousTxt2ImgV1
+  targetPath: string
+}
+
+export interface GenerationQueueTestHooks {
+  /** Failure after durable directory publication, before SQLite insertion. */
+  afterInputPublish?: () => Promise<void>
+}
+
+type WorkerJobWithoutPaths = Omit<IllustriousTxt2ImgRequestV1['job'], 'output' | 'target'> & {
+  target: Omit<IllustriousTxt2ImgRequestV1['job']['target'], 'path'>
+}
+
+interface InputManifestV1 {
+  payloadSha256: string
+  queueInputVersion: 1
+  queueItemId: string
+  targetByteSize: number
+  targetFile: 'target.png'
+  targetSha256: string
+}
+
+export class GenerationQueueError extends Error {
+  constructor(
+    readonly code:
+      | 'QUEUE_INPUT_INVALID'
+      | 'QUEUE_ITEM_NOT_FOUND'
+      | 'QUEUE_PROJECT_IDENTITY_CHANGED'
+      | 'QUEUE_STORAGE_UNSAFE',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'GenerationQueueError'
+  }
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+/**
+ * Main-owned, first-job queue checkpoint. It never dispatches work or publishes candidates. Files
+ * commit first, then the SQLite row; startup removes unreferenced file commits after a crash.
+ */
+export class GenerationQueueRepository {
+  private pendingOperation: Promise<void> = Promise.resolve()
+  private readonly root: string
+
+  constructor(
+    private readonly db: Kysely<DB>,
+    dataRoot: string,
+    private readonly testHooks: GenerationQueueTestHooks = {},
+  ) {
+    if (!path.isAbsolute(dataRoot) || path.resolve(dataRoot) !== dataRoot) {
+      throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Application data root is invalid.')
+    }
+    this.root = path.join(dataRoot, 'generation-inputs')
+  }
+
+  /** Call within the qualified request's scratch lease, while its target path is still valid. */
+  async enqueueIllustriousTxt2Img(input: {
+    prepared: PreparedNormalTxt2Img
+    projectPath: string
+    request: IllustriousTxt2ImgRequestV1
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem> {
+    // Freeze caller-owned objects before any await, including the source Project path.
+    const request = structuredClone(input.request)
+    const context = structuredClone(input.prepared.context)
+    const targetBytes = Buffer.from(input.prepared.targetPngBytes)
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    validateSnapshot(context, request, targetBytes, stagingSessionId)
+
+    return await this.serialize(async () => {
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      const sourceBytes = await readStableFile(
+        request.job.target.path,
+        request.job.target.byteSize,
+        request.job.target.sha256,
+      )
+      if (!sourceBytes.equals(targetBytes)) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The qualified request target differs from the frozen Project target.',
+        )
+      }
+      await validateTargetPng(targetBytes, context)
+
+      const id = randomUUID()
+      const batchId = randomUUID()
+      const now = new Date().toISOString()
+      const payload: FrozenQueuedIllustriousTxt2ImgV1 = {
+        context,
+        kind: 'illustrious-txt2img',
+        originRequestId: request.requestId,
+        schemaVersion: 1,
+        workerJob: {
+          bbox: request.job.bbox,
+          checkpoint: request.job.checkpoint,
+          prompts: request.job.prompts,
+          sampling: request.job.sampling,
+          schemaVersion: request.job.schemaVersion,
+          target: {
+            byteSize: request.job.target.byteSize,
+            height: request.job.target.height,
+            iccSha256: request.job.target.iccSha256,
+            sha256: request.job.target.sha256,
+            width: request.job.target.width,
+          },
+        },
+      }
+      const payloadJson = JSON.stringify(payload)
+      if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
+      }
+      parsePayload(payloadJson)
+      const manifest: InputManifestV1 = {
+        payloadSha256: sha256(Buffer.from(payloadJson, 'utf8')),
+        queueInputVersion: QUEUE_INPUT_VERSION,
+        queueItemId: id,
+        targetByteSize: targetBytes.length,
+        targetFile: 'target.png',
+        targetSha256: sha256(targetBytes),
+      }
+      const root = await this.ensureRoot()
+      const temporary = await mkdtemp(path.join(root, '.tmp-'))
+      const published = path.join(root, id)
+      let renamed = false
+      try {
+        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+        await writeDurableFile(
+          path.join(temporary, 'manifest.json'),
+          Buffer.from(JSON.stringify(manifest), 'utf8'),
+        )
+        await syncDirectory(temporary)
+        await rename(temporary, published)
+        renamed = true
+        await syncDirectory(root)
+        await this.testHooks.afterInputPublish?.()
+        await this.db
+          .insertInto('generation_queue_item')
+          .values({
+            batch_id: batchId,
+            canonical_project_path: canonicalPath,
+            created_at: now,
+            document_id: context.documentId,
+            document_revision: context.documentRevision,
+            error_code: null,
+            error_message: null,
+            finished_at: null,
+            frozen_payload_json: payloadJson,
+            id,
+            local_project_key: localProjectKey,
+            operation: 'illustrious-txt2img',
+            staging_session_id: stagingSessionId,
+            started_at: null,
+            status: 'pending',
+            status_sequence: 0,
+            updated_at: now,
+          })
+          .execute()
+        return {
+          batchId,
+          createdAt: now,
+          id,
+          localProjectKey,
+          projectPath: canonicalPath,
+          stagingSessionId,
+          status: 'pending',
+          statusSequence: 0,
+        }
+      } catch (error) {
+        // A database error may have happened after a commit acknowledgement was lost. Never
+        // delete a published input unless a successful read proves the row was not committed.
+        let safeToRemove = !renamed
+        if (renamed) {
+          try {
+            const committed = await this.db
+              .selectFrom('generation_queue_item')
+              .select('id')
+              .where('id', '=', id)
+              .executeTakeFirst()
+            safeToRemove = !committed
+          } catch {
+            safeToRemove = false
+          }
+        }
+        if (safeToRemove) {
+          await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
+            (cleanupError: unknown) => {
+              process.emitWarning(`Generation input cleanup failed: ${String(cleanupError)}`)
+            },
+          )
+        }
+        throw error
+      }
+    })
+  }
+
+  /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
+  async loadVerifiedInput(id: string): Promise<VerifiedQueuedInput> {
+    if (!UUID_PATTERN.test(id)) {
+      throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+    }
+    return await this.serialize(async () => {
+      const row = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst()
+      if (!row) {
+        throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+      }
+      const root = await this.ensureRoot()
+      const directory = path.join(root, id)
+      const entry = await lstat(directory).catch(() => null)
+      if (!entry?.isDirectory() || entry.isSymbolicLink()) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The queued input is missing or unsafe.',
+        )
+      }
+      const payloadBytes = Buffer.from(row.frozen_payload_json, 'utf8')
+      if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The frozen queue payload is invalid.',
+        )
+      }
+      const payload = parsePayload(row.frozen_payload_json)
+      if (
+        payload.context.documentId !== row.document_id ||
+        payload.context.documentRevision !== row.document_revision ||
+        !path.isAbsolute(row.canonical_project_path) ||
+        path.resolve(row.canonical_project_path) !== row.canonical_project_path ||
+        localProjectRecoveryKey(row.canonical_project_path) !== row.local_project_key
+      ) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue context changed.')
+      }
+      const expectedManifest: InputManifestV1 = {
+        payloadSha256: sha256(payloadBytes),
+        queueInputVersion: QUEUE_INPUT_VERSION,
+        queueItemId: id,
+        targetByteSize: payload.workerJob.target.byteSize,
+        targetFile: 'target.png',
+        targetSha256: payload.workerJob.target.sha256,
+      }
+      const manifestBytes = await readStableFile(path.join(directory, 'manifest.json'), null, null)
+      if (manifestBytes.length > MAX_MANIFEST_BYTES) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The queued input manifest is invalid.',
+        )
+      }
+      let manifest: unknown
+      try {
+        manifest = JSON.parse(manifestBytes.toString('utf8'))
+      } catch {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The queued input manifest is invalid.',
+        )
+      }
+      if (!isDeepStrictEqual(manifest, expectedManifest)) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input manifest changed.')
+      }
+      const targetPath = path.join(directory, 'target.png')
+      const targetBytes = await readStableFile(
+        targetPath,
+        payload.workerJob.target.byteSize,
+        payload.workerJob.target.sha256,
+      )
+      await validateTargetPng(targetBytes, payload.context)
+      return { item: toItem(row), payload, targetPath }
+    })
+  }
+
+  /** Restart never resumes old work; registered inputs remain for a future explicit retry. */
+  async recoverAfterRestart(): Promise<{
+    canceledCount: number
+    orphanedDirectoriesRemoved: number
+  }> {
+    return await this.serialize(async () => {
+      const root = await this.ensureRoot()
+      const now = new Date().toISOString()
+      const canceled = await this.db.transaction().execute(async (transaction) => {
+        const result = await transaction
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: 'APP_RESTART',
+            error_message: 'The application closed before this job completed.',
+            finished_at: now,
+            status: 'canceled',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('status', 'in', ['pending', 'running'])
+          .executeTakeFirst()
+        return Number(result.numUpdatedRows)
+      })
+      const rows = await this.db.selectFrom('generation_queue_item').select('id').execute()
+      const registered = new Set(rows.map((row) => row.id))
+      let removed = 0
+      for (const name of await readdir(root)) {
+        if (!name.startsWith('.tmp-') && (registered.has(name) || !UUID_PATTERN.test(name))) {
+          continue
+        }
+        const candidate = path.join(root, name)
+        const entry = await lstat(candidate)
+        if (!entry.isDirectory() || entry.isSymbolicLink()) {
+          throw new GenerationQueueError(
+            'QUEUE_STORAGE_UNSAFE',
+            'Generation input storage contains an unsafe entry.',
+          )
+        }
+        await rm(candidate, { force: true, recursive: true })
+        removed += 1
+      }
+      if (removed > 0) {
+        await syncDirectory(root)
+      }
+      return { canceledCount: canceled, orphanedDirectoriesRemoved: removed }
+    })
+  }
+
+  private async ensureRoot(): Promise<string> {
+    const parent = path.dirname(this.root)
+    const canonicalParent = await realpath(parent)
+    const parentEntry = await lstat(canonicalParent)
+    if (
+      !parentEntry.isDirectory() ||
+      parentEntry.isSymbolicLink() ||
+      (parentEntry.mode & 0o077) !== 0 ||
+      (process.getuid?.() !== undefined && parentEntry.uid !== process.getuid())
+    ) {
+      throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Application data root is unsafe.')
+    }
+    const privateRoot = path.join(canonicalParent, path.basename(this.root))
+    await mkdir(privateRoot, { mode: 0o700, recursive: true })
+    const canonical = await realpath(privateRoot)
+    const entry = await lstat(privateRoot)
+    if (
+      canonical !== privateRoot ||
+      !entry.isDirectory() ||
+      entry.isSymbolicLink() ||
+      (entry.mode & 0o077) !== 0 ||
+      (process.getuid?.() !== undefined && entry.uid !== process.getuid())
+    ) {
+      throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Generation input storage is unsafe.')
+    }
+    return canonical
+  }
+
+  private async serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const prior = this.pendingOperation
+    let release!: () => void
+    this.pendingOperation = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await prior
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
+  }
+}
+
+function validateSnapshot(
+  context: FrozenNormalTxt2ImgPreparationV1,
+  request: IllustriousTxt2ImgRequestV1,
+  bytes: Buffer,
+  stagingSessionId: string,
+): void {
+  if (
+    !v.safeParse(FrozenContextSchema, context).success ||
+    !v.safeParse(SourceRequestSchema, request).success
+  ) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The qualified request is invalid.')
+  }
+  const target = request.job.target
+  if (
+    context.kind !== 'normal-txt2img-preparation' ||
+    context.schemaVersion !== 1 ||
+    request.type !== 'generate-illustrious-txt2img' ||
+    request.protocolVersion !== '1' ||
+    request.job.schemaVersion !== 1 ||
+    !UUID_PATTERN.test(context.documentId) ||
+    !UUID_PATTERN.test(context.documentRevision) ||
+    !UUID_PATTERN.test(request.requestId) ||
+    !UUID_PATTERN.test(stagingSessionId) ||
+    !path.isAbsolute(target.path) ||
+    path.resolve(target.path) !== target.path ||
+    request.job.output.stagingRoot !== path.dirname(target.path) ||
+    request.job.output.pngPath !== path.join(request.job.output.stagingRoot, 'result.png') ||
+    !isDeepStrictEqual(request.job.bbox, context.bbox) ||
+    !isDeepStrictEqual(request.job.prompts, context.prompts) ||
+    request.job.checkpoint.path !== context.model.managedPath ||
+    request.job.checkpoint.sha256 !== context.model.reference.fileSha256 ||
+    request.job.checkpoint.predictionType !== context.model.reference.predictionType ||
+    request.job.sampling.cfgScale !== context.sampling.cfgScale ||
+    request.job.sampling.scheduler !== context.sampling.invokeScheduler ||
+    request.job.sampling.seed !== context.sampling.seed ||
+    request.job.sampling.steps !== context.sampling.steps ||
+    target.byteSize !== context.target.byteSize ||
+    target.width !== context.target.width ||
+    target.height !== context.target.height ||
+    target.iccSha256 !== IGS_SRGB_ICC_SHA256 ||
+    target.iccSha256 !== context.target.iccSha256 ||
+    target.sha256 !== context.target.sha256 ||
+    !SHA256_PATTERN.test(target.sha256) ||
+    bytes.length < 1 ||
+    bytes.length > MAX_TARGET_BYTES ||
+    bytes.length !== target.byteSize ||
+    sha256(bytes) !== target.sha256
+  ) {
+    throw new GenerationQueueError(
+      'QUEUE_INPUT_INVALID',
+      'The qualified request is not frozen input.',
+    )
+  }
+}
+
+function parsePayload(json: string): FrozenQueuedIllustriousTxt2ImgV1 {
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+  }
+  const parsed = v.safeParse(FrozenPayloadSchema, value)
+  if (!parsed.success || !payloadFieldsAgree(parsed.output)) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+  }
+  return parsed.output
+}
+
+function payloadFieldsAgree(payload: FrozenQueuedIllustriousTxt2ImgV1): boolean {
+  const { context, workerJob } = payload
+  const scheduler = resolveIllustriousScheduler(
+    context.sampling.sampler,
+    context.sampling.scheduler,
+  )
+  return (
+    path.isAbsolute(context.model.managedPath) &&
+    path.resolve(context.model.managedPath) === context.model.managedPath &&
+    workerJob.checkpoint.path === context.model.managedPath &&
+    workerJob.checkpoint.sha256 === context.model.reference.fileSha256 &&
+    workerJob.checkpoint.predictionType === context.model.reference.predictionType &&
+    isDeepStrictEqual(workerJob.bbox, context.bbox) &&
+    isDeepStrictEqual(workerJob.prompts, context.prompts) &&
+    workerJob.sampling.cfgScale === context.sampling.cfgScale &&
+    workerJob.sampling.seed === context.sampling.seed &&
+    workerJob.sampling.steps === context.sampling.steps &&
+    workerJob.sampling.scheduler === context.sampling.invokeScheduler &&
+    scheduler.kind === 'supported' &&
+    scheduler.key === workerJob.sampling.scheduler &&
+    workerJob.target.byteSize === context.target.byteSize &&
+    workerJob.target.height === context.target.height &&
+    workerJob.target.width === context.target.width &&
+    workerJob.target.sha256 === context.target.sha256 &&
+    context.target.width === context.bbox.width &&
+    context.target.height === context.bbox.height
+  )
+}
+
+async function validateTargetPng(
+  bytes: Buffer,
+  context: FrozenNormalTxt2ImgPreparationV1,
+): Promise<void> {
+  try {
+    await validateSrgbPngStream(
+      (async function* () {
+        yield bytes
+      })(),
+      'target.png',
+      MAX_TARGET_BYTES,
+      Math.max(context.bbox.width, context.bbox.height),
+    )
+  } catch {
+    throw new GenerationQueueError(
+      'QUEUE_INPUT_INVALID',
+      'The queued target is not a valid sRGB PNG.',
+    )
+  }
+  if (
+    bytes.readUInt32BE(16) !== context.bbox.width ||
+    bytes.readUInt32BE(20) !== context.bbox.height ||
+    bytes[25] !== 6 ||
+    !hasIccProfile(bytes)
+  ) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued target has wrong PNG pixels.')
+  }
+}
+
+function hasIccProfile(png: Buffer): boolean {
+  let offset = 8
+  while (offset + 12 <= png.length) {
+    const size = png.readUInt32BE(offset)
+    if (png.toString('ascii', offset + 4, offset + 8) === 'iCCP') {
+      return true
+    }
+    offset += size + 12
+  }
+  return false
+}
+
+async function readStableFile(
+  filePath: string,
+  expectedBytes: number | null,
+  expectedSha256: string | null,
+): Promise<Buffer> {
+  let file
+  try {
+    file = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input file is unavailable.')
+  }
+  try {
+    const before = await file.stat({ bigint: true })
+    if (
+      !before.isFile() ||
+      before.size < 1n ||
+      before.size > BigInt(expectedBytes ?? MAX_MANIFEST_BYTES) ||
+      (expectedBytes !== null && before.size !== BigInt(expectedBytes))
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input file is invalid.')
+    }
+    const bytes = await file.readFile()
+    const after = await file.stat({ bigint: true })
+    const atPath = await lstat(filePath, { bigint: true })
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      before.dev !== atPath.dev ||
+      before.ino !== atPath.ino ||
+      atPath.isSymbolicLink() ||
+      (expectedBytes !== null && bytes.length !== expectedBytes) ||
+      (expectedSha256 !== null && sha256(bytes) !== expectedSha256)
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input file changed.')
+    }
+    return bytes
+  } finally {
+    await file.close()
+  }
+}
+
+async function writeDurableFile(filePath: string, bytes: Buffer): Promise<void> {
+  const file = await open(filePath, 'wx', 0o600)
+  try {
+    await file.writeFile(bytes)
+    await file.sync()
+  } finally {
+    await file.close()
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const file = await open(
+    directory,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  )
+  try {
+    await file.sync()
+  } finally {
+    await file.close()
+  }
+}
+
+function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {
+  if (
+    row.status !== 'pending' &&
+    row.status !== 'running' &&
+    row.status !== 'completed' &&
+    row.status !== 'failed' &&
+    row.status !== 'canceled'
+  ) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue status is invalid.')
+  }
+  return {
+    batchId: row.batch_id,
+    createdAt: row.created_at,
+    id: row.id,
+    localProjectKey: row.local_project_key,
+    projectPath: row.canonical_project_path,
+    stagingSessionId: row.staging_session_id,
+    status: row.status,
+    statusSequence: row.status_sequence,
+  }
+}

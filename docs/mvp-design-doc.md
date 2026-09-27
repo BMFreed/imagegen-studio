@@ -2174,7 +2174,13 @@ UI показывает fallback "Изображение не найдено"
 - хранить `predictionType` в metadata основной модели;
 - передавать `predictionType` в Python worker вместе с generation job;
 - сохранять фактический `predictionType` в immutable accepted-result provenance;
-- если prediction type неизвестен, показывать пользователю compatibility warning и не маскировать это как художественную настройку.
+- допускать Illustrious/SDXL Generate только для точного SHA-256 checkpoint,
+  указанного в проверенном app-owned compatibility manifest; CivitAI metadata,
+  загрузка весов и SDXL-эвристика `epsilon` не доказывают training objective;
+- если prediction type неизвестен, показывать compatibility diagnostic и
+  блокировать Generate, не маскируя проблему как художественную настройку.
+  Anima использует отдельный rectified-flow pipeline и не получает фиктивный
+  SDXL prediction mode.
 
 Статус: закрыто для MVP.
 

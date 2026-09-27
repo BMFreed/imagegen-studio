@@ -147,11 +147,19 @@ Rules:
 - changing Model Manager's default version must not silently rewrite open projects, presets or accepted-result provenance;
 - if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager; if the same exact version exists under different local IDs, offer an explicit verified link.
 
-If the user selects a v-prediction model, Generate should use the model metadata to pass the correct prediction type to the worker and store it in accepted-result provenance. This is a model compatibility behavior, not a separate user-facing generation mode.
+If the user selects an Illustrious/SDXL v-prediction model, Generate uses the
+verified exact-hash compatibility manifest to pass the correct prediction type
+to the worker and stores it in accepted-result provenance. Anima uses its own
+rectified-flow capability record, not an SDXL prediction type. A selected model
+with no appropriate verified family entry remains visible in Project, but
+Generate is blocked with an explanation. This is a model compatibility
+behavior, not a separate user-facing generation mode.
 
 ## Acceptance Criteria
 
 - User can select a model and configure core sampling parameters.
+- Generate accepts only a verified exact-hash family compatibility record;
+  an unlisted checkpoint produces a visible diagnostic before enqueue.
 - Project derives txt2img/img2img/inpaint/outpaint from the frozen target-area composite rather than a manual workflow toggle.
 - Normal generation and each Smart Patch Layer have correctly scoped generation drafts.
 - Product implementation lets the user select an installed version; the current prototype only displays the selected version.

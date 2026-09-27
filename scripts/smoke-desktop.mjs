@@ -66,6 +66,41 @@ const environment = {
 }
 delete environment.ELECTRON_RUN_AS_NODE
 
+async function seedUnfinishedQueueItem() {
+  const appDataRoot = path.join(dataRoot, 'data', 'imagegen-studio')
+  mkdirSync(appDataRoot, { recursive: true })
+  const database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  const id = randomUUID()
+  const now = new Date().toISOString()
+  try {
+    await database.db
+      .insertInto('generation_queue_item')
+      .values({
+        batch_id: randomUUID(),
+        canonical_project_path: path.join(dataRoot, 'startup-queued.igs'),
+        created_at: now,
+        document_id: randomUUID(),
+        document_revision: randomUUID(),
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: '{}',
+        id,
+        local_project_key: `project-v1-${'0'.repeat(64)}`,
+        operation: 'illustrious-txt2img',
+        staging_session_id: randomUUID(),
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      })
+      .execute()
+  } finally {
+    await database.close()
+  }
+  return { appDataRoot, id }
+}
+
 async function seedInstalledCheckpointVersions() {
   const appDataRoot = path.join(dataRoot, 'data', 'imagegen-studio')
   const modelRoot = path.join(appDataRoot, 'models')
@@ -234,6 +269,7 @@ async function waitForHomeThumbnail(window, projectTitle) {
 let application
 let secondProcess
 try {
+  const queuedBeforeStart = await seedUnfinishedQueueItem()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
   const window = await application.firstWindow()
   await window.locator('body').waitFor()
@@ -292,6 +328,12 @@ try {
   await window.getByRole('button', { name: 'Close Model Manager' }).click()
   await window.getByRole('dialog', { name: 'Model Manager' }).waitFor({ state: 'detached' })
   const checkpointVersions = await seedInstalledCheckpointVersions()
+  const seededCatalog = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(seededCatalog.ok, true)
+  assert.ok(
+    seededCatalog.value.some((item) => item.name === 'Illustrious Smoke Checkpoint'),
+    'The Electron catalog did not see the externally seeded checkpoint.',
+  )
   await window.getByRole('button', { name: 'Manage Models' }).click()
   await window.getByText('Illustrious Smoke Checkpoint', { exact: true }).first().waitFor()
   await checkModelManagerLayout(application, window)
@@ -1875,6 +1917,25 @@ try {
   console.log(
     'Desktop smoke passed: native window close flushes and saves the latest Project draft.',
   )
+  await application.close()
+  const queueDatabase = openAppDatabase(
+    queuedBeforeStart.appDataRoot,
+    path.resolve('src/main/db/migrations'),
+  )
+  try {
+    const canceled = await queueDatabase.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', queuedBeforeStart.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(canceled, {
+      error_code: 'APP_RESTART',
+      status: 'canceled',
+      status_sequence: 1,
+    })
+  } finally {
+    await queueDatabase.close()
+  }
   application = undefined
   const runtimeDir = path.join(dataRoot, 'data', 'imagegen-studio', 'runtime')
   const outside = path.join(dataRoot, 'outside')

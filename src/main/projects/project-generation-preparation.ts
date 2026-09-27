@@ -201,7 +201,7 @@ export async function prepareNormalTxt2Img(input: {
       documentId,
       documentRevision,
       kind: 'normal-txt2img-preparation',
-      model: { managedPath: verified.managedPath, reference: { ...model } },
+      model: { managedPath: verified.managedPath, reference: { ...verified.reference } },
       prompts: {
         negative: draft.negativePrompt.text,
         positive: draft.positivePrompt.text,
