@@ -5,11 +5,12 @@ import type {
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
+import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 
 import { NSelect, type SelectOption } from 'naive-ui'
 import { computed, h, ref, watch } from 'vue'
 
-import { savedModelAvailability } from './project-model-picker.js'
+import { portableModelRelinkCandidate, savedModelAvailability } from './project-model-picker.js'
 import ProjectLoraRow from './ProjectLoraRow.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
 
@@ -23,6 +24,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   add: [identity: ProjectLoraIdentity]
   change: [change: ProjectGenerationDraftChange]
+  relink: [identity: ProjectLoraIdentity]
   remove: [identity: ProjectLoraIdentity]
   validity: [valid: boolean]
 }>()
@@ -46,7 +48,13 @@ const options = computed(() =>
     .filter((resource) => resource.resourceType === 'lora')
     .flatMap((resource) =>
       resource.versions.map((version) => {
-        const added = props.draft.loras.some((lora) => lora.resource.localModelId === resource.id)
+        const added = props.draft.loras.some((lora) =>
+          sameResourceModel(lora.resource, {
+            civitaiModelId: resource.modelId,
+            kind: 'lora',
+            localModelId: resource.id,
+          }),
+        )
         const mismatch =
           props.draft.model?.baseModelFamily &&
           version.baseModelFamily &&
@@ -105,9 +113,28 @@ function add(versionId: string) {
     emit('add', { resourceId: entry.resource.id, versionId })
   }
 }
+function linkState(
+  lora: ProjectTab['generationDraft']['loras'][number],
+): 'available' | 'duplicate' | 'unavailable' {
+  if (!props.catalogReady || !portableModelRelinkCandidate(lora.resource, props.catalog)) {
+    return 'unavailable'
+  }
+  return props.draft.loras.some(
+    (entry) => entry !== lora && sameResourceModel(entry.resource, lora.resource),
+  )
+    ? 'duplicate'
+    : 'available'
+}
 function warning(lora: ProjectTab['generationDraft']['loras'][number]) {
   if (!props.catalogReady) {
     return null
+  }
+  const link = linkState(lora)
+  if (link === 'available') {
+    return 'This exact version is installed here. Link it to restore this LoRA.'
+  }
+  if (link === 'duplicate') {
+    return 'This LoRA is also present in another row. Remove the duplicate before linking.'
   }
   const availability = savedModelAvailability(lora.resource, props.catalog)
   if (availability === 'missing') {
@@ -161,10 +188,12 @@ function validity(key: string, valid: boolean) {
     <ProjectLoraRow
       v-for="row of rows"
       :key="row.key"
+      :canRelink="linkState(row.lora) === 'available'"
       :disabled
       :lora="row.lora"
       :warning="warning(row.lora)"
       @change="emit('change', $event)"
+      @relink="emit('relink', row.identity)"
       @remove="emit('remove', row.identity)"
       @validity="validity(row.key, $event)"
     />

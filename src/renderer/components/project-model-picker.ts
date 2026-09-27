@@ -86,26 +86,31 @@ export function portableModelRelinkCandidate(
     saved.civitaiModelId === null ||
     saved.civitaiVersionId === null ||
     saved.civitaiFileId === null ||
-    saved.baseModelFamily === null
+    (saved.kind !== 'checkpoint' && saved.kind !== 'lora') ||
+    (saved.kind === 'checkpoint' && saved.baseModelFamily === null)
   ) {
     return null
   }
 
-  const matches = checkpointCatalog(catalog).flatMap((resource) =>
-    resource.versions
-      .filter(
-        (version) =>
-          resource.modelId === saved.civitaiModelId &&
-          version.civitaiVersionId === saved.civitaiVersionId &&
-          version.civitaiFileId === saved.civitaiFileId &&
-          version.sha256.toLowerCase() === saved.fileSha256.toLowerCase() &&
-          version.baseModelFamily === saved.baseModelFamily,
-      )
-      .map((version) => ({ resource, version })),
-  )
+  const matches = catalog
+    .filter((resource) => resource.resourceType === saved.kind)
+    .flatMap((resource) =>
+      resource.versions
+        .filter(
+          (version) =>
+            resource.modelId === saved.civitaiModelId &&
+            version.civitaiVersionId === saved.civitaiVersionId &&
+            version.civitaiFileId === saved.civitaiFileId &&
+            version.sha256.toLowerCase() === saved.fileSha256.toLowerCase() &&
+            version.baseModelFamily === saved.baseModelFamily,
+        )
+        .map((version) => ({ resource, version })),
+    )
   const match = matches.length === 1 ? matches[0]! : null
   return match &&
-    selectableVersion(match.version) &&
+    (saved.kind === 'lora'
+      ? match.version.fileStatus === 'ready'
+      : selectableVersion(match.version)) &&
     (match.resource.id !== saved.localModelId || match.version.id !== saved.localVersionId)
     ? match
     : null

@@ -6,12 +6,14 @@ import { NButton, NIcon, NInput, NSwitch } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
+  canRelink: boolean
   disabled: boolean
   lora: ProjectTab['generationDraft']['loras'][number]
   warning: string | null
 }>()
 const emit = defineEmits<{
   change: [change: ProjectGenerationDraftChange]
+  relink: []
   remove: []
   validity: [valid: boolean]
 }>()
@@ -97,6 +99,16 @@ function blurWeight() {
       Enter a finite weight before saving.
     </p>
     <p v-if="warning" class="lora-warning" role="status">{{ warning }}</p>
+    <NButton
+      v-if="canRelink"
+      :aria-label="`Link installed version of ${lora.resource.displayName}`"
+      :disabled="disabled || weight === null"
+      secondary
+      size="small"
+      @click="emit('relink')"
+    >
+      Link installed version
+    </NButton>
   </article>
 </template>
 

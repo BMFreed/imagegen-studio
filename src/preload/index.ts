@@ -603,6 +603,8 @@ const api: StudioApi = {
     open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
+    relinkGenerationLora: (tabId, identity) =>
+      invokeProject(ipcChannels.projects.relinkGenerationLora, [tabId, identity], isProjectTab),
     relinkGenerationModel: (tabId) =>
       invokeProject(ipcChannels.projects.relinkGenerationModel, [tabId], isProjectTab),
     removeGenerationLora: (tabId, identity) =>

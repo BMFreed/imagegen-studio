@@ -30,11 +30,14 @@ results and their provenance. Project indexes and preview caches can be rebuilt;
 they are not required as the sole copy of the saved project. Model weights stay
 in the reusable library: moving a project may require installing its exact
 resources, and missing resources must remain understandable from copied metadata.
-For a saved checkpoint whose local registry IDs came from another machine,
+For a saved checkpoint or LoRA whose local registry IDs came from another machine,
 Project may explicitly link the same installed CivitAI model/version/file,
 SHA-256 and base family after main verifies its bytes and required dependencies. This updates
-only the document's local IDs through the ordinary dirty/shadow/Save lifecycle;
-opening a copied `.igs` never performs the relink silently.
+only the document's local IDs through the ordinary dirty/shadow/Save lifecycle.
+LoRA weight, enabled state, row order and copied metadata remain unchanged.
+A LoRA with unknown family can retain that state if all other exact identity
+fields and file bytes match; this does not prove model compatibility.
+Opening a copied `.igs` never performs the relink silently.
 
 ## Dirty State
 
@@ -248,3 +251,8 @@ The pending process pilot is tracked in [Engineering workflow](../../engineering
   Save its current state.
 - Save success is verified by reopening through the real loader; a write/validation/replacement failure keeps the previous saved package readable and the document dirty.
 - Valid recovery opens for review without replacing the saved package until explicit Save; failed Save does not delete the recoverable shadow.
+
+Portable LoRA links now use this same document lifecycle. Two-library filesystem
+checks cover recovery and Save/reopen; Electron covers explicit row action,
+corrupt-file refusal and a just-edited weight before linking. See
+[LoRA relink validation](../../engineering/phase-2a-project-storage-research.md#portable-lora-relinking-validation).

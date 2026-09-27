@@ -468,66 +468,13 @@ export class ModelService {
   async resolvePortableGenerationCheckpoint(
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
-    if (
-      saved.kind !== 'checkpoint' ||
-      saved.civitaiModelId === null ||
-      saved.civitaiVersionId === null ||
-      saved.civitaiFileId === null ||
-      (saved.baseModelFamily !== 'illustrious' && saved.baseModelFamily !== 'anima')
-    ) {
-      throw new ModelServiceError(
-        'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',
-        'This Project reference has no complete supported checkpoint identity to link.',
-      )
-    }
-    const installed = await this.repository.listInstalled()
-    const matches = installed.flatMap((resource) => {
-      if (
-        resource.type !== 'checkpoint' ||
-        resource.source.kind !== 'civitai' ||
-        resource.source.modelId !== saved.civitaiModelId
-      ) {
-        return []
-      }
-      return resource.versions
-        .filter(
-          (version) =>
-            version.civitaiVersionId === saved.civitaiVersionId &&
-            version.civitaiFileId === saved.civitaiFileId &&
-            version.file.sha256.toLowerCase() === saved.fileSha256.toLowerCase() &&
-            version.baseModelFamily === saved.baseModelFamily,
-        )
-        .map((version) => ({ resourceId: resource.id, versionId: version.id }))
-    })
-    if (matches.length !== 1) {
-      throw new ModelServiceError(
-        matches.length === 0
-          ? 'MODEL_PORTABLE_MATCH_UNAVAILABLE'
-          : 'MODEL_PORTABLE_MATCH_AMBIGUOUS',
-        matches.length === 0
-          ? 'Install or repair this exact checkpoint version before linking it to the Project.'
-          : 'Several installed checkpoints match this Project reference; resolve the duplicate before linking.',
-      )
-    }
-    const match = matches[0]
-    const resolved = await this.resolveGenerationCheckpoint(match.resourceId, match.versionId)
-    if (
-      resolved.civitaiModelId !== saved.civitaiModelId ||
-      resolved.civitaiVersionId !== saved.civitaiVersionId ||
-      resolved.civitaiFileId !== saved.civitaiFileId ||
-      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase() ||
-      resolved.baseModelFamily !== saved.baseModelFamily
-    ) {
-      throw new ModelServiceError(
-        'MODEL_PORTABLE_MATCH_UNAVAILABLE',
-        'The installed checkpoint changed while its exact identity was being verified.',
-      )
-    }
-    return {
-      ...saved,
-      localModelId: resolved.localModelId,
-      localVersionId: resolved.localVersionId,
-    }
+    return this.resolvePortableGenerationResource(saved, 'checkpoint')
+  }
+
+  async resolvePortableGenerationLora(
+    saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    return this.resolvePortableGenerationResource(saved, 'lora')
   }
 
   async saveToken(token: string): Promise<CivitaiTokenStatus> {
@@ -805,6 +752,75 @@ export class ModelService {
       localVersionId: version.id,
       predictionType: version.predictionType,
       versionName: version.name,
+    }
+  }
+
+  private async resolvePortableGenerationResource(
+    saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+    kind: 'checkpoint' | 'lora',
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    const label = kind === 'checkpoint' ? 'checkpoint' : 'LoRA'
+    if (
+      saved.kind !== kind ||
+      saved.civitaiModelId === null ||
+      saved.civitaiVersionId === null ||
+      saved.civitaiFileId === null ||
+      (kind === 'checkpoint' &&
+        saved.baseModelFamily !== 'illustrious' &&
+        saved.baseModelFamily !== 'anima')
+    ) {
+      throw new ModelServiceError(
+        'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',
+        `This Project reference has no complete supported ${label} identity to link.`,
+      )
+    }
+    const installed = await this.repository.listInstalled()
+    const matches = installed.flatMap((resource) => {
+      if (
+        resource.type !== kind ||
+        resource.source.kind !== 'civitai' ||
+        resource.source.modelId !== saved.civitaiModelId
+      ) {
+        return []
+      }
+      return resource.versions
+        .filter(
+          (version) =>
+            version.civitaiVersionId === saved.civitaiVersionId &&
+            version.civitaiFileId === saved.civitaiFileId &&
+            version.file.sha256.toLowerCase() === saved.fileSha256.toLowerCase() &&
+            version.baseModelFamily === saved.baseModelFamily,
+        )
+        .map((version) => ({ resourceId: resource.id, versionId: version.id }))
+    })
+    if (matches.length !== 1) {
+      throw new ModelServiceError(
+        matches.length === 0
+          ? 'MODEL_PORTABLE_MATCH_UNAVAILABLE'
+          : 'MODEL_PORTABLE_MATCH_AMBIGUOUS',
+        matches.length === 0
+          ? `Install or repair this exact ${label} version before linking it to the Project.`
+          : `Several installed ${label} versions match this Project reference; resolve the duplicate before linking.`,
+      )
+    }
+    const match = matches[0]
+    const resolved = await this.resolveGenerationResource(match.resourceId, match.versionId, kind)
+    if (
+      resolved.civitaiModelId !== saved.civitaiModelId ||
+      resolved.civitaiVersionId !== saved.civitaiVersionId ||
+      resolved.civitaiFileId !== saved.civitaiFileId ||
+      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase() ||
+      resolved.baseModelFamily !== saved.baseModelFamily
+    ) {
+      throw new ModelServiceError(
+        'MODEL_PORTABLE_MATCH_UNAVAILABLE',
+        `The installed ${label} changed while its exact identity was being verified.`,
+      )
+    }
+    return {
+      ...saved,
+      localModelId: resolved.localModelId,
+      localVersionId: resolved.localVersionId,
     }
   }
 

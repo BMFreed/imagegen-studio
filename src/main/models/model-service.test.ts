@@ -891,89 +891,120 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
   )
 })
 
-test('portable checkpoint linking requires the same CivitAI file identity and bytes, then verifies the installed file', async () => {
-  const requests: { authorization: string | null; pathname: string }[] = []
-  await withModelHarness(
-    civitaiApi({ requests }),
-    new ModelDownloader(),
-    async ({ repository, root, service }) => {
-      const bytes = Buffer.from('portable illustrious checkpoint bytes')
-      const managedPath = path.join(root, 'portable.safetensors')
-      await writeFile(managedPath, bytes)
-      const digest = sha256(bytes)
-      const published = await repository.publishVerifiedInstallation({
-        primary: {
-          file: {
-            managedPath,
-            originalFilename: 'portable.safetensors',
-            sha256: digest,
-            sizeBytes: bytes.length,
-            verifiedAt: new Date().toISOString(),
-          },
-          resource: {
-            displayName: 'Destination checkpoint',
-            source: { kind: 'civitai', modelId: 427 },
-            sourceMetadata: {},
-            type: 'checkpoint',
-          },
-          version: {
-            baseModelFamily: 'illustrious',
-            format: 'SafeTensor',
-            name: 'Destination version',
-            predictionType: 'v_prediction',
-            source: {
-              expectedSha256: digest,
-              fileId: 882,
-              kind: 'civitai',
-              versionId: 881,
+for (const kind of ['checkpoint', 'lora'] as const) {
+  test(`portable ${kind} linking requires the same CivitAI file identity and bytes, then verifies the installed file`, async () => {
+    const requests: { authorization: string | null; pathname: string }[] = []
+    await withModelHarness(
+      civitaiApi({ requests }),
+      new ModelDownloader(),
+      async ({ databaseFile, repository, root, service }) => {
+        const resolvePortable =
+          kind === 'checkpoint'
+            ? service.resolvePortableGenerationCheckpoint.bind(service)
+            : service.resolvePortableGenerationLora.bind(service)
+        const resolveSelected =
+          kind === 'checkpoint'
+            ? service.resolveGenerationCheckpoint.bind(service)
+            : service.resolveGenerationLora.bind(service)
+        const bytes = Buffer.from('portable illustrious checkpoint bytes')
+        const managedPath = path.join(root, 'portable.safetensors')
+        await writeFile(managedPath, bytes)
+        const digest = sha256(bytes)
+        const published = await repository.publishVerifiedInstallation({
+          primary: {
+            file: {
+              managedPath,
+              originalFilename: 'portable.safetensors',
+              sha256: digest,
+              sizeBytes: bytes.length,
+              verifiedAt: new Date().toISOString(),
             },
-            sourceMetadata: {},
+            resource: {
+              displayName: 'Destination checkpoint',
+              source: { kind: 'civitai', modelId: 427 },
+              sourceMetadata: {},
+              type: kind,
+            },
+            version: {
+              baseModelFamily: 'illustrious',
+              format: 'SafeTensor',
+              name: 'Destination version',
+              predictionType: 'v_prediction',
+              source: {
+                expectedSha256: digest,
+                fileId: 882,
+                kind: 'civitai',
+                versionId: 881,
+              },
+              sourceMetadata: {},
+            },
           },
-        },
-      })
-      const local = await service.resolveGenerationCheckpoint(
-        published.resourceId,
-        published.versionId,
-      )
-      const portable = {
-        ...local,
-        displayName: 'Original checkpoint name',
-        localModelId: randomUUID(),
-        localVersionId: randomUUID(),
-        predictionType: null,
-        versionName: 'Original version name',
-      }
-      assert.deepEqual(await service.resolvePortableGenerationCheckpoint(portable), {
-        ...portable,
-        localModelId: local.localModelId,
-        localVersionId: local.localVersionId,
-      })
-      for (const mismatch of [
-        { ...portable, civitaiModelId: 428 },
-        { ...portable, civitaiVersionId: 880 },
-        { ...portable, civitaiFileId: 883 },
-        { ...portable, fileSha256: 'f'.repeat(64) },
-        { ...portable, baseModelFamily: 'anima' as const },
-      ]) {
-        await assert.rejects(service.resolvePortableGenerationCheckpoint(mismatch), {
-          code: 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
         })
-      }
-      await assert.rejects(
-        service.resolvePortableGenerationCheckpoint({ ...portable, civitaiFileId: null }),
-        { code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE' },
-      )
-      await writeFile(managedPath, Buffer.alloc(bytes.length, 0x78))
-      await assert.rejects(service.resolvePortableGenerationCheckpoint(portable), {
-        code: 'MODEL_FILE_CORRUPT',
-      })
-      await rm(managedPath)
-      await assert.rejects(service.resolvePortableGenerationCheckpoint(portable), {
-        code: 'MODEL_FILE_MISSING',
-      })
-    },
-  )
-})
+        const local = await resolveSelected(published.resourceId, published.versionId)
+        const portable = {
+          ...local,
+          displayName: 'Original checkpoint name',
+          localModelId: randomUUID(),
+          localVersionId: randomUUID(),
+          predictionType: null,
+          versionName: 'Original version name',
+        }
+        assert.deepEqual(await resolvePortable(portable), {
+          ...portable,
+          localModelId: local.localModelId,
+          localVersionId: local.localVersionId,
+        })
+        for (const mismatch of [
+          { ...portable, civitaiModelId: 428 },
+          { ...portable, civitaiVersionId: 880 },
+          { ...portable, civitaiFileId: 883 },
+          { ...portable, fileSha256: 'f'.repeat(64) },
+          { ...portable, baseModelFamily: 'anima' as const },
+        ]) {
+          await assert.rejects(resolvePortable(mismatch), {
+            code: 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
+          })
+        }
+        await assert.rejects(resolvePortable({ ...portable, civitaiFileId: null }), {
+          code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',
+        })
+        await assert.rejects(
+          resolvePortable({ ...portable, kind: kind === 'checkpoint' ? 'lora' : 'checkpoint' }),
+          { code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE' },
+        )
+        if (kind === 'lora') {
+          const sqlite = new Database(databaseFile)
+          try {
+            sqlite
+              .prepare('UPDATE model_resource_version SET base_model_family = NULL WHERE id = ?')
+              .run(published.versionId)
+            const unknownFamily = { ...portable, baseModelFamily: null }
+            assert.deepEqual(await resolvePortable(unknownFamily), {
+              ...unknownFamily,
+              localModelId: local.localModelId,
+              localVersionId: local.localVersionId,
+            })
+            sqlite
+              .prepare(
+                "UPDATE model_resource_version SET base_model_family = 'illustrious' WHERE id = ?",
+              )
+              .run(published.versionId)
+          } finally {
+            sqlite.close()
+          }
+        }
+        await writeFile(managedPath, Buffer.alloc(bytes.length, 0x78))
+        await assert.rejects(resolvePortable(portable), {
+          code: 'MODEL_FILE_CORRUPT',
+        })
+        await rm(managedPath)
+        await assert.rejects(resolvePortable(portable), {
+          code: 'MODEL_FILE_MISSING',
+        })
+      },
+    )
+  })
+}
 
 test('repair replaces a same-size corrupted file and preserves its resource and version identity', async () => {
   const bytes = Buffer.from('checkpoint bytes with intact size')

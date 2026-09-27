@@ -274,6 +274,10 @@ function setGenerationModel(
   return runGenerationModelAction(tabId, () => projectApi().setGenerationModel(tabId, selection))
 }
 
+function relinkGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
+  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationLora(tabId, identity))
+}
+
 function relinkGenerationModel(tabId: string) {
   return runGenerationModelAction(tabId, () => projectApi().relinkGenerationModel(tabId))
 }
@@ -1107,6 +1111,7 @@ onBeforeUnmount(() => {
           @manageModels="modelManagerOpen = true"
           @moveLayer="moveActiveRasterLayer"
           @refreshModels="refreshModelCatalog"
+          @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
           @removeLora="removeGenerationLora(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"

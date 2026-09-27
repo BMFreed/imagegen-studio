@@ -63,6 +63,7 @@ const emit = defineEmits<{
   manageModels: []
   moveLayer: [layerId: string, targetIndex: number]
   refreshModels: []
+  relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
   removeLora: [identity: ProjectLoraIdentity]
   save: []
@@ -733,6 +734,7 @@ function applyFitBbox() {
             :loading="modelCatalogLoading"
             @add="emit('addLora', $event)"
             @change="emit('updateDraft', $event)"
+            @relink="emit('relinkLora', $event)"
             @remove="emit('removeLora', $event)"
             @validity="lorasValid = $event"
           />

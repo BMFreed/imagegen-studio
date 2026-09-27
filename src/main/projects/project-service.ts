@@ -18,6 +18,7 @@ import {
   type IgsRectV1,
   IgsSchemaError,
 } from '../../shared/projects/project-schema.js'
+import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 
 import { randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -104,6 +105,7 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_INVALID_INPUT'
       | 'PROJECT_LAYER_LOCKED'
       | 'PROJECT_LAYER_NOT_FOUND'
+      | 'PROJECT_LORA_RELINK_MISMATCH'
       | 'PROJECT_MODEL_NOT_SELECTED'
       | 'PROJECT_MODEL_RELINK_MISMATCH'
       | 'PROJECT_NOT_FOUND'
@@ -145,11 +147,7 @@ export class ProjectService {
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    if (
-      document.generationDraft.loras.some(
-        (lora) => lora.resource.localModelId === resource.localModelId,
-      )
-    ) {
+    if (document.generationDraft.loras.some((lora) => sameResourceModel(lora.resource, resource))) {
       throw new ProjectServiceError(
         'PROJECT_INVALID_INPUT',
         'This LoRA is already in the stack. Remove it before choosing another version.',
@@ -566,6 +564,76 @@ export class ProjectService {
     } finally {
       this.rebuilding.delete(projectId)
     }
+  }
+
+  /** Link one saved LoRA without replacing its settings or copied metadata. */
+  async relinkGenerationLora(
+    tabId: string,
+    identity: ProjectLoraIdentity,
+    resolve: (
+      saved: IgsProjectDocumentV1['generationDraft']['loras'][number]['resource'],
+    ) => Promise<IgsProjectDocumentV1['generationDraft']['loras'][number]['resource']>,
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const index = this.loraIndex(document, identity)
+    const lora = document.generationDraft.loras[index]
+    const saved = lora.resource
+    const resolved = await resolve(structuredClone(saved))
+    if (
+      resolved.kind !== 'lora' ||
+      resolved.civitaiModelId !== saved.civitaiModelId ||
+      resolved.civitaiVersionId !== saved.civitaiVersionId ||
+      resolved.civitaiFileId !== saved.civitaiFileId ||
+      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase() ||
+      resolved.baseModelFamily !== saved.baseModelFamily
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_LORA_RELINK_MISMATCH',
+        'The installed LoRA does not match the exact Project reference.',
+      )
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed while linking its LoRA.')
+    }
+    if (
+      document.generationDraft.loras.some(
+        (entry, current) => current !== index && sameResourceModel(entry.resource, resolved),
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'This LoRA is already present in another row. Remove the duplicate before linking.',
+      )
+    }
+    const linked = {
+      ...saved,
+      localModelId: resolved.localModelId,
+      localVersionId: resolved.localVersionId,
+    }
+    if (
+      saved.localModelId === linked.localModelId &&
+      saved.localVersionId === linked.localVersionId
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          loras: document.generationDraft.loras.map((entry, current) =>
+            current === index ? { ...entry, resource: linked } : entry,
+          ),
+        },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
   }
 
   /**

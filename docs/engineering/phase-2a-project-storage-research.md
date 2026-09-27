@@ -675,3 +675,91 @@ identity strings use the existing document `titleBytes` bound (1024 bytes), not
 a new persistence limit. This slice changes neither `.igs` schema nor Save/
 recovery failure handling. Runtime installation, inference, trigger completion,
 portable LoRA relink and preset integration remain open roadmap work.
+
+## Portable LoRA relinking: research
+
+Scope on `a188cd2`: extend the existing explicit checkpoint relink path to one
+selected LoRA row. PP-004/PP-007 and the managed-library/document-lifecycle
+contracts require exact portable resource identity and copied missing-resource
+metadata. Risk is high at the trusted resource resolution and document mutation
+boundaries. No schema, installation or inference change is needed.
+
+Confirmed: Project already stores exact LoRA refs; main verifies newly selected
+files. Copied `.igs` retains former local IDs and currently offers only removal.
+Checkpoint relink compares CivitAI model/version/file IDs, SHA-256 and family,
+verifies bytes, rejects ambiguous matches and checks document revision after
+asynchronous resolution. Those invariants also apply to LoRA. Null family is
+allowed for LoRA (compatibility remains unknown); checkpoint family restrictions
+and Anima component checks must remain unchanged.
+
+Path: LoRA row action → renderer flushes draft edits → strict IPC accepts only
+saved row IDs → ProjectService captures row/revision → ModelService resolves the
+unique exact installed file and verifies bytes → ProjectService replaces only
+local IDs → dirty/shadow → explicit Save. Display/prediction metadata, weight,
+enabled flag, row order and both prompts/embedding refs remain unchanged.
+Opening or refreshing the catalog never relinks automatically. Main rejects stale
+completion after an edit, row removal or tab close/reopen. Missing/corrupt bytes,
+partial/mismatched identity and duplicate matches leave the document unchanged.
+
+A transferred row and a fresh local selection may share one CivitAI resource
+while carrying different local IDs. Duplicate detection must therefore use the
+portable model identity as well as local resource ID. Existing duplicate rows
+must not be merged or silently deleted; relinking a colliding row fails with a
+local explanation. No new numeric limits: IPC uses the existing 1024-byte
+`titleBytes` bound for saved IDs; new installed selections still require UUIDs.
+
+Validation: two real SQLite libraries/files and a copied archive; relink through
+recovery/Save/reopen; immutable metadata and neighboring row controls; real
+Electron import→row action→Save/reopen and error states; stale async completions;
+semantic mutations of local-only replacement and stale-revision guard. Renderer
+catalog suggestions are advisory: successful main byte verification is required.
+
+### Portable LoRA relinking: validation
+
+Self-review on the working tree based on `a188cd2`, 27.09.2026. The same
+main-owned resolver now serves checkpoint and LoRA relinking; existing
+checkpoint family/Anima dependency restrictions are preserved.
+
+- `project-service.test.ts`: two real SQLite libraries, managed byte fixtures,
+  saved source archive and explicit Copy. Relink changes only local IDs of one
+  row; weight/enabled, copied name/version/prediction metadata, prompts and a
+  neighboring LoRA remain unchanged. The source and saved copy remain unchanged
+  before Save; shadow recovery in a restarted service restores the link, and
+  Save/reopen commits it. Repeating a verified link is a clean no-op. Duplicate
+  portable refs and wrong/stale row identity are rejected. Concurrent edit,
+  removal and close/reopen each invalidate the resolver's late response,
+  including when it would otherwise be a no-op.
+- `model-service.test.ts`: the same real registry/file suite now runs for both
+  resource kinds. It rejects mismatched model/version/file/hash/family, partial
+  identity, wrong kind and missing/corrupt bytes. LoRA with unknown family may
+  link only to that same unknown family; this adds no compatibility claim.
+- `project-model-picker.test.ts`: renderer suggestions require one ready exact
+  match at different local IDs; duplicates and resource-kind mismatch are not
+  offered. This is advisory and does not replace main's file verification.
+- `smoke-desktop.mjs`: imports a saved LoRA with former local IDs through the
+  actual dialog. No automatic relink; the existing resource is marked Added.
+  Extra identity metadata in IPC is rejected. Replacing a suggested file with
+  same-size corrupt bytes makes the row action fail without changing Project.
+  Restoring bytes and explicitly retrying links successfully; the last typed
+  weight is flushed first. Save/reopen and direct `.igs` read agree. Checkpoint
+  relink and the remaining smoke scenarios still use the same production paths.
+- Semantic mutations ran in an isolated temporary copy of `src`: copying the
+  resolver's metadata over the saved ref broke the preservation assertion;
+  removing the revision/session guard broke all three late-completion tests.
+  The working tree was never mutated for these experiments.
+
+This is document/resource integration, not inference or GPU qualification.
+Installed model bytes in tests are deliberately small fixtures, not runnable
+weights. No worker, archive schema, storage ceiling or installation behavior
+changes. Trigger completion, VAE/embedding selection, queue, pipeline and release
+runtime remain roadmap work; PP-004/PP-007 retain their incomplete public status.
+
+Final checks: `pnpm run typecheck`, `pnpm run lint`, all **253 app tests**, all
+**142 prototype tests**, all seven Electron smoke scenarios and `app:build`
+passed. Build retains the known >500 kB chunk-size warning. `git diff --check`
+passed. Visual self-review with the existing `ui-audit` checklist inspected the
+new neutral row action in the actual renderer at 1380×900, the corrupt-file
+failure, and the linked state at 900×620; the action/message disappear after a
+successful link and all weight/switch/remove controls remain usable. Local
+captures: `/tmp/igs-lora-relink.png` and
+`/tmp/igs-lora-relink-linked-small.png`. This is not a full accessibility audit.

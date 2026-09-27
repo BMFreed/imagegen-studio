@@ -661,6 +661,23 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(
+        ipcChannels.projects.relinkGenerationLora,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]),
+        async (tabId, identity) => {
+          if (!modelStorageAvailable) {
+            throw new ModelServiceError(
+              'MODEL_STORAGE_UNAVAILABLE',
+              'Managed model storage needs repair.',
+            )
+          }
+          return projectService.relinkGenerationLora(
+            tabId as string,
+            identity as ProjectLoraIdentity,
+            (saved) => modelService.resolvePortableGenerationLora(saved),
+          )
+        },
+      )
+      registerProjectHandler(
         ipcChannels.projects.relinkGenerationModel,
         oneProjectId,
         async (tabId) => {

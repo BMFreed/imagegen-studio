@@ -263,3 +263,45 @@ test('portable relink refuses partial, mismatched, or unavailable metadata', () 
     'a ready plus corrupt duplicate must not show an action that main will reject',
   )
 })
+
+test('portable LoRA suggestions use exact source identity, preserve unknown family and reject other resource kinds', () => {
+  const saved = { ...savedModel(), kind: 'lora' as const }
+  const localVersion = version('destination-version', shaA, 'ready')
+  const local = {
+    ...resource('unrelated-default', [localVersion]),
+    id: 'destination-model',
+    resourceType: 'lora' as const,
+  }
+  assert.equal(portableModelRelinkCandidate(saved, [local])?.version.id, localVersion.id)
+  assert.equal(
+    portableModelRelinkCandidate(saved, [{ ...local, resourceType: 'checkpoint' }]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...local, versions: [{ ...localVersion, sha256: shaB }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...local, versions: [{ ...localVersion, civitaiFileId: 12 }] },
+    ]),
+    null,
+  )
+  assert.equal(
+    portableModelRelinkCandidate(saved, [
+      { ...local, versions: [{ ...localVersion, fileStatus: 'missing' }] },
+    ]),
+    null,
+  )
+  assert.equal(portableModelRelinkCandidate(saved, [local, { ...local, id: 'duplicate' }]), null)
+  const unknown = { ...saved, baseModelFamily: null }
+  assert.equal(
+    portableModelRelinkCandidate(unknown, [
+      { ...local, versions: [{ ...localVersion, baseModelFamily: null }] },
+    ])?.version.id,
+    localVersion.id,
+  )
+  assert.equal(portableModelRelinkCandidate(unknown, [local]), null)
+})

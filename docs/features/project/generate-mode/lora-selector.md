@@ -50,6 +50,20 @@ disabled or removed. Model changes preserve the stack and show local compatibili
 warnings. LoRA actions preserve both prompt text and embedding sidecars.
 
 The stack participates in dirty state, document shadow recovery and explicit
-`.igs` Save/reopen. Portable LoRA relinking, trigger highlighting/autocomplete,
-presets and actual inference/preflight remain unimplemented. Evidence and test
+`.igs` Save/reopen. A transferred LoRA can be explicitly linked to the same exact
+installed CivitAI model/version/file, hash and family. Main verifies the file;
+only local registry IDs change. Weight, enabled state, copied metadata and
+prompts remain unchanged. Opening or refreshing never performs this link.
+The row offers `Link installed version` only for one ready exact catalog match.
+Missing/corrupt or ambiguous matches need repair; a known incompatible family
+cannot be substituted. Unknown family may stay unknown on both sides: linking
+it does not establish inference compatibility.
+
+Duplicate detection uses local and portable resource identity, so transferred
+rows are marked Added in the selector too. Existing duplicates are preserved
+and must be explicitly resolved before linking. A late response after any
+Project edit, row removal or close/reopen is rejected. Trigger highlighting/
+autocomplete, presets and actual inference/preflight remain unimplemented. Evidence and test
 boundaries: [Phase 2A research](../../../engineering/phase-2a-project-storage-research.md#project-lora-stack-validation).
+
+Portable relinking evidence: [LoRA relink review](../../../engineering/phase-2a-project-storage-research.md#portable-lora-relinking-validation).

@@ -225,37 +225,44 @@ async function withService(
   }
 }
 
-async function publishPortableCheckpoint(
+async function publishPortableResource(
   repository: ModelRepository,
   dataRoot: string,
   bytes: Buffer,
   displayName: string,
   predictionType: 'epsilon' | 'v_prediction',
+  resourceType: 'checkpoint' | 'lora' = 'checkpoint',
+  modelId = 927,
 ) {
-  const managedPath = path.join(dataRoot, 'portable-checkpoint.safetensors')
+  const managedPath = path.join(dataRoot, `portable-${resourceType}-${modelId}.safetensors`)
   await writeFile(managedPath, bytes)
   const digest = createHash('sha256').update(bytes).digest('hex')
   return await repository.publishVerifiedInstallation({
     primary: {
       file: {
         managedPath,
-        originalFilename: 'portable-checkpoint.safetensors',
+        originalFilename: path.basename(managedPath),
         sha256: digest,
         sizeBytes: bytes.length,
         verifiedAt: new Date().toISOString(),
       },
       resource: {
         displayName,
-        source: { kind: 'civitai', modelId: 927 },
+        source: { kind: 'civitai', modelId },
         sourceMetadata: {},
-        type: 'checkpoint',
+        type: resourceType,
       },
       version: {
         baseModelFamily: 'illustrious',
         format: 'SafeTensor',
         name: `${displayName} version`,
         predictionType,
-        source: { expectedSha256: digest, fileId: 929, kind: 'civitai', versionId: 928 },
+        source: {
+          expectedSha256: digest,
+          fileId: modelId + 2,
+          kind: 'civitai',
+          versionId: modelId + 1,
+        },
         sourceMetadata: {},
       },
     },
@@ -753,7 +760,7 @@ test('Project keeps a registry-selected exact checkpoint through shadow, Save, d
 test('a copied .igs explicitly links the same installed checkpoint across local libraries without rewriting frozen metadata', async () => {
   const bytes = Buffer.from('one exact portable checkpoint in two managed libraries')
   await withService(async (origin) => {
-    const originInstalled = await publishPortableCheckpoint(
+    const originInstalled = await publishPortableResource(
       origin.modelRepository,
       origin.dataRoot,
       bytes,
@@ -786,7 +793,7 @@ test('a copied .igs explicitly links the same installed checkpoint across local 
     await origin.service.close(created.id)
 
     await withService(async (destination) => {
-      const destinationInstalled = await publishPortableCheckpoint(
+      const destinationInstalled = await publishPortableResource(
         destination.modelRepository,
         destination.dataRoot,
         bytes,
@@ -2364,4 +2371,295 @@ test('exact LoRA stack edits preserve prompts through autosave recovery, Save, r
       await restarted.close(created.id)
     },
   )
+})
+
+test('portable LoRA relink across two libraries changes only local IDs through recovery and Save', async () => {
+  const bytes = Buffer.from('exact portable LoRA bytes')
+  await withService(async (origin) => {
+    const installed = await publishPortableResource(
+      origin.modelRepository,
+      origin.dataRoot,
+      bytes,
+      'Original LoRA',
+      'epsilon',
+      'lora',
+    )
+    const neighborInstalled = await publishPortableResource(
+      origin.modelRepository,
+      origin.dataRoot,
+      Buffer.from('neighbor LoRA'),
+      'Neighbor',
+      'epsilon',
+      'lora',
+      931,
+    )
+    const originalRef = await origin.modelService.resolveGenerationLora(
+      installed.resourceId,
+      installed.versionId,
+    )
+    const neighbor = await origin.modelService.resolveGenerationLora(
+      neighborInstalled.resourceId,
+      neighborInstalled.versionId,
+    )
+    const identity = { resourceId: originalRef.localModelId, versionId: originalRef.localVersionId }
+    const created = await origin.service.create({ height: 512, title: 'Portable LoRA', width: 512 })
+    await origin.service.addGenerationLora(created.id, originalRef)
+    await origin.service.addGenerationLora(created.id, neighbor)
+    await origin.service.updateGenerationDraft(created.id, {
+      ...identity,
+      kind: 'lora-weight',
+      value: -0.35,
+    })
+    await origin.service.updateGenerationDraft(created.id, {
+      ...identity,
+      kind: 'lora-enabled',
+      value: false,
+    })
+    await origin.service.updateGenerationDraft(created.id, {
+      kind: 'positive-prompt',
+      text: 'original LoRA trigger, portrait',
+    })
+    const baseline = await origin.service.updateGenerationDraft(created.id, {
+      kind: 'negative-prompt',
+      text: 'original LoRA trigger, blur',
+    })
+    await origin.service.save(created.id)
+    const sourcePath = (await origin.repository.listProjects())[0].canonicalPath
+    const sourceBytes = await readFile(sourcePath)
+    await origin.service.close(created.id)
+
+    await withService(async (destination) => {
+      const local = await publishPortableResource(
+        destination.modelRepository,
+        destination.dataRoot,
+        bytes,
+        'Renamed at destination',
+        'v_prediction',
+        'lora',
+      )
+      const incomingPath = path.join(destination.dataRoot, 'Incoming LoRA.igs')
+      await writeFile(incomingPath, sourceBytes)
+      const importChoice = await destination.service.selectImport(incomingPath)
+      assert.equal(importChoice.kind, 'transfer-required')
+      if (importChoice.kind !== 'transfer-required') {
+        throw new Error('Expected portable import')
+      }
+      const imported = await destination.service.finishImport(importChoice.importId, 'copy')
+      assert.equal(imported.result.kind, 'opened')
+      if (imported.result.kind !== 'opened') {
+        throw new Error('Expected open Project')
+      }
+      const tabId = imported.result.tab.id
+      const savedPath = (await destination.repository.listProjects())[0].canonicalPath
+      assert.notEqual(local.resourceId, identity.resourceId)
+      assert.notEqual(local.versionId, identity.versionId)
+      assert.deepEqual(imported.result.tab.generationDraft, baseline.generationDraft)
+      const initialCopy = await readFile(savedPath)
+      assert.equal(imported.result.tab.dirty, false)
+      const resolvedLocal = await destination.modelService.resolveGenerationLora(
+        local.resourceId,
+        local.versionId,
+      )
+      await assert.rejects(destination.service.addGenerationLora(tabId, resolvedLocal), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+      await assert.rejects(
+        destination.service.relinkGenerationLora(tabId, identity, async (saved) => ({
+          ...(await destination.modelService.resolvePortableGenerationLora(saved)),
+          civitaiFileId: 9999,
+        })),
+        { code: 'PROJECT_LORA_RELINK_MISMATCH' },
+      )
+      assert.equal(destination.service.getOpenTabs()[0].dirty, false)
+
+      const linked = await destination.service.relinkGenerationLora(
+        tabId,
+        identity,
+        async (saved) => ({
+          ...(await destination.modelService.resolvePortableGenerationLora(saved)),
+          displayName: 'Must not replace saved name',
+          predictionType: 'sample',
+          versionName: 'Must not replace version',
+        }),
+      )
+      const expected = {
+        ...baseline.generationDraft,
+        loras: baseline.generationDraft.loras.map((entry, index) =>
+          index === 0
+            ? {
+                ...entry,
+                resource: {
+                  ...entry.resource,
+                  localModelId: local.resourceId,
+                  localVersionId: local.versionId,
+                },
+              }
+            : entry,
+        ),
+      }
+      assert.equal(linked.dirty, true)
+      assert.deepEqual(linked.generationDraft, expected)
+      await destination.service.flushAutosave(tabId)
+      assert.deepEqual(await readFile(savedPath), initialCopy)
+      const restarted = new ProjectService({
+        autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+        dataRoot: destination.dataRoot,
+        repository: destination.repository,
+        roots: { placeholdersDir, scratchDir: path.join(destination.dataRoot, 'scratch') },
+        shadow: destination.shadow,
+      })
+      assert.equal((await restarted.open(tabId)).kind, 'recovery-required')
+      assert.deepEqual(
+        (await restarted.resolveRecovery(tabId, 'recover')).generationDraft,
+        expected,
+      )
+      await restarted.save(tabId)
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft, expected)
+      await restarted.close(tabId)
+      const reopened = await restarted.open(tabId)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('Expected saved Project')
+      }
+      assert.deepEqual(reopened.tab.generationDraft, expected)
+      assert.equal(
+        (
+          await restarted.relinkGenerationLora(
+            tabId,
+            { resourceId: local.resourceId, versionId: local.versionId },
+            (saved) => destination.modelService.resolvePortableGenerationLora(saved),
+          )
+        ).dirty,
+        false,
+      )
+      await assert.rejects(
+        restarted.relinkGenerationLora(tabId, identity, (saved) =>
+          destination.modelService.resolvePortableGenerationLora(saved),
+        ),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      assert.deepEqual(await readFile(incomingPath), sourceBytes)
+      await restarted.close(tabId)
+    })
+  })
+})
+
+for (const concurrentAction of ['edit', 'remove', 'close-reopen'] as const) {
+  test(`LoRA relink rejects completion after ${concurrentAction}, including a no-op match`, async () => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service }) => {
+      const installed = await publishPortableResource(
+        modelRepository,
+        dataRoot,
+        Buffer.from('LoRA for late relink'),
+        'LoRA',
+        'epsilon',
+        'lora',
+      )
+      const resource = await modelService.resolveGenerationLora(
+        installed.resourceId,
+        installed.versionId,
+      )
+      const identity = { resourceId: resource.localModelId, versionId: resource.localVersionId }
+      const created = await service.create({ height: 512, title: 'Late relink', width: 512 })
+      await service.addGenerationLora(created.id, resource)
+      await service.save(created.id)
+      let release!: () => void
+      let signalStarted!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
+      const linking = service.relinkGenerationLora(created.id, identity, async (saved) => {
+        signalStarted()
+        await gate
+        return modelService.resolvePortableGenerationLora(saved)
+      })
+      await started
+      if (concurrentAction === 'edit') {
+        await service.updateGenerationDraft(created.id, {
+          ...identity,
+          kind: 'lora-weight',
+          value: 0.25,
+        })
+      } else if (concurrentAction === 'remove') {
+        await service.removeGenerationLora(created.id, identity)
+      } else {
+        await service.close(created.id)
+        assert.equal((await service.open(created.id)).kind, 'opened')
+      }
+      const beforeCompletion = service.getOpenTabs()[0]
+      release()
+      await assert.rejects(linking, { code: 'EDIT_CONFLICT' })
+      assert.deepEqual(service.getOpenTabs()[0], beforeCompletion)
+      await service.save(created.id)
+      await service.close(created.id)
+    })
+  })
+}
+
+test('LoRA relink refuses an existing portable duplicate without merging rows or dirtying the document', async () => {
+  await withService(async ({ dataRoot, modelRepository, modelService, service }) => {
+    const local = await publishPortableResource(
+      modelRepository,
+      dataRoot,
+      Buffer.from('duplicate LoRA'),
+      'Local name',
+      'epsilon',
+      'lora',
+    )
+    const ref = await modelService.resolveGenerationLora(local.resourceId, local.versionId)
+    const copied = {
+      ...ref,
+      displayName: 'Copied name',
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+    }
+    const document = createEmptyProjectDocumentV1({ title: 'Duplicate portable references' })
+    document.generationDraft.loras = [
+      { enabled: false, resource: copied, weight: -0.6 },
+      { enabled: true, resource: ref, weight: 0.9 },
+    ]
+    const input = path.join(dataRoot, 'Duplicate source.igs')
+    const preview = await readProjectPlaceholders(placeholdersDir, 'empty')
+    await saveIgsPackage(input, {
+      assets: {},
+      preview: { ...preview, rect: null, status: 'empty' },
+      project: document,
+    })
+    const selection = await service.selectImport(input)
+    if (selection.kind !== 'transfer-required') {
+      throw new Error('Expected import choice')
+    }
+    const imported = await service.finishImport(selection.importId, 'copy')
+    if (imported.result.kind !== 'opened') {
+      throw new Error('Expected copied Project')
+    }
+    const tabId = imported.result.tab.id
+    const copiedIdentity = { resourceId: copied.localModelId, versionId: copied.localVersionId }
+    await assert.rejects(
+      service.relinkGenerationLora(tabId, copiedIdentity, (saved) =>
+        modelService.resolvePortableGenerationLora(saved),
+      ),
+      { code: 'PROJECT_INVALID_INPUT' },
+    )
+    assert.deepEqual(service.getOpenTabs()[0], imported.result.tab)
+    await service.removeGenerationLora(tabId, {
+      resourceId: ref.localModelId,
+      versionId: ref.localVersionId,
+    })
+    const linked = await service.relinkGenerationLora(tabId, copiedIdentity, (saved) =>
+      modelService.resolvePortableGenerationLora(saved),
+    )
+    assert.deepEqual(linked.generationDraft.loras, [
+      {
+        enabled: false,
+        resource: { ...copied, localModelId: ref.localModelId, localVersionId: ref.localVersionId },
+        weight: -0.6,
+      },
+    ])
+    await service.save(tabId)
+    await service.close(tabId)
+  })
 })

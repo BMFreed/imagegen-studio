@@ -1423,6 +1423,14 @@ try {
     localModelId: randomUUID(),
     localVersionId: randomUUID(),
   }
+  const copiedLora = {
+    ...loraPackage.project.generationDraft.loras[0],
+    resource: {
+      ...loraPackage.project.generationDraft.loras[0].resource,
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+    },
+  }
   await saveIgsPackage(portableFile, {
     assets: {},
     preview: {
@@ -1433,7 +1441,13 @@ try {
     },
     project: {
       ...portableDocument,
-      generationDraft: { ...portableDocument.generationDraft, model: copiedModelRef },
+      generationDraft: {
+        ...portableDocument.generationDraft,
+        model: copiedModelRef,
+        loras: [copiedLora],
+        positivePrompt: loraPackage.project.generationDraft.positivePrompt,
+        negativePrompt: loraPackage.project.generationDraft.negativePrompt,
+      },
     },
   })
   const portableSourceBytes = readFileSync(portableFile)
@@ -1454,12 +1468,124 @@ try {
   const portableProjectRegion = recoveryWindow.getByRole('region', {
     name: `Project ${portableTitle}`,
   })
-  await portableProjectRegion.getByRole('button', { name: 'Link installed version' }).waitFor()
+  await portableProjectRegion
+    .getByRole('button', { name: 'Link installed version', exact: true })
+    .waitFor()
   if (process.env.IMAGEGEN_SMOKE_PROJECT_RELINK_SCREENSHOT) {
     await portableProjectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
     await delay(250)
     await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_RELINK_SCREENSHOT })
   }
+  const portableLoraRow = portableProjectRegion.getByRole('article', {
+    name: 'LoRA Smoke Detail LoRA',
+  })
+  const linkLoraButton = portableLoraRow.getByRole('button', {
+    name: 'Link installed version of Smoke Detail LoRA',
+  })
+  await linkLoraButton.waitFor()
+  if (process.env.IMAGEGEN_SMOKE_LORA_RELINK_SCREENSHOT) {
+    await portableLoraRow.scrollIntoViewIfNeeded()
+    await delay(250)
+    await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_LORA_RELINK_SCREENSHOT })
+  }
+  const beforeLoraLink = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    portableProject.id,
+  )
+  assert.deepEqual(beforeLoraLink.value.tab.generationDraft.loras, [copiedLora])
+  assert.equal(beforeLoraLink.value.tab.dirty, false)
+  const forgedLoraLink = await recoveryWindow.evaluate(
+    ({ id, resourceId, versionId }) =>
+      window.api.projects.relinkGenerationLora(id, {
+        resourceId,
+        versionId,
+        fileSha256: '0'.repeat(64),
+      }),
+    {
+      id: portableProject.id,
+      resourceId: copiedLora.resource.localModelId,
+      versionId: copiedLora.resource.localVersionId,
+    },
+  )
+  assert.equal(forgedLoraLink.ok, false)
+  assert.equal(forgedLoraLink.error.code, 'IPC_INVALID_CALLER')
+  const portableLoras = portableProjectRegion.getByRole('region', { name: 'LoRAs', exact: true })
+  await portableLoras.locator('[aria-label="Add LoRA"]').click()
+  const alreadyAdded = recoveryWindow
+    .locator('.n-base-select-option')
+    .filter({ hasText: 'trigger 905' })
+  assert.match(await alreadyAdded.innerText(), /Added/)
+  await alreadyAdded.click({ force: true })
+  await recoveryWindow.keyboard.press('Escape')
+  assert.deepEqual(
+    (await recoveryWindow.evaluate((id) => window.api.projects.open(id), portableProject.id)).value
+      .tab.generationDraft.loras,
+    [copiedLora],
+  )
+
+  // Catalog suggestions must never substitute for main's actual byte verification.
+  const verifiedLoraBytes = readFileSync(checkpointVersions.loraPath)
+  writeFileSync(checkpointVersions.loraPath, Buffer.alloc(verifiedLoraBytes.length, 0x78))
+  await linkLoraButton.click()
+  await portableProjectRegion
+    .getByText('The selected LoRA file failed verification.', { exact: false })
+    .waitFor()
+  const rejectedLink = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    portableProject.id,
+  )
+  assert.equal(rejectedLink.value.tab.dirty, false)
+  assert.deepEqual(rejectedLink.value.tab.generationDraft.loras, [copiedLora])
+  writeFileSync(checkpointVersions.loraPath, verifiedLoraBytes)
+  await portableProjectRegion.getByRole('button', { name: 'Refresh models' }).click()
+  await linkLoraButton.waitFor()
+  await portableLoraRow.getByRole('textbox', { name: 'Smoke Detail LoRA weight' }).fill('-0.45')
+  await linkLoraButton.click()
+  await waitForOpenTab(
+    recoveryWindow,
+    portableProject.id,
+    (tab) =>
+      tab.generationDraft.loras[0]?.resource.localVersionId === checkpointVersions.lora.versionId,
+    'Portable LoRA did not link to the exact installed version',
+  )
+  const expectedLinkedLora = {
+    ...copiedLora,
+    weight: -0.45,
+    resource: {
+      ...copiedLora.resource,
+      localModelId: checkpointVersions.lora.resourceId,
+      localVersionId: checkpointVersions.lora.versionId,
+    },
+  }
+  const linkedLoraTab = (
+    await recoveryWindow.evaluate((id) => window.api.projects.open(id), portableProject.id)
+  ).value.tab
+  assert.deepEqual(linkedLoraTab.generationDraft.loras, [expectedLinkedLora])
+  assert.deepEqual(
+    linkedLoraTab.generationDraft.positivePrompt,
+    loraPackage.project.generationDraft.positivePrompt,
+  )
+  assert.deepEqual(
+    linkedLoraTab.generationDraft.negativePrompt,
+    loraPackage.project.generationDraft.negativePrompt,
+  )
+  assert.equal(await linkLoraButton.count(), 0)
+  if (process.env.IMAGEGEN_SMOKE_LORA_RELINK_SCREENSHOT) {
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(900, 620),
+    )
+    await portableLoraRow.scrollIntoViewIfNeeded()
+    await delay(250)
+    await recoveryWindow.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_LORA_RELINK_SCREENSHOT.replace('.png', '-linked-small.png'),
+    })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
+  }
+  // Save LoRA before checking the independent checkpoint relink's clean starting state.
+  await portableProjectRegion.getByRole('button', { name: 'Save Project' }).click()
+  await portableProjectRegion.getByText('Saved', { exact: true }).waitFor()
   const beforeModelRelink = await recoveryWindow.evaluate(
     (id) => window.api.projects.open(id),
     portableProject.id,
@@ -1470,7 +1596,9 @@ try {
     copiedModelRef.localVersionId,
   )
   assert.equal(beforeModelRelink.value.tab.dirty, false)
-  await portableProjectRegion.getByRole('button', { name: 'Link installed version' }).click()
+  await portableProjectRegion
+    .getByRole('button', { name: 'Link installed version', exact: true })
+    .click()
   await waitForOpenTab(
     recoveryWindow,
     portableProject.id,
@@ -1507,9 +1635,25 @@ try {
       !tab.dirty,
     'The exact linked model did not survive Save and reopen',
   )
+  const reopenedLinkedLora = (
+    await recoveryWindow.evaluate((id) => window.api.projects.open(id), portableProject.id)
+  ).value.tab
+  assert.deepEqual(reopenedLinkedLora.generationDraft.loras, [expectedLinkedLora])
+  const portableSavedPackages = await Promise.all(
+    readdirSync(projectDir)
+      .filter((entry) => entry.endsWith('.igs'))
+      .map((entry) => readIgsPackage(path.join(projectDir, entry))),
+  )
+  assert.deepEqual(
+    portableSavedPackages.find((pkg) => pkg.project.title === portableTitle).project.generationDraft
+      .loras,
+    [expectedLinkedLora],
+  )
   assert.deepEqual(readFileSync(portableFile), portableSourceBytes)
   await recoveryWindow.getByRole('button', { name: `Close ${portableTitle}` }).click()
-  console.log('Desktop smoke passed: imported Project explicitly links its exact installed model.')
+  console.log(
+    'Desktop smoke passed: imported Project explicitly links its exact installed checkpoint and LoRA.',
+  )
 
   await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
   await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
