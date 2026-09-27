@@ -25,6 +25,7 @@ export interface FrozenGenerationTarget {
     sha256: string
     width: number
   }
+  documentId: string
   documentRevision: string
   generationDraft: IgsProjectDocumentV1['generationDraft']
   mode: ComposeTargetMode
@@ -85,6 +86,7 @@ export async function buildFrozenGenerationTarget(input: {
           sha256: result.composite.sha256,
           width: bbox.width,
         },
+        documentId: document.documentId,
         documentRevision: document.documentRevision,
         generationDraft: document.generationDraft,
         mode: result.mode,

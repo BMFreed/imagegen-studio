@@ -135,6 +135,7 @@ test('real package raster, bbox and generation draft are frozen before worker re
       scratchBasePath,
       worker,
     })
+    assert.equal(target.documentId, document.documentId)
     assert.equal(target.documentRevision, document.documentRevision)
     assert.deepEqual(target.bbox, { height: 2, width: 2, x: -7, y: 9 })
     assert.equal(target.generationDraft.positivePrompt.text, 'frozen prompt')

@@ -477,6 +477,46 @@ export class ModelService {
     return this.resolvePortableGenerationResource(saved, 'lora')
   }
 
+  /**
+   * Resolve a saved exact checkpoint for a main-process generation plan, including its verified
+   * file.
+   */
+  async resolveVerifiedGenerationCheckpointForPlan(
+    saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+  ): Promise<{
+    managedPath: string
+    reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
+  }> {
+    if (saved.kind !== 'checkpoint') {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The Project generation resource is not a checkpoint.',
+      )
+    }
+    const resolved = await this.resolveGenerationResourceWithFile(
+      saved.localModelId,
+      saved.localVersionId,
+      'checkpoint',
+    )
+    const reference = resolved.reference
+    if (
+      saved.localModelId !== reference.localModelId ||
+      saved.localVersionId !== reference.localVersionId ||
+      saved.civitaiModelId !== reference.civitaiModelId ||
+      saved.civitaiVersionId !== reference.civitaiVersionId ||
+      saved.civitaiFileId !== reference.civitaiFileId ||
+      saved.fileSha256 !== reference.fileSha256 ||
+      saved.baseModelFamily !== reference.baseModelFamily ||
+      saved.predictionType !== reference.predictionType
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed checkpoint no longer matches this Project exact version.',
+      )
+    }
+    return resolved
+  }
+
   async saveToken(token: string): Promise<CivitaiTokenStatus> {
     validateCivitaiToken(token)
     const availability = await this.tokenStore.getAvailability()
@@ -669,6 +709,17 @@ export class ModelService {
     versionId: string,
     kind: 'checkpoint' | 'lora',
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
+    return (await this.resolveGenerationResourceWithFile(resourceId, versionId, kind)).reference
+  }
+
+  private async resolveGenerationResourceWithFile(
+    resourceId: string,
+    versionId: string,
+    kind: 'checkpoint' | 'lora',
+  ): Promise<{
+    managedPath: string
+    reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
+  }> {
     const label = kind === 'checkpoint' ? 'checkpoint' : 'LoRA'
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (!uuid.test(resourceId) || !uuid.test(versionId)) {
@@ -741,17 +792,20 @@ export class ModelService {
       }
     }
     return {
-      baseModelFamily: version.baseModelFamily,
-      civitaiFileId: version.civitaiFileId,
-      civitaiModelId: resource.source.modelId,
-      civitaiVersionId: version.civitaiVersionId,
-      displayName: resource.displayName,
-      fileSha256: version.file.sha256,
-      kind,
-      localModelId: resource.id,
-      localVersionId: version.id,
-      predictionType: version.predictionType,
-      versionName: version.name,
+      managedPath: version.file.managedPath,
+      reference: {
+        baseModelFamily: version.baseModelFamily,
+        civitaiFileId: version.civitaiFileId,
+        civitaiModelId: resource.source.modelId,
+        civitaiVersionId: version.civitaiVersionId,
+        displayName: resource.displayName,
+        fileSha256: version.file.sha256,
+        kind,
+        localModelId: resource.id,
+        localVersionId: version.id,
+        predictionType: version.predictionType,
+        versionName: version.name,
+      },
     }
   }
 

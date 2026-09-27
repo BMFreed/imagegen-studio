@@ -25,6 +25,7 @@ import { type BigIntStats, constants } from 'node:fs'
 import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { ModelService } from '../models/model-service.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
@@ -36,6 +37,10 @@ import {
   ProjectAutosaveError,
   type ProjectAutosaveOptions,
 } from './project-autosave.js'
+import {
+  prepareNormalTxt2Img,
+  validateNormalTxt2ImgDraft,
+} from './project-generation-preparation.js'
 import { buildFrozenGenerationTarget } from './project-generation-target.js'
 import {
   canonicalProjectPath,
@@ -543,6 +548,19 @@ export class ProjectService {
       scratchBasePath: this.options.roots.scratchDir,
       worker,
     })
+  }
+
+  /** Prepare one verified Project context; queue and worker qualification are separate gates. */
+  async prepareNormalTxt2ImgContext(
+    tabId: string,
+    worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+    modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    randomUint32?: () => number,
+  ): ReturnType<typeof prepareNormalTxt2Img> {
+    // A known-invalid draft should explain itself even if image composition cannot start.
+    validateNormalTxt2ImgDraft(this.requireTab(tabId).document.generationDraft)
+    const target = await this.prepareNormalGenerationInput(tabId, worker)
+    return await prepareNormalTxt2Img({ modelService, randomUint32, target })
   }
 
   /** Rebuild a saved derivative without silently saving document edits or touching recovery. */

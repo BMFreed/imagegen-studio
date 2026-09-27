@@ -134,6 +134,15 @@ or `Per prompt` then schedules the batch from that base. The frozen request
 keeps the concrete seed and requested policy separately, so later completions
 cannot silently change an already queued batch.
 
+В текущем production main есть только
+[подготовительный контекст Illustrious `txt2img`](../engineering/phase-2b-generation-preparation-research.md):
+он фиксирует точную модель, Project target, prompts, Steps/CFG и конкретный
+Fixed/Random seed. Это отдельный тип с copied PNG bytes вне JSON context, а
+не сообщение worker'у или запись очереди. Он отвергает `Reuse` до подключения
+durable cursor и не назначает sampler/scheduler без квалифицированного pipeline.
+Материализация immutable asset, capability validation и исполнимый DTO всё ещё
+нужны перед enqueue.
+
 ## Минимальные сообщения worker'а
 
 ### Исполнимая граница превью Project в фазе 2A
