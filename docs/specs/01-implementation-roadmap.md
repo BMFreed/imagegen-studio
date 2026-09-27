@@ -277,6 +277,10 @@ Save/reopen и диагностику отсутствующего файла. W
 main проверяет точный файл, меняет только локальные ID и сохраняет правку через
 dirty/shadow/Save. Сервисные тесты используют две SQLite-библиотеки, Electron
 smoke проверяет импорт→Link→Save/reopen. Это не загружает веса в worker.
+Production Project также редактирует Steps и CFG scale в существующем
+`generationDraft` без навязанного model-specific default. Эти значения проходят
+через тот же dirty/shadow/Save и повторное открытие `.igs`; их принятие
+inference worker остаётся отдельной задачей Phase 2B/2C.
 Выбор `Reuse` не означает, что уже доступен фактический seed: operational
 cursor и fallback к сохранённому `.igs` snapshot будут подключены к enqueue в
 фазе 2B, а редактирование draft их не обновляет.

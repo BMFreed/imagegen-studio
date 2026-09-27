@@ -15,6 +15,7 @@ import {
   NButton,
   NFormItem,
   NIcon,
+  NInput,
   NInputNumber,
   NSelect,
   NTag,
@@ -253,7 +254,23 @@ const fixedSeedInvalid = computed(
       fixedSeedInput.value < 0 ||
       fixedSeedInput.value > 0xff_ff_ff_ff),
 )
-watch(fixedSeedInvalid, (invalid) => emit('validateDraft', props.tab.id, !invalid), {
+const samplingStepsInput = ref<number | null>(null)
+const samplingCfgScaleText = ref('')
+const samplingCfgScaleFocused = ref(false)
+const rawSamplingStepsInvalid = ref(false)
+const samplingStepsInvalid = computed(
+  () =>
+    rawSamplingStepsInvalid.value ||
+    (samplingStepsInput.value !== null &&
+      (!Number.isSafeInteger(samplingStepsInput.value) || samplingStepsInput.value < 1)),
+)
+const samplingCfgScaleInvalid = computed(
+  () => parseCfgScale(samplingCfgScaleText.value).kind === 'invalid',
+)
+const draftInvalid = computed(
+  () => fixedSeedInvalid.value || samplingStepsInvalid.value || samplingCfgScaleInvalid.value,
+)
+watch(draftInvalid, (invalid) => emit('validateDraft', props.tab.id, !invalid), {
   immediate: true,
 })
 onBeforeUnmount(() => emit('validateDraft', props.tab.id, true))
@@ -266,6 +283,90 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  () => props.generationDraft.sampling.steps,
+  (steps) => {
+    if (!rawSamplingStepsInvalid.value) {
+      samplingStepsInput.value = steps
+    }
+  },
+  { immediate: true },
+)
+watch(
+  () => props.generationDraft.sampling.cfgScale,
+  (cfgScale) => {
+    if (!samplingCfgScaleFocused.value) {
+      samplingCfgScaleText.value = cfgScale === null ? '' : String(cfgScale)
+    }
+  },
+  { immediate: true },
+)
+
+function captureSamplingStepsInput(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return
+  }
+  const raw = event.target.value.trim()
+  const value = Number(raw)
+  rawSamplingStepsInvalid.value =
+    raw !== '' && (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1)
+}
+
+function updateSamplingSteps(value: number | null) {
+  if (rawSamplingStepsInvalid.value) {
+    return
+  }
+  if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
+    rawSamplingStepsInvalid.value = true
+    return
+  }
+  samplingStepsInput.value = value
+  if (props.busy || props.reloadRequired || props.generationDraft.sampling.steps === value) {
+    return
+  }
+  emit('updateDraft', { kind: 'sampling-steps', value })
+}
+
+function restoreInvalidSamplingSteps() {
+  if (samplingStepsInvalid.value) {
+    const restored = props.generationDraft.sampling.steps
+    rawSamplingStepsInvalid.value = false
+    samplingStepsInput.value = restored
+    void nextTick(() => {
+      samplingStepsInput.value = restored
+    })
+  }
+}
+
+function parseCfgScale(raw: string): { kind: 'invalid' } | { kind: 'valid'; value: number | null } {
+  const text = raw.trim()
+  if (text === '') {
+    return { kind: 'valid', value: null }
+  }
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(text)) {
+    return { kind: 'invalid' }
+  }
+  const value = Number(text)
+  return Number.isFinite(value) && value >= 0 ? { kind: 'valid', value } : { kind: 'invalid' }
+}
+
+function updateSamplingCfgScaleText(text: string) {
+  samplingCfgScaleText.value = text
+  const parsed = parseCfgScale(text)
+  if (parsed.kind === 'invalid' || props.busy || props.reloadRequired) {
+    return
+  }
+  emit('updateDraft', { kind: 'sampling-cfg-scale', value: parsed.value })
+}
+
+function normalizeSamplingCfgScaleOnBlur() {
+  const parsed = parseCfgScale(samplingCfgScaleText.value)
+  samplingCfgScaleFocused.value = false
+  samplingCfgScaleText.value =
+    parsed.kind === 'invalid'
+      ? (props.generationDraft.sampling.cfgScale?.toString() ?? '')
+      : (parsed.value?.toString() ?? '')
+}
 
 function updateSeedPolicy(policy: string) {
   if (props.busy || props.reloadRequired || policy === props.generationDraft.seed.policy) {
@@ -472,7 +573,7 @@ function applyFitBbox() {
           </span>
           <NButton
             aria-label="Save Project"
-            :disabled="reloadRequired || busy || fixedSeedInvalid"
+            :disabled="reloadRequired || busy || draftInvalid"
             :loading="pending === 'save'"
             size="small"
             @click="emit('save')"
@@ -607,6 +708,39 @@ function applyFitBbox() {
               @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
             />
           </div>
+          <div class="sampling-fields">
+            <NFormItem label="Steps" :showFeedback="false">
+              <div class="sampling-input" @input.capture="captureSamplingStepsInput">
+                <NInputNumber
+                  :disabled="busy || reloadRequired"
+                  :inputProps="{ 'aria-label': 'Steps' }"
+                  :min="1"
+                  :showButton="false"
+                  size="small"
+                  :value="samplingStepsInput"
+                  @blur="restoreInvalidSamplingSteps"
+                  @update:value="updateSamplingSteps"
+                />
+              </div>
+            </NFormItem>
+            <NFormItem label="CFG scale" :showFeedback="false">
+              <NInput
+                :disabled="busy || reloadRequired"
+                :inputProps="{ 'aria-label': 'CFG scale', inputmode: 'decimal' }"
+                size="small"
+                :value="samplingCfgScaleText"
+                @blur="normalizeSamplingCfgScaleOnBlur"
+                @focus="samplingCfgScaleFocused = true"
+                @update:value="updateSamplingCfgScaleText"
+              />
+            </NFormItem>
+          </div>
+          <p v-if="samplingStepsInvalid" class="sampling-validation" role="alert">
+            Enter a positive whole number of steps, or leave it unset.
+          </p>
+          <p v-if="samplingCfgScaleInvalid" class="sampling-validation" role="alert">
+            Enter a CFG scale of zero or greater, or leave it unset.
+          </p>
           <div class="seed-fields">
             <NFormItem label="Seed policy" :showFeedback="false">
               <NSelect
@@ -629,7 +763,6 @@ function applyFitBbox() {
                   :inputProps="{ 'aria-label': 'Fixed seed' }"
                   :max="0xff_ff_ff_ff"
                   :min="0"
-                  :precision="0"
                   :showButton="false"
                   size="small"
                   :value="fixedSeedInput"
@@ -867,6 +1000,19 @@ function applyFitBbox() {
   margin-top: 13px;
 }
 
+.sampling-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.sampling-input,
+.sampling-fields :deep(.n-input),
+.sampling-fields :deep(.n-input-number) {
+  width: 100%;
+}
+
 .seed-fields :deep(.n-select),
 .seed-fields :deep(.n-input-number) {
   width: 100%;
@@ -880,7 +1026,8 @@ function applyFitBbox() {
   margin: 8px 0 0;
 }
 
-.project-settings .seed-validation {
+.project-settings .seed-validation,
+.project-settings .sampling-validation {
   margin: 8px 0 0;
 }
 

@@ -755,23 +755,50 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
     const draft = document.generationDraft
-    if (change.kind === 'seed') {
-      if (draft.seed.policy === change.policy && draft.seed.value === change.value) {
-        return toTab(tabId, coordinator)
+    switch (change.kind) {
+      case 'sampling-cfg-scale': {
+        if (draft.sampling.cfgScale === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          sampling: { ...draft.sampling, cfgScale: change.value },
+        }
+        break
       }
-      document.generationDraft = { ...draft, seed: { policy: change.policy, value: change.value } }
-    } else {
-      const field = change.kind === 'positive-prompt' ? 'positivePrompt' : 'negativePrompt'
-      const before = draft[field]
-      const embeddingRefs = before.embeddingRefs.filter((ref) =>
-        hasLiteralActivationToken(change.text, ref.token),
-      )
-      if (before.text === change.text && embeddingRefs.length === before.embeddingRefs.length) {
-        return toTab(tabId, coordinator)
+      case 'sampling-steps': {
+        if (draft.sampling.steps === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          sampling: { ...draft.sampling, steps: change.value },
+        }
+        break
       }
-      document.generationDraft = {
-        ...draft,
-        [field]: { embeddingRefs, text: change.text },
+      case 'seed': {
+        if (draft.seed.policy === change.policy && draft.seed.value === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          seed: { policy: change.policy, value: change.value },
+        }
+        break
+      }
+      default: {
+        const field = change.kind === 'positive-prompt' ? 'positivePrompt' : 'negativePrompt'
+        const before = draft[field]
+        const embeddingRefs = before.embeddingRefs.filter((ref) =>
+          hasLiteralActivationToken(change.text, ref.token),
+        )
+        if (before.text === change.text && embeddingRefs.length === before.embeddingRefs.length) {
+          return toTab(tabId, coordinator)
+        }
+        document.generationDraft = {
+          ...draft,
+          [field]: { embeddingRefs, text: change.text },
+        }
       }
     }
     await coordinator.applyDocument(

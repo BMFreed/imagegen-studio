@@ -116,6 +116,8 @@ export type ProjectRasterLayerChange =
 
 export type ProjectGenerationDraftChange =
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
+  | { kind: 'sampling-cfg-scale'; value: number | null }
+  | { kind: 'sampling-steps'; value: number | null }
   | { kind: 'seed'; policy: 'fixed'; value: number }
   | { kind: 'seed'; policy: 'random' | 'reuse'; value: null }
 
@@ -332,7 +334,7 @@ export interface StudioApi {
   runtime: RuntimeApi
 }
 
-/** The renderer may edit plain text and seed policy, never forge resource sidecars. */
+/** The renderer may edit scalar draft settings, never forge resource sidecars. */
 export function isProjectGenerationDraftChange(
   input: unknown,
 ): input is ProjectGenerationDraftChange {
@@ -350,6 +352,17 @@ export function isProjectGenerationDraftChange(
       value.text.length <= IGS_SAFETY_CEILINGS.textBytes &&
       new TextEncoder().encode(value.text).length <= IGS_SAFETY_CEILINGS.textBytes
     )
+  }
+  if (value.kind === 'sampling-steps' || value.kind === 'sampling-cfg-scale') {
+    if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('value')) {
+      return false
+    }
+    if (value.value === null) {
+      return true
+    }
+    return value.kind === 'sampling-steps'
+      ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && value.value >= 1
+      : typeof value.value === 'number' && Number.isFinite(value.value) && value.value >= 0
   }
   if (
     value.kind !== 'seed' ||

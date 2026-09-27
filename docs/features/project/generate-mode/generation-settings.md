@@ -77,9 +77,13 @@ If color matching is needed later, design it as a Smart Patch/compositing behavi
 
 The production Project settings edit the normal Project's exact installed
 checkpoint/version reference, positive and negative plain prompt text and
-Seed `Fixed`/`Random`/`Reuse` policy. `Fixed` stores an explicit unsigned
-32-bit value; `Random` and `Reuse` store no draft value. Changes use the
-Project document's dirty/shadow/explicit Save path and reopen from `.igs`.
+Seed `Fixed`/`Random`/`Reuse` policy, plus Steps and CFG scale. `Fixed` stores an
+explicit unsigned 32-bit value; `Random` and `Reuse` store no draft value.
+Steps is a positive safe integer and CFG scale is a finite nonnegative number;
+either can remain unset in the draft. These controls do not infer a default or
+claim model-specific runtime compatibility before the inference pipeline is
+qualified. Changes use the Project document's dirty/shadow/explicit Save path
+and reopen from `.igs`.
 Model selection passes only resource/version IDs across IPC: main verifies the
 file and required Anima companions before copying the exact registry metadata
 into the Project. Changing Model Manager's Default never changes a saved
@@ -93,8 +97,9 @@ Generate available.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
-insertion is implemented. No production LoRA, sampling, VAE, advanced options
-or Smart Patch-owned draft controls are connected yet.
+insertion is implemented. No production sampler/scheduler selection,
+denoising-strength control, LoRA, VAE, advanced options or Smart Patch-owned
+draft controls are connected yet.
 The chosen Seed policy is a request for a future job, not a completed seed:
 the operational last-actual-seed cursor and fallback to a saved `.igs` snapshot
 still belong to the Phase 2B enqueue/completion path.

@@ -165,6 +165,20 @@ function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChang
     draft.seed = { policy: change.policy, value: change.value }
     return true
   }
+  if (change.kind === 'sampling-steps') {
+    if (draft.sampling.steps === change.value) {
+      return false
+    }
+    draft.sampling.steps = change.value
+    return true
+  }
+  if (change.kind === 'sampling-cfg-scale') {
+    if (draft.sampling.cfgScale === change.value) {
+      return false
+    }
+    draft.sampling.cfgScale = change.value
+    return true
+  }
   return false
 }
 
@@ -174,6 +188,12 @@ function changeForField(field: DraftField, draft: GenerationDraft): ProjectGener
   }
   if (field === 'negative-prompt') {
     return { kind: field, text: draft.negativePrompt.text }
+  }
+  if (field === 'sampling-steps') {
+    return { kind: field, value: draft.sampling.steps }
+  }
+  if (field === 'sampling-cfg-scale') {
+    return { kind: field, value: draft.sampling.cfgScale }
   }
   const seed = draft.seed
   return seed.policy === 'fixed'

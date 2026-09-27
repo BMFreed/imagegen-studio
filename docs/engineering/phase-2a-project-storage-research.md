@@ -564,3 +564,29 @@ Save/reopen persists them. The smoke uses small synthetic checkpoint bytes;
 it does not prove real Anima loading or inference. This relink covers managed
 checkpoints only; LoRA, VAE, embedding and arbitrary local-file relink remain
 separate work.
+
+## Production sampling draft controls
+
+The portable `.igs` v1 schema already carries nullable `sampling.steps` and
+`sampling.cfgScale` fields. Project now edits them through separate typed
+renderer changes, IPC validation and the same document revision/dirty/shadow/
+explicit Save path as prompts and Seed. Steps accepts a positive safe integer;
+CFG scale accepts a finite nonnegative number. Clearing either field stores
+`null` without inventing an inference default. Separate draft-sync keys keep
+rapid changes to both controls from overwriting one another before Save.
+
+The service test uses a real `.igs` package and recovery shadow to check both
+fields, `null` clearing, no-op edits and Save/reopen; the strict IPC validator
+rejects malformed values and extra keys. A semantic mutation that wrote Steps
+into CFG made the new test fail and was reverted. The full `pnpm run app:test`
+passed 242/242; typecheck, lint and Electron smoke passed. In Electron, invalid
+input blocks Save, focused Ctrl+S persists Steps and CFG strings `5.0` and
+`1e-7`, and native window close persists a focused CFG edit. The CFG control
+uses raw text parsing because the installed Naive numeric input delays some
+valid strings until blur and rounds scientific notation before emitting it.
+
+These values remain Project draft settings. There is no worker inference,
+model-specific sampler/capability validation or Generate action in this slice;
+the existing nullable draft schema does not establish suitable values for
+Illustrious or Anima. That qualification belongs to the executable Phase 2B/2C
+job contract.

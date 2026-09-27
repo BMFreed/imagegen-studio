@@ -763,7 +763,7 @@ async function saveProject(tabId: string, closeAfter = false) {
     return
   }
   if (draftValidity.value[tabId] === false) {
-    const message = 'Enter a valid fixed seed before saving this Project.'
+    const message = 'Correct invalid generation settings before saving this Project.'
     setTabError(tabId, message)
     if (closeAfter) {
       closeError.value = message
@@ -955,7 +955,7 @@ onMounted(() => {
         windowClosePending.value = true
         try {
           if (Object.values(draftValidity.value).includes(false)) {
-            throw new Error('Enter a valid fixed seed before closing the app.')
+            throw new Error('Correct invalid generation settings before closing the app.')
           }
           await draftSync.flushAll()
         } catch (cause) {

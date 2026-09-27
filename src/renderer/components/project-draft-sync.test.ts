@@ -33,6 +33,16 @@ function apply(tab: ProjectTab, change: ProjectGenerationDraftChange): ProjectTa
 
       break
     }
+    case 'sampling-cfg-scale': {
+      next.generationDraft.sampling.cfgScale = change.value
+
+      break
+    }
+    case 'sampling-steps': {
+      next.generationDraft.sampling.steps = change.value
+
+      break
+    }
     case 'seed': {
       next.generationDraft.seed = { policy: change.policy, value: change.value }
 
@@ -90,6 +100,61 @@ test('keeps latest typing visible and flush waits for serialized changes', async
   assert.equal(saved.generationDraft.negativePrompt.text, 'blur')
   assert.deepEqual(saved.generationDraft.seed, { policy: 'fixed', value: 42 })
   assert.equal(overlays.at(-1), null)
+})
+
+test('Steps and CFG scale stay independent during rapid edits and Save flush', async () => {
+  let saved = projectTab()
+  const sent: ProjectGenerationDraftChange[] = []
+  const overlays: (ProjectTab['generationDraft'] | null)[] = []
+  let releaseFirst: (() => void) | undefined
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => {
+      saved = tab
+    },
+    onError: () => assert.fail('Unexpected draft error'),
+    onOverlay: (_tabId, draft) => overlays.push(draft),
+    send: async (_tabId, change) => {
+      sent.push(change)
+      if (sent.length === 1) {
+        await first
+      }
+      saved = apply(saved, change)
+      return saved
+    },
+  })
+
+  sync.change(saved, { kind: 'sampling-steps', value: 20 })
+  sync.change(saved, { kind: 'sampling-cfg-scale', value: 7.5 })
+  sync.change(saved, { kind: 'sampling-steps', value: 28 })
+  assert.equal(overlays.at(-1)?.sampling.steps, 28)
+  assert.equal(overlays.at(-1)?.sampling.cfgScale, 7.5)
+  assert.deepEqual(sent, [{ kind: 'sampling-steps', value: 20 }])
+
+  const flush = sync.flush(saved.id)
+  releaseFirst?.()
+  await flush
+  assert.deepEqual(sent, [
+    { kind: 'sampling-steps', value: 20 },
+    { kind: 'sampling-cfg-scale', value: 7.5 },
+    { kind: 'sampling-steps', value: 28 },
+  ])
+  assert.deepEqual(saved.generationDraft.sampling, {
+    cfgScale: 7.5,
+    denoisingStrength: null,
+    sampler: null,
+    scheduler: null,
+    steps: 28,
+  })
+  assert.equal(overlays.at(-1), null)
+
+  sync.change(saved, { kind: 'sampling-cfg-scale', value: null })
+  sync.change(saved, { kind: 'sampling-steps', value: null })
+  await sync.flush(saved.id)
+  assert.equal(saved.generationDraft.sampling.steps, null)
+  assert.equal(saved.generationDraft.sampling.cfgScale, null)
 })
 
 test('new edit after failed request restarts even before the failed run settles', async () => {

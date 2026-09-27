@@ -498,6 +498,121 @@ test('Project prompt and seed edits survive shadow recovery, Save and reopen wit
   })
 })
 
+test('Project sampling edits survive shadow recovery, Save and reopen independently', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const created = await service.create({ height: 512, title: 'Sampling persistence', width: 512 })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const originalSampling = created.generationDraft.sampling
+    assert.deepEqual(originalSampling, {
+      cfgScale: null,
+      denoisingStrength: null,
+      sampler: null,
+      scheduler: null,
+      steps: null,
+    })
+
+    const steps = await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-steps',
+      value: 35,
+    })
+    assert.equal(steps.dirty, true)
+    assert.deepEqual(steps.generationDraft.sampling, { ...originalSampling, steps: 35 })
+    const cfgScale = await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-cfg-scale',
+      value: 7.5,
+    })
+    assert.deepEqual(cfgScale.generationDraft.sampling, {
+      ...originalSampling,
+      cfgScale: 7.5,
+      steps: 35,
+    })
+    await service.flushAutosave(created.id)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+      originalSampling,
+    )
+
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.equal(recovered.dirty, true)
+    assert.deepEqual(recovered.generationDraft.sampling, cfgScale.generationDraft.sampling)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+      originalSampling,
+    )
+
+    assert.equal((await restarted.save(created.id)).tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+      cfgScale.generationDraft.sampling,
+    )
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved Project did not reopen.')
+    }
+    assert.deepEqual(reopened.tab.generationDraft.sampling, cfgScale.generationDraft.sampling)
+    assert.equal(
+      (
+        await restarted.updateGenerationDraft(created.id, {
+          kind: 'sampling-steps',
+          value: 35,
+        })
+      ).dirty,
+      false,
+    )
+    assert.equal(
+      (
+        await restarted.updateGenerationDraft(created.id, {
+          kind: 'sampling-cfg-scale',
+          value: 7.5,
+        })
+      ).dirty,
+      false,
+    )
+
+    const clearedSteps = await restarted.updateGenerationDraft(created.id, {
+      kind: 'sampling-steps',
+      value: null,
+    })
+    assert.deepEqual(clearedSteps.generationDraft.sampling, {
+      ...originalSampling,
+      cfgScale: 7.5,
+    })
+    await restarted.save(created.id)
+    await restarted.close(created.id)
+    const reopenedAfterClear = await restarted.open(created.id)
+    assert.equal(reopenedAfterClear.kind, 'opened')
+    if (reopenedAfterClear.kind !== 'opened') {
+      throw new Error('Saved Project did not reopen after clearing Steps.')
+    }
+    assert.deepEqual(
+      reopenedAfterClear.tab.generationDraft.sampling,
+      clearedSteps.generationDraft.sampling,
+    )
+    const clearedCfgScale = await restarted.updateGenerationDraft(created.id, {
+      kind: 'sampling-cfg-scale',
+      value: null,
+    })
+    assert.equal(clearedCfgScale.dirty, true)
+    assert.deepEqual(clearedCfgScale.generationDraft.sampling, originalSampling)
+    await restarted.save(created.id)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+      originalSampling,
+    )
+    await restarted.close(created.id)
+  })
+})
+
 test('Project keeps a registry-selected exact checkpoint through shadow, Save, default change and missing file', async () => {
   await withService(
     async ({ dataRoot, modelRepository, modelService, repository, service, shadow }) => {
@@ -865,7 +980,7 @@ test('Project prompt text retains only pre-existing embedding refs whose literal
   })
 })
 
-test('Project draft IPC shape and service reject forged refs and invalid seed settings without dirtying', async () => {
+test('Project draft IPC shape and service reject forged refs and invalid scalar settings without dirtying', async () => {
   const invalid = [
     { embeddingRefs: [], kind: 'positive-prompt', text: 'face' },
     { kind: 'seed', policy: 'fixed', value: null },
@@ -873,6 +988,19 @@ test('Project draft IPC shape and service reject forged refs and invalid seed se
     { kind: 'seed', policy: 'fixed', value: 4_294_967_296 },
     { kind: 'seed', policy: 'random', value: 1 },
     { kind: 'seed', policy: 'reuse', value: 3 },
+    { kind: 'sampling-steps', value: 0 },
+    { kind: 'sampling-steps', value: -1 },
+    { kind: 'sampling-steps', value: 1.5 },
+    { kind: 'sampling-steps', value: Number.MAX_SAFE_INTEGER + 1 },
+    { kind: 'sampling-steps', value: Number.POSITIVE_INFINITY },
+    { kind: 'sampling-steps', value: Number.NaN },
+    { kind: 'sampling-steps', value: '30' },
+    { kind: 'sampling-steps', scheduler: 'forged', value: 30 },
+    { kind: 'sampling-cfg-scale', value: -0.1 },
+    { kind: 'sampling-cfg-scale', value: Number.POSITIVE_INFINITY },
+    { kind: 'sampling-cfg-scale', value: Number.NaN },
+    { kind: 'sampling-cfg-scale', value: '7.5' },
+    { kind: 'sampling-cfg-scale', loras: [], value: 7.5 },
     { kind: 'positive-prompt', text: 'é'.repeat(IGS_SAFETY_CEILINGS.textBytes) },
   ]
   for (const change of invalid) {
@@ -880,6 +1008,18 @@ test('Project draft IPC shape and service reject forged refs and invalid seed se
   }
   assert.equal(isProjectGenerationDraftChange({ kind: 'seed', policy: 'fixed', value: 0 }), true)
   assert.equal(isProjectGenerationDraftChange({ kind: 'seed', policy: 'reuse', value: null }), true)
+  assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-steps', value: null }), true)
+  assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-steps', value: 1 }), true)
+  assert.equal(
+    isProjectGenerationDraftChange({ kind: 'sampling-steps', value: Number.MAX_SAFE_INTEGER }),
+    true,
+  )
+  assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: null }), true)
+  assert.equal(isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: 0 }), true)
+  assert.equal(
+    isProjectGenerationDraftChange({ kind: 'sampling-cfg-scale', value: Number.MAX_VALUE }),
+    true,
+  )
   await withService(async ({ service }) => {
     const created = await service.create({ height: 512, title: 'Guarded draft', width: 512 })
     for (const change of invalid) {
