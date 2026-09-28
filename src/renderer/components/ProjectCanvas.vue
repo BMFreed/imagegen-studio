@@ -35,6 +35,7 @@ const panning = ref(false)
 const camera = ref<CanvasCamera>({ scale: 1, x: 0, y: 0 })
 const viewport = ref<CanvasSize>({ height: 0, width: 0 })
 const failedImageUrls = ref<Set<string>>(new Set())
+const localBboxPosition = ref<{ x: number; y: number } | null>(null)
 const zoomPercent = computed(() => Number((camera.value.scale * 100).toPrecision(3)))
 const zoomOptions = computed(() =>
   [...new Set([25, 50, 75, 100, 125, 200, 400, zoomPercent.value])]
@@ -66,6 +67,8 @@ let resizeObserver: ResizeObserver | null = null
 let fitMode = true
 let panMoved = false
 let lastPointer = { x: 0, y: 0 }
+let keyboardBboxDirty = false
+const heldArrowKeys = new Set<string>()
 const images = new Map<string, HTMLImageElement>()
 
 function token(name: string): string {
@@ -132,6 +135,16 @@ function startPan(event: PointerEvent) {
   host.value.setPointerCapture(event.pointerId)
 }
 
+function handleCanvasPointerDown(event: PointerEvent) {
+  if (
+    event.target === host.value ||
+    (event.target instanceof Element && event.target.closest('.konva-stage'))
+  ) {
+    host.value?.focus({ preventScroll: true })
+  }
+  startPan(event)
+}
+
 function movePan(event: PointerEvent) {
   if (!panning.value) {
     return
@@ -153,6 +166,39 @@ function stopPan() {
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.target !== host.value) {
+    return
+  }
+  if (
+    tool.value === 'bbox' &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    (event.key === 'ArrowLeft' ||
+      event.key === 'ArrowRight' ||
+      event.key === 'ArrowUp' ||
+      event.key === 'ArrowDown')
+  ) {
+    event.preventDefault()
+    if (props.disabled || !bboxShape) {
+      return
+    }
+    const step = event.shiftKey ? 10 : 1
+    const x =
+      Math.round(bboxShape.x()) +
+      (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0)
+    const y =
+      Math.round(bboxShape.y()) +
+      (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0)
+    if (!validBbox({ height: props.bbox.height, width: props.bbox.width, x, y })) {
+      return
+    }
+    heldArrowKeys.add(event.key)
+    bboxShape.position({ x, y })
+    localBboxPosition.value = { x, y }
+    bboxTransformer?.forceUpdate()
+    sceneLayer?.batchDraw()
+    keyboardBboxDirty = true
+    fitMode = false
     return
   }
   switch (event.key) {
@@ -179,6 +225,31 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function finishKeyboardBbox() {
+  heldArrowKeys.clear()
+  if (!keyboardBboxDirty) {
+    return
+  }
+  keyboardBboxDirty = false
+  commitBbox()
+}
+
+function handleKeyup(event: KeyboardEvent) {
+  if (event.target !== host.value || !heldArrowKeys.has(event.key)) {
+    return
+  }
+  event.preventDefault()
+  heldArrowKeys.delete(event.key)
+  if (heldArrowKeys.size === 0) {
+    finishKeyboardBbox()
+  }
+}
+
+function selectBboxTool() {
+  tool.value = 'bbox'
+  host.value?.focus({ preventScroll: true })
+}
+
 function validBbox(rect: IgsRectV1): boolean {
   return (
     Number.isSafeInteger(rect.x) &&
@@ -195,6 +266,7 @@ function validBbox(rect: IgsRectV1): boolean {
 }
 
 function restoreBbox() {
+  localBboxPosition.value = null
   bboxShape?.position({ x: props.bbox.x, y: props.bbox.y })
   bboxShape?.size({ height: props.bbox.height, width: props.bbox.width })
   bboxShape?.scale({ x: 1, y: 1 })
@@ -224,7 +296,11 @@ function commitBbox() {
       (key) => rect[key as keyof IgsRectV1] !== props.bbox[key as keyof IgsRectV1],
     )
   ) {
+    localBboxPosition.value = { x: rect.x, y: rect.y }
+    fitMode = false
     emit('changeBbox', rect)
+  } else {
+    localBboxPosition.value = null
   }
 }
 
@@ -413,9 +489,11 @@ onMounted(() => {
     }
   })
   resizeObserver.observe(host.value)
+  window.addEventListener('blur', finishKeyboardBbox)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('blur', finishKeyboardBbox)
   resizeObserver?.disconnect()
   for (const image of images.values()) {
     image.onload = null
@@ -446,31 +524,57 @@ watch(
   },
 )
 watch(() => props.selectedLayerId, renderRasters)
-watch([tool, () => props.disabled], () => {
+watch(tool, () => {
   panMoved = false
+  heldArrowKeys.clear()
+  keyboardBboxDirty = false
   restoreBbox()
   updateBboxTool()
 })
+watch(
+  () => props.disabled,
+  (disabled) => {
+    panMoved = false
+    if (keyboardBboxDirty) {
+      heldArrowKeys.clear()
+      keyboardBboxDirty = false
+      restoreBbox()
+    } else if (!disabled) {
+      // Keep the local drag/nudge position visible until the IPC result arrives.
+      // A failed mutation has no bbox prop update, so leaving busy restores it.
+      restoreBbox()
+    }
+    updateBboxTool()
+  },
+)
 </script>
 
 <template>
   <section aria-label="Project Canvas" class="project-canvas">
     <div
       ref="host"
-      aria-label="Infinite project canvas. Use the Pan or Bounding Box tool. Numeric generation area fields are in Project settings."
+      :aria-label="
+        tool === 'bbox'
+          ? 'Infinite project canvas. Bounding Box tool. Arrow keys move the generation area by 1 pixel; Shift and arrow keys move it by 10 pixels. Drag to move or use handles to resize.'
+          : 'Infinite project canvas. Use the Pan or Bounding Box tool. Zoom with the wheel.'
+      "
       class="canvas-area"
       :class="{ 'canvas-area--pan': tool === 'pan', 'canvas-area--panning': panning }"
+      role="group"
       tabindex="0"
+      @blur="finishKeyboardBbox"
       @keydown="handleKeydown"
+      @keyup="handleKeyup"
       @pointercancel="stopPan"
-      @pointerdown="startPan"
+      @pointerdown="handleCanvasPointerDown"
       @pointermove="movePan"
       @pointerup="stopPan"
       @wheel.prevent="onWheel"
     >
       <div ref="stageContainer" aria-hidden="true" class="konva-stage" />
       <div class="bbox-readout">
-        Generation area · {{ bbox.width }} × {{ bbox.height }} · X {{ bbox.x }} · Y {{ bbox.y }}
+        Generation area · {{ bbox.width }} × {{ bbox.height }} · X
+        {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}
       </div>
       <div aria-label="Canvas tools" class="tool-rail" role="toolbar">
         <NButton
@@ -491,7 +595,7 @@ watch([tool, () => props.disabled], () => {
           quaternary
           size="small"
           :themeOverrides="tool === 'bbox' ? activeControlTheme : controlTheme"
-          @click="tool = 'bbox'"
+          @click="selectBboxTool"
         >
           <template v-slot:icon><NIcon :component="Box" :size="18" /></template>
         </NButton>
@@ -526,7 +630,11 @@ watch([tool, () => props.disabled], () => {
         </NButton>
       </div>
       <span class="viewport-hint">
-        {{ tool === 'pan' ? 'Drag to pan · Wheel to zoom' : 'Drag to move · Handles to resize' }}
+        {{
+          tool === 'pan'
+            ? 'Drag to pan · Wheel to zoom'
+            : 'Drag to move · Arrows: 1 px · Shift+Arrows: 10 px · Handles to resize'
+        }}
       </span>
     </div>
   </section>

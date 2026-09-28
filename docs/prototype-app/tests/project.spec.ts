@@ -418,11 +418,14 @@ test.describe('Project prototype', () => {
     await expect(promptCard).toHaveCSS('transition-duration', '0.3s, 0.3s, 0.3s')
     const promptHelp = page.locator('.prompt-help')
     await expect(promptHelp).toBeVisible()
-    const dismissHint = page.getByRole('button', { name: "Don't show again" })
-    await expect(dismissHint.locator('svg')).toHaveCount(1)
+    const closeHelp = page.getByRole('button', { name: 'Close prompt help' })
+    await expect(closeHelp.locator('svg')).toHaveCount(1)
     const onboardingWidth = await promptHelp.evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).width),
     )
+    await closeHelp.click()
+    await expect(promptHelp).toBeHidden()
+    await expect(promptCard).toHaveCSS('border-color', 'rgb(126, 231, 135)')
 
     await page.getByText('Canvas Size', { exact: true }).click()
     await expect(promptHelp).toBeHidden()
@@ -430,8 +433,7 @@ test.describe('Project prototype', () => {
     await expect(promptCard).toHaveCSS('border-color', 'rgb(52, 52, 55)')
     await expect(promptCard).toHaveCSS('box-shadow', 'none')
     await editor.click()
-    await expect(promptHelp).toBeVisible()
-    await dismissHint.click()
+    await expect(promptHelp).toBeHidden()
 
     await editor.press('Control+a')
     await editor.press('Backspace')
@@ -460,8 +462,51 @@ test.describe('Project prototype', () => {
       Number.parseFloat(getComputedStyle(element).width),
     )
     expect(regularHelpWidth).toBeCloseTo(onboardingWidth, 0)
-    await expect(page.getByRole('button', { name: "Don't show again" })).toHaveCount(0)
+    await closeHelp.click()
+    await expect(promptHelp).toBeHidden()
     expect(vueWarnings).toEqual([])
+  })
+
+  test('shows prompt help automatically once across positive and negative prompts', async ({
+    page,
+  }) => {
+    await openProject(page)
+    const positive = page.getByRole('textbox', { exact: true, name: 'Prompt' })
+    const negative = page.getByRole('textbox', { exact: true, name: 'Negative Prompt' })
+    const promptHelp = page.locator('.prompt-help')
+
+    await positive.click()
+    await expect(promptHelp).toBeVisible()
+    await negative.click()
+    await expect(promptHelp).toBeHidden()
+    await positive.click()
+    await expect(promptHelp).toBeHidden()
+
+    await page.reload()
+    await negative.click()
+    await expect(promptHelp).toBeHidden()
+    await page.getByRole('button', { name: 'About Negative Prompt editor' }).click()
+    await expect(promptHelp).toBeVisible()
+    await page.getByRole('button', { name: 'Close prompt help' }).click()
+    await expect(promptHelp).toBeHidden()
+    await page.getByRole('button', { name: 'About Negative Prompt editor' }).click()
+    await expect(promptHelp).toBeVisible()
+    await page.getByText('Canvas Size', { exact: true }).click()
+    await expect(promptHelp).toBeHidden()
+  })
+
+  test('counts a first manual Info view as the one-time prompt hint', async ({ page }) => {
+    await openProject(page)
+    const promptHelp = page.locator('.prompt-help')
+    await page.getByRole('button', { name: 'About Prompt editor' }).hover()
+    await expect(promptHelp).toBeVisible()
+    await page.getByText('Canvas Size', { exact: true }).click()
+    await expect(promptHelp).toBeHidden()
+
+    await page.getByRole('textbox', { exact: true, name: 'Prompt' }).click()
+    await expect(promptHelp).toBeHidden()
+    await page.getByRole('textbox', { exact: true, name: 'Negative Prompt' }).click()
+    await expect(promptHelp).toBeHidden()
   })
 
   test('keeps native double-click and Shift selection while triple-click selects a phrase', async ({

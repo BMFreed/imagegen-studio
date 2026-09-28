@@ -47,7 +47,10 @@ test('Apply overlay preserves malformed prompt text and clears derived warnings 
   const dialog = page.getByRole('dialog', { name: 'Apply Preset: Studio Portrait Soft Light' })
   await dialog.getByRole('button', { exact: true, name: 'Expand all' }).click()
   const prompt = dialog.getByRole('textbox', { exact: true, name: 'Prompt' })
-  await prompt.fill('(portrait:abc)')
+  await prompt.click()
+  await prompt.press('Control+a')
+  await page.keyboard.insertText('(portrait:abc)')
+  await expect(prompt).toHaveText('(portrait:abc)')
   await expect(prompt.locator('.cm-prompt-syntax-warning')).toHaveText('abc')
   const indicator = dialog.getByRole('button', {
     exact: true,
@@ -59,7 +62,10 @@ test('Apply overlay preserves malformed prompt text and clears derived warnings 
   ).toContainText('Invalid attention weight "abc"')
   await dialog.getByRole('button', { exact: true, name: 'Reset all' }).click()
   await expect(prompt.locator('.cm-prompt-syntax-warning')).toHaveCount(0)
-  await prompt.fill('(portrait:abc)')
+  await prompt.click()
+  await prompt.press('Control+a')
+  await page.keyboard.insertText('(portrait:abc)')
+  await expect(prompt).toHaveText('(portrait:abc)')
   await dialog.getByRole('button', { exact: true, name: 'Apply' }).click()
   await expect(dialog).toBeHidden()
   const applied = page.getByRole('textbox', { exact: true, name: 'Prompt' })

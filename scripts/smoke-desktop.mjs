@@ -351,6 +351,7 @@ try {
   await checkNewProjectResolution(window)
   await newProjectDialog.getByRole('button', { name: 'Create Project' }).click()
   await window.getByRole('tab', { name: projectTitle }).waitFor()
+  await expect(window.getByRole('button', { name: 'Fit to active layer' })).toBeDisabled()
 
   const emptyProjectPicker = application.evaluate(
     ({ dialog }) =>
@@ -390,9 +391,17 @@ try {
   assert.equal(unchangedProject.value.tab.dirty, false)
   assert.equal(unchangedProject.value.tab.layers.length, 0)
 
-  await window.locator('input[aria-label="Generation area X"]').fill('72')
   await window.locator('input[aria-label="Generation area width"]').fill('704')
-  await window.getByRole('button', { name: 'Apply generation area' }).click()
+  const uncommittedBbox = await window.evaluate((id) => window.api.projects.open(id), projectId)
+  assert.equal(uncommittedBbox.ok, true)
+  assert.deepEqual(uncommittedBbox.value.tab.primaryBbox, { x: 0, y: 0, width: 640, height: 512 })
+  await window.locator('input[aria-label="Generation area width"]').press('Enter')
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.primaryBbox.x === 0 && tab.primaryBbox.width === 704,
+    'Enter did not commit the generation-area draft',
+  )
   await window.getByRole('button', { name: 'Save Project' }).click()
   await window
     .getByRole('region', { name: `Project ${projectTitle}` })
@@ -406,7 +415,7 @@ try {
   const reopenedProject = await window.evaluate((id) => window.api.projects.open(id), projectId)
   assert.equal(reopenedProject.ok, true)
   assert.equal(reopenedProject.value.kind, 'opened')
-  assert.deepEqual(reopenedProject.value.tab.primaryBbox, { x: 72, y: 0, width: 704, height: 512 })
+  assert.deepEqual(reopenedProject.value.tab.primaryBbox, { x: 0, y: 0, width: 704, height: 512 })
   assert.equal(reopenedProject.value.tab.dirty, false)
 
   const projectRegion = window.getByRole('region', { name: `Project ${projectTitle}` })
@@ -865,14 +874,46 @@ try {
   console.log('Desktop smoke passed: Home, Model Manager IPC, Project Save/reopen, one instance.')
 
   const savedPackage = readFileSync(packagePath)
-  await window.locator('input[aria-label="Generation area Y"]').fill('96')
-  await window.getByRole('button', { name: 'Apply generation area' }).click()
+  const projectCanvas = window.getByRole('region', { name: 'Project Canvas' })
+  const projectCanvasArea = projectCanvas.locator('.canvas-area')
+  await projectCanvas.getByRole('button', { name: 'Pan tool' }).click()
+  await projectCanvasArea.focus()
+  await projectCanvasArea.press('ArrowRight')
+  await projectCanvas.getByRole('button', { name: 'Bounding Box tool' }).click()
+  await expect(projectCanvasArea).toBeFocused()
+  await window.keyboard.down('Shift')
+  for (let index = 0; index < 7; index += 1) {
+    await window.keyboard.down('ArrowRight')
+  }
+  await expect(projectCanvas.locator('.bbox-readout')).toContainText('X 70 · Y 0')
+  await window.keyboard.up('Shift')
+  await window.keyboard.down('ArrowRight')
+  await window.keyboard.down('ArrowRight')
+  await window.keyboard.up('ArrowRight')
   await waitForOpenTab(
     window,
     projectId,
-    (tab) => tab.dirty && tab.primaryBbox.y === 96,
-    'Generation-area edit did not reach the Project tab',
+    (tab) => tab.dirty && tab.primaryBbox.x === 72 && tab.primaryBbox.y === 0,
+    'ArrowRight hold did not move the generation area by 72 project pixels',
   )
+  await expect(projectCanvas.locator('.bbox-readout')).toContainText('X 72 · Y 0')
+  await expect(window.locator('input[aria-label="Generation area width"]')).toBeEnabled()
+  await window.keyboard.down('Shift')
+  for (let index = 0; index < 9; index += 1) {
+    await window.keyboard.down('ArrowDown')
+  }
+  await window.keyboard.up('Shift')
+  for (let index = 0; index < 6; index += 1) {
+    await window.keyboard.down('ArrowDown')
+  }
+  await window.keyboard.up('ArrowDown')
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.dirty && tab.primaryBbox.x === 72 && tab.primaryBbox.y === 96,
+    'ArrowDown hold did not move the generation area by 96 project pixels',
+  )
+  await expect(projectCanvas.locator('.bbox-readout')).toContainText('X 72 · Y 96')
   const shadowManifestPath = path.join(
     dataRoot,
     'data',
@@ -1264,9 +1305,18 @@ try {
     const button = document.querySelector('button[aria-label="Hide Raster smoke layer"]')
     return button instanceof HTMLButtonElement && !button.disabled
   })
-  await recoveryWindow.locator('[aria-label="Seed policy"]').click()
-  await recoveryWindow.getByText('Fixed', { exact: true }).click()
-  const fixedSeed = recoveryWindow.locator('input[aria-label="Fixed seed"]')
+  const randomSeedSwitch = recoveryWindow.locator('[aria-label="Random seed switch"]')
+  const shuffleSeed = recoveryWindow.getByRole('button', { name: 'Shuffle Seed' })
+  const reuseSeed = recoveryWindow.getByRole('button', { name: 'Reuse last seed' })
+  const fixedSeed = recoveryWindow.locator('input[aria-label="Generation seed"]')
+  assert.equal(await fixedSeed.isDisabled(), true)
+  assert.equal(await shuffleSeed.isDisabled(), true)
+  assert.equal(await reuseSeed.isDisabled(), true)
+  await randomSeedSwitch.click()
+  assert.equal(await fixedSeed.isEnabled(), true)
+  assert.equal(await shuffleSeed.isEnabled(), true)
+  await shuffleSeed.click()
+  assert.equal(Number.isInteger(Number(await fixedSeed.inputValue())), true)
   await fixedSeed.fill('')
   assert.equal(
     await recoveryWindow.getByRole('button', { name: 'Save Project' }).isDisabled(),
@@ -1348,6 +1398,10 @@ try {
   await cfgScaleInput.fill('5.5')
   await stepsInput.fill('30')
   if (process.env.IMAGEGEN_SMOKE_PROJECT_SCREENSHOT) {
+    await recoveryWindow.keyboard.press('Escape')
+    await recoveryWindow
+      .locator('.seed-fields')
+      .evaluate((element) => element.scrollIntoView({ block: 'center' }))
     await recoveryWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROJECT_SCREENSHOT })
   }
   // Save without blurring Steps: Ctrl+S must flush the latest numeric and prompt edits.
@@ -1512,15 +1566,41 @@ try {
   assert.equal(canceledImageImport.value.tab.dirty, false)
   assert.equal(canceledImageImport.value.tab.layers.length, 2)
 
-  await recoveryWindow.locator('input[aria-label="Generation area X"]').fill('31')
-  await recoveryWindow.locator('input[aria-label="Generation area Y"]').fill('-17')
-  await recoveryWindow.getByRole('button', { name: 'Apply generation area' }).click()
+  await canvasRegion.getByRole('button', { name: 'Bounding Box tool' }).click()
+  const rasterCanvasArea = canvasRegion.locator('.canvas-area')
+  await rasterCanvasArea.locator('canvas').first().click({ position: { x: 120, y: 120 } })
+  await expect(rasterCanvasArea).toBeFocused()
+  await recoveryWindow.keyboard.down('Shift')
+  for (let index = 0; index < 3; index += 1) {
+    await recoveryWindow.keyboard.down('ArrowRight')
+  }
+  await recoveryWindow.keyboard.up('Shift')
+  await recoveryWindow.keyboard.down('ArrowRight')
+  await recoveryWindow.keyboard.up('ArrowRight')
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => tab.primaryBbox.x === 31 && tab.primaryBbox.y === 0,
+    'ArrowRight did not move the import placement bbox to X 31',
+  )
+  await expect(canvasRegion.locator('.bbox-readout')).toContainText('X 31 · Y 0')
+  await expect(recoveryWindow.locator('input[aria-label="Generation area width"]')).toBeEnabled()
+  await recoveryWindow.keyboard.down('Shift')
+  await recoveryWindow.keyboard.down('ArrowUp')
+  await recoveryWindow.keyboard.up('Shift')
+  for (let index = 0; index < 7; index += 1) {
+    await recoveryWindow.keyboard.down('ArrowUp')
+  }
+  await expect(canvasRegion.locator('.bbox-readout')).toContainText('X 31 · Y -17')
+  await recoveryWindow.keyboard.up('ArrowUp')
   await waitForOpenTab(
     recoveryWindow,
     rasterProject.id,
     (tab) => tab.primaryBbox.x === 31 && tab.primaryBbox.y === -17,
-    'The import placement bbox did not reach the Project tab',
+    'ArrowUp did not move the import placement bbox into negative coordinates',
   )
+  await expect(canvasRegion.locator('.bbox-readout')).toContainText('X 31 · Y -17')
+  await expect(recoveryWindow.locator('input[aria-label="Generation area width"]')).toBeEnabled()
   const sourceImage = path.join(externalDirectory, 'Selected image.png')
   const sourceImageBytes = readFileSync('src/main/projects/placeholders/unavailable.png')
   writeFileSync(sourceImage, sourceImageBytes)
@@ -1586,6 +1666,29 @@ try {
   const importedSelection = recoveryWindow.getByRole('button', { name: 'Select Selected image' })
   await importedSelection.waitFor()
   assert.equal(await importedSelection.getAttribute('aria-pressed'), 'true')
+  const fitActiveLayer = recoveryWindow.getByRole('button', { name: 'Fit to active layer' })
+  await expect(fitActiveLayer).toBeEnabled()
+  await fitActiveLayer.click()
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) =>
+      tab.primaryBbox.x === 31 &&
+      tab.primaryBbox.y === -17 &&
+      tab.primaryBbox.width === 512 &&
+      tab.primaryBbox.height === 512,
+    'Fit to active layer did not use the selected Raster Layer bounds',
+  )
+  await expect(fitActiveLayer).toBeDisabled()
+  await recoveryWindow.locator('input[aria-label="Generation area width"]').fill('1024')
+  await recoveryWindow.locator('input[aria-label="Generation area height"]').fill('1024')
+  await recoveryWindow.locator('input[aria-label="Generation area height"]').press('Enter')
+  await waitForOpenTab(
+    recoveryWindow,
+    rasterProject.id,
+    (tab) => tab.primaryBbox.width === 1024 && tab.primaryBbox.height === 1024,
+    'Enter did not restore the generation-area size after Fit',
+  )
   assert.deepEqual(
     readFileSync(sourceImage),
     sourceImageBytes,

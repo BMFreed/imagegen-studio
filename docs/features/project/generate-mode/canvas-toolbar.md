@@ -4,7 +4,7 @@
 
 Generate mode needs compact viewport controls, canvas-area metadata/actions and a clear place for primary generation bbox actions on the unbounded Project Canvas.
 
-The current Project prototype does not use a large top canvas toolbar. Viewport controls live in a bottom bar attached to the canvas area. In the product, numeric generation bbox dimensions live in the left `Size` section, while canvas handles move/resize that bbox. The prototype's `Crop / Resize Project Canvas` label and finite frame are outdated coverage.
+The current Project prototype does not use a large top canvas toolbar. Viewport controls live in a bottom bar attached to the canvas area. In the product, numeric generation bbox dimensions live in the left `Generation area` section, while canvas handles move/resize that bbox. The prototype's `Crop / Resize Project Canvas` label and finite frame are outdated coverage.
 
 ## Reference
 
@@ -36,17 +36,16 @@ Include in the bottom viewport bar:
 
 `Fit View to Layers` changes only the viewport/camera. It does not mutate layers or either generation bbox.
 
-`Fit Generation BBox to Layers` changes the primary generation bbox to the selected/visible Raster Layer extent. It is useful after importing a large image, without changing layer pixels or export bounds.
+`Fit to active layer` changes the primary generation bbox to the currently selected visible Raster Layer extent. It is useful after importing a large image, without changing layer pixels or export bounds. No selection, a hidden or fully transparent Raster Layer, or another selected layer type leaves this command disabled; it never falls back to all visible layers.
 
-This command belongs in the left `Size` section, not in the bottom viewport bar, so the user does not see two visually similar `fit` controls doing different things.
+This command is a compact icon in the `Generation area` heading, with an accessible name and tooltip. It does not belong in the bottom viewport bar, so the user does not see two visually similar `fit` controls doing different things. Manually entered width/height edits in Project commit on `Enter` after validation; ratio presets that resize and width/height swap apply immediately. There is no full-width `Apply` button or numeric x/y editor in this section.
 
-The left-rail `Bounding Box` tool directly moves/resizes the primary generation bbox when no Smart Patch Layer is targeted. It does not crop, resample or transform Raster Layer pixels. With a Smart Patch Layer targeted, the contextual `Bounding Box` tool edits that layer's owned bbox instead.
+The left-rail `Bounding Box` tool directly moves/resizes the primary generation bbox when no Smart Patch Layer is targeted. With that tool active and the canvas focused, arrow keys move the primary bbox 1 project pixel; Shift+arrows move it 10 pixels. Holding a key is one movement gesture, committed when the key is released or canvas focus leaves. Other modified arrow shortcuts are not intercepted. This does not crop, resample or transform Raster Layer pixels. With a Smart Patch Layer targeted, the contextual `Bounding Box` tool edits that layer's owned bbox instead.
 
-When fitting the primary generation bbox to layers:
+When fitting the primary generation bbox to the active layer:
 
-- prefer selected visible Raster Layers when there is an explicit layer selection;
-- otherwise use the bounds of visible Raster Layers;
-- ignore hidden layers;
+- require one selected Raster Layer with visibility enabled and opacity greater than zero;
+- use only that layer's extent, without a union or fallback;
 - preserve Raster Layer pixels and transforms;
 - preserve Smart Patch Layer bboxes and masks in project coordinates;
 - support undo/redo;
@@ -113,14 +112,13 @@ Document separately:
 
 - drag-and-drop/importing images into canvas as new Raster Layers;
 - snapping rules for the primary generation bbox and Smart Patch Layer bbox;
-- exact x/y precision controls for the primary bbox;
 - exact design of the canvas context menu.
 
 ## Vue Prototype Coverage
 
 The bottom bar currently provides Undo, Redo, zoom out, a percentage select, zoom in, `Fit View` and contextual hints. Pointer pan and wheel zoom update a local DOM/CSS viewport transform.
 
-`Fit View` resets the deterministic prototype camera; it does not yet calculate production bounds from real composited pixels. The left Size card has a separate deterministic `Fit to visible layers` mutation that currently changes a finite Project Canvas frame. The `Crop / Resize Project Canvas` rail tool and handles are visual workflow coverage only. They do not implement the product's independently movable/resizable primary generation bbox.
+`Fit View` resets the deterministic prototype camera; it does not yet calculate production bounds from real composited pixels. The left Size card has a separate deterministic `Fit to visible layers` mutation that currently changes a finite Project Canvas frame; this label and selection behavior are outdated prototype coverage, not the production `Fit to active layer` contract. The `Crop / Resize Project Canvas` rail tool and handles are visual workflow coverage only. They do not implement the product's independently movable/resizable primary generation bbox.
 
 The Smart Patch rail includes a working deterministic `Fit Patch BBox to Mask` command. A numeric bbox popover and a canvas context menu are not implemented.
 
@@ -128,8 +126,9 @@ The Smart Patch rail includes a working deterministic `Fit Patch BBox to Mask` c
 
 - User can zoom with explicit controls and a percentage readout.
 - User can fit the viewport to visible layers/content.
-- User can fit the primary generation bbox to visible/selected Raster Layers from the left `Size` section.
+- User can fit the primary generation bbox to the selected visible Raster Layer through a compact icon in the left `Generation area` heading; without one, the action is disabled.
 - User can move/resize the primary generation bbox from the left canvas rail without destructive Raster Layer crop.
+- With the Bounding Box tool and canvas focus, arrows move the primary bbox by 1 project pixel and Shift+arrows by 10; other modified arrows retain their browser/application behavior.
 - The active bbox readout is positioned as a `canvas-area` overlay; the future context-menu placement remains undecided by the prototype.
 - Smart Patch Layer exposes `Fit Patch BBox to Mask` in its contextual left toolbar.
 - Regional Guidance Layer does not expose any bbox fit-to-mask action.

@@ -6,16 +6,27 @@ import { expect } from '@playwright/test'
 export async function checkPromptActions({ window, application, projectRegion }) {
   const positive = projectRegion.getByRole('textbox', { name: 'Positive prompt', exact: true })
   const negative = projectRegion.getByRole('textbox', { name: 'Negative prompt', exact: true })
-  const positiveCard = projectRegion.getByRole('region', { name: 'Positive prompt editor', exact: true })
-  const negativeCard = projectRegion.getByRole('region', { name: 'Negative prompt editor', exact: true })
+  const positiveCard = projectRegion.getByRole('region', {
+    name: 'Positive prompt editor',
+    exact: true,
+  })
+  const negativeCard = projectRegion.getByRole('region', {
+    name: 'Negative prompt editor',
+    exact: true,
+  })
   await positive.fill('alpha phrase, beta word')
   const help = window.locator('.prompt-help')
   await expect(help).toBeVisible()
   await expect(help).toContainText('Ctrl/Cmd+Space browses LoRA triggers.')
   await expect(help).not.toContainText('embeddings')
-  await window.getByRole('button', { name: "Don't show again" }).click()
+  await window.getByRole('button', { name: 'Close prompt help' }).click()
   await expect(help).toBeHidden()
-  assert.equal(await window.evaluate(() => localStorage.getItem('imagegen-studio.prompt-editor-hint-dismissed.v1')), '1')
+  assert.equal(
+    await window.evaluate(() =>
+      localStorage.getItem('imagegen-studio.prompt-editor-hint-shown.v1'),
+    ),
+    '1',
+  )
 
   // Click in actual rendered text; do not construct a CodeMirror selection through evaluate.
   await positive.dblclick({ position: { x: 15, y: 12 } })
@@ -56,14 +67,22 @@ export async function checkPromptActions({ window, application, projectRegion })
   try {
     await positiveCard.getByRole('button', { name: 'Copy prompt' }).click()
     await expect(positiveCard.getByRole('status')).toHaveText('Copied')
-    assert.equal(await application.evaluate(({ clipboard }) => clipboard.readText()), 'alpha phrase+, beta word')
+    assert.equal(
+      await application.evaluate(({ clipboard }) => clipboard.readText()),
+      'alpha phrase+, beta word',
+    )
   } finally {
-    await application.evaluate(({ clipboard }, previous) => clipboard.writeText(previous), previousClipboard)
+    await application.evaluate(
+      ({ clipboard }, previous) => clipboard.writeText(previous),
+      previousClipboard,
+    )
   }
   await expect(positive).toHaveText('alpha phrase+, beta word')
   await positiveCard.getByRole('button', { name: 'Clear prompt' }).click()
   await expect(positive).toHaveText('')
-  await expect(positiveCard.getByRole('button', { name: 'Increase prompt attention' })).toBeDisabled()
+  await expect(
+    positiveCard.getByRole('button', { name: 'Increase prompt attention' }),
+  ).toBeDisabled()
   await expect(positiveCard.getByRole('button', { name: 'Clear prompt' })).toBeDisabled()
   await positive.press('Control+z')
   await expect(positive).toHaveText('alpha phrase+, beta word')
@@ -74,8 +93,12 @@ export async function checkPromptActions({ window, application, projectRegion })
   for (let index = 0; index < 7; index += 1) {
     await positive.press('ArrowRight')
   }
-  await expect(positiveCard.getByRole('button', { name: 'Increase prompt attention' })).toBeDisabled()
-  await expect(negativeCard.getByRole('button', { name: 'Increase prompt attention' })).toBeEnabled()
+  await expect(
+    positiveCard.getByRole('button', { name: 'Increase prompt attention' }),
+  ).toBeDisabled()
+  await expect(
+    negativeCard.getByRole('button', { name: 'Increase prompt attention' }),
+  ).toBeEnabled()
   await positive.fill('alpha phrase, beta word')
   await positive.press('Control+Home')
   await positive.press('Control+ArrowUp')
@@ -85,18 +108,24 @@ export async function checkPromptActions({ window, application, projectRegion })
   if (process.env.IMAGEGEN_SMOKE_PROMPT_ACTIONS_SCREENSHOT) {
     await positiveCard.getByRole('button', { name: 'About Positive prompt editor' }).hover()
     await expect(help).toBeVisible()
-    await expect(window.getByRole('button', { name: "Don't show again" })).toHaveCount(0)
+    await expect(window.getByRole('button', { name: 'Close prompt help' })).toBeVisible()
     // Capture the settled Naive popover, after its opacity/position transition.
     await window.waitForTimeout(350)
     await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_ACTIONS_SCREENSHOT })
     await window.mouse.move(600, 200)
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 620))
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(900, 620),
+    )
     await window.waitForFunction(() => window.innerWidth === 900)
     await positiveCard.evaluate((element) => element.scrollIntoView({ block: 'start' }))
     await expect(help).toBeHidden()
     await window.waitForTimeout(350)
-    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_PROMPT_ACTIONS_SCREENSHOT.replace('.png', '-small.png') })
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1380, 900))
+    await window.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_PROMPT_ACTIONS_SCREENSHOT.replace('.png', '-small.png'),
+    })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
     await window.waitForFunction(() => window.innerWidth === 1380)
   }
 }

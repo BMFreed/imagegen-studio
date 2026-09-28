@@ -13,7 +13,11 @@ import {
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
-import { DeviceFloppy as SaveIcon } from '@vicons/tabler'
+import {
+  AspectRatio as FitIcon,
+  DeviceFloppy as SaveIcon,
+  ArrowsShuffle as ShuffleIcon,
+} from '@vicons/tabler'
 import { DnDProvider } from '@vue-dnd-kit/core'
 import {
   NAlert,
@@ -23,7 +27,9 @@ import {
   NInput,
   NInputNumber,
   NSelect,
+  NSwitch,
   NTag,
+  NTooltip,
   type SelectOption,
 } from 'naive-ui'
 import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -278,11 +284,6 @@ function renderVersionTag({ option }: { option: SelectOption }) {
   return saved && option.value === saved.localVersionId ? saved.versionName : String(option.label)
 }
 
-const seedOptions = [
-  { label: 'Random', value: 'random' },
-  { label: 'Fixed', value: 'fixed' },
-  { label: 'Reuse last', value: 'reuse' },
-]
 const illustriousSamplingUnavailable = computed(
   () => selectedModel.value !== null && selectedModel.value.baseModelFamily !== 'illustrious',
 )
@@ -357,16 +358,22 @@ function updateScheduler(scheduler: string | null) {
   emit('updateDraft', { kind: 'sampling-pair', sampler, scheduler })
 }
 
-const fixedSeedInput = ref<number | null>(null)
+const fixedSeedInput = ref<number | null>(0)
+const lastValidFixedSeed = ref(0)
 const rawFixedSeedInvalid = ref(false)
+const displayedSeed = computed(() =>
+  props.generationDraft.seed.policy === 'reuse'
+    ? props.tab.lastActualSeedSnapshot
+    : fixedSeedInput.value,
+)
 const fixedSeedInvalid = computed(
   () =>
-    props.generationDraft.seed.policy === 'fixed' &&
-    (rawFixedSeedInvalid.value ||
-      fixedSeedInput.value === null ||
-      !Number.isSafeInteger(fixedSeedInput.value) ||
-      fixedSeedInput.value < 0 ||
-      fixedSeedInput.value > 0xff_ff_ff_ff),
+    rawFixedSeedInvalid.value ||
+    (props.generationDraft.seed.policy === 'fixed' &&
+      (fixedSeedInput.value === null ||
+        !Number.isSafeInteger(fixedSeedInput.value) ||
+        fixedSeedInput.value < 0 ||
+        fixedSeedInput.value > 0xff_ff_ff_ff)),
 )
 const samplingStepsInput = ref<number | null>(null)
 const samplingCfgScaleText = ref('')
@@ -397,7 +404,12 @@ watch(
   () => props.generationDraft.seed,
   (seed) => {
     if (seed.policy === 'fixed') {
-      fixedSeedInput.value = seed.value
+      if (seed.value !== null) {
+        lastValidFixedSeed.value = seed.value
+      }
+      if (!rawFixedSeedInvalid.value) {
+        fixedSeedInput.value = seed.value
+      }
     }
   },
   { immediate: true },
@@ -487,16 +499,42 @@ function normalizeSamplingCfgScaleOnBlur() {
       : (parsed.value?.toString() ?? '')
 }
 
-function updateSeedPolicy(policy: string) {
+function updateSeedPolicy(policy: ProjectTab['generationDraft']['seed']['policy']) {
   if (props.busy || props.reloadRequired || policy === props.generationDraft.seed.policy) {
     return
   }
+  rawFixedSeedInvalid.value = false
   if (policy === 'fixed') {
-    const value = fixedSeedInput.value ?? props.tab.lastActualSeedSnapshot ?? 0
+    const value = lastValidFixedSeed.value
     fixedSeedInput.value = value
     emit('updateDraft', { kind: 'seed', policy: 'fixed', value })
-  } else if (policy === 'random' || policy === 'reuse') {
+  } else {
     emit('updateDraft', { kind: 'seed', policy, value: null })
+  }
+}
+
+function shuffleSeed() {
+  if (props.busy || props.reloadRequired || props.generationDraft.seed.policy === 'random') {
+    return
+  }
+  const random = crypto.getRandomValues(new Uint32Array(1))[0]!
+  const value = random === displayedSeed.value ? (random + 1) >>> 0 : random
+  rawFixedSeedInvalid.value = false
+  fixedSeedInput.value = value
+  lastValidFixedSeed.value = value
+  emit('updateDraft', { kind: 'seed', policy: 'fixed', value })
+}
+
+function reuseLastSeed() {
+  const last = props.tab.lastActualSeedSnapshot
+  if (props.generationDraft.seed.policy === 'reuse') {
+    if (last === null) {
+      updateSeedPolicy('fixed')
+    } else {
+      updateFixedSeed(last)
+    }
+  } else if (last !== null) {
+    updateSeedPolicy('reuse')
   }
 }
 
@@ -513,6 +551,8 @@ function updateFixedSeed(value: number | null) {
   ) {
     return
   }
+  rawFixedSeedInvalid.value = false
+  lastValidFixedSeed.value = value
   emit('updateDraft', { kind: 'seed', policy: 'fixed', value })
 }
 
@@ -526,6 +566,9 @@ function captureFixedSeedInput(event: Event) {
     value === null || !Number.isSafeInteger(value) || value > 0xff_ff_ff_ff
   if (rawFixedSeedInvalid.value) {
     fixedSeedInput.value = null
+    if (props.generationDraft.seed.policy === 'reuse' && !props.busy && !props.reloadRequired) {
+      emit('updateDraft', { kind: 'seed', policy: 'fixed', value: lastValidFixedSeed.value })
+    }
     return
   }
   updateFixedSeed(value)
@@ -533,7 +576,7 @@ function captureFixedSeedInput(event: Event) {
 
 function restoreInvalidFixedSeed() {
   if (fixedSeedInvalid.value) {
-    const restored = props.generationDraft.seed.value ?? 0
+    const restored = props.generationDraft.seed.value ?? lastValidFixedSeed.value
     rawFixedSeedInvalid.value = false
     fixedSeedInput.value = restored
     void nextTick(() => {
@@ -619,17 +662,33 @@ function applyBbox() {
   emit('applyBbox', { height, width, x, y })
 }
 
+function applyBboxOnEnter(event: KeyboardEvent) {
+  if (
+    event.isComposing ||
+    !(event.target instanceof HTMLInputElement) ||
+    !event.target.closest('.n-input-number')
+  ) {
+    return
+  }
+  // NInputNumber parses its displayed text on Enter before this bubbling handler runs.
+  commitBboxAfterUpdate()
+}
+
+function commitBboxAfterUpdate() {
+  void nextTick(applyBbox)
+}
+
+const activeFitLayer = computed(
+  () =>
+    props.tab.layers.find(
+      (layer) => layer.id === selectedLayerId.value && layer.visible && layer.opacity > 0,
+    ) ?? null,
+)
 const fitBbox = computed<IgsRectV1 | null>(() => {
-  const selected = props.tab.layers.find(
-    (layer) => layer.id === selectedLayerId.value && layer.visible && layer.opacity > 0,
-  )
-  const visible = selected
-    ? [selected]
-    : props.tab.layers.filter((layer) => layer.visible && layer.opacity > 0)
-  if (visible.length === 0) {
+  if (!activeFitLayer.value) {
     return null
   }
-  const bounds = fitTargetBounds(visible, props.tab.primaryBbox)
+  const bounds = fitTargetBounds([activeFitLayer.value], props.tab.primaryBbox)
   const x = Math.floor(bounds.left)
   const y = Math.floor(bounds.top)
   const rect = {
@@ -927,35 +986,55 @@ function applyFitBbox() {
             Enter a CFG scale of zero or greater, or leave it unset.
           </p>
           <div class="seed-fields">
-            <NFormItem label="Seed policy" :showFeedback="false">
-              <NSelect
-                aria-label="Seed policy"
-                :disabled="busy || reloadRequired"
-                :options="seedOptions"
-                size="small"
-                :value="generationDraft.seed.policy"
-                @update:value="updateSeedPolicy"
-              />
-            </NFormItem>
-            <NFormItem
-              v-if="generationDraft.seed.policy === 'fixed'"
-              label="Fixed seed"
-              :showFeedback="false"
-            >
+            <NFormItem label="Seed" :showFeedback="false">
               <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">
                 <NInputNumber
-                  :disabled="busy || reloadRequired"
-                  :inputProps="{ 'aria-label': 'Fixed seed' }"
+                  :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                  :inputProps="{ 'aria-label': 'Generation seed' }"
                   :max="0xff_ff_ff_ff"
                   :min="0"
                   :showButton="false"
                   size="small"
-                  :value="fixedSeedInput"
+                  :value="displayedSeed"
                   @blur="restoreInvalidFixedSeed"
                   @update:value="updateFixedSeed"
                 />
               </div>
             </NFormItem>
+            <NFormItem label="Random" :showFeedback="false">
+              <NSwitch
+                aria-label="Random seed switch"
+                :disabled="busy || reloadRequired"
+                size="small"
+                :value="generationDraft.seed.policy === 'random'"
+                @update:value="updateSeedPolicy($event ? 'random' : 'fixed')"
+              />
+            </NFormItem>
+            <div class="seed-actions">
+              <NButton
+                :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                secondary
+                size="small"
+                @click="shuffleSeed"
+              >
+                <template v-slot:icon><NIcon :component="ShuffleIcon" :size="16" /></template>
+                Shuffle Seed
+              </NButton>
+              <NButton
+                :aria-pressed="generationDraft.seed.policy === 'reuse'"
+                :disabled="
+                  busy ||
+                  reloadRequired ||
+                  (tab.lastActualSeedSnapshot === null && generationDraft.seed.policy !== 'reuse')
+                "
+                secondary
+                size="small"
+                :type="generationDraft.seed.policy === 'reuse' ? 'primary' : 'default'"
+                @click="reuseLastSeed"
+              >
+                Reuse last seed
+              </NButton>
+            </div>
           </div>
           <p v-if="fixedSeedInvalid" class="seed-validation" role="alert">
             Enter a fixed seed from 0 to 4294967295 before saving.
@@ -969,58 +1048,51 @@ function applyFitBbox() {
             completes.
           </p>
           <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
-            Last saved seed: {{ tab.lastActualSeedSnapshot }}
+            Last completed seed: {{ tab.lastActualSeedSnapshot }}
           </p>
         </section>
-        <section aria-label="Generation area" class="settings-section">
-          <h2>Generation area</h2>
-          <p>Set the position and size of the area used for the next image.</p>
-          <div class="bbox-fields">
-            <NFormItem label="X" :showFeedback="false">
-              <NInputNumber
-                v-model:value="draft.x"
-                :inputProps="{ 'aria-label': 'Generation area X' }"
-                :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
-                :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
-                :showButton="false"
-              />
-            </NFormItem>
-            <NFormItem label="Y" :showFeedback="false">
-              <NInputNumber
-                v-model:value="draft.y"
-                :inputProps="{ 'aria-label': 'Generation area Y' }"
-                :max="IGS_SAFETY_CEILINGS.coordinateMagnitude"
-                :min="-IGS_SAFETY_CEILINGS.coordinateMagnitude"
-                :showButton="false"
-              />
-            </NFormItem>
+        <section
+          aria-label="Generation area"
+          class="settings-section"
+          @keydown.enter="applyBboxOnEnter"
+        >
+          <div class="generation-area-heading">
+            <h2>Generation area</h2>
+            <NTooltip>
+              <template v-slot:trigger>
+                <span class="fit-bbox-trigger">
+                  <NButton
+                    aria-label="Fit to active layer"
+                    circle
+                    :disabled="!canFitBbox || busy || reloadRequired"
+                    :loading="pending === 'bbox'"
+                    quaternary
+                    size="tiny"
+                    @click="applyFitBbox"
+                  >
+                    <template v-slot:icon><NIcon :component="FitIcon" :size="16" /></template>
+                  </NButton>
+                </span>
+              </template>
+              {{
+                !activeFitLayer
+                  ? 'Select a visible layer to fit'
+                  : canFitBbox
+                    ? 'Fit to active layer'
+                    : 'Generation area already fits the active layer'
+              }}
+            </NTooltip>
           </div>
           <ResolutionControl
             v-model="draftSize"
             class="bbox-size"
             :disabled="busy || reloadRequired"
             heightLabel="Generation area height"
+            layout="expanded-preview"
             :max="IGS_SAFETY_CEILINGS.rasterDimension"
             widthLabel="Generation area width"
+            @commit="commitBboxAfterUpdate"
           />
-          <NButton
-            aria-label="Apply generation area"
-            class="apply-bbox"
-            :disabled="!validBbox || !bboxChanged || busy || reloadRequired"
-            :loading="pending === 'bbox'"
-            @click="applyBbox"
-          >
-            Apply
-          </NButton>
-          <NButton
-            aria-label="Fit generation area to visible layers"
-            class="fit-bbox"
-            :disabled="!canFitBbox || busy || reloadRequired"
-            secondary
-            @click="applyFitBbox"
-          >
-            Fit to visible layers
-          </NButton>
         </section>
       </aside>
 
@@ -1174,8 +1246,14 @@ function applyFitBbox() {
 
 .seed-fields {
   display: grid;
-  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
   margin-top: 13px;
+}
+
+.seed-fields :deep(.n-form-item) {
+  min-width: 0;
 }
 
 .sampling-fields {
@@ -1192,13 +1270,19 @@ function applyFitBbox() {
   width: 100%;
 }
 
-.seed-fields :deep(.n-select),
 .seed-fields :deep(.n-input-number) {
   width: 100%;
 }
 
 .fixed-seed-input {
   width: 100%;
+}
+
+.seed-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .project-settings .seed-diagnostic {
@@ -1216,27 +1300,18 @@ function applyFitBbox() {
   font-size: var(--app-font-size-meta);
 }
 
-.bbox-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 8px;
-}
-
-.bbox-fields :deep(.n-input-number) {
-  width: 100%;
+.generation-area-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .bbox-size {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
-.apply-bbox {
-  width: 100%;
-  margin-top: 18px;
-}
-
-.fit-bbox {
-  width: 100%;
-  margin-top: 8px;
+.fit-bbox-trigger {
+  display: inline-flex;
 }
 </style>

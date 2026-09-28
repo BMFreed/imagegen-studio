@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ListCheck, Wand, X } from '@vicons/tabler'
+import { ArrowsShuffle, ListCheck, Wand, X } from '@vicons/tabler'
 import {
   NAlert,
   NBadge,
@@ -9,6 +9,7 @@ import {
   NInputNumber,
   NScrollbar,
   NSelect,
+  NSwitch,
   NText,
   NTooltip,
 } from 'naive-ui'
@@ -55,6 +56,12 @@ const target = computed(() => {
   return entity && 'kind' in entity && entity.kind === 'smart-patch' ? entity : undefined
 })
 const payload = computed(() => activeDraft.value.payload)
+const seedPolicy = computed(() => payload.value.seed?.policy ?? 'random')
+const displayedSeed = computed(() =>
+  seedPolicy.value === 'reuse'
+    ? (props.session.lastActualSeed ?? null)
+    : (payload.value.seed?.value ?? 0),
+)
 const imagesPerClick = defineModel<number>('imagesPerClick', { default: 4 })
 const dynamicPreviewOpen = ref(false)
 const modelChoices = presetEditorResources.models.filter(
@@ -151,6 +158,37 @@ function removeLora(resourceId: string) {
 }
 function updateDynamicSettings(value: ProjectDynamicPromptSettings) {
   updatePayload('Change dynamic prompt settings', (draft) => (draft.dynamicPrompt = value))
+}
+function setRandomSeed(random: boolean) {
+  updatePayload('Change seed policy', (draft) => {
+    draft.payload.seed = random
+      ? { policy: 'random', value: draft.payload.seed?.value ?? 0 }
+      : { policy: 'fixed', value: draft.payload.seed?.value ?? 0 }
+  })
+}
+function setFixedSeed(value: number | null) {
+  if (value === null) {
+    return
+  }
+  updatePayload('Change seed', (draft) => {
+    draft.payload.seed = { policy: 'fixed', value }
+  })
+}
+function shuffleSeed() {
+  const random = globalThis.crypto.getRandomValues(new Uint32Array(1))[0]!
+  setFixedSeed(random === displayedSeed.value ? (random + 1) >>> 0 : random)
+}
+function toggleReuseSeed() {
+  const last = props.session.lastActualSeed
+  if (last === undefined && seedPolicy.value !== 'reuse') {
+    return
+  }
+  updatePayload('Change seed policy', (draft) => {
+    draft.payload.seed =
+      draft.payload.seed?.policy === 'reuse'
+        ? { policy: 'fixed', value: last ?? draft.payload.seed?.value ?? 0 }
+        : { policy: 'reuse', value: draft.payload.seed?.value ?? 0 }
+  })
 }
 function normalizeCount(value: number | null) {
   if (value === null || !Number.isFinite(value)) {
@@ -372,52 +410,61 @@ function normalizeCount(value: number | null) {
                 Available when the generation area contains visible raster content.
               </NText>
             </label>
-            <div class="two-fields">
-              <label>
-                Seed policy
-                <NSelect
-                  aria-label="Seed policy"
-                  :options="[
-                    { label: 'Random', value: 'random' },
-                    { label: 'Fixed', value: 'fixed' },
-                    { label: 'Reuse', value: 'reuse' },
-                  ]"
-                  :value="payload.seed?.policy ?? 'random'"
-                  @update:value="
-                    updatePayload('Change seed policy', (draft) => {
-                      draft.payload.seed = { policy: $event, value: draft.payload.seed?.value ?? 0 }
-                    })
-                  "
-                />
-              </label>
-              <label>
+            <div class="seed-controls">
+              <label class="seed-value">
                 Seed
                 <NInputNumber
-                  :disabled="payload.seed?.policy !== 'fixed'"
+                  :disabled="seedPolicy === 'random'"
                   :inputProps="{ 'aria-label': 'Generation seed' }"
                   :max="4294967295"
                   :min="0"
+                  placeholder="—"
                   :precision="0"
-                  :value="
-                    payload.seed?.policy === 'reuse'
-                      ? (session.lastActualSeed ?? null)
-                      : (payload.seed?.value ?? 0)
-                  "
-                  @update:value="
-                    updatePayload('Change seed', (draft) => {
-                      draft.payload.seed = { policy: 'fixed', value: $event ?? 0 }
-                    })
-                  "
+                  size="small"
+                  :value="displayedSeed"
+                  @update:value="setFixedSeed"
                 />
               </label>
+              <label class="seed-random">
+                Random
+                <NSwitch
+                  aria-label="Random seed"
+                  size="small"
+                  :value="seedPolicy === 'random'"
+                  @update:value="setRandomSeed"
+                />
+              </label>
+              <NButton
+                aria-label="Shuffle Seed"
+                class="seed-shuffle"
+                :disabled="seedPolicy === 'random'"
+                secondary
+                size="small"
+                @click="shuffleSeed"
+              >
+                <template v-slot:icon><NIcon :component="ArrowsShuffle" /></template>
+                Shuffle
+              </NButton>
+              <div class="seed-reuse">
+                <NButton
+                  aria-label="Reuse last seed"
+                  :aria-pressed="seedPolicy === 'reuse'"
+                  :disabled="session.lastActualSeed === undefined && seedPolicy !== 'reuse'"
+                  size="tiny"
+                  text
+                  :type="seedPolicy === 'reuse' ? 'primary' : 'default'"
+                  @click="toggleReuseSeed"
+                >
+                  Reuse last seed
+                </NButton>
+                <NText v-if="session.lastActualSeed !== undefined" key="completed" depth="3">
+                  Last completed: {{ session.lastActualSeed }}
+                </NText>
+                <NText v-else-if="seedPolicy === 'reuse'" key="missing" depth="3">
+                  No completed seed in this project yet.
+                </NText>
+              </div>
             </div>
-            <NText v-if="payload.seed?.policy === 'reuse'" depth="3">
-              {{
-                session.lastActualSeed === undefined
-                  ? 'No completed seed in this project yet.'
-                  : `Last completed seed in this project: ${session.lastActualSeed}`
-              }}
-            </NText>
             <details>
               <summary>Advanced Options</summary>
               <div class="field-stack advanced">
@@ -533,6 +580,33 @@ function normalizeCount(value: number | null) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+.seed-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 6px;
+}
+.seed-value,
+.seed-random {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  color: var(--app-text-muted);
+  font-size: 11px;
+}
+.seed-random {
+  justify-items: center;
+}
+.seed-shuffle {
+  margin-bottom: 1px;
+}
+.seed-reuse {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .advanced {
   margin-top: 6px;

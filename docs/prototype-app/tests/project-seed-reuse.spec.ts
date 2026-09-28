@@ -10,14 +10,20 @@ async function selectSeedPolicy(
   scope: Locator | Page = page,
 ) {
   await page.keyboard.press('Escape')
-  await scope.getByLabel('Seed policy').click()
-  await page
-    .locator('.n-base-select-menu:visible')
-    .first()
-    .locator('.n-base-select-option:visible')
-    .filter({ hasText: policy })
-    .click()
-  await expect(scope.getByLabel('Seed policy')).toContainText(policy)
+  const reuse = scope.getByRole('button', { name: 'Reuse last seed' })
+  if (policy === 'Reuse') {
+    await reuse.click()
+    await expect(reuse).toHaveAttribute('aria-pressed', 'true')
+  } else if ((await reuse.getAttribute('aria-pressed')) === 'true') {
+    if (await reuse.isDisabled()) {
+      const seed = scope.getByRole('textbox', { name: 'Generation seed' })
+      await seed.fill('0')
+      await seed.press('Enter')
+    } else {
+      await reuse.click()
+    }
+    await expect(reuse).toHaveAttribute('aria-pressed', 'false')
+  }
   await page.keyboard.press('Escape')
 }
 
@@ -49,6 +55,28 @@ test('the prototype records a completed mock seed outside document history', () 
   expect(session.lastActualSeed).toBe(9001)
 })
 
+test('Random disables manual Seed and Shuffle; Shuffle creates a new fixed seed', async ({
+  page,
+}) => {
+  await page.goto('/?prototype=project&scenario=empty-project')
+  const random = page.getByRole('switch', { name: 'Random seed' })
+  const seed = page.getByRole('textbox', { name: 'Generation seed' })
+  const shuffle = page.getByRole('button', { name: 'Shuffle Seed' })
+  const firstSeed = await seed.inputValue()
+
+  await random.click()
+  await expect(random).toBeChecked()
+  await expect(seed).toBeDisabled()
+  await expect(shuffle).toBeDisabled()
+
+  await random.click()
+  await expect(random).not.toBeChecked()
+  await expect(seed).toBeEnabled()
+  await shuffle.click()
+  await expect(seed).not.toHaveValue(firstSeed)
+  await expect(page.getByRole('button', { name: 'Reuse last seed' })).toBeDisabled()
+})
+
 test('Reuse waits for a completed output and freezes the cursor with the requested policy', async ({
   page,
 }) => {
@@ -62,7 +90,10 @@ test('Reuse waits for a completed output and freezes the cursor with the request
   await preset.getByRole('button', { exact: true, name: 'Apply' }).click()
 
   const generate = page.getByRole('button', { exact: true, name: 'Generate' })
-  await expect(page.getByLabel('Seed policy')).toContainText('Reuse')
+  await expect(page.getByRole('button', { name: 'Reuse last seed' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
   await expect(generate).toBeDisabled()
   await expect(page.getByText('No completed seed in this project yet.').first()).toBeVisible()
 
@@ -73,11 +104,13 @@ test('Reuse waits for a completed output and freezes the cursor with the request
   const count = page.getByRole('textbox', { name: 'Images per click' })
   await count.fill('1')
   await count.press('Enter')
+  await page.clock.pauseAt(Date.now() + 60_000)
   await generate.click()
   await page.getByRole('button', { name: 'Cancel current generation' }).click()
   await page.clock.runFor(600)
-  await selectSeedPolicy(page, 'Reuse')
-  await expect(generate).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Reuse last seed' })).toBeDisabled()
+  await expect(generate).toBeEnabled()
+  await page.clock.resume()
   await page.getByRole('button', { name: 'Discard all candidates' }).click()
 
   await selectSeedPolicy(page, 'Fixed')
@@ -97,7 +130,7 @@ test('Reuse waits for a completed output and freezes the cursor with the request
   await page.getByRole('button', { name: 'Discard all candidates' }).click()
 
   await selectSeedPolicy(page, 'Reuse')
-  await expect(page.getByText('Last completed seed in this project: 100')).toBeVisible()
+  await expect(page.getByText('Last completed: 100')).toBeVisible()
   await expect(generate).toBeEnabled()
 
   await page.getByRole('textbox', { exact: true, name: 'Prompt' }).fill('portrait {red|blue}')
@@ -126,11 +159,14 @@ test('Reuse waits for a completed output and freezes the cursor with the request
       .locator('.n-dropdown-menu:visible')
       .getByText('Compare generation settings', { exact: true })
       .click()
-    const comparison = page.getByRole('region', { name: 'Compare generation settings' })
+    const comparison = page
+      .getByRole('region', { name: 'Compare generation settings' })
+      .filter({ has: page.getByText(`Generated Result ${index + 1}`, { exact: true }) })
     const seedRow = comparison.locator('.comparison-row').filter({ hasText: /^Seed/ })
     await expect(seedRow.locator('.values p').first()).toContainText(`Fixed · ${expectedSeed}`)
     await expect(seedRow.locator('.values p').first()).toContainText('Requested policy: reuse')
     await page.locator('.canvas-size-label').click()
+    await expect(comparison).toBeHidden()
   }
 })
 
@@ -159,15 +195,12 @@ test('completed seed belongs to one project and survives same-session close and 
 
   await page.getByRole('tab', { name: 'Sample Project A.igs' }).click()
   const projectA = page.locator('.project-prototype:visible')
-  await selectSeedPolicy(page, 'Reuse', projectA)
-  await expect(projectA.getByRole('button', { exact: true, name: 'Generate' })).toBeDisabled()
-  await expect(
-    projectA.getByText('No completed seed in this project yet.', { exact: true }),
-  ).toBeVisible()
+  await expect(projectA.getByRole('button', { name: 'Reuse last seed' })).toBeDisabled()
+  await expect(projectA.getByText('Last completed: 321', { exact: true })).toHaveCount(0)
 
   await page.getByRole('tab', { name: 'Sample Project B.igs' }).click()
   await selectSeedPolicy(page, 'Reuse', activeProject)
-  await expect(activeProject.getByText('Last completed seed in this project: 321')).toBeVisible()
+  await expect(activeProject.getByText('Last completed: 321')).toBeVisible()
   await page.getByRole('button', { name: 'Close Sample Project B.igs' }).click()
   const close = page.getByRole('dialog', { name: 'Close Project' })
   await close.getByRole('button', { name: 'Discard Changes' }).click()
@@ -176,6 +209,6 @@ test('completed seed belongs to one project and survives same-session close and 
   await page.getByRole('button', { name: 'Open Project' }).click()
   const reopened = page.locator('.project-prototype:visible')
   await selectSeedPolicy(page, 'Reuse', reopened)
-  await expect(reopened.getByText('Last completed seed in this project: 321')).toBeVisible()
+  await expect(reopened.getByText('Last completed: 321')).toBeVisible()
   await expect(reopened.getByRole('button', { exact: true, name: 'Generate' })).toBeEnabled()
 })

@@ -17,6 +17,7 @@ const props = withDefaults(
   defineProps<{
     disabled?: boolean
     heightLabel?: string
+    layout?: 'expanded-preview' | 'regular'
     max: number
     min?: number
     step?: number
@@ -26,6 +27,7 @@ const props = withDefaults(
   {
     disabled: false,
     heightLabel: 'Height',
+    layout: 'regular',
     min: 1,
     step: 8,
     swapLabel: 'Swap width and height',
@@ -36,6 +38,7 @@ const size = defineModel<ResolutionSize>({ required: true })
 const aspect = defineModel<AspectRatioState>('aspectRatio', {
   default: () => ({ id: 'free', locked: false, value: 1 }),
 })
+const emit = defineEmits<{ commit: [] }>()
 const id = useId()
 const theme = useThemeVars()
 const limits = computed(() => ({ max: props.max, min: props.min, step: props.step }))
@@ -47,9 +50,12 @@ const validSize = computed(
     size.value.height > 0,
 )
 const currentRatio = computed(() => (validSize.value ? size.value.width! / size.value.height! : 1))
-// SVG geometry keeps the preview proportional without inline CSS or dependency on a theme palette.
-const previewWidth = computed(() => Math.max(1, Math.min(56, 44 * currentRatio.value)))
-const previewHeight = computed(() => Math.max(1, Math.min(44, 56 / currentRatio.value)))
+// The same intrinsic SVG frame is used by both layouts; only its placement changes.
+const previewFrame = { height: 132, innerHeight: 104, innerWidth: 168, width: 200 }
+const previewWidth = computed(() =>
+  Math.max(1, Math.min(previewFrame.innerWidth, previewFrame.innerHeight * currentRatio.value)),
+)
+const previewHeight = computed(() => previewWidth.value / currentRatio.value)
 
 watch(currentRatio, (ratio) => {
   if (!validSize.value) {
@@ -78,6 +84,7 @@ function selectRatio(value: AspectRatioId) {
   aspect.value = { id: value, locked: true, value: ratio }
   const area = validSize.value ? size.value.width! * size.value.height! : 1024 * 1024
   size.value = sizeForAspectRatio(ratio, area, limits.value)
+  emit('commit')
 }
 
 function updateDimension(key: 'height' | 'width', value: number | null) {
@@ -104,23 +111,47 @@ function swap() {
     value: 1 / aspect.value.value,
   }
   size.value = { height: size.value.width, width: size.value.height }
+  emit('commit')
 }
 </script>
 
 <template>
-  <div class="resolution-control">
+  <div
+    class="resolution-control"
+    :class="{ 'resolution-control--expanded-preview': layout === 'expanded-preview' }"
+  >
     <div class="resolution-fields">
       <div class="resolution-field">
         <span :id="`${id}-aspect`">Aspect ratio</span>
-        <NSelect
-          aria-label="Aspect ratio"
-          :aria-labelledby="`${id}-aspect`"
-          :disabled
-          :options="aspectRatioOptions"
-          size="small"
-          :value="aspect.id"
-          @update:value="selectRatio"
-        />
+        <div class="aspect-ratio-row">
+          <NSelect
+            aria-label="Aspect ratio"
+            :aria-labelledby="`${id}-aspect`"
+            :disabled
+            :options="aspectRatioOptions"
+            size="small"
+            :value="aspect.id"
+            @update:value="selectRatio"
+          />
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
+                :aria-label="aspect.locked ? 'Unlock aspect ratio' : 'Lock aspect ratio'"
+                :aria-pressed="aspect.locked"
+                circle
+                :disabled="disabled || !validSize"
+                quaternary
+                size="tiny"
+                @click="toggleLock"
+              >
+                <template v-slot:icon>
+                  <NIcon :component="aspect.locked ? Lock : LockOpen" :size="16" />
+                </template>
+              </NButton>
+            </template>
+            {{ aspect.locked ? 'Unlock aspect ratio' : 'Lock current aspect ratio' }}
+          </NTooltip>
+        </div>
       </div>
       <div class="dimension-fields">
         <div class="resolution-field">
@@ -136,6 +167,23 @@ function swap() {
             :value="size.width"
             @update:value="updateDimension('width', $event)"
           />
+        </div>
+        <div class="dimension-swap">
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
+                :aria-label="swapLabel"
+                circle
+                :disabled="disabled || !validSize"
+                quaternary
+                size="tiny"
+                @click="swap"
+              >
+                <template v-slot:icon><NIcon :component="ArrowsLeftRight" :size="16" /></template>
+              </NButton>
+            </template>
+            Swap width and height
+          </NTooltip>
         </div>
         <div class="resolution-field">
           <label :for="`${id}-height`">Height</label>
@@ -154,7 +202,14 @@ function swap() {
       </div>
     </div>
     <div class="preview-column">
-      <svg aria-label="Aspect ratio preview" class="aspect-preview" role="img" viewBox="0 0 72 60">
+      <svg
+        aria-label="Aspect ratio preview"
+        class="aspect-preview"
+        :height="previewFrame.height"
+        role="img"
+        :viewBox="`0 0 ${previewFrame.width} ${previewFrame.height}`"
+        :width="previewFrame.width"
+      >
         <title>
           {{ validSize ? `${size.width} × ${size.height}` : 'Enter a width and height' }}
         </title>
@@ -164,44 +219,11 @@ function swap() {
           :height="previewHeight"
           :stroke="theme.primaryColor"
           :width="previewWidth"
-          :x="(72 - previewWidth) / 2"
-          :y="(60 - previewHeight) / 2"
+          :x="(previewFrame.width - previewWidth) / 2"
+          :y="(previewFrame.height - previewHeight) / 2"
         />
       </svg>
-      <div class="preview-actions">
-        <NTooltip>
-          <template v-slot:trigger>
-            <NButton
-              :aria-label="aspect.locked ? 'Unlock aspect ratio' : 'Lock aspect ratio'"
-              :aria-pressed="aspect.locked"
-              circle
-              :disabled="disabled || !validSize"
-              quaternary
-              size="tiny"
-              @click="toggleLock"
-            >
-              <template v-slot:icon>
-                <NIcon :component="aspect.locked ? Lock : LockOpen" :size="16" />
-              </template>
-            </NButton>
-          </template>
-          {{ aspect.locked ? 'Unlock aspect ratio' : 'Lock current aspect ratio' }}
-        </NTooltip>
-        <NTooltip>
-          <template v-slot:trigger>
-            <NButton
-              :aria-label="swapLabel"
-              circle
-              :disabled="disabled || !validSize"
-              quaternary
-              size="tiny"
-              @click="swap"
-            >
-              <template v-slot:icon><NIcon :component="ArrowsLeftRight" :size="16" /></template>
-            </NButton>
-          </template>
-          Swap width and height
-        </NTooltip>
+      <div v-if="$slots['actions']" class="preview-actions">
         <slot name="actions" />
       </div>
     </div>
@@ -211,14 +233,16 @@ function swap() {
 <style scoped>
 .resolution-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 10px;
+  grid-template-areas: 'fields preview';
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+  gap: 12px;
   min-width: 0;
 }
 .resolution-fields {
+  grid-area: fields;
   display: grid;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
 }
 .resolution-field {
@@ -228,20 +252,39 @@ function swap() {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-meta, 12px);
 }
+.aspect-ratio-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.aspect-ratio-row :deep(.n-select) {
+  min-width: 0;
+}
 .dimension-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
+  align-items: end;
   gap: 8px;
 }
-.preview-column {
+.dimension-swap {
   display: grid;
-  justify-items: center;
-  gap: 4px;
+  place-items: center;
+  height: 28px;
+}
+.dimension-fields .resolution-field {
+  min-width: 0;
+}
+.preview-column {
+  grid-area: preview;
+  position: relative;
+  justify-self: center;
+  min-width: 0;
 }
 .aspect-preview {
   display: block;
-  width: 72px;
-  height: 60px;
+  box-sizing: border-box;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-elevated);
@@ -251,7 +294,17 @@ function swap() {
   stroke-opacity: 0.7;
 }
 .preview-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: flex;
   gap: 2px;
+}
+.resolution-control--expanded-preview {
+  grid-template-areas:
+    'preview'
+    'fields';
+  grid-template-columns: minmax(0, 1fr);
+  gap: 13px;
 }
 </style>

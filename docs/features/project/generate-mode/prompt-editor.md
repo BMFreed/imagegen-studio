@@ -32,7 +32,7 @@ Ctrl/Cmd+Space browses embeddings and LoRA triggers.
 Ctrl/Cmd+Up / Down adjusts attention.
 ```
 
-The hint deliberately omits ordinary typing and native double-click word selection, keeping only the editor-specific gestures. It names only completion sources supported by that editor. It stays visible only while a prompt editor is focused. Its text-style `Don't show again` action stores `imagegen-studio.prompt-editor-hint-dismissed.v1` in `localStorage`. After dismissal the same compact help layout, without the action row, remains available from the Info button through an ordinary hover/focus popover.
+The hint deliberately omits ordinary typing and native double-click word selection, keeping only the editor-specific gestures. It names only completion sources supported by that editor. On first display, whether from prompt focus or the Info button, it records `imagegen-studio.prompt-editor-hint-shown.v1` in `localStorage`, so the automatic hint appears just once across positive and negative prompts, including after reload. A corner X closes the current popover. The same help remains available from the Info button through hover, focus, or click. The previous dismissed preference is honored for existing users.
 
 ## Resource-aware text
 

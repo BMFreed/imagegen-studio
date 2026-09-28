@@ -122,6 +122,16 @@ The chosen Seed policy is a request for a future job, not a completed seed:
 the operational last-actual-seed cursor and fallback to a saved `.igs` snapshot
 are not yet connected to Project Generate.
 
+The Seed control shows a numeric value, a `Random` switch and `Shuffle Seed`, as
+in Invoke. Random disables the number and Shuffle; switching it off selects
+Fixed and restores the previous fixed value when it is available in the open
+editor. Shuffle chooses a new unsigned 32-bit fixed seed.
+`Reuse last seed` is a separate action because it remains a distinct requested
+policy for batch scheduling and provenance. It shows the last completed seed of
+this Project, and editing that number changes the policy to Fixed. Reuse cannot
+be newly selected without a completed seed; an already selected Reuse policy
+can still be turned off when the cursor is unavailable.
+
 ## Vue Prototype Coverage
 
 The current Project settings stack implements:
@@ -136,7 +146,7 @@ The current Project settings stack implements:
 - images-per-click as an integer input from 1 through 100 in the fixed Generate bar;
 - an `Advanced Options` disclosure containing VAE, VAE precision and CFG Rescale controls.
 
-VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. Seed offers `Fixed`, `Random` and `Reuse`; `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. The prototype still uses fixture models rather than the production Model Manager registry; shuffle/advance seed and clip skip remain gaps. Generation and seeds are simulated; no inference is performed.
+VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. The prototype Seed row uses the same Random, Shuffle and separate Reuse controls described above. `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. The prototype still uses fixture models rather than the production Model Manager registry; explicit advance-seed and clip skip remain gaps. Generation and seeds are simulated; no inference is performed.
 
 Selecting a Smart Patch binds the visible settings to its layer-owned draft. Denoising stays visible and is disabled with an explanation when the effective target has no raster input. The prototype uses deterministic layer coverage metadata for this decision because it has no pixel compositor.
 

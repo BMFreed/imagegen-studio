@@ -8,29 +8,48 @@ Vue-прототипа, а не готовность production UI.
 Общий редактор размера используется в обоих контурах; его production-проводка
 проверяется отдельно через Electron.
 
-| Роль               | Компонент                                                                                                 | Текущий потребитель                                                                        |
-| ------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Действие с иконкой | [`IconButton.vue`](../prototype-app/src/components/IconButton.vue)                                        | [`AppChrome.vue`](../prototype-app/src/components/AppChrome.vue)                           |
-| Поверхность слоя   | [`ProjectEntitySurface.vue`](../prototype-app/src/prototypes/project/ProjectEntitySurface.vue)            | Raster, Smart Patch и Regional rows                                                        |
-| Выбор ресурса      | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue) | Project Settings, LoRA stack, Preset editor                                                |
-| Поле с подписью    | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
-| Размер и пропорции | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue) | Electron New Project/Project bbox; prototype New Project/Project Size |
-| Действия и справка prompt | [`PromptEditorActions.vue`](../../src/renderer/components/PromptEditorActions.vue), [`PromptEditorHelp.vue`](../../src/renderer/components/PromptEditorHelp.vue) | Electron PlainPromptEditor; prototype ProjectPromptCard |
+| Роль                      | Компонент                                                                                                                                                        | Текущий потребитель                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Действие с иконкой        | [`IconButton.vue`](../prototype-app/src/components/IconButton.vue)                                                                                               | [`AppChrome.vue`](../prototype-app/src/components/AppChrome.vue)                           |
+| Поверхность слоя          | [`ProjectEntitySurface.vue`](../prototype-app/src/prototypes/project/ProjectEntitySurface.vue)                                                                   | Raster, Smart Patch и Regional rows                                                        |
+| Выбор ресурса             | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue)                                                        | Project Settings, LoRA stack, Preset editor                                                |
+| Поле с подписью           | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                                                                       | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
+| Размер и пропорции        | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue)                                                                                   | Electron New Project/Project bbox; prototype New Project/Project Size                      |
+| Действия и справка prompt | [`PromptEditorActions.vue`](../../src/renderer/components/PromptEditorActions.vue), [`PromptEditorHelp.vue`](../../src/renderer/components/PromptEditorHelp.vue) | Electron PlainPromptEditor; prototype ProjectPromptCard                                    |
 
 ## Публичный API и инварианты
 
 - **Размер и пропорции:** `v-model: ResolutionSize` (`width`/`height`: `number | null`)
   и `v-model:aspectRatio: AspectRatioState`; обязательный `max`, опциональные
   `min` (1), `step` (8), `disabled`, `widthLabel`, `heightLabel`, `swapLabel`.
-  Слот `actions` добавляет контекстный Fit. Preset соотношения включает lock,
+  В обычном layout, используемом New Project, поля стоят слева, SVG preview —
+  справа; `layout="expanded-preview"` в узкой панели Project центрирует preview
+  над полями. В обоих вариантах внешняя рамка preview имеет один фиксированный
+  размер 200 × 132 CSS px: меняется только показанное внутри соотношение сторон.
+  Lock стоит рядом с Aspect ratio, а swap — между Width и Height. Слот `actions`
+  остаётся доступен для контекстных действий владельца. Preset соотношения включает lock,
   изменение стороны с lock сохраняет пропорцию в пределах bounds; swap меняет
-  стороны и preset; ручной unlock оставляет текущие размеры. SVG preview
+  стороны и preset; ручной unlock оставляет текущие размеры. Событие `commit`
+  испускается после выбора числового preset соотношения и после swap: владелец
+  Project применяет получившийся bbox сразу после обновления модели. Выбор
+  `Free` и lock/unlock меняют только режим пропорции и bbox не коммитят. Ручной
+  ввод width/height не испускает `commit` и ждёт `Enter` у владельца. SVG preview
   отражает текущие размеры. Очистка input передаёт `null`, а не сохраняет
-  скрыто прежнее значение: блокировка Apply/Create принадлежит форме.
+  скрыто прежнее значение: блокировка Create для New Project и валидация
+  числового ввода Project принадлежат владельцу формы.
   Внешнее изменение bbox с другой пропорцией снимает lock, не откатывая bbox.
   Компонент не знает ProjectSession, IPC, undo или preset payload. Production
-  владелец применяет размер только через Create/Apply; prototype wrapper —
-  через свою существующую команду. `max` задаёт владелец: предел `.igs` не
+  владелец New Project применяет размер через Create; владелец production Project
+  применяет валидные вручную введённые width/height по `Enter`, без кнопки Apply.
+  Позиция bbox не редактируется числовыми полями: при выбранном Bounding Box tool
+  и фокусе на canvas стрелки перемещают его на 1 px, Shift+стрелки — на 10 px;
+  drag остаётся доступен. Выбор числового preset соотношения и swap применяются
+  сразу через `commit`; контекстный Fit имеет собственную команду; prototype
+  wrapper сохраняет свою существующую команду. Production Fit — компактная
+  иконка в заголовке `Generation area` с доступным именем `Fit to active layer`,
+  enabled только при выбранном видимом Raster Layer; текущий prototype Fit to
+  visible layers не доказывает это поведение.
+  `max` задаёт владелец: предел `.igs` не
   является обещанием доступной GPU resolution. Общие TS-типы и алгоритмы
   находятся в [`resolution-control.ts`](../../src/renderer/components/resolution-control.ts).
 - **Действие с иконкой:** обязательные `icon: Component` и `label: string`;
@@ -147,10 +166,13 @@ clipboard или CodeMirror. Владелец вычисляет непусту�
 фокус редактора; открытие modal следует обычному focus lifecycle.
 
 `PromptEditorHelp` принимает `title`, `editorFocused`, `completionSources` и
-испускает `focusEditor`. Он владеет лишь состоянием справки и локальным
-предпочтением скрыть onboarding. Владелец перечисляет реально подключённые
-источники: Electron — LoRA triggers, prototype — embeddings and LoRA triggers.
-Обычная Info-справка доступна после отключения onboarding через hover/focus.
+испускает `focusEditor`. Он владеет лишь состоянием справки. Первый показ через
+фокус любого prompt или через Info записывает факт показа в `localStorage`;
+автоматический onboarding больше не повторяется в обоих полях. Крестик закрывает
+текущую подсказку. Владелец перечисляет
+реально подключённые источники: Electron — LoRA triggers, prototype — embeddings
+and LoRA triggers. Обычная Info-справка доступна через hover/focus/click и после
+закрытия onboarding.
 
 [Общие правила](../../src/shared/projects/prompt-text.ts) работают с обычным
 текстом и диапазонами. [CodeMirror adapter](../../src/renderer/components/prompt-editing-codemirror.ts)

@@ -53,8 +53,10 @@ async function generateAndAccept(page: Page, behavior: 'per-iteration' | 'per-pr
   )
   await preview.getByRole('button', { name: 'Close' }).click()
 
-  await page.getByLabel('Seed policy').click()
-  await page.locator('.n-base-select-option').filter({ hasText: 'Fixed' }).click()
+  const random = page.getByRole('switch', { name: 'Random seed' })
+  if (await random.isChecked()) {
+    await random.click()
+  }
   const seed = page.getByRole('textbox', { name: 'Generation seed' })
   await seed.fill('100')
   await seed.press('Enter')
@@ -85,13 +87,16 @@ for (const behavior of ['per-iteration', 'per-prompt'] as const) {
         .locator('.n-dropdown-menu:visible')
         .getByText('Compare generation settings', { exact: true })
         .click()
-      const comparison = page.getByRole('region', { name: 'Compare generation settings' })
+      const comparison = page
+        .getByRole('region', { name: 'Compare generation settings' })
+        .filter({ has: page.getByText(`Generated Result ${index + 1}`, { exact: true }) })
       await comparison.getByRole('checkbox', { name: 'Show unchanged sections' }).check()
       const seedRow = comparison.locator('.comparison-row').filter({ hasText: /^Seed/ })
       const promptRow = comparison.locator('.comparison-row').filter({ hasText: /^Prompt/ })
       await expect(seedRow.locator('.values p').first()).toContainText(String(expectedSeeds[index]))
       await expect(promptRow.locator('.values p').first()).toContainText(expectedPrompts[index]!)
       await page.locator('.canvas-size-label').click()
+      await expect(comparison).toBeHidden()
     }
   })
 }

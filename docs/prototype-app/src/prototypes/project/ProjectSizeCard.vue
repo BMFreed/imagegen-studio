@@ -34,31 +34,31 @@ function fitToLayers() {
 
 <template>
   <NCard size="small" title="Canvas Size">
+    <template v-slot:header-extra>
+      <NTooltip>
+        <template v-slot:trigger>
+          <NButton
+            aria-label="Fit canvas to visible layers"
+            circle
+            quaternary
+            size="tiny"
+            @click="fitToLayers"
+          >
+            <template v-slot:icon><NIcon :component="AspectRatio" :size="16" /></template>
+          </NButton>
+        </template>
+        Fit canvas to visible layers
+      </NTooltip>
+    </template>
     <ResolutionControl
       v-model="size"
       v-model:aspectRatio="session.ui.aspectRatio"
       heightLabel="Canvas height"
+      layout="expanded-preview"
       :max="4096"
       :min="64"
       swapLabel="Swap canvas dimensions"
       widthLabel="Canvas width"
-    >
-      <template v-slot:actions>
-        <NTooltip>
-          <template v-slot:trigger>
-            <NButton
-              aria-label="Fit canvas to visible layers"
-              circle
-              quaternary
-              size="tiny"
-              @click="fitToLayers"
-            >
-              <template v-slot:icon><NIcon :component="AspectRatio" :size="16" /></template>
-            </NButton>
-          </template>
-          Fit canvas to visible layers
-        </NTooltip>
-      </template>
-    </ResolutionControl>
+    />
   </NCard>
 </template>
