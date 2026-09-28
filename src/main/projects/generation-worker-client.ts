@@ -73,6 +73,9 @@ export class GenerationWorkerError extends Error {
  * admits one generation at a time. It does not claim queue rows or publish worker output.
  */
 export class GenerationWorkerClient implements GenerationWorkerTransport {
+  private static startupTail: Promise<void> = Promise.resolve()
+  private static readonly unconfirmedStartChildren = new Set<GenerationWorkerClient>()
+
   get ready(): GenerationWorkerReady {
     if (this.closed || !this.readyMessage) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -145,31 +148,54 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     deadline(options.requestTimeoutMs, 30 * 60_000, 'requestTimeoutMs')
     deadline(options.startupTimeoutMs, 120_000, 'startupTimeoutMs')
     deadline(options.shutdownWaitMs, SHUTDOWN_WAIT_MS, 'shutdownWaitMs')
-    const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
-    const scratchBasePath = await canonicalDirectory(location.scratchBasePath, 'Scratch base')
-    const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
-    const child = spawn(executable, ['-I', '-m', 'imagegen_worker.inference_main'], {
-      cwd: runtimeRoot,
-      env: {
-        ...(options.environment ?? { LANG: 'C.UTF-8' }),
-        // An inference job must never turn a missing pinned component into an implicit download.
-        HF_HUB_OFFLINE: '1',
-        TRANSFORMERS_OFFLINE: '1',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
+    // Serialize admission through startup and failed-start cleanup. A second launch must not race
+    // the first child before we know whether that child has exited.
+    const preceding = GenerationWorkerClient.startupTail
+    let release!: () => void
+    GenerationWorkerClient.startupTail = new Promise<void>((resolve) => {
+      release = resolve
     })
-    const client = new GenerationWorkerClient(child, scratchBasePath, options)
+    await preceding
     try {
-      const ready = await client.startupPromise
-      if (client.closed) {
-        throw new GenerationWorkerError('PROTOCOL_ERROR', 'The worker stopped during startup.')
+      for (const unconfirmed of GenerationWorkerClient.unconfirmedStartChildren) {
+        await unconfirmed.close()
+        GenerationWorkerClient.unconfirmedStartChildren.delete(unconfirmed)
       }
-      client.readyMessage = ready
-      return client
-    } catch (error) {
-      await client.close()
-      throw error
+      const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
+      const scratchBasePath = await canonicalDirectory(location.scratchBasePath, 'Scratch base')
+      const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
+      const child = spawn(executable, ['-I', '-m', 'imagegen_worker.inference_main'], {
+        cwd: runtimeRoot,
+        env: {
+          ...(options.environment ?? { LANG: 'C.UTF-8' }),
+          // An inference job must never turn a missing pinned component into an implicit download.
+          HF_HUB_OFFLINE: '1',
+          TRANSFORMERS_OFFLINE: '1',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+      const client = new GenerationWorkerClient(child, scratchBasePath, options)
+      try {
+        const ready = await client.startupPromise
+        if (client.closed) {
+          throw new GenerationWorkerError('PROTOCOL_ERROR', 'The worker stopped during startup.')
+        }
+        client.readyMessage = ready
+        return client
+      } catch (error) {
+        try {
+          await client.close()
+        } catch (closeError) {
+          if (!client.exitObserved) {
+            GenerationWorkerClient.unconfirmedStartChildren.add(client)
+          }
+          throw closeError
+        }
+        throw error
+      }
+    } finally {
+      release()
     }
   }
 
@@ -277,6 +303,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     if (!this.exitObserved) {
       this.exitObserved = true
       this.exitResolve()
+      GenerationWorkerClient.unconfirmedStartChildren.delete(this)
     }
   }
 

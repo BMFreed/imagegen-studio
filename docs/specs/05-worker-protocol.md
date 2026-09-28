@@ -134,11 +134,11 @@ or `Per prompt` then schedules the batch from that base. The frozen request
 keeps the concrete seed and requested policy separately, so later completions
 cannot silently change an already queued batch.
 
-В текущем production main есть только
+Production ProjectService создаёт
 [подготовительный контекст Illustrious `txt2img`](../engineering/phase-2b-generation-preparation-research.md):
 он фиксирует точную модель, Project target, prompts, Steps/CFG и конкретный
 Fixed/Random seed. Это отдельный тип с copied PNG bytes вне JSON context, а
-не сообщение worker'у или запись очереди. Он отвергает `Reuse` до подключения
+не сообщение worker'у или запись очереди сам по себе. Он отвергает `Reuse` до подключения
 durable cursor. Явно выбранную поддерживаемую пару sampler/scheduler он сохраняет
 вместе с Invoke scheduler key; если оба поля не заданы, контекст остаётся
 неразрешённым. [Первый request boundary](../engineering/phase-2b-illustrious-request-research.md)
@@ -153,9 +153,13 @@ queue/staging repositories и приватный processor уже проверя
 отмену и публикацию candidate на подставном inference transport.
 [Development inference boundary](../engineering/phase-2b-inference-worker-research.md)
 добавляет отдельный реальный Linux/NVIDIA process и TS transport для одного
-plain-prompt Illustrious `txt2img`; локальный GPU smoke проверяет provisional
-sRGB PNG. Это не release runtime и не полная capability MVP: Electron wiring,
-полный Invoke-like conditioning/LoRA и renderer actions ещё нужны перед Generate.
+Illustrious `txt2img`; [следующий внутренний checkpoint](../engineering/phase-2b-internal-handoff-and-conditioning.md)
+добавляет ограниченный dual-CLIP Compel conditioning и Project → queue → staging
+handoff. Локальный GPU smoke проверяет provisional sRGB PNG. Это не release
+runtime и не полная capability MVP: Electron wiring, LoRA, другие входы
+Invoke-like conditioning и renderer actions ещё нужны перед Generate. Маска
+padding при разной длине positive/negative conditioning локально проверена для
+закреплённого Diffusers 0.40, но не доказывает пиксельный паритет с Invoke.
 
 ## Минимальные сообщения worker'а
 

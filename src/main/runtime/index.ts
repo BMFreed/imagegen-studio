@@ -1,12 +1,20 @@
 import type { ApiResult, RuntimeStatus } from '../../shared/api.js'
 
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 
+import type { GenerationWorkerLocation } from '../projects/generation-worker-client.js'
+
+import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
+
 const POINTER_SCHEMA_VERSION = 1
 const MAX_POINTER_BYTES = 16 * 1024
 const RUNTIME_ID_PATTERN = /^[a-z0-9][\w.-]{0,127}$/i
+const QUALIFICATION_CACHE_MS = 60_000
+const MAX_CONFIG_FILES = 32
+const MAX_CONFIG_BYTES = 8 * 1024 * 1024
 
 export interface RuntimeRoots {
   appDataDir: string
@@ -26,6 +34,12 @@ export interface RuntimeHost {
   platform: NodeJS.Platform
 }
 
+export interface QualifiedGenerationWorker {
+  environment: NodeJS.ProcessEnv
+  location: GenerationWorkerLocation
+  runtimeId: string
+}
+
 interface ActiveRuntimePointer {
   pythonExecutable: string
   runtimeId: string
@@ -35,23 +49,53 @@ interface ActiveRuntimePointer {
 type PointerRead =
   { kind: 'invalid' } | { kind: 'missing' } | { kind: 'valid'; value: ActiveRuntimePointer }
 
+interface PreparedQualification {
+  key: string
+  worker: QualifiedGenerationWorker
+}
+
+interface CachedQualification {
+  expiresAt: number
+  key: string
+  promise: Promise<boolean>
+}
+
+interface QualificationClient {
+  close: () => Promise<void>
+}
+
+type StartQualificationClient = (
+  location: GenerationWorkerLocation,
+  environment: NodeJS.ProcessEnv,
+) => Promise<QualificationClient>
+
+const startQualificationClient: StartQualificationClient = async (location, environment) =>
+  await GenerationWorkerClient.start(location, { environment })
+
 export class RuntimeManager {
+  private cachedQualification: CachedQualification | null = null
   private readonly host: RuntimeHost
   private readonly listeners = new Set<(status: RuntimeStatus) => void>()
   private previousStatus: RuntimeStatus | null = null
+  private qualificationTail: Promise<void> = Promise.resolve()
   private readonly roots: RuntimeRoots
+  private readonly startClient: StartQualificationClient
+  private unconfirmedClient: QualificationClient | null = null
 
   constructor(
     roots: RuntimeRoots,
     host: RuntimeHost = { arch: process.arch, platform: process.platform },
+    startClient: StartQualificationClient = startQualificationClient,
   ) {
     this.roots = roots
     this.host = host
+    this.startClient = startClient
   }
 
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
     let status: RuntimeStatus
     if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
+      this.cachedQualification = null
       status = {
         detail: 'The first release supports Linux x64 with an NVIDIA GPU.',
         kind: 'unsupported',
@@ -72,6 +116,7 @@ export class RuntimeManager {
       }
 
       if (pointer.kind === 'missing') {
+        this.cachedQualification = null
         status = {
           detail:
             'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
@@ -79,19 +124,31 @@ export class RuntimeManager {
           profile: 'linux-nvidia',
         }
       } else if (pointer.kind === 'invalid') {
+        this.cachedQualification = null
         status = {
           detail: 'The installed runtime metadata or Python executable is missing or invalid.',
           kind: 'needs-repair',
           profile: 'linux-nvidia',
         }
       } else {
-        // A pointer and an executable are not a successful worker self-test.
-        status = {
-          detail: 'The runtime exists, but this application version cannot verify its worker yet.',
-          kind: 'needs-repair',
-          profile: 'linux-nvidia',
-          runtimeId: pointer.value.runtimeId,
+        const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
+        const ready = prepared !== null && (await this.qualify(prepared, true))
+        if (!ready) {
+          this.cachedQualification = null
         }
+        status = ready
+          ? {
+              detail: 'The Linux/NVIDIA image runtime is ready.',
+              kind: 'ready',
+              profile: 'linux-nvidia',
+              runtimeId: pointer.value.runtimeId,
+            }
+          : {
+              detail: 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
+              kind: 'needs-repair',
+              profile: 'linux-nvidia',
+              runtimeId: pointer.value.runtimeId,
+            }
       }
     }
 
@@ -131,6 +188,183 @@ export class RuntimeManager {
         message: 'Runtime repair will be available after the verified installer is implemented.',
       },
       ok: false,
+    }
+  }
+
+  /**
+   * Resolve a worker for one actual launch. This deliberately bypasses the status cache: a
+   * qualified status is advisory, while the next job must observe its own live handshake.
+   */
+  async resolveQualifiedGenerationWorker(
+    scratchBasePath: string,
+  ): Promise<QualifiedGenerationWorker | null> {
+    if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
+      return null
+    }
+    try {
+      const pointer = await readPointer(this.roots)
+      if (pointer.kind !== 'valid') {
+        this.cachedQualification = null
+        return null
+      }
+      const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
+      // A dispatch qualification supersedes any earlier advisory status result.
+      this.cachedQualification = null
+      if (prepared && (await this.qualify(prepared, false))) {
+        return prepared.worker
+      }
+      this.cachedQualification = null
+      return null
+    } catch {
+      this.cachedQualification = null
+      return null
+    }
+  }
+
+  private async confirmPreviousExit(): Promise<boolean> {
+    if (!this.unconfirmedClient) {
+      return true
+    }
+    try {
+      await this.unconfirmedClient.close()
+      this.unconfirmedClient = null
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async prepareQualification(
+    pointer: ActiveRuntimePointer,
+    scratchBasePath: string,
+  ): Promise<PreparedQualification | null> {
+    try {
+      const environmentRoot = path.join(this.roots.environmentsDir, pointer.runtimeId)
+      const configDir = path.join(environmentRoot, 'resources', 'sdxl-config')
+      const [scratch, config, cache, executable] = await Promise.all([
+        fs.realpath(scratchBasePath),
+        fs.realpath(configDir),
+        fs.realpath(this.roots.cacheDir),
+        fs.stat(pointer.pythonExecutable),
+      ])
+      if (
+        !isWithin(this.roots.appDataDir, scratch) ||
+        scratch !== scratchBasePath ||
+        !(await fs.lstat(scratch)).isDirectory() ||
+        !isWithin(environmentRoot, config) ||
+        config !== configDir ||
+        !(await fs.lstat(config)).isDirectory() ||
+        cache !== this.roots.cacheDir ||
+        !(await fs.lstat(cache)).isDirectory() ||
+        !executable.isFile()
+      ) {
+        return null
+      }
+      const configFingerprint = await fingerprintConfig(config)
+
+      const location: GenerationWorkerLocation = {
+        pythonExecutable: pointer.pythonExecutable,
+        runtimeRoot: this.roots.runtimeDir,
+        scratchBasePath: scratch,
+      }
+      const environment: NodeJS.ProcessEnv = {
+        HF_DATASETS_OFFLINE: '1',
+        HF_HOME: cache,
+        HF_HUB_OFFLINE: '1',
+        IGS_SDXL_CONFIG_DIR: config,
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+        TRANSFORMERS_OFFLINE: '1',
+      }
+      return {
+        key: JSON.stringify([
+          pointer.runtimeId,
+          pointer.pythonExecutable,
+          executable.dev,
+          executable.ino,
+          executable.size,
+          executable.mtimeMs,
+          configFingerprint,
+        ]),
+        worker: { environment, location, runtimeId: pointer.runtimeId },
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private async qualify(prepared: PreparedQualification, useCache: boolean): Promise<boolean> {
+    if (useCache) {
+      const cached = this.cachedQualification
+      if (cached?.key === prepared.key && cached.expiresAt > Date.now()) {
+        return await cached.promise
+      }
+    }
+    const qualification = this.qualifyLive(prepared)
+    if (useCache) {
+      this.cachedQualification = {
+        expiresAt: Number.POSITIVE_INFINITY,
+        key: prepared.key,
+        promise: qualification,
+      }
+    }
+    const succeeded = await qualification
+    if (useCache && this.cachedQualification?.promise === qualification) {
+      this.cachedQualification = succeeded
+        ? {
+            expiresAt: Date.now() + QUALIFICATION_CACHE_MS,
+            key: prepared.key,
+            promise: Promise.resolve(true),
+          }
+        : null
+    }
+    return succeeded
+  }
+
+  private async qualifyLive(prepared: PreparedQualification): Promise<boolean> {
+    let release!: () => void
+    const previous = this.qualificationTail
+    this.qualificationTail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      if (!(await this.confirmPreviousExit())) {
+        return false
+      }
+      const before = await readPointer(this.roots)
+      if (before.kind !== 'valid') {
+        return false
+      }
+      const unchanged = await this.prepareQualification(
+        before.value,
+        prepared.worker.location.scratchBasePath,
+      )
+      if (unchanged?.key !== prepared.key) {
+        return false
+      }
+      const client = await this.startClient(prepared.worker.location, prepared.worker.environment)
+      try {
+        // A ready line alone is insufficient: the child must stop before qualification is published.
+        await client.close()
+      } catch {
+        // Do not start another GPU worker while the exit of this one remains unconfirmed.
+        this.unconfirmedClient = client
+        return false
+      }
+      const pointer = await readPointer(this.roots)
+      if (pointer.kind !== 'valid' || pointer.value.runtimeId !== prepared.worker.runtimeId) {
+        return false
+      }
+      const current = await this.prepareQualification(
+        pointer.value,
+        prepared.worker.location.scratchBasePath,
+      )
+      return current?.key === prepared.key
+    } catch {
+      return false
+    } finally {
+      release()
     }
   }
 }
@@ -200,6 +434,77 @@ function isWithin(parent: string, target: string): boolean {
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
   )
+}
+
+/**
+ * Cheap content identity for the small, pinned SDXL configuration. The Python worker validates the
+ * expected file names and hashes; this digest only invalidates an advisory status cache.
+ */
+async function fingerprintConfig(root: string): Promise<string> {
+  const digest = createHash('sha256')
+  const pending: { depth: number; directory: string }[] = [{ depth: 0, directory: root }]
+  let entriesSeen = 0
+  let filesSeen = 0
+  let bytesSeen = 0
+  while (pending.length > 0) {
+    const next = pending.pop()!
+    const entries = await fs.readdir(next.directory)
+    for (const name of entries.sort()) {
+      if (++entriesSeen > MAX_CONFIG_FILES * 2) {
+        throw new Error('The inference configuration has too many entries.')
+      }
+      const absolute = path.join(next.directory, name)
+      const entry = await fs.lstat(absolute)
+      if (entry.isSymbolicLink()) {
+        throw new Error('The inference configuration contains a symlink.')
+      }
+      const relative = path.relative(root, absolute)
+      if (entry.isDirectory()) {
+        if (next.depth >= 3 || (await fs.realpath(absolute)) !== absolute) {
+          throw new Error('The inference configuration has an unsafe directory.')
+        }
+        digest.update(`dir:${relative}\0`)
+        pending.push({ depth: next.depth + 1, directory: absolute })
+        continue
+      }
+      if (!entry.isFile() || ++filesSeen > MAX_CONFIG_FILES) {
+        throw new Error('The inference configuration has an unsafe file.')
+      }
+      const handle = await fs.open(
+        absolute,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      )
+      try {
+        const opened = await handle.stat()
+        if (
+          !opened.isFile() ||
+          opened.size > MAX_CONFIG_BYTES - bytesSeen ||
+          opened.size !== entry.size
+        ) {
+          throw new Error('The inference configuration exceeds its byte limit.')
+        }
+        const bytes = Buffer.alloc(opened.size + 1)
+        let offset = 0
+        while (offset < bytes.length) {
+          const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+          if (bytesRead === 0) {
+            break
+          }
+          offset += bytesRead
+        }
+        if (offset !== opened.size) {
+          throw new Error('The inference configuration changed during inspection.')
+        }
+        bytesSeen += offset
+        digest.update(`file:${relative}\0`)
+        digest.update(bytes.subarray(0, offset))
+        digest.update('\0')
+      } finally {
+        await handle.close()
+      }
+    }
+  }
+  return digest.digest('hex')
 }
 
 async function readPointer(roots: RuntimeRoots): Promise<PointerRead> {

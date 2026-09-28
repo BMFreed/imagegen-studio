@@ -10,6 +10,7 @@ import hashlib
 import importlib
 import importlib.metadata
 import io
+import math
 import os
 import re
 import stat
@@ -45,18 +46,46 @@ PINNED_ML_VERSIONS: dict[str, str] = {
     "accelerate": "1.14.0",
     "safetensors": "0.8.0",
     "torchsde": "0.2.6",
+    "compel": "2.4.0",
     "pillow": "12.2.0",
 }
 
-# Conservative because raw Diffusers prompt= does not implement Invoke's weighted/long prompts.
-_UNSUPPORTED_PROMPT_MARKUP = re.compile(r"[()\[\]{}<>]|\+\+|--")
-_MAX_CLIP_TOKENS = 77
+# Embeddings, dynamic prompts, and complex cross-attention/conjunction inputs have no DTO yet.
+_UNSUPPORTED_PROMPT_MARKUP = re.compile(
+    r"[\[\]{}<>]|(?:\.(?:swap|and|add|blend)|(?:with|use)Lora)\s*\(", re.IGNORECASE
+)
+_CLIP_CHUNK_TOKENS = 77
+_MAX_CONDITIONING_TOKENS = 4 * _CLIP_CHUNK_TOKENS
+_SDXL_MICRO_CONDITIONING_SIZE = (1024, 1024)
+_COLON_WEIGHT = re.compile(r"\+?(?:\d+(?:\.\d*)?|\.\d+)\Z")
+_PLAIN_SUFFIX_WEIGHT = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)\Z")
+
+
+@dataclass
+class _PromptGroup:
+    start: int
+    colons: list[int]
+    nested: bool
+    escaped: bool
+    quoted: bool
+    has_parent: bool
 
 
 @dataclass(frozen=True)
 class MLRuntime:
     torch: ModuleType
     diffusers: ModuleType
+    compel: ModuleType
+
+
+@dataclass(frozen=True)
+class SdxlConditioning:
+    positive: Any
+    negative: Any
+    positive_pooled: Any
+    negative_pooled: Any
+    positive_length: int
+    negative_length: int
 
 
 def require_dependency_versions(installed: Mapping[str, str]) -> None:
@@ -77,6 +106,7 @@ def qualify_ml_runtime() -> MLRuntime:
         require_dependency_versions(versions)
         torch = importlib.import_module("torch")
         diffusers = importlib.import_module("diffusers")
+        compel = importlib.import_module("compel")
         importlib.import_module("transformers")
         importlib.import_module("accelerate")
         importlib.import_module("safetensors")
@@ -88,6 +118,8 @@ def qualify_ml_runtime() -> MLRuntime:
             "EulerAncestralDiscreteScheduler",
         ):
             getattr(diffusers, name)
+        for name in ("Compel", "ReturnedEmbeddingsType", "SplitLongTextMode"):
+            getattr(compel, name)
         if (
             cast(Any, torch).version.cuda is None
             or cast(Any, torch).version.hip is not None
@@ -103,7 +135,7 @@ def qualify_ml_runtime() -> MLRuntime:
         raise DerivativeError(
             "INFERENCE_UNAVAILABLE", "The pinned CUDA inference runtime is unavailable."
         ) from error
-    return MLRuntime(torch=torch, diffusers=diffusers)
+    return MLRuntime(torch=torch, diffusers=diffusers, compel=compel)
 
 
 def _checkpoint_digest(path: Path) -> str:
@@ -175,18 +207,111 @@ def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> No
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Target PNG is invalid.") from error
 
 
-def validate_plain_prompt(prompt: str, tokenizer: Any) -> None:
+def validate_compel_prompt(prompt: str, tokenizer: Any) -> None:
     if _UNSUPPORTED_PROMPT_MARKUP.search(prompt):
         raise DerivativeError(
-            "GENERATION_PROMPT_UNSUPPORTED", "Weighted prompt markup is not supported yet."
+            "GENERATION_PROMPT_UNSUPPORTED", "This prompt uses an unsupported resource or syntax."
         )
     token_ids: list[int] = cast(
         list[int], tokenizer.encode(prompt, add_special_tokens=True, truncation=False)
     )
-    if tokenizer.model_max_length != _MAX_CLIP_TOKENS or len(token_ids) > _MAX_CLIP_TOKENS:
+    if (
+        tokenizer.model_max_length != _CLIP_CHUNK_TOKENS
+        or len(token_ids) > _MAX_CONDITIONING_TOKENS
+    ):
         raise DerivativeError(
-            "GENERATION_PROMPT_UNSUPPORTED", "This prompt exceeds the first CLIP token limit."
+            "GENERATION_PROMPT_UNSUPPORTED", "This prompt exceeds the conditioning safety limit."
         )
+
+
+def normalize_compel_prompt(prompt: str) -> str:
+    """Translate only unambiguous common attention weights to Compel syntax.
+
+    Compel reads ``(tag:1.2)`` as literal text, while the editor identifies it
+    as an attention weight. Ambiguous groups fail closed rather than generating
+    an image from conditioning the author did not request.
+    """
+    if _UNSUPPORTED_PROMPT_MARKUP.search(prompt):
+        raise DerivativeError(
+            "GENERATION_PROMPT_UNSUPPORTED", "This prompt uses an unsupported resource or syntax."
+        )
+    groups: list[_PromptGroup] = []
+    edits: list[tuple[int, int, str]] = []
+    quoted = False
+    index = 0
+    while index < len(prompt):
+        char = prompt[index]
+        if char == "\\":
+            if groups:
+                groups[-1].escaped = True
+            index += 2
+            continue
+        if char == '"':
+            quoted = not quoted
+            if groups:
+                groups[-1].quoted = True
+        elif char == "(":
+            if groups:
+                groups[-1].nested = True
+            groups.append(_PromptGroup(index, [], False, False, quoted, bool(groups)))
+        elif char == ":" and groups:
+            groups[-1].colons.append(index)
+        elif char == ")" and groups:
+            group = groups.pop()
+            if group.colons:
+                if (
+                    len(group.colons) != 1
+                    or group.nested
+                    or group.escaped
+                    or group.quoted
+                    or group.has_parent
+                ):
+                    raise DerivativeError(
+                        "GENERATION_PROMPT_UNSUPPORTED", "Ambiguous attention weight syntax."
+                    )
+                colon = group.colons[0]
+                phrase = prompt[group.start + 1 : colon]
+                weight = prompt[colon + 1 : index]
+                if (
+                    not phrase
+                    or phrase != phrase.strip()
+                    or not any(letter.isalpha() for letter in phrase)
+                    or not _COLON_WEIGHT.fullmatch(weight)
+                    or not math.isfinite(float(weight))
+                ):
+                    raise DerivativeError(
+                        "GENERATION_PROMPT_UNSUPPORTED", "Ambiguous attention weight syntax."
+                    )
+                # A second operator on the same group is not equivalent to a
+                # simple Forge-style weight, even if Compel happens to parse it.
+                if index + 1 < len(prompt) and prompt[index + 1] not in " \t\r\n,":
+                    raise DerivativeError(
+                        "GENERATION_PROMPT_UNSUPPORTED", "Ambiguous attention weight syntax."
+                    )
+                edits.append((group.start, index + 1, f"({phrase}){weight.lstrip('+')}"))
+
+            # Compel's + and - markers are not signed numeric suffixes. The
+            # editor accepts +1.2/-0.5/1e2 as numbers; do not reinterpret them.
+            suffix = re.match(r"[^\s,()[\]{}\\]*", prompt[index + 1 :])
+            value = suffix.group() if suffix else ""
+            if value and (
+                value[0].isdigit()
+                or (
+                    value[0] in "+-." and len(value) > 1 and (value[1].isdigit() or value[1] == ".")
+                )
+            ):
+                if value.startswith("+") and _PLAIN_SUFFIX_WEIGHT.fullmatch(value[1:]):
+                    edits.append((index + 1, index + 1 + len(value), value[1:]))
+                elif not _PLAIN_SUFFIX_WEIGHT.fullmatch(value):
+                    raise DerivativeError(
+                        "GENERATION_PROMPT_UNSUPPORTED", "Unsupported attention weight syntax."
+                    )
+        index += 1
+    if any(group.colons for group in groups):
+        raise DerivativeError("GENERATION_PROMPT_UNSUPPORTED", "Unclosed attention weight syntax.")
+    for start, end, replacement in reversed(edits):
+        prompt = prompt[:start] + replacement + prompt[end:]
+    return prompt
 
 
 def select_inference_scheduler(
@@ -214,31 +339,264 @@ def select_inference_scheduler(
         return diffusers.DPMSolverSDEScheduler.from_config(
             config,
             use_karras_sigmas=command.scheduler.endswith("_k"),
-            noise_sampler_seed=0,
+            noise_sampler_seed=command.seed,
             prediction_type=command.prediction_type,
         )
     raise DerivativeError("GENERATION_SAMPLING_UNSUPPORTED", "Scheduler is unsupported.")
 
 
-def validate_pipeline_prompts(command: GenerateIllustriousTxt2ImgCommand, pipeline: Any) -> None:
+def validate_pipeline_prompts(
+    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any
+) -> tuple[str, str]:
+    prompts = (
+        normalize_compel_prompt(command.positive_prompt),
+        normalize_compel_prompt(command.negative_prompt),
+    )
     for tokenizer in (pipeline.tokenizer, pipeline.tokenizer_2):
-        for prompt in (command.positive_prompt, command.negative_prompt):
-            validate_plain_prompt(prompt, tokenizer)
+        for prompt in prompts:
+            validate_compel_prompt(prompt, tokenizer)
+    return prompts
+
+
+def _zero_pad_to_length(embeds: Any, length: int, torch: Any) -> Any:
+    missing = length - embeds.shape[1]
+    if missing < 0:
+        raise DerivativeError("GENERATION_PROMPT_UNSUPPORTED", "Conditioning lengths are invalid.")
+    if missing == 0:
+        return embeds
+    padding = torch.zeros(
+        (embeds.shape[0], missing, embeds.shape[2]), dtype=embeds.dtype, device=embeds.device
+    )
+    return torch.cat((embeds, padding), dim=1)
+
+
+def _clip_embeddings(
+    prompt: str, *, builder: Any, encoder: Any, pooled: bool, torch: Any
+) -> tuple[Any, Any | None]:
+    if prompt == "":
+        embeds = torch.zeros(
+            (1, encoder.config.max_position_embeddings, encoder.config.hidden_size),
+            dtype=encoder.dtype,
+            device=encoder.device,
+        )
+        pooled_embeds = (
+            torch.zeros((1, encoder.config.hidden_size), dtype=encoder.dtype, device=encoder.device)
+            if pooled
+            else None
+        )
+    else:
+        result = builder(prompt)
+        if pooled:
+            embeds, pooled_embeds = result
+        else:
+            embeds, pooled_embeds = result, None
+    if (
+        embeds.ndim != 3
+        or embeds.shape[0] != 1
+        or embeds.shape[1] > _MAX_CONDITIONING_TOKENS
+        or embeds.shape[1] % _CLIP_CHUNK_TOKENS != 0
+        or embeds.shape[2] != encoder.config.hidden_size
+        or (
+            pooled
+            and (pooled_embeds is None or pooled_embeds.shape != (1, encoder.config.hidden_size))
+        )
+    ):
+        raise DerivativeError("GENERATION_PROMPT_UNSUPPORTED", "Invalid SDXL conditioning shape.")
+    return embeds, pooled_embeds
+
+
+def build_sdxl_conditioning(
+    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any, runtime: MLRuntime
+) -> SdxlConditioning:
+    """Build bounded, independent CLIP1/CLIP2 conditioning for both prompt signs."""
+    prompts = validate_pipeline_prompts(command, pipeline)
+    compel = cast(Any, runtime.compel)
+    torch = cast(Any, runtime.torch)
+    clip_builders = (
+        compel.Compel(
+            tokenizer=pipeline.tokenizer,
+            text_encoder=pipeline.text_encoder,
+            returned_embeddings_type=(
+                compel.ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED
+            ),
+            truncate_long_prompts=False,
+            split_long_text_mode=compel.SplitLongTextMode.SENTENCES,
+            requires_pooled=False,
+        ),
+        compel.Compel(
+            tokenizer=pipeline.tokenizer_2,
+            text_encoder=pipeline.text_encoder_2,
+            returned_embeddings_type=(
+                compel.ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED
+            ),
+            truncate_long_prompts=False,
+            split_long_text_mode=compel.SplitLongTextMode.SENTENCES,
+            requires_pooled=True,
+        ),
+    )
+
+    signed: list[tuple[Any, Any]] = []
+    for prompt in prompts:
+        clip1, _ = _clip_embeddings(
+            prompt,
+            builder=clip_builders[0],
+            encoder=pipeline.text_encoder,
+            pooled=False,
+            torch=torch,
+        )
+        clip2, pooled = _clip_embeddings(
+            prompt,
+            builder=clip_builders[1],
+            encoder=pipeline.text_encoder_2,
+            pooled=True,
+            torch=torch,
+        )
+        sequence_length = max(clip1.shape[1], clip2.shape[1])
+        combined = torch.cat(
+            (
+                _zero_pad_to_length(clip1, sequence_length, torch),
+                _zero_pad_to_length(clip2, sequence_length, torch),
+            ),
+            dim=-1,
+        )
+        signed.append((combined, pooled))
+
+    positive, positive_pooled = signed[0]
+    negative, negative_pooled = signed[1]
+    positive_length = positive.shape[1]
+    negative_length = negative.shape[1]
+    sequence_length = max(positive.shape[1], negative.shape[1])
+    return SdxlConditioning(
+        positive=_zero_pad_to_length(positive, sequence_length, torch),
+        negative=_zero_pad_to_length(negative, sequence_length, torch),
+        positive_pooled=positive_pooled,
+        negative_pooled=negative_pooled,
+        positive_length=positive_length,
+        negative_length=negative_length,
+    )
+
+
+def run_sdxl_pipeline(
+    pipeline: Any,
+    conditioning: SdxlConditioning,
+    *,
+    width: int,
+    height: int,
+    steps: int,
+    cfg_scale: float,
+    generator: Any,
+    torch: Any,
+) -> Any:
+    """Mask only the final positive/negative padding through a scoped UNet hook.
+
+    The pinned Diffusers SDXL pipeline accepts prompt embeddings but does not
+    forward an encoder attention mask to its UNet. PyTorch's public pre-hook
+    lets this one pipeline call supply that supported UNet argument without
+    replacing an attention processor or copying the denoising loop.
+    """
+    positive = conditioning.positive
+    negative = conditioning.negative
+    if (
+        positive.ndim != 3
+        or negative.shape != positive.shape
+        or positive.dtype != negative.dtype
+        or positive.device != negative.device
+        or not 0 < conditioning.positive_length <= positive.shape[1]
+        or not 0 < conditioning.negative_length <= positive.shape[1]
+    ):
+        raise DerivativeError("GENERATION_WORKER_FAILED", "Invalid SDXL conditioning mask input.")
+
+    def call_pipeline() -> Any:
+        return pipeline(
+            prompt_embeds=positive,
+            negative_prompt_embeds=negative,
+            pooled_prompt_embeds=conditioning.positive_pooled,
+            negative_pooled_prompt_embeds=conditioning.negative_pooled,
+            width=width,
+            height=height,
+            original_size=_SDXL_MICRO_CONDITIONING_SIZE,
+            target_size=_SDXL_MICRO_CONDITIONING_SIZE,
+            negative_original_size=_SDXL_MICRO_CONDITIONING_SIZE,
+            negative_target_size=_SDXL_MICRO_CONDITIONING_SIZE,
+            crops_coords_top_left=(0, 0),
+            negative_crops_coords_top_left=(0, 0),
+            num_inference_steps=steps,
+            num_images_per_prompt=1,
+            guidance_scale=cfg_scale,
+            generator=generator,
+        )
+
+    if conditioning.positive_length == conditioning.negative_length:
+        return call_pipeline()
+
+    length = positive.shape[1]
+
+    def mask_row(used_length: int) -> Any:
+        return torch.cat(
+            (
+                torch.ones((1, used_length), dtype=positive.dtype, device=positive.device),
+                torch.zeros(
+                    (1, length - used_length), dtype=positive.dtype, device=positive.device
+                ),
+            ),
+            dim=1,
+        )
+
+    # Diffusers 0.40 concatenates unconditional before conditional when CFG is on.
+    cfg_enabled = cfg_scale > 1 and pipeline.unet.config.time_cond_proj_dim is None
+    if not cfg_enabled and conditioning.positive_length == length:
+        return call_pipeline()
+    mask = (
+        torch.cat(
+            (mask_row(conditioning.negative_length), mask_row(conditioning.positive_length)),
+            dim=0,
+        )
+        if cfg_enabled
+        else mask_row(conditioning.positive_length)
+    )
+    expected_batch = 2 if cfg_enabled else 1
+    if mask.shape != (expected_batch, length):
+        raise DerivativeError("GENERATION_WORKER_FAILED", "Invalid SDXL attention mask shape.")
+
+    hook_calls = 0
+
+    def add_encoder_attention_mask(
+        _unet: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        nonlocal hook_calls
+        embeds = kwargs.get("encoder_hidden_states")
+        if (
+            "encoder_attention_mask" in kwargs
+            or embeds is None
+            or embeds.shape != (expected_batch, length, positive.shape[2])
+            or embeds.device != mask.device
+        ):
+            raise DerivativeError(
+                "GENERATION_WORKER_FAILED", "SDXL attention mask does not match UNet input."
+            )
+        hook_calls += 1
+        return args, {**kwargs, "encoder_attention_mask": mask}
+
+    handle = pipeline.unet.register_forward_pre_hook(add_encoder_attention_mask, with_kwargs=True)
+    try:
+        result = call_pipeline()
+        if hook_calls == 0:
+            raise DerivativeError("GENERATION_WORKER_FAILED", "SDXL UNet did not receive its mask.")
+        return result
+    finally:
+        handle.remove()
 
 
 def generate_illustrious_txt2img(
     command: GenerateIllustriousTxt2ImgCommand, *, config_dir: Path, runtime: MLRuntime
 ) -> dict[str, object]:
-    """Execute one exact, plain-prompt SDXL job and publish only its provisional PNG."""
+    """Execute one exact SDXL job and publish only its provisional PNG."""
     if command.prediction_type == "sample":
         raise DerivativeError(
             "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
         )
-    for prompt in (command.positive_prompt, command.negative_prompt):
-        if _UNSUPPORTED_PROMPT_MARKUP.search(prompt):
-            raise DerivativeError(
-                "GENERATION_PROMPT_UNSUPPORTED", "Weighted prompt markup is not supported yet."
-            )
+    normalize_compel_prompt(command.positive_prompt)
+    normalize_compel_prompt(command.negative_prompt)
     verify_pinned_config(str(config_dir))
     validate_generation_assets(command)
     torch = cast(Any, runtime.torch)
@@ -253,19 +611,21 @@ def generate_illustrious_txt2img(
     # The single-file loader reads the file after our preflight hash. Detect mutation during load.
     if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed during loading.")
-    validate_pipeline_prompts(command, pipeline)
     pipeline.scheduler = select_inference_scheduler(command, pipeline, runtime)
     pipeline.set_progress_bar_config(disable=True)
     pipeline = pipeline.to("cuda")
+    with torch.inference_mode():
+        conditioning = build_sdxl_conditioning(command, pipeline, runtime)
     generator = torch.Generator(device="cpu").manual_seed(command.seed)
-    result = pipeline(
-        prompt=command.positive_prompt,
-        negative_prompt=command.negative_prompt,
+    result = run_sdxl_pipeline(
+        pipeline,
+        conditioning,
         width=command.width,
         height=command.height,
-        num_inference_steps=command.steps,
-        guidance_scale=command.cfg_scale,
+        steps=command.steps,
+        cfg_scale=command.cfg_scale,
         generator=generator,
+        torch=torch,
     )
     image = result.images[0]
     if not isinstance(image, Image.Image) or image.size != (command.width, command.height):

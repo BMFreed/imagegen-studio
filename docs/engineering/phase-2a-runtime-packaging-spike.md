@@ -119,7 +119,9 @@ are checked again before activation, not inferred from archive filenames.
 1. **Build the missing inference graph.** Pin the Invoke-like pipeline,
    PyTorch/CUDA, Diffusers, Transformers and native extension versions in a
    production Linux/NVIDIA lock; build the worker wheel and CI-selected
-   wheelhouse. The current Pillow-only lock and `derivatives-only` worker are
+   wheelhouse. At the time of this spike the lock had only Pillow and the
+   `derivatives-only` worker; the later [inference extra and runtime qualification](./phase-2b-internal-handoff-and-conditioning.md)
+   still do not provide an app-owned release artifact. The original state was
    insufficient for the Phase 2A gate (`07-python-runtime-management.md:216-239`,
    `worker-python/README.md:1-3`).
 2. **Prove package and host compatibility.** On the oldest intended Linux ABI

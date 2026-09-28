@@ -1,9 +1,8 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-
 import assert from 'node:assert/strict'
+import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -35,6 +34,9 @@ const fs = require('node:fs')
 if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
 if (process.env.HF_HUB_OFFLINE !== '1' || process.env.TRANSFORMERS_OFFLINE !== '1') process.exit(23)
 const mode = process.env.FAKE_MODE || 'done'
+if (process.env.FAKE_SPAWN_MARKER) {
+  fs.appendFileSync(process.env.FAKE_SPAWN_MARKER, String(process.pid) + '\n')
+}
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
   workerVersion:mode === 'bad-version' ? '0.1.0' : '0.2.0',
@@ -42,7 +44,7 @@ const ready = {
   pythonVersion:'3.12.13',
   capabilities: mode === 'no-capability' ? [] : ['illustrious-txt2img']
 }
-if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm') {
+if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
     if (mode === 'delayed-sigterm') setTimeout(() => process.exit(0), 70)
   })
@@ -51,7 +53,7 @@ if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm') {
 if (process.env.FAKE_EXIT_MARKER) {
   process.on('exit', () => fs.writeFileSync(process.env.FAKE_EXIT_MARKER, 'exited'))
 }
-if (mode === 'silent') { setInterval(() => {}, 1000) }
+if (mode === 'silent' || mode === 'silent-ignore-sigterm') { setInterval(() => {}, 1000) }
 else if (mode === 'bad-json-ready') process.stdout.write('{oops\n')
 else if (mode === 'oversized-ready') process.stdout.write('a'.repeat(65537))
 else {
@@ -329,6 +331,65 @@ test('close escalates to SIGKILL, and unconfirmed exit remains retryable', async
     } finally {
       retryChild.kill = actualKill
       await retry.close()
+    }
+  })
+})
+
+test('an unconfirmed startup child blocks concurrent and later starts until its exit is observed', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'started-pids')
+    const actualKill = ChildProcess.prototype.kill
+    ChildProcess.prototype.kill = function (this: ChildProcess, signal) {
+      return this.spawnfile === fixture.executable ? true : actualKill.call(this, signal)
+    }
+    try {
+      const first = GenerationWorkerClient.start(
+        fixture.location,
+        options('silent-ignore-sigterm', { FAKE_SPAWN_MARKER: marker }),
+      )
+      for (let attempt = 0; attempt < 100 && !existsSync(marker); attempt += 1) {
+        await delay(5)
+      }
+      assert.equal(existsSync(marker), true, 'the first subprocess started')
+      const concurrent = GenerationWorkerClient.start(
+        fixture.location,
+        options('done', { FAKE_SPAWN_MARKER: marker }),
+      )
+      await assert.rejects(first, isCode('WORKER_EXIT_UNCONFIRMED'))
+      await assert.rejects(concurrent, isCode('WORKER_EXIT_UNCONFIRMED'))
+      await assert.rejects(
+        GenerationWorkerClient.start(
+          fixture.location,
+          options('done', { FAKE_SPAWN_MARKER: marker }),
+        ),
+        isCode('WORKER_EXIT_UNCONFIRMED'),
+      )
+      assert.equal((await readFile(marker, 'utf8')).trim().split('\n').length, 1)
+
+      ChildProcess.prototype.kill = actualKill
+      const recovered = await GenerationWorkerClient.start(
+        fixture.location,
+        options('done', { FAKE_SPAWN_MARKER: marker }),
+      )
+      await recovered.close()
+      assert.equal((await readFile(marker, 'utf8')).trim().split('\n').length, 2)
+    } finally {
+      ChildProcess.prototype.kill = actualKill
+      if (existsSync(marker)) {
+        for (const pid of (await readFile(marker, 'utf8')).trim().split('\n').map(Number)) {
+          try {
+            // PID reuse must not let test cleanup signal an unrelated process.
+            const commandLine = await readFile(`/proc/${pid}/cmdline`, 'utf8')
+            if (commandLine.includes(fixture.executable)) {
+              process.kill(pid, 'SIGKILL')
+            }
+          } catch (error) {
+            if (!['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+              throw error
+            }
+          }
+        }
+      }
     }
   })
 })

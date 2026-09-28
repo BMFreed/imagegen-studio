@@ -61,8 +61,8 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate | Подключить staging recovery к Project UI, acceptance, provenance и accepted history | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
-| Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target; отдельный локально проверенный Linux/NVIDIA entrypoint для короткого plain-prompt Illustrious `txt2img` | Устанавливаемый app-owned ML runtime, полный Invoke-like conditioning/LoRA/Anima, кэш моделей, progress и остальные generation operations | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, отдельный TS subprocess transport и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight | Подключение processor/runtime к Electron и UI actions, полный pipeline, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target; отдельный локально проверенный Linux/NVIDIA entrypoint для Illustrious `txt2img` с ограниченным dual-CLIP Compel conditioning и маской padding в закреплённом Diffusers 0.40 | Устанавливаемый app-owned ML runtime, остальной Invoke-like conditioning, LoRA/Anima, кэш моделей, progress и остальные generation operations | 2A–2C |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, TS subprocess transport, внутренний Project → queue → staging handoff и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight | Подключение processor/runtime к Electron и UI actions, полный pipeline, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -445,6 +445,18 @@ worker по-прежнему не объявляет inference capability. Runti
 поставляет ML-зависимости и закреплённый SDXL config; Electron не создаёт этот
 transport/processor. Raw Diffusers prompt не покрывает Invoke conditioning,
 LoRA и прочие входы MVP, поэтому этот checkpoint не открывает Generate в UI.
+
+**Следующий внутренний checkpoint (28.09.2026):** [Project → queue → staging и
+dual-CLIP conditioning](../engineering/phase-2b-internal-handoff-and-conditioning.md)
+проверены отдельно. Оркестратор связывает открытый Project, exact model и
+восстановленные queue/staging repositories через реальную SQLite и файловую
+систему; inference output в этом тесте подставной. Локальный GPU smoke
+проверил Compel conditioning для взвешенного и длинного prompt; отдельная
+GPU-проверка подтвердила маску padding в UNet при разной длине положительного
+и негативного conditioning. RuntimeManager
+может проверить app-owned worker через live handshake, но installer/release
+artifact всё ещё отсутствуют. Electron не вызывает оркестратор; renderer
+Generate, LoRA inference, acceptance и provenance ещё не готовы.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

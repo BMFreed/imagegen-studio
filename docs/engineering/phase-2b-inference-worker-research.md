@@ -45,9 +45,11 @@ The request has no LoRA, embedding, region, mask, advanced-option, img2img or
 outpaint inputs. Raw Diffusers `prompt=` differs from Invoke's dual-CLIP Compel
 conditioning, so this slice rejects weighted markup and prompts exceeding 77
 tokens in either CLIP tokenizer instead of silently treating them differently.
-All five current scheduler keys use the frozen `epsilon`/`v_prediction`; the
-SDE schedulers use Invoke's fixed Brownian sampler seed `0` while initial
-latents use the job seed. Pixel-for-pixel Invoke parity is unproven. The model
+All five scheduler keys use the frozen `epsilon`/`v_prediction`; the initial
+boundary incorrectly used a fixed Brownian sampler seed `0` for SDE schedulers
+while initial latents used the job seed. Invoke overrides the SDE noise sampler
+with the actual job seed; the follow-up checkpoint corrects this. Pixel-for-pixel
+Invoke parity is unproven. The model
 reloads for each job; warm caching, progress events and release performance are
 still open.
 
@@ -106,3 +108,8 @@ the installer does not deliver the pinned ML runtime/config. Full Invoke-like
 conditioning, LoRA, Anima, model cache, renderer Generate/Queue Manager,
 staging acceptance and accepted provenance remain Phase 2B/2C work. No
 production promise status changes at this checkpoint.
+
+Follow-up (28.09.2026): [internal handoff and dual-CLIP conditioning](./phase-2b-internal-handoff-and-conditioning.md)
+supersede the plain-prompt-only and isolated-repository limitations described
+above. This note remains the evidence record for the original boundary; Electron
+Generate, release runtime installation and accepted-result provenance remain open.
