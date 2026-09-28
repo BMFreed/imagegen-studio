@@ -115,6 +115,9 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>): Promise<vo
       repository,
       new CivitaiClient(),
       new CivitaiTokenStore(storage, root),
+      undefined,
+      undefined,
+      async () => {}, // Processor tests use a fake transport and a tiny checkpoint fixture.
     )
     const modelBytes = Buffer.from('exact local checkpoint for processor tests')
     const modelPath = path.join(root, 'checkpoint.safetensors')

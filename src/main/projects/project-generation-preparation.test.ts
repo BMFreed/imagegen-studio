@@ -100,6 +100,7 @@ async function withService(
     ),
     undefined,
     compatibilityManifest,
+    async () => {}, // This suite isolates frozen job behavior using tiny checkpoint fixtures.
   )
   const projectRepository = new ProjectIndexRepository(database.db)
   const service = new ProjectService({
@@ -617,6 +618,32 @@ test(
       assert.equal(qualifiedPrepared.context.sampling.sampler, 'Euler a')
       assert.equal(qualifiedPrepared.context.sampling.scheduler, 'Normal')
       await service.discardAndClose(qualifiedPair.tabId)
+
+      // A legacy or externally authored library override can still contain `sample`, even though
+      // Model Manager now only offers epsilon/v_prediction. It must fail at real Prepare.
+      const predictionOverride = {
+        expectedSha256: model.fileSha256,
+        expectedSizeBytes: Buffer.byteLength('one exact model for failure cases'),
+        resourceId: model.localModelId,
+        versionId: model.localVersionId,
+      }
+      await modelRepository.setPredictionOverride({
+        ...predictionOverride,
+        predictionType: 'sample',
+      })
+      const legacySample = await importProject(service, dataRoot, {
+        model,
+        name: 'legacy-sample-prediction',
+      })
+      await assert.rejects(
+        service.prepareNormalTxt2ImgContext(legacySample.tabId, worker, modelService),
+        { code: 'MODEL_PREDICTION_UNSUPPORTED' },
+      )
+      await service.discardAndClose(legacySample.tabId)
+      await modelRepository.setPredictionOverride({
+        ...predictionOverride,
+        predictionType: 'epsilon',
+      })
 
       const random = await importProject(service, dataRoot, {
         draft: { seed: { policy: 'random', value: null } },

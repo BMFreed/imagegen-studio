@@ -8,7 +8,7 @@ import platform
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from PIL import Image, ImageCms
 from PIL import __version__ as pillow_version
@@ -76,9 +76,27 @@ class ComposeTargetCommand:
 
 @dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
-    """Validated request identity; inference inputs are intentionally not executable yet."""
+    """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
     request_id: str
+    checkpoint_path: Path
+    checkpoint_sha256: str
+    prediction_type: Literal["epsilon", "v_prediction", "sample"]
+    target_path: Path
+    target_sha256: str
+    target_byte_size: int
+    target_icc_sha256: str
+    width: int
+    height: int
+    bbox: PreviewRect
+    positive_prompt: str
+    negative_prompt: str
+    steps: int
+    cfg_scale: float
+    seed: int
+    scheduler: Literal["dpmpp_2m_k", "dpmpp_2m", "euler_a", "dpmpp_sde_k", "dpmpp_sde"]
+    staging_root: Path
+    output_path: Path
 
 
 def ready_message() -> dict[str, object]:
@@ -192,8 +210,8 @@ def _generate_illustrious_txt2img(
         raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
 
     checkpoint = _object(job["checkpoint"], "Checkpoint", {"path", "sha256", "predictionType"})
-    _absolute_path(checkpoint["path"], "Checkpoint path")
-    _sha256(checkpoint["sha256"], "Checkpoint SHA-256")
+    checkpoint_path = _absolute_path(checkpoint["path"], "Checkpoint path")
+    checkpoint_sha256 = _sha256(checkpoint["sha256"], "Checkpoint SHA-256")
     prediction_type = checkpoint["predictionType"]
     if not isinstance(prediction_type, str) or prediction_type not in (
         "epsilon",
@@ -208,8 +226,9 @@ def _generate_illustrious_txt2img(
         {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
     )
     target_path = _absolute_path(target["path"], "Target path")
-    _sha256(target["sha256"], "Target SHA-256")
-    if _sha256(target["iccSha256"], "Target ICC SHA-256") != PINNED_SRGB_ICC_SHA256:
+    target_sha256 = _sha256(target["sha256"], "Target SHA-256")
+    target_icc_sha256 = _sha256(target["iccSha256"], "Target ICC SHA-256")
+    if target_icc_sha256 != PINNED_SRGB_ICC_SHA256:
         raise DerivativeError("INVALID_REQUEST", "Target ICC profile is unsupported.")
     target_byte_size = _positive_integer(target["byteSize"], "Target byte size")
     if target_byte_size > MAX_GENERATION_TARGET_BYTES:
@@ -272,7 +291,27 @@ def _generate_illustrious_txt2img(
         raise DerivativeError("INVALID_REQUEST", "Output PNG must be a direct staging child.")
     if png_path == target_path:
         raise DerivativeError("INVALID_REQUEST", "Output PNG must not replace the target PNG.")
-    return GenerateIllustriousTxt2ImgCommand(request_id=request_id)
+    return GenerateIllustriousTxt2ImgCommand(
+        request_id=request_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_sha256=checkpoint_sha256,
+        prediction_type=prediction_type,
+        target_path=target_path,
+        target_sha256=target_sha256,
+        target_byte_size=target_byte_size,
+        target_icc_sha256=target_icc_sha256,
+        width=width,
+        height=height,
+        bbox=bbox,
+        positive_prompt=prompts["positive"],
+        negative_prompt=prompts["negative"],
+        steps=steps,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        scheduler=scheduler,
+        staging_root=staging_root,
+        output_path=png_path,
+    )
 
 
 def _preview_layer(value: object) -> PreviewLayer:

@@ -53,16 +53,16 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 Строка «есть» означает указанный сценарий, а не завершение всей фазы.
 Исторические checkpoints ниже сохраняют дату и границы своих проверок.
 
-| Область | Есть в Electron из исходников | Осталось в принятом MVP | Фаза завершения |
+| Область | Реализовано в исходниках (Electron указан отдельно) | Осталось в принятом MVP | Фаза завершения |
 | --- | --- | --- | --- |
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
-| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default; поддерживаемые Illustrious/Anima `.safetensors`, custom Anima с закреплёнными Qwen3/VAE; единственный editable Illustrious prediction override по SHA-256+size с отмеченным `epsilon` default; Project → Manager focus и Electron smoke изменения библиотечного типа; условия закреплённых компонентов, размер выбранного файла и rollback поздней ошибки repair | Структурная проверка совместимости, условия custom checkpoint от источника, hard remove, остальные resource handoff, реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
+| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default; поддерживаемые Illustrious/Anima `.safetensors`, custom Anima с закреплёнными Qwen3/VAE; единственный editable Illustrious prediction override по SHA-256+size с отмеченным `epsilon` default; Project → Manager focus и Electron smoke изменения библиотечного типа; первый SDXL structural preflight перед Prepare | Полная model/component compatibility для обоих семейств, условия custom checkpoint от источника, hard remove, остальные resource handoff, release model-load/download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate | Подключить staging recovery к Project UI, acceptance, provenance и accepted history | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
-| Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации первого проверенного candidate, seed cursor и restart reconciliation; приватный processor связывает queue со staging через квалифицированный transport и подтверждённый выход worker при cancel/failure; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, подключение processor к Electron и UI actions, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target; отдельный локально проверенный Linux/NVIDIA entrypoint для короткого plain-prompt Illustrious `txt2img` | Устанавливаемый app-owned ML runtime, полный Invoke-like conditioning/LoRA/Anima, кэш моделей, progress и остальные generation operations | 2A–2C |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, отдельный TS subprocess transport и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight | Подключение processor/runtime к Electron и UI actions, полный pipeline, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -434,7 +434,17 @@ checkpoint и замороженный target, связывает ответ wor
 для повторной отмены. Неверный PNG без publication receipt переводит job в
 `failed` после остановки worker, а receipt с неопределённым исходом остаётся
 для restart reconciliation. Этот processor пока проверен через подставной
-inference transport; производственного GPU worker и renderer Generate нет.
+inference transport; renderer Generate нет.
+
+**Development inference checkpoint (28.09.2026):** [первый GPU boundary](../engineering/phase-2b-inference-worker-research.md)
+добавляет SDXL structural preflight до Prepare, отдельный JSONL transport с
+подтверждённым выходом процесса и узкий Linux/NVIDIA worker для короткого
+plain-prompt Illustrious `txt2img`. Локальный offline smoke проверил настоящий
+checkpoint, CUDA, TypeScript → Python и provisional sRGB PNG. Derivatives-only
+worker по-прежнему не объявляет inference capability. Runtime installer ещё не
+поставляет ML-зависимости и закреплённый SDXL config; Electron не создаёт этот
+transport/processor. Raw Diffusers prompt не покрывает Invoke conditioning,
+LoRA и прочие входы MVP, поэтому этот checkpoint не открывает Generate в UI.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

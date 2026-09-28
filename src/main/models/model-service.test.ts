@@ -156,6 +156,7 @@ async function withModelHarness(
       new CivitaiTokenStore(safeStorage(), root),
       undefined,
       compatibilityManifest,
+      async () => {}, // Install/identity tests use arbitrary small bytes; real preflight has its own tests.
     )
     const coordinator = new ModelInstallCoordinator(repository, service, downloader, root)
     await coordinator.initialize()

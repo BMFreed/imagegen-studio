@@ -36,6 +36,10 @@ import {
   type CheckpointCompatibilityFingerprint,
   qualifiedCheckpointPredictionType,
 } from './model-compatibility-manifest.js'
+import {
+  qualifySdxlCheckpoint,
+  SdxlCheckpointQualificationError,
+} from './sdxl-checkpoint-qualification.js'
 
 const PREVIEW_TTL_MS = 10 * 60_000
 const PUBLICATION_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -82,6 +86,9 @@ export class ModelService {
     readonly tokenStore: CivitaiTokenStore,
     private readonly cacheRoot?: string,
     private readonly compatibilityManifest: readonly CheckpointCompatibilityFingerprint[] = CHECKPOINT_COMPATIBILITY_MANIFEST,
+    private readonly checkpointQualifier: (
+      managedPath: string,
+    ) => Promise<void> = qualifySdxlCheckpoint,
   ) {}
 
   async checkUpdates(
@@ -560,6 +567,22 @@ export class ModelService {
       throw new ModelServiceError(
         'MODEL_VERSION_MISMATCH',
         'The installed checkpoint no longer matches this Project exact version.',
+      )
+    }
+    if (reference.predictionType !== 'epsilon' && reference.predictionType !== 'v_prediction') {
+      throw new ModelServiceError(
+        'MODEL_PREDICTION_UNSUPPORTED',
+        'This inference runtime supports only epsilon and v_prediction checkpoints.',
+      )
+    }
+    try {
+      await this.checkpointQualifier(resolved.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_CHECKPOINT_INCOMPATIBLE',
+        error instanceof SdxlCheckpointQualificationError
+          ? `The installed checkpoint is not a compatible single-file SDXL base checkpoint: ${error.message}`
+          : 'The installed checkpoint could not be structurally qualified for SDXL generation.',
       )
     }
     // Prediction type belongs to the exact installed file, not to each Project. A saved .igs

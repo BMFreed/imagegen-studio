@@ -29,6 +29,10 @@ const storage: SafeStorageAdapter = {
   isAsyncEncryptionAvailable: async () => true,
 }
 
+// These identity and override scenarios use deliberately tiny non-model files. The real
+// safetensors preflight is exercised through ModelService in sdxl-checkpoint-qualification.test.
+const skipCheckpointQualification = async (): Promise<void> => {}
+
 async function withInstalledCheckpoints(
   run: (context: {
     firstBytes: Buffer
@@ -64,6 +68,7 @@ async function withInstalledCheckpoints(
       new CivitaiTokenStore(storage, root),
       undefined,
       testManifest,
+      skipCheckpointQualification,
     )
     const modelsDir = path.join(root, 'models')
     await mkdir(modelsDir)
@@ -195,6 +200,7 @@ test('unlisted Illustrious defaults to epsilon and plans from the current file s
       new CivitaiTokenStore(storage, root),
       undefined,
       [],
+      skipCheckpointQualification,
     )
     const savedWithoutPrediction = { ...firstRef, predictionType: null }
     const unlisted =
@@ -307,6 +313,7 @@ test('prediction edit follows exact bytes across versions without changing saved
         new CivitaiTokenStore(storage, root),
         undefined,
         [],
+        skipCheckpointQualification,
       )
       for (const id of [firstRef.localVersionId, duplicate.versionId]) {
         const catalogVersion = (await withoutManifest.getCatalog())

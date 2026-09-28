@@ -150,9 +150,12 @@ lease. Отдельный [durable enqueue checkpoint](../engineering/phase-2b-d
 копирует проверенный target в app-owned input store и создаёт SQLite `pending`
 row с frozen context (до 128 КиБ); startup отменяет незавершённые rows. Отдельные
 queue/staging repositories и приватный processor уже проверяют completion,
-отмену и публикацию candidate на подставном inference transport. Их подключение
-к Electron, реальный inference worker и renderer actions всё ещё нужны перед
-Generate.
+отмену и публикацию candidate на подставном inference transport.
+[Development inference boundary](../engineering/phase-2b-inference-worker-research.md)
+добавляет отдельный реальный Linux/NVIDIA process и TS transport для одного
+plain-prompt Illustrious `txt2img`; локальный GPU smoke проверяет provisional
+sRGB PNG. Это не release runtime и не полная capability MVP: Electron wiring,
+полный Invoke-like conditioning/LoRA и renderer actions ещё нужны перед Generate.
 
 ## Минимальные сообщения worker'а
 

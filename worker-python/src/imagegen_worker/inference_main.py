@@ -1,0 +1,115 @@
+"""Separate, qualified JSON-lines entrypoint for the first GPU inference slice."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import sys
+import traceback
+from pathlib import Path
+
+from imagegen_worker import PROTOCOL_VERSION
+from imagegen_worker.derivatives import DerivativeError
+from imagegen_worker.inference import (
+    INFERENCE_CAPABILITY,
+    INFERENCE_RUNTIME_PROFILE,
+    INFERENCE_WORKER_VERSION,
+    MLRuntime,
+    generate_illustrious_txt2img,
+    qualify_ml_runtime,
+)
+from imagegen_worker.inference_config import configured_sdxl_path
+from imagegen_worker.protocol import (
+    MAX_MESSAGE_BYTES,
+    GenerateIllustriousTxt2ImgCommand,
+    error_message,
+    parse_request,
+    request_id_hint,
+)
+
+
+def _emit(message: dict[str, object]) -> None:
+    encoded = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+    sys.stdout.buffer.write(encoded)
+    sys.stdout.buffer.flush()
+
+
+def inference_ready_message() -> dict[str, object]:
+    import platform
+
+    return {
+        "type": "ready",
+        "protocolVersion": PROTOCOL_VERSION,
+        "workerVersion": INFERENCE_WORKER_VERSION,
+        "pythonVersion": platform.python_version(),
+        "runtimeProfile": INFERENCE_RUNTIME_PROFILE,
+        "capabilities": [INFERENCE_CAPABILITY],
+    }
+
+
+def _qualify() -> tuple[Path, MLRuntime]:
+    if sys.platform != "linux" or sys.version_info[:2] != (3, 12):
+        raise DerivativeError("INFERENCE_UNAVAILABLE", "Linux CUDA inference is unavailable.")
+    # Keep both Hub fallback and transformers out of the network, including during lazy imports.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    config_dir = configured_sdxl_path()
+    runtime = qualify_ml_runtime()
+    return config_dir, runtime
+
+
+def process_inference_request(
+    value: object, *, config_dir: Path, runtime: MLRuntime
+) -> dict[str, object]:
+    request_id = request_id_hint(value)
+    try:
+        command = parse_request(value)
+        if not isinstance(command, GenerateIllustriousTxt2ImgCommand):
+            raise DerivativeError(
+                "INVALID_REQUEST", "This worker accepts generation requests only."
+            )
+        with contextlib.redirect_stdout(sys.stderr):
+            return generate_illustrious_txt2img(command, config_dir=config_dir, runtime=runtime)
+    except DerivativeError as error:
+        return error_message(request_id, error.code, str(error))
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        return error_message(
+            request_id,
+            "GENERATION_WORKER_FAILED",
+            "The inference worker could not complete this generation.",
+        )
+
+
+def main() -> int:
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            config_dir, runtime = _qualify()
+    except DerivativeError as error:
+        print(f"Inference startup failed: {error}", file=sys.stderr)
+        return 78
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        return 78
+    _emit(inference_ready_message())
+    while line := sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1):
+        if len(line) > MAX_MESSAGE_BYTES:
+            while line and not line.endswith(b"\n"):
+                line = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
+            _emit(
+                error_message(None, "MESSAGE_TOO_LARGE", "Worker request exceeds the line limit.")
+            )
+            continue
+        try:
+            value: object = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            _emit(error_message(None, "INVALID_REQUEST", "Request is not valid UTF-8 JSON."))
+            continue
+        _emit(process_inference_request(value, config_dir=config_dir, runtime=runtime))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

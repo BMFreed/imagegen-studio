@@ -30,11 +30,11 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; условия обязательных Anima-компонентов, размер выбранного файла и откат поздней ошибки repair проверены; structural qualification, загрузка worker, embedding/VAE selectors и обратный handoff ещё отсутствуют |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md), [candidate receipt](./engineering/phase-2b-candidate-publication-research.md) и [приватный processor](./engineering/phase-2b-generation-processor-research.md) с подставным transport; renderer Generate, реальный inference, accepted provenance/storage ещё не реализованы |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; [первый SDXL structural preflight](./engineering/phase-2b-inference-worker-research.md) перед Prepare проверен; полная совместимость/загрузка managed моделей, embedding/VAE selectors и обратный handoff ещё отсутствуют |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, repository enqueue/candidate receipt и приватный processor; [локальный GPU smoke](./engineering/phase-2b-inference-worker-research.md) проверяет узкий plain-prompt worker и TS transport до provisional PNG; renderer Generate, полный pipeline и accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
 | PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; staging repository пока не подключён к Project UI, release runtime отсутствует |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и [приватный processor](./engineering/phase-2b-generation-processor-research.md) с cancel/late-done guards; worker inference, renderer staging и принятие результата в `.igs` ещё не подключены |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и приватный processor с cancel/late-done guards; [узкий GPU worker/transport](./engineering/phase-2b-inference-worker-research.md) проверен отдельно от processor; Electron dispatch, renderer staging и принятие результата в `.igs` ещё не подключены |
 
 ### Статусы и доказательства
 
@@ -193,8 +193,10 @@ Model Manager и показывает его в Project read-only. Prepare по�
 точный файл и берёт current effective type независимо от advisory snapshot в
 `.igs`, включая прежние non-null и `null`. Frozen контекст фиксирует фактический
 тип; если override изменился до materialization, старый контекст отвергается.
-Model Manager и Project display проверены в Electron smoke; structural check и
-inference worker ещё не реализованы. Для custom Anima показаны условия
+Model Manager и Project display проверены в Electron smoke; первый SDXL
+structural preflight и локальный plain-prompt GPU worker проверены отдельно от
+Electron dispatch. Их форма не доказывает Illustrious lineage, полную
+совместимость модели или поддержку всего MVP pipeline. Для custom Anima показаны условия
 обязательных компонентов и объём выбранного файла; SQLite/filesystem tests
 проверяют откат поздней ошибки установки при repair компонента.
 
@@ -250,11 +252,15 @@ seed. Production Project также сохраняет явно выбранну
 может опубликовать проверенный временный output и сохранить фактический seed,
 но это не принятый результат и не provenance. Приватный processor связывает
 queue с candidate repository через подставной inference transport и проверяет
-отмену и выход worker. Renderer Generate, производственного dispatch,
-реальной генерации и acceptance пока нет.
+отмену и выход worker. Отдельный [GPU boundary](./engineering/phase-2b-inference-worker-research.md)
+в локальном smoke создаёт provisional PNG через настоящий TS/Python subprocess,
+но не подключён к processor в Electron. Renderer Generate, полный MVP pipeline
+и acceptance пока отсутствуют.
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
-worker отвечает `INFERENCE_UNAVAILABLE`. Результат и его provenance не создаются.
+derivatives-only worker отвечает `INFERENCE_UNAVAILABLE`; отдельный dev inference
+entrypoint исполняет только plain-prompt `txt2img`. Принятый результат и его
+provenance ещё не создаются.
 Единственная редактируемая настройка Illustrious prediction type находится в
 Model Manager по точным SHA-256 и размеру, с явно обозначенным `epsilon` по
 умолчанию. Project показывает current type read-only, а любой сохранённый `.igs`
@@ -262,7 +268,8 @@ non-null или старый `null` служит advisory snapshot. Prepare по
 файл, берёт текущий effective type без переписывания `.igs` и фиксирует actual
 type в подготовленном job. Смена override до materialization отвергает старую
 подготовку; accepted provenance в будущем останется immutable.
-Renderer Generate, inference worker и создание accepted provenance ещё не подключены.
+Renderer Generate, release inference runtime и создание accepted provenance ещё
+не подключены.
 
 ### Обещание
 
