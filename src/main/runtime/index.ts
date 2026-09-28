@@ -84,6 +84,7 @@ const startQualificationClient: StartQualificationClient = async (location, envi
 export class RuntimeManager {
   private cachedQualification: CachedQualification | null = null
   private generationLease: GenerationLease | null = null
+  private generationWorkPrevented = false
   private readonly host: RuntimeHost
   private readonly listeners = new Set<(status: RuntimeStatus) => void>()
   private previousStatus: RuntimeStatus | null = null
@@ -103,6 +104,9 @@ export class RuntimeManager {
   }
 
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
+    if (this.generationWorkPrevented) {
+      return this.shuttingDownStatus()
+    }
     let status: RuntimeStatus
     if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
       this.cachedQualification = null
@@ -116,6 +120,9 @@ export class RuntimeManager {
       try {
         pointer = await readPointer(this.roots)
       } catch {
+        if (this.generationWorkPrevented) {
+          return this.shuttingDownStatus()
+        }
         return {
           error: {
             code: 'RUNTIME_STATUS_UNAVAILABLE',
@@ -123,6 +130,10 @@ export class RuntimeManager {
           },
           ok: false,
         }
+      }
+
+      if (this.generationWorkPrevented) {
+        return this.shuttingDownStatus()
       }
 
       if (pointer.kind === 'missing') {
@@ -149,12 +160,18 @@ export class RuntimeManager {
         }
       } else {
         const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
+        if (this.generationWorkPrevented) {
+          return this.shuttingDownStatus()
+        }
         // A generation may have acquired its lease while pointer/config inspection awaited I/O.
         // Never start a second CUDA child merely to answer an advisory status request.
         const lease = this.generationLease
         const ready = lease
           ? this.leaseIsAdvisoryReady(lease, prepared)
           : prepared !== null && (await this.qualify(prepared, true))
+        if (this.generationWorkPrevented) {
+          return this.shuttingDownStatus()
+        }
         if (!ready) {
           this.cachedQualification = null
         }
@@ -178,6 +195,10 @@ export class RuntimeManager {
               runtimeId: pointer.value.runtimeId,
             }
       }
+    }
+
+    if (this.generationWorkPrevented) {
+      return this.shuttingDownStatus()
     }
 
     if (this.previousStatus && JSON.stringify(this.previousStatus) !== JSON.stringify(status)) {
@@ -209,6 +230,12 @@ export class RuntimeManager {
     return () => this.listeners.delete(listener)
   }
 
+  /** Permanently stop new status qualifications and generation leases before app shutdown awaits. */
+  preventNewGenerationWork(): void {
+    this.generationWorkPrevented = true
+    this.cachedQualification = null
+  }
+
   async repair(): Promise<ApiResult<RuntimeStatus>> {
     return {
       error: {
@@ -228,23 +255,31 @@ export class RuntimeManager {
   async resolveQualifiedGenerationWorker(
     scratchBasePath: string,
   ): Promise<QualifiedGenerationWorker | null> {
-    if (this.host.platform !== 'linux' || this.host.arch !== 'x64' || this.generationLease) {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64' ||
+      this.generationLease
+    ) {
       return null
     }
     try {
       const pointer = await readPointer(this.roots)
+      if (this.generationWorkPrevented) {
+        return null
+      }
       if (pointer.kind !== 'valid') {
         this.cachedQualification = null
         return null
       }
       const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
-      if (this.generationLease) {
+      if (this.generationWorkPrevented || this.generationLease) {
         return null
       }
       // A dispatch qualification supersedes any earlier advisory status result.
       this.cachedQualification = null
       if (prepared && (await this.qualify(prepared, false))) {
-        return this.generationLease ? null : prepared.worker
+        return this.generationWorkPrevented || this.generationLease ? null : prepared.worker
       }
       this.cachedQualification = null
       return null
@@ -302,7 +337,12 @@ export class RuntimeManager {
     scratchBasePath: string,
     use: (worker: GenerationWorkerClient, runtime: QualifiedGenerationWorker) => Promise<T>,
   ): Promise<T | null> {
-    if (this.host.platform !== 'linux' || this.host.arch !== 'x64' || this.generationLease) {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64' ||
+      this.generationLease
+    ) {
       return null
     }
     const cached = this.cachedQualification
@@ -322,17 +362,20 @@ export class RuntimeManager {
     this.cachedQualification = null
     try {
       return await this.withGpuSlot(async () => {
+        if (this.generationWorkPrevented) {
+          return null
+        }
         const pointer = await readPointer(this.roots)
-        if (pointer.kind !== 'valid') {
+        if (this.generationWorkPrevented || pointer.kind !== 'valid') {
           return null
         }
         const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
-        if (!prepared) {
+        if (this.generationWorkPrevented || !prepared) {
           return null
         }
         lease.key = prepared.key
         lease.runtimeId = pointer.value.runtimeId
-        if (!(await this.qualifyLiveUnlocked(prepared))) {
+        if (!(await this.qualifyLiveUnlocked(prepared)) || this.generationWorkPrevented) {
           return null
         }
         const client = await GenerationWorkerClient.start(prepared.worker.location, {
@@ -347,7 +390,7 @@ export class RuntimeManager {
             currentPointer.kind === 'valid'
               ? await this.prepareQualification(currentPointer.value, scratchBasePath)
               : null
-          if (current?.key !== prepared.key) {
+          if (this.generationWorkPrevented || current?.key !== prepared.key) {
             return null
           }
           return await use(client, prepared.worker)
@@ -461,10 +504,14 @@ export class RuntimeManager {
   }
 
   private async qualify(prepared: PreparedQualification, useCache: boolean): Promise<boolean> {
+    if (this.generationWorkPrevented) {
+      return false
+    }
     if (useCache) {
       const cached = this.cachedQualification
       if (cached?.key === prepared.key && cached.expiresAt > Date.now()) {
-        return await cached.promise
+        const ready = await cached.promise
+        return !this.generationWorkPrevented && ready
       }
     }
     const qualification = this.qualifyLive(prepared)
@@ -476,6 +523,10 @@ export class RuntimeManager {
       }
     }
     const succeeded = await qualification
+    if (this.generationWorkPrevented) {
+      this.cachedQualification = null
+      return false
+    }
     if (useCache && this.cachedQualification?.promise === qualification) {
       this.cachedQualification = succeeded
         ? {
@@ -490,24 +541,29 @@ export class RuntimeManager {
 
   private async qualifyLive(prepared: PreparedQualification): Promise<boolean> {
     return await this.withGpuSlot(async () =>
-      this.generationLease ? false : await this.qualifyLiveUnlocked(prepared),
+      this.generationWorkPrevented || this.generationLease
+        ? false
+        : await this.qualifyLiveUnlocked(prepared),
     )
   }
 
   private async qualifyLiveUnlocked(prepared: PreparedQualification): Promise<boolean> {
     try {
-      if (!(await this.confirmPreviousExit())) {
+      if (this.generationWorkPrevented || !(await this.confirmPreviousExit())) {
+        return false
+      }
+      if (this.generationWorkPrevented) {
         return false
       }
       const before = await readPointer(this.roots)
-      if (before.kind !== 'valid') {
+      if (this.generationWorkPrevented || before.kind !== 'valid') {
         return false
       }
       const unchanged = await this.prepareQualification(
         before.value,
         prepared.worker.location.scratchBasePath,
       )
-      if (unchanged?.key !== prepared.key) {
+      if (this.generationWorkPrevented || unchanged?.key !== prepared.key) {
         return false
       }
       const client = await this.startClient(prepared.worker.location, prepared.worker.environment)
@@ -520,16 +576,30 @@ export class RuntimeManager {
         return false
       }
       const pointer = await readPointer(this.roots)
-      if (pointer.kind !== 'valid' || pointer.value.runtimeId !== prepared.worker.runtimeId) {
+      if (
+        this.generationWorkPrevented ||
+        pointer.kind !== 'valid' ||
+        pointer.value.runtimeId !== prepared.worker.runtimeId
+      ) {
         return false
       }
       const current = await this.prepareQualification(
         pointer.value,
         prepared.worker.location.scratchBasePath,
       )
-      return current?.key === prepared.key
+      return !this.generationWorkPrevented && current?.key === prepared.key
     } catch {
       return false
+    }
+  }
+
+  private shuttingDownStatus(): ApiResult<RuntimeStatus> {
+    return {
+      error: {
+        code: 'RUNTIME_SHUTTING_DOWN',
+        message: 'The image runtime is shutting down.',
+      },
+      ok: false,
     }
   }
 

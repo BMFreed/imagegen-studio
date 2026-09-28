@@ -31,10 +31,10 @@
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; [первый SDXL structural preflight](./engineering/phase-2b-inference-worker-research.md) перед Prepare проверен; полная совместимость/загрузка managed моделей, embedding/VAE selectors и обратный handoff ещё отсутствуют |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft; [внутренний handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) связывает frozen Illustrious job с queue/processor/staging на реальных SQLite/filesystem, а отдельный GPU smoke проверяет dual-CLIP conditioning; [owned dispatch](./engineering/phase-2b-owned-dispatch-and-recovery.md) пока только внутренний; renderer Generate, полный pipeline и accepted provenance/storage ещё не реализованы |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft; [внутренний handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) связывает frozen Illustrious job с queue/processor/staging на реальных SQLite/filesystem, а отдельный GPU smoke проверяет dual-CLIP conditioning; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) создаёт внутренний dispatch owner и ждёт worker exit при закрытии; renderer Generate, полный pipeline и accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; Electron теперь [удерживает recovered queue/staging](./engineering/phase-2b-owned-dispatch-and-recovery.md), но installer и staging Project UI отсутствуют |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и приватный processor с cancel/late-done guards; [Project → staging handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) проверен с подставным inference transport и настоящей SQLite/filesystem; [owned dispatch](./engineering/phase-2b-owned-dispatch-and-recovery.md) проверен только внутри main, Electron dispatch, renderer staging и принятие результата в `.igs` ещё не подключены |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs и ждёт worker exit, но installer и staging Project UI отсутствуют |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и приватный processor с cancel/late-done guards; [Project → staging handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) проверен с подставным inference transport и настоящей SQLite/filesystem; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs при app close; Generate/Results IPC, Project staging/discard и принятие результата в `.igs` отсутствуют |
 
 ### Статусы и доказательства
 
@@ -264,6 +264,9 @@ acceptance пока отсутствуют.
 [Следующий внутренний checkpoint](./engineering/phase-2b-owned-dispatch-and-recovery.md)
 удерживает recovered queue/staging в Electron и проверяет single-worker dispatch
 без пользовательского входа; accepted provenance он не создаёт.
+[Electron shutdown](./engineering/phase-2b-electron-shutdown.md) создаёт этого
+внутреннего владельца при готовых storage/runtime и ждёт его при закрытии,
+но по-прежнему не запускает generation из UI.
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
 derivatives-only worker отвечает `INFERENCE_UNAVAILABLE`; отдельный dev inference
@@ -426,6 +429,8 @@ Electron удерживает одну восстановленную queue/stag
 не покрывают Project close/discard или acceptance. Live self-test app-owned runtime
 проверен как внутренняя граница, но без
 проверенного release artifact и installer он не доказывает готовую установку.
+[Native app close](./engineering/phase-2b-electron-shutdown.md) теперь отменяет
+ожидающие jobs до закрытия SQLite; recovery результатов в Project UI всё ещё нет.
 Home загружает
 подписанные thumbnails из проверенного `.igs` или пересобираемого cache.
 Clean Rebuild Preview проверен
@@ -473,10 +478,11 @@ undo показаны на in-memory candidates. Main имеет локальн�
 для проверенного кандидата и seed и приватный processor для cancel/completion;
 внутренний Project → queue → staging handoff проверен на реальных SQLite/filesystem
 с подставным inference transport. Отдельный GPU worker проверен локально, но
-Electron dispatch и пользовательские preview/acceptance/storage handoff отсутствуют.
+запуск job через Electron и пользовательские preview/acceptance/storage handoff отсутствуют.
 [Внутренний coordinator](./engineering/phase-2b-owned-dispatch-and-recovery.md)
-уже владеет одним worker lease и отменой при shutdown; приложение его пока не
-создаёт и не выполняет graceful Project close/discard.
+владеет одним worker lease и отменой при shutdown. Electron теперь создаёт его
+при готовых storage/runtime и [ждёт при закрытии приложения](./engineering/phase-2b-electron-shutdown.md),
+но не выполняет graceful Project close/discard и не имеет Generate IPC.
 
 ### Обещание
 

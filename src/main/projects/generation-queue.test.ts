@@ -498,6 +498,176 @@ test('unfinished Project listing isolates identities and excludes every terminal
   }
 })
 
+test('app shutdown cancels every pending row durably while preserving frozen inputs and adjacent statuses', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-shutdown-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    await queue.recoverAfterRestart()
+    const projectA = await fixture(root)
+    const otherRoot = path.join(root, 'other-project')
+    await mkdir(otherRoot)
+    const projectB = await fixture(otherRoot)
+
+    const running = await enqueueFixture(root, queue, projectA.prepared, projectA.projectPath)
+    assert.equal((await queue.claimNextPending())?.item.id, running.id)
+    const pendingA = await enqueueFixture(root, queue, projectA.prepared, projectA.projectPath)
+    const pendingB = await enqueueFixture(root, queue, projectB.prepared, projectB.projectPath)
+    const canceled = await enqueueFixture(root, queue, projectA.prepared, projectA.projectPath)
+    await queue.cancel(canceled.id)
+    const failed = await enqueueFixture(root, queue, projectA.prepared, projectA.projectPath)
+    await first.db
+      .updateTable('generation_queue_item')
+      .set({ error_code: 'WORKER_FAILED', status: 'failed', status_sequence: 2 })
+      .where('id', '=', failed.id)
+      .execute()
+    const completed = await enqueueFixture(root, queue, projectA.prepared, projectA.projectPath)
+    await first.db
+      .updateTable('generation_queue_item')
+      .set({ status: 'completed', status_sequence: 3 })
+      .where('id', '=', completed.id)
+      .execute()
+
+    const pendingIds = [pendingA.id, pendingB.id]
+    const terminalIds = [running.id, canceled.id, failed.id, completed.id]
+    const before = await first.db.selectFrom('generation_queue_item').selectAll().execute()
+    const byIdBefore = new Map(before.map((row) => [row.id, row]))
+    const frozenInputs = await Promise.all(
+      pendingIds.map(async (id) => {
+        const input = await queue.loadVerifiedInput(id)
+        return { id, targetBytes: await readFile(input.targetPath) }
+      }),
+    )
+
+    assert.equal(await queue.cancelPendingForShutdown(), 2)
+    assert.equal(await queue.cancelPendingForShutdown(), 0)
+    const after = await first.db.selectFrom('generation_queue_item').selectAll().execute()
+    const byIdAfter = new Map(after.map((row) => [row.id, row]))
+    for (const id of terminalIds) {
+      assert.deepEqual(byIdAfter.get(id), byIdBefore.get(id))
+    }
+    for (const id of pendingIds) {
+      const previous = byIdBefore.get(id)
+      const next = byIdAfter.get(id)
+      assert.ok(previous)
+      assert.ok(next)
+      assert.equal(next.status, 'canceled')
+      assert.equal(next.status_sequence, previous.status_sequence + 1)
+      assert.equal(next.error_code, 'USER_CANCELED')
+      assert.equal(next.error_message, 'The job was canceled.')
+      assert.ok(next.finished_at)
+      assert.equal(next.frozen_payload_json, previous.frozen_payload_json)
+    }
+    for (const input of frozenInputs) {
+      const verified = await queue.loadVerifiedInput(input.id)
+      assert.equal(verified.item.status, 'canceled')
+      assert.deepEqual(await readFile(verified.targetPath), input.targetBytes)
+    }
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    try {
+      const reopened = new GenerationQueueRepository(second.db, root)
+      for (const id of pendingIds) {
+        const verified = await reopened.loadVerifiedInput(id)
+        assert.equal(verified.item.status, 'canceled')
+        assert.equal(verified.item.statusSequence, 1)
+      }
+      await reopened.recoverAfterRestart()
+      assert.equal(await reopened.cancelPendingForShutdown(), 0)
+      for (const id of pendingIds) {
+        assert.equal((await reopened.loadVerifiedInput(id)).item.statusSequence, 1)
+      }
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('app shutdown cancellation refuses unreconciled queue and failed restart recovery without changing pending rows', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-shutdown-readiness-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    const unreconciled = new GenerationQueueRepository(database.db, root)
+    await assert.rejects(unreconciled.cancelPendingForShutdown(), {
+      code: 'QUEUE_NOT_RECONCILED',
+    })
+    assert.equal((await queue.loadVerifiedInput(pending.id)).item.status, 'pending')
+
+    const inputRoot = path.join(root, 'generation-inputs')
+    await rm(inputRoot, { recursive: true })
+    await symlink(root, inputRoot, 'dir')
+    await assert.rejects(queue.recoverAfterRestart(), { code: 'QUEUE_STORAGE_UNSAFE' })
+    await assert.rejects(queue.cancelPendingForShutdown(), {
+      code: 'QUEUE_NOT_RECONCILED',
+    })
+    const row = await database.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', pending.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(row, { error_code: null, status: 'pending', status_sequence: 0 })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('app shutdown cancellation wins a pending claim race without reviving the row', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-shutdown-race-'))
+  const first = openAppDatabase(root, migrations)
+  const second = openAppDatabase(root, migrations)
+  let reachedClaim!: () => void
+  const claimReached = new Promise<void>((resolve) => {
+    reachedClaim = resolve
+  })
+  let releaseClaim!: () => void
+  const claimGate = new Promise<void>((resolve) => {
+    releaseClaim = resolve
+  })
+  try {
+    const claimQueue = new GenerationQueueRepository(first.db, root, {
+      beforeClaimUpdate: async () => {
+        reachedClaim()
+        await claimGate
+      },
+    })
+    const shutdownQueue = new GenerationQueueRepository(second.db, root)
+    await claimQueue.recoverAfterRestart()
+    await shutdownQueue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, shutdownQueue, prepared, projectPath)
+
+    const claim = claimQueue.claimNextPending()
+    await claimReached
+    assert.equal(await shutdownQueue.cancelPendingForShutdown(), 1)
+    releaseClaim()
+    assert.equal(await claim, null)
+    const row = await second.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', pending.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(row, {
+      error_code: 'USER_CANCELED',
+      status: 'canceled',
+      status_sequence: 1,
+    })
+    assert.equal((await shutdownQueue.loadVerifiedInput(pending.id)).item.status, 'canceled')
+  } finally {
+    releaseClaim()
+    await first.close()
+    await second.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('failed running job records normalized error; a late failure cannot change it', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-worker-error-'))
   try {

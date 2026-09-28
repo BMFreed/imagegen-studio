@@ -6,6 +6,8 @@ import * as path from 'node:path'
 import { afterEach, test } from 'node:test'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
+import { GenerationAppShutdown } from '../projects/generation-app-shutdown.js'
+import { openAppDatabase } from '../db/database.js'
 
 import { createRuntimeRoots, RuntimeManager } from './index.ts'
 
@@ -389,9 +391,7 @@ test('generation retry does not confirm an unclosed qualification child', async 
     )
     blockClose = false
     assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
-    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), [
-      'worker-2-linux-nvidia',
-    ])
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), ['worker-2-linux-nvidia'])
     assert.equal(
       await manager.withGenerationWorker(scratch, async (worker) => worker.ready.workerVersion),
       '0.2.0',
@@ -556,6 +556,88 @@ test('a generation lease excludes status and resolver probes during qualificatio
   ])
   assert.equal((await manager.getStatus()).value.kind, 'ready')
   assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+})
+
+test('shutdown fences late runtime probes and waits for an in-flight qualification before SQLite closes', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  let qualificationEntered
+  const entered = new Promise((resolve) => {
+    qualificationEntered = resolve
+  })
+  let releaseQualification
+  const qualificationGate = new Promise((resolve) => {
+    releaseQualification = resolve
+  })
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const child = await GenerationWorkerClient.start(location, { environment })
+      qualificationEntered()
+      return {
+        close: async () => {
+          await qualificationGate
+          await child.close()
+        },
+      }
+    },
+  )
+  const database = openAppDatabase(roots.appDataDir, path.resolve('src/main/db/migrations'))
+  let databaseClosed = false
+  const shutdown = new GenerationAppShutdown({
+    closeDatabase: async () => {
+      assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), ['worker-2-linux-nvidia'])
+      await database.close()
+      databaseClosed = true
+    },
+    context: { shutdown: () => undefined },
+    coordinator: null,
+    pendingJobs: null,
+    runtimeExit: manager,
+  })
+  const firstStatus = manager.getStatus()
+  let finalizing
+  let lateStatus
+  try {
+    await entered
+    finalizing = shutdown.finalize()
+    lateStatus = manager.getStatus()
+    assert.deepEqual(
+      await Promise.race([
+        lateStatus,
+        new Promise((resolve) => setImmediate(() => resolve({ kind: 'still-pending' }))),
+      ]),
+      {
+        error: {
+          code: 'RUNTIME_SHUTTING_DOWN',
+          message: 'The image runtime is shutting down.',
+        },
+        ok: false,
+      },
+    )
+    assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'late'), null)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+    await database.db.selectFrom('app_metadata').selectAll().execute()
+    assert.equal(databaseClosed, false)
+    releaseQualification()
+    await firstStatus
+    await finalizing
+    assert.equal(databaseClosed, true)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+    ])
+  } finally {
+    releaseQualification()
+    await Promise.allSettled([firstStatus, lateStatus, finalizing].filter(Boolean))
+    if (!databaseClosed) await database.close()
+  }
 })
 
 test('a generation lease preserves callback failure and accepts an already canceled child', async () => {

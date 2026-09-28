@@ -63,7 +63,7 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target; отдельный локально проверенный Linux/NVIDIA entrypoint для Illustrious `txt2img` с ограниченным dual-CLIP Compel conditioning и маской padding в закреплённом Diffusers 0.40 | Устанавливаемый app-owned ML runtime, остальной Invoke-like conditioning, LoRA/Anima, кэш моделей, progress и остальные generation operations | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, TS subprocess transport, внутренний Project → queue → staging handoff и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight; Electron удерживает восстановленные repositories, а внутренний coordinator владеет одним worker lease | Создать dispatch coordinator в Electron и подключить UI actions; per-Project close/discard, полный pipeline, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, TS subprocess transport, внутренний Project → queue → staging handoff и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight; Electron удерживает recovered repositories и создаёт coordinator с подтверждаемым worker lease и барьером закрытия; pending jobs отменяются при app close | Подключить Generate/Results IPC и UI; per-Project close/discard, полный pipeline, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -468,6 +468,15 @@ Generate, LoRA inference, acceptance и provenance ещё не готовы.
 незавершённых jobs пока только read-only. Coordinator ещё не создан в Electron;
 Generate IPC/UI, безопасный graceful Project close и discard staging остаются
 следующим этапом.
+
+**Electron shutdown checkpoint (29.09.2026):**
+[проверка app lifecycle](../engineering/phase-2b-electron-shutdown.md) подключает
+один coordinator к восстановленным generation services и настоящему
+RuntimeManager. Native close ждёт подтверждения worker exit, отменяет все
+оставшиеся pending jobs и закрывает SQLite до закрытия окна; Cancel в диалоге
+сохраняет очередь. Desktop smoke проверяет этот путь без Generate IPC.
+Отдельное закрытие Project, долговечный discard staging и пользовательский
+Generate по-прежнему не подключены.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

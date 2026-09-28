@@ -23,8 +23,6 @@ import { mkdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { GenerationAppContext } from './projects/generation-app-context.js'
-
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
 import { openAppDatabase } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
@@ -36,6 +34,8 @@ import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
 import { createGenerationAppContext } from './projects/generation-app-context.js'
+import { GenerationAppShutdown } from './projects/generation-app-shutdown.js'
+import { GenerationDispatchCoordinator } from './projects/generation-dispatch-coordinator.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
@@ -102,7 +102,9 @@ if (!gotInstanceLock) {
 } else {
   let mainWindow: BrowserWindow | null = null
   let closeDatabase: (() => Promise<void>) | null = null
-  let generationContext: GenerationAppContext | null = null
+  let generationShutdown: GenerationAppShutdown | null = null
+  let exitReady = false
+  let exitInProgress = false
 
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -116,13 +118,33 @@ if (!gotInstanceLock) {
   })
 
   app.on('window-all-closed', () => app.quit())
-  app.on('will-quit', () => {
-    // The startup context owns no active worker yet: this only closes context access. When Generate
-    // gets an entry point, its dispatch owner must confirm worker exit before SQLite closes.
-    generationContext?.shutdown()
-    if (closeDatabase) {
-      void closeDatabase()
+  app.on('will-quit', (event) => {
+    if (exitReady) {
+      return
     }
+    // Electron emits will-quit after closing its windows. The normal window-close path awaits
+    // this barrier while the window is still available; this is the fallback for other quit paths.
+    event.preventDefault()
+    if (exitInProgress) {
+      return
+    }
+    exitInProgress = true
+    void (async () => {
+      if (generationShutdown) {
+        await generationShutdown.finalize()
+      } else if (closeDatabase) {
+        await closeDatabase()
+      }
+      exitReady = true
+      app.quit()
+    })().catch((error: unknown) => {
+      exitInProgress = false
+      console.error('Application shutdown failed', error)
+      dialog.showErrorBox(
+        'Application close failed',
+        'The application could not confirm worker exit or close its data storage.',
+      )
+    })
   })
 
   void app
@@ -224,7 +246,7 @@ if (!gotInstanceLock) {
       )
       // Keep the recovered queue/staging pair and their single owner for this app lifetime.
       // This is storage readiness only; index registers no Generate IPC entry point or worker.
-      generationContext = await createGenerationAppContext({
+      const ownedGenerationContext = await createGenerationAppContext({
         database,
         dataRoot: paths.dataRoot,
         modelService,
@@ -232,8 +254,8 @@ if (!gotInstanceLock) {
         projectService,
         scratchBasePath: path.join(paths.dataRoot, 'scratch'),
       })
-      if (generationContext.availability.kind === 'recovery-failed') {
-        console.error('Generation recovery is unavailable', generationContext.recoveryFailure)
+      if (ownedGenerationContext.availability.kind === 'recovery-failed') {
+        console.error('Generation recovery is unavailable', ownedGenerationContext.recoveryFailure)
       }
       const installCoordinator = new ModelInstallCoordinator(
         modelRepository,
@@ -252,13 +274,35 @@ if (!gotInstanceLock) {
         RuntimeManager,
         'getStatus' | 'install' | 'onStatusChanged' | 'repair'
       >
+      let generationRuntime: RuntimeManager | null = null
       try {
         const runtimeRoots = await createRuntimeRoots(paths.dataRoot)
-        runtimeManager = new RuntimeManager(runtimeRoots)
+        generationRuntime = new RuntimeManager(runtimeRoots)
+        runtimeManager = generationRuntime
       } catch (error) {
         console.error('Runtime storage is unavailable', error)
         runtimeManager = unavailableRuntimeService()
       }
+      const recoveredGeneration =
+        ownedGenerationContext.availability.kind === 'storage-recovered'
+          ? ownedGenerationContext.requireRecoveredServices()
+          : null
+      const appShutdown = new GenerationAppShutdown({
+        closeDatabase: database.close,
+        context: ownedGenerationContext,
+        coordinator:
+          recoveredGeneration && generationRuntime
+            ? new GenerationDispatchCoordinator(
+                generationRuntime,
+                recoveredGeneration.orchestrator,
+                recoveredGeneration.processor,
+                path.join(paths.dataRoot, 'scratch'),
+              )
+            : null,
+        pendingJobs: recoveredGeneration?.queue ?? null,
+        runtimeExit: generationRuntime,
+      })
+      generationShutdown = appShutdown
 
       Menu.setApplicationMenu(null)
       const window = new BrowserWindow({
@@ -335,7 +379,7 @@ if (!gotInstanceLock) {
         })
       }
       window.on('close', (event) => {
-        if (closingAfterResolution || projectService.getOpenTabs().length === 0) {
+        if (closingAfterResolution) {
           return
         }
         event.preventDefault()
@@ -347,7 +391,9 @@ if (!gotInstanceLock) {
           try {
             // The renderer can still have an unacknowledged prompt/seed edit. Flush it before
             // main decides whether anything is dirty or starts an explicit Save.
-            await flushRendererDraftsBeforeClose()
+            if (projectService.getOpenTabs().length > 0) {
+              await flushRendererDraftsBeforeClose()
+            }
             const dirtyCount = projectService.getOpenTabs().filter((tab) => tab.dirty).length
             const choice = dirtyCount
               ? dialog.showMessageBoxSync(window, {
@@ -371,11 +417,16 @@ if (!gotInstanceLock) {
                 }
               }
             }
+            // A canceled dialog has not stopped generation. Once the user confirms closing,
+            // hold this visible window until worker exit and pending-job cancellation are durable.
+            await appShutdown.prepareWindowClose()
             for (const tab of projectService.getOpenTabs()) {
               await (tab.dirty && choice === 1
                 ? projectService.discardAndClose(tab.id)
                 : projectService.close(tab.id))
             }
+            await appShutdown.finalize()
+            exitReady = true
             closingAfterResolution = true
             window.close()
           } catch (error) {

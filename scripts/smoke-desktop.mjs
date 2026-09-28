@@ -1959,6 +1959,39 @@ try {
     .getByRole('textbox', { name: 'Positive prompt' })
     .fill('saved during native window close')
   await recoveryWindow.locator('input[aria-label="CFG scale"]').fill('6.0')
+  const queuedBeforeQuit = await seedUnfinishedQueueItem()
+  await application.evaluate(({ dialog }) => {
+    globalThis.igsSmokeCanceledClose = 0
+    dialog.showMessageBoxSync = () => {
+      globalThis.igsSmokeCanceledClose += 1
+      return 2
+    }
+  })
+  await application.evaluate(({ app }) => {
+    setTimeout(() => app.quit(), 0)
+  })
+  await expect.poll(() => application.evaluate(() => globalThis.igsSmokeCanceledClose)).toBe(1)
+  await expect(
+    recoveryWindow.getByRole('textbox', { name: 'Positive prompt' }),
+  ).toBeVisible()
+  const stillPendingDatabase = openAppDatabase(
+    queuedBeforeQuit.appDataRoot,
+    path.resolve('src/main/db/migrations'),
+  )
+  try {
+    const stillPending = await stillPendingDatabase.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', queuedBeforeQuit.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(stillPending, {
+      error_code: null,
+      status: 'pending',
+      status_sequence: 0,
+    })
+  } finally {
+    await stillPendingDatabase.close()
+  }
   await application.evaluate(({ dialog }) => {
     dialog.showMessageBoxSync = () => 0
   })
@@ -1998,6 +2031,16 @@ try {
       .executeTakeFirstOrThrow()
     assert.deepEqual(canceled, {
       error_code: 'APP_RESTART',
+      status: 'canceled',
+      status_sequence: 1,
+    })
+    const canceledAtClose = await queueDatabase.db
+      .selectFrom('generation_queue_item')
+      .select(['status', 'status_sequence', 'error_code'])
+      .where('id', '=', queuedBeforeQuit.id)
+      .executeTakeFirstOrThrow()
+    assert.deepEqual(canceledAtClose, {
+      error_code: 'USER_CANCELED',
       status: 'canceled',
       status_sequence: 1,
     })

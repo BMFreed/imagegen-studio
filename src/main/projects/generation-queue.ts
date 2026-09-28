@@ -347,6 +347,30 @@ export class GenerationQueueRepository {
   }
 
   /**
+   * App shutdown calls this after dispatch has stopped and the active worker has exited. Only
+   * still-pending rows are terminalized; their registered frozen inputs remain for explicit retry.
+   */
+  async cancelPendingForShutdown(): Promise<number> {
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const now = new Date().toISOString()
+      const canceled = await this.db
+        .updateTable('generation_queue_item')
+        .set({
+          error_code: 'USER_CANCELED',
+          error_message: 'The job was canceled.',
+          finished_at: now,
+          status: 'canceled',
+          status_sequence: sql<number>`status_sequence + 1`,
+          updated_at: now,
+        })
+        .where('status', '=', 'pending')
+        .executeTakeFirst()
+      return Number(canceled.numUpdatedRows)
+    })
+  }
+
+  /**
    * Verify the oldest pending input before taking the sole running slot. The conditional SQLite
    * update also excludes a running row claimed through another repository instance.
    */
