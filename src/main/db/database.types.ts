@@ -12,6 +12,13 @@ export interface AppMetadata {
   value: string
 }
 
+export interface CheckpointPredictionOverride {
+  prediction_type: string
+  sha256: string
+  size_bytes: number
+  updated_at: string
+}
+
 export interface GenerationCandidateReceipt {
   actual_seed: number
   candidate_id: string
@@ -177,6 +184,7 @@ export interface SchemaMigrations {
 
 export interface DB {
   app_metadata: AppMetadata
+  checkpoint_prediction_override: CheckpointPredictionOverride
   generation_candidate_receipt: GenerationCandidateReceipt
   generation_queue_item: GenerationQueueItem
   generation_seed_cursor: GenerationSeedCursor

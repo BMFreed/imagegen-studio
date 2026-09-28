@@ -121,7 +121,7 @@ test('verified installation survives reopen with exact CivitAI file identity and
     const migrationCount = sqlite
       .prepare<[], { count: number }>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    assert.equal(migrationCount?.count, 6)
+    assert.equal(migrationCount?.count, 7)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })
@@ -168,6 +168,102 @@ test('side-by-side versions preserve exact references and default changes only o
       [first.versionId, second.versionId],
     )
     await app.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('prediction override follows exact checkpoint bytes across versions and SQLite reopen', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-model-prediction-'))
+  try {
+    const app = openAppDatabase(root, migrations)
+    const repository = new ModelRepository(app.db)
+    const firstArtifact = civitaiArtifact(root, 1, 11, 111)
+    const duplicateArtifact = civitaiArtifact(root, 2, 22, 222)
+    const sameBytes = readFileSync(firstArtifact.file.managedPath)
+    writeFileSync(duplicateArtifact.file.managedPath, sameBytes)
+    duplicateArtifact.file.sha256 = firstArtifact.file.sha256
+    duplicateArtifact.file.sizeBytes = firstArtifact.file.sizeBytes
+    duplicateArtifact.version.source = {
+      expectedSha256: firstArtifact.file.sha256,
+      fileId: 222,
+      kind: 'civitai',
+      versionId: 22,
+    }
+    const differentArtifact = civitaiArtifact(root, 3, 33, 333)
+    const first = await repository.publishVerifiedInstallation({ primary: firstArtifact })
+    const duplicate = await repository.publishVerifiedInstallation({ primary: duplicateArtifact })
+    const different = await repository.publishVerifiedInstallation({ primary: differentArtifact })
+    const loraArtifact = civitaiArtifact(root, 4, 44, 444, 'lora')
+    const lora = await repository.publishVerifiedInstallation({ primary: loraArtifact })
+    const exact = { sha256: firstArtifact.file.sha256, sizeBytes: firstArtifact.file.sizeBytes }
+    assert.equal(await repository.getPredictionOverride(exact), null)
+    assert.deepEqual(await repository.listPredictionOverrides(), [])
+
+    const saved = await repository.setPredictionOverride({
+      expectedSha256: exact.sha256,
+      expectedSizeBytes: exact.sizeBytes,
+      predictionType: 'v_prediction',
+      resourceId: first.resourceId,
+      versionId: first.versionId,
+    })
+    assert.equal(saved.predictionType, 'v_prediction')
+    assert.equal(await repository.getPredictionOverride(exact), 'v_prediction')
+    assert.equal(
+      await repository.getPredictionOverride({
+        sha256: differentArtifact.file.sha256,
+        sizeBytes: differentArtifact.file.sizeBytes,
+      }),
+      null,
+    )
+    assert.equal((await repository.listPredictionOverrides()).length, 1)
+    // The version column remains untouched evidence; both exact-byte owners use one override.
+    assert.deepEqual(
+      (await repository.listInstalled()).flatMap((resource) =>
+        resource.versions.map((version) => version.predictionType),
+      ),
+      [null, null, null, null],
+    )
+
+    const input = {
+      expectedSha256: exact.sha256,
+      expectedSizeBytes: exact.sizeBytes,
+      predictionType: 'sample' as const,
+      resourceId: duplicate.resourceId,
+      versionId: duplicate.versionId,
+    }
+    for (const stale of [
+      { ...input, resourceId: first.resourceId },
+      { ...input, expectedSha256: '0'.repeat(64) },
+      { ...input, expectedSizeBytes: exact.sizeBytes + 1 },
+      { ...input, resourceId: different.resourceId, versionId: different.versionId },
+      {
+        ...input,
+        expectedSha256: loraArtifact.file.sha256,
+        expectedSizeBytes: loraArtifact.file.sizeBytes,
+        resourceId: lora.resourceId,
+        versionId: lora.versionId,
+      },
+    ]) {
+      await assert.rejects(repository.setPredictionOverride(stale), /exact ready Illustrious/)
+    }
+    assert.equal(await repository.getPredictionOverride(exact), 'v_prediction')
+    await repository.setPredictionOverride(input)
+    assert.equal(await repository.getPredictionOverride(exact), 'sample')
+    assert.equal((await repository.listPredictionOverrides()).length, 1)
+    await app.close()
+
+    const reopened = openAppDatabase(root, migrations)
+    try {
+      const reloaded = new ModelRepository(reopened.db)
+      assert.equal(await reloaded.getPredictionOverride(exact), 'sample')
+      assert.deepEqual(
+        (await reloaded.listPredictionOverrides()).map((item) => item.sha256),
+        [exact.sha256],
+      )
+    } finally {
+      await reopened.close()
+    }
   } finally {
     rmSync(root, { force: true, recursive: true })
   }
@@ -415,6 +511,102 @@ test('Anima group publishes atomically and reuses ready shared companions', asyn
       models.find((model) => model.id === second.resourceId)?.versions[0]?.dependencyVersionIds.vae,
       first.dependencyVersionIds.vae,
     )
+    const animaFile = models.find((model) => model.id === first.resourceId)?.versions[0]?.file
+    assert.ok(animaFile)
+    await assert.rejects(
+      repository.setPredictionOverride({
+        expectedSha256: animaFile.sha256,
+        expectedSizeBytes: animaFile.sizeBytes,
+        predictionType: 'epsilon',
+        resourceId: first.resourceId,
+        versionId: first.versionId,
+      }),
+      /exact ready Illustrious/,
+    )
+    await app.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('Anima checkpoint repair rolls back dependency repair when the final job identity fails', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-model-anima-repair-'))
+  try {
+    const app = openAppDatabase(root, migrations)
+    const repository = new ModelRepository(app.db)
+    const checkpoint = civitaiArtifact(root, 64, 641, 6411, 'checkpoint', 'anima')
+    const encoder = dependencyArtifact(root, 'qwen3_encoder', 'pinned-revision')
+    const vae = dependencyArtifact(root, 'vae', 'pinned-revision')
+    const published = await repository.publishVerifiedInstallation({
+      dependencies: [
+        { artifact: encoder, role: 'qwen3_encoder' },
+        { artifact: vae, role: 'vae' },
+      ],
+      primary: checkpoint,
+    })
+    const vaeId = published.dependencyVersionIds.vae
+    assert.ok(vaeId)
+    const before = (await repository.listInstalled())
+      .flatMap((resource) => resource.versions)
+      .find((version) => version.id === vaeId)
+    assert.ok(before)
+    await app.db
+      .updateTable('local_model_file')
+      .set({ status: 'corrupt' })
+      .where('resource_version_id', '=', vaeId)
+      .execute()
+    const recoveredPath = path.join(root, 'models', 'recovered-vae.safetensors')
+    writeFileSync(recoveredPath, readFileSync(vae.file.managedPath))
+    const recovered = {
+      ...vae.file,
+      managedPath: recoveredPath,
+      originalFilename: 'recovered-vae.safetensors',
+    }
+    const wrongJobId = await repository.createInstallJob({
+      artifacts: [
+        { role: 'primary', source: { fileId: 6412, kind: 'civitai_file' } },
+        { role: 'vae', source: { key: 'anima/vae', kind: 'supported_dependency' } },
+      ],
+      baseModelFamily: 'anima',
+      civitaiFileId: 6412,
+      civitaiModelId: 64,
+      civitaiVersionId: 641,
+      displayName: 'Model 64',
+      resourceType: 'checkpoint',
+      versionName: 'v641',
+    })
+    await repository.updateInstallJob(wrongJobId, { status: 'downloading' })
+    for (const role of ['primary', 'vae'] as const) {
+      await repository.updateInstallArtifact(wrongJobId, role, { status: 'downloading' })
+      await repository.updateInstallArtifact(wrongJobId, role, { status: 'verifying' })
+      await repository.updateInstallArtifact(wrongJobId, role, { status: 'ready' })
+    }
+    await repository.updateInstallJob(wrongJobId, { status: 'verifying' })
+    const repair = {
+      dependencyRepairs: [{ file: recovered, role: 'vae' as const, versionId: vaeId }],
+      file: checkpoint.file,
+      versionId: published.versionId,
+    }
+    await assert.rejects(
+      repository.repairVerifiedVersion({ ...repair, jobId: wrongJobId }),
+      /source identity does not match/,
+    )
+    const rolledBack = (await repository.listInstalled())
+      .flatMap((resource) => resource.versions)
+      .find((version) => version.id === vaeId)
+    assert.equal(rolledBack?.file.status, 'corrupt')
+    assert.equal(rolledBack.file.managedPath, before.file.managedPath)
+    assert.equal(
+      (await repository.listInstallJobs()).find((job) => job.id === wrongJobId)?.status,
+      'verifying',
+    )
+
+    await repository.repairVerifiedVersion(repair)
+    const repaired = (await repository.listInstalled())
+      .flatMap((resource) => resource.versions)
+      .find((version) => version.id === vaeId)
+    assert.equal(repaired?.file.status, 'ready')
+    assert.equal(repaired.file.managedPath, recoveredPath)
     await app.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

@@ -673,7 +673,15 @@ provenance до подтверждения. Скопированная display/i
 читаемость отсутствующих ссылок, но не делает весы восстановимыми. Общий
 resource lifecycle определяет [Model Manager](./features/model-manager.md#remove-local-resource).
 
-`predictionType` — compatibility metadata модели. Для `v_prediction`-моделей scheduler должен работать в `v_prediction` mode; запуск такой модели как обычной `epsilon`-модели приводит к неверному denoising.
+Illustrious `predictionType` — выбранный для точного файла scheduler mode;
+пользовательский override хранится по SHA-256 и размеру только в Model Manager.
+Project показывает current effective type read-only; сохранённый в `.igs` тип
+служит только справочным snapshot. Без явно известного значения Model Manager
+предлагает редактируемый `epsilon`
+как помеченное предположение, не как доказанное свойство весов. Для
+`v_prediction`-моделей scheduler должен работать в `v_prediction` mode; запуск
+такой модели как `epsilon` приводит к неверному denoising. Anima использует
+отдельный rectified-flow pipeline без SDXL prediction mode.
 
 ### 9.4. Загрузка SDXL/Illustrious-like checkpoint'ов
 
@@ -2174,13 +2182,23 @@ UI показывает fallback "Изображение не найдено"
 - хранить `predictionType` в metadata основной модели;
 - передавать `predictionType` в Python worker вместе с generation job;
 - сохранять фактический `predictionType` в immutable accepted-result provenance;
-- допускать Illustrious/SDXL Generate только для точного SHA-256 checkpoint,
-  указанного в проверенном app-owned compatibility manifest; CivitAI metadata,
-  загрузка весов и SDXL-эвристика `epsilon` не доказывают training objective;
-- если prediction type неизвестен, показывать compatibility diagnostic и
-  блокировать Generate, не маскируя проблему как художественную настройку.
-  Anima использует отдельный rectified-flow pipeline и не получает фиктивный
-  SDXL prediction mode.
+- разрешать установку любого поддерживаемого CivitAI Illustrious/Anima
+  `.safetensors` checkpoint; SHA-256 использовать для identity и integrity,
+  а не как app-owned allowlist;
+- при отсутствии явно известного Illustrious типа предлагать `epsilon` как
+  помеченное и редактируемое предположение для точного SHA-256 и размера файла,
+  не выдавая CivitAI
+  metadata или форму весов за доказательство training objective;
+- перед enqueue проверять структуру файла, обязательные совместимые компоненты
+  и worker capability; редактировать тип только в Model Manager, а в Project
+  показывать current effective type read-only. Сохранённое `.igs` non-null или
+  старое `null` — advisory snapshot: Prepare повторно хеширует точный файл и
+  берёт текущий effective type без переписывания документа; смена override до
+  materialization прерывает подготовку. Actual type записывается в frozen
+  job/provenance;
+- Anima устанавливать с закреплёнными Qwen3/VAE и вести через отдельный
+  rectified-flow pipeline без фиктивного SDXL prediction mode; наличие
+  компонентов не доказывает структурную совместимость для Generate.
 
 Статус: закрыто для MVP.
 

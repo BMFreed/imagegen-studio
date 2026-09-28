@@ -51,13 +51,19 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 6)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 7)
     assert.equal(statSync(root).mode & 0o777, 0o700)
     assert.equal(statSync(path.join(root, 'database')).mode & 0o777, 0o700)
     assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
     assert.throws(() =>
       sqlite.prepare('INSERT INTO app_metadata VALUES (?, ?)').run('invalid', Buffer.from([1])),
     )
+    const overrideInsert = sqlite.prepare(
+      'INSERT INTO checkpoint_prediction_override (sha256, size_bytes, prediction_type, updated_at) VALUES (?, ?, ?, ?)',
+    )
+    assert.throws(() => overrideInsert.run('g'.repeat(64), 1, 'epsilon', '2026-09-28T00:00:00Z'))
+    assert.throws(() => overrideInsert.run('a'.repeat(64), 0, 'epsilon', '2026-09-28T00:00:00Z'))
+    assert.throws(() => overrideInsert.run('a'.repeat(64), 1, 'unknown', '2026-09-28T00:00:00Z'))
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })
@@ -180,7 +186,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 6)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 7)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

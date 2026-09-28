@@ -38,7 +38,10 @@ Product MVP controls:
 - model selector;
 - model version selector for the selected model;
 - base model family badge;
-- prediction type badge/warning where useful, such as `epsilon` or `v_prediction`;
+- for Illustrious, a read-only display of the current exact-file prediction
+  type from Model Manager, including whether `epsilon` is an assumption;
+  the editable control belongs only to Model Manager. Anima has no SDXL
+  prediction type control;
 - separate LoRAs selector and selected LoRA stack;
 - unified prompt autocomplete for embeddings and active LoRA trigger phrases;
 - sampler/scheduler;
@@ -100,6 +103,15 @@ can explicitly link the same installed CivitAI checkpoint when main verifies
 the exact portable identity and file; this changes only local IDs in the
 document. Selection and relinking do not load a model in the worker or make
 Generate available.
+The production Project now displays the current Illustrious prediction type
+read-only from Model Manager. The only editable control is in Model Manager,
+keyed by SHA-256 and size. Electron smoke covers the library control and Project
+display. Main can prepare an unlisted Illustrious checkpoint with the current
+effective type or labeled `epsilon` fallback, regardless of an older `.igs`
+snapshot; a changed library setting invalidates a prepared request before
+materialization. The worker still reports
+`INFERENCE_UNAVAILABLE`. Custom CivitAI Anima installation with pinned Qwen3/VAE
+is available; structural qualification and Anima inference are still open.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
@@ -153,24 +165,40 @@ Rules:
 - changing Model Manager's default version must not silently rewrite open projects, presets or accepted-result provenance;
 - if the exact version used by a project is missing, show a missing-resource warning and offer to open Model Manager; if the same exact version exists under different local IDs, offer an explicit verified link.
 
-If the user selects an Illustrious/SDXL v-prediction model, Generate uses the
-verified exact-hash compatibility manifest to pass the correct prediction type
-to the worker and stores it in accepted-result provenance. Anima uses its own
-rectified-flow capability record, not an SDXL prediction type. A selected model
-with no appropriate verified family entry remains visible in Project, but
-Generate is blocked with an explanation. This is a model compatibility
-behavior, not a separate user-facing generation mode.
+Model Manager is the only place to edit Illustrious prediction type for exact
+SHA-256 and size. Project shows the current effective value read-only; if no
+value is explicitly known, `epsilon` is labeled as an assumption. New selections
+may store that value in the `.igs` reference for diagnostics, but the field is an
+advisory snapshot. Existing non-null and old `null` values likewise never decide
+future inference. Prepare rehashes the exact installed file and takes the current
+effective library value without rewriting `.igs`. Main rechecks file integrity,
+structure and required components before enqueue. If the library override
+changes between Prepare and materialization, main aborts and requires a new
+Prepare; it never silently substitutes a type in the frozen job. The worker
+uses the frozen type without fallback, and accepted-result provenance stores
+the actual type. Anima uses a separate
+rectified-flow loader and compatible-component checks, never an SDXL prediction
+type. An installed but structurally unsupported checkpoint remains visible and
+Generate explains the blocking reason. SHA-256 binds the exact files and saved
+references, not an app-owned allowlist of permitted checkpoint hashes.
 
 ## Acceptance Criteria
 
 - User can select a model and configure core sampling parameters.
-- Generate accepts only a verified exact-hash family compatibility record;
-  an unlisted checkpoint produces a visible diagnostic before enqueue.
+- Generate verifies the chosen checkpoint's exact bytes, structural compatibility,
+  required components and worker capability before enqueue; absence from an
+  app-owned hash manifest alone does not block it.
 - Project derives txt2img/img2img/inpaint/outpaint from the frozen target-area composite rather than a manual workflow toggle.
 - Normal generation and each Smart Patch Layer have correctly scoped generation drafts.
-- Product implementation lets the user select an installed version; the current prototype only displays the selected version.
+- Product implementation lets the user select an installed version; the current
+  prototype models this choice against mock installed resources. Its readout
+  does not prove the production Model Manager edit or worker qualification.
 - Unsupported controls are not shown as generic always-on clutter.
-- Prediction type metadata is passed to the worker and stored in accepted-result provenance.
+- The current exact-file Illustrious prediction type from Model Manager is
+  frozen at Prepare, used by the worker and stored in accepted-result provenance.
+  Project displays it read-only; any `.igs` snapshot is advisory. A change
+  before materialization aborts the old preparation. Anima has no SDXL
+  prediction type and uses pinned Qwen3/VAE subject to structural checks.
 - LoRAs have a structured stack; embeddings are plain prompt text with sidecar `embeddingRefs` and have no standalone section.
 - Denoising strength is shown in Generation settings, not above or inside the layer stack.
 - Denoising strength stays visible but explains its disabled state when the current target has no applicable raster input.

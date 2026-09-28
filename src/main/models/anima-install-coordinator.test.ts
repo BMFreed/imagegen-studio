@@ -1,8 +1,8 @@
 import type { ModelInstallJobView } from '../../shared/api.js'
 
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, open, readdir, rm, stat, unlink } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, open, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import { openAppDatabase } from '../db/database.js'
 import {
   ANIMA_BASE_1_0_CHECKPOINT,
+  ANIMA_BASE_1_0_COMPANION_BYTES,
   ANIMA_BASE_1_0_TOTAL_BYTES,
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
@@ -48,7 +49,9 @@ function safeStorage(): SafeStorageAdapter {
   }
 }
 
-function civitaiApi(): typeof fetch {
+function civitaiApi(
+  options: { fileHash?: string | null; fileSizeKB?: number | null } = {},
+): typeof fetch {
   return async (input) => {
     const pathname = new URL(String(input)).pathname
     const body =
@@ -66,12 +69,19 @@ function civitaiApi(): typeof fetch {
               files: [
                 {
                   downloadUrl: fileUrl,
-                  hashes: { SHA256: ANIMA_BASE_1_0_CHECKPOINT.sha256 },
+                  hashes:
+                    options.fileHash === null
+                      ? undefined
+                      : { SHA256: options.fileHash ?? ANIMA_BASE_1_0_CHECKPOINT.sha256 },
                   id: 701,
                   metadata: { format: 'SafeTensor' },
                   name: 'anima-base-v1.0.safetensors',
                   primary: true,
-                  sizeKB: Math.floor(ANIMA_BASE_1_0_CHECKPOINT.sizeBytes / 1024),
+                  sizeKB:
+                    options.fileSizeKB === null
+                      ? undefined
+                      : (options.fileSizeKB ??
+                        Math.floor(ANIMA_BASE_1_0_CHECKPOINT.sizeBytes / 1024)),
                 },
               ],
               id: 7,
@@ -127,6 +137,7 @@ async function withHarness(
     root: string
     service: ModelService
   }) => Promise<void>,
+  api: typeof fetch = civitaiApi(),
 ): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'igs-anima-install-'))
   const database = openAppDatabase(root, migrations)
@@ -134,7 +145,7 @@ async function withHarness(
     const repository = new ModelRepository(database.db)
     const service = new ModelService(
       repository,
-      new CivitaiClient(civitaiApi()),
+      new CivitaiClient(api),
       new CivitaiTokenStore(safeStorage(), root),
     )
     const coordinator = new ModelInstallCoordinator(repository, service, downloader, root)
@@ -345,6 +356,224 @@ test('Anima group publishes one checkpoint linked to both pinned companion recor
   })
 })
 
+test('custom CivitAI Anima checkpoint installs with disclosed companion sizes and remains unqualified for Generate', async () => {
+  const bytes = Buffer.from('custom Anima checkpoint bytes for the installation boundary')
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  const estimatedBytes = bytes.length + 512
+  const calls: ModelDownloadInput[] = []
+  const downloader = {
+    async download(input: ModelDownloadInput): Promise<VerifiedStagedModelFile> {
+      calls.push(input)
+      if (input.source !== 'civitai') {
+        return stageSparse(input)
+      }
+      assert.equal(input.expectedBytes, null, 'CivitAI size estimate is not an integrity bound')
+      assert.equal(input.expectedSha256, digest)
+      await mkdir(input.stagingDirectory, { recursive: true })
+      const stagingPath = path.join(input.stagingDirectory, `${randomUUID()}.part`)
+      await writeFile(stagingPath, bytes)
+      return { sha256: digest, sizeBytes: bytes.length, stagingPath }
+    },
+  } as ModelDownloader
+  await withHarness(
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const selected = await service.previewImport(modelUrl)
+      assert.equal(selected.kind, 'select-file')
+      if (selected.kind !== 'select-file') {
+        throw new Error('Expected file preview')
+      }
+      assert.equal(selected.files[0]?.sha256, digest)
+      assert.equal(selected.files[0]?.license, null)
+      assert.equal(selected.license, null)
+      assert.equal(selected.files[0]?.sizeEstimateBytes, estimatedBytes)
+      assert.equal(selected.totalAdditionalBytes, estimatedBytes + ANIMA_BASE_1_0_COMPANION_BYTES)
+      await assert.rejects(coordinator.startInstall(selected.previewId, 701, false), {
+        code: 'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+      })
+      const completed = await waitForTerminal(coordinator, () =>
+        coordinator.startInstall(selected.previewId, 701, true),
+      )
+      assert.equal(completed.status, 'completed', completed.error?.message ?? '')
+      assert.equal(completed.totalBytes, bytes.length + ANIMA_BASE_1_0_COMPANION_BYTES)
+      assert.deepEqual(
+        calls.map((call) => [call.source, call.expectedBytes, call.expectedSha256]),
+        [
+          ['civitai', null, digest],
+          [
+            'anima-huggingface',
+            ANIMA_QWEN3_0_6B_ENCODER.sizeBytes,
+            ANIMA_QWEN3_0_6B_ENCODER.sha256,
+          ],
+          ['anima-huggingface', ANIMA_QWEN_IMAGE_VAE.sizeBytes, ANIMA_QWEN_IMAGE_VAE.sha256],
+        ],
+      )
+      const installed = await repository.listInstalled()
+      const checkpoint = installed.find((item) => item.type === 'checkpoint')
+      assert.ok(checkpoint)
+      assert.equal(checkpoint.versions[0]?.file.sha256, digest)
+      assert.equal(checkpoint.versions[0]?.predictionType, null)
+      assert.equal(checkpoint.versions[0]?.sourceMetadata.license, undefined)
+      assert.deepEqual(Object.keys(checkpoint.versions[0]?.dependencyVersionIds ?? {}).sort(), [
+        'qwen3_encoder',
+        'vae',
+      ])
+      // The companion files here are sparse test stand-ins for multi-GB pinned artifacts. Keep
+      // primary verification real and substitute only those companion hash checks.
+      const verifier = service as unknown as {
+        isVerifiedFile: (file: { sha256: string }) => Promise<boolean>
+      }
+      const realVerify = verifier.isVerifiedFile.bind(service)
+      verifier.isVerifiedFile = async (file) =>
+        file.sha256 === ANIMA_QWEN3_0_6B_ENCODER.sha256 ||
+        file.sha256 === ANIMA_QWEN_IMAGE_VAE.sha256 ||
+        realVerify(file)
+      const selectedRef = await service.resolveGenerationCheckpoint(
+        checkpoint.id,
+        checkpoint.versions[0].id,
+      )
+      assert.equal(selectedRef.fileSha256, digest)
+      assert.equal(selectedRef.predictionType, null)
+      await assert.rejects(service.resolveVerifiedGenerationCheckpointForPlan(selectedRef), {
+        code: 'MODEL_FAMILY_UNSUPPORTED',
+      })
+    },
+    civitaiApi({ fileHash: digest, fileSizeKB: estimatedBytes / 1024 }),
+  )
+})
+
+test('custom Anima without CivitAI SHA installs under its computed hash', async () => {
+  const bytes = Buffer.from('Anima source without published SHA-256')
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  const downloader = {
+    async download(input: ModelDownloadInput): Promise<VerifiedStagedModelFile> {
+      if (input.source !== 'civitai') {
+        return stageSparse(input)
+      }
+      assert.equal(input.expectedSha256, null)
+      assert.equal(input.expectedBytes, null)
+      await mkdir(input.stagingDirectory, { recursive: true })
+      const stagingPath = path.join(input.stagingDirectory, `${randomUUID()}.part`)
+      await writeFile(stagingPath, bytes)
+      return { sha256: digest, sizeBytes: bytes.length, stagingPath }
+    },
+  } as ModelDownloader
+  await withHarness(
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const selected = await service.previewImport(modelUrl)
+      assert.equal(selected.kind, 'select-file')
+      if (selected.kind !== 'select-file') {
+        throw new Error('Expected file preview')
+      }
+      assert.equal(selected.files[0]?.sha256, null)
+      assert.equal(selected.files[0]?.license, null)
+      assert.equal(selected.totalAdditionalBytes, bytes.length + ANIMA_BASE_1_0_COMPANION_BYTES)
+      const completed = await waitForTerminal(coordinator, () =>
+        coordinator.startInstall(selected.previewId, 701, true),
+      )
+      assert.equal(completed.status, 'completed', completed.error?.message ?? '')
+      const installed = (await repository.listInstalled()).find(
+        (item) => item.type === 'checkpoint',
+      )
+      assert.ok(installed)
+      assert.equal(installed.versions[0]?.file.sha256, digest)
+      assert.equal(installed.versions[0]?.expectedSha256, null)
+      assert.equal(installed.versions[0]?.sourceMetadata.license, undefined)
+    },
+    civitaiApi({ fileHash: null, fileSizeKB: bytes.length / 1024 }),
+  )
+})
+
+test('custom Anima with no CivitAI size cannot start a download', async () => {
+  const { downloader } = fakeDownloader()
+  await withHarness(
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const selected = await service.previewImport(modelUrl)
+      assert.equal(selected.kind, 'select-file')
+      if (selected.kind !== 'select-file') {
+        throw new Error('Expected file preview')
+      }
+      assert.equal(selected.totalAdditionalBytes, null)
+      await assert.rejects(coordinator.startInstall(selected.previewId, 701, false), {
+        code: 'ANIMA_SIZE_UNKNOWN',
+      })
+      assert.deepEqual(await coordinator.listJobs(), [])
+      assert.deepEqual(await repository.listInstalled(), [])
+    },
+    civitaiApi({ fileHash: 'f'.repeat(64), fileSizeKB: null }),
+  )
+})
+
+test('unknown CivitAI SHA requires companion terms and attributes Base license from actual bytes', async () => {
+  const calls: ModelDownloadInput[] = []
+  const downloader = {
+    async download(input: ModelDownloadInput): Promise<VerifiedStagedModelFile> {
+      calls.push(input)
+      if (input.source !== 'civitai') {
+        return stageSparse(input)
+      }
+      assert.equal(input.expectedSha256, null)
+      assert.equal(input.expectedBytes, null)
+      await mkdir(input.stagingDirectory, { recursive: true })
+      const stagingPath = path.join(input.stagingDirectory, `${randomUUID()}.part`)
+      const staged = await open(stagingPath, 'wx', 0o600)
+      try {
+        await staged.truncate(ANIMA_BASE_1_0_CHECKPOINT.sizeBytes)
+      } finally {
+        await staged.close()
+      }
+      return {
+        sha256: ANIMA_BASE_1_0_CHECKPOINT.sha256,
+        sizeBytes: ANIMA_BASE_1_0_CHECKPOINT.sizeBytes,
+        stagingPath,
+      }
+    },
+  } as ModelDownloader
+  await withHarness(
+    downloader,
+    async ({ coordinator, repository, root, service }) => {
+      const first = await service.previewImport(modelUrl)
+      assert.equal(first.kind, 'select-file')
+      if (first.kind !== 'select-file') {
+        throw new Error('Expected file preview')
+      }
+      assert.equal(first.files[0]?.sha256, null)
+      assert.equal(first.files[0]?.license, null)
+      await assert.rejects(coordinator.startInstall(first.previewId, 701, false), {
+        code: 'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+      })
+      assert.deepEqual(await repository.listInstalled(), [])
+      await assertNoPublishedFiles(root)
+
+      const second = await service.previewImport(modelUrl)
+      assert.equal(second.kind, 'select-file')
+      if (second.kind !== 'select-file') {
+        throw new Error('Expected file preview')
+      }
+      const accepted = await waitForTerminal(coordinator, () =>
+        coordinator.startInstall(second.previewId, 701, true),
+      )
+      assert.equal(accepted.status, 'completed', accepted.error?.message ?? '')
+      assert.deepEqual(
+        calls.map((call) => call.source),
+        ['civitai', 'anima-huggingface', 'anima-huggingface'],
+      )
+      const checkpoint = (await repository.listInstalled()).find(
+        (resource) => resource.type === 'checkpoint',
+      )
+      assert.ok(checkpoint)
+      assert.equal(checkpoint.versions[0]?.file.sha256, ANIMA_BASE_1_0_CHECKPOINT.sha256)
+      assert.equal(
+        checkpoint.versions[0]?.sourceMetadata.license,
+        'circlestone-labs-non-commercial-license',
+      )
+    },
+    civitaiApi({ fileHash: null }),
+  )
+})
+
 test('failed VAE download leaves neither checkpoint nor newly downloaded Qwen3 selectable', async () => {
   const { calls, downloader } = fakeDownloader(async (input) => {
     if (input.url === ANIMA_QWEN_IMAGE_VAE.url) {
@@ -365,6 +594,53 @@ test('failed VAE download leaves neither checkpoint nor newly downloaded Qwen3 s
     assert.deepEqual(await repository.listInstalled(), [])
     assert.deepEqual(await service.getCatalog(), [])
     await assertNoPublishedFiles(root)
+  })
+})
+
+test('late Anima install failure rolls back a prepared repair of an existing companion', async () => {
+  const { downloader } = fakeDownloader()
+  await withHarness(downloader, async ({ coordinator, repository, root, service }) => {
+    const existingId = await publishExistingCompanion(root, repository, ANIMA_QWEN_IMAGE_VAE)
+    const before = (await repository.listInstalled())
+      .flatMap((resource) => resource.versions)
+      .find((version) => version.id === existingId)
+    assert.ok(before)
+    const originalPublish = repository.publishVerifiedInstallation.bind(repository)
+    repository.publishVerifiedInstallation = async (input) => {
+      if (input.jobId) {
+        throw new Error('Late catalog publication failed')
+      }
+      return originalPublish(input)
+    }
+    const selected = await service.previewImport(modelUrl)
+    assert.equal(selected.kind, 'select-file')
+    if (selected.kind !== 'select-file') {
+      throw new Error('Expected file preview')
+    }
+    const job = await waitForTerminal(coordinator, () =>
+      coordinator.startInstall(selected.previewId, 701, true),
+    )
+    assert.equal(job.status, 'failed')
+    const installed = await repository.listInstalled()
+    assert.deepEqual(
+      installed.map((resource) => resource.type),
+      ['vae'],
+    )
+    const after = installed[0]?.versions[0]
+    assert.ok(after)
+    assert.equal(after.id, existingId)
+    assert.deepEqual(after.file, before.file)
+    let leftover: string[] = []
+    for (let attempt = 0; attempt < 100; attempt++) {
+      leftover = (await readdir(path.dirname(before.file.managedPath))).filter((name) =>
+        name.includes('-repair-'),
+      )
+      if (leftover.length === 0) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.deepEqual(leftover, [])
   })
 })
 

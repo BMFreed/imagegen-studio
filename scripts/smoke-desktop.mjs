@@ -679,6 +679,25 @@ try {
   )
   await expect(focusedManager.locator('.metadata-list dd').first()).toHaveText('v901')
   await expect(focusedManager.locator('.metadata-list dd').nth(1)).toContainText('v901')
+  const focusedPrediction = focusedManager.locator('.version-row--project .version-prediction')
+  await expect(focusedPrediction).toContainText('Assumed default; check the model author’s guidance')
+  await focusedPrediction.locator('.n-base-selection').click()
+  await window.getByText('V-prediction', { exact: true }).last().click()
+  await expect(focusedPrediction).toContainText('Chosen for this exact file')
+  const changedPredictionCatalog = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(changedPredictionCatalog.ok, true)
+  assert.equal(
+    changedPredictionCatalog.value
+      .find((resource) => resource.id === checkpointVersions.first.resourceId)
+      .versions.find((version) => version.id === checkpointVersions.first.versionId).predictionType,
+    'v_prediction',
+  )
+  assert.equal(
+    (await window.evaluate((id) => window.api.projects.open(id), projectId)).value.tab
+      .generationDraft.model.predictionType,
+    'epsilon',
+    'Library prediction edits must not rewrite the saved Project snapshot',
+  )
   await checkModelManagerLayout(application, window)
   const focusedVersionFits = await focusedManager
     .locator('.version-row--project')
@@ -722,6 +741,8 @@ try {
     beforeModelHandoff.generationDraft.model,
   )
   assert.equal(afterModelHandoff.dirty, beforeModelHandoff.dirty)
+  await projectRegion.getByText('Prediction: v_prediction', { exact: true }).waitFor()
+  await expect(projectRegion.getByRole('combobox', { name: /prediction type/i })).toHaveCount(0)
   await projectRegion.locator('[aria-label="Model version"]').click()
   await window.getByText('v902', { exact: true }).last().click()
   await waitForOpenTab(
@@ -730,6 +751,7 @@ try {
     (tab) => tab.generationDraft.model?.localVersionId === checkpointVersions.second.versionId,
     'The exact model version change did not reach the document',
   )
+  await projectRegion.getByText('Prediction: epsilon (assumed)', { exact: true }).waitFor()
   if (process.env.IMAGEGEN_SMOKE_PROJECT_MODEL_SCREENSHOT) {
     await projectRegion.getByRole('heading', { name: 'Generation', exact: true }).click()
     await delay(250)
@@ -742,7 +764,7 @@ try {
     selectedModelPackage.project.generationDraft.model?.localVersionId,
     checkpointVersions.second.versionId,
   )
-  assert.equal(selectedModelPackage.project.generationDraft.model?.predictionType, 'v_prediction')
+  assert.equal(selectedModelPackage.project.generationDraft.model?.predictionType, 'epsilon')
   await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
   await window.getByRole('tab', { name: 'Home' }).click()
   await window.getByRole('button', { name: `Open ${projectTitle}` }).click()

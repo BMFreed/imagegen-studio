@@ -526,6 +526,12 @@ const api: StudioApi = {
     saveToken: (token) => invokeModel(ipcChannels.models.saveToken, [token], isTokenStatus),
     setDefaultVersion: (resourceId, versionId) =>
       invokeModel(ipcChannels.models.setDefaultVersion, [resourceId, versionId], isVoid),
+    setPredictionType: (resourceId, versionId, predictionType) =>
+      invokeModel(
+        ipcChannels.models.setPredictionType,
+        [resourceId, versionId, predictionType],
+        isVoid,
+      ),
     startInstall: (previewId, fileId, acceptedAnimaLicense) =>
       invokeModel(
         ipcChannels.models.startInstall,

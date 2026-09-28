@@ -19,6 +19,7 @@ export const ipcChannels = {
     removeToken: 'models:remove-token',
     saveToken: 'models:save-token',
     setDefaultVersion: 'models:set-default-version',
+    setPredictionType: 'models:set-prediction-type',
     startInstall: 'models:start-install',
   },
   projects: {
@@ -234,6 +235,7 @@ export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler'
 
 export type BaseModelFamily = 'anima' | 'illustrious'
 export type ModelFileStatus = 'corrupt' | 'missing' | 'ready'
+export type IllustriousPredictionType = 'epsilon' | 'v_prediction'
 export interface ModelVersionView {
   baseModelFamily: BaseModelFamily | null
   civitaiFileId: number | null
@@ -247,6 +249,7 @@ export interface ModelVersionView {
   installedAt: string
   name: string
   predictionType: 'epsilon' | 'sample' | 'v_prediction' | null
+  predictionTypeSource?: 'default' | 'manifest' | 'not-applicable' | 'user'
   sha256: string
   trainedWords: string[]
 }
@@ -286,6 +289,7 @@ export type ModelImportPreview =
         alreadyInstalled: boolean
         fileId: number
         format: string | null
+        license: { name: string; summary: string; url: string } | null
         name: string
         needsRepair: boolean
         primary: boolean
@@ -339,6 +343,11 @@ export interface ModelApi {
   removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
   saveToken: (token: string) => Promise<ApiResult<CivitaiTokenStatus>>
   setDefaultVersion: (resourceId: string, versionId: string) => Promise<ApiResult<void>>
+  setPredictionType: (
+    resourceId: string,
+    versionId: string,
+    predictionType: IllustriousPredictionType,
+  ) => Promise<ApiResult<void>>
   startInstall: (
     previewId: string,
     fileId: number,

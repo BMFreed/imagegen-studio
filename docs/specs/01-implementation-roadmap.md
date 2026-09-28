@@ -56,11 +56,11 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Область | Есть в Electron из исходников | Осталось в принятом MVP | Фаза завершения |
 | --- | --- | --- | --- |
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance | Release runtime install/repair вместо заглушек, qualification | 2A, 5 |
-| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default, Anima dependency group; Project → Manager focus на выбранных checkpoint и версии; exact-hash compatibility manifest для официального Illustrious v0.1 | Hard remove с reference/job diagnostics; обратный и остальные resource handoff; Anima compatibility record, реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
+| Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default; поддерживаемые Illustrious/Anima `.safetensors`, custom Anima с закреплёнными Qwen3/VAE; единственный editable Illustrious prediction override по SHA-256+size с отмеченным `epsilon` default; Project → Manager focus и Electron smoke изменения библиотечного типа; условия закреплённых компонентов, размер выбранного файла и rollback поздней ошибки repair | Структурная проверка совместимости, условия custom checkpoint от источника, hard remove, остальные resource handoff, реальные model loads и release download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
 | Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate | Подключить staging recovery к Project UI, acceptance, provenance и accepted history | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
-| Generation draft | Exact checkpoint, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
+| Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
 | Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue repository с claim/cancel/failure; repository публикации первого проверенного candidate, seed cursor и restart reconciliation; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, queue processor/dispatch и UI actions, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
@@ -95,8 +95,9 @@ Manager и presets. Перед production renderer/main-process реализац
 Основные архитектурные решения уже находятся в [реестре](../open-questions.md#уже-закрытые-решения):
 Linux/NVIDIA, Illustrious и Anima, единый Invoke-like inference pipeline внутри
 MVP, LoRA, worker-created previews, `safeStorage`, очередь и lifecycle удаления.
-Model Manager ставит обязательные Anima Qwen3/VAE components вместе с моделью,
-показывая суммарный объём до скачивания. Удалённые пресеты доступны для
+Model Manager показывает суммарный объём Anima checkpoint и закреплённых
+Qwen3/VAE до скачивания; установка группы не доказывает структурную
+совместимость для Generate. Удалённые пресеты доступны для
 восстановления 30 дней, затем автоматически очищаются. Блокирующих продуктовых
 решений в принятом функциональном MVP scope сейчас нет. Для первого релиза
 приняты проверка обновлений Electron-приложения только по нажатию
@@ -195,20 +196,24 @@ self-test и реальной установки ещё нет. Home показ�
 - Настройка CivitAI API token.
 - Импорт модели по CivitAI URL.
 - Получение metadata и preview перед скачиванием.
-- Установка Anima checkpoint вместе с проверенными Qwen3 encoder и VAE после
-  показа полного объёма всех обязательных файлов, отдельной лицензии Anima и
-  одного подтверждения. ImageGen Studio остаётся бесплатным open-source
-  приложением, а базовые веса Anima поддерживаются только для некоммерческого
-  использования вне production; веса не входят в дистрибутив приложения.
+- Любой поддерживаемый CivitAI Illustrious/Anima `.safetensors` checkpoint
+  проходит preview-first установку. Каждый custom Anima checkpoint, закреплённые
+  Qwen3 encoder и VAE предлагаются одной подтверждаемой группой; это не
+  доказывает структурную совместимость checkpoint для Generate. Условия весов
+  показываются для каждого источника группы; базовые веса Anima имеют отдельную
+  некоммерческую лицензию и не входят в дистрибутив приложения.
 - model install/download pipeline с временным файлом и очередью внутри Model Manager, без отдельной Download Manager surface.
 - Проверка size/hash, если данные доступны.
-- Хранение model compatibility metadata: `baseModelFamily` определяется из
-  источника; для Illustrious/SDXL `predictionType` остаётся nullable, пока для
-  точного SHA-256 файла нет проверенного app-owned манифеста. Форма весов и
-  успешная загрузка worker'ом не доказывают training objective; неизвестное
-  значение не подменяется предположением `epsilon`. Anima требует своей
-  exact-hash записи rectified-flow capability. Установить неподтверждённый
-  файл можно, запускать inference с ним в первом релизе нельзя.
+- Хранение source-owned metadata отдельно от пользовательского Illustrious
+  `predictionType` override по точным SHA-256 и размеру файла. Единственный
+  editable control находится в Model Manager. Если значение не подтверждено,
+  `epsilon` предлагается там как редактируемое предположение; Project показывает
+  текущий тип read-only. `.igs` non-null и старый `null` — advisory snapshots:
+  Prepare повторно хеширует файл и берёт текущий effective type без переписывания
+  `.igs`. Если override сменился до materialization, требуется новый Prepare.
+  SHA-256 остаётся identity и
+  integrity check, не allowlist. Anima использует отдельные rectified-flow
+  capabilities и закреплённые Qwen3/VAE, без SDXL prediction mode.
 - Запись Model / ModelVersion / LocalModelFile в SQLite.
 - Обнаружение доступных CivitAI-версий и явный `Update available` state.
 - Preview и установка новой exact version рядом с уже установленными версиями.
@@ -224,8 +229,10 @@ self-test и реальной установки ещё нет. Home показ�
   что смена default не переписывает существующие exact references.
 
 **Выходная проверка:** модель можно установить локально, увидеть после restart,
-безопасно добавить другую версию и выбрать default. Отмена, ошибка проверки и
-недостающий Anima component не оставляют selectable установку. Существующие
+безопасно добавить другую версию и выбрать default. Отмена и ошибка проверки
+файла не оставляют установленную версию; custom Anima checkpoint публикуется
+вместе с проверенными закреплёнными Qwen3/VAE, но Generate отдельно проверяет
+структуру checkpoint и компонентов. Существующие
 Project/Preset/provenance refs не переписываются; их сквозная проверка с реальными
 файлами — в фазах 2–3. PP-004 остаётся неполным до worker/load и Project picker.
 Если Linux `safeStorage` даёт `basic_text` или secure provider недоступен,
@@ -347,11 +354,14 @@ generation DTO и source map из документационного трека.
 
 - Расширить worker до долгоживущего inference process. Main process готовит
   immutable input и владеет файлами/очередью; worker выполняет model loading,
-  conditioning и denoising. Реально загрузить установленный в фазе 1 exact
-  Illustrious checkpoint и показывать несовместимость, которую metadata не
-  могла доказать при установке. К inference допускаются лишь checkpoints с
-  проверенным по точному SHA-256 app-owned манифестом `predictionType`; worker
-  также проверяет архитектуру/загрузку и не выводит training objective из весов.
+  conditioning и denoising. Реально загрузить установленный exact Illustrious
+  checkpoint и показывать несовместимость, которую metadata не могла доказать
+  при установке. До enqueue main повторно проверяет SHA-256 выбранного файла,
+  структуру/компоненты и совместимость worker; при Prepare берёт current
+  Illustrious `predictionType` из Model Manager и замораживает его. Смена override
+  до materialization прерывает подготовку и требует повторного Prepare.
+  Наличие SHA-256 в app-owned manifest не является
+  условием Generate; worker обязан использовать выбранный тип без silent fallback.
 - SQLite-backed Queue Manager в main process, frozen job payloads и
   progress/done/error events. Cancel pending/running, retry failed/canceled и
   delete/prune terminal rows не затрагивают валидный staging manifest.
@@ -389,9 +399,10 @@ generation DTO и source map из документационного трека.
 `derivatives-only` worker распознаёт его, но отвечает `INFERENCE_UNAVAILABLE`;
 этот scratch lease не является долговечным input или завершённой генерацией.
 
-**Durable enqueue checkpoint:** [точный manifest](../engineering/phase-2b-model-compatibility-manifest.md)
+**Исторический durable enqueue checkpoint:** [точный manifest](../engineering/phase-2b-model-compatibility-manifest.md)
 квалифицирует один официальный Illustrious v0.1 checkpoint по вычисленным
-SHA-256/размеру и авторскому prediction type. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
+SHA-256/размеру и авторскому prediction type. Этот allowlist gate требуется
+заменить согласно текущему контракту. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
 сохраняют один замороженный Illustrious `txt2img` как app-owned input и
 `pending` row; Electron startup отменяет старые `pending`/`running` rows и
 сверяет orphan input directories.
@@ -433,10 +444,12 @@ LoRA для обеих семейств.
   textual-inversion embeddings через текстовый prompt + sidecar refs и
   `clipSkip` согласно capability matrix: неподдерживаемая моделью опция
   отвергается до enqueue, а не игнорируется.
-- Для Anima подготовить отдельную проверенную запись exact checkpoint в
-  compatibility manifest с подтверждённой rectified-flow архитектурой и
-  capabilities; первая Illustrious-запись и её SDXL `predictionType` не
-  квалифицируют Anima по семейству или имени.
+- Для Anima реализовать отдельный loader и проверку rectified-flow структуры,
+  точной совместимости Qwen3 encoder/VAE и family capabilities перед enqueue.
+  Установка любого поддерживаемого CivitAI Anima `.safetensors` checkpoint с
+  закреплёнными Qwen3/VAE не доказывает их структурную совместимость; если
+  проверка не пройдена, Generate объясняет причину и блокируется.
+  Illustrious SDXL `predictionType` к Anima не применяется.
 - Валидировать exact model/component/LoRA refs и семейные capabilities до
   enqueue; unsupported input блокируется с понятным сообщением, без silent
   fallback. Frozen job сохраняет все фактически использованные operational
@@ -645,7 +658,8 @@ MVP workflows, сохранить/перенести проект, восста�
 ## Первый вертикальный срез
 
 Первый исполнимый срез соответствует фазам 0–2C: Linux/NVIDIA runtime,
-установка Illustrious и Anima с обязательными компонентами, LoRA для обоих,
+установка Illustrious и Anima с закреплёнными Qwen3/VAE, проверка структуры
+и компонентов перед Anima Generate, LoRA для обоих,
 сохраняемый `.igs` Project с базовым Canvas, automatic `txt2img`/`img2img`,
 temporary staging и explicit Add as Raster Layer с provenance/history.
 Preset create/apply, Smart Patch, regional controls и `inpaint`/`outpaint`

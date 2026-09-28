@@ -146,7 +146,17 @@ Untagged CMYK worker не импортирует. Исходный профил�
 capacity tests до релиза; лимит генерации не выводится из этих потолков и не
 копируется из mock UI.
 
-Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, nullable `predictionType`, display name/version и отсутствующий-resource status после проверки. Старое `null` в Project reference не меняется скрыто при появлении точного compatibility manifest; подтверждённое значение фиксируется в operational job/provenance.
+Модели, LoRA, VAE и другие большие reusable resources не встраиваются в `.igs` по умолчанию. Project file хранит ссылки и compatibility metadata: local resource id, file hash, CivitAI ids, base model family, nullable Illustrious `predictionType`, display name/version и отсутствующий-resource status после проверки. Поле `predictionType` — справочный snapshot момента выбора или старого сохранения, а не настройка Project: даже сохранённое non-null значение не определяет будущий inference. Единственный редактируемый Illustrious type находится в Model Manager по точным SHA-256 и размеру. Prepare повторно хеширует файл, берёт текущий effective type (при отсутствии известного значения — помеченное `epsilon`) и не переписывает `.igs` независимо от сохранённого non-null или `null`; frozen job и accepted provenance фиксируют фактически использованный тип. Изменение override после Prepare и до materialization прерывает старую подготовку.
+
+Model Manager хранит пользовательский Illustrious override отдельно от
+неизменяемой CivitAI source metadata и явно известного значения; override
+привязан к точным SHA-256 и размеру файла. Effective type имеет основание:
+override, известное значение или default-предположение.
+`predictionType` в `.igs` — advisory snapshot; Project показывает read-only
+текущий тип из библиотеки, а не сохранённый snapshot. Для Prepare authoritative
+только текущий effective type точного проверенного файла. Для Anima вместо SDXL типа будущие
+frozen jobs/provenance фиксируют точные component references и результат
+структурной проверки; нынешняя `.igs` v1 их ещё не сериализует.
 
 `preview/thumbnail.webp` и `preview/merged.png` внутри `.igs` являются переносимыми preview-артефактами проекта. Они едут вместе с project file и являются источником истины для project preview.
 На бесконечном Project Canvas их конечный rasterization rect определяется по
@@ -648,8 +658,8 @@ interface PresetModelRef extends PresetResourceRef {
   predictionType: 'epsilon' | 'v_prediction' | 'sample' | null
 }
 
-// A preset may retain an unknown model mode; Apply can restore the selection,
-// while Generate still requires an exact file in its verified family manifest.
+// A preset may retain a null or older non-null Illustrious snapshot; Apply
+// preserves it, while Prepare uses the current exact-file library type.
 
 interface PresetLora {
   enabled: boolean
@@ -755,7 +765,12 @@ interface PresetApplicationDraft {
   `negativePrompt` включает plain-text prompt и соответствующий sidecar
   `embeddingRefs`; refs не являются токенами текста или UI chips.
 - При нормализации workflow `textToImage` удаляет `denoisingStrength`. Возврат к другому workflow не создаёт поле автоматически.
-- `predictionType` хранит scheduler prediction mode модели. Доменный label `v-pred` маппится на worker/storage token `v_prediction`; это compatibility metadata, а не user-facing style setting.
+- Illustrious `predictionType` в Preset хранит только advisory snapshot;
+  фактический scheduler mode Prepare берёт из текущей настройки точного файла
+  в Model Manager. `epsilon` без подтверждённого значения является видимым,
+  редактируемым там default, не доказанным свойством весов.
+  Доменный label `v-pred` маппится на worker/storage token `v_prediction`.
+  Anima не получает SDXL prediction mode.
 - Optional `missing` — runtime/catalog resolution state в текущем prototype DTO. Production mapper может вычислять его по Model Manager registry, но должен сохранять human-readable `id`/`name`/`version` reference metadata, чтобы preset оставался понятным при отсутствии файла.
 - `PresetResourceRef.id` является стабильным local resource identity и разрешается через Model Manager records, где остаются CivitAI ids/hash/base-family metadata. Если preset должен копировать дополнительные identifiers для offline diagnostics, они добавляются в доменный ref и runtime schema явно, а не скрываются в несовместимой storage-only форме.
 - `has_loras`, `primary_model_resource_id` и похожие derived-поля в MVP не добавляются.
@@ -815,16 +830,14 @@ ImageGen Studio/
 - `current-runtime.json` заменяется атомарно только после успешного staging self-test. Failed install не изменяет active runtime и не удаляет previous known-good runtime.
 - Модель считается установленной только после успешного скачивания, проверки и записи в SQLite.
 - Скачивание идёт во временный файл, затем выполняется атомарный перенос в managed directory.
-- Anima requires its Qwen3 encoder and VAE alongside the chosen checkpoint.
-  The install preview lists all required files and the total additional
-  download size before consent. A checkpoint is not published as selectable
-  until the checkpoint and all required companions are verified and their
-  relationships are recorded; an interrupted/failed companion download leaves
-  no partially installed selectable Anima model. Existing verified companions
-  may be reused and are not counted as new download bytes. Shared companion
-  files are not removed while another installed model still references them. If
-  a companion later goes missing, the dependent checkpoint becomes unavailable
-  for generation until the exact dependency is repaired.
+- A supported CivitAI Anima `.safetensors` checkpoint is installed with pinned
+  Qwen3 encoder/VAE. The install preview lists all required files and additional
+  bytes before consent, and interrupted/failed group installation publishes no
+  partial group. The paired components alone do not prove structural
+  compatibility; Generate checks checkpoint structure and component compatibility.
+  Verified companions may be reused, are not counted as new download bytes and
+  remain while another model references them. A missing exact companion blocks
+  generation until repair.
 - CivitAI model identity и exact model version/file identity хранятся отдельно;
   несколько version records одной модели могут ссылаться на независимые managed
   files и существовать одновременно.
@@ -833,7 +846,9 @@ ImageGen Studio/
   queue payloads или accepted-result provenance.
 - Worker completion creates a temporary candidate, not a persistent project result.
 - Generation provenance is created only when a candidate is accepted and never changes afterward.
-- Generation provenance stores the actual `predictionType` and actual seed so the accepted result can be reproduced with the correct scheduler mode.
+- Generation provenance stores the actual Illustrious `predictionType` and
+  actual seed so the accepted result can be reproduced with the scheduler mode
+  used by its frozen job; Anima records its separate flow and exact components.
 - Provenance comparison is read-only derived state. Opening or closing it cannot
   mutate provenance or current Project state, and the MVP popover exposes no
   Apply/Recall/Restore action.

@@ -39,7 +39,9 @@ Provenance deliberately contains three data groups with different product roles.
 This is the portable, user-comparable configuration that may seed a preset:
 
 - model identity and exact version/hash metadata;
-- prediction type metadata;
+- for Illustrious, the actual prediction type frozen for the job, even if it
+  began as an editable `epsilon` default; Anima records its separate flow and
+  exact compatible components instead of an SDXL prediction type;
 - frozen positive and negative plain text plus their embedding resource refs;
 - concrete expanded dynamic prompt where relevant;
 - actual worker-used seed, requested Seed policy and dynamic seed behavior;

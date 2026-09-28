@@ -1,5 +1,12 @@
 # Phase 2B: Illustrious txt2img request boundary
 
+> **Historical implementation checkpoint.** The exact-hash manifest gate
+> described below was superseded by the current
+> [managed model-library contract](../contracts/managed-model-library.md):
+> a supported checkpoint can be installed without a hash allowlist, and Prepare
+> resolves the effective prediction type before freezing the job. The original
+> boundary evidence remains recorded here.
+
 Base: clean `06d7e02`. Risk: medium. This slice changes the main-to-worker
 request contract and ephemeral scratch files, but does not enqueue a job,
 publish a candidate, mutate `.igs`/SQLite or enable inference. Expected behavior

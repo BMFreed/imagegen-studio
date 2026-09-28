@@ -3,6 +3,7 @@ import type {
   ApiResult,
   BaseModelFamily,
   CivitaiTokenStatus,
+  IllustriousPredictionType,
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
@@ -76,6 +77,12 @@ const sortChoices = [
   { label: 'Recently installed', value: 'recent' },
   { label: 'Size', value: 'size' },
 ]
+const predictionChoices = [
+  { label: 'Epsilon', value: 'epsilon' },
+  { label: 'V-prediction', value: 'v_prediction' },
+]
+const animaBaseLicenseUrl =
+  'https://huggingface.co/circlestone-labs/Anima/blob/f973fc41ec7545364ac9776c2440285f43ff2a30/LICENSE.md'
 
 const catalog = ref<ModelCatalogItem[]>([])
 const jobs = ref<ModelInstallJobView[]>([])
@@ -92,7 +99,9 @@ const queueView = ref(false)
 const navigationPaneSize = ref<number | string>('220px')
 const resourcePaneSize = ref<number | string>('calc(100% - 400px)')
 const loading = ref(false)
-const busy = ref<'cancel' | 'default' | 'install' | 'preview' | 'token' | 'updates' | null>(null)
+const busy = ref<
+  'cancel' | 'default' | 'install' | 'prediction' | 'preview' | 'token' | 'updates' | null
+>(null)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const importError = ref<string | null>(null)
@@ -114,14 +123,18 @@ const filePreview = computed(() => (preview.value?.kind === 'select-file' ? prev
 const selectedFile = computed(() =>
   filePreview.value?.files.find((file) => file.fileId === selectedFileId.value),
 )
+const selectedFileLicense = computed(() => selectedFile.value?.license ?? null)
+const conditionalAnimaLicense = computed(
+  () =>
+    filePreview.value?.baseModelFamily === 'anima' &&
+    filePreview.value.resourceType === 'checkpoint' &&
+    selectedFile.value?.sha256 === null,
+)
 const selectedAdditionalBytes = computed(() => {
   const selection = filePreview.value
   const file = selectedFile.value
   if (!selection || !file) {
     return null
-  }
-  if (file.primary) {
-    return selection.totalAdditionalBytes
   }
   if (file.sizeEstimateBytes === null) {
     return null
@@ -141,15 +154,13 @@ const canInstall = computed(
     selectedFile.value !== undefined &&
     !selectedFile.value.alreadyInstalled &&
     (filePreview.value.baseModelFamily !== 'anima' ||
-      (filePreview.value.license !== null &&
-        (filePreview.value.resourceType !== 'checkpoint' ||
-          selectedAdditionalBytes.value !== null) &&
-        (filePreview.value.resourceType !== 'checkpoint' ||
-          (filePreview.value.dependencies.some(
-            (dependency) => dependency.role === 'qwen3_encoder',
-          ) &&
-            filePreview.value.dependencies.some((dependency) => dependency.role === 'vae'))) &&
-        acceptedAnimaLicense.value)),
+      filePreview.value.resourceType !== 'checkpoint' ||
+      acceptedAnimaLicense.value) &&
+    (filePreview.value.baseModelFamily !== 'anima' ||
+      filePreview.value.resourceType !== 'checkpoint' ||
+      (selectedAdditionalBytes.value !== null &&
+        filePreview.value.dependencies.some((dependency) => dependency.role === 'qwen3_encoder') &&
+        filePreview.value.dependencies.some((dependency) => dependency.role === 'vae'))),
 )
 const hasActiveFilters = computed(
   () =>
@@ -227,6 +238,23 @@ function importFileLabel(
         ? 'Reuse local file'
         : null
   return `${file.name} · ${formatBytes(file.sizeEstimateBytes)}${status ? ` · ${status}` : ''}`
+}
+
+function predictionSourceLabel(version: ModelVersionView): string {
+  switch (version.predictionTypeSource) {
+    case 'default': {
+      return 'Assumed default; check the model author’s guidance'
+    }
+    case 'manifest': {
+      return 'Verified for this exact file'
+    }
+    case 'user': {
+      return 'Chosen for this exact file'
+    }
+    default: {
+      return 'Check the model author’s guidance'
+    }
+  }
 }
 
 function versionFor(resource: ModelCatalogItem): ModelVersionView | null {
@@ -656,6 +684,38 @@ async function setDefault(resourceId: string, versionId: string) {
   busy.value = null
 }
 
+async function setPredictionType(
+  resourceId: string,
+  versionId: string,
+  predictionType: IllustriousPredictionType,
+) {
+  if (busy.value) {
+    return
+  }
+  busy.value = 'prediction'
+  error.value = null
+  const changed = await runApi(
+    () => requireApi().setPredictionType(resourceId, versionId, predictionType),
+    () => {
+      notice.value = 'Prediction type saved for this exact checkpoint file.'
+    },
+  )
+  if (changed) {
+    await loadCatalog()
+  }
+  busy.value = null
+}
+
+function selectPredictionType(
+  resourceId: string,
+  versionId: string,
+  value: number | string | null,
+) {
+  if (value === 'epsilon' || value === 'v_prediction') {
+    void setPredictionType(resourceId, versionId, value)
+  }
+}
+
 async function checkUpdates(resource: ModelCatalogItem) {
   if (resource.modelId === null || busy.value) {
     return
@@ -762,6 +822,10 @@ watch(
   },
   { flush: 'sync' },
 )
+
+watch(selectedFileId, () => {
+  acceptedAnimaLicense.value = false
+})
 
 onMounted(() => {
   try {
@@ -1217,6 +1281,28 @@ onBeforeUnmount(() => {
                             <span>
                               {{ formatBytes(version.fileSizeBytes) }} · {{ version.fileStatus }}
                             </span>
+                            <div
+                              v-if="
+                                selectedResource.resourceType === 'checkpoint' &&
+                                version.baseModelFamily === 'illustrious'
+                              "
+                              class="version-prediction"
+                            >
+                              <label :for="`prediction-${version.id}`">Prediction type</label>
+                              <NSelect
+                                :id="`prediction-${version.id}`"
+                                :aria-label="`Prediction type for ${version.name}`"
+                                :disabled="busy !== null || version.fileStatus !== 'ready'"
+                                :options="predictionChoices"
+                                size="small"
+                                :value="version.predictionType"
+                                @update:value="
+                                  (value) =>
+                                    selectPredictionType(selectedResource!.id, version.id, value)
+                                "
+                              />
+                              <small>{{ predictionSourceLabel(version) }}</small>
+                            </div>
                             <span v-if="version.dependencyIssues.length" class="dependency-warning">
                               Missing: {{ version.dependencyIssues.join(', ') }}
                             </span>
@@ -1518,11 +1604,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <strong class="total-size">
-            {{
-              filePreview.baseModelFamily === 'anima'
-                ? 'Additional download'
-                : 'Estimated additional download'
-            }}: {{ formatBytes(selectedAdditionalBytes) }}
+            Estimated additional download: {{ formatBytes(selectedAdditionalBytes) }}
           </strong>
           <NAlert
             v-if="
@@ -1537,32 +1619,66 @@ onBeforeUnmount(() => {
             The full Anima download and required files must be known before installation.
           </NAlert>
           <NAlert
-            v-if="filePreview.baseModelFamily === 'anima'"
+            v-if="selectedFileLicense"
             key="anima-license"
             title="Anima use restriction"
             type="warning"
           >
-            {{
-              filePreview.license?.summary ??
-              'License details are unavailable. Installation cannot proceed.'
-            }}
+            {{ selectedFileLicense.summary }}
             <NButton
-              v-if="filePreview.license"
               class="license-link"
               size="small"
               text
               type="primary"
-              @click="openSource(filePreview.license.url)"
+              @click="openSource(selectedFileLicense.url)"
             >
-              Read {{ filePreview.license.name }}
+              Read {{ selectedFileLicense.name }}
               <NIcon :component="ExternalLinkIcon" />
             </NButton>
-            <NCheckbox
-              v-model:checked="acceptedAnimaLicense"
-              class="license-acknowledgment"
-              :disabled="!filePreview.license"
+          </NAlert>
+          <NAlert
+            v-else-if="conditionalAnimaLicense"
+            key="anima-conditional-license"
+            title="Source hash unavailable"
+            type="info"
+          >
+            CivitAI did not provide a SHA-256 hash for this file. If its downloaded bytes match
+            CircleStone Anima Base, the Base license also applies.
+            <NButton
+              class="license-link"
+              size="small"
+              text
+              type="primary"
+              @click="openSource(animaBaseLicenseUrl)"
             >
-              I understand Anima is only for non-commercial, non-production use.
+              Read CircleStone Anima Base license
+              <NIcon :component="ExternalLinkIcon" />
+            </NButton>
+          </NAlert>
+          <NAlert
+            v-if="
+              filePreview.baseModelFamily === 'anima' && filePreview.resourceType === 'checkpoint'
+            "
+            key="anima-companion-license"
+            title="Required component terms"
+            type="warning"
+          >
+            The Qwen3 encoder and VAE installed or reused with this checkpoint are CircleStone files
+            for non-commercial, non-production use. A custom checkpoint may have separate terms. If
+            the selected file is the official Base checkpoint, the same CircleStone terms apply to
+            it too.
+            <NButton
+              class="license-link"
+              size="small"
+              text
+              type="primary"
+              @click="openSource(animaBaseLicenseUrl)"
+            >
+              Read CircleStone license
+              <NIcon :component="ExternalLinkIcon" />
+            </NButton>
+            <NCheckbox v-model:checked="acceptedAnimaLicense" class="license-acknowledgment">
+              I understand these component terms and the Base terms if applicable.
             </NCheckbox>
           </NAlert>
           <NButton class="source-link" size="small" text @click="openPreviewSource">
@@ -1949,6 +2065,20 @@ onBeforeUnmount(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.version-prediction {
+  display: grid;
+  gap: 4px;
+  width: min(220px, 100%);
+  margin-top: 8px;
+}
+.version-prediction label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.version-prediction small {
+  color: var(--app-text-muted);
+  line-height: 1.3;
 }
 .version-actions {
   display: flex;

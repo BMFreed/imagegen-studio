@@ -56,11 +56,13 @@
 ## Уже закрытые решения
 
 - ImageGen Studio всегда остаётся бесплатным open-source приложением. Это не
-  меняет лицензию весов Anima: базовый checkpoint распространяется по
+  меняет лицензию весов Anima Base 1.0: базовый checkpoint распространяется по
   [CircleStone Non-Commercial License](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md)
   и поддерживается у нас только для некоммерческого использования вне
   production. Веса не входят в дистрибутив приложения; перед установкой
   пользователь видит источник, ограничение и ссылку на условия модели.
+  Условия произвольного CivitAI derivative показываются по его источнику;
+  лицензия Base 1.0 не присваивается ему только по имени семейства.
 - Setup/status/repair Python runtime встроены в основное окно ImageGen Studio;
   отдельного приложения или окна лаунчера нет. Код Invoke launcher из
   `/home/user/Work/sources/launcher/` можно использовать как reference для
@@ -168,7 +170,21 @@
 - Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
 - Preset resource diagnostics: PP-006 требует visible warning до mutation и hard block только для выбранных секций с missing model/LoRA/VAE/embedding. Standalone и Project-integrated mock Apply уже показывают текстовую диагностику и учитывают nested resources. Production resource registry, persistent storage и handoff `Open in Models` остаются незавершёнными; mock не доказывает готовность PP-006 в приложении.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
-- Model compatibility: для Illustrious/SDXL `predictionType` (`epsilon`, `v_prediction`, `sample`) берётся только из проверенного app-owned манифеста по exact checkpoint SHA-256, передаётся worker'у и сохраняется в accepted-result provenance. CivitAI metadata и эвристика по весам не считаются подтверждением. Anima требует отдельной exact-hash записи rectified-flow capability, а не SDXL prediction mode. Отсутствие подходящей записи блокирует Generate, но не установку модели.
+- Model compatibility: любой поддерживаемый CivitAI Illustrious/Anima
+  `.safetensors` checkpoint можно установить. Для нового Illustrious выбора без
+  явно известного значения предлагается редактируемый `epsilon` default,
+  относящийся к точным SHA-256 и размеру и помеченный как предположение;
+  пользователь может выбрать `v_prediction`. CivitAI metadata и форма весов не подтверждают
+  training objective. SHA-256 остаётся для identity/integrity, но не является
+  allowlist. Generate проверяет структуру, обязательные совместимые компоненты
+  и worker capability; Anima устанавливается с закреплёнными Qwen3/VAE, но
+  проходит отдельную structural check в rectified-flow path без SDXL prediction
+  mode. Editable control есть только в Model Manager; Project показывает
+  текущий type read-only. Сохранённое `.igs` поле — advisory snapshot, будь то
+  non-null или старый `null`: Prepare повторно хеширует точный файл и берёт
+  текущий effective type (по умолчанию `epsilon`) без переписывания `.igs`.
+  Изменение override до materialization требует повторного Prepare. Frozen jobs
+  и immutable provenance сохраняют фактически использованный тип.
 - Model versioning: MVP обнаруживает доступные CivitAI-версии, устанавливает
   новую exact version рядом со старой, позволяет явно выбрать default для новых
   selections и никогда не переписывает существующие Projects, Presets или

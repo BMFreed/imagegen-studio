@@ -865,6 +865,21 @@ if (!gotInstanceLock) {
         },
       )
       registerModelHandler(
+        ipcChannels.models.setPredictionType,
+        (args) =>
+          args.length === 3 &&
+          typeof args[0] === 'string' &&
+          typeof args[1] === 'string' &&
+          (args[2] === 'epsilon' || args[2] === 'v_prediction'),
+        async (resourceId, versionId, predictionType) => {
+          await modelService.setPredictionType(
+            resourceId as string,
+            versionId as string,
+            predictionType as 'epsilon' | 'v_prediction',
+          )
+        },
+      )
+      registerModelHandler(
         ipcChannels.models.checkUpdates,
         (args) => args.length === 1 && Number.isSafeInteger(args[0]),
         (modelId) => modelService.checkUpdates(modelId as number),

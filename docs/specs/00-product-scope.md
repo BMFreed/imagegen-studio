@@ -25,7 +25,7 @@ Reference-first подход не означает перенос всей ин�
 отделён от Python runtime и моделей. Поведение описано в
 [Application Updates](../features/application-updates.md).
 
-Для SDXL/Illustrious-like checkpoint'ов `.safetensors` остаётся исходным пользовательским файлом: worker загружает его по InvokeAI-пути через Diffusers single-file loading и кэширует загруженные модели/components в RAM/VRAM. Скрытой постоянной конвертации в diffusers-директорию нет. Anima требует совместимые Qwen3 text encoder и VAE: установка показывает полный объём загрузки модели **вместе** с обязательными компонентами и устанавливает их как один набор зависимостей.
+Для SDXL/Illustrious-like checkpoint'ов `.safetensors` остаётся исходным пользовательским файлом: worker загружает его по InvokeAI-пути через Diffusers single-file loading и кэширует загруженные модели/components в RAM/VRAM. Скрытой постоянной конвертации в diffusers-директорию нет. Каждый поддерживаемый CivitAI Anima `.safetensors` checkpoint устанавливается с закреплёнными Qwen3 text encoder и VAE: preview показывает полный объём загрузки группы, которая публикуется как один набор зависимостей. Наличие этих компонентов само по себе не доказывает структурную совместимость checkpoint для Generate.
 
 Regional text guidance входит в MVP для обоих семейств. Regional reference images доступны только для Illustrious/SDXL; Invoke-style inverse-mask auto-negative не входит ни для одного семейства. Корректная пространственная семантика regional negative text на Anima остаётся обязательным implementation validation gate: до проверки реальной генерацией worker не может молча трактовать его как глобальный negative prompt.
 

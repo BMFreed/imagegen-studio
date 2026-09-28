@@ -885,7 +885,7 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
         good.published.versionId,
       )
       assert.equal(exact.fileSha256, sha256(good.bytes))
-      assert.equal(exact.predictionType, null)
+      assert.equal(exact.predictionType, 'epsilon')
       await assert.rejects(
         service.resolveGenerationCheckpoint(good.published.resourceId, lora.published.versionId),
         { code: 'MODEL_VERSION_UNAVAILABLE' },
@@ -906,7 +906,7 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
           unpinnedAnima.published.resourceId,
           unpinnedAnima.published.versionId,
         ),
-        { code: 'ANIMA_UNSUPPORTED_CHECKPOINT' },
+        { code: 'ANIMA_DEPENDENCY_UNAVAILABLE' },
       )
       await writeFile(good.managedPath, Buffer.concat([good.bytes, Buffer.from('x')]))
       const wrongSize = (await service.getCatalog()).find(
@@ -1052,7 +1052,7 @@ for (const kind of ['checkpoint', 'lora'] as const) {
   })
 }
 
-test('repair replaces a same-size corrupted file and preserves its resource and version identity', async () => {
+test('repair atomically replaces a same-size corrupted file and preserves its resource and version identity', async () => {
   const bytes = Buffer.from('checkpoint bytes with intact size')
   const corruptBytes = Buffer.alloc(bytes.length, 0x58)
   const requests: { authorization: string | null; pathname: string }[] = []
@@ -1107,8 +1107,11 @@ test('repair replaces a same-size corrupted file and preserves its resource and 
       assert.equal(after.versions.length, 1)
       assert.equal(after.versions[0]?.id, originalVersion.id)
       assert.equal(after.versions[0]?.file.id, originalVersion.file.id)
-      assert.equal(after.versions[0]?.file.managedPath, originalVersion.file.managedPath)
-      assert.deepEqual(await readFile(originalVersion.file.managedPath), bytes)
+      const repairedFile = after.versions[0]?.file
+      assert.ok(repairedFile)
+      assert.notEqual(repairedFile.managedPath, originalVersion.file.managedPath)
+      assert.deepEqual(await readFile(repairedFile.managedPath), bytes)
+      await assert.rejects(stat(originalVersion.file.managedPath), { code: 'ENOENT' })
       assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'ready')
     },
   )
@@ -1316,7 +1319,7 @@ test('cancel after observed download progress removes the partial file and never
   )
 })
 
-test('Anima preview discloses its license and dependencies, and install rejects missing acknowledgement', async () => {
+test('mixed Anima file preview attributes Base license by exact file and discloses companions', async () => {
   const requests: { authorization: string | null; pathname: string }[] = []
   let downloadCount = 0
   const downloader = new ModelDownloader({
@@ -1337,6 +1340,8 @@ test('Anima preview discloses its license and dependencies, and install rejects 
       const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
       assert.equal(preview.baseModelFamily, 'anima')
       assert.match(preview.license?.summary ?? '', /non-commercial, non-production/)
+      assert.equal(preview.files[0]?.license?.name, 'CircleStone Non-Commercial License')
+      assert.equal(preview.files[1]?.license, null)
       assert.equal(preview.totalAdditionalBytes, ANIMA_BASE_1_0_TOTAL_BYTES)
       assert.deepEqual(
         preview.dependencies.map((dependency) => dependency.role),
@@ -1344,7 +1349,7 @@ test('Anima preview discloses its license and dependencies, and install rejects 
       )
       assert.deepEqual(
         preview.files.map((file) => file.fileId),
-        [701],
+        [701, 702],
       )
       await assert.rejects(coordinator.startInstall(preview.previewId, 701, false), {
         code: 'ANIMA_LICENSE_NOT_ACKNOWLEDGED',

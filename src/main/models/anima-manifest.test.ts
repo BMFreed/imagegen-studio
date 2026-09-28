@@ -10,7 +10,7 @@ import {
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
   ANIMA_SOURCE_LICENSE,
-  resolveAnimaDependencies,
+  isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
 
 test('Anima Base 1.0 manifest pins exact source files and their integrity metadata', () => {
@@ -60,25 +60,11 @@ test('Anima Base 1.0 manifest pins exact source files and their integrity metada
   assert.equal(ANIMA_BASE_1_0_TOTAL_BYTES, 5_628_159_670)
 })
 
-test('dependency mapping accepts only the verified Base 1.0 checkpoint hash', () => {
-  const known = resolveAnimaDependencies(ANIMA_BASE_1_0_CHECKPOINT.sha256)
-  assert.equal(known.supported, true)
-  if (known.supported) {
-    assert.equal(known.checkpoint, ANIMA_BASE_1_0_CHECKPOINT)
-    assert.equal(known.companions, ANIMA_BASE_1_0_COMPANIONS)
-    assert.equal(known.totalBytes, ANIMA_BASE_1_0_TOTAL_BYTES)
-  }
-
-  assert.deepEqual(resolveAnimaDependencies('0'.repeat(64)), {
-    reason: 'unsupported-checkpoint',
-    supported: false,
-  })
-  assert.deepEqual(resolveAnimaDependencies('anima-base-v1.0.safetensors'), {
-    reason: 'unsupported-checkpoint',
-    supported: false,
-  })
-  assert.deepEqual(resolveAnimaDependencies(undefined), {
-    reason: 'unsupported-checkpoint',
-    supported: false,
-  })
+test('Base source identity is exact and separate from installable Anima dependency selection', () => {
+  assert.equal(isPinnedAnimaBaseCheckpoint(ANIMA_BASE_1_0_CHECKPOINT.sha256), true)
+  assert.equal(isPinnedAnimaBaseCheckpoint(ANIMA_BASE_1_0_CHECKPOINT.sha256.toUpperCase()), true)
+  assert.equal(isPinnedAnimaBaseCheckpoint('0'.repeat(64)), false)
+  assert.equal(isPinnedAnimaBaseCheckpoint('anima-base-v1.0.safetensors'), false)
+  assert.equal(isPinnedAnimaBaseCheckpoint(undefined), false)
+  assert.deepEqual(ANIMA_BASE_1_0_COMPANIONS, [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE])
 })

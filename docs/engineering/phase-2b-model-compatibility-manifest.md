@@ -1,5 +1,18 @@
 # Phase 2B: exact checkpoint compatibility manifest
 
+> **Historical decision, superseded on 2026-09-28.** The exact-hash allowlist
+> and ban on an `epsilon` default below describe the Phase 2B implementation
+> checkpoint, not the current product contract. The current
+> [managed model-library contract](../contracts/managed-model-library.md)
+> permits supported CivitAI Illustrious/Anima `.safetensors` installation without
+> an allowlist, stores Illustrious user prediction overrides by exact SHA-256
+> and size only in Model Manager with an explicitly labeled `epsilon` default;
+> Project displays the current value read-only, while `.igs` snapshots are
+> advisory. It installs custom
+> Anima checkpoints with pinned Qwen3/VAE. Generate still requires structural
+> and component checks. The source evidence and past test results below are retained
+> unchanged; they do not prove the new behavior is implemented.
+
 Base: clean `c59fe30`. Risk: **high** for generation correctness: the wrong
 prediction mode can yield a plausible but incorrect image, and silently changing
 an exact Project reference would violate portable `.igs` identity. The product

@@ -727,7 +727,7 @@ test('Project keeps a registry-selected exact checkpoint through shadow, Save, d
         kind: 'checkpoint',
         localModelId: selection.resourceId,
         localVersionId: selection.versionId,
-        predictionType: null,
+        predictionType: 'epsilon',
         versionName: 'v7',
       })
       const selected = await service.setGenerationModel(created.id, exactRef)

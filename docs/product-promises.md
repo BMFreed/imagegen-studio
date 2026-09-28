@@ -30,10 +30,10 @@
 | PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовый Home/Project и Model Manager; полный Home, preferences и Preset Manager ещё не подключены |
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): install/version/repair, точные Project checkpoint/LoRA, LoRA weight/enabled/remove, exact-version trigger autocomplete/подсветка, явный checkpoint/LoRA relink и Project → Manager focus проверены с SQLite, файлами и Electron; [exact-hash manifest](./engineering/phase-2b-model-compatibility-manifest.md) квалифицирует один официальный Illustrious v0.1 checkpoint, но Anima record, загрузка worker, embedding/VAE selectors и обратный handoff отсутствуют |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; условия обязательных Anima-компонентов, размер выбранного файла и откат поздней ошибки repair проверены; structural qualification, загрузка worker, embedding/VAE selectors и обратный handoff ещё отсутствуют |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md) и [candidate receipt](./engineering/phase-2b-candidate-publication-research.md); renderer Generate, inference, accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; staging repository пока не подключён к Project UI, release runtime отсутствует |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; staging repository пока не подключён к Project UI, release runtime отсутствует |
 | PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance и production repository для validated candidate/seed recovery; worker inference, renderer staging и принятие результата в `.igs` ещё не подключены |
 
 ### Статусы и доказательства
@@ -169,23 +169,34 @@ Autocomplete, явный creatable selector и command palette допустим�
 
 **Публичный статус:** пока не обещать как готовую возможность. В production
 Model Manager реализованы локальная установка из CivitAI URL, проверка целостности,
-repair и независимые версии; их пути проверены с SQLite и файловой системой.
+repair и независимые версии, в том числе custom Anima с закреплёнными Qwen3/VAE;
+их пути проверены с SQLite и файловой системой.
 Production Project выбирает точную установленную версию checkpoint и сохраняет
 проверенную main ссылку в `.igs`; смена Default и исчезновение файла не
 подменяют этот выбор. После переноса `.igs` пользователь может явно связать
 сохранённую версию с точной установленной копией CivitAI-файла; меняются только
 локальные ID, а правка сохраняется обычным Save. Загрузка моделей в worker,
-embedding/VAE selectors, связи с Presets и provenance ещё не реализованы.
+структурная проверка, embedding/VAE selectors, связи с Presets и provenance
+ещё не реализованы.
 
 Project → Model Manager теперь фокусирует выбранный checkpoint и помечает его
 точную версию без смены Default или Project reference; Electron smoke проверяет
 повторное открытие после фильтров и предупреждение при отсутствующем локальном
 ID. Обратный переход и прочий resource handoff остаются открытыми.
-Для Illustrious/SDXL Generate допускает только exact checkpoint SHA-256 с
-проверенным app-owned manifest `predictionType`. Сейчас manifest содержит один
-официальный Illustrious v0.1 checkpoint; соответствующая CivitAI install
-сохраняет подтверждённый тип, а unlisted файлы остаются с `null` и не
-квалифицируются для inference. Anima требует отдельной rectified-flow записи.
+Принятый [контракт](./contracts/managed-model-library.md)
+разрешает установку любого поддерживаемого CivitAI Illustrious/Anima
+`.safetensors` checkpoint. Illustrious prediction override хранится по точным
+SHA-256 и размеру файла; `epsilon` предлагается как явно обозначенное предположение,
+если нет подтверждённого значения. SHA-256 остаётся проверкой целостности и
+identity. Текущий код устанавливает такие checkpoints, редактирует тип только в
+Model Manager и показывает его в Project read-only. Prepare повторно хеширует
+точный файл и берёт current effective type независимо от advisory snapshot в
+`.igs`, включая прежние non-null и `null`. Frozen контекст фиксирует фактический
+тип; если override изменился до materialization, старый контекст отвергается.
+Model Manager и Project display проверены в Electron smoke; structural check и
+inference worker ещё не реализованы. Для custom Anima показаны условия
+обязательных компонентов и объём выбранного файла; SQLite/filesystem tests
+проверяют откат поздней ошибки установки при repair компонента.
 
 Project LoRA stack уже хранит точную проверенную версию, вес и enabled state;
 добавление/удаление не переписывают prompt или embedding refs. Выбор и Save
@@ -242,8 +253,14 @@ seed. Production Project также сохраняет явно выбранну
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
 worker отвечает `INFERENCE_UNAVAILABLE`. Результат и его provenance не создаются.
-Для произвольного CivitAI checkpoint неизвестный `predictionType` остаётся
-блокирующим до появления проверенного exact-hash manifest.
+Единственная редактируемая настройка Illustrious prediction type находится в
+Model Manager по точным SHA-256 и размеру, с явно обозначенным `epsilon` по
+умолчанию. Project показывает current type read-only, а любой сохранённый `.igs`
+non-null или старый `null` служит advisory snapshot. Prepare повторно хеширует
+файл, берёт текущий effective type без переписывания `.igs` и фиксирует actual
+type в подготовленном job. Смена override до materialization отвергает старую
+подготовку; accepted provenance в будущем останется immutable.
+Renderer Generate, inference worker и создание accepted provenance ещё не подключены.
 
 ### Обещание
 

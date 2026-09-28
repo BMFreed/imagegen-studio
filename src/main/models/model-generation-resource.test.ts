@@ -173,7 +173,7 @@ test('generation plan resolves the saved exact checkpoint after Default changes'
         (
           await service.resolveVerifiedGenerationCheckpointForPlan({
             ...firstRef,
-            predictionType: null,
+            predictionType: 'v_prediction',
           })
         ).reference.predictionType,
         'epsilon',
@@ -187,25 +187,53 @@ test('generation plan resolves the saved exact checkpoint after Default changes'
   )
 })
 
-test('generation plan refuses an unlisted file or a stored prediction conflicting with exact bytes', async () => {
-  await withInstalledCheckpoints(
-    async ({ firstRef, repository, root, service, setFirstStoredPredictionType }) => {
-      const unqualified = new ModelService(
-        repository,
-        new CivitaiClient(),
-        new CivitaiTokenStore(storage, root),
-        undefined,
-        [],
-      )
-      await assert.rejects(unqualified.resolveVerifiedGenerationCheckpointForPlan(firstRef), {
-        code: 'MODEL_PREDICTION_UNQUALIFIED',
-      })
-      await setFirstStoredPredictionType('v_prediction')
-      await assert.rejects(service.resolveVerifiedGenerationCheckpointForPlan(firstRef), {
-        code: 'MODEL_VERSION_MISMATCH',
-      })
-    },
-  )
+test('unlisted Illustrious defaults to epsilon and plans from the current file setting', async () => {
+  await withInstalledCheckpoints(async ({ firstRef, repository, root, service }) => {
+    const unqualified = new ModelService(
+      repository,
+      new CivitaiClient(),
+      new CivitaiTokenStore(storage, root),
+      undefined,
+      [],
+    )
+    const savedWithoutPrediction = { ...firstRef, predictionType: null }
+    const unlisted =
+      await unqualified.resolveVerifiedGenerationCheckpointForPlan(savedWithoutPrediction)
+    assert.equal(unlisted.reference.predictionType, 'epsilon')
+    assert.equal(savedWithoutPrediction.predictionType, null)
+    const unlistedVersion = (await unqualified.getCatalog())
+      .flatMap((item) => item.versions)
+      .find((version) => version.id === firstRef.localVersionId)
+    assert.deepEqual(
+      {
+        predictionType: unlistedVersion?.predictionType,
+        predictionTypeSource: unlistedVersion?.predictionTypeSource,
+      },
+      { predictionType: 'epsilon', predictionTypeSource: 'default' },
+    )
+
+    await service.setPredictionType(firstRef.localModelId, firstRef.localVersionId, 'v_prediction')
+    assert.equal(
+      (await service.resolveVerifiedGenerationCheckpointForPlan(firstRef)).reference.predictionType,
+      'v_prediction',
+    )
+    assert.equal(
+      (await service.resolveVerifiedGenerationCheckpointForPlan(savedWithoutPrediction)).reference
+        .predictionType,
+      'v_prediction',
+    )
+    assert.equal(
+      (
+        await unqualified.resolveVerifiedGenerationCheckpointForPlan({
+          ...firstRef,
+          predictionType: 'epsilon',
+        })
+      ).reference.predictionType,
+      'v_prediction',
+    )
+    assert.equal(firstRef.predictionType, 'epsilon')
+    assert.equal(savedWithoutPrediction.predictionType, null)
+  })
 })
 
 test('generation plan rejects a saved checkpoint whose exact version fields differ', async () => {
@@ -217,7 +245,6 @@ test('generation plan rejects a saved checkpoint whose exact version fields diff
       ['CivitAI file', { ...firstRef, civitaiFileId: 801 }],
       ['file hash', { ...firstRef, fileSha256: '0'.repeat(64) }],
       ['model family', { ...firstRef, baseModelFamily: 'anima' }],
-      ['prediction type', { ...firstRef, predictionType: 'v_prediction' }],
       ['resource kind', { ...firstRef, kind: 'lora' }],
     ]
     for (const [field, saved] of mismatches) {
@@ -236,6 +263,274 @@ test('generation plan rejects a saved checkpoint whose exact version fields diff
       { code: 'MODEL_VERSION_UNAVAILABLE', name: 'ModelServiceError' },
     )
   })
+})
+
+test('prediction edit follows exact bytes across versions without changing saved snapshots or evidence', async () => {
+  await withInstalledCheckpoints(
+    async ({ firstBytes, firstRef, repository, root, secondRef, service }) => {
+      const duplicatePath = path.join(root, 'models', 'duplicate.safetensors')
+      await writeFile(duplicatePath, firstBytes)
+      const duplicate = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath: duplicatePath,
+            originalFilename: 'duplicate.safetensors',
+            sha256: firstRef.fileSha256,
+            sizeBytes: firstBytes.length,
+            verifiedAt: '2026-09-28T00:00:00.000Z',
+          },
+          resource: {
+            displayName: 'Same bytes from another source',
+            source: { kind: 'civitai', modelId: 43 },
+            sourceMetadata: {},
+            type: 'checkpoint',
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'safetensors',
+            name: 'duplicate',
+            predictionType: 'v_prediction',
+            source: {
+              expectedSha256: firstRef.fileSha256,
+              fileId: 901,
+              kind: 'civitai',
+              versionId: 9,
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+      const legacyNull = { ...firstRef, predictionType: null }
+      const withoutManifest = new ModelService(
+        repository,
+        new CivitaiClient(),
+        new CivitaiTokenStore(storage, root),
+        undefined,
+        [],
+      )
+      for (const id of [firstRef.localVersionId, duplicate.versionId]) {
+        const catalogVersion = (await withoutManifest.getCatalog())
+          .flatMap((item) => item.versions)
+          .find((version) => version.id === id)
+        assert.equal(catalogVersion?.predictionType, 'epsilon')
+        assert.equal(catalogVersion?.predictionTypeSource, 'default')
+      }
+
+      await service.setPredictionType(
+        firstRef.localModelId,
+        firstRef.localVersionId,
+        'v_prediction',
+      )
+      assert.equal(
+        await repository.getPredictionOverride({
+          sha256: firstRef.fileSha256,
+          sizeBytes: firstBytes.length,
+        }),
+        'v_prediction',
+      )
+      assert.equal(
+        (await service.resolveGenerationCheckpoint(firstRef.localModelId, firstRef.localVersionId))
+          .predictionType,
+        'v_prediction',
+      )
+      assert.equal(
+        (await service.resolveGenerationCheckpoint(duplicate.resourceId, duplicate.versionId))
+          .predictionType,
+        'v_prediction',
+      )
+      assert.equal(
+        (
+          await service.resolveGenerationCheckpoint(
+            secondRef.localModelId,
+            secondRef.localVersionId,
+          )
+        ).predictionType,
+        'v_prediction',
+      )
+      const catalogVersions = (await service.getCatalog()).flatMap((item) => item.versions)
+      for (const versionId of [firstRef.localVersionId, duplicate.versionId]) {
+        const catalogVersion = catalogVersions.find((version) => version.id === versionId)
+        assert.equal(catalogVersion?.predictionType, 'v_prediction')
+        assert.equal(catalogVersion?.predictionTypeSource, 'user')
+      }
+      assert.equal(
+        (await service.resolveVerifiedGenerationCheckpointForPlan(firstRef)).reference
+          .predictionType,
+        'v_prediction',
+      )
+      assert.equal(
+        (await service.resolveVerifiedGenerationCheckpointForPlan(legacyNull)).reference
+          .predictionType,
+        'v_prediction',
+      )
+      assert.equal(legacyNull.predictionType, null)
+      assert.equal(firstRef.predictionType, 'epsilon')
+
+      await service.setPredictionType(duplicate.resourceId, duplicate.versionId, 'epsilon')
+      assert.equal(
+        (await service.resolveGenerationCheckpoint(firstRef.localModelId, firstRef.localVersionId))
+          .predictionType,
+        'epsilon',
+      )
+      assert.equal(
+        (
+          await service.resolveVerifiedGenerationCheckpointForPlan({
+            ...firstRef,
+            predictionType: 'v_prediction',
+          })
+        ).reference.predictionType,
+        'epsilon',
+      )
+      assert.equal(
+        (
+          await service.resolveGenerationCheckpoint(
+            secondRef.localModelId,
+            secondRef.localVersionId,
+          )
+        ).predictionType,
+        'v_prediction',
+      )
+      assert.equal(
+        (await repository.listInstalled())
+          .flatMap((item) => item.versions)
+          .find((version) => version.id === firstRef.localVersionId)?.predictionType,
+        null,
+      )
+    },
+  )
+})
+
+test('prediction edit rejects invalid IDs, unsupported resources, and corrupt exact files', async () => {
+  await withInstalledCheckpoints(
+    async ({ firstBytes, firstPath, firstRef, repository, root, service }) => {
+      const makeFile = async (filename: string, bytes: Buffer) => {
+        const managedPath = path.join(root, 'models', filename)
+        await writeFile(managedPath, bytes)
+        return {
+          managedPath,
+          originalFilename: filename,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          sizeBytes: bytes.length,
+          verifiedAt: '2026-09-28T00:00:00.000Z',
+        }
+      }
+      const loraFile = await makeFile('lora.safetensors', Buffer.from('a verified lora'))
+      const lora = await repository.publishVerifiedInstallation({
+        primary: {
+          file: loraFile,
+          resource: {
+            displayName: 'LoRA',
+            source: { kind: 'civitai', modelId: 44 },
+            sourceMetadata: {},
+            type: 'lora',
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'safetensors',
+            name: 'v1',
+            source: {
+              expectedSha256: loraFile.sha256,
+              fileId: 4401,
+              kind: 'civitai',
+              versionId: 44,
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+      const animaFile = await makeFile('anima.safetensors', Buffer.from('anima checkpoint'))
+      const dependency = async (role: 'qwen3_encoder' | 'vae'): Promise<VerifiedModelArtifact> => {
+        const file = await makeFile(`${role}.safetensors`, Buffer.from(`anima ${role}`))
+        return {
+          file,
+          resource: {
+            displayName: role,
+            source: { key: `anima/${role}`, kind: 'supported_dependency' },
+            sourceMetadata: {},
+            type: role,
+          },
+          version: {
+            baseModelFamily: 'anima',
+            format: 'safetensors',
+            name: 'v1',
+            source: {
+              expectedSha256: file.sha256,
+              kind: 'supported_dependency',
+              revision: 'v1',
+            },
+            sourceMetadata: {},
+          },
+        }
+      }
+      const anima = await repository.publishVerifiedInstallation({
+        dependencies: [
+          { artifact: await dependency('qwen3_encoder'), role: 'qwen3_encoder' },
+          { artifact: await dependency('vae'), role: 'vae' },
+        ],
+        primary: {
+          file: animaFile,
+          resource: {
+            displayName: 'Anima',
+            source: { kind: 'civitai', modelId: 45 },
+            sourceMetadata: {},
+            type: 'checkpoint',
+          },
+          version: {
+            baseModelFamily: 'anima',
+            format: 'safetensors',
+            name: 'v1',
+            source: {
+              expectedSha256: animaFile.sha256,
+              fileId: 4501,
+              kind: 'civitai',
+              versionId: 45,
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+
+      await assert.rejects(
+        service.setPredictionType(firstRef.localModelId, randomUUID(), 'epsilon'),
+        {
+          code: 'MODEL_VERSION_UNAVAILABLE',
+          name: 'ModelServiceError',
+        },
+      )
+      await assert.rejects(service.setPredictionType(lora.resourceId, lora.versionId, 'epsilon'), {
+        code: 'MODEL_VERSION_UNAVAILABLE',
+        name: 'ModelServiceError',
+      })
+      await assert.rejects(
+        service.setPredictionType(anima.resourceId, anima.versionId, 'epsilon'),
+        {
+          code: 'MODEL_VERSION_UNAVAILABLE',
+          name: 'ModelServiceError',
+        },
+      )
+      await assert.rejects(
+        service.setPredictionType(
+          firstRef.localModelId,
+          firstRef.localVersionId,
+          'sample' as 'epsilon',
+        ),
+        { code: 'MODEL_PREDICTION_INVALID', name: 'ModelServiceError' },
+      )
+
+      await writeFile(firstPath, Buffer.alloc(firstBytes.length, 0x58))
+      await assert.rejects(
+        service.setPredictionType(firstRef.localModelId, firstRef.localVersionId, 'v_prediction'),
+        { code: 'MODEL_FILE_CORRUPT', name: 'ModelServiceError' },
+      )
+      assert.equal(
+        await repository.getPredictionOverride({
+          sha256: firstRef.fileSha256,
+          sizeBytes: firstBytes.length,
+        }),
+        null,
+      )
+    },
+  )
 })
 
 test('generation plan rehashes managed bytes and rejects corrupt or missing checkpoints', async () => {

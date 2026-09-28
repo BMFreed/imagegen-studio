@@ -17,6 +17,8 @@ import type { CivitaiTokenStore } from './civitai-token-store.js'
 import type {
   BaseModelFamily,
   InstalledModelFile,
+  InstalledModelVersion,
+  ModelPredictionType,
   ModelRepository,
   ModelResourceType as StoredResourceType,
 } from './model-repository.js'
@@ -26,7 +28,7 @@ import {
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
   ANIMA_SOURCE_LICENSE,
-  resolveAnimaDependencies,
+  isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
 import { validateCivitaiToken } from './civitai-token-store.js'
 import {
@@ -155,6 +157,12 @@ export class ModelService {
 
   async getCatalog(): Promise<ModelCatalogItem[]> {
     const installed = await this.repository.listInstalled()
+    const predictionOverrides = new Map(
+      (await this.repository.listPredictionOverrides()).map((override) => [
+        `${override.sha256}:${override.sizeBytes}`,
+        override.predictionType,
+      ]),
+    )
     const versionsById = new Map(
       installed.flatMap((model) => model.versions.map((version) => [version.id, version] as const)),
     )
@@ -192,13 +200,30 @@ export class ModelService {
             versions: await Promise.all(
               model.versions.map(async (version): Promise<ModelVersionView> => {
                 const primaryStatus = await this.catalogFileStatus(version.file)
+                const prediction = this.effectivePredictionType(
+                  model.type,
+                  version,
+                  predictionOverrides.get(`${version.file.sha256}:${version.file.sizeBytes}`) ??
+                    null,
+                )
                 const dependencyIssues: string[] = []
                 if (model.type === 'checkpoint' && version.baseModelFamily === 'anima') {
                   for (const role of ['qwen3_encoder', 'vae'] as const) {
                     const dependencyId = version.dependencyVersionIds[role]
                     const dependency = dependencyId ? versionsById.get(dependencyId) : null
+                    const dependencyResource = installed.find((candidate) =>
+                      candidate.versions.some((item) => item.id === dependencyId),
+                    )
+                    const expectedSha =
+                      role === 'qwen3_encoder'
+                        ? ANIMA_QWEN3_0_6B_ENCODER.sha256
+                        : ANIMA_QWEN_IMAGE_VAE.sha256
                     if (
                       !dependency ||
+                      dependencyResource?.type !== role ||
+                      dependencyResource.source.kind !== 'supported_dependency' ||
+                      dependency.baseModelFamily !== 'anima' ||
+                      dependency.file.sha256 !== expectedSha ||
                       (await this.catalogFileStatus(dependency.file)) !== 'ready'
                     ) {
                       dependencyIssues.push(role)
@@ -220,7 +245,8 @@ export class ModelService {
                   id: version.id,
                   installedAt: version.createdAt,
                   name: version.name,
-                  predictionType: version.predictionType,
+                  predictionType: prediction.value,
+                  predictionTypeSource: prediction.source,
                   sha256: version.file.sha256,
                   trainedWords: Array.isArray(version.sourceMetadata.trainedWords)
                     ? version.sourceMetadata.trainedWords.filter(
@@ -312,15 +338,7 @@ export class ModelService {
 
     const needsAnimaCompanions =
       preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
-    const files = needsAnimaCompanions
-      ? preview.files.filter((file) => resolveAnimaDependencies(file.sha256).supported)
-      : preview.files
-    if (files.length === 0) {
-      throw new ModelServiceError(
-        'ANIMA_UNSUPPORTED_CHECKPOINT',
-        'Only the verified Anima Base 1.0 checkpoint is supported in this release.',
-      )
-    }
+    const files = preview.files
     const installed = await this.repository.listInstalled()
     const companionStatus = needsAnimaCompanions
       ? await Promise.all(
@@ -355,16 +373,22 @@ export class ModelService {
               await Promise.all(
                 (['qwen3_encoder', 'vae'] as const).map(async (role) => {
                   const dependencyId = exactVersion.dependencyVersionIds[role]
-                  const dependency = installed
-                    .flatMap((resource) => resource.versions)
-                    .find((version) => version.id === dependencyId)
+                  const dependency = installed.find((resource) =>
+                    resource.versions.some((item) => item.id === dependencyId),
+                  )
+                  const dependencyVersion = dependency?.versions.find(
+                    (item) => item.id === dependencyId,
+                  )
                   const expectedSha =
                     role === 'qwen3_encoder'
                       ? ANIMA_QWEN3_0_6B_ENCODER.sha256
                       : ANIMA_QWEN_IMAGE_VAE.sha256
                   return (
-                    dependency?.file.sha256 === expectedSha &&
-                    (await this.isVerifiedFile(dependency.file))
+                    dependency?.type === role &&
+                    dependency.source.kind === 'supported_dependency' &&
+                    dependencyVersion?.baseModelFamily === 'anima' &&
+                    dependencyVersion.file.sha256 === expectedSha &&
+                    (await this.isVerifiedFile(dependencyVersion.file))
                   )
                 }),
               )
@@ -378,13 +402,23 @@ export class ModelService {
           alreadyInstalled,
           fileId: file.fileId,
           format: file.format,
+          license:
+            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
+              ? {
+                  name: 'CircleStone Non-Commercial License',
+                  summary: 'Anima Base 1.0 is only for non-commercial, non-production use.',
+                  url: ANIMA_SOURCE_LICENSE.url,
+                }
+              : null,
           name: file.name,
           needsRepair: !!exact && !alreadyInstalled,
           primary: file.primary,
           reusesInstalledFile: reusable !== null,
           sha256: file.sha256,
           sizeEstimateBytes: needsAnimaCompanions
-            ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+            ? isPinnedAnimaBaseCheckpoint(file.sha256)
+              ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+              : file.sizeEstimateBytes
             : file.sizeEstimateBytes,
         }
       }),
@@ -423,14 +457,7 @@ export class ModelService {
       description: preview.description,
       files: fileChoices,
       kind: 'select-file',
-      license:
-        preview.baseModelFamily === 'anima'
-          ? {
-              name: 'CircleStone Non-Commercial License',
-              summary: 'Anima is supported only for non-commercial, non-production use.',
-              url: ANIMA_SOURCE_LICENSE.url,
-            }
-          : null,
+      license: selectedEstimate?.license ?? null,
       modelId: preview.modelId,
       modelName: preview.modelName,
       previewId,
@@ -515,6 +542,12 @@ export class ModelService {
       'checkpoint',
     )
     const reference = resolved.reference
+    if (reference.baseModelFamily !== 'illustrious') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'This generation path currently supports only Illustrious checkpoints.',
+      )
+    }
     if (
       saved.localModelId !== reference.localModelId ||
       saved.localVersionId !== reference.localVersionId ||
@@ -529,29 +562,13 @@ export class ModelService {
         'The installed checkpoint no longer matches this Project exact version.',
       )
     }
-    const qualified = this.qualifiedPredictionTypeForVerifiedCheckpoint({
-      baseModelFamily: reference.baseModelFamily,
-      sha256: reference.fileSha256,
-      sizeBytes: resolved.fileSizeBytes,
-    })
-    if (!qualified) {
-      throw new ModelServiceError(
-        'MODEL_PREDICTION_UNQUALIFIED',
-        'This exact checkpoint is not in the verified compatibility manifest.',
-      )
-    }
-    if (
-      (reference.predictionType !== null && reference.predictionType !== qualified) ||
-      (saved.predictionType !== null && saved.predictionType !== qualified)
-    ) {
-      throw new ModelServiceError(
-        'MODEL_VERSION_MISMATCH',
-        'The checkpoint prediction type conflicts with its verified compatibility record.',
-      )
-    }
+    // Prediction type belongs to the exact installed file, not to each Project. A saved .igs
+    // reference may carry an old snapshot; use the current library setting after re-hashing the
+    // exact file. The returned job reference freezes the value actually used for this run.
+    const predictionType = reference.predictionType
     return {
       managedPath: resolved.managedPath,
-      reference: { ...reference, predictionType: qualified },
+      reference: { ...reference, predictionType },
     }
   }
 
@@ -583,12 +600,19 @@ export class ModelService {
       )
     }
     if (resource?.type === 'checkpoint' && version.baseModelFamily === 'anima') {
-      const versions = installed.flatMap((item) => item.versions)
       for (const companion of [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE]) {
         const role = companion.role === 'qwen3-encoder' ? 'qwen3_encoder' : 'vae'
-        const dependency = versions.find((item) => item.id === version.dependencyVersionIds[role])
+        const dependencyResource = installed.find((item) =>
+          item.versions.some((candidate) => candidate.id === version.dependencyVersionIds[role]),
+        )
+        const dependency = dependencyResource?.versions.find(
+          (item) => item.id === version.dependencyVersionIds[role],
+        )
         if (
+          dependencyResource?.type !== role ||
+          dependencyResource.source.kind !== 'supported_dependency' ||
           !dependency ||
+          dependency.baseModelFamily !== 'anima' ||
           dependency.file.sha256 !== companion.sha256 ||
           !(await this.isVerifiedFile(dependency.file))
         ) {
@@ -600,6 +624,43 @@ export class ModelService {
       }
     }
     await this.repository.setDefaultVersion(resourceId, versionId)
+  }
+
+  async setPredictionType(
+    resourceId: string,
+    versionId: string,
+    predictionType: 'epsilon' | 'v_prediction',
+  ): Promise<void> {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuid.test(resourceId) || !uuid.test(versionId)) {
+      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
+    }
+    if (predictionType !== 'epsilon' && predictionType !== 'v_prediction') {
+      throw new ModelServiceError('MODEL_PREDICTION_INVALID', 'Choose a supported prediction type.')
+    }
+    const installed = await this.repository.listInstalled()
+    const resource = installed.find((item) => item.id === resourceId)
+    const version = resource?.versions.find((item) => item.id === versionId)
+    if (resource?.type !== 'checkpoint' || version?.baseModelFamily !== 'illustrious') {
+      throw new ModelServiceError(
+        'MODEL_VERSION_UNAVAILABLE',
+        'Choose an installed Illustrious checkpoint version.',
+      )
+    }
+    const status = await this.actualFileStatus(version.file, true)
+    if (status !== 'ready') {
+      throw new ModelServiceError(
+        status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
+        'The checkpoint file must pass verification before editing its prediction type.',
+      )
+    }
+    await this.repository.setPredictionOverride({
+      expectedSha256: version.file.sha256,
+      expectedSizeBytes: version.file.sizeBytes,
+      predictionType,
+      resourceId,
+      versionId,
+    })
   }
 
   private async actualFileStatus(
@@ -695,6 +756,31 @@ export class ModelService {
       this.fileStatusCache.delete(file.managedPath)
       return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'corrupt'
     }
+  }
+
+  private effectivePredictionType(
+    resourceType: StoredResourceType,
+    version: InstalledModelVersion,
+    override: ModelPredictionType | null,
+  ): {
+    source: 'default' | 'manifest' | 'not-applicable' | 'user'
+    value: ModelPredictionType | null
+  } {
+    if (resourceType !== 'checkpoint' || version.baseModelFamily !== 'illustrious') {
+      return { source: 'not-applicable', value: null }
+    }
+    if (override) {
+      return { source: 'user', value: override }
+    }
+    const verified = this.qualifiedPredictionTypeForVerifiedCheckpoint({
+      baseModelFamily: version.baseModelFamily,
+      sha256: version.file.sha256,
+      sizeBytes: version.file.sizeBytes,
+    })
+    if (verified) {
+      return { source: 'manifest', value: verified }
+    }
+    return { source: 'default', value: 'epsilon' }
   }
 
   private async isVerifiedFile(file: InstalledModelFile): Promise<boolean> {
@@ -800,13 +886,6 @@ export class ModelService {
       )
     }
     if (kind === 'checkpoint' && version.baseModelFamily === 'anima') {
-      const supported = resolveAnimaDependencies(version.file.sha256)
-      if (!supported.supported) {
-        throw new ModelServiceError(
-          'ANIMA_UNSUPPORTED_CHECKPOINT',
-          'Only the verified Anima Base 1.0 checkpoint is supported in this release.',
-        )
-      }
       for (const [role, artifact] of [
         ['qwen3_encoder', ANIMA_QWEN3_0_6B_ENCODER],
         ['vae', ANIMA_QWEN_IMAGE_VAE],
@@ -830,6 +909,16 @@ export class ModelService {
         }
       }
     }
+    const prediction = this.effectivePredictionType(
+      resource.type,
+      version,
+      kind === 'checkpoint'
+        ? await this.repository.getPredictionOverride({
+            sha256: version.file.sha256,
+            sizeBytes: version.file.sizeBytes,
+          })
+        : null,
+    )
     return {
       fileSizeBytes: version.file.sizeBytes,
       managedPath: version.file.managedPath,
@@ -843,7 +932,7 @@ export class ModelService {
         kind,
         localModelId: resource.id,
         localVersionId: version.id,
-        predictionType: version.predictionType,
+        predictionType: prediction.value,
         versionName: version.name,
       },
     }

@@ -88,6 +88,11 @@ const promptLoraSources = computed(() =>
   ),
 )
 const selectedModel = computed(() => props.generationDraft.model)
+const selectedModelVersion = computed(() =>
+  props.modelCatalog
+    .find((resource) => resource.id === selectedModel.value?.localModelId)
+    ?.versions.find((version) => version.id === selectedModel.value?.localVersionId),
+)
 function openModelManager() {
   const model = selectedModel.value
   emit(
@@ -779,8 +784,12 @@ function applyFitBbox() {
                       : 'Unknown family'
                 }}
               </NTag>
-              <span v-if="selectedModel.predictionType" class="model-prediction">
-                Prediction: {{ selectedModel.predictionType }}
+              <span
+                v-if="selectedModel.baseModelFamily === 'illustrious' && selectedModelVersion"
+                class="model-prediction"
+              >
+                Prediction: {{ selectedModelVersion.predictionType
+                }}{{ selectedModelVersion.predictionTypeSource === 'default' ? ' (assumed)' : '' }}
               </span>
             </div>
             <p v-if="modelCatalogError" class="model-message" role="alert">
@@ -1144,6 +1153,7 @@ function applyFitBbox() {
 }
 
 .model-prediction {
+  margin: 0;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-meta);
 }

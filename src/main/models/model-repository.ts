@@ -58,7 +58,13 @@ export interface VerifiedModelArtifact {
 
 export type ModelDependencyInput =
   | { artifact: VerifiedModelArtifact; existingVersionId?: never; role: AnimaDependencyRole }
-  | { artifact?: never; existingVersionId: string; role: AnimaDependencyRole }
+  | { artifact?: never; existingVersionId: string; repairFile?: never; role: AnimaDependencyRole }
+  | {
+      artifact?: never
+      existingVersionId: string
+      repairFile: VerifiedLocalModelFile
+      role: AnimaDependencyRole
+    }
 
 export interface PublishVerifiedInstallationInput {
   dependencies?: ModelDependencyInput[]
@@ -74,6 +80,11 @@ export interface PublishedInstallation {
 }
 
 export interface RepairVerifiedVersionInput {
+  dependencyRepairs?: {
+    file: VerifiedLocalModelFile
+    role: AnimaDependencyRole
+    versionId: string
+  }[]
   file: VerifiedLocalModelFile
   /** A CivitAI install job for precisely this resource/version/file, if one exists. */
   jobId?: string
@@ -131,6 +142,21 @@ export interface ExactFileDuplicate {
   matchedBy: 'civitai_identity' | 'sha256'
   resourceId: string
   status: ModelFileStatus
+  versionId: string
+}
+
+export interface CheckpointPredictionOverride {
+  predictionType: ModelPredictionType
+  sha256: string
+  sizeBytes: number
+  updatedAt: string
+}
+
+export interface SetPredictionOverrideInput {
+  expectedSha256: string
+  expectedSizeBytes: number
+  predictionType: ModelPredictionType
+  resourceId: string
   versionId: string
 }
 
@@ -419,6 +445,23 @@ export class ModelRepository {
     return null
   }
 
+  async getPredictionOverride(file: {
+    sha256: string
+    sizeBytes: number
+  }): Promise<ModelPredictionType | null> {
+    const sha256 = normalizeSha256(file.sha256, 'Checkpoint override hash')
+    if (!Number.isSafeInteger(file.sizeBytes) || file.sizeBytes <= 0) {
+      throw new Error('Checkpoint override size must be a positive safe integer')
+    }
+    const row = await this.db
+      .selectFrom('checkpoint_prediction_override')
+      .select('prediction_type')
+      .where('sha256', '=', sha256)
+      .where('size_bytes', '=', file.sizeBytes)
+      .executeTakeFirst()
+    return (row?.prediction_type as ModelPredictionType | undefined) ?? null
+  }
+
   async listInstalled(): Promise<InstalledModel[]> {
     const rows = await this.db
       .selectFrom('model_resource as resource')
@@ -564,6 +607,20 @@ export class ModelRepository {
     })
   }
 
+  async listPredictionOverrides(): Promise<CheckpointPredictionOverride[]> {
+    const rows = await this.db
+      .selectFrom('checkpoint_prediction_override')
+      .select(['prediction_type', 'sha256', 'size_bytes', 'updated_at'])
+      .orderBy('sha256')
+      .execute()
+    return rows.map((row) => ({
+      predictionType: row.prediction_type as ModelPredictionType,
+      sha256: row.sha256,
+      sizeBytes: row.size_bytes,
+      updatedAt: row.updated_at,
+    }))
+  }
+
   async publishVerifiedInstallation(
     input: PublishVerifiedInstallationInput,
   ): Promise<PublishedInstallation> {
@@ -601,6 +658,14 @@ export class ModelRepository {
       const dependencyVersionIds: Partial<Record<AnimaDependencyRole, string>> = {}
       for (const dependency of dependencies) {
         if (dependency.existingVersionId) {
+          if (dependency.repairFile) {
+            await repairAnimaDependency(
+              trx,
+              dependency.existingVersionId,
+              dependency.role,
+              dependency.repairFile,
+            )
+          }
           await requireReadyDependency(trx, dependency.existingVersionId, dependency.role)
           dependencyVersionIds[dependency.role] = dependency.existingVersionId
         } else if (dependency.artifact) {
@@ -692,6 +757,22 @@ export class ModelRepository {
         if (dependencies.length !== 2) {
           throw new Error('Anima checkpoint has incomplete dependencies')
         }
+        const repairs = input.dependencyRepairs ?? []
+        if (new Set(repairs.map((repair) => repair.role)).size !== repairs.length) {
+          throw new Error('Duplicate Anima dependency repair role')
+        }
+        for (const repair of repairs) {
+          if (
+            !dependencies.some(
+              (dependency) =>
+                dependency.role === repair.role &&
+                dependency.component_version_id === repair.versionId,
+            )
+          ) {
+            throw new Error('Anima dependency repair does not match the checkpoint link')
+          }
+          await repairAnimaDependency(trx, repair.versionId, repair.role, repair.file)
+        }
         for (const dependency of dependencies) {
           await requireReadyDependency(
             trx,
@@ -699,6 +780,8 @@ export class ModelRepository {
             dependency.role as AnimaDependencyRole,
           )
         }
+      } else if (input.dependencyRepairs?.length) {
+        throw new Error('Only an Anima checkpoint may repair dependencies')
       }
 
       const now = new Date().toISOString()
@@ -796,6 +879,63 @@ export class ModelRepository {
         .set({ default_version_id: versionId, updated_at: new Date().toISOString() })
         .where('id', '=', resourceId)
         .execute()
+    })
+  }
+
+  async setPredictionOverride(
+    input: SetPredictionOverrideInput,
+  ): Promise<CheckpointPredictionOverride> {
+    const sha256 = normalizeSha256(input.expectedSha256, 'Checkpoint override hash')
+    if (!Number.isSafeInteger(input.expectedSizeBytes) || input.expectedSizeBytes <= 0) {
+      throw new Error('Checkpoint override size must be a positive safe integer')
+    }
+    if (!['epsilon', 'sample', 'v_prediction'].includes(input.predictionType)) {
+      throw new Error('Unsupported checkpoint prediction type')
+    }
+    return this.db.transaction().execute(async (trx) => {
+      const target = await trx
+        .selectFrom('model_resource_version as version')
+        .innerJoin('model_resource as resource', 'resource.id', 'version.model_resource_id')
+        .innerJoin('local_model_file as file', 'file.resource_version_id', 'version.id')
+        .select([
+          'resource.type as resourceType',
+          'version.base_model_family as family',
+          'file.status as fileStatus',
+        ])
+        .where('resource.id', '=', input.resourceId)
+        .where('version.id', '=', input.versionId)
+        .where('file.sha256', '=', sha256)
+        .where('file.size_bytes', '=', input.expectedSizeBytes)
+        .executeTakeFirst()
+      if (
+        target?.resourceType !== 'checkpoint' ||
+        target.family !== 'illustrious' ||
+        target.fileStatus !== 'ready'
+      ) {
+        throw new Error('Prediction override requires this exact ready Illustrious checkpoint')
+      }
+      const updatedAt = new Date().toISOString()
+      await trx
+        .insertInto('checkpoint_prediction_override')
+        .values({
+          prediction_type: input.predictionType,
+          sha256,
+          size_bytes: input.expectedSizeBytes,
+          updated_at: updatedAt,
+        })
+        .onConflict((conflict) =>
+          conflict.columns(['sha256', 'size_bytes']).doUpdateSet({
+            prediction_type: input.predictionType,
+            updated_at: updatedAt,
+          }),
+        )
+        .execute()
+      return {
+        predictionType: input.predictionType,
+        sha256,
+        sizeBytes: input.expectedSizeBytes,
+        updatedAt,
+      }
     })
   }
 
@@ -1186,6 +1326,54 @@ async function assertSharedManagedPathCompatible(
   ) {
     throw new Error('Managed model path is already assigned to different file bytes')
   }
+}
+
+async function repairAnimaDependency(
+  executor: DbExecutor,
+  versionId: string,
+  role: AnimaDependencyRole,
+  file: VerifiedLocalModelFile,
+): Promise<void> {
+  const verifiedHash = assertVerifiedFile(file)
+  const target = await executor
+    .selectFrom('model_resource_version as version')
+    .innerJoin('model_resource as resource', 'resource.id', 'version.model_resource_id')
+    .innerJoin('local_model_file as local', 'local.resource_version_id', 'version.id')
+    .select([
+      'resource.source_kind as sourceKind',
+      'resource.type as resourceType',
+      'version.base_model_family as family',
+      'version.expected_sha256 as expectedSha256',
+      'local.id as fileId',
+      'local.sha256 as sha256',
+      'local.size_bytes as sizeBytes',
+    ])
+    .where('version.id', '=', versionId)
+    .executeTakeFirst()
+  if (
+    !target ||
+    target.sourceKind !== 'supported_dependency' ||
+    target.resourceType !== role ||
+    target.family !== 'anima' ||
+    target.sha256 !== verifiedHash ||
+    (target.expectedSha256 !== null && target.expectedSha256 !== verifiedHash) ||
+    target.sizeBytes !== file.sizeBytes
+  ) {
+    throw new Error(`Repair file does not match the exact Anima ${role} dependency`)
+  }
+  await assertSharedManagedPathCompatible(executor, file, verifiedHash, target.fileId)
+  await executor
+    .updateTable('local_model_file')
+    .set({
+      managed_path: file.managedPath,
+      original_filename: file.originalFilename,
+      sha256: verifiedHash,
+      size_bytes: file.sizeBytes,
+      status: 'ready',
+      verified_at: file.verifiedAt,
+    })
+    .where('id', '=', target.fileId)
+    .execute()
 }
 
 async function requireReadyDependency(

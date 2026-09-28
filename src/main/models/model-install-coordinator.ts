@@ -1,8 +1,8 @@
 import type { ModelInstallJobView } from '../../shared/api.js'
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { CivitaiFileChoice, CivitaiImportPreview } from './civitai-client.js'
@@ -13,6 +13,7 @@ import type {
   InstalledModelVersion,
   ModelDependencyInput,
   StoredModelInstallJob,
+  VerifiedLocalModelFile,
   VerifiedModelArtifact,
 } from './model-repository.js'
 import type { ModelRepository } from './model-repository.js'
@@ -24,7 +25,7 @@ import {
   ANIMA_QWEN_IMAGE_VAE,
   ANIMA_SOURCE_LICENSE,
   type AnimaArtifact,
-  resolveAnimaDependencies,
+  isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
 import { supportedModelFileExtension } from './civitai-client.js'
 import { ModelDownloadError } from './model-downloader.js'
@@ -34,6 +35,7 @@ type FilePreview = Extract<CivitaiImportPreview, { kind: 'select-file' }>
 type ArtifactRole = 'primary' | AnimaDependencyRole
 
 interface QueuedInstall {
+  acceptedAnimaLicense: boolean
   controller: AbortController
   file: CivitaiFileChoice
   jobId: string
@@ -125,22 +127,25 @@ export class ModelInstallCoordinator {
     if (!file) {
       throw new ModelServiceError('MODEL_INVALID_FILE', 'The selected file is not in the preview.')
     }
-    if (preview.baseModelFamily === 'anima') {
-      if (!acceptedAnimaLicense) {
-        throw new ModelServiceError(
-          'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
-          'Acknowledge the Anima non-commercial, non-production license before installing.',
-        )
-      }
+    const needsAnimaCompanions =
+      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
+    const isPinnedBase = needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
+    if (needsAnimaCompanions) {
       if (
-        preview.resourceType === 'checkpoint' &&
-        !resolveAnimaDependencies(file.sha256).supported
+        !isPinnedBase &&
+        (!Number.isSafeInteger(file.sizeEstimateBytes) || (file.sizeEstimateBytes ?? 0) < 1)
       ) {
         throw new ModelServiceError(
-          'ANIMA_UNSUPPORTED_CHECKPOINT',
-          'Only the verified Anima Base 1.0 checkpoint is supported.',
+          'ANIMA_SIZE_UNKNOWN',
+          'CivitAI must provide the checkpoint download size before installation.',
         )
       }
+    }
+    if (needsAnimaCompanions && !acceptedAnimaLicense) {
+      throw new ModelServiceError(
+        'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+        'Acknowledge the CircleStone terms for the required Anima components before installing.',
+      )
     }
     const token = await this.modelService.requireToken()
     await this.modelService.civitai.validateToken(token)
@@ -180,14 +185,12 @@ export class ModelInstallCoordinator {
       )
     }
 
-    const needsAnimaCompanions =
-      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
     const companions = needsAnimaCompanions ? [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE] : []
     const jobId = await this.repository.createInstallJob({
       artifacts: [
         {
           expectedSha256: file.sha256,
-          expectedSizeBytes: needsAnimaCompanions ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes : null,
+          expectedSizeBytes: isPinnedBase ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes : null,
           role: 'primary',
           source: { fileId, kind: 'civitai_file' },
         },
@@ -213,7 +216,11 @@ export class ModelInstallCoordinator {
       file.sha256 ?? exactVersion?.file.sha256 ?? '',
     )
     const totalBytes = needsAnimaCompanions
-      ? (reusablePrimary ? 0 : ANIMA_BASE_1_0_CHECKPOINT.sizeBytes) +
+      ? (reusablePrimary
+          ? 0
+          : isPinnedBase
+            ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+            : file.sizeEstimateBytes!) +
         (
           await Promise.all(
             companions.map(async (item) =>
@@ -228,6 +235,7 @@ export class ModelInstallCoordinator {
     const controller = new AbortController()
     this.controllers.set(jobId, controller)
     this.queued.push({
+      acceptedAnimaLicense,
       controller,
       file,
       jobId,
@@ -348,13 +356,18 @@ export class ModelInstallCoordinator {
       return true
     }
     const installed = await this.repository.listInstalled()
-    const versions = installed.flatMap((resource) => resource.versions)
     for (const companion of [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE]) {
       const role = companionRole(companion)
       const dependencyId = version.dependencyVersionIds[role]
-      const dependency = versions.find((item) => item.id === dependencyId)
+      const dependencyResource = installed.find((resource) =>
+        resource.versions.some((item) => item.id === dependencyId),
+      )
+      const dependency = dependencyResource?.versions.find((item) => item.id === dependencyId)
       if (
         !dependency ||
+        dependencyResource?.type !== role ||
+        dependencyResource.source.kind !== 'supported_dependency' ||
+        dependency.baseModelFamily !== 'anima' ||
         dependency.file.sha256 !== companion.sha256 ||
         !(await this.isFileVerified(dependency.file))
       ) {
@@ -393,7 +406,7 @@ export class ModelInstallCoordinator {
         version: {
           baseModelFamily: 'anima',
           format: 'SafeTensor',
-          name: ANIMA_BASE_1_0_CHECKPOINT.path.split('/').at(-1) ?? 'Anima Base 1.0',
+          name: fileName,
           source: {
             expectedSha256: source.sha256,
             kind: 'supported_dependency',
@@ -459,7 +472,15 @@ export class ModelInstallCoordinator {
             kind: 'civitai',
             versionId: preview.versionId,
           },
-          sourceMetadata: { baseModel: preview.baseModel, trainedWords: preview.trainedWords },
+          sourceMetadata: {
+            baseModel: preview.baseModel,
+            trainedWords: preview.trainedWords,
+            ...(preview.resourceType === 'checkpoint' &&
+            preview.baseModelFamily === 'anima' &&
+            isPinnedAnimaBaseCheckpoint(staged.sha256)
+              ? { license: ANIMA_SOURCE_LICENSE.id }
+              : {}),
+          },
         },
       },
       createdPath: created,
@@ -491,8 +512,15 @@ export class ModelInstallCoordinator {
         throw new ModelServiceError('MODEL_HASH_COLLISION', 'An existing managed file is invalid.')
       }
       if (stat.size !== staged.sizeBytes || (await hashFile(managedPath)) !== staged.sha256) {
-        await rename(staged.stagingPath, managedPath)
+        // Keep the old, possibly shared path untouched until the SQLite group commit. A late
+        // failure can then remove this new file without making a failed repair usable.
+        const replacementPath = path.join(
+          hashDirectory,
+          `${staged.sha256}-repair-${randomUUID()}${extension}`,
+        )
+        await link(staged.stagingPath, replacementPath)
         await syncDirectory(hashDirectory)
+        return { created: true, managedPath: replacementPath }
       }
       return { created: false, managedPath }
     }
@@ -556,7 +584,10 @@ export class ModelInstallCoordinator {
         continue
       }
       for (const name of await readdir(directory)) {
-        if (!/^[a-f0-9]{64}\.(?:safetensors|pth|pt)$/i.test(name) || name.slice(0, 2) !== prefix) {
+        if (
+          !/^[a-f0-9]{64}(?:-repair-[a-f0-9-]{36})?\.(?:safetensors|pth|pt)$/i.test(name) ||
+          name.slice(0, 2) !== prefix
+        ) {
           continue
         }
         const filePath = path.join(directory, name)
@@ -612,7 +643,9 @@ export class ModelInstallCoordinator {
           bearerToken: job.token,
           expectedBytes:
             job.preview.resourceType === 'checkpoint' && job.preview.baseModelFamily === 'anima'
-              ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+              ? isPinnedAnimaBaseCheckpoint(job.file.sha256)
+                ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+                : (repairVersion?.file.sizeBytes ?? null)
               : (repairVersion?.file.sizeBytes ?? null),
           expectedSha256: expectedPrimaryHash,
           onProgress: (bytes, total) =>
@@ -623,6 +656,17 @@ export class ModelInstallCoordinator {
         staging.push(primary.stagingPath)
         downloadedTotal += primary.sizeBytes
       }
+      if (
+        job.preview.resourceType === 'checkpoint' &&
+        job.preview.baseModelFamily === 'anima' &&
+        isPinnedAnimaBaseCheckpoint(primary.sha256) &&
+        !job.acceptedAnimaLicense
+      ) {
+        throw new ModelServiceError(
+          'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+          'The downloaded file is CircleStone Anima Base 1.0; acknowledge its license before installing.',
+        )
+      }
       prepared.push(await this.preparePrimary(job.preview, job.file, primary, createdPaths))
       await this.repository.updateInstallArtifact(job.jobId, 'primary', {
         status: 'ready',
@@ -630,6 +674,10 @@ export class ModelInstallCoordinator {
       })
 
       const companionVersionIds = new Map<AnimaDependencyRole, string>()
+      const dependencyRepairs = new Map<
+        AnimaDependencyRole,
+        { file: VerifiedLocalModelFile; role: AnimaDependencyRole; versionId: string }
+      >()
 
       for (const companion of job.preview.resourceType === 'checkpoint' &&
       job.preview.baseModelFamily === 'anima'
@@ -681,17 +729,12 @@ export class ModelInstallCoordinator {
             .flatMap((resource) => resource.versions)
             .find((version) => version.file.sha256 === companion.sha256)
         if (repairCompanion) {
-          await this.repository.repairVerifiedVersion({
+          dependencyRepairs.set(role, {
             file: preparedCompanion.artifact.file,
+            role,
             versionId: repairCompanion.id,
           })
           companionVersionIds.set(role, repairCompanion.id)
-          if (preparedCompanion.createdPath) {
-            createdPaths.splice(
-              createdPaths.indexOf(preparedCompanion.artifact.file.managedPath),
-              1,
-            )
-          }
         } else {
           prepared.push(preparedCompanion)
         }
@@ -708,6 +751,9 @@ export class ModelInstallCoordinator {
       await this.updateJob(job.jobId, {
         bytesDownloaded: downloadedTotal,
         status: 'verifying',
+        ...(job.preview.resourceType === 'checkpoint' && job.preview.baseModelFamily === 'anima'
+          ? { totalBytes: downloadedTotal }
+          : {}),
       })
       const primaryArtifact = prepared.find((item) => item.role === 'primary')?.artifact
       if (!primaryArtifact) {
@@ -728,7 +774,13 @@ export class ModelInstallCoordinator {
                 `Required Anima ${role} is missing.`,
               )
             }
-            dependencies.push({ existingVersionId, role })
+            dependencies.push({
+              existingVersionId,
+              ...(dependencyRepairs.has(role)
+                ? { repairFile: dependencyRepairs.get(role)!.file }
+                : {}),
+              role,
+            })
           }
         }
       }
@@ -738,6 +790,7 @@ export class ModelInstallCoordinator {
       this.committingJobs.add(job.jobId)
       await (repairVersion
         ? this.repository.repairVerifiedVersion({
+            dependencyRepairs: [...dependencyRepairs.values()],
             file: primaryArtifact.file,
             jobId: job.jobId,
             versionId: repairVersion.id,
@@ -748,6 +801,9 @@ export class ModelInstallCoordinator {
             primary: primaryArtifact,
           }))
       published = true
+      if (createdPaths.some((filePath) => path.basename(filePath).includes('-repair-'))) {
+        await this.removeOrphanedManagedFiles().catch(() => undefined)
+      }
       await this.emitJob(job.jobId)
       this.modelService.forgetPreview(job.previewId)
     } catch (error) {
@@ -783,7 +839,11 @@ export class ModelInstallCoordinator {
 
   private async updateJob(
     jobId: string,
-    input: { bytesDownloaded?: number; status: 'completed' | 'downloading' | 'verifying' },
+    input: {
+      bytesDownloaded?: number
+      status: 'completed' | 'downloading' | 'verifying'
+      totalBytes?: number
+    },
   ): Promise<void> {
     await this.repository.updateInstallJob(jobId, input)
     await this.emitJob(jobId)

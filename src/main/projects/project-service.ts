@@ -911,7 +911,6 @@ export class ProjectService {
         }
         break
       }
-
       case 'sampling-cfg-scale': {
         if (draft.sampling.cfgScale === change.value) {
           return toTab(tabId, coordinator)

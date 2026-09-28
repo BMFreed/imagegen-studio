@@ -271,7 +271,14 @@ Workflow-specific fields are conditional:
 - choosing `Fixed` seed reveals the seed value input;
 - a Smart Patch preset stores reusable generation settings only, not a mask, patch bounding box, layer position or generated raster variants.
 
-Prompt fields use visible `Prompt` and `Negative Prompt` labels. Compatibility metadata such as `v-pred` may be shown compactly with an info tooltip, but must not be presented as an unexplained editable generation field.
+Prompt fields use visible `Prompt` and `Negative Prompt` labels. For an
+Illustrious exact-file reference, the saved prediction type is advisory metadata.
+Preset Apply cannot override the Model Manager setting: `epsilon` with no known
+value is labeled there as an editable assumption, and `v-pred` maps to
+`v_prediction` in the worker payload. An older `null` or non-null reference
+stays unchanged; Prepare rehashes the exact file and resolves the current
+effective type without rewriting the preset or `.igs`. Frozen job and provenance
+store the actual type. Anima has no SDXL prediction type control.
 
 ### Edit Lifecycle
 

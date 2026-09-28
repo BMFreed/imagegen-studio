@@ -1,7 +1,9 @@
 /**
- * Pinned reference artifacts for the explicitly supported Anima Base 1.0 checkpoint. File metadata
- * comes from the Hugging Face tree API at ANIMA_HF_REVISION. An Anima architecture match alone does
- * not establish companion compatibility.
+ * Pinned reference artifacts from the Anima Base 1.0 release. File metadata comes from the Hugging
+ * Face tree API at ANIMA_HF_REVISION. The checkpoint identity is used to identify its source
+ * license and exact size; it is not an allowlist for installing other Anima checkpoints. The Qwen3
+ * encoder and VAE are the app-supported companion set until a worker probe qualifies another
+ * combination for inference.
  */
 
 export const ANIMA_HF_REVISION = 'f973fc41ec7545364ac9776c2440285f43ff2a30'
@@ -79,33 +81,10 @@ export const ANIMA_BASE_1_0_COMPANION_BYTES = ANIMA_BASE_1_0_COMPANIONS.reduce(
 export const ANIMA_BASE_1_0_TOTAL_BYTES =
   ANIMA_BASE_1_0_CHECKPOINT.sizeBytes + ANIMA_BASE_1_0_COMPANION_BYTES
 
-export type AnimaDependencyResolution =
-  | Readonly<{
-      checkpoint: AnimaArtifact
-      companions: readonly AnimaArtifact[]
-      supported: true
-      totalBytes: number
-    }>
-  | Readonly<{ reason: 'unsupported-checkpoint'; supported: false }>
-
-const SUPPORTED_BASE_1_0: AnimaDependencyResolution = Object.freeze({
-  checkpoint: ANIMA_BASE_1_0_CHECKPOINT,
-  companions: ANIMA_BASE_1_0_COMPANIONS,
-  supported: true,
-  totalBytes: ANIMA_BASE_1_0_TOTAL_BYTES,
-})
-
-const UNSUPPORTED_CHECKPOINT: AnimaDependencyResolution = Object.freeze({
-  reason: 'unsupported-checkpoint',
-  supported: false,
-})
-
-/** Resolve a pinned hash; the caller must verify the downloaded checkpoint bytes. */
-export function resolveAnimaDependencies(
-  checkpointSha256: string | null | undefined,
-): AnimaDependencyResolution {
-  return typeof checkpointSha256 === 'string' &&
+/** A source-identity check, not an Anima inference capability check. */
+export function isPinnedAnimaBaseCheckpoint(checkpointSha256: string | null | undefined): boolean {
+  return (
+    typeof checkpointSha256 === 'string' &&
     checkpointSha256.toLowerCase() === ANIMA_BASE_1_0_CHECKPOINT.sha256
-    ? SUPPORTED_BASE_1_0
-    : UNSUPPORTED_CHECKPOINT
+  )
 }

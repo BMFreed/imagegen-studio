@@ -73,20 +73,27 @@ Already fixed project decisions:
   unavailable secure storage backend cannot be used to save a token.
 - CivitAI in-app search / marketplace browsing is not MVP.
 - SDXL/Illustrious-like `.safetensors` files remain source files; the worker loads them through the Invoke-like Diffusers single-file path and caches loaded components in RAM/VRAM.
-- Illustrious and Anima are the supported MVP checkpoint families. Anima's
-  Qwen3 encoder and VAE are installed with its checkpoint as required managed
-  dependencies, not left for the user to find and install separately.
-- ImageGen Studio is a free open-source application, but the base Anima weights
-  have separate [CircleStone Non-Commercial License](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md)
-  terms. Anima support is for non-commercial, non-production use only. The app
-  does not bundle those weights; the install preview shows the source, license
-  link and use restriction before the user confirms the download.
-- Model metadata includes `baseModelFamily` and nullable `predictionType`.
-- `predictionType` is Illustrious/SDXL compatibility metadata, not a creative
-  user setting. For its inference, it must come from a verified app-owned
-  manifest keyed by exact checkpoint SHA-256. Anima's rectified-flow path needs
-  a separate family-specific manifest entry. Unqualified models can be
-  installed but cannot generate.
+- Illustrious and Anima are the supported MVP checkpoint families. Any supported
+  CivitAI `.safetensors` checkpoint in either family can be installed. Anima
+  uses a separate rectified-flow path. Each supported custom Anima checkpoint
+  is installed with pinned Qwen3 encoder and VAE. This pairing does not prove
+  structural compatibility; Generate checks it separately.
+- ImageGen Studio is a free open-source application and does not bundle model
+  weights. The Anima Base 1.0 weights have separate
+  [CircleStone Non-Commercial License](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md)
+  terms and are supported only for non-commercial, non-production use. An
+  arbitrary CivitAI derivative must show its own source terms, alongside the
+  pinned components' terms; the Base 1.0 checkpoint license is not assigned to
+  every derivative merely because its family is Anima.
+- Model metadata includes `baseModelFamily`. Illustrious/SDXL `predictionType`
+  override is keyed by exact SHA-256 and size, separate from source-owned metadata.
+  With no explicitly known value, Model Manager offers editable `epsilon` as a
+  labeled assumption, not a claim about training. Project displays the current
+  effective type read-only; its saved snapshot does not control future inference.
+  SHA-256 verifies file identity
+  and integrity, not membership in a generation allowlist. Anima does not use an
+  SDXL prediction type; Generate requires structural and compatible-component
+  checks for its separate rectified-flow pipeline.
 - Missing model/LoRA/embedding resources must be diagnosable when applying presets or viewing accepted-result provenance/comparison.
 
 ## ImageGen Studio Decision
@@ -291,7 +298,9 @@ Visible MVP detail content:
 - display name;
 - short description;
 - status/type/base-model badges;
-- `predictionType` badge for main checkpoints when known, such as `v-pred`, with a short explanatory tooltip;
+- for Illustrious checkpoints, the exact file's selected prediction type, its
+  known/default/user-chosen status, and an editable `epsilon`/`v-pred` control
+  with a short explanation; no SDXL prediction control for Anima;
 - installed versions;
 - selected/default version;
 - managed file name;
@@ -373,8 +382,9 @@ MVP includes:
 - require active CivitAI API token before download;
 - fetch CivitAI metadata and preview before download;
 - show an import preview before starting the install;
-- for Anima, show the checkpoint, required Qwen3 encoder and VAE, and the total
-  additional download size before confirming their joint installation;
+- for Anima, show the checkpoint, pinned Qwen3 encoder/VAE and total additional
+  download size before joint installation; explain that structural compatibility
+  is checked separately before Generate;
 - download to a temporary file;
 - show download/install progress;
 - verify size and hash when available;
@@ -473,20 +483,17 @@ flowchart TD
 
 The import flow is preview-first. The app should not start downloading a large model before the user sees what will be installed.
 
-For Anima, the CivitAI URL is still the user-facing install entrypoint. A
-versioned, app-supported dependency mapping resolves the exact Qwen3 encoder
-and VAE artifacts needed by that checkpoint; this is not a generic second
-model-source browser. The import preview lists each required artifact and its
-size, any already installed verified companion, and the total bytes still to
-download. If a required artifact or its size cannot be resolved, installation
-cannot start and the dialog explains the missing dependency. One confirmation
-starts the whole group. The checkpoint becomes selectable only after all
-required components pass verification and their relationships are committed;
-failure/cancel leaves no partially installed selectable Anima model. Verified
-shared companions are reused rather than downloaded again, and are retained
-while another installed model needs them. If a companion later goes missing,
-the dependent checkpoint is unavailable for generation until that exact
-dependency is repaired.
+For Anima, the CivitAI URL is still the user-facing install entrypoint. Each
+supported custom checkpoint is paired with pinned Qwen3 encoder and VAE in one
+confirmed install group. The import preview lists the files and total bytes
+for that group before download; failure/cancel publishes no partial group.
+Verified shared companions can be reused and remain while another installed
+model needs them. Their installation does not prove the checkpoint's structural
+compatibility; Generate becomes available only after the exact checkpoint
+structure and components are checked. The preview shows the selected checkpoint
+and pinned components' sources and applicable terms, without assuming every
+Anima derivative has the Base 1.0 checkpoint license. A missing companion later blocks
+generation until that exact dependency is repaired.
 
 Validation steps:
 
@@ -868,6 +875,19 @@ not mutate all mock rows, and prototype storage, real download/repair/remove,
 queue advancement, token/error/empty states remain outside this interaction
 coverage. Production acceptance criteria below require separate evidence.
 
+The Vue prototype still shows prediction type as read-only. The production
+Electron Model Manager now offers a per-exact-file Illustrious prediction control:
+an explicit choice overrides the verified manifest value or the labeled
+`epsilon` assumption. It installs supported CivitAI Anima checkpoints together
+with pinned Qwen3/VAE companions; the official Base license is attributed only
+to matching checkpoint bytes. Electron smoke covers the Model Manager control and
+Project read-only display. The `.igs` value is advisory for future inference;
+Prepare takes the current effective type. The production import dialog shows
+the selected file's download estimate and the pinned companions' CircleStone
+terms; custom checkpoint terms remain source-specific. SQLite/filesystem tests
+cover rollback of a late Anima install failure after preparing a companion
+repair. Structural qualification and inference in the worker remain open.
+
 The App Chrome downloads icon is visually present but not wired to Model Manager in the prototype; `Manage Models` on Home and the standalone query are the implemented entry points.
 
 ## Acceptance Criteria
@@ -881,10 +901,16 @@ The following criteria describe the production feature; prototype-only coverage 
 - Import is blocked until CivitAI token is configured.
 - Linux cannot persist a token with `safeStorage`'s `basic_text` backend or a
   plaintext fallback; token setup explains secure-storage unavailability.
-- Anima install preview shows all required companion files and total additional
-  download size plus its non-commercial, non-production license restriction;
-  the checkpoint is selectable only after the whole group is verified and
-  registered.
+- A supported CivitAI Illustrious/Anima `.safetensors` checkpoint can be
+  installed without an app-owned checkpoint-hash allowlist. All custom Anima
+  installs show the pinned Qwen3/VAE group and total additional download size;
+  Generate still requires structural and component checks.
+- Each installed artifact's source terms are shown before install; the CircleStone
+  restriction is shown for its Base 1.0 weights, not inferred for every derivative.
+- The user can edit Illustrious prediction type only in Model Manager, per exact
+  SHA-256 and size. An `epsilon` default with no known value is visibly labeled
+  as an assumption. A library edit affects subsequent Prepare for that file,
+  without rewriting `.igs`, Presets, frozen jobs or accepted provenance.
 - User can start model install and see it in an install queue.
 - Download progress is visible and survives Model Manager close/reopen during the app session.
 - Completed install creates SQLite resource records and a managed local file.
