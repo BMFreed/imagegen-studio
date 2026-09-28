@@ -2,7 +2,12 @@
 
 ## Роль worker'а
 
-MVP использует один Invoke-like inference pipeline для Illustrious/SDXL и Anima, включая совместимые LoRA. Другие inference engines не являются fallback или будущим backend-вариантом. Diffusers и PyTorch могут оставаться внутренними библиотеками pipeline.
+MVP использует один Invoke-like inference pipeline для Illustrious (архитектура
+SDXL) и Anima, включая совместимые LoRA. Самостоятельная поддержка базовой SDXL
+не запланирована; обозначение SDXL ниже относится к внутренним компонентам
+пути Illustrious. Другие inference engines не являются fallback или будущим
+backend-вариантом. Diffusers и PyTorch могут оставаться внутренними библиотеками
+pipeline.
 
 TypeScript владеет строго типизированной бизнес-логикой, очередью, проверкой совместимости ресурсов/операций и подготовкой immutable job inputs. Python worker загружает и кэширует модели в RAM/VRAM, выполняет model-specific conditioning и denoising, создаёт image derivatives/thumbnails из переданных assets и промежуточные previews во время генерации. Он не управляет SQLite, пресетами, CivitAI, app-managed storage, именами/путями файлов или публикацией результатов. Main process владеет download, file cache, materialization, storage и атомарной публикацией output; worker получает только разрешённые main-managed paths.
 

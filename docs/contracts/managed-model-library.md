@@ -50,6 +50,9 @@ hash и source link. Любой CivitAI checkpoint поддерживаемог�
 Illustrious или Anima с поддерживаемым `.safetensors`-файлом можно установить
 после обычной проверки источника и целостности; SHA-256 определяет точные bytes
 и resource identity, но не служит списком разрешённых моделей.
+Метка семейства `SDXL` в CivitAI сама по себе не означает `Illustrious` и не
+включает checkpoint в поддерживаемый список. SDXL в названии loader'а и
+проверки весов обозначает архитектуру Illustrious, а не третье семейство.
 
 CivitAI metadata и форма весов не доказывают Illustrious/SDXL `predictionType`.
 Пользовательский override `epsilon` или `v_prediction` редактируется только в

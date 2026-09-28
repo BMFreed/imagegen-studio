@@ -364,9 +364,12 @@ test('an unconfirmed startup child blocks concurrent and later starts until its 
         ),
         isCode('WORKER_EXIT_UNCONFIRMED'),
       )
+      assert.equal(await GenerationWorkerClient.retryUnconfirmedStartExit(), false)
       assert.equal((await readFile(marker, 'utf8')).trim().split('\n').length, 1)
 
       ChildProcess.prototype.kill = actualKill
+      assert.equal(await GenerationWorkerClient.retryUnconfirmedStartExit(), true)
+      assert.equal((await readFile(marker, 'utf8')).trim().split('\n').length, 1)
       const recovered = await GenerationWorkerClient.start(
         fixture.location,
         options('done', { FAKE_SPAWN_MARKER: marker }),

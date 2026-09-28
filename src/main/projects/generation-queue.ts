@@ -27,6 +27,7 @@ const MAX_PAYLOAD_BYTES = 128 * 1024
 const MAX_MANIFEST_BYTES = 4096
 const QUEUE_INPUT_VERSION = 1
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+const PROJECT_KEY_PATTERN = /^project-v1-[a-f0-9]{64}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const UuidSchema = v.pipe(v.string(), v.uuid())
 const Sha256Schema = v.pipe(v.string(), v.regex(SHA256_PATTERN))
@@ -610,6 +611,28 @@ export class GenerationQueueRepository {
       }
       await this.requireRow(id)
       throw statusConflict()
+    })
+  }
+
+  /** Snapshot unfinished jobs for one local Project; the caller must recheck each row on cancel. */
+  async listUnfinishedByProject(localProjectKey: string): Promise<QueuedGenerationItem[]> {
+    if (typeof localProjectKey !== 'string' || !PROJECT_KEY_PATTERN.test(localProjectKey)) {
+      throw new GenerationQueueError(
+        'QUEUE_PROJECT_IDENTITY_CHANGED',
+        'The Project identity is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const rows = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('local_project_key', '=', localProjectKey)
+        .where('status', 'in', ['pending', 'running'])
+        .orderBy('created_at', 'asc')
+        .orderBy('id', 'asc')
+        .execute()
+      return rows.map(toItem)
     })
   }
 

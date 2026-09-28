@@ -109,6 +109,10 @@ used by the application entrypoint. A later Electron integration must retain
 one recovered pair and prevent a runtime status probe from competing with a
 running CUDA job.
 
+This paragraph records the state of that checkpoint. The later
+[retained-recovery and owned-dispatch checkpoint](./phase-2b-owned-dispatch-and-recovery.md)
+adds both internal boundaries; Electron still has no Generate caller.
+
 An isolated detached-worktree mutation removed queue recovery from the
 bootstrap helper. Two of its three focused tests failed (`QUEUE_NOT_RECONCILED`
 and wrong unsafe-storage error); the original helper passed 3/3 again after

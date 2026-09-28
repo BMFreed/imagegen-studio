@@ -23,6 +23,8 @@ import { mkdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { GenerationAppContext } from './projects/generation-app-context.js'
+
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
 import { openAppDatabase } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
@@ -33,8 +35,7 @@ import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
-import { GenerationQueueRepository } from './projects/generation-queue.js'
-import { GenerationStagingRepository } from './projects/generation-staging.js'
+import { createGenerationAppContext } from './projects/generation-app-context.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
@@ -101,6 +102,7 @@ if (!gotInstanceLock) {
 } else {
   let mainWindow: BrowserWindow | null = null
   let closeDatabase: (() => Promise<void>) | null = null
+  let generationContext: GenerationAppContext | null = null
 
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -115,6 +117,9 @@ if (!gotInstanceLock) {
 
   app.on('window-all-closed', () => app.quit())
   app.on('will-quit', () => {
+    // The startup context owns no active worker yet: this only closes context access. When Generate
+    // gets an entry point, its dispatch owner must confirm worker exit before SQLite closes.
+    generationContext?.shutdown()
     if (closeDatabase) {
       void closeDatabase()
     }
@@ -127,15 +132,6 @@ if (!gotInstanceLock) {
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
-      try {
-        // Old jobs never resume automatically. Reconcile manifest-first candidate publication
-        // after queue restart cancellation and before any future processor can use the database.
-        await new GenerationQueueRepository(database.db, paths.dataRoot).recoverAfterRestart()
-        await new GenerationStagingRepository(database.db, paths.dataRoot).recoverAfterRestart()
-      } catch (error) {
-        // No generation processor is active in this checkpoint; keep document/model access alive.
-        console.error('Generation recovery is unavailable', error)
-      }
       const projectRepository = new ProjectIndexRepository(database.db)
       const projectService = new ProjectService({
         dataRoot: paths.dataRoot,
@@ -226,6 +222,19 @@ if (!gotInstanceLock) {
         new CivitaiTokenStore(safeStorage, paths.dataRoot),
         paths.cacheRoot,
       )
+      // Keep the recovered queue/staging pair and their single owner for this app lifetime.
+      // This is storage readiness only; index registers no Generate IPC entry point or worker.
+      generationContext = await createGenerationAppContext({
+        database,
+        dataRoot: paths.dataRoot,
+        modelService,
+        projectIndex: projectRepository,
+        projectService,
+        scratchBasePath: path.join(paths.dataRoot, 'scratch'),
+      })
+      if (generationContext.availability.kind === 'recovery-failed') {
+        console.error('Generation recovery is unavailable', generationContext.recoveryFailure)
+      }
       const installCoordinator = new ModelInstallCoordinator(
         modelRepository,
         modelService,

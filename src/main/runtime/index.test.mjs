@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -55,13 +56,14 @@ const mode = fs.readFileSync(path.join(environment, 'mode'), 'utf8')
 if (mode === 'no-ready') process.exit(78)
 const ready = {
   type: 'ready', protocolVersion: '1', pythonVersion: '3.12.13',
-  workerVersion: mode === 'wrong-version' ? '0.1.0' : '0.2.0',
+  workerVersion: mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : '0.2.0',
   runtimeProfile: 'linux-nvidia', capabilities: ['illustrious-txt2img']
 }
 process.on('SIGTERM', () => {
   process.exit(0)
 })
 process.on('exit', () => fs.appendFileSync(path.join(root, 'exits'), runtimeId + '\n'))
+if (mode === 'wrong-version-keepalive') setInterval(() => {}, 1000)
 process.stdout.write(JSON.stringify(ready) + '\n')
 process.stdin.resume()
 `
@@ -344,5 +346,271 @@ test('an unconfirmed worker exit blocks every new qualification until its exit i
   } finally {
     blockClose = false
     await Promise.all(clients.map((client) => client.close().catch(() => undefined)))
+  }
+})
+
+test('generation retry does not confirm an unclosed qualification child', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const clients = []
+  let blockClose = true
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const client = await GenerationWorkerClient.start(location, { environment })
+      clients.push(client)
+      return {
+        close: async () => {
+          if (blockClose) throw new Error('Qualification exit remains unconfirmed.')
+          await client.close()
+        },
+      }
+    },
+  )
+  try {
+    assert.equal(
+      await manager.withGenerationWorker(scratch, async () =>
+        assert.fail('An unconfirmed qualification cannot dispatch a job.'),
+      ),
+      null,
+    )
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+    ])
+    assert.equal(
+      await manager.withGenerationWorker(scratch, async () =>
+        assert.fail('The previous CUDA child still owns the runtime.'),
+      ),
+      null,
+    )
+    blockClose = false
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), [
+      'worker-2-linux-nvidia',
+    ])
+    assert.equal(
+      await manager.withGenerationWorker(scratch, async (worker) => worker.ready.workerVersion),
+      '0.2.0',
+    )
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 3)
+  } finally {
+    blockClose = false
+    await Promise.all(clients.map((client) => client.close().catch(() => undefined)))
+  }
+})
+
+test('failed startup child blocks runtime retry and new launches until exit is confirmed', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'wrong-version-keepalive')
+  const actualKill = ChildProcess.prototype.kill
+  const stalled = new Set()
+  ChildProcess.prototype.kill = function (signal) {
+    if (this.spawnfile === installed.executable) {
+      stalled.add(this)
+      return true
+    }
+    return actualKill.call(this, signal)
+  }
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) =>
+      await GenerationWorkerClient.start(location, {
+        environment,
+        shutdownWaitMs: 25,
+        startupTimeoutMs: 100,
+      }),
+  )
+  try {
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+    ])
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.equal(
+      await manager.withGenerationWorker(scratch, async () =>
+        assert.fail('An unconfirmed startup child must block dispatch.'),
+      ),
+      null,
+    )
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+
+    ChildProcess.prototype.kill = actualKill
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.equal(stalled.size, 1)
+    const [startupChild] = stalled
+    assert.equal(
+      startupChild.exitCode !== null || startupChild.signalCode !== null,
+      true,
+      'retry must observe the actual subprocess exit, including SIGKILL',
+    )
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    await fs.writeFile(path.join(installed.environment, 'mode'), 'ready')
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  } finally {
+    ChildProcess.prototype.kill = actualKill
+    for (const child of stalled) {
+      if (child.exitCode === null && child.signalCode === null) {
+        actualKill.call(child, 'SIGKILL')
+      }
+    }
+    await GenerationWorkerClient.retryUnconfirmedStartExit().catch(() => undefined)
+  }
+})
+
+test('a generation lease excludes status and resolver probes during qualification and active work', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  const pointerBytes = await fs.readFile(roots.pointerFile)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  let qualificationEntered
+  const entered = new Promise((resolve) => {
+    qualificationEntered = resolve
+  })
+  let resumeQualification
+  const qualificationGate = new Promise((resolve) => {
+    resumeQualification = resolve
+  })
+  let workEntered
+  const working = new Promise((resolve) => {
+    workEntered = resolve
+  })
+  let finishWork
+  const workGate = new Promise((resolve) => {
+    finishWork = resolve
+  })
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const child = await GenerationWorkerClient.start(location, { environment })
+      qualificationEntered()
+      await qualificationGate
+      return child
+    },
+  )
+  const generation = manager.withGenerationWorker(scratch, async (worker) => {
+    assert.equal(worker.ready.workerVersion, '0.2.0')
+    workEntered()
+    await workGate
+    return 'completed'
+  })
+  try {
+    await entered
+    const startingStatus = await Promise.race([
+      manager.getStatus(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('status waited for generation')), 1000),
+      ),
+    ])
+    assert.equal(startingStatus.value.kind, 'needs-repair')
+    assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+    ])
+
+    resumeQualification()
+    await working
+    const activeStatus = await Promise.race([
+      manager.getStatus(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('status waited for active job')), 1000),
+      ),
+    ])
+    assert.equal(activeStatus.value.kind, 'ready')
+    assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'second'), null)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+      'worker-2-linux-nvidia',
+    ])
+    await fs.writeFile(path.join(installed.config, 'model_index.json'), 'changed')
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    await fs.writeFile(path.join(installed.config, 'model_index.json'), 'pinned')
+    await fs.rm(roots.pointerFile)
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    await fs.writeFile(roots.pointerFile, pointerBytes)
+  } finally {
+    await fs.writeFile(path.join(installed.config, 'model_index.json'), 'pinned')
+    await fs.writeFile(roots.pointerFile, pointerBytes)
+    resumeQualification()
+    finishWork()
+  }
+  assert.equal(await generation, 'completed')
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), [
+    'worker-2-linux-nvidia',
+    'worker-2-linux-nvidia',
+  ])
+  assert.equal((await manager.getStatus()).value.kind, 'ready')
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+})
+
+test('a generation lease preserves callback failure and accepts an already canceled child', async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const original = new Error('the processor failed')
+  await assert.rejects(
+    manager.withGenerationWorker(scratch, async (worker) => {
+      await worker.close()
+      throw original
+    }),
+    (error) => error === original,
+  )
+  assert.equal(await manager.withGenerationWorker(scratch, async () => 'next'), 'next')
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 4)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 4)
+})
+
+test('unconfirmed generation exit retains its lease and blocks every new CUDA process until retry', async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  let client
+  let blockClose = true
+  try {
+    await assert.rejects(
+      manager.withGenerationWorker(scratch, async (worker) => {
+        client = worker
+        const actualClose = worker.close.bind(worker)
+        worker.close = async () => {
+          if (blockClose) throw new Error('exit was not confirmed')
+          await actualClose()
+        }
+        return 'done'
+      }),
+      /exit was not confirmed/,
+    )
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+      'worker-2-linux-nvidia',
+      'worker-2-linux-nvidia',
+    ])
+    blockClose = false
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+  } finally {
+    blockClose = false
+    await manager.retryUnconfirmedGenerationExit().catch(() => undefined)
+    await client?.close().catch(() => undefined)
   }
 })

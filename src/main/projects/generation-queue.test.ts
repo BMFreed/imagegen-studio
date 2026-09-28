@@ -21,6 +21,7 @@ import {
   type IllustriousTxt2ImgRequestV1,
   withIllustriousTxt2ImgRequest,
 } from './illustrious-txt2img-job.js'
+import { localProjectRecoveryKey } from './project-identity.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const iccPath = path.resolve('worker-python/src/imagegen_worker/srgb.icc')
@@ -402,15 +403,95 @@ test('dispatch readiness is revoked when startup recovery fails', async () => {
   const database = openAppDatabase(root, migrations)
   try {
     const queue = new GenerationQueueRepository(database.db, root)
+    const { projectPath } = await fixture(root)
+    const projectKey = localProjectRecoveryKey(projectPath)
     assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+    await assert.rejects(queue.listUnfinishedByProject(projectKey), {
+      code: 'QUEUE_NOT_RECONCILED',
+    })
     await queue.recoverAfterRestart()
     assert.doesNotThrow(() => queue.assertReadyForDispatch())
+    assert.deepEqual(await queue.listUnfinishedByProject(projectKey), [])
 
     const inputRoot = path.join(root, 'generation-inputs')
     await rm(inputRoot, { recursive: true })
     await symlink(root, inputRoot, 'dir')
     await assert.rejects(queue.recoverAfterRestart(), { code: 'QUEUE_STORAGE_UNSAFE' })
     assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+    await assert.rejects(queue.listUnfinishedByProject(projectKey), {
+      code: 'QUEUE_NOT_RECONCILED',
+    })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('unfinished Project listing isolates identities and excludes every terminal status without changing rows', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-project-list-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const first = await fixture(root)
+    const secondRoot = path.join(root, 'second-project')
+    await mkdir(secondRoot)
+    const second = await fixture(secondRoot)
+
+    const failed = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const failedClaim = await queue.claimNextPending()
+    assert.equal(failedClaim?.item.id, failed.id)
+    await queue.failRunning(failed.id, 1, {
+      code: 'WORKER_FAILED',
+      message: 'Fixture failure.',
+    })
+
+    const running = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const runningClaim = await queue.claimNextPending()
+    assert.equal(runningClaim?.item.id, running.id)
+    const requested = await queue.cancel(running.id, 1)
+    assert.equal(requested.cancelRequested, true)
+
+    const pending = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const canceled = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    await queue.cancel(canceled.id)
+    const completed = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ status: 'completed' })
+      .where('id', '=', completed.id)
+      .execute()
+
+    const otherPending = await enqueueFixture(root, queue, second.prepared, second.projectPath)
+    const otherCanceled = await enqueueFixture(root, queue, second.prepared, second.projectPath)
+    await queue.cancel(otherCanceled.id)
+
+    const before = await database.db
+      .selectFrom('generation_queue_item')
+      .select(['id', 'status', 'status_sequence'])
+      .orderBy('id')
+      .execute()
+    const firstUnfinished = await queue.listUnfinishedByProject(running.localProjectKey)
+    assert.deepEqual(firstUnfinished.map((item) => item.id).sort(), [running.id, pending.id].sort())
+    assert.deepEqual(
+      firstUnfinished.find((item) => item.id === running.id),
+      requested,
+    )
+    assert.deepEqual(
+      (await queue.listUnfinishedByProject(otherPending.localProjectKey)).map((item) => item.id),
+      [otherPending.id],
+    )
+    await assert.rejects(queue.listUnfinishedByProject('project-v1-invalid'), {
+      code: 'QUEUE_PROJECT_IDENTITY_CHANGED',
+    })
+    assert.deepEqual(
+      await database.db
+        .selectFrom('generation_queue_item')
+        .select(['id', 'status', 'status_sequence'])
+        .orderBy('id')
+        .execute(),
+      before,
+    )
   } finally {
     await database.close()
     await rm(root, { force: true, recursive: true })

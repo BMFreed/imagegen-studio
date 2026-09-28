@@ -47,6 +47,7 @@ export class GenerationProcessorError extends Error {
   constructor(
     readonly code:
       | 'BUSY'
+      | 'CLOSED'
       | 'INFERENCE_UNAVAILABLE'
       | 'PUBLICATION_UNCERTAIN'
       | 'QUEUE_CHANGED'
@@ -66,6 +67,7 @@ export class GenerationProcessorError extends Error {
 export class GenerationProcessor {
   private active: ActiveJob | null = null
   private running = false
+  private stopping = false
 
   constructor(
     private readonly queue: GenerationQueueRepository,
@@ -90,6 +92,9 @@ export class GenerationProcessor {
   }
 
   async runOne(transport: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
+    if (this.stopping) {
+      throw new GenerationProcessorError('CLOSED', 'Generation dispatch is stopping.')
+    }
     if (this.running || this.active) {
       throw new GenerationProcessorError('BUSY', 'A generation job is already being processed.')
     }
@@ -124,6 +129,10 @@ export class GenerationProcessor {
       let dispatched = false
       let publishing = false
       try {
+        if (this.stopping) {
+          await this.cancelActive(active)
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
@@ -239,6 +248,15 @@ export class GenerationProcessor {
     }
   }
 
+  /** Permanently stop dispatch and cancel the currently owned worker, if any. */
+  async stopAndCancelActive(): Promise<void> {
+    this.stopping = true
+    const active = this.active
+    if (active) {
+      await this.cancelActive(active)
+    }
+  }
+
   private cancelActive(active: ActiveJob): Promise<QueuedGenerationItem> {
     if (!active.cancelPromise) {
       // Until SQLite says this job was already terminal, process exit is unconfirmed. A failed
@@ -333,6 +351,10 @@ export class GenerationProcessor {
   }
 
   private async stillRunning(active: ActiveJob): Promise<boolean> {
+    if (this.stopping && !active.cancelPromise) {
+      await this.cancelActive(active)
+      return false
+    }
     if (active.cancelPromise) {
       await active.cancelPromise
       return false

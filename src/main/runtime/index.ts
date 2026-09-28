@@ -64,6 +64,15 @@ interface QualificationClient {
   close: () => Promise<void>
 }
 
+interface GenerationLease {
+  advisoryReadyKey: string | null
+  client: GenerationWorkerClient | null
+  key: string | null
+  phase: 'qualifying' | 'running' | 'unconfirmed-exit'
+  retry: Promise<boolean> | null
+  runtimeId: string | null
+}
+
 type StartQualificationClient = (
   location: GenerationWorkerLocation,
   environment: NodeJS.ProcessEnv,
@@ -74,6 +83,7 @@ const startQualificationClient: StartQualificationClient = async (location, envi
 
 export class RuntimeManager {
   private cachedQualification: CachedQualification | null = null
+  private generationLease: GenerationLease | null = null
   private readonly host: RuntimeHost
   private readonly listeners = new Set<(status: RuntimeStatus) => void>()
   private previousStatus: RuntimeStatus | null = null
@@ -117,12 +127,19 @@ export class RuntimeManager {
 
       if (pointer.kind === 'missing') {
         this.cachedQualification = null
-        status = {
-          detail:
-            'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
-          kind: 'not-installed',
-          profile: 'linux-nvidia',
-        }
+        status = this.generationLease
+          ? {
+              detail:
+                'The active runtime metadata is missing; probing is blocked during generation.',
+              kind: 'needs-repair',
+              profile: 'linux-nvidia',
+            }
+          : {
+              detail:
+                'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
+              kind: 'not-installed',
+              profile: 'linux-nvidia',
+            }
       } else if (pointer.kind === 'invalid') {
         this.cachedQualification = null
         status = {
@@ -132,19 +149,30 @@ export class RuntimeManager {
         }
       } else {
         const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
-        const ready = prepared !== null && (await this.qualify(prepared, true))
+        // A generation may have acquired its lease while pointer/config inspection awaited I/O.
+        // Never start a second CUDA child merely to answer an advisory status request.
+        const lease = this.generationLease
+        const ready = lease
+          ? this.leaseIsAdvisoryReady(lease, prepared)
+          : prepared !== null && (await this.qualify(prepared, true))
         if (!ready) {
           this.cachedQualification = null
         }
         status = ready
           ? {
-              detail: 'The Linux/NVIDIA image runtime is ready.',
+              detail: lease
+                ? 'The Linux/NVIDIA image runtime is in use; a separate status probe is deferred.'
+                : 'The Linux/NVIDIA image runtime is ready.',
               kind: 'ready',
               profile: 'linux-nvidia',
               runtimeId: pointer.value.runtimeId,
             }
           : {
-              detail: 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
+              detail: lease
+                ? lease.phase === 'unconfirmed-exit'
+                  ? 'The generation worker has not confirmed exit; runtime probing is blocked.'
+                  : 'The image runtime is starting; a separate status probe is deferred.'
+                : 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
               kind: 'needs-repair',
               profile: 'linux-nvidia',
               runtimeId: pointer.value.runtimeId,
@@ -193,12 +221,14 @@ export class RuntimeManager {
 
   /**
    * Resolve a worker for one actual launch. This deliberately bypasses the status cache: a
-   * qualified status is advisory, while the next job must observe its own live handshake.
+   * qualified status is advisory, while the next job must observe its own live handshake. This
+   * legacy location-only method is not a lifecycle lease; production dispatch uses
+   * withGenerationWorker() so a status probe cannot compete with the live job.
    */
   async resolveQualifiedGenerationWorker(
     scratchBasePath: string,
   ): Promise<QualifiedGenerationWorker | null> {
-    if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
+    if (this.host.platform !== 'linux' || this.host.arch !== 'x64' || this.generationLease) {
       return null
     }
     try {
@@ -208,16 +238,133 @@ export class RuntimeManager {
         return null
       }
       const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
+      if (this.generationLease) {
+        return null
+      }
       // A dispatch qualification supersedes any earlier advisory status result.
       this.cachedQualification = null
       if (prepared && (await this.qualify(prepared, false))) {
-        return prepared.worker
+        return this.generationLease ? null : prepared.worker
       }
       this.cachedQualification = null
       return null
     } catch {
       this.cachedQualification = null
       return null
+    }
+  }
+
+  /** Confirm exit of a failed generation, qualification or startup child without starting another. */
+  async retryUnconfirmedGenerationExit(): Promise<boolean> {
+    const lease = this.generationLease
+    if (lease && (lease.phase !== 'unconfirmed-exit' || !lease.client)) {
+      return false
+    }
+    if (lease?.retry) {
+      return await lease.retry
+    }
+    // A failed qualification has no generation lease, but its child is retained separately.
+    // Serialize both retry paths with status qualification and generation admission.
+    const retry = this.withGpuSlot(async () => {
+      if (this.generationLease !== lease) {
+        return false
+      }
+      if (lease) {
+        try {
+          await lease.client!.close()
+        } catch {
+          return false
+        }
+        this.generationLease = null
+      }
+      if (!(await this.confirmPreviousExit())) {
+        return false
+      }
+      return await GenerationWorkerClient.retryUnconfirmedStartExit()
+    })
+    if (lease) {
+      lease.retry = retry
+      void retry.finally(() => {
+        if (lease.retry === retry) {
+          lease.retry = null
+        }
+      })
+    }
+    return await retry
+  }
+
+  /**
+   * Own one CUDA generation child from live qualification through the caller's last operation and
+   * confirmed child exit. The callback may cancel via worker.close(); final close is idempotent. A
+   * second caller receives null instead of queueing another GPU worker behind a long job.
+   */
+  async withGenerationWorker<T>(
+    scratchBasePath: string,
+    use: (worker: GenerationWorkerClient, runtime: QualifiedGenerationWorker) => Promise<T>,
+  ): Promise<T | null> {
+    if (this.host.platform !== 'linux' || this.host.arch !== 'x64' || this.generationLease) {
+      return null
+    }
+    const cached = this.cachedQualification
+    const lease: GenerationLease = {
+      advisoryReadyKey:
+        cached && Number.isFinite(cached.expiresAt) && cached.expiresAt > Date.now()
+          ? cached.key
+          : null,
+      client: null,
+      key: null,
+      phase: 'qualifying',
+      retry: null,
+      runtimeId: null,
+    }
+    // Reserve synchronously, before any pointer I/O or wait for an earlier status qualification.
+    this.generationLease = lease
+    this.cachedQualification = null
+    try {
+      return await this.withGpuSlot(async () => {
+        const pointer = await readPointer(this.roots)
+        if (pointer.kind !== 'valid') {
+          return null
+        }
+        const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
+        if (!prepared) {
+          return null
+        }
+        lease.key = prepared.key
+        lease.runtimeId = pointer.value.runtimeId
+        if (!(await this.qualifyLiveUnlocked(prepared))) {
+          return null
+        }
+        const client = await GenerationWorkerClient.start(prepared.worker.location, {
+          environment: prepared.worker.environment,
+        })
+        lease.client = client
+        lease.phase = 'running'
+        try {
+          // Activation may race the second startup. Do not pass a stale environment to a job.
+          const currentPointer = await readPointer(this.roots)
+          const current =
+            currentPointer.kind === 'valid'
+              ? await this.prepareQualification(currentPointer.value, scratchBasePath)
+              : null
+          if (current?.key !== prepared.key) {
+            return null
+          }
+          return await use(client, prepared.worker)
+        } finally {
+          try {
+            await client.close()
+          } catch (error) {
+            // Keep a strong owner and reject all new probes/leases until explicit exit retry.
+            lease.phase = 'unconfirmed-exit'
+            throw error
+          }
+        }
+      })
+    } finally {
+      if (lease.phase !== 'unconfirmed-exit' && this.generationLease === lease) {
+        this.generationLease = null
+      }
     }
   }
 
@@ -229,6 +376,26 @@ export class RuntimeManager {
       await this.unconfirmedClient.close()
       this.unconfirmedClient = null
       return true
+    } catch {
+      return false
+    }
+  }
+
+  private leaseIsAdvisoryReady(
+    lease: GenerationLease,
+    prepared: PreparedQualification | null,
+  ): boolean {
+    if (!prepared || prepared.key !== lease.key || prepared.worker.runtimeId !== lease.runtimeId) {
+      return false
+    }
+    if (lease.phase === 'qualifying') {
+      return lease.advisoryReadyKey === prepared.key
+    }
+    if (lease.phase === 'unconfirmed-exit' || !lease.client) {
+      return false
+    }
+    try {
+      return lease.client.ready.workerVersion === '0.2.0'
     } catch {
       return false
     }
@@ -322,12 +489,12 @@ export class RuntimeManager {
   }
 
   private async qualifyLive(prepared: PreparedQualification): Promise<boolean> {
-    let release!: () => void
-    const previous = this.qualificationTail
-    this.qualificationTail = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    await previous
+    return await this.withGpuSlot(async () =>
+      this.generationLease ? false : await this.qualifyLiveUnlocked(prepared),
+    )
+  }
+
+  private async qualifyLiveUnlocked(prepared: PreparedQualification): Promise<boolean> {
     try {
       if (!(await this.confirmPreviousExit())) {
         return false
@@ -363,6 +530,18 @@ export class RuntimeManager {
       return current?.key === prepared.key
     } catch {
       return false
+    }
+  }
+
+  private async withGpuSlot<T>(operation: () => Promise<T>): Promise<T> {
+    let release!: () => void
+    const previous = this.qualificationTail
+    this.qualificationTail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await operation()
     } finally {
       release()
     }

@@ -141,6 +141,26 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     child.on('close', () => this.observeExit())
   }
 
+  /** Retry exit confirmation for failed starts without admitting another child. */
+  static async retryUnconfirmedStartExit(): Promise<boolean> {
+    // Share the startup admission lock: a successful result must not race a new spawn or a
+    // different caller's failed-start cleanup.
+    const preceding = GenerationWorkerClient.startupTail
+    let release!: () => void
+    GenerationWorkerClient.startupTail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await preceding
+    try {
+      await GenerationWorkerClient.confirmFailedStartExitsUnlocked()
+      return true
+    } catch {
+      return false
+    } finally {
+      release()
+    }
+  }
+
   static async start(
     location: GenerationWorkerLocation,
     options: GenerationWorkerOptions = {},
@@ -157,10 +177,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     })
     await preceding
     try {
-      for (const unconfirmed of GenerationWorkerClient.unconfirmedStartChildren) {
-        await unconfirmed.close()
-        GenerationWorkerClient.unconfirmedStartChildren.delete(unconfirmed)
-      }
+      await GenerationWorkerClient.confirmFailedStartExitsUnlocked()
       const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
       const scratchBasePath = await canonicalDirectory(location.scratchBasePath, 'Scratch base')
       const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
@@ -196,6 +213,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       }
     } finally {
       release()
+    }
+  }
+
+  private static async confirmFailedStartExitsUnlocked(): Promise<void> {
+    for (const unconfirmed of GenerationWorkerClient.unconfirmedStartChildren) {
+      await unconfirmed.close()
+      GenerationWorkerClient.unconfirmedStartChildren.delete(unconfirmed)
     }
   }
 

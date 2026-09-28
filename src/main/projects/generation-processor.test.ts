@@ -9,6 +9,7 @@ import test from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
 
 import type { AppDatabase } from '../db/database.js'
+import type { GenerationWorkerLease } from './generation-dispatch-coordinator.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type {
   IllustriousTxt2ImgRequestV1,
@@ -21,6 +22,10 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import {
+  GenerationDispatchCoordinator,
+  GenerationDispatchError,
+} from './generation-dispatch-coordinator.js'
 import { GenerationProcessor, GenerationProcessorError } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
@@ -277,6 +282,139 @@ test('qualified completion publishes real PNG and actual seed through SQLite sta
   })
 })
 
+test('app-owned dispatch closes the leased worker after a real queued completion', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    let closeCount = 0
+    const worker = transport(
+      async (request) => await writeDone(request, fixture.outputBytes),
+      qualifiedReady,
+      async () => {
+        closeCount += 1
+      },
+    )
+    const runtime: GenerationWorkerLease = {
+      retryUnconfirmedGenerationExit: async () => true,
+      withGenerationWorker: async (_scratch, use) => {
+        try {
+          return await use(worker)
+        } finally {
+          await worker.close()
+        }
+      },
+    }
+    const coordinator = new GenerationDispatchCoordinator(
+      runtime,
+      { runNext: async (active) => await fixture.processor.runOne(active) },
+      fixture.processor,
+      path.join(fixture.root, 'scratch'),
+    )
+    const result = await coordinator.runNext()
+    assert.deepEqual(
+      { kind: result.kind, queueItemId: result.kind === 'idle' ? null : result.queueItemId },
+      { kind: 'completed', queueItemId: id },
+    )
+    assert.equal(closeCount, 1)
+    const queued = await fixture.queue.loadVerifiedInput(id)
+    assert.equal(
+      (await fixture.staging.listVerifiedCandidates(queued.item.localProjectKey)).length,
+      1,
+    )
+    await coordinator.shutdown()
+    await assert.rejects(
+      coordinator.runNext(),
+      (error: unknown) => error instanceof GenerationDispatchError && error.code === 'CLOSED',
+    )
+  })
+})
+
+test('app-owned dispatch leaves a pending row untouched when the runtime is unavailable', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    const runtime: GenerationWorkerLease = {
+      retryUnconfirmedGenerationExit: async () => true,
+      withGenerationWorker: async () => null,
+    }
+    const coordinator = new GenerationDispatchCoordinator(
+      runtime,
+      { runNext: async () => assert.fail('An unavailable runtime cannot claim the queue.') },
+      fixture.processor,
+      path.join(fixture.root, 'scratch'),
+    )
+    await assert.rejects(
+      coordinator.runNext(),
+      (error: unknown) =>
+        error instanceof GenerationDispatchError && error.code === 'RUNTIME_UNAVAILABLE',
+    )
+    assert.equal((await fixture.queue.loadVerifiedInput(id)).item.status, 'pending')
+    await coordinator.shutdown()
+  })
+})
+
+test('app-owned shutdown cancels its in-flight job and waits for confirmed worker exit', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    let enteredResolve!: () => void
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve
+    })
+    let closeEnteredResolve!: () => void
+    const closeEntered = new Promise<void>((resolve) => {
+      closeEnteredResolve = resolve
+    })
+    let releaseExit!: () => void
+    const exited = new Promise<void>((resolve) => {
+      releaseExit = resolve
+    })
+    let closePromise: Promise<void> | null = null
+    const worker = transport(
+      async () => {
+        enteredResolve()
+        return await new Promise<never>(() => undefined)
+      },
+      qualifiedReady,
+      async () => {
+        closePromise ??= (async () => {
+          closeEnteredResolve()
+          await exited
+        })()
+        await closePromise
+      },
+    )
+    const runtime: GenerationWorkerLease = {
+      retryUnconfirmedGenerationExit: async () => true,
+      withGenerationWorker: async (_scratch, use) => {
+        try {
+          return await use(worker)
+        } finally {
+          await worker.close()
+        }
+      },
+    }
+    const coordinator = new GenerationDispatchCoordinator(
+      runtime,
+      { runNext: async (active) => await fixture.processor.runOne(active) },
+      fixture.processor,
+      path.join(fixture.root, 'scratch'),
+    )
+    const running = coordinator.runNext()
+    await entered
+    await assert.rejects(
+      coordinator.runNext(),
+      (error: unknown) => error instanceof GenerationDispatchError && error.code === 'BUSY',
+    )
+    const closing = coordinator.shutdown()
+    await closeEntered
+    const during = await fixture.queue.loadVerifiedInput(id)
+    assert.equal(during.item.status, 'running')
+    assert.equal(during.item.cancelRequested, true)
+    releaseExit()
+    await closing
+    assert.deepEqual(await running, { kind: 'canceled', queueItemId: id })
+    assert.equal((await fixture.queue.loadVerifiedInput(id)).item.status, 'canceled')
+  })
+})
+
 test('derivatives-only readiness cannot claim a pending job', async () => {
   await withFixture(async (fixture) => {
     const id = await enqueue(fixture)
@@ -493,6 +631,97 @@ test('cancellation between SQLite claim and local ownership prevents dispatch', 
     )
     assert.deepEqual(result, { kind: 'canceled', queueItemId: id })
     assert.equal(closeCount, 1)
+    assert.equal((await fixture.queue.loadVerifiedInput(id)).item.status, 'canceled')
+  })
+})
+
+test('shutdown during claim cancels the claimed row before worker dispatch', async () => {
+  await withFixture(async (fixture) => {
+    let claimedResolve!: () => void
+    const claimed = new Promise<void>((resolve) => {
+      claimedResolve = resolve
+    })
+    let releaseClaim!: () => void
+    const claimReleased = new Promise<void>((resolve) => {
+      releaseClaim = resolve
+    })
+    class PausedClaimQueue extends GenerationQueueRepository {
+      override async claimNextPending() {
+        const item = await super.claimNextPending()
+        claimedResolve()
+        await claimReleased
+        return item
+      }
+    }
+    const queue = new PausedClaimQueue(fixture.database.db, fixture.root)
+    await queue.recoverAfterRestart()
+    const id = await enqueue(fixture)
+    const processor = new GenerationProcessor(
+      queue,
+      fixture.staging,
+      fixture.modelService,
+      path.join(fixture.root, 'scratch'),
+    )
+    let closeCount = 0
+    const run = processor.runOne(
+      transport(
+        async () => assert.fail('shutdown must prevent dispatch after claim'),
+        qualifiedReady,
+        async () => {
+          closeCount += 1
+        },
+      ),
+    )
+    await claimed
+    await processor.stopAndCancelActive()
+    releaseClaim()
+    assert.deepEqual(await run, { kind: 'canceled', queueItemId: id })
+    assert.equal((await queue.loadVerifiedInput(id)).item.status, 'canceled')
+    assert.equal(closeCount, 1)
+    await assert.rejects(
+      processor.runOne(transport(async () => assert.fail('stopped processor must not dispatch'))),
+      (error: unknown) => error instanceof GenerationProcessorError && error.code === 'CLOSED',
+    )
+  })
+})
+
+test('shutdown keeps running slot until worker exit is confirmed', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    let enteredResolve!: () => void
+    const entered = new Promise<void>((resolve) => {
+      enteredResolve = resolve
+    })
+    let releaseExit!: () => void
+    const exited = new Promise<void>((resolve) => {
+      releaseExit = resolve
+    })
+    let closeEnteredResolve!: () => void
+    const closeEntered = new Promise<void>((resolve) => {
+      closeEnteredResolve = resolve
+    })
+    const run = fixture.processor.runOne(
+      transport(
+        async () => {
+          enteredResolve()
+          return await new Promise<never>(() => undefined)
+        },
+        qualifiedReady,
+        async () => {
+          closeEnteredResolve()
+          await exited
+        },
+      ),
+    )
+    await entered
+    const stopping = fixture.processor.stopAndCancelActive()
+    await closeEntered
+    const during = await fixture.queue.loadVerifiedInput(id)
+    assert.equal(during.item.status, 'running')
+    assert.equal(during.item.cancelRequested, true)
+    releaseExit()
+    await stopping
+    assert.deepEqual(await run, { kind: 'canceled', queueItemId: id })
     assert.equal((await fixture.queue.loadVerifiedInput(id)).item.status, 'canceled')
   })
 })

@@ -5,8 +5,8 @@
 ImageGen Studio не использует системный Python и не изменяет активное Python-окружение при установке или обновлении worker'а.
 
 Первый release target — Linux с NVIDIA GPU. Один Invoke-like inference pipeline
-поддерживает Illustrious/SDXL и Anima с LoRA; альтернативных inference engines,
-включая отдельный ComfyUI backend, нет. Diffusers/PyTorch — внутренние
+поддерживает Illustrious (на архитектуре SDXL) и Anima с LoRA; альтернативных
+inference engines, включая отдельный ComfyUI backend, нет. Diffusers/PyTorch — внутренние
 зависимости этого pipeline. Будущий platform/device port потребует проверенного
 runtime artifact и self-test того же pipeline, а не автоматического fallback на
 другой engine.
