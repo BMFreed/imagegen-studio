@@ -62,7 +62,7 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target | Устанавливаемый Linux/NVIDIA runtime, inference/model loading, scheduling image tasks рядом с generation | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue repository с claim/cancel/failure; repository публикации первого проверенного candidate, seed cursor и restart reconciliation; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, queue processor/dispatch и UI actions, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации первого проверенного candidate, seed cursor и restart reconciliation; приватный processor связывает queue со staging через квалифицированный transport и подтверждённый выход worker при cancel/failure; текущий worker явно отказывает в inference, UI generation пока только mock | Реальный inference worker/runtime, подключение processor к Electron и UI actions, Generate, staging preview/recovery в UI, acceptance, immutable provenance/history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -401,8 +401,10 @@ generation DTO и source map из документационного трека.
 
 **Исторический durable enqueue checkpoint:** [точный manifest](../engineering/phase-2b-model-compatibility-manifest.md)
 квалифицирует один официальный Illustrious v0.1 checkpoint по вычисленным
-SHA-256/размеру и авторскому prediction type. Этот allowlist gate требуется
-заменить согласно текущему контракту. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
+SHA-256/размеру и авторскому prediction type. Позднее allowlist gate заменён:
+ModelService берёт тип из пользовательской настройки точного файла, затем из
+manifest либо из помеченного `epsilon` assumption и повторно проверяет bytes
+перед Prepare. [Generation input и SQLite queue](../engineering/phase-2b-durable-enqueue-research.md)
 сохраняют один замороженный Illustrious `txt2img` как app-owned input и
 `pending` row; Electron startup отменяет старые `pending`/`running` rows и
 сверяет orphan input directories.
@@ -416,12 +418,23 @@ repository проверяет frozen input до claim, удерживает ед
 валидирует sRGB PNG, публикует app-owned manifest/asset раньше SQLite
 completion и actual-seed cursor с проверкой той же sequence, а затем
 восстанавливает этот crash window при Electron startup. Это всё ещё
-repository/bootstrap boundary: renderer Generate,
-worker dispatch/GPU pipeline, Queue Manager UI, staging preview/acceptance,
+внутренний repository/bootstrap boundary: renderer Generate,
+реальный worker dispatch/GPU pipeline, Queue Manager UI, staging preview/acceptance,
 retry/prune, quota/discard и подключение `Reuse` остаются незавершёнными.
-Перед подключением processor требуется наблюдаемое завершение дочернего
-процесса до acknowledgement отмены: текущий `ProjectWorkerClient.close()`
-после `SIGKILL` не дожидается события `exit` и сам по себе не освобождает слот.
+Предусловие processor для отмены закрыто на уровне worker client:
+`ProjectWorkerClient.close()` ждёт наблюдаемого завершения дочернего процесса
+после `SIGTERM` или эскалации до `SIGKILL`. Если `exit` не подтверждён за
+отдельные 2 секунды после `SIGKILL`, вызов завершается ошибкой
+`WORKER_EXIT_UNCONFIRMED`; повторный вызов может дождаться позднего выхода или
+повторить сигнал. [Приватный processor](../engineering/phase-2b-generation-processor-research.md)
+проверяет успешное queue/staging recovery до claim, повторно сверяет exact
+checkpoint и замороженный target, связывает ответ worker с request и передаёт
+проверенный output в staging. При отмене он удерживает running slot и scratch
+до подтверждённого выхода worker; при неподтверждённом выходе оставляет owner
+для повторной отмены. Неверный PNG без publication receipt переводит job в
+`failed` после остановки worker, а receipt с неопределённым исходом остаётся
+для restart reconciliation. Этот processor пока проверен через подставной
+inference transport; производственного GPU worker и renderer Generate нет.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

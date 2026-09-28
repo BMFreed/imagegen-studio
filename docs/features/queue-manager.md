@@ -230,7 +230,7 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
-## Current production boundary: Phase 2B repository checkpoint
+## Current production boundary: Phase 2B private processor checkpoint
 
 Main now stores one frozen Illustrious `txt2img` input and a SQLite `pending`
 item. The queue repository verifies that input before claiming the one
@@ -244,10 +244,18 @@ acknowledgement after observed worker exit may release it. On restart, former
 A separate app-owned staging repository validates a provisional sRGB PNG,
 publishes an asset and manifest before a SQLite completion transaction, and
 reconciles that crash window on startup. The completed candidate and actual
-seed remain outside `.igs` and independent of queue-row retention. This is a
-repository/bootstrap boundary: the renderer has no Generate or Queue Manager
-action, and the worker processor, cancel signal/exit acknowledgement, progress,
-retry, pruning and candidate acceptance are still unconnected.
+seed remain outside `.igs` and independent of queue-row retention. A private
+processor now gates dispatch on successful queue and staging restart recovery,
+rechecks exact model/target inputs, and publishes a correlated worker completion
+through that repository. Its cancellation path retains the only running slot
+and scratch lease until the worker exit is observed; an unconfirmed exit keeps
+the owner available for an explicit retry. Missing or invalid output without
+a publication receipt becomes `failed` after confirmed worker exit, while an
+uncertain receipt is left for restart reconciliation.
+
+This is still an internal boundary tested with a substitute inference transport.
+There is no production GPU worker dispatch or renderer Generate/Queue Manager
+action; progress, retry, pruning and candidate acceptance are unconnected.
 
 ## Queue Manager UI
 

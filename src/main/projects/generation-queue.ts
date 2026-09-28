@@ -210,6 +210,7 @@ export class GenerationQueueError extends Error {
       | 'QUEUE_FAILURE_INVALID'
       | 'QUEUE_INPUT_INVALID'
       | 'QUEUE_ITEM_NOT_FOUND'
+      | 'QUEUE_NOT_RECONCILED'
       | 'QUEUE_PROJECT_IDENTITY_CHANGED'
       | 'QUEUE_STATUS_CONFLICT'
       | 'QUEUE_STORAGE_UNSAFE',
@@ -230,6 +231,7 @@ function sha256(bytes: Buffer): string {
  */
 export class GenerationQueueRepository {
   private pendingOperation: Promise<void> = Promise.resolve()
+  private reconciled = false
   private readonly root: string
 
   constructor(
@@ -273,6 +275,16 @@ export class GenerationQueueRepository {
       await this.requireRow(id)
       throw statusConflict()
     })
+  }
+
+  /** Dispatch must use the repository instance whose startup recovery completed successfully. */
+  assertReadyForDispatch(): void {
+    if (!this.reconciled) {
+      throw new GenerationQueueError(
+        'QUEUE_NOT_RECONCILED',
+        'Generation queue recovery must complete before dispatch.',
+      )
+    }
   }
 
   /**
@@ -612,6 +624,7 @@ export class GenerationQueueRepository {
     canceledCount: number
     orphanedDirectoriesRemoved: number
   }> {
+    this.reconciled = false
     return await this.serialize(async () => {
       const root = await this.ensureRoot()
       const now = new Date().toISOString()
@@ -659,6 +672,7 @@ export class GenerationQueueRepository {
       if (removed > 0) {
         await syncDirectory(root)
       }
+      this.reconciled = true
       return { canceledCount: canceled, orphanedDirectoriesRemoved: removed }
     })
   }

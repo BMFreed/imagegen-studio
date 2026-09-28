@@ -1,6 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
@@ -55,6 +57,12 @@ const ready = {
     ...(String(mode).startsWith('target-') && mode !== 'target-no-capability'
       ? ['target-composition'] : [])]
 }
+if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm') {
+  process.on('SIGTERM', () => {
+    if (mode === 'delayed-sigterm') setTimeout(() => process.exit(0), 75)
+  })
+  setInterval(() => {}, 1000)
+}
 if (mode === 'silent') { setInterval(() => {}, 1000) }
 else {
   const startup = JSON.stringify(ready) + '\n'
@@ -68,7 +76,7 @@ else {
     while (input.includes('\n')) {
       const newline = input.indexOf('\n')
       const request = JSON.parse(input.slice(0, newline)); input = input.slice(newline + 1)
-      if (mode === 'hang') continue
+      if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
       if (mode === 'crash') process.exit(7)
       if (mode === 'invalid-json') { process.stdout.write('{bad\n'); continue }
       if (mode === 'worker-error') {
@@ -331,6 +339,133 @@ test('fixed executable path, handshake, self-test and protocol failures', async 
     })
   })
 })
+
+test('close rejects an active request and waits for the real child to exit after SIGTERM', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'delayed-sigterm' } },
+    )
+    const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
+    let exitObserved = false
+    child.once('exit', () => {
+      exitObserved = true
+    })
+    const activeRequest = assert.rejects(client.selfTest(), { code: 'CLOSED' })
+    await client.close()
+    await activeRequest
+    assert.equal(exitObserved, true)
+    assert.equal(child.exitCode, 0)
+  })
+})
+
+test(
+  'close waits for observed exit after escalating a SIGTERM-resistant real child to SIGKILL',
+  { timeout: 8000 },
+  async () => {
+    await withTemp(async (directory) => {
+      const runtimeRoot = path.join(directory, 'runtime')
+      const stagingBasePath = path.join(directory, 'staging')
+      await mkdir(runtimeRoot)
+      await mkdir(stagingBasePath)
+      const pythonExecutable = await fakeWorker(runtimeRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        { environment: { FAKE_MODE: 'ignore-sigterm' } },
+      )
+      const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
+      let exitObserved = false
+      child.once('exit', () => {
+        exitObserved = true
+      })
+      try {
+        const activeRequest = assert.rejects(client.selfTest(), { code: 'CLOSED' })
+        const firstClose = client.close()
+        const secondClose = client.close()
+        await activeRequest
+        assert.equal(exitObserved, false)
+        await Promise.all([firstClose, secondClose])
+        assert.equal(exitObserved, true)
+        assert.equal(child.signalCode, 'SIGKILL')
+      } finally {
+        if (!exitObserved) {
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          child.kill('SIGKILL')
+          await exited
+        }
+      }
+    })
+  },
+)
+
+test(
+  'failed spawn closes after its close event without an exit event',
+  { timeout: 5000 },
+  async () => {
+    await withTemp(async (directory) => {
+      const runtimeRoot = path.join(directory, 'runtime')
+      const stagingBasePath = path.join(directory, 'staging')
+      await mkdir(runtimeRoot)
+      await mkdir(stagingBasePath)
+      const pythonExecutable = path.join(runtimeRoot, 'broken-python')
+      await writeFile(pythonExecutable, '#!/nonexistent/imagegen-python\n')
+      await chmod(pythonExecutable, 0o700)
+      await assert.rejects(
+        ProjectWorkerClient.start({ pythonExecutable, runtimeRoot, stagingBasePath }),
+        {
+          code: 'WORKER_EXITED',
+        },
+      )
+    })
+  },
+)
+
+test(
+  'close rejects unconfirmed termination and can retry after a failed SIGKILL',
+  { timeout: 10_000 },
+  async () => {
+    await withTemp(async (directory) => {
+      const runtimeRoot = path.join(directory, 'runtime')
+      const stagingBasePath = path.join(directory, 'staging')
+      await mkdir(runtimeRoot)
+      await mkdir(stagingBasePath)
+      const pythonExecutable = await fakeWorker(runtimeRoot)
+      const client = await ProjectWorkerClient.start(
+        { pythonExecutable, runtimeRoot, stagingBasePath },
+        { environment: { FAKE_MODE: 'ignore-sigterm' } },
+      )
+      const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
+      const originalKill = child.kill.bind(child)
+      let exitObserved = false
+      child.once('exit', () => {
+        exitObserved = true
+      })
+      child.kill = (signal) => (signal === 'SIGKILL' ? false : originalKill(signal))
+      try {
+        const activeRequest = assert.rejects(client.selfTest(), { code: 'CLOSED' })
+        await assert.rejects(client.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+        await activeRequest
+        assert.equal(exitObserved, false)
+        child.kill = originalKill
+        await client.close()
+        assert.equal(exitObserved, true)
+        assert.equal(child.signalCode, 'SIGKILL')
+      } finally {
+        child.kill = originalKill
+        if (!exitObserved) {
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          child.kill('SIGKILL')
+          await exited
+        }
+      }
+    })
+  },
+)
 
 test('wrong request ID, malformed JSON, crash and deadline reject the active request', async () => {
   await withTemp(async (directory) => {

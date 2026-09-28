@@ -31,10 +31,10 @@
 | PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; Generate/Apply и полный resource handoff отсутствуют |
 | PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; Preset Manager, resource handoff и result history остаются незавершёнными |
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; условия обязательных Anima-компонентов, размер выбранного файла и откат поздней ошибки repair проверены; structural qualification, загрузка worker, embedding/VAE selectors и обратный handoff ещё отсутствуют |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md) и [candidate receipt](./engineering/phase-2b-candidate-publication-research.md); renderer Generate, inference, accepted provenance/storage ещё не реализованы |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft, main готовит frozen Illustrious job, [repository enqueue](./engineering/phase-2b-durable-enqueue-research.md), [candidate receipt](./engineering/phase-2b-candidate-publication-research.md) и [приватный processor](./engineering/phase-2b-generation-processor-research.md) с подставным transport; renderer Generate, реальный inference, accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
 | PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; staging repository пока не подключён к Project UI, release runtime отсутствует |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance и production repository для validated candidate/seed recovery; worker inference, renderer staging и принятие результата в `.igs` ещё не подключены |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и [приватный processor](./engineering/phase-2b-generation-processor-research.md) с cancel/late-done guards; worker inference, renderer staging и принятие результата в `.igs` ещё не подключены |
 
 ### Статусы и доказательства
 
@@ -248,7 +248,9 @@ seed. Production Project также сохраняет явно выбранну
 без скрытого default. Durable enqueue сохраняет immutable input и SQLite
 `pending` row; startup отменяет прежние незавершённые jobs. Candidate repository
 может опубликовать проверенный временный output и сохранить фактический seed,
-но это не принятый результат и не provenance. Renderer Generate, dispatch,
+но это не принятый результат и не provenance. Приватный processor связывает
+queue с candidate repository через подставной inference transport и проверяет
+отмену и выход worker. Renderer Generate, производственного dispatch,
 реальной генерации и acceptance пока нет.
 Строгий [Illustrious request boundary](./engineering/phase-2b-illustrious-request-research.md)
 проверяет выбранный sampler/scheduler, модель и временный target, но текущий
@@ -447,7 +449,8 @@ Clean Rebuild Preview проверен
 
 **Публичный статус:** пока не обещать как готовую возможность — acceptance и
 undo показаны на in-memory candidates. Main имеет локальный recovery repository
-для проверенного кандидата и seed, но worker inference и пользовательские
+для проверенного кандидата и seed и приватный processor для cancel/completion;
+он проверен с подставным transport, но worker inference и пользовательские
 preview/acceptance/storage handoff отсутствуют.
 
 ### Обещание

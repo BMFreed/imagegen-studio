@@ -397,6 +397,26 @@ test('restart preserves explicit cancel request and does not revive an unfinishe
   }
 })
 
+test('dispatch readiness is revoked when startup recovery fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-readiness-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+    await queue.recoverAfterRestart()
+    assert.doesNotThrow(() => queue.assertReadyForDispatch())
+
+    const inputRoot = path.join(root, 'generation-inputs')
+    await rm(inputRoot, { recursive: true })
+    await symlink(root, inputRoot, 'dir')
+    await assert.rejects(queue.recoverAfterRestart(), { code: 'QUEUE_STORAGE_UNSAFE' })
+    assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('failed running job records normalized error; a late failure cannot change it', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-worker-error-'))
   try {

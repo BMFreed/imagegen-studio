@@ -32,6 +32,7 @@ const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_ICC_BYTES = 4 * 1024 * 1024
 const MAX_IMAGE_SIDE = 16_384
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const SHUTDOWN_WAIT_MS = 2000
 
 export interface ProjectWorkerLocation {
   /** Absolute executable selected from the app-owned runtime, never looked up in PATH. */
@@ -184,6 +185,7 @@ export class ProjectWorkerError extends Error {
       | 'PROTOCOL_ERROR'
       | 'REQUEST_TIMEOUT'
       | 'STARTUP_TIMEOUT'
+      | 'WORKER_EXIT_UNCONFIRMED'
       | 'WORKER_EXITED'
       | 'WORKER_REQUEST_FAILED'
       | 'WORKER_VERSION_MISMATCH',
@@ -206,8 +208,11 @@ export class ProjectWorkerClient {
   private active: PendingRequest | null = null
   private busy = false
   private closed = false
+  private closePromise: Promise<void> | null = null
+  private exitObserved = false
   private readonly exitPromise: Promise<void>
   private exitResolve!: () => void
+  private forcedTermination = false
   private readyMessage: WorkerReady | null = null
   private readonly requestTimeoutMs: number
   private readonly stagingBasePath: string
@@ -245,12 +250,13 @@ export class ProjectWorkerClient {
     })
     this.child.on('error', () => {
       this.fail(new ProjectWorkerError('WORKER_EXITED', 'The image worker could not be started.'))
-      this.exitResolve()
     })
     this.child.on('exit', () => {
+      this.observeExit()
       this.fail(new ProjectWorkerError('WORKER_EXITED', 'The image worker exited.'))
-      this.exitResolve()
     })
+    // A failed spawn can emit `error` without `exit`; `close` follows either path.
+    this.child.on('close', () => this.observeExit())
   }
 
   static async start(
@@ -283,25 +289,13 @@ export class ProjectWorkerClient {
   }
 
   async close(): Promise<void> {
-    if (!this.closed) {
-      this.fail(new ProjectWorkerError('CLOSED', 'The image worker was closed.'))
-    }
-    this.child.stdin.end()
-    if (this.child.exitCode === null && this.child.signalCode === null) {
-      this.child.kill('SIGTERM')
-      let timeout: ReturnType<typeof setTimeout> | undefined
-      await Promise.race([
-        this.exitPromise,
-        new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, 2000)
-          timeout.unref()
-        }),
-      ])
-      clearTimeout(timeout)
-      if (this.child.exitCode === null && this.child.signalCode === null) {
-        this.child.kill('SIGKILL')
-      }
-    }
+    this.closePromise ??= this.closeOne().catch((error: unknown) => {
+      // An unconfirmed termination keeps the slot occupied; a later call can observe a delayed
+      // exit or retry SIGKILL instead of inheriting a permanently rejected close promise.
+      this.closePromise = null
+      throw error
+    })
+    await this.closePromise
   }
 
   async composePreview(input: ComposePreviewInput): Promise<ComposePreviewResult> {
@@ -526,6 +520,26 @@ export class ProjectWorkerClient {
     })
   }
 
+  private async closeOne(): Promise<void> {
+    if (!this.closed) {
+      this.fail(new ProjectWorkerError('CLOSED', 'The image worker was closed.'))
+    }
+    this.child.stdin.end()
+    if (!this.exitObserved && !this.forcedTermination) {
+      await this.waitForExit(SHUTDOWN_WAIT_MS)
+    }
+    if (!this.exitObserved) {
+      this.forcedTermination = true
+      this.child.kill('SIGKILL')
+      if (!(await this.waitForExit(SHUTDOWN_WAIT_MS))) {
+        throw new ProjectWorkerError(
+          'WORKER_EXIT_UNCONFIRMED',
+          'The image worker did not exit after termination was requested.',
+        )
+      }
+    }
+  }
+
   private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closed) {
       throw new ProjectWorkerError('CLOSED', 'The image worker is unavailable.')
@@ -565,6 +579,13 @@ export class ProjectWorkerClient {
       this.active = null
     }
     this.child.kill('SIGTERM')
+  }
+
+  private observeExit(): void {
+    if (!this.exitObserved) {
+      this.exitObserved = true
+      this.exitResolve()
+    }
   }
 
   private onMessage(input: unknown): void {
@@ -741,6 +762,22 @@ export class ProjectWorkerClient {
       throw new ProjectWorkerError('INVALID_PATH', 'Worker output paths must be distinct.')
     }
     return { paths, stagingRoot }
+  }
+
+  private async waitForExit(timeoutMs: number): Promise<boolean> {
+    if (this.exitObserved) {
+      return true
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      this.exitPromise,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs)
+        timeout.unref()
+      }),
+    ])
+    clearTimeout(timeout)
+    return this.exitObserved
   }
 }
 

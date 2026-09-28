@@ -1,0 +1,457 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
+import type { ModelService } from '../models/model-service.js'
+import type { QueuedGenerationItem, VerifiedQueuedInput } from './generation-queue.js'
+import type { GenerationQueueRepository } from './generation-queue.js'
+import type { VerifiedGenerationCandidate } from './generation-staging.js'
+import type { GenerationStagingRepository } from './generation-staging.js'
+import type {
+  IllustriousTxt2ImgRequestV1,
+  InferenceWorkerReady,
+} from './illustrious-txt2img-job.js'
+
+const PROTOCOL_VERSION = '1'
+const INFERENCE_WORKER_VERSION = '0.2.0'
+const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
+const MAX_TARGET_BYTES = 32 * 1024 * 1024
+
+/** A qualified, long-lived worker borrowed for one job. close() must resolve only after exit. */
+export interface GenerationWorkerTransport {
+  close: () => Promise<void>
+  generate: (request: IllustriousTxt2ImgRequestV1) => Promise<unknown>
+  readonly ready: InferenceWorkerReady
+}
+
+export type GenerationProcessorResult =
+  | { candidate: VerifiedGenerationCandidate; kind: 'completed'; queueItemId: string }
+  | { kind: 'canceled'; queueItemId: string }
+  | { kind: 'failed'; queueItemId: string }
+  | { kind: 'idle' }
+
+type ActiveJob = {
+  cancelPromise: Promise<QueuedGenerationItem> | null
+  cancelSignal: Promise<{ completion: Promise<QueuedGenerationItem> }>
+  exitUnconfirmed: boolean
+  item: QueuedGenerationItem
+  provisionalRoot: string | null
+  releasePromise: Promise<void> | null
+  runSettled: boolean
+  signalCancel: (value: { completion: Promise<QueuedGenerationItem> }) => void
+  transport: GenerationWorkerTransport
+}
+
+export class GenerationProcessorError extends Error {
+  constructor(
+    readonly code:
+      | 'BUSY'
+      | 'INFERENCE_UNAVAILABLE'
+      | 'PUBLICATION_UNCERTAIN'
+      | 'QUEUE_CHANGED'
+      | 'WORKER_EXIT_UNCONFIRMED',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'GenerationProcessorError'
+  }
+}
+
+/**
+ * One private queue handoff. This does not instantiate an inference worker or expose Generate in
+ * the renderer; callers must supply a runtime-qualified transport. SQLite retains the global
+ * running slot after any uncertain worker exit or candidate publication.
+ */
+export class GenerationProcessor {
+  private active: ActiveJob | null = null
+  private running = false
+
+  constructor(
+    private readonly queue: GenerationQueueRepository,
+    private readonly staging: GenerationStagingRepository,
+    private readonly modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    private readonly scratchBasePath: string,
+  ) {}
+
+  async cancel(queueItemId: string): Promise<QueuedGenerationItem> {
+    const active = this.active
+    if (active?.item.id === queueItemId) {
+      return await this.cancelActive(active)
+    }
+    const item = await this.queue.cancel(queueItemId)
+    // cancel() may have won after the SQLite claim but before runOne assigned its local owner.
+    // runOne also rechecks the row before materialization and dispatch.
+    const newlyActive = this.active
+    if (item.status === 'running' && newlyActive?.item.id === queueItemId) {
+      return await this.cancelActive(newlyActive)
+    }
+    return item
+  }
+
+  async runOne(transport: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
+    if (this.running || this.active) {
+      throw new GenerationProcessorError('BUSY', 'A generation job is already being processed.')
+    }
+    requireInferenceReady(transport.ready)
+    this.queue.assertReadyForDispatch()
+    this.staging.assertReadyForPublication()
+    this.running = true
+    let active: ActiveJob | null = null
+    try {
+      const claimed = await this.queue.claimNextPending()
+      if (!claimed) {
+        return { kind: 'idle' }
+      }
+      // No await between claim resolution and assigning the local owner. A cancellation from
+      // another caller may still have changed SQLite during the claim await; recheck below.
+      let signalCancel!: (value: { completion: Promise<QueuedGenerationItem> }) => void
+      const cancelSignal = new Promise<{ completion: Promise<QueuedGenerationItem> }>((resolve) => {
+        signalCancel = resolve
+      })
+      active = {
+        cancelPromise: null,
+        cancelSignal,
+        exitUnconfirmed: false,
+        item: claimed.item,
+        provisionalRoot: null,
+        releasePromise: null,
+        runSettled: false,
+        signalCancel,
+        transport,
+      }
+      this.active = active
+      let dispatched = false
+      let publishing = false
+      try {
+        if (!(await this.stillRunning(active))) {
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        const provisionalRoot = await createProvisionalRoot(this.scratchBasePath)
+        active.provisionalRoot = provisionalRoot
+        const targetPath = path.join(provisionalRoot, 'target.png')
+        const outputPath = path.join(provisionalRoot, 'result.png')
+        const targetBytes = await readStableTarget(claimed)
+        await writeFile(targetPath, targetBytes, { flag: 'wx', mode: 0o600 })
+        if (!(await this.stillRunning(active))) {
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        const request = await this.requestForClaim(claimed, targetPath, outputPath, provisionalRoot)
+        if (!(await this.stillRunning(active))) {
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        dispatched = true
+        const outcome = await Promise.race([
+          transport.generate(request).then((response) => ({ kind: 'done' as const, response })),
+          active.cancelSignal.then(({ completion }) => ({ completion, kind: 'cancel' as const })),
+        ])
+        if (outcome.kind === 'cancel') {
+          await outcome.completion
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        if (active.cancelPromise) {
+          await active.cancelPromise
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        const actualSeed = requireCorrelatedDone(outcome.response, request)
+        publishing = true
+        const candidate = await this.staging.publishIllustriousTxt2Img({
+          actualSeed,
+          expectedProvisionalRoot: provisionalRoot,
+          expectedStatusSequence: claimed.item.statusSequence,
+          provisionalOutputPath: outputPath,
+          queueItemId: claimed.item.id,
+        })
+        return { candidate, kind: 'completed', queueItemId: claimed.item.id }
+      } catch {
+        if (active.cancelPromise) {
+          await active.cancelPromise
+          return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        if (active.exitUnconfirmed) {
+          throw new GenerationProcessorError(
+            'WORKER_EXIT_UNCONFIRMED',
+            'The generation worker has not confirmed exit.',
+          )
+        }
+        if (publishing) {
+          // A receipt is reserved before any candidate asset/manifest can be published. If its
+          // absence is proven, this was a pre-publication validation failure and may be failed.
+          // A present receipt or failed lookup is uncertain: restart reconciliation owns it.
+          let hasReceipt: boolean
+          try {
+            hasReceipt = await this.staging.hasPublicationReceipt(claimed.item.id)
+          } catch {
+            hasReceipt = true
+          }
+          if (hasReceipt) {
+            throw new GenerationProcessorError(
+              'PUBLICATION_UNCERTAIN',
+              'Candidate publication needs recovery before another job can run.',
+            )
+          }
+        }
+        if (dispatched) {
+          try {
+            await transport.close()
+          } catch {
+            active.exitUnconfirmed = true
+            throw new GenerationProcessorError(
+              'WORKER_EXIT_UNCONFIRMED',
+              'The generation worker has not confirmed exit.',
+            )
+          }
+        }
+        try {
+          await this.queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
+            code: dispatched ? 'GENERATION_WORKER_FAILED' : 'GENERATION_INPUT_CHANGED',
+            message: dispatched
+              ? 'The generation worker did not return a valid completed result.'
+              : 'The frozen generation input could not be verified.',
+          })
+        } catch (failure) {
+          if (active.cancelPromise) {
+            await active.cancelPromise
+            return { kind: 'canceled', queueItemId: claimed.item.id }
+          }
+          throw failure
+        }
+        return { kind: 'failed', queueItemId: claimed.item.id }
+      }
+    } finally {
+      if (!active) {
+        this.running = false
+      } else {
+        try {
+          if (active.cancelPromise) {
+            await active.cancelPromise
+          }
+        } finally {
+          active.runSettled = true
+          if (!active.exitUnconfirmed) {
+            await this.releaseActive(active)
+          } else {
+            // The owner stays attached to the potentially live worker for an explicit retry.
+            this.running = false
+          }
+        }
+      }
+    }
+  }
+
+  private cancelActive(active: ActiveJob): Promise<QueuedGenerationItem> {
+    if (!active.cancelPromise) {
+      // Until SQLite says this job was already terminal, process exit is unconfirmed. A failed
+      // close leaves this owner available for an explicit retry instead of stranding its row.
+      active.exitUnconfirmed = true
+      const operation = (async () => {
+        const item = await this.queue.cancel(active.item.id)
+        if (item.status !== 'running' || !item.cancelRequested) {
+          active.exitUnconfirmed = false
+          if (active.runSettled) {
+            await this.releaseActive(active)
+          }
+          return item
+        }
+        // The queue keeps its only running slot until the transport confirms process exit.
+        await active.transport.close()
+        const canceled = await this.queue.acknowledgeCanceledRunning(item.id, item.statusSequence)
+        active.exitUnconfirmed = false
+        if (active.runSettled) {
+          await this.releaseActive(active)
+        }
+        return canceled
+      })()
+      active.cancelPromise = operation
+      active.signalCancel({ completion: operation })
+      void operation.catch(() => {
+        if (active.cancelPromise === operation) {
+          active.cancelPromise = null
+        }
+      })
+    }
+    return active.cancelPromise
+  }
+
+  private releaseActive(active: ActiveJob): Promise<void> {
+    if (!active.releasePromise) {
+      active.releasePromise = (async () => {
+        try {
+          if (active.provisionalRoot) {
+            await rm(active.provisionalRoot, { force: true, recursive: true })
+          }
+        } catch {
+          // A scratch cleanup failure cannot undo a committed candidate or release a running
+          // queue row. A future app-owned scratch sweep can remove this orphan directory.
+          process.emitWarning('Generation scratch cleanup failed.', {
+            code: 'GENERATION_SCRATCH_CLEANUP_FAILED',
+          })
+        } finally {
+          if (this.active === active) {
+            this.active = null
+            this.running = false
+          }
+        }
+      })()
+    }
+    return active.releasePromise
+  }
+
+  private async requestForClaim(
+    claimed: VerifiedQueuedInput,
+    targetPath: string,
+    outputPath: string,
+    provisionalRoot: string,
+  ): Promise<IllustriousTxt2ImgRequestV1> {
+    const frozen = claimed.payload
+    const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
+      frozen.context.model.reference,
+    )
+    if (
+      verified.managedPath !== frozen.context.model.managedPath ||
+      verified.managedPath !== frozen.workerJob.checkpoint.path ||
+      verified.reference.fileSha256 !== frozen.workerJob.checkpoint.sha256 ||
+      verified.reference.predictionType !== frozen.workerJob.checkpoint.predictionType
+    ) {
+      throw new Error('The exact checkpoint or prediction type changed after enqueue.')
+    }
+    const request: IllustriousTxt2ImgRequestV1 = {
+      job: {
+        ...structuredClone(frozen.workerJob),
+        checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
+        output: { pngPath: outputPath, stagingRoot: provisionalRoot },
+        target: { ...frozen.workerJob.target, path: targetPath },
+      },
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: randomUUID(),
+      type: 'generate-illustrious-txt2img',
+    }
+    if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
+      throw new Error('The generation request exceeds the worker message limit.')
+    }
+    return request
+  }
+
+  private async stillRunning(active: ActiveJob): Promise<boolean> {
+    if (active.cancelPromise) {
+      await active.cancelPromise
+      return false
+    }
+    const current = await this.queue.loadVerifiedInput(active.item.id)
+    if (current.item.status === 'running' && current.item.cancelRequested) {
+      await this.cancelActive(active)
+      return false
+    }
+    if (
+      current.item.status !== 'running' ||
+      current.item.statusSequence !== active.item.statusSequence
+    ) {
+      throw new GenerationProcessorError('QUEUE_CHANGED', 'The claimed queue job changed.')
+    }
+    if (active.cancelPromise) {
+      await active.cancelPromise
+      return false
+    }
+    return true
+  }
+}
+
+function requireInferenceReady(ready: InferenceWorkerReady): void {
+  if (
+    ready.protocolVersion !== PROTOCOL_VERSION ||
+    ready.workerVersion !== INFERENCE_WORKER_VERSION ||
+    ready.runtimeProfile !== 'linux-nvidia' ||
+    !Array.isArray(ready.capabilities) ||
+    !ready.capabilities.includes('illustrious-txt2img')
+  ) {
+    throw new GenerationProcessorError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious txt2img inference.',
+    )
+  }
+}
+
+function requireCorrelatedDone(response: unknown, request: IllustriousTxt2ImgRequestV1): number {
+  if (typeof response !== 'object' || response === null) {
+    throw new Error('The generation worker response is invalid.')
+  }
+  const done = response as Record<string, unknown>
+  if (
+    done.type !== 'generation-done' ||
+    done.protocolVersion !== PROTOCOL_VERSION ||
+    done.requestId !== request.requestId ||
+    done.outputPath !== request.job.output.pngPath ||
+    !Number.isInteger(done.seed) ||
+    (done.seed as number) < 0 ||
+    (done.seed as number) > 0xff_ff_ff_ff
+  ) {
+    throw new Error('The generation worker response does not match this request.')
+  }
+  return done.seed as number
+}
+
+async function createProvisionalRoot(scratchBasePath: string): Promise<string> {
+  if (!path.isAbsolute(scratchBasePath) || path.resolve(scratchBasePath) !== scratchBasePath) {
+    throw new Error('The generation scratch directory is invalid.')
+  }
+  const entry = await lstat(scratchBasePath)
+  if (
+    !entry.isDirectory() ||
+    entry.isSymbolicLink() ||
+    (await realpath(scratchBasePath)) !== scratchBasePath ||
+    (process.getuid?.() !== undefined && entry.uid !== process.getuid())
+  ) {
+    throw new Error('The generation scratch directory is unsafe.')
+  }
+  return await mkdtemp(path.join(scratchBasePath, 'illustrious-request-'))
+}
+
+async function readStableTarget(claimed: VerifiedQueuedInput): Promise<Buffer> {
+  const expected = claimed.payload.workerJob.target
+  let handle
+  try {
+    handle = await open(claimed.targetPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch {
+    throw new Error('The frozen target could not be opened.')
+  }
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (
+      !before.isFile() ||
+      before.size !== BigInt(expected.byteSize) ||
+      before.size < 1n ||
+      before.size > BigInt(MAX_TARGET_BYTES) ||
+      before.nlink !== 1n
+    ) {
+      throw new Error('The frozen target changed.')
+    }
+    const bytes = Buffer.alloc(expected.byteSize + 1)
+    let length = 0
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length)
+      if (bytesRead === 0) {
+        break
+      }
+      length += bytesRead
+    }
+    const after = await handle.stat({ bigint: true })
+    const atPath = await lstat(claimed.targetPath, { bigint: true })
+    if (
+      length !== expected.byteSize ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      before.dev !== atPath.dev ||
+      before.ino !== atPath.ino ||
+      atPath.isSymbolicLink() ||
+      createHash('sha256').update(bytes.subarray(0, length)).digest('hex') !== expected.sha256
+    ) {
+      throw new Error('The frozen target changed.')
+    }
+    return bytes.subarray(0, length)
+  } finally {
+    await handle.close()
+  }
+}

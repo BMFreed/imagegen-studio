@@ -229,6 +229,23 @@ export class GenerationStagingRepository {
     }
   }
 
+  /** Reject dispatch before startup has reconciled previous publication attempts. */
+  assertReadyForPublication(): void {
+    this.requireReconciled()
+  }
+
+  /**
+   * A processor may fail a running job only when publication definitely never reserved a receipt.
+   * If this lookup fails, the processor must keep the job for restart reconciliation.
+   */
+  async hasPublicationReceipt(queueItemId: string): Promise<boolean> {
+    assertUuid(queueItemId)
+    return await this.serialize(async () => {
+      this.requireReconciled()
+      return (await this.receiptFor(queueItemId)) !== undefined
+    })
+  }
+
   /** Queue history may have been pruned; only the independent manifest and receipt are needed. */
   async listVerifiedCandidates(localProjectKey: string): Promise<VerifiedGenerationCandidate[]> {
     if (!PROJECT_KEY_PATTERN.test(localProjectKey)) {

@@ -148,9 +148,11 @@ durable cursor. Явно выбранную поддерживаемую пар�
 транспортными/операционными границами. Он создаёт только краткоживущий scratch
 lease. Отдельный [durable enqueue checkpoint](../engineering/phase-2b-durable-enqueue-research.md)
 копирует проверенный target в app-owned input store и создаёт SQLite `pending`
-row с frozen context (до 128 КиБ); startup отменяет незавершённые rows. Queue
-dispatch/actions, реальный inference worker и candidate publication всё ещё
-нужны перед Generate.
+row с frozen context (до 128 КиБ); startup отменяет незавершённые rows. Отдельные
+queue/staging repositories и приватный processor уже проверяют completion,
+отмену и публикацию candidate на подставном inference transport. Их подключение
+к Electron, реальный inference worker и renderer actions всё ещё нужны перед
+Generate.
 
 ## Минимальные сообщения worker'а
 

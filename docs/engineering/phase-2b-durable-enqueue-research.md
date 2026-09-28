@@ -1,5 +1,13 @@
 # Phase 2B: durable input for the first generation queue item
 
+> **Historical checkpoint, superseded on 2026-09-28.** The `predictionType:
+> null` admission limit below describes the state at `c59fe30`. Current
+> [model-library contract](../contracts/managed-model-library.md) and
+> `ModelService` allow a verified Illustrious checkpoint without a manifest
+> allowlist: an exact-file override, known manifest value, or labeled `epsilon`
+> assumption supplies the operational type. The queue input and recovery
+> evidence in this note remains scoped to the historical checkpoint.
+
 Base: clean `c59fe30`. Risk: **high** because this checkpoint coordinates
 app-owned files and a persistent SQLite queue row. The expected result comes
 from [Queue Manager](../features/queue-manager.md#frozen-job-rule),
