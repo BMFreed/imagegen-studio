@@ -34,6 +34,7 @@ import {
 } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
+import type { CandidateExportFeedback } from './components/candidate-export-feedback.js'
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
@@ -49,12 +50,20 @@ import { imageGenNaiveTheme } from './theme/naive-theme.js'
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type PendingProjectAction =
-  | {
-      kind: 'bbox' | 'close' | 'discard' | 'import-image' | 'layer' | 'model' | 'save'
-      tabId: string
-    }
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open' | 'rebuild'; projectId: string }
+  | {
+      kind:
+        | 'bbox'
+        | 'close'
+        | 'discard'
+        | 'export-candidate'
+        | 'import-image'
+        | 'layer'
+        | 'model'
+        | 'save'
+      tabId: string
+    }
 
 const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
@@ -75,6 +84,8 @@ const draftValidity = ref<Record<string, boolean>>({})
 const projectsLoading = ref(false)
 const homeError = ref<string | null>(null)
 const tabErrors = ref<Record<string, string | null>>({})
+const exportFeedbackByTab = ref<Record<string, CandidateExportFeedback | null>>({})
+const exportFeedbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const saveNotices = ref<Record<string, string | null>>({})
 const reloadRequiredIds = ref<Set<string>>(new Set())
 const globalNotice = ref<string | null>(null)
@@ -359,6 +370,7 @@ function focusTab(tab: ProjectTab) {
 }
 
 function removeTab(tabId: string) {
+  stopExportFeedbackTimer(tabId)
   draftSync.forget(tabId)
   generationResultsRequests.set(tabId, (generationResultsRequests.get(tabId) ?? 0) + 1)
   const { [tabId]: _closedResults, ...remainingResults } = generationResultsByTab.value
@@ -378,8 +390,10 @@ function removeTab(tabId: string) {
   nextReloadRequired.delete(tabId)
   reloadRequiredIds.value = nextReloadRequired
   const { [tabId]: _closedError, ...remainingErrors } = tabErrors.value
+  const { [tabId]: _closedExportFeedback, ...remainingExportFeedback } = exportFeedbackByTab.value
   const { [tabId]: _closedNotice, ...remainingNotices } = saveNotices.value
   tabErrors.value = remainingErrors
+  exportFeedbackByTab.value = remainingExportFeedback
   saveNotices.value = remainingNotices
 }
 
@@ -387,6 +401,7 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   const openIds = new Set(nextTabs.map((tab) => tab.id))
   for (const tab of projectTabs.value) {
     if (!openIds.has(tab.id)) {
+      stopExportFeedbackTimer(tab.id)
       draftSync.forget(tab.id)
       generationResultsRequests.set(tab.id, (generationResultsRequests.get(tab.id) ?? 0) + 1)
     }
@@ -406,6 +421,9 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   reloadRequiredIds.value = new Set([...reloadRequiredIds.value].filter((id) => openIds.has(id)))
   tabErrors.value = Object.fromEntries(
     Object.entries(tabErrors.value).filter(([id]) => openIds.has(id)),
+  )
+  exportFeedbackByTab.value = Object.fromEntries(
+    Object.entries(exportFeedbackByTab.value).filter(([id]) => openIds.has(id)),
   )
   saveNotices.value = Object.fromEntries(
     Object.entries(saveNotices.value).filter(([id]) => openIds.has(id)),
@@ -716,6 +734,54 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
 
 function setTabError(tabId: string, message: string | null) {
   tabErrors.value = { ...tabErrors.value, [tabId]: message }
+}
+
+function stopExportFeedbackTimer(tabId: string) {
+  const timer = exportFeedbackTimers.get(tabId)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    exportFeedbackTimers.delete(tabId)
+  }
+}
+
+function clearExportFeedback(tabId: string) {
+  stopExportFeedbackTimer(tabId)
+  exportFeedbackByTab.value = { ...exportFeedbackByTab.value, [tabId]: null }
+}
+
+async function saveCandidateImage(tabId: string, candidateId: string) {
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'export-candidate', tabId }
+  setTabError(tabId, null)
+  clearExportFeedback(tabId)
+  try {
+    const outcome = await apiValue(() =>
+      projectApi().saveGenerationCandidateImage(tabId, candidateId),
+    )
+    if (outcome.kind === 'saved') {
+      exportFeedbackByTab.value = {
+        ...exportFeedbackByTab.value,
+        [tabId]: {
+          kind: 'success',
+          message: `Saved ${outcome.fileName}. Candidate stays in temporary results; not added to Project.`,
+        },
+      }
+      const timer = setTimeout(() => clearExportFeedback(tabId), 6000)
+      exportFeedbackTimers.set(tabId, timer)
+    }
+  } catch (cause) {
+    exportFeedbackByTab.value = {
+      ...exportFeedbackByTab.value,
+      [tabId]: {
+        kind: 'error',
+        message: `Candidate image could not be saved. ${errorMessage(cause)}`,
+      },
+    }
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 async function applyBbox(tabId: string, rect: IgsRectV1) {
@@ -1106,6 +1172,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  for (const tabId of exportFeedbackTimers.keys()) {
+    stopExportFeedbackTimer(tabId)
+  }
   unsubscribeModelInstall?.()
   unsubscribeStatus?.()
   unsubscribeProjectTabs?.()
@@ -1211,6 +1280,7 @@ onBeforeUnmount(() => {
           :busy="pendingProjectAction !== null || windowClosePending"
           :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
+          :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
           :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
           :generationResults="generationResultsByTab[activeTab.id] ?? null"
           :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
@@ -1225,6 +1295,7 @@ onBeforeUnmount(() => {
           :tab="activeTab"
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
+          @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
           @moveLayer="moveActiveRasterLayer"
@@ -1234,6 +1305,7 @@ onBeforeUnmount(() => {
           @relinkModel="relinkGenerationModel(activeTab.id)"
           @removeLora="removeGenerationLora(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
+          @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @updateDraft="updateGenerationDraft(activeTab.id, $event)"
           @updateLayer="updateActiveRasterLayer"

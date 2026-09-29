@@ -43,6 +43,10 @@ import { GenerationStagingError } from './projects/generation-staging.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import {
+  ProjectCandidateImageExporter,
+  ProjectCandidateImageExportError,
+} from './projects/project-candidate-image-export.js'
+import {
   ProjectGenerationClose,
   ProjectGenerationCloseError,
 } from './projects/project-generation-close.js'
@@ -313,6 +317,16 @@ if (!gotInstanceLock) {
       const generationResults = new ProjectGenerationResultResource(
         recoveredGeneration?.staging ?? null,
         (tabId) => projectService.getOpenDocumentId(tabId),
+      )
+      const candidateImageExporter = new ProjectCandidateImageExporter(
+        recoveredGeneration?.staging ?? null,
+        (tabId) => projectService.getOpenDocumentId(tabId),
+        (defaultFileName) =>
+          dialog.showSaveDialog(window, {
+            defaultPath: defaultFileName,
+            filters: [{ extensions: ['png'], name: 'PNG Images' }],
+            title: 'Save Candidate Image',
+          }),
       )
       protocol.handle('igs-staging', async (request) => {
         const responseHeaders = {
@@ -658,6 +672,9 @@ if (!gotInstanceLock) {
       const isRasterLayerId = (value: unknown): value is string =>
         typeof value === 'string' &&
         /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
+      const isCandidateId = (value: unknown): value is string =>
+        typeof value === 'string' &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
       const closeProjectArgs = (args: unknown[]): boolean =>
         args.length === 2 && isProjectId(args[0]) && typeof args[1] === 'boolean'
@@ -703,6 +720,7 @@ if (!gotInstanceLock) {
           } catch (error) {
             if (
               error instanceof ProjectServiceError ||
+              error instanceof ProjectCandidateImageExportError ||
               error instanceof ProjectGenerationCloseError ||
               error instanceof ProjectGenerationResultResourceError ||
               error instanceof GenerationOrchestratorError ||
@@ -1039,6 +1057,11 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.listGenerationResults, oneProjectId, (tabId) =>
         generationResults.list(tabId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.saveGenerationCandidateImage,
+        (args) => args.length === 2 && isProjectId(args[0]) && isCandidateId(args[1]),
+        (tabId, candidateId) => candidateImageExporter.save(tabId as string, candidateId as string),
       )
       registerProjectHandler(ipcChannels.projects.close, closeProjectArgs, (tabId, confirm) =>
         projectGenerationClose.close(tabId as string, {

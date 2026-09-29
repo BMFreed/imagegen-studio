@@ -20,6 +20,7 @@ import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
 
 const props = defineProps<{
   bbox: IgsRectV1
+  candidateActionsDisabled: boolean
   disabled: boolean
   generationResults: ProjectGenerationResultView[]
   generationResultsLoading: boolean
@@ -30,6 +31,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   changeBbox: [rect: IgsRectV1]
   refreshGenerationResults: []
+  saveCandidateImage: [candidateId: string]
   selectLayer: [layerId: string]
 }>()
 
@@ -773,12 +775,14 @@ watch(
       </div>
       <ProjectGenerationResultsTray
         v-if="generationResults.length > 0"
+        :actionsDisabled="candidateActionsDisabled"
         :candidates="generationResults"
         :focusedCandidateId
         :loading="generationResultsLoading"
         :previewVisible
         @focus="focusCandidate"
         @refresh="emit('refreshGenerationResults')"
+        @saveCandidateImage="emit('saveCandidateImage', $event)"
         @togglePreview="previewVisible = !previewVisible"
       />
       <div v-if="layers.length === 0 && !(focusedCandidate && previewVisible)" class="canvas-empty">

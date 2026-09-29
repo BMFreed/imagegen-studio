@@ -6,6 +6,7 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  ProjectCandidateExportResult,
   ProjectCloseImpact,
   ProjectImportFinishResult,
   ProjectImportSelection,
@@ -194,6 +195,24 @@ function isProjectCloseImpact(value: unknown): value is ProjectCloseImpact {
     Number.isSafeInteger(value.completedCandidateCount) &&
     (value.completedCandidateCount as number) >= 0 &&
     typeof value.generationStorageUnavailable === 'boolean'
+  )
+}
+
+function isProjectCandidateExportResult(value: unknown): value is ProjectCandidateExportResult {
+  if (!isRecord(value)) {
+    return false
+  }
+  if (value.kind === 'canceled') {
+    return Object.keys(value).length === 1
+  }
+  return (
+    value.kind === 'saved' &&
+    Object.keys(value).length === 2 &&
+    typeof value.fileName === 'string' &&
+    value.fileName.length > 4 &&
+    value.fileName.toLowerCase().endsWith('.png') &&
+    !value.fileName.includes('/') &&
+    !value.fileName.includes('\\')
   )
 }
 
@@ -640,6 +659,12 @@ const api: StudioApi = {
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
+    saveGenerationCandidateImage: (tabId, candidateId) =>
+      invokeProject(
+        ipcChannels.projects.saveGenerationCandidateImage,
+        [tabId, candidateId],
+        isProjectCandidateExportResult,
+      ),
     selectImport: () =>
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setGenerationModel: (tabId, selection) =>

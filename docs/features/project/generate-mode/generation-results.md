@@ -273,20 +273,33 @@ PP-008 flow.
 
 ## Production recovery preview checkpoint
 
-The Project now lists verified local candidates through typed IPC and draws
+The Project lists verified local candidates through typed IPC and draws
 the focused candidate at its frozen bbox over the canvas. Pixels use a private,
 process-lifetime URL; neither an asset path nor the frozen job payload reaches
 the renderer. A new image read verifies the candidate again and requires the
-Project to remain open. The tray labels this as a temporary, read-only result.
+Project to remain open. The tray labels this as a temporary result.
 It marks a candidate created for a different document previously at the same
 path, without presenting it as selected for acceptance.
 
 Save does not put the candidate in `.igs`. Canceling Project close leaves it
 available; confirmed close discards its staging session and revokes new reads.
 The [Phase 2B Results recovery view](../../../engineering/phase-2b-results-recovery-ui.md)
-records the end-to-end test boundary. User-triggered Generate, acceptance into
-Raster/Smart Patch, provenance, export and storage quota/cleanup remain open;
-the current tray does not claim the full PP-008 flow.
+records the preview/close boundary.
+
+## Production candidate image export checkpoint
+
+Each verified candidate has `Save Candidate Image` in its secondary menu.
+Main chooses the destination through a native Save dialog, rechecks the
+candidate after the dialog, then writes its exact sRGB PNG without changing
+the Project, `.igs`, provenance, history or staging. The action remains
+available for a candidate from an earlier document at the same path: it
+saves raw pixels and does not imply that the candidate can be accepted into
+the current document. An existing destination is not overwritten; the user
+must choose another name. See the
+[export boundary](../../../engineering/phase-2b-candidate-image-export.md).
+
+User-triggered Generate, acceptance into Raster/Smart Patch, provenance and
+storage quota/cleanup remain open; preview/export do not fulfill PP-008.
 
 ## Vue Prototype Coverage
 

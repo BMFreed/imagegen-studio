@@ -124,14 +124,16 @@ staging repository can publish/recover a temporary candidate and advance the
 Project's actual-seed cursor. That checkpoint had no Project Generate action,
 worker dispatch or candidate preview/acceptance UI.
 
-## Current production boundary: read-only Results recovery
+## Current production boundary: Results recovery and image export
 
-The Project can now display and preview an already verified, locally recovered
-candidate. This does not enable the Generate action or acceptance. The current
+The Project can now display, preview and explicitly save the raw PNG of an
+already verified, locally recovered candidate. This does not enable the
+Generate action or acceptance. The current
 worker does not cover all visible generation inputs, and the release runtime
 installer is not complete. Prototype interactions above do not prove a full
 production generation flow. See the
-[Results recovery checkpoint](../../../engineering/phase-2b-results-recovery-ui.md).
+[Results recovery checkpoint](../../../engineering/phase-2b-results-recovery-ui.md)
+and [candidate image export](../../../engineering/phase-2b-candidate-image-export.md).
 
 ## Acceptance Criteria
 

@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -97,6 +105,25 @@ async function renderedBlueBounds(window) {
     }
     return Number.isFinite(left) ? { left, top, right, bottom } : null
   })
+}
+
+async function setNativeSaveDialogResult(application, result) {
+  await application.evaluate(({ dialog }, selectedResult) => {
+    globalThis.igsSmokeSaveDialogCalls ??= 0
+    dialog.showSaveDialog = async () => {
+      globalThis.igsSmokeSaveDialogCalls += 1
+      return selectedResult
+    }
+  }, result)
+}
+
+async function nativeSaveDialogCalls(application) {
+  return await application.evaluate(() => globalThis.igsSmokeSaveDialogCalls ?? 0)
+}
+
+async function clickSaveCandidateImage(window) {
+  await window.getByRole('button', { name: 'Result 1 actions' }).click()
+  await window.getByRole('menuitem', { name: 'Save Candidate Image' }).click()
 }
 
 const dataRoot = mkdtempSync(path.join(os.tmpdir(), 'igs-results-smoke-'))
@@ -328,6 +355,77 @@ try {
   const afterSave = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
   assert.equal(afterSave.ok, true)
   assert.equal(afterSave.value.candidates.length, 1)
+
+  // The actual Results menu calls renderer → preload → main. Replace only the native Save picker;
+  // candidate verification, path handling and output publication stay in the production code.
+  const packageBeforeExport = readFileSync(packagePath)
+  const candidateBeforeExport = readFileSync(candidate.assetPath)
+  const stagingManifestPath = path.join(path.dirname(path.dirname(candidate.assetPath)), 'manifest.json')
+  const manifestBeforeExport = readFileSync(stagingManifestPath)
+  const exportDirectory = path.join(dataRoot, 'exports')
+  mkdirSync(exportDirectory)
+  const exportedPath = path.join(exportDirectory, 'saved-candidate.png')
+  const canvasBoundsBeforeExport = await canvas.locator('.konva-stage').boundingBox()
+  assert.ok(canvasBoundsBeforeExport)
+  await setNativeSaveDialogResult(application, { canceled: false, filePath: exportedPath })
+  let dialogCalls = await nativeSaveDialogCalls(application)
+  await clickSaveCandidateImage(window)
+  await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
+  await expect(window.getByText('Image exported')).toBeVisible()
+  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  await expect.poll(() => existsSync(exportedPath)).toBe(true)
+  assert.deepEqual(readFileSync(exportedPath), output)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
+  assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
+  assert.deepEqual(readFileSync(stagingManifestPath), manifestBeforeExport)
+  const afterExport = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  assert.equal(afterExport.ok, true)
+  assert.deepEqual(afterExport.value.candidates.map((item) => item.candidateId), [candidate.candidateId])
+  const afterExportTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(afterExportTab.ok, true)
+  assert.equal(afterExportTab.value.tab.layers.length, 0)
+  assert.equal(afterExportTab.value.tab.dirty, false)
+
+  const filesBeforeCancel = readdirSync(exportDirectory).sort()
+  await setNativeSaveDialogResult(application, { canceled: true })
+  dialogCalls = await nativeSaveDialogCalls(application)
+  await clickSaveCandidateImage(window)
+  await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
+  await expect(window.getByText('Image exported')).toHaveCount(0)
+  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  assert.deepEqual(readdirSync(exportDirectory).sort(), filesBeforeCancel)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
+  assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
+  assert.deepEqual(readFileSync(stagingManifestPath), manifestBeforeExport)
+
+  // A chosen existing destination must never be overwritten, and the temporary source must stay
+  // available for another Save attempt. The native picker is allowed to return an existing path.
+  const existingPath = path.join(exportDirectory, 'existing-candidate.png')
+  const existingBytes = Buffer.from('Keep this unrelated destination unchanged.')
+  writeFileSync(existingPath, existingBytes)
+  await setNativeSaveDialogResult(application, { canceled: false, filePath: existingPath })
+  dialogCalls = await nativeSaveDialogCalls(application)
+  await clickSaveCandidateImage(window)
+  await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
+  await expect(window.getByText('Image export failed')).toBeVisible()
+  await expect(window.getByText(/A file with that name already exists/)).toBeVisible()
+  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  assert.deepEqual(readFileSync(existingPath), existingBytes)
+  assert.deepEqual(readdirSync(exportDirectory).sort(), [path.basename(existingPath), path.basename(exportedPath)].sort())
+  assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
+  assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
+  assert.deepEqual(readFileSync(stagingManifestPath), manifestBeforeExport)
+  const afterFailedExport = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(afterFailedExport.ok, true)
+  assert.deepEqual(afterFailedExport.value.candidates.map((item) => item.candidateId), [candidate.candidateId])
+  const afterFailedExportTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(afterFailedExportTab.ok, true)
+  assert.equal(afterFailedExportTab.value.tab.layers.length, 0)
+  assert.equal(afterFailedExportTab.value.tab.dirty, false)
+
   await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
   const closeDialog = window.getByRole('dialog', { name: 'Close Project' })
   await expect(closeDialog.getByText('Unaccepted generation results', { exact: false })).toBeVisible()
@@ -348,7 +446,9 @@ try {
   assert.equal(afterClose.ok, true)
   assert.equal(afterClose.value.candidates.length, 0)
   assert.equal(existsSync(candidate.assetPath), false)
-  console.log('Desktop Results smoke passed: verified recovery, preview, Save, Cancel and discard.')
+  console.log(
+    'Desktop Results smoke passed: verified recovery, preview, exact image export, Save, Cancel and discard.',
+  )
 } finally {
   application?.process().kill('SIGKILL')
   rmSync(dataRoot, { force: true, recursive: true })

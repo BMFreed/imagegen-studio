@@ -7,14 +7,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  DotsVertical,
   Eye,
   EyeOff,
   Refresh,
 } from '@vicons/tabler'
-import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
+import { NButton, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
+  actionsDisabled: boolean
   candidates: ProjectGenerationResultView[]
   focusedCandidateId: string | null
   loading: boolean
@@ -24,10 +26,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   focus: [candidateId: string]
   refresh: []
+  saveCandidateImage: [candidateId: string]
   togglePreview: []
 }>()
 
 const collapsed = ref(false)
+const candidateActions = [{ key: 'save-image', label: 'Save Candidate Image' }]
 const focusedIndex = computed(() =>
   props.candidates.findIndex((candidate) => candidate.candidateId === props.focusedCandidateId),
 )
@@ -75,14 +79,40 @@ function focusStep(delta: number) {
           </NTag>
         </button>
         <div class="candidate-footer">
+          <NDropdown
+            :menuProps="() => ({ role: 'menu', 'aria-label': `Result ${index + 1} actions` })"
+            :nodeProps="() => ({ role: 'menuitem' })"
+            :options="candidateActions"
+            placement="top-start"
+            size="small"
+            trigger="click"
+            @select="
+              (key) => key === 'save-image' && emit('saveCandidateImage', candidate.candidateId)
+            "
+          >
+            <NButton
+              aria-haspopup="menu"
+              :aria-label="`Result ${index + 1} actions`"
+              circle
+              class="candidate-actions"
+              :disabled="actionsDisabled"
+              quaternary
+              size="tiny"
+            >
+              <template v-slot:icon><NIcon :component="DotsVertical" :size="16" /></template>
+            </NButton>
+          </NDropdown>
           <span>#{{ index + 1 }}</span>
         </div>
       </article>
     </div>
 
     <div aria-label="Temporary generation results" class="results-toolbar" role="toolbar">
-      <span class="results-label" title="Recovered results are temporary on this computer.">
-        Preview only
+      <span
+        class="results-label"
+        title="These images are temporary on this computer and not part of the Project. Save an individual image from its menu."
+      >
+        Temp results
       </span>
       <div class="results-navigation">
         <NButton
@@ -140,7 +170,7 @@ function focusStep(delta: number) {
       <NTag size="small" type="warning">Different document</NTag>
       <span>
         One or more results were created for a different Project document previously at this path.
-        Preview only.
+        You can preview or save their images; they have not been added to this Project.
       </span>
     </p>
   </section>
@@ -217,12 +247,15 @@ function focusStep(delta: number) {
   left: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 2px 4px;
+  justify-content: space-between;
+  padding: 1px 3px;
   color: var(--app-text);
   background: var(--app-elevated);
   font-size: var(--app-font-size-meta);
-  pointer-events: none;
+}
+
+.candidate-actions {
+  flex: 0 0 20px;
 }
 
 .candidate-mismatch {

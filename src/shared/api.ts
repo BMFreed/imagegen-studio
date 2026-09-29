@@ -42,6 +42,7 @@ export const ipcChannels = {
     removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
+    saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
     selectImport: 'projects:select-import',
     setGenerationModel: 'projects:set-generation-model',
     setPrimaryBbox: 'projects:set-primary-bbox',
@@ -197,6 +198,9 @@ export interface ProjectGenerationResultsSnapshot {
   recoveryUnavailable: boolean
 }
 
+export type ProjectCandidateExportResult =
+  { fileName: string; kind: 'saved' } | { kind: 'canceled' }
+
 export interface ProjectApi {
   addGenerationLora: (
     tabId: string,
@@ -241,6 +245,10 @@ export interface ProjectApi {
     decision: 'discard' | 'recover',
   ) => Promise<ApiResult<ProjectTab>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
+  saveGenerationCandidateImage: (
+    tabId: string,
+    candidateId: string,
+  ) => Promise<ApiResult<ProjectCandidateExportResult>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setGenerationModel: (
     tabId: string,

@@ -223,8 +223,9 @@ The exact installed checkpoint/version selector, portable checkpoint/LoRA
 relink and LoRA stack edits also use this document path. VAE/embedding
 selectors, denoising and advanced controls are not connected yet. A separate
 main-process repository can publish and recover a verified temporary candidate
-and its actual seed. The Project now shows a [read-only recovery preview](../../engineering/phase-2b-results-recovery-ui.md)
-without adding that candidate to `.igs`; production Generate, full worker
+and its actual seed. The Project now shows a [recovery preview](../../engineering/phase-2b-results-recovery-ui.md)
+and can [save the candidate PNG separately](../../engineering/phase-2b-candidate-image-export.md)
+without adding it to `.igs`; production Generate, full worker
 inference and user-facing acceptance are not connected yet.
 Electron smoke exercises immediate prompt editing followed by native
 `app.quit()` and the Save choice, then reads the latest prompt from the real

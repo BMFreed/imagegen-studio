@@ -36,6 +36,7 @@ import {
 } from 'naive-ui'
 import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
+import type { CandidateExportFeedback } from './candidate-export-feedback.js'
 import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
@@ -59,6 +60,7 @@ const props = defineProps<{
   busy: boolean
   draftPending: boolean
   error: string | null
+  exportFeedback: CandidateExportFeedback | null
   generationDraft: ProjectTab['generationDraft']
   generationResults: ProjectGenerationResultsSnapshot | null
   generationResultsError: string | null
@@ -76,6 +78,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
+  clearExportFeedback: []
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
   moveLayer: [layerId: string, targetIndex: number]
@@ -85,6 +88,7 @@ const emit = defineEmits<{
   relinkModel: []
   removeLora: [identity: ProjectLoraIdentity]
   save: []
+  saveCandidateImage: [candidateId: string]
   selectModel: [selection: { resourceId: string; versionId: string } | null]
   updateDraft: [change: ProjectGenerationDraftChange]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
@@ -732,8 +736,22 @@ function applyFitBbox() {
 
 <template>
   <section :aria-label="`Project ${tab.title}`" class="project-view">
+    <NAlert
+      v-if="exportFeedback"
+      key="export-feedback"
+      class="export-feedback"
+      closable
+      :showIcon="false"
+      :title="exportFeedback.kind === 'success' ? 'Image exported' : 'Image export failed'"
+      :type="exportFeedback.kind"
+      @close="emit('clearExportFeedback')"
+    >
+      {{ exportFeedback.message }}
+    </NAlert>
     <div class="project-notices">
-      <NAlert v-if="error" title="Project action failed" type="error">{{ error }}</NAlert>
+      <NAlert v-if="error" key="n-alert-2" title="Project action failed" type="error">
+        {{ error }}
+      </NAlert>
       <NAlert v-if="saveNotice" key="n-alert-2" title="Project saved with a warning" type="warning">
         {{ saveNotice }}
       </NAlert>
@@ -1142,6 +1160,7 @@ function applyFitBbox() {
       <ProjectCanvas
         :key="tab.id"
         :bbox="tab.primaryBbox"
+        :candidateActionsDisabled="busy"
         :disabled="busy || reloadRequired"
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
@@ -1149,6 +1168,7 @@ function applyFitBbox() {
         :selectedLayerId
         @changeBbox="emit('applyBbox', $event)"
         @refreshGenerationResults="emit('refreshGenerationResults')"
+        @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectLayer="selectedLayerId = $event"
       />
 
@@ -1169,10 +1189,20 @@ function applyFitBbox() {
 
 <style scoped>
 .project-view {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+}
+
+.export-feedback {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  width: 256px;
+  max-width: calc(100% - 24px);
 }
 
 .document-state {
