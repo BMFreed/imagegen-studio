@@ -292,6 +292,7 @@ try {
   assert.equal(snapshot.ok, true)
   assert.equal(snapshot.value.recoveryUnavailable, false)
   assert.equal(snapshot.value.candidates.length, 1)
+  assert.equal(snapshot.value.lastActualSeed, 42)
   const recovered = snapshot.value.candidates[0]
   assert.equal(recovered.candidateId, candidate.candidateId)
   assert.deepEqual(recovered.bbox, bbox)
@@ -300,6 +301,7 @@ try {
   assert.equal('assetPath' in recovered || 'frozenPayloadJson' in recovered, false)
   await expect(window.getByRole('region', { name: 'Project Canvas' })).toBeVisible()
   await expect(window.getByRole('toolbar', { name: 'Temporary generation results' })).toBeVisible()
+  await expect(window.getByRole('button', { name: 'Reuse last seed' })).toBeEnabled()
   const resource = await window.evaluate(async (url) => {
     const response = await fetch(url)
     const bytes = new Uint8Array(await response.arrayBuffer())
@@ -352,9 +354,11 @@ try {
   const savedProject = (await readIgsPackage(packagePath)).project
   assert.deepEqual(savedProject.primaryBbox, movedBbox)
   assert.equal(savedProject.layers.length, 0)
+  assert.equal(savedProject.lastActualSeedSnapshot, 42)
   const afterSave = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
   assert.equal(afterSave.ok, true)
   assert.equal(afterSave.value.candidates.length, 1)
+  assert.equal(afterSave.value.lastActualSeed, 42)
 
   // The actual Results menu calls renderer → preload → main. Replace only the native Save picker;
   // candidate verification, path handling and output publication stay in the production code.
@@ -445,6 +449,7 @@ try {
   const afterClose = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
   assert.equal(afterClose.ok, true)
   assert.equal(afterClose.value.candidates.length, 0)
+  assert.equal(afterClose.value.lastActualSeed, 42)
   assert.equal(existsSync(candidate.assetPath), false)
   console.log(
     'Desktop Results smoke passed: verified recovery, preview, exact image export, Save, Cancel and discard.',

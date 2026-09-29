@@ -207,6 +207,7 @@ async function importProject(
   input: {
     bbox?: { height: number; width: number; x: number; y: number }
     draft?: Partial<IgsProjectDocumentV1['generationDraft']>
+    lastActualSeedSnapshot?: number | null
     model: ExactRef
     name: string
     raster?: boolean
@@ -229,6 +230,7 @@ async function importProject(
       seed: { policy: 'fixed', value: 0xff_ff_ff_ff },
       ...input.draft,
     },
+    lastActualSeedSnapshot: input.lastActualSeedSnapshot ?? null,
     layers: input.raster
       ? [
           {
@@ -443,6 +445,63 @@ test(
         assert.equal(copied.context.sampling.steps, originalSteps)
       },
     )
+  },
+)
+
+test(
+  'Reuse freezes the document-scoped operational seed before verified preparation, with saved fallback',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const installed = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('one exact model for failure cases'),
+        civitaiModelId: 623,
+        civitaiVersionId: 624,
+        kind: 'checkpoint',
+      })
+      const model = await modelService.resolveGenerationCheckpoint(
+        installed.published.resourceId,
+        installed.published.versionId,
+      )
+      const { tabId } = await importProject(service, dataRoot, {
+        draft: { seed: { policy: 'reuse', value: null } },
+        lastActualSeedSnapshot: 37,
+        model,
+        name: 'reuse-saved-snapshot',
+      })
+      const saved = await service.prepareNormalTxt2ImgContext(tabId, worker, modelService, () =>
+        assert.fail('Reuse must not choose a random seed'),
+      )
+      assert.equal(saved.context.sampling.requestedSeedPolicy, 'reuse')
+      assert.equal(saved.context.sampling.seed, 37)
+
+      const local = await service.prepareNormalTxt2ImgContext(
+        tabId,
+        worker,
+        modelService,
+        () => assert.fail('Reuse must not choose a random seed'),
+        0,
+      )
+      assert.equal(local.context.sampling.requestedSeedPolicy, 'reuse')
+      assert.equal(local.context.sampling.seed, 0)
+
+      const target = await service.prepareNormalGenerationInput(tabId, worker)
+      const frozen = await prepareNormalTxt2Img({
+        lastActualSeed: 0,
+        modelService: {
+          resolveVerifiedGenerationCheckpointForPlan: async (savedModel) => {
+            target.lastActualSeedSnapshot = 999
+            target.generationDraft.seed = { policy: 'random', value: null }
+            return await modelService.resolveVerifiedGenerationCheckpointForPlan(savedModel)
+          },
+        },
+        randomUint32: () => assert.fail('Reuse must not choose a random seed'),
+        target,
+      })
+      assert.equal(frozen.context.sampling.requestedSeedPolicy, 'reuse')
+      assert.equal(frozen.context.sampling.seed, 0)
+      await service.discardAndClose(tabId)
+    })
   },
 )
 

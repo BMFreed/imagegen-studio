@@ -202,6 +202,8 @@ export interface ProjectGenerationResultView {
 
 export interface ProjectGenerationResultsSnapshot {
   candidates: ProjectGenerationResultView[]
+  /** Local completed seed for the currently open document, independent of candidate retention. */
+  lastActualSeed: number | null
   recoveryUnavailable: boolean
 }
 

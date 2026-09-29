@@ -47,6 +47,8 @@ test('results list exposes only a bounded view, and signed image URL is scoped t
   const resource = new ProjectGenerationResultResource(
     {
       listVerifiedCandidates: async () => [published],
+      readLastActualSeed: async (_key, documentId) =>
+        documentId === published.documentId ? 42 : null,
       readVerifiedCandidatePng: async (request) => {
         reads.push(request)
         return image
@@ -57,6 +59,7 @@ test('results list exposes only a bounded view, and signed image URL is scoped t
 
   const snapshot = await resource.list(localProjectKey)
   assert.equal(snapshot.recoveryUnavailable, false)
+  assert.equal(snapshot.lastActualSeed, 42)
   assert.equal(snapshot.candidates.length, 1)
   const view = snapshot.candidates[0]
   assert.deepEqual(Object.keys(view).sort(), [
@@ -109,6 +112,7 @@ test('results list exposes only a bounded view, and signed image URL is scoped t
   openDocumentId = randomUUID()
   const reusedPath = await resource.list(localProjectKey)
   assert.equal(reusedPath.candidates[0].sourceDocumentMismatch, true)
+  assert.equal(reusedPath.lastActualSeed, null)
   assert.equal(reusedPath.candidates[0].imageUrl, view.imageUrl)
   assert.deepEqual(await resource.readImage(view.imageUrl), image)
 
@@ -124,6 +128,7 @@ test('unavailable recovery reports an explicit state without exposing result URL
   )
   assert.deepEqual(await resource.list(localProjectKey), {
     candidates: [],
+    lastActualSeed: null,
     recoveryUnavailable: true,
   })
   await assert.rejects(resource.list(otherProjectKey), { code: 'PROJECT_NOT_OPEN' })

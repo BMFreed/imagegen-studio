@@ -9,6 +9,7 @@ import test from 'node:test'
 
 import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { withProjectPathLock } from './project-path-lock.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectSession } from './project-session.js'
 import {
@@ -137,6 +138,154 @@ test('debounced dirty document recovers after restart without changing saved .ig
     assert.equal(
       (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
       'clean',
+    )
+  })
+})
+
+test('Save-only seed snapshot stays out of dirty state, shadow autosave, and Undo history', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const revision = coordinator.document.documentRevision
+    const saved = await coordinator.save({ lastActualSeedSnapshot: 17 })
+    assert.equal(saved.recovery.status, 'clean')
+    assert.equal(coordinator.dirty, false)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.document.documentRevision, revision)
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 17)
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 17)
+    assert.equal(
+      (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
+      'absent',
+    )
+
+    await coordinator.applyDocument({ ...coordinator.document, lastActualSeedSnapshot: null })
+    await coordinator.flush()
+    assert.equal(coordinator.dirty, false)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 17)
+    assert.equal(
+      (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
+      'absent',
+    )
+
+    await coordinator.applyDocument({ ...coordinator.document, title: 'Editable change' })
+    assert.equal(coordinator.canUndo, true)
+    await coordinator.save({ lastActualSeedSnapshot: 23 })
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'Saved')
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 23)
+    assert.equal(coordinator.dirty, true)
+    await coordinator.redo()
+    assert.equal(coordinator.document.title, 'Editable change')
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 23)
+    assert.equal(coordinator.dirty, false)
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 23)
+  })
+})
+
+test('a later edit remains recoverable across a metadata-only seed Save commit', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const locked = deferred()
+    const releaseLock = deferred()
+    const blocker = withProjectPathLock(projectPath, async () => {
+      locked.release()
+      await releaseLock.promise
+    })
+    await locked.promise
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const savedRevision = coordinator.document.documentRevision
+    const saving = coordinator.save({ lastActualSeedSnapshot: 81 })
+    let editFailure: unknown
+    try {
+      await coordinator.applyDocument({ ...coordinator.document, title: 'Later edit' })
+      await coordinator.flush()
+    } catch (error) {
+      editFailure = error
+    } finally {
+      releaseLock.release()
+    }
+    await blocker
+    const outcome = await saving
+    if (editFailure) {
+      throw editFailure
+    }
+    assert.equal(outcome.recovery.status, 'dirty')
+    const packageAfterSave = await readIgsPackage(projectPath)
+    assert.equal(packageAfterSave.project.documentRevision, savedRevision)
+    assert.equal(packageAfterSave.project.lastActualSeedSnapshot, 81)
+    assert.equal(packageAfterSave.project.title, 'Saved')
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 81)
+    const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
+    assert.equal(inspection.status, 'recoverable')
+    if (inspection.status === 'recoverable') {
+      assert.equal(inspection.document.title, 'Later edit')
+    }
+  })
+})
+
+test('crash after a metadata-only seed Save commit reopens the concurrent edit', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const locked = deferred()
+    const releaseLock = deferred()
+    const blocker = withProjectPathLock(projectPath, async () => {
+      locked.release()
+      await releaseLock.promise
+    })
+    await locked.promise
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      afterSaveCommit: async () => {
+        throw new Error('Simulated crash before shadow rebase')
+      },
+    })
+    const saving = coordinator.save({ lastActualSeedSnapshot: 82 })
+    try {
+      await coordinator.applyDocument({ ...coordinator.document, title: 'Recover after crash' })
+      await coordinator.flush()
+    } finally {
+      releaseLock.release()
+    }
+    await blocker
+    const outcome = await saving
+    assert.equal(outcome.recovery.status, 'failed')
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 82)
+    const atCrash = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
+    assert.equal(atCrash.status, 'recoverable')
+    const restarted = await ProjectAutosaveCoordinator.recover(projectPath, roots, shadow, {
+      leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+    })
+    assert.equal(restarted.document.title, 'Recover after crash')
+    assert.equal(restarted.document.lastActualSeedSnapshot, 82)
+    assert.equal(restarted.dirty, true)
+  })
+})
+
+test('a prepared edit crosses a seed-only Save without reverting its snapshot', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const staged = deferred()
+    const releaseEdit = deferred()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      beforeEditCommit: async (document) => {
+        if (document.title === 'Prepared edit') {
+          staged.release()
+          await releaseEdit.promise
+        }
+      },
+    })
+    const editing = coordinator.applyDocument({ ...coordinator.document, title: 'Prepared edit' })
+    await staged.promise
+    const saved = await coordinator.save({ lastActualSeedSnapshot: 99 })
+    assert.equal(saved.recovery.status, 'clean')
+    releaseEdit.release()
+    await editing
+    await coordinator.flush()
+    assert.equal(coordinator.document.title, 'Prepared edit')
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 99)
+    assert.equal(coordinator.dirty, true)
+    assert.equal(coordinator.canUndo, true)
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 99)
+    assert.equal(
+      (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
+      'recoverable',
     )
   })
 })
@@ -544,11 +693,12 @@ test('a crash after Save A commit still recovers B through its exact committing 
       },
     })
     await coordinator.applyDocument({ ...coordinator.document, title: 'Save A' })
-    const saving = coordinator.save()
+    const saving = coordinator.save({ lastActualSeedSnapshot: 901 })
     await coordinator.applyDocument({ ...coordinator.document, title: 'Later B' })
     await coordinator.flush()
     await committed.promise
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Save A')
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 901)
     const atCrash = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
     assert.equal(atCrash.status, 'recoverable')
     if (atCrash.status === 'recoverable') {
@@ -560,6 +710,12 @@ test('a crash after Save A commit still recovers B through its exact committing 
       (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
       'recoverable',
     )
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 901)
+    const restarted = await ProjectAutosaveCoordinator.recover(projectPath, roots, shadow, {
+      leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+    })
+    assert.equal(restarted.document.title, 'Later B')
+    assert.equal(restarted.document.lastActualSeedSnapshot, 901)
   })
 })
 
@@ -575,12 +731,13 @@ test('undo to old saved S during Save A is recoverable after A commits', async (
     })
     const oldSaved = coordinator.document
     await coordinator.applyDocument({ ...oldSaved, title: 'Save A' })
-    const saving = coordinator.save()
+    const saving = coordinator.save({ lastActualSeedSnapshot: 902 })
     await coordinator.applyDocument(oldSaved)
     assert.equal(coordinator.dirty, false)
     await coordinator.flush()
     await committed.promise
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Save A')
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, 902)
     const atCrash = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
     assert.equal(atCrash.status, 'recoverable')
     if (atCrash.status === 'recoverable') {
@@ -589,11 +746,13 @@ test('undo to old saved S during Save A is recoverable after A commits', async (
     gate.release()
     assert.equal((await saving).recovery.status, 'dirty')
     assert.equal(coordinator.document.title, 'Saved')
+    assert.equal(coordinator.document.lastActualSeedSnapshot, 902)
     assert.equal(coordinator.dirty, true)
     const recovered = await ProjectAutosaveCoordinator.recover(projectPath, roots, shadow, {
       leaseRegistry: new ProjectAutosaveLeaseRegistry(),
     })
     assert.equal(recovered.document.title, 'Saved')
+    assert.equal(recovered.document.lastActualSeedSnapshot, 902)
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Save A')
   })
 })
@@ -690,6 +849,7 @@ test('a failed Save leaves its preflight shadow recoverable and the saved packag
     await coordinator.applyDocument({ ...coordinator.document, title: 'Unsaved A' })
     await assert.rejects(
       coordinator.save({
+        lastActualSeedSnapshot: 71,
         renderedPreview: {
           documentRevision: coordinator.document.documentRevision,
           merged: raster,
@@ -700,7 +860,9 @@ test('a failed Save leaves its preflight shadow recoverable and the saved packag
       { code: 'PROJECT_INVALID_PREVIEW' },
     )
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Saved')
+    assert.equal((await readIgsPackage(projectPath)).project.lastActualSeedSnapshot, null)
     assert.equal(coordinator.dirty, true)
+    assert.equal(coordinator.document.lastActualSeedSnapshot, null)
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
     assert.equal(inspection.status, 'recoverable')
     if (inspection.status === 'recoverable') {

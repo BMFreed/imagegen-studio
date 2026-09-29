@@ -491,7 +491,9 @@ function documentBytes(document: IgsProjectDocumentV1): Buffer {
 }
 
 function contentKey(document: IgsProjectDocumentV1): string {
-  return JSON.stringify({ ...document, documentRevision: null })
+  // The seed snapshot is portable Save metadata, not an editable document difference. Keep
+  // documentBytes() exact: the committing hash still identifies the package after rename.
+  return JSON.stringify({ ...document, documentRevision: null, lastActualSeedSnapshot: null })
 }
 
 function referencedMembers(document: IgsProjectDocumentV1): Map<string, MemberRef> {

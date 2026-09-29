@@ -569,7 +569,12 @@ export class ProjectAutosaveCoordinator {
 
   /** Explicit Save commits `.igs`, then cleans only that revision and rebases any later edit. */
   async save(
-    input: { emptyPreviewRevision?: string; renderedPreview?: RenderedProjectPreview } = {},
+    input: {
+      emptyPreviewRevision?: string
+      /** Trusted operational cursor; absent means preserve the saved portable snapshot. */
+      lastActualSeedSnapshot?: number
+      renderedPreview?: RenderedProjectPreview
+    } = {},
   ): Promise<CoordinatedSaveOutcome> {
     this.assertOpen()
     if (this.activeSave || this.editGate) {
@@ -582,9 +587,16 @@ export class ProjectAutosaveCoordinator {
         throw new ProjectAutosaveError('SAVE_IN_PROGRESS', 'A Project Save is already running.')
       }
     }
+    const savingDocument = this.session.document
+    const committingDocument =
+      input.lastActualSeedSnapshot === undefined
+        ? savingDocument
+        : parseProjectDocumentV1({
+            ...savingDocument,
+            lastActualSeedSnapshot: input.lastActualSeedSnapshot,
+          })
     this.sealHistoryGroupNow()
     this.clearTimer()
-    const savingDocument = this.session.document
     const assets = this.changedSources(savingDocument)
     // Worker derivatives may finish for the revision that preceded the user's latest edit.
     // Save the captured document anyway, using an honest unavailable/empty placeholder.
@@ -615,8 +627,14 @@ export class ProjectAutosaveCoordinator {
             'The Project changed while preparing its Save snapshot.',
           )
         }
-        this.saveTarget = savingDocument
-        const packageSave = this.session.save({ assets, ...preview })
+        this.saveTarget = committingDocument
+        const packageSave = this.session.save({
+          assets,
+          ...preview,
+          ...(input.lastActualSeedSnapshot === undefined
+            ? {}
+            : { lastActualSeedSnapshot: input.lastActualSeedSnapshot }),
+        })
         this.releasePreparedEdits()
         committed = await packageSave
       } catch (error) {
@@ -632,17 +650,20 @@ export class ProjectAutosaveCoordinator {
         await this.options.afterSaveCommit?.()
         this.rebasing = true
         await this.pendingWrite
-        this.baseDocument = savingDocument
+        this.baseDocument = committingDocument
         this.saveTarget = undefined
         this.retainSaveBaseSourcesForCurrent()
         const savedPackage = await readIgsPackage(this.filePath)
-        if (!sameDocument(savedPackage.project, savingDocument)) {
+        if (!sameDocument(savedPackage.project, committingDocument)) {
           throw new ProjectAutosaveError(
             'SAVED_PROJECT_CHANGED',
             'The Project changed immediately after Save; reopen it before autosave continues.',
           )
         }
-        const cleaned = await this.shadow.markClean(this.filePath, savingDocument.documentRevision)
+        const cleaned = await this.shadow.markClean(
+          this.filePath,
+          committingDocument.documentRevision,
+        )
         if (this.session.dirty) {
           const later = await this.writeCurrent()
           if (!later) {
@@ -684,7 +705,7 @@ export class ProjectAutosaveCoordinator {
       } catch (error) {
         this.rebasing = true
         await this.pendingWrite
-        this.baseDocument = savingDocument
+        this.baseDocument = committingDocument
         this.saveTarget = undefined
         this.retainSaveBaseSourcesForCurrent()
         const failure = this.reportError(error)
@@ -756,7 +777,7 @@ export class ProjectAutosaveCoordinator {
       await this.options.beforeEditCommit?.(candidate)
       await this.editGate
       this.assertOpen()
-      if (!sameDocument(this.session.document, before)) {
+      if (!sameEditableDocument(this.session.document, before)) {
         throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed during this edit.')
       }
       if (this.historyEpoch !== historyEpoch) {
@@ -1294,8 +1315,15 @@ function sameDocument(left: IgsProjectDocumentV1, right: IgsProjectDocumentV1): 
 
 function sameContent(left: IgsProjectDocumentV1, right: IgsProjectDocumentV1): boolean {
   return (
-    JSON.stringify({ ...left, documentRevision: null }) ===
-    JSON.stringify({ ...right, documentRevision: null })
+    JSON.stringify({ ...left, documentRevision: null, lastActualSeedSnapshot: null }) ===
+    JSON.stringify({ ...right, documentRevision: null, lastActualSeedSnapshot: null })
+  )
+}
+
+function sameEditableDocument(left: IgsProjectDocumentV1, right: IgsProjectDocumentV1): boolean {
+  return (
+    JSON.stringify({ ...left, lastActualSeedSnapshot: null }) ===
+    JSON.stringify({ ...right, lastActualSeedSnapshot: null })
   )
 }
 

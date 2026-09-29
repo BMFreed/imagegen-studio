@@ -189,8 +189,12 @@ if (!gotInstanceLock) {
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
       closeDatabase = database.close
       const projectRepository = new ProjectIndexRepository(database.db)
+      let readGenerationSeed:
+        ((projectKey: string, documentId: string) => Promise<number | null>) | null = null
       const projectService = new ProjectService({
         dataRoot: paths.dataRoot,
+        readLastActualSeed: async (projectKey, documentId) =>
+          readGenerationSeed ? await readGenerationSeed(projectKey, documentId) : null,
         repository: projectRepository,
         roots: {
           placeholdersDir: path.join(moduleDir, 'placeholders'),
@@ -321,6 +325,10 @@ if (!gotInstanceLock) {
         ownedGenerationContext.availability.kind === 'storage-recovered'
           ? ownedGenerationContext.requireRecoveredServices()
           : null
+      readGenerationSeed = recoveredGeneration
+        ? (projectKey, documentId) =>
+            recoveredGeneration.staging.readLastActualSeed(projectKey, documentId)
+        : null
       const projectGenerationGate = new ProjectGenerationOperationGate()
       const generationAcceptance = recoveredGeneration
         ? new ProjectGenerationAcceptance({

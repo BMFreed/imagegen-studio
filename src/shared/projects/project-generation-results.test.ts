@@ -22,6 +22,7 @@ test('preload result guard requires a valid document-mismatch diagnostic', () =>
         stagingSessionId,
       },
     ],
+    lastActualSeed: 42,
     recoveryUnavailable: false,
   }
   assert.equal(isProjectGenerationResultsSnapshot(result), true)
@@ -57,4 +58,11 @@ test('preload result guard requires a valid document-mismatch diagnostic', () =>
     false,
   )
   assert.equal(isProjectGenerationResultsSnapshot({ ...result, recoveryUnavailable: true }), false)
+  assert.equal(isProjectGenerationResultsSnapshot({ ...result, lastActualSeed: 0 }), true)
+  assert.equal(isProjectGenerationResultsSnapshot({ ...result, lastActualSeed: null }), true)
+  assert.equal(isProjectGenerationResultsSnapshot({ ...result, lastActualSeed: -1 }), false)
+  assert.equal(
+    isProjectGenerationResultsSnapshot({ ...result, lastActualSeed: 0x1_00_00_00_00 }),
+    false,
+  )
 })

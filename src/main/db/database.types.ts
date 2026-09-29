@@ -60,6 +60,7 @@ export interface GenerationSeedCursor {
   actual_seed: number
   candidate_id: string
   completion_order: number
+  document_id: string | null
   local_project_key: string
   updated_at: string
 }

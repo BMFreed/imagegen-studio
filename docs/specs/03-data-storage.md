@@ -48,7 +48,9 @@ Seed `Reuse` takes the most recent completed output's actual seed for this same
 Project, even when that candidate was subsequently discarded. Its local cursor
 is operational metadata, not a document edit: job completion does not mark the
 Project dirty or add an undo step. The cursor is keyed to the local Project
-identity and survives graceful tab close, staging cleanup and queue pruning.
+identity and checked against the open `.igs` `documentId`: replacing a
+document at the same path cannot lend it the previous document's seed. It
+survives graceful tab close, staging cleanup and queue pruning.
 An explicit Project Save snapshots its current value into `.igs`; until then,
 the newer local cursor stays on this computer. Opening a portable `.igs` without
 a local cursor starts from its saved snapshot, if any. A copied `.igs` at a new
@@ -422,9 +424,11 @@ MVP-правило:
 Portable `documentId` inside `.igs` identifies document content, but cannot be
 the sole key for local autosave, staging or the last-seed cursor: copying a file
 copies that id too. App-managed recovery uses a key derived from the canonical
-local project identity/path. A managed move migrates the local key with its
-recovery and cursor records; an independently imported copy receives a distinct
-local key even if the portable `documentId` matches.
+local project identity/path. Seed-cursor reads additionally match the open
+document's `documentId`; neither identifier alone is sufficient. A managed move
+migrates the local key with its recovery and cursor records; an independently
+imported copy receives a distinct local key even if the portable `documentId`
+matches.
 
 Если позже понадобится поддержка symlink-heavy workflow или network paths, identity policy можно расширить через filesystem inode/file id там, где платформа это поддерживает. Для MVP достаточно canonical path + rescan/relink поведения.
 

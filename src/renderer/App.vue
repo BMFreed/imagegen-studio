@@ -1261,6 +1261,9 @@ async function saveProject(tabId: string, closeAfter = false) {
     await flushProjectDraft(tabId)
     const outcome = await apiValue(() => projectApi().save(tabId))
     replaceTab(outcome.tab)
+    // Save may snapshot a candidate completed since the last Results read. Refresh the local
+    // cursor before the Seed control can offer a stale Reuse value.
+    await refreshGenerationResults(tabId)
     const warning = saveWarning(outcome)
     saveNotices.value = { ...saveNotices.value, [tabId]: warning }
     if (outcome.reloadRequired) {

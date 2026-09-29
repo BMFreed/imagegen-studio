@@ -98,6 +98,58 @@ test('New Project, exact undo, Save and portable reopen use the actual package',
   })
 })
 
+test('explicit Save snapshots the actual seed without a document revision or dirty edit', async () => {
+  await withSession(async (session, directory) => {
+    const revision = session.document.documentRevision
+    assert.equal(session.document.lastActualSeedSnapshot, null)
+    await session.save({ lastActualSeedSnapshot: 4_294_967_295 })
+    assert.equal(session.dirty, false)
+    assert.equal(session.document.documentRevision, revision)
+    assert.equal(session.document.lastActualSeedSnapshot, 4_294_967_295)
+    assert.equal(
+      (await readIgsPackage(session.filePath)).project.lastActualSeedSnapshot,
+      4_294_967_295,
+    )
+
+    // A stale document command cannot turn operational metadata into an edit or rewind it.
+    session.applyDocument({ ...session.document, lastActualSeedSnapshot: null })
+    assert.equal(session.dirty, false)
+    assert.equal(session.document.documentRevision, revision)
+    assert.equal(session.document.lastActualSeedSnapshot, 4_294_967_295)
+    await session.save()
+    assert.equal(
+      (await readIgsPackage(session.filePath)).project.lastActualSeedSnapshot,
+      4_294_967_295,
+    )
+
+    const copiedPath = path.join(directory, 'portable-seed.igs')
+    await copyFile(session.filePath, copiedPath)
+    const portable = await ProjectSession.open(copiedPath, {
+      placeholdersDir: bundledPlaceholders,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    assert.equal(portable.document.lastActualSeedSnapshot, 4_294_967_295)
+  })
+})
+
+test('a rejected Save cannot advance the in-memory or portable seed snapshot', async () => {
+  await withSession(async (session, directory) => {
+    const other = await ProjectSession.open(session.filePath, {
+      placeholdersDir: bundledPlaceholders,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    await other.save({ lastActualSeedSnapshot: 33 })
+    const committed = await readFile(session.filePath)
+    await assert.rejects(session.save({ lastActualSeedSnapshot: 44 }), {
+      code: 'PROJECT_EXTERNAL_CHANGE',
+    })
+    assert.equal(session.document.lastActualSeedSnapshot, null)
+    assert.equal(session.dirty, false)
+    assert.deepEqual(await readFile(session.filePath), committed)
+    assert.equal((await readIgsPackage(session.filePath)).project.lastActualSeedSnapshot, 33)
+  })
+})
+
 test('Save without a worker keeps raster pixels and original ICC metadata in an unavailable-preview package', async () => {
   await withSession(async (session, directory) => {
     const id = randomUUID()

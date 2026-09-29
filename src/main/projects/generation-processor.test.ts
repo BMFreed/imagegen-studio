@@ -276,7 +276,10 @@ test('qualified completion publishes real PNG and actual seed through SQLite sta
     const candidates = await fixture.staging.listVerifiedCandidates(item.item.localProjectKey)
     assert.equal(candidates.length, 1)
     assert.equal(candidates[0]?.actualSeed, 65_535)
-    assert.equal(await fixture.staging.readLastActualSeed(item.item.localProjectKey), 65_535)
+    assert.equal(
+      await fixture.staging.readLastActualSeed(item.item.localProjectKey, candidates[0].documentId),
+      65_535,
+    )
     assert.deepEqual(await readFile(path.join(fixture.root, 'Project.igs')), originalProject)
     assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
   })

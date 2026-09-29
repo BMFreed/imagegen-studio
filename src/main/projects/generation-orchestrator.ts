@@ -210,10 +210,13 @@ export class GenerationOrchestrator {
     this.staging.assertReadyForPublication()
     this.assertGenerationOpen(tabId)
     const project = await this.indexedProject(tabId)
+    const lastActualSeed = await this.staging.readLastActualSeed(tabId, project.documentId)
     const prepared = await this.projects.prepareNormalTxt2ImgContext(
       tabId,
       compositionWorker,
       this.models,
+      undefined,
+      lastActualSeed,
     )
     if (project.documentId !== prepared.context.documentId) {
       throw new GenerationOrchestratorError(

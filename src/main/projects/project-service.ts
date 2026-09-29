@@ -88,6 +88,8 @@ export interface ProjectServiceOptions {
   /** Primarily a test seam for deterministic autosave and simulated process restart. */
   autosaveOptions?: ProjectAutosaveOptions
   dataRoot: string
+  /** The document-scoped operational seed; unavailable recovery never blocks Project Save. */
+  readLastActualSeed?: (localProjectKey: string, documentId: string) => Promise<number | null>
   /** Test seam for a post-commit source removal failure; production uses fs.unlink. */
   removeImportedSource?: (sourcePath: string) => Promise<void>
   repository: ProjectIndexRepository
@@ -577,11 +579,17 @@ export class ProjectService {
     worker: Pick<ProjectWorkerClient, 'composeTarget'>,
     modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
     randomUint32?: () => number,
+    lastActualSeed?: number | null,
   ): ReturnType<typeof prepareNormalTxt2Img> {
     // A known-invalid draft should explain itself even if image composition cannot start.
-    validateNormalTxt2ImgDraft(this.requireTab(tabId).document.generationDraft)
+    const document = this.requireTab(tabId).document
+    validateNormalTxt2ImgDraft(
+      document.generationDraft,
+      lastActualSeed,
+      document.lastActualSeedSnapshot,
+    )
     const target = await this.prepareNormalGenerationInput(tabId, worker)
-    return await prepareNormalTxt2Img({ modelService, randomUint32, target })
+    return await prepareNormalTxt2Img({ lastActualSeed, modelService, randomUint32, target })
   }
 
   /** Rebuild a saved derivative without silently saving document edits or touching recovery. */
@@ -1261,6 +1269,7 @@ export class ProjectService {
     previewWorker?: Pick<ProjectWorkerClient, 'composePreview'>,
   ): Promise<ProjectSaveResult> {
     const coordinator = this.requireTab(tabId)
+    const documentId = coordinator.document.documentId
     let renderedPreview: Awaited<ReturnType<typeof buildProjectPreview>> | undefined
     if (previewWorker) {
       const document = coordinator.document
@@ -1281,12 +1290,28 @@ export class ProjectService {
         console.warn('Project preview is unavailable; saving with placeholders.')
       }
     }
+    let lastActualSeedSnapshot: number | undefined
+    try {
+      // Read as close to the package Save as possible: preview rendering can be slow enough for a
+      // generation to complete while it runs. SQLite and .igs have no shared atomic transaction.
+      lastActualSeedSnapshot =
+        (await this.options.readLastActualSeed?.(tabId, documentId)) ?? undefined
+    } catch {
+      // The portable Project remains saveable when local generation recovery is unavailable.
+      console.warn('Generation seed recovery is unavailable; Save retains its previous snapshot.')
+    }
+    if (coordinator.document.documentId !== documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The Project document changed while preparing Save.',
+      )
+    }
     const saved = await coordinator.save(
       renderedPreview?.kind === 'rendered'
-        ? { renderedPreview: renderedPreview.preview }
+        ? { lastActualSeedSnapshot, renderedPreview: renderedPreview.preview }
         : renderedPreview?.kind === 'empty'
-          ? { emptyPreviewRevision: renderedPreview.documentRevision }
-          : {},
+          ? { emptyPreviewRevision: renderedPreview.documentRevision, lastActualSeedSnapshot }
+          : { lastActualSeedSnapshot },
     )
     let indexWarning: string | undefined
     try {

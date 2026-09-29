@@ -46,6 +46,8 @@ export interface ProjectSaveInput {
   assets?: Readonly<Record<string, IgsAssetSource>>
   /** The compositor found no visible pixels at this exact revision, including transparent layers. */
   emptyPreviewRevision?: string
+  /** Trusted operational cursor, copied into the package only by this explicit Save. */
+  lastActualSeedSnapshot?: number
   /** A derivative computed from this exact document revision. */
   renderedPreview?: RenderedProjectPreview
 }
@@ -176,9 +178,15 @@ export class ProjectSession {
     if (this.reloadRequired) {
       throw new ProjectSessionError('PROJECT_RELOAD_REQUIRED', 'Reopen the saved Project first.')
     }
-    const candidate = parseProjectDocumentV1(input)
-    if (candidate.documentId !== this.current.documentId) {
+    const parsed = parseProjectDocumentV1(input)
+    if (parsed.documentId !== this.current.documentId) {
       throw new ProjectSessionError('PROJECT_INVALID_EDIT', 'A Project ID cannot change in a tab.')
+    }
+    // The portable seed is Save metadata, not editable document content. Undo snapshots and
+    // prepared edits can carry an older value; neither may rewind a successful Save.
+    const candidate = {
+      ...parsed,
+      lastActualSeedSnapshot: this.current.lastActualSeedSnapshot,
     }
     const key = contentKey(candidate)
     const revision =
@@ -288,10 +296,16 @@ export class ProjectSession {
         'A Save for this Project is already running.',
       )
     }
-    savingPaths.add(this.filePath)
     // Capture the document before waiting for a Home scan/index critical section. Edits made
     // during that wait belong to the next Save, just like edits made during archive assembly.
-    const project = this.current
+    const project =
+      input.lastActualSeedSnapshot === undefined
+        ? this.current
+        : parseProjectDocumentV1({
+            ...this.current,
+            lastActualSeedSnapshot: input.lastActualSeedSnapshot,
+          })
+    savingPaths.add(this.filePath)
     try {
       return await withProjectPathLock(
         this.filePath,
@@ -402,9 +416,12 @@ export class ProjectSession {
       // Rename is the commit point. A post-commit read failure must not be
       // reported as a failed Save: the package writer already verified it.
       this.saved = project
-      if (contentKey(this.current) === contentKey(project)) {
-        this.current = project
-      }
+      // Keep edits that arrived while the package was assembled, but move their portable
+      // metadata to the just-committed snapshot without adding a document revision.
+      this.current =
+        contentKey(this.current) === contentKey(project)
+          ? project
+          : { ...this.current, lastActualSeedSnapshot: project.lastActualSeedSnapshot }
       await this.refreshCommittedPackage(project)
       return {
         committed: true,
@@ -489,7 +506,7 @@ async function fileFingerprint(filePath: string): Promise<string> {
 }
 
 function contentKey(document: IgsProjectDocumentV1): string {
-  return JSON.stringify({ ...document, documentRevision: null })
+  return JSON.stringify({ ...document, documentRevision: null, lastActualSeedSnapshot: null })
 }
 
 function containsRect(outer: IgsPreviewRectV1, inner: IgsPreviewRectV1): boolean {

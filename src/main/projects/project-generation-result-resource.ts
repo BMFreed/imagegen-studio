@@ -33,18 +33,25 @@ export class ProjectGenerationResultResource {
   constructor(
     private readonly staging: Pick<
       GenerationStagingRepository,
-      'listVerifiedCandidates' | 'readVerifiedCandidatePng'
+      'listVerifiedCandidates' | 'readLastActualSeed' | 'readVerifiedCandidatePng'
     > | null,
     private readonly getOpenDocumentId: (localProjectKey: string) => string | null,
   ) {}
 
   async list(localProjectKey: string): Promise<ProjectGenerationResultsSnapshot> {
-    this.requireOpenDocumentId(localProjectKey)
+    const originalDocumentId = this.requireOpenDocumentId(localProjectKey)
     if (!this.staging) {
-      return { candidates: [], recoveryUnavailable: true }
+      return { candidates: [], lastActualSeed: null, recoveryUnavailable: true }
     }
     const candidates = await this.staging.listVerifiedCandidates(localProjectKey)
+    const lastActualSeed = await this.staging.readLastActualSeed(
+      localProjectKey,
+      originalDocumentId,
+    )
     const openDocumentId = this.requireOpenDocumentId(localProjectKey)
+    if (openDocumentId !== originalDocumentId) {
+      throw new ProjectGenerationResultResourceError()
+    }
     return {
       candidates: candidates
         .filter((candidate) => candidate.localProjectKey === localProjectKey)
@@ -64,6 +71,7 @@ export class ProjectGenerationResultResource {
           sourceDocumentMismatch: candidate.documentId !== openDocumentId,
           stagingSessionId: candidate.stagingSessionId,
         })),
+      lastActualSeed,
       recoveryUnavailable: false,
     }
   }

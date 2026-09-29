@@ -135,6 +135,36 @@ test('a new shadow-store instance recovers dirty data from disk without changing
   })
 })
 
+test('a Save-only seed snapshot can replace the base hash without hiding a later edit', async () => {
+  await withProject(async ({ projectPath, savedDocument, store }) => {
+    const committingDocument = { ...savedDocument, lastActualSeedSnapshot: 73 }
+    const laterEdit = edit(savedDocument, 'Later edit')
+    await assert.rejects(
+      store.write({
+        committingDocument: { ...committingDocument, title: 'Not metadata' },
+        document: laterEdit,
+        projectPath,
+        savedDocument,
+      }),
+      { code: 'SHADOW_INVALID_REQUEST' },
+    )
+    await store.write({ committingDocument, document: laterEdit, projectPath, savedDocument })
+    const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+    await saveIgsPackage(projectPath, {
+      preview: { ...placeholders, rect: null, status: 'empty' },
+      project: committingDocument,
+    })
+    const inspection = await store.inspect({
+      projectPath,
+      savedPackage: await readIgsPackage(projectPath),
+    })
+    assert.equal(inspection.status, 'recoverable')
+    if (inspection.status === 'recoverable') {
+      assert.equal(inspection.document.title, 'Later edit')
+    }
+  })
+})
+
 test('same-named copies in separate workspaces retain independent document recovery', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-shadow-workspaces-'))
   try {

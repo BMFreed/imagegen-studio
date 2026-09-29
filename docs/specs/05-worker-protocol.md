@@ -142,9 +142,13 @@ cannot silently change an already queued batch.
 Production ProjectService создаёт
 [подготовительный контекст Illustrious `txt2img`](../engineering/phase-2b-generation-preparation-research.md):
 он фиксирует точную модель, Project target, prompts, Steps/CFG и конкретный
-Fixed/Random seed. Это отдельный тип с copied PNG bytes вне JSON context, а
-не сообщение worker'у или запись очереди сам по себе. Он отвергает `Reuse` до подключения
-durable cursor. Явно выбранную поддерживаемую пару sampler/scheduler он сохраняет
+Fixed/Random/Reuse seed. Это отдельный тип с copied PNG bytes вне JSON context, а
+не сообщение worker'у или запись очереди сам по себе. Для `Reuse` он получает
+document-scoped durable cursor от staging либо saved `.igs` snapshot; при
+отсутствии обоих останавливается до composition и enqueue.
+[Seed Reuse checkpoint](../engineering/phase-2b-seed-reuse-research.md)
+проверяет этот внутренний путь, но renderer Generate ещё не подключён.
+Явно выбранную поддерживаемую пару sampler/scheduler он сохраняет
 вместе с Invoke scheduler key; если оба поля не заданы, контекст остаётся
 неразрешённым. [Первый request boundary](../engineering/phase-2b-illustrious-request-research.md)
 требует пару, CFG ≥ 1, размер кратный 8, известный prediction type и

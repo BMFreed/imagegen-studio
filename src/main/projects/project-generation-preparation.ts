@@ -64,7 +64,11 @@ export class GenerationPreparationError extends Error {
 }
 
 /** Reject unsupported draft settings before invoking an image worker. Recheck the frozen draft too. */
-export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generationDraft']): {
+export function validateNormalTxt2ImgDraft(
+  draft: IgsProjectDocumentV1['generationDraft'],
+  operationalSeed?: number | null,
+  savedSnapshot?: number | null,
+): {
   cfgScale: number
   invokeScheduler: IllustriousSchedulerKey | null
   model: ExactCheckpoint
@@ -130,10 +134,17 @@ export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generati
       'Set valid Steps and CFG before preparing a generation.',
     )
   }
-  if (draft.seed.policy === 'reuse') {
+  const reusableSeed = operationalSeed ?? savedSnapshot
+  if (draft.seed.policy === 'reuse' && reusableSeed == null) {
     throw new GenerationPreparationError(
       'GENERATION_SEED_UNAVAILABLE',
-      'Reuse needs the durable last actual seed cursor, which is not connected yet.',
+      'Reuse needs a completed actual seed from this Project.',
+    )
+  }
+  if (draft.seed.policy === 'reuse' && reusableSeed != null && !isUint32(reusableSeed)) {
+    throw new GenerationPreparationError(
+      'GENERATION_SEED_INVALID',
+      'The completed seed must be an unsigned 32-bit integer.',
     )
   }
   return {
@@ -149,6 +160,7 @@ export function validateNormalTxt2ImgDraft(draft: IgsProjectDocumentV1['generati
  * capabilities remain unqualified, so this result must not be dispatched to the worker.
  */
 export async function prepareNormalTxt2Img(input: {
+  lastActualSeed?: number | null
   modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
   randomUint32?: () => number
   target: FrozenGenerationTarget
@@ -166,11 +178,18 @@ export async function prepareNormalTxt2Img(input: {
   const bbox = { ...target.bbox }
   const composite = { ...target.composite, bytes: Buffer.from(target.composite.bytes) }
   const { documentId, documentRevision } = target
-  const { cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(draft)
+  const savedSnapshot = target.lastActualSeedSnapshot
+  const { cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(
+    draft,
+    input.lastActualSeed,
+    savedSnapshot,
+  )
   const actualSeed =
     draft.seed.policy === 'fixed'
       ? draft.seed.value
-      : (input.randomUint32?.() ?? randomBytes(4).readUInt32LE(0))
+      : draft.seed.policy === 'reuse'
+        ? (input.lastActualSeed ?? savedSnapshot)
+        : (input.randomUint32?.() ?? randomBytes(4).readUInt32LE(0))
   if (actualSeed === null || !isUint32(actualSeed)) {
     throw new GenerationPreparationError(
       'GENERATION_SEED_INVALID',

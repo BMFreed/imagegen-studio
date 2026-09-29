@@ -92,6 +92,18 @@ Do not persist:
 - parse error UI state beyond normal project/session diagnostics;
 - full transient preview list unless it is tied to an actual generated result.
 
+## Production Seed Reuse checkpoint
+
+[The current internal checkpoint](../../../engineering/phase-2b-seed-reuse-research.md)
+records actual seed only after durable candidate completion. Main reads that
+cursor with the local Project key and open `.igs` `documentId`, then freezes
+the concrete `reuse` seed before enqueue. If the local cursor is absent, the
+saved `.igs` snapshot is used; if both are absent, Prepare stops explicitly.
+The Results IPC exposes the local cursor and explicit Save records its snapshot
+without marking the document dirty or adding Undo history. This does not yet
+implement renderer Generate, dynamic batch expansion in the production worker
+or a packaged Linux/NVIDIA release pipeline.
+
 ## Vue Prototype Coverage
 
 The shared preview modal parses non-nested brace alternatives directly from `GenerationPrompt.text`, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.

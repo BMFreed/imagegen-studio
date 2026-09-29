@@ -284,6 +284,7 @@ test(
       })
       const indexed = await fixture.projectIndex.getProject(fixture.tabId)
       assert.ok(indexed)
+      assert.ok(indexed.documentId)
       const originalIgs = await readFile(indexed.canonicalPath)
       const enqueued = await fixture.orchestrator.enqueueOne(
         fixture.tabId,
@@ -303,7 +304,7 @@ test(
       assert.equal(processed.queueItemId, enqueued.id)
       assert.equal(processed.candidate.actualSeed, 42)
       assert.deepEqual(await readFile(indexed.canonicalPath), originalIgs)
-      assert.equal(await fixture.staging.readLastActualSeed(fixture.tabId), 42)
+      assert.equal(await fixture.staging.readLastActualSeed(fixture.tabId, indexed.documentId), 42)
 
       // Reopen the same SQLite/filesystem state: completion is recoverable without accepting it
       // into the portable Project package.
@@ -315,6 +316,63 @@ test(
       assert.equal(candidates.length, 1)
       assert.equal(candidates[0]?.candidateId, enqueued.id)
       assert.equal(candidates[0]?.image.sha256, sha256(fixture.outputBytes))
+    })
+  },
+)
+
+test(
+  'Reuse rejects an empty Project cursor and freezes the completed local seed in the durable queue',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const transport = inferenceTransport(fixture.outputBytes)
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'reuse',
+        value: null,
+      })
+      await assert.rejects(
+        fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport),
+        { code: 'GENERATION_SEED_UNAVAILABLE' },
+      )
+      assert.deepEqual(
+        await fixture.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+        [],
+      )
+
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: 0,
+      })
+      await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      assert.equal((await fixture.orchestrator.runNext(transport)).kind, 'completed')
+      const indexed = await fixture.projectIndex.getProject(fixture.tabId)
+      assert.ok(indexed?.documentId)
+      assert.equal(await fixture.staging.readLastActualSeed(fixture.tabId, indexed.documentId), 0)
+
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'reuse',
+        value: null,
+      })
+      const reused = await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      const frozen = await fixture.queue.loadVerifiedInput(reused.id)
+      assert.equal(frozen.payload.context.sampling.requestedSeedPolicy, 'reuse')
+      assert.equal(frozen.payload.context.sampling.seed, 0)
+
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: 99,
+      })
+      await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      assert.equal((await fixture.orchestrator.runNext(transport)).kind, 'completed')
+      assert.equal((await fixture.orchestrator.runNext(transport)).kind, 'completed')
+      assert.equal(await fixture.staging.readLastActualSeed(fixture.tabId, indexed.documentId), 99)
+      const stillFrozen = await fixture.queue.loadVerifiedInput(reused.id)
+      assert.equal(stillFrozen.payload.context.sampling.requestedSeedPolicy, 'reuse')
+      assert.equal(stillFrozen.payload.context.sampling.seed, 0)
     })
   },
 )

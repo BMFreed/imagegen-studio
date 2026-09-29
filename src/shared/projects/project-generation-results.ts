@@ -13,6 +13,11 @@ export function isProjectGenerationResultsSnapshot(
   return (
     isRecord(value) &&
     typeof value.recoveryUnavailable === 'boolean' &&
+    (value.lastActualSeed === null ||
+      (typeof value.lastActualSeed === 'number' &&
+        Number.isSafeInteger(value.lastActualSeed) &&
+        value.lastActualSeed >= 0 &&
+        value.lastActualSeed <= 0xff_ff_ff_ff)) &&
     Array.isArray(value.candidates) &&
     value.candidates.every(
       (candidate: unknown) =>
@@ -34,7 +39,7 @@ export function isProjectGenerationResultsSnapshot(
         isBbox(candidate.bbox) &&
         isResultImageUrl(candidate.imageUrl, candidate),
     ) &&
-    (!value.recoveryUnavailable || value.candidates.length === 0)
+    (!value.recoveryUnavailable || (value.candidates.length === 0 && value.lastActualSeed === null))
   )
 }
 

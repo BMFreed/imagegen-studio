@@ -408,10 +408,11 @@ function updateScheduler(scheduler: string | null) {
 const fixedSeedInput = ref<number | null>(0)
 const lastValidFixedSeed = ref(0)
 const rawFixedSeedInvalid = ref(false)
+const lastActualSeed = computed(
+  () => props.generationResults?.lastActualSeed ?? props.tab.lastActualSeedSnapshot,
+)
 const displayedSeed = computed(() =>
-  props.generationDraft.seed.policy === 'reuse'
-    ? props.tab.lastActualSeedSnapshot
-    : fixedSeedInput.value,
+  props.generationDraft.seed.policy === 'reuse' ? lastActualSeed.value : fixedSeedInput.value,
 )
 const fixedSeedInvalid = computed(
   () =>
@@ -573,7 +574,7 @@ function shuffleSeed() {
 }
 
 function reuseLastSeed() {
-  const last = props.tab.lastActualSeedSnapshot
+  const last = lastActualSeed.value
   if (props.generationDraft.seed.policy === 'reuse') {
     if (last === null) {
       updateSeedPolicy('fixed')
@@ -1149,7 +1150,7 @@ function applyFitBbox() {
                 :disabled="
                   busy ||
                   reloadRequired ||
-                  (tab.lastActualSeedSnapshot === null && generationDraft.seed.policy !== 'reuse')
+                  (lastActualSeed === null && generationDraft.seed.policy !== 'reuse')
                 "
                 secondary
                 size="small"
@@ -1164,7 +1165,7 @@ function applyFitBbox() {
             Enter a fixed seed from 0 to 4294967295 before saving.
           </p>
           <p
-            v-if="generationDraft.seed.policy === 'reuse' && tab.lastActualSeedSnapshot === null"
+            v-if="generationDraft.seed.policy === 'reuse' && lastActualSeed === null"
             class="seed-diagnostic"
             role="status"
           >
@@ -1172,7 +1173,7 @@ function applyFitBbox() {
             completes.
           </p>
           <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
-            Last completed seed: {{ tab.lastActualSeedSnapshot }}
+            Last completed seed: {{ lastActualSeed }}
           </p>
         </section>
         <section

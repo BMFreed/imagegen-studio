@@ -1447,7 +1447,13 @@ test('reserved publication survives retry/prune attempts and a completed candida
         (await recoveredStaging.listVerifiedCandidates(canceled.localProjectKey)).length,
         1,
       )
-      assert.equal(await recoveredStaging.readLastActualSeed(canceled.localProjectKey), 42)
+      assert.equal(
+        await recoveredStaging.readLastActualSeed(
+          canceled.localProjectKey,
+          beforePrune[0].documentId,
+        ),
+        42,
+      )
     } finally {
       await second.close()
     }

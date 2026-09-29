@@ -3,7 +3,17 @@ import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -264,7 +274,10 @@ test('real PNG and frozen job become a durable candidate without changing the .i
       prepared,
       projectPath,
       async (request, claim) => {
-        assert.equal(await staging.readLastActualSeed(claim.item.localProjectKey), null)
+        assert.equal(
+          await staging.readLastActualSeed(claim.item.localProjectKey, prepared.context.documentId),
+          null,
+        )
         await writeFile(request.job.output.pngPath, outputBytes, { flag: 'wx', mode: 0o600 })
         const published = await staging.publishIllustriousTxt2Img({
           actualSeed: 65_535,
@@ -278,7 +291,10 @@ test('real PNG and frozen job become a durable candidate without changing the .i
         assert.equal(published.image.sha256, sha256(outputBytes))
         assert.equal(published.bbox.x, bbox.x)
         assert.equal(published.completionOrder, 1)
-        assert.equal(await staging.readLastActualSeed(claim.item.localProjectKey), 65_535)
+        assert.equal(
+          await staging.readLastActualSeed(claim.item.localProjectKey, prepared.context.documentId),
+          65_535,
+        )
       },
     )
     assert.deepEqual(await readFile(publishedAsset), outputBytes)
@@ -309,7 +325,10 @@ test('real PNG and frozen job become a durable candidate without changing the .i
       ).context.prompts.positive,
       'a frozen blue lantern',
     )
-    assert.equal(await recovered.readLastActualSeed(projectKey), 65_535)
+    assert.equal(
+      await recovered.readLastActualSeed(projectKey, prepared.context.documentId),
+      65_535,
+    )
     await reopened.db.deleteFrom('generation_queue_item').where('id', '=', queueItemId).execute()
     assert.equal((await recovered.listVerifiedCandidates(projectKey)).length, 1)
 
@@ -401,7 +420,10 @@ test('manifest-first crash recovers exact APP_RESTART attempt and seed once', as
           /injected crash after manifest fsync/,
         )
         assert.deepEqual(await staging.listVerifiedCandidates(localProjectKey), [])
-        assert.equal(await staging.readLastActualSeed(localProjectKey), null)
+        assert.equal(
+          await staging.readLastActualSeed(localProjectKey, prepared.context.documentId),
+          null,
+        )
       },
     )
     await first.close()
@@ -421,9 +443,15 @@ test('manifest-first crash recovers exact APP_RESTART attempt and seed once', as
     const restarted = new GenerationStagingRepository(second.db, root)
     assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 1 })
     assert.equal((await restarted.listVerifiedCandidates(localProjectKey)).length, 1)
-    assert.equal(await restarted.readLastActualSeed(localProjectKey), 9001)
+    assert.equal(
+      await restarted.readLastActualSeed(localProjectKey, prepared.context.documentId),
+      9001,
+    )
     assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
-    assert.equal(await restarted.readLastActualSeed(localProjectKey), 9001)
+    assert.equal(
+      await restarted.readLastActualSeed(localProjectKey, prepared.context.documentId),
+      9001,
+    )
     const receipt = await second.db
       .selectFrom('generation_candidate_receipt')
       .select(['completion_order', 'status'])
@@ -475,7 +503,10 @@ test('SQLite completion abort leaves a recoverable manifest and no premature cur
           .where('id', '=', claim.item.id)
           .executeTakeFirstOrThrow()
         assert.deepEqual(row, { status: 'running', status_sequence: 1 })
-        assert.equal(await staging.readLastActualSeed(projectKey), null)
+        assert.equal(
+          await staging.readLastActualSeed(projectKey, prepared.context.documentId),
+          null,
+        )
         assert.deepEqual(await staging.listVerifiedCandidates(projectKey), [])
         await sql`DROP TRIGGER fail_candidate_completion`.execute(first.db)
       },
@@ -485,7 +516,7 @@ test('SQLite completion abort leaves a recoverable manifest and no premature cur
     await new GenerationQueueRepository(second.db, root).recoverAfterRestart()
     const recovered = new GenerationStagingRepository(second.db, root)
     assert.deepEqual(await recovered.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 1 })
-    assert.equal(await recovered.readLastActualSeed(projectKey), 8080)
+    assert.equal(await recovered.readLastActualSeed(projectKey, prepared.context.documentId), 8080)
     assert.equal((await recovered.listVerifiedCandidates(projectKey))[0].queueItemId, queueItemId)
     await second.close()
   } finally {
@@ -546,7 +577,10 @@ test('explicit cancellation and stale restart sequence never expose a published 
         reconciledCount: 0,
       })
       assert.deepEqual(await recovered.listVerifiedCandidates(localProjectKey), [])
-      assert.equal(await recovered.readLastActualSeed(localProjectKey), null)
+      assert.equal(
+        await recovered.readLastActualSeed(localProjectKey, prepared.context.documentId),
+        null,
+      )
       await second.close()
     } finally {
       await rm(root, { force: true, recursive: true })
@@ -578,7 +612,10 @@ test('cancel-requested running job cannot publish with the newer queue sequence'
         }),
         { code: 'STAGING_STATUS_CONFLICT' },
       )
-      assert.equal(await staging.readLastActualSeed(claim.item.localProjectKey), null)
+      assert.equal(
+        await staging.readLastActualSeed(claim.item.localProjectKey, prepared.context.documentId),
+        null,
+      )
     })
     const receipts = await database.db
       .selectFrom('generation_candidate_receipt')
@@ -657,7 +694,10 @@ test('corrupt, unsupported or symlinked output is excluded without moving the se
           }),
           { code: 'STAGING_OUTPUT_INVALID' },
         )
-        assert.equal(await staging.readLastActualSeed(claim.item.localProjectKey), null)
+        assert.equal(
+          await staging.readLastActualSeed(claim.item.localProjectKey, prepared.context.documentId),
+          null,
+        )
       })
       const count = await database.db
         .selectFrom('generation_candidate_receipt')
@@ -751,7 +791,13 @@ test('Project discard hides only its old sessions and preserves actual seed afte
     assert.deepEqual(discarded, { cleanupDeferred: false, discardedSessionCount: 2 })
     assert.deepEqual(await staging.listVerifiedCandidates(completedA.localProjectKey), [])
     assert.equal((await staging.listVerifiedCandidates(completedB.localProjectKey)).length, 1)
-    assert.equal(await staging.readLastActualSeed(completedA.localProjectKey), 111)
+    assert.equal(
+      await staging.readLastActualSeed(
+        completedA.localProjectKey,
+        projectA.prepared.context.documentId,
+      ),
+      111,
+    )
     assert.equal(
       (
         await first.db
@@ -774,7 +820,13 @@ test('Project discard hides only its old sessions and preserves actual seed afte
     assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
     assert.deepEqual(await restarted.listVerifiedCandidates(completedA.localProjectKey), [])
     assert.equal((await restarted.listVerifiedCandidates(completedB.localProjectKey)).length, 1)
-    assert.equal(await restarted.readLastActualSeed(completedA.localProjectKey), 111)
+    assert.equal(
+      await restarted.readLastActualSeed(
+        completedA.localProjectKey,
+        projectA.prepared.context.documentId,
+      ),
+      111,
+    )
 
     // A fresh session for the same local Project is valid after reopen. An old discarded session
     // stays forbidden even if a future queue caller accidentally reuses its UUID.
@@ -803,7 +855,13 @@ test('Project discard hides only its old sessions and preserves actual seed afte
     })
     await publishOne(root, restartedQueue, restarted, projectA, 444)
     assert.equal((await restarted.listVerifiedCandidates(completedA.localProjectKey)).length, 1)
-    assert.equal(await restarted.readLastActualSeed(completedA.localProjectKey), 444)
+    assert.equal(
+      await restarted.readLastActualSeed(
+        completedA.localProjectKey,
+        projectA.prepared.context.documentId,
+      ),
+      444,
+    )
     await second.close()
   } finally {
     await rm(root, { force: true, recursive: true })
@@ -982,7 +1040,13 @@ test('tombstone committed before cleanup blocks recovery after an interrupted di
     const recovered = new GenerationStagingRepository(second.db, root)
     assert.deepEqual(await recovered.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
     assert.deepEqual(await recovered.listVerifiedCandidates(published.localProjectKey), [])
-    assert.equal(await recovered.readLastActualSeed(published.localProjectKey), 901)
+    assert.equal(
+      await recovered.readLastActualSeed(
+        published.localProjectKey,
+        candidate.prepared.context.documentId,
+      ),
+      901,
+    )
     await assert.rejects(stat(published.assetPath), { code: 'ENOENT' })
     await second.close()
   } finally {
@@ -1016,7 +1080,13 @@ test('failed candidate cleanup stays hidden and is retried on restart', async ()
     assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
     assert.deepEqual(await restarted.listVerifiedCandidates(published.localProjectKey), [])
     await assert.rejects(stat(published.assetPath), { code: 'ENOENT' })
-    assert.equal(await restarted.readLastActualSeed(published.localProjectKey), 707)
+    assert.equal(
+      await restarted.readLastActualSeed(
+        published.localProjectKey,
+        candidate.prepared.context.documentId,
+      ),
+      707,
+    )
     await second.close()
   } finally {
     await rm(root, { force: true, recursive: true })
@@ -1084,6 +1154,150 @@ test('verified image bytes are copied under staging serialization and a discarde
     await database.close()
   } finally {
     allowDiscard()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('Seed cursor follows the document at a reused Project path and survives pruning, discard and restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-seed-document-'))
+  const first = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const original = await fixture(root)
+    const oldDocumentId = original.prepared.context.documentId
+    const oldCandidate = await publishOne(root, queue, staging, original, 111)
+    const key = oldCandidate.localProjectKey
+    assert.equal(await staging.readLastActualSeed(key, oldDocumentId), 111)
+
+    // The path key is unchanged but the saved .igs is now a different document. The old seed
+    // must not become the replacement Project's Reuse value, even while its candidate remains.
+    await rm(original.projectPath)
+    const replacement = await fixture(root)
+    const newDocumentId = (await readIgsPackage(replacement.projectPath)).project.documentId
+    assert.notEqual(newDocumentId, oldDocumentId)
+    assert.equal(await staging.readLastActualSeed(key, newDocumentId), null)
+    assert.equal(await staging.readLastActualSeed(key, oldDocumentId), 111)
+
+    await publishOne(root, queue, staging, replacement, 222)
+    assert.equal(await staging.readLastActualSeed(key, newDocumentId), 222)
+    assert.equal(await staging.readLastActualSeed(key, oldDocumentId), null)
+    assert.equal(await queue.pruneTerminal(['completed']), 2)
+    assert.equal(await staging.readLastActualSeed(key, newDocumentId), 222)
+    await staging.discardProject(key)
+    assert.equal(await staging.readLastActualSeed(key, newDocumentId), 222)
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    try {
+      await new GenerationQueueRepository(second.db, root).recoverAfterRestart()
+      const restarted = new GenerationStagingRepository(second.db, root)
+      await restarted.recoverAfterRestart()
+      assert.equal(await restarted.readLastActualSeed(key, newDocumentId), 222)
+      assert.equal(await restarted.readLastActualSeed(key, oldDocumentId), null)
+      assert.deepEqual(await restarted.listVerifiedCandidates(key), [])
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await first.close().catch(() => undefined)
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('migration trusts only a legacy cursor with matching completed receipt and queue document', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-seed-cursor-migration-'))
+  try {
+    const legacyMigrations = path.join(root, 'legacy-migrations')
+    await mkdir(legacyMigrations)
+    for (const file of await readdir(migrations)) {
+      if (file.endsWith('.sql') && file < '0009_generation_seed_document.sql') {
+        await copyFile(path.join(migrations, file), path.join(legacyMigrations, file))
+      }
+    }
+    const old = openAppDatabase(root, legacyMigrations)
+    const documentId = randomUUID()
+    const candidateId = randomUUID()
+    const unknownCandidateId = randomUUID()
+    const sessionId = randomUUID()
+    const pathWithEvidence = path.join(root, 'Known.igs')
+    const pathWithoutEvidence = path.join(root, 'Unknown.igs')
+    const knownKey = localProjectRecoveryKey(pathWithEvidence)
+    const unknownKey = localProjectRecoveryKey(pathWithoutEvidence)
+    const now = new Date().toISOString()
+    try {
+      await sql`
+        INSERT INTO generation_queue_item
+          (id, batch_id, local_project_key, canonical_project_path, document_id,
+           document_revision, staging_session_id, operation, status, status_sequence,
+           frozen_payload_json, error_code, error_message, created_at, updated_at,
+           started_at, finished_at)
+        VALUES
+          (${candidateId}, ${randomUUID()}, ${knownKey}, ${pathWithEvidence}, ${documentId},
+           ${randomUUID()}, ${sessionId}, 'illustrious-txt2img', 'completed', 2,
+           '{}', NULL, NULL, ${now}, ${now}, ${now}, ${now})
+      `.execute(old.db)
+      await sql`
+        INSERT INTO generation_candidate_receipt
+          (completion_order, candidate_id, queue_item_id, expected_status_sequence,
+           local_project_key, canonical_project_path, staging_session_id,
+           frozen_payload_sha256, image_sha256, image_byte_size, actual_seed,
+           status, reserved_at, completed_at)
+        VALUES
+          (1, ${candidateId}, ${candidateId}, 1, ${knownKey}, ${pathWithEvidence}, ${sessionId},
+           ${sha256(Buffer.from('{}'))}, ${'a'.repeat(64)}, 100, 42, 'completed', ${now}, ${now})
+      `.execute(old.db)
+      // Receipts outlive pruned queue rows, so this otherwise matching legacy cursor
+      // cannot be assigned to any document during migration.
+      await sql`
+        INSERT INTO generation_candidate_receipt
+          (completion_order, candidate_id, queue_item_id, expected_status_sequence,
+           local_project_key, canonical_project_path, staging_session_id,
+           frozen_payload_sha256, image_sha256, image_byte_size, actual_seed,
+           status, reserved_at, completed_at)
+        VALUES
+          (2, ${unknownCandidateId}, ${unknownCandidateId}, 1, ${unknownKey},
+           ${pathWithoutEvidence}, ${randomUUID()}, ${sha256(Buffer.from('{}'))},
+           ${'b'.repeat(64)}, 100, 99, 'completed', ${now}, ${now})
+      `.execute(old.db)
+      await sql`
+        INSERT INTO generation_seed_cursor
+          (local_project_key, completion_order, candidate_id, actual_seed, updated_at)
+        VALUES (${knownKey}, 1, ${candidateId}, 42, ${now}),
+               (${unknownKey}, 2, ${unknownCandidateId}, 99, ${now})
+      `.execute(old.db)
+    } finally {
+      await old.close()
+    }
+
+    const upgraded = openAppDatabase(root, migrations)
+    try {
+      const cursors = await upgraded.db
+        .selectFrom('generation_seed_cursor')
+        .select(['local_project_key', 'document_id'])
+        .orderBy('local_project_key')
+        .execute()
+      assert.deepEqual(
+        cursors,
+        [
+          { document_id: documentId, local_project_key: knownKey },
+          { document_id: null, local_project_key: unknownKey },
+        ].sort((a, b) => a.local_project_key.localeCompare(b.local_project_key)),
+      )
+      const staging = new GenerationStagingRepository(upgraded.db, root)
+      await staging.recoverAfterRestart()
+      assert.equal(await staging.readLastActualSeed(knownKey, documentId), 42)
+      assert.equal(await staging.readLastActualSeed(knownKey, randomUUID()), null)
+      assert.equal(await staging.readLastActualSeed(unknownKey, randomUUID()), null)
+      await assert.rejects(staging.readLastActualSeed(knownKey, 'not-a-document-id'), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+    } finally {
+      await upgraded.close()
+    }
+  } finally {
     await rm(root, { force: true, recursive: true })
   }
 })

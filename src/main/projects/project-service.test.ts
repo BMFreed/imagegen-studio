@@ -196,6 +196,7 @@ async function withService(
     shadow: ProjectShadowStore
   }) => Promise<void>,
   autosaveOptions: Pick<ProjectAutosaveOptions, 'beforeEditCommit'> = {},
+  readLastActualSeed?: (localProjectKey: string, documentId: string) => Promise<number | null>,
 ): Promise<void> {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-service-'))
   const database = openAppDatabase(dataRoot, migrations)
@@ -222,6 +223,7 @@ async function withService(
       leaseRegistry: new ProjectAutosaveLeaseRegistry(),
     },
     dataRoot,
+    readLastActualSeed,
     repository,
     roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
     shadow,
@@ -233,6 +235,77 @@ async function withService(
     await rm(dataRoot, { force: true, recursive: true })
   }
 }
+
+test('explicit Project Save snapshots the local actual seed without a draft edit or Undo step', async () => {
+  let localSeed: number | null = null
+  let storageAvailable = true
+  await withService(
+    async ({ repository, service }) => {
+      const created = await service.create({ height: 512, title: 'Seed snapshot', width: 512 })
+      const savedPath = (await repository.listProjects())[0].canonicalPath
+      const documentId = (await readIgsPackage(savedPath)).project.documentId
+      assert.equal(created.lastActualSeedSnapshot, null)
+      assert.equal(created.dirty, false)
+      assert.equal(created.canUndo, false)
+
+      localSeed = 0
+      assert.equal((await readIgsPackage(savedPath)).project.lastActualSeedSnapshot, null)
+      const first = await service.save(created.id)
+      assert.equal(first.tab.lastActualSeedSnapshot, 0)
+      assert.equal(first.tab.dirty, false)
+      assert.equal(first.tab.canUndo, false)
+      assert.equal((await readIgsPackage(savedPath)).project.lastActualSeedSnapshot, 0)
+
+      localSeed = 42
+      assert.equal((await readIgsPackage(savedPath)).project.lastActualSeedSnapshot, 0)
+      const second = await service.save(created.id)
+      assert.equal(second.tab.lastActualSeedSnapshot, 42)
+      assert.equal(second.tab.dirty, false)
+      assert.equal(second.tab.canUndo, false)
+      assert.equal((await readIgsPackage(savedPath)).project.lastActualSeedSnapshot, 42)
+
+      storageAvailable = false
+      const fallback = await service.save(created.id)
+      assert.equal(fallback.tab.lastActualSeedSnapshot, 42)
+      assert.equal((await readIgsPackage(savedPath)).project.lastActualSeedSnapshot, 42)
+      await service.close(created.id)
+      const reopened = await service.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind === 'opened') {
+        assert.equal(reopened.tab.lastActualSeedSnapshot, 42)
+      }
+      assert.equal((await readIgsPackage(savedPath)).project.documentId, documentId)
+    },
+    {},
+    async (localProjectKey, documentId) => {
+      assert.match(localProjectKey, /^project-v1-[a-f0-9]{64}$/)
+      assert.match(documentId, /^[a-f0-9-]{36}$/)
+      if (!storageAvailable) {
+        throw new Error('Simulated local recovery failure')
+      }
+      return localSeed
+    },
+  )
+})
+
+test('Save captures a completion that arrives while its preview worker runs', async () => {
+  let localSeed = 1
+  await withService(
+    async ({ dataRoot, repository, service }) => {
+      const { filePath, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+      const saved = await service.save(
+        tabId,
+        previewWorker(async () => {
+          localSeed = 2
+        }),
+      )
+      assert.equal(saved.tab.lastActualSeedSnapshot, 2)
+      assert.equal((await readIgsPackage(filePath)).project.lastActualSeedSnapshot, 2)
+    },
+    {},
+    async () => localSeed,
+  )
+})
 
 async function publishPortableResource(
   repository: ModelRepository,

@@ -37,6 +37,7 @@ async function withPackage(
     scratchBasePath: string
   }) => Promise<void>,
   withRaster = true,
+  lastActualSeedSnapshot: number | null = null,
 ): Promise<void> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-target-'))
   try {
@@ -52,6 +53,7 @@ async function withPackage(
         ...empty.generationDraft,
         positivePrompt: { embeddingRefs: [], text: 'frozen prompt' },
       },
+      lastActualSeedSnapshot,
       layers: withRaster
         ? [
             {
@@ -116,35 +118,41 @@ function outputWorker(
   }
 }
 
-test('real package raster, bbox and generation draft are frozen before worker returns', async () => {
-  await withPackage(async ({ document, packagePath, scratchBasePath }) => {
-    let stage = ''
-    const worker = outputWorker(opaquePng, 'img2img', async (input) => {
-      stage = input.stagingRoot
-      assert.deepEqual(input.bbox, { height: 2, width: 2, x: -7, y: 9 })
-      assert.equal(input.layers.length, 1)
-      assert.deepEqual(await readFile(input.layers[0].path), opaquePng)
-      document.primaryBbox.x = 100
-      document.generationDraft.positivePrompt.text = 'edited while worker ran'
-      document.layers[0].transform.x = 100
-    })
-    const target = await buildFrozenGenerationTarget({
-      document,
-      packagePath,
-      pendingSource: () => null,
-      scratchBasePath,
-      worker,
-    })
-    assert.equal(target.documentId, document.documentId)
-    assert.equal(target.documentRevision, document.documentRevision)
-    assert.deepEqual(target.bbox, { height: 2, width: 2, x: -7, y: 9 })
-    assert.equal(target.generationDraft.positivePrompt.text, 'frozen prompt')
-    assert.equal(target.mode, 'img2img')
-    assert.equal(target.composite.sha256, sha256(opaquePng))
-    assert.deepEqual(target.composite.bytes, opaquePng)
-    assert.equal(existsSync(stage), false)
-    assert.deepEqual(await readdir(scratchBasePath), [])
-  })
+test('real package raster, bbox, draft and saved seed snapshot are frozen before worker returns', async () => {
+  await withPackage(
+    async ({ document, packagePath, scratchBasePath }) => {
+      let stage = ''
+      const worker = outputWorker(opaquePng, 'img2img', async (input) => {
+        stage = input.stagingRoot
+        assert.deepEqual(input.bbox, { height: 2, width: 2, x: -7, y: 9 })
+        assert.equal(input.layers.length, 1)
+        assert.deepEqual(await readFile(input.layers[0].path), opaquePng)
+        document.primaryBbox.x = 100
+        document.generationDraft.positivePrompt.text = 'edited while worker ran'
+        document.lastActualSeedSnapshot = 99
+        document.layers[0].transform.x = 100
+      })
+      const target = await buildFrozenGenerationTarget({
+        document,
+        packagePath,
+        pendingSource: () => null,
+        scratchBasePath,
+        worker,
+      })
+      assert.equal(target.documentId, document.documentId)
+      assert.equal(target.documentRevision, document.documentRevision)
+      assert.deepEqual(target.bbox, { height: 2, width: 2, x: -7, y: 9 })
+      assert.equal(target.generationDraft.positivePrompt.text, 'frozen prompt')
+      assert.equal(target.lastActualSeedSnapshot, 37)
+      assert.equal(target.mode, 'img2img')
+      assert.equal(target.composite.sha256, sha256(opaquePng))
+      assert.deepEqual(target.composite.bytes, opaquePng)
+      assert.equal(existsSync(stage), false)
+      assert.deepEqual(await readdir(scratchBasePath), [])
+    },
+    true,
+    37,
+  )
 })
 
 test('empty Project still materializes a transparent finite txt2img input', async () => {

@@ -118,9 +118,13 @@ sidecar ref; retyping the token does not restore the ref until resource-aware
 insertion is implemented. No production denoising-strength control, VAE,
 advanced options or Smart Patch-owned
 draft controls are connected yet.
-The chosen Seed policy is a request for a future job, not a completed seed:
-the operational last-actual-seed cursor and fallback to a saved `.igs` snapshot
-are not yet connected to Project Generate.
+The chosen Seed policy is a request for a future job, not a completed seed.
+Main now reads the document-scoped operational last-actual-seed cursor before
+internal Prepare/enqueue, falling back to the saved `.igs` snapshot when no
+local cursor exists. A missing seed blocks `Reuse` with an explicit error;
+`0` is valid. Project displays the local value through Results IPC and Save
+snapshots it into `.igs` without a dirty/Undo step. The renderer Generate
+action and full release inference pipeline are still absent.
 
 The Seed control shows a numeric value, a `Random` switch and `Shuffle Seed`, as
 in Invoke. Random disables the number and Shuffle; switching it off selects

@@ -489,8 +489,8 @@ export class GenerationStagingRepository {
     })
   }
 
-  async readLastActualSeed(localProjectKey: string): Promise<number | null> {
-    if (!PROJECT_KEY_PATTERN.test(localProjectKey)) {
+  async readLastActualSeed(localProjectKey: string, documentId: string): Promise<number | null> {
+    if (!PROJECT_KEY_PATTERN.test(localProjectKey) || !UUID_PATTERN.test(documentId)) {
       throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Project identity is invalid.')
     }
     return await this.serialize(async () => {
@@ -499,6 +499,7 @@ export class GenerationStagingRepository {
         .selectFrom('generation_seed_cursor')
         .select(['actual_seed'])
         .where('local_project_key', '=', localProjectKey)
+        .where('document_id', '=', documentId)
         .executeTakeFirst()
       return row?.actual_seed ?? null
     })
@@ -735,11 +736,12 @@ export class GenerationStagingRepository {
       }
       await sql`
         INSERT INTO generation_seed_cursor
-          (local_project_key, completion_order, candidate_id, actual_seed, updated_at)
+          (local_project_key, document_id, completion_order, candidate_id, actual_seed, updated_at)
         VALUES
-          (${entry.localProjectKey}, ${entry.completionOrder}, ${entry.candidateId},
+          (${entry.localProjectKey}, ${entry.documentId}, ${entry.completionOrder}, ${entry.candidateId},
            ${entry.actualSeed}, ${now})
         ON CONFLICT(local_project_key) DO UPDATE SET
+          document_id = excluded.document_id,
           completion_order = excluded.completion_order,
           candidate_id = excluded.candidate_id,
           actual_seed = excluded.actual_seed,

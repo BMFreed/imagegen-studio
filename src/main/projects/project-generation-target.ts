@@ -28,6 +28,7 @@ export interface FrozenGenerationTarget {
   documentId: string
   documentRevision: string
   generationDraft: IgsProjectDocumentV1['generationDraft']
+  lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
   mode: ComposeTargetMode
 }
 type RasterAsset = IgsProjectDocumentV1['layers'][number]['asset']
@@ -89,6 +90,7 @@ export async function buildFrozenGenerationTarget(input: {
         documentId: document.documentId,
         documentRevision: document.documentRevision,
         generationDraft: document.generationDraft,
+        lastActualSeedSnapshot: document.lastActualSeedSnapshot,
         mode: result.mode,
       }
     },
