@@ -66,6 +66,7 @@ export class GenerationProcessorError extends Error {
  */
 export class GenerationProcessor {
   private active: ActiveJob | null = null
+  private currentRun: Promise<GenerationProcessorResult> | null = null
   private running = false
   private stopping = false
 
@@ -91,7 +92,166 @@ export class GenerationProcessor {
     return item
   }
 
+  /**
+   * A Project close must not treat a cancel-requested running row as stopped. In particular, queue
+   * claim can precede assignment of this processor's local worker owner. Wait for that claim to
+   * settle, or retain the Project and its staging for an explicit retry.
+   */
+  async cancelAndWait(queueItemId: string): Promise<QueuedGenerationItem> {
+    const item = await this.cancel(queueItemId)
+    if (item.status !== 'running') {
+      return item
+    }
+    const active = this.active
+    if (active?.item.id === queueItemId) {
+      return await this.cancelActive(active)
+    }
+    if (active) {
+      throw new GenerationProcessorError(
+        'WORKER_EXIT_UNCONFIRMED',
+        'Another worker owns the running queue slot.',
+      )
+    }
+    const run = this.currentRun
+    if (!run) {
+      throw new GenerationProcessorError(
+        'WORKER_EXIT_UNCONFIRMED',
+        'The running generation worker has no confirmed local owner.',
+      )
+    }
+    // The only local run with no active owner is between SQLite claim and ownership assignment.
+    // Its own cancellation check must stop the worker before this close can proceed.
+    await run
+    const settled = await this.cancel(queueItemId)
+    if (settled.status === 'running') {
+      throw new GenerationProcessorError(
+        'WORKER_EXIT_UNCONFIRMED',
+        'The generation worker has not confirmed exit.',
+      )
+    }
+    return settled
+  }
+
   async runOne(transport: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
+    if (this.currentRun) {
+      throw new GenerationProcessorError('BUSY', 'A generation job is already being processed.')
+    }
+    const run = this.runOneInternal(transport)
+    this.currentRun = run
+    try {
+      return await run
+    } finally {
+      if (this.currentRun === run) {
+        this.currentRun = null
+      }
+    }
+  }
+
+  /** Permanently stop dispatch and cancel the currently owned worker, if any. */
+  async stopAndCancelActive(): Promise<void> {
+    this.stopping = true
+    const active = this.active
+    if (active) {
+      await this.cancelActive(active)
+    }
+  }
+
+  private cancelActive(active: ActiveJob): Promise<QueuedGenerationItem> {
+    if (!active.cancelPromise) {
+      // Until SQLite says this job was already terminal, process exit is unconfirmed. A failed
+      // close leaves this owner available for an explicit retry instead of stranding its row.
+      active.exitUnconfirmed = true
+      const operation = (async () => {
+        const item = await this.queue.cancel(active.item.id)
+        if (item.status !== 'running' || !item.cancelRequested) {
+          active.exitUnconfirmed = false
+          if (active.runSettled) {
+            await this.releaseActive(active)
+          }
+          return item
+        }
+        // The queue keeps its only running slot until the transport confirms process exit.
+        await active.transport.close()
+        const canceled = await this.queue.acknowledgeCanceledRunning(item.id, item.statusSequence)
+        active.exitUnconfirmed = false
+        if (active.runSettled) {
+          await this.releaseActive(active)
+        }
+        return canceled
+      })()
+      active.cancelPromise = operation
+      active.signalCancel({ completion: operation })
+      void operation.catch(() => {
+        if (active.cancelPromise === operation) {
+          active.cancelPromise = null
+        }
+      })
+    }
+    return active.cancelPromise
+  }
+
+  private releaseActive(active: ActiveJob): Promise<void> {
+    if (!active.releasePromise) {
+      active.releasePromise = (async () => {
+        try {
+          if (active.provisionalRoot) {
+            await rm(active.provisionalRoot, { force: true, recursive: true })
+          }
+        } catch {
+          // A scratch cleanup failure cannot undo a committed candidate or release a running
+          // queue row. A future app-owned scratch sweep can remove this orphan directory.
+          process.emitWarning('Generation scratch cleanup failed.', {
+            code: 'GENERATION_SCRATCH_CLEANUP_FAILED',
+          })
+        } finally {
+          if (this.active === active) {
+            this.active = null
+            this.running = false
+          }
+        }
+      })()
+    }
+    return active.releasePromise
+  }
+
+  private async requestForClaim(
+    claimed: VerifiedQueuedInput,
+    targetPath: string,
+    outputPath: string,
+    provisionalRoot: string,
+  ): Promise<IllustriousTxt2ImgRequestV1> {
+    const frozen = claimed.payload
+    const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
+      frozen.context.model.reference,
+    )
+    if (
+      verified.managedPath !== frozen.context.model.managedPath ||
+      verified.managedPath !== frozen.workerJob.checkpoint.path ||
+      verified.reference.fileSha256 !== frozen.workerJob.checkpoint.sha256 ||
+      verified.reference.predictionType !== frozen.workerJob.checkpoint.predictionType
+    ) {
+      throw new Error('The exact checkpoint or prediction type changed after enqueue.')
+    }
+    const request: IllustriousTxt2ImgRequestV1 = {
+      job: {
+        ...structuredClone(frozen.workerJob),
+        checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
+        output: { pngPath: outputPath, stagingRoot: provisionalRoot },
+        target: { ...frozen.workerJob.target, path: targetPath },
+      },
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: randomUUID(),
+      type: 'generate-illustrious-txt2img',
+    }
+    if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
+      throw new Error('The generation request exceeds the worker message limit.')
+    }
+    return request
+  }
+
+  private async runOneInternal(
+    transport: GenerationWorkerTransport,
+  ): Promise<GenerationProcessorResult> {
     if (this.stopping) {
       throw new GenerationProcessorError('CLOSED', 'Generation dispatch is stopping.')
     }
@@ -246,108 +406,6 @@ export class GenerationProcessor {
         }
       }
     }
-  }
-
-  /** Permanently stop dispatch and cancel the currently owned worker, if any. */
-  async stopAndCancelActive(): Promise<void> {
-    this.stopping = true
-    const active = this.active
-    if (active) {
-      await this.cancelActive(active)
-    }
-  }
-
-  private cancelActive(active: ActiveJob): Promise<QueuedGenerationItem> {
-    if (!active.cancelPromise) {
-      // Until SQLite says this job was already terminal, process exit is unconfirmed. A failed
-      // close leaves this owner available for an explicit retry instead of stranding its row.
-      active.exitUnconfirmed = true
-      const operation = (async () => {
-        const item = await this.queue.cancel(active.item.id)
-        if (item.status !== 'running' || !item.cancelRequested) {
-          active.exitUnconfirmed = false
-          if (active.runSettled) {
-            await this.releaseActive(active)
-          }
-          return item
-        }
-        // The queue keeps its only running slot until the transport confirms process exit.
-        await active.transport.close()
-        const canceled = await this.queue.acknowledgeCanceledRunning(item.id, item.statusSequence)
-        active.exitUnconfirmed = false
-        if (active.runSettled) {
-          await this.releaseActive(active)
-        }
-        return canceled
-      })()
-      active.cancelPromise = operation
-      active.signalCancel({ completion: operation })
-      void operation.catch(() => {
-        if (active.cancelPromise === operation) {
-          active.cancelPromise = null
-        }
-      })
-    }
-    return active.cancelPromise
-  }
-
-  private releaseActive(active: ActiveJob): Promise<void> {
-    if (!active.releasePromise) {
-      active.releasePromise = (async () => {
-        try {
-          if (active.provisionalRoot) {
-            await rm(active.provisionalRoot, { force: true, recursive: true })
-          }
-        } catch {
-          // A scratch cleanup failure cannot undo a committed candidate or release a running
-          // queue row. A future app-owned scratch sweep can remove this orphan directory.
-          process.emitWarning('Generation scratch cleanup failed.', {
-            code: 'GENERATION_SCRATCH_CLEANUP_FAILED',
-          })
-        } finally {
-          if (this.active === active) {
-            this.active = null
-            this.running = false
-          }
-        }
-      })()
-    }
-    return active.releasePromise
-  }
-
-  private async requestForClaim(
-    claimed: VerifiedQueuedInput,
-    targetPath: string,
-    outputPath: string,
-    provisionalRoot: string,
-  ): Promise<IllustriousTxt2ImgRequestV1> {
-    const frozen = claimed.payload
-    const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
-      frozen.context.model.reference,
-    )
-    if (
-      verified.managedPath !== frozen.context.model.managedPath ||
-      verified.managedPath !== frozen.workerJob.checkpoint.path ||
-      verified.reference.fileSha256 !== frozen.workerJob.checkpoint.sha256 ||
-      verified.reference.predictionType !== frozen.workerJob.checkpoint.predictionType
-    ) {
-      throw new Error('The exact checkpoint or prediction type changed after enqueue.')
-    }
-    const request: IllustriousTxt2ImgRequestV1 = {
-      job: {
-        ...structuredClone(frozen.workerJob),
-        checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
-        output: { pngPath: outputPath, stagingRoot: provisionalRoot },
-        target: { ...frozen.workerJob.target, path: targetPath },
-      },
-      protocolVersion: PROTOCOL_VERSION,
-      requestId: randomUUID(),
-      type: 'generate-illustrious-txt2img',
-    }
-    if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
-      throw new Error('The generation request exceeds the worker message limit.')
-    }
-    return request
   }
 
   private async stillRunning(active: ActiveJob): Promise<boolean> {

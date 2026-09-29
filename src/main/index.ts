@@ -36,8 +36,16 @@ import { developmentImageWorkerLocation } from './projects/development-image-wor
 import { createGenerationAppContext } from './projects/generation-app-context.js'
 import { GenerationAppShutdown } from './projects/generation-app-shutdown.js'
 import { GenerationDispatchCoordinator } from './projects/generation-dispatch-coordinator.js'
+import { GenerationOrchestratorError } from './projects/generation-orchestrator.js'
+import { GenerationProcessorError } from './projects/generation-processor.js'
+import { GenerationQueueError } from './projects/generation-queue.js'
+import { GenerationStagingError } from './projects/generation-staging.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
+import {
+  ProjectGenerationClose,
+  ProjectGenerationCloseError,
+} from './projects/project-generation-close.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
 import {
@@ -287,6 +295,7 @@ if (!gotInstanceLock) {
         ownedGenerationContext.availability.kind === 'storage-recovered'
           ? ownedGenerationContext.requireRecoveredServices()
           : null
+      const projectGenerationClose = new ProjectGenerationClose(projectService, recoveredGeneration)
       const appShutdown = new GenerationAppShutdown({
         closeDatabase: database.close,
         context: ownedGenerationContext,
@@ -388,24 +397,82 @@ if (!gotInstanceLock) {
         }
         resolvingClose = true
         void (async () => {
+          const fencedTabs: string[] = []
+          let closeCommitted = false
           try {
             // The renderer can still have an unacknowledged prompt/seed edit. Flush it before
             // main decides whether anything is dirty or starts an explicit Save.
             if (projectService.getOpenTabs().length > 0) {
               await flushRendererDraftsBeforeClose()
             }
-            const dirtyCount = projectService.getOpenTabs().filter((tab) => tab.dirty).length
-            const choice = dirtyCount
-              ? dialog.showMessageBoxSync(window, {
-                  buttons: ['Save', 'Discard Changes', 'Cancel'],
-                  cancelId: 2,
-                  defaultId: 0,
-                  detail: `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`,
-                  message: 'Close ImageGen Studio?',
-                  type: 'question',
-                })
-              : 0
-            if (choice === 2) {
+            const tabs = projectService.getOpenTabs()
+            // Fence each open Project before taking the close-impact snapshot. Cancel releases
+            // every fence without changing jobs or candidates.
+            for (const tab of tabs) {
+              await recoveredGeneration?.orchestrator.fenceProjectGeneration(tab.id)
+              fencedTabs.push(tab.id)
+            }
+            const impacts = await Promise.all(
+              tabs.map((tab) => projectGenerationClose.getCloseImpact(tab.id)),
+            )
+            const dirtyCount = tabs.filter((tab) => tab.dirty).length
+            const unfinishedJobCount = impacts.reduce(
+              (sum, impact) => sum + impact.unfinishedJobCount,
+              0,
+            )
+            const completedCandidateCount = impacts.reduce(
+              (sum, impact) => sum + impact.completedCandidateCount,
+              0,
+            )
+            const generationStorageUnavailable =
+              recoveredGeneration === null ||
+              impacts.some((impact) => impact.generationStorageUnavailable)
+            const hasGenerationImpact =
+              unfinishedJobCount + completedCandidateCount > 0 || generationStorageUnavailable
+            const detail = [
+              dirtyCount > 0
+                ? `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`
+                : null,
+              unfinishedJobCount > 0
+                ? `${unfinishedJobCount} unfinished generation job${unfinishedJobCount === 1 ? '' : 's'} will be canceled.`
+                : null,
+              completedCandidateCount > 0
+                ? `${completedCandidateCount} unaccepted result${completedCandidateCount === 1 ? '' : 's'} will be discarded.`
+                : null,
+              generationStorageUnavailable
+                ? 'Generation recovery storage cannot be inspected. Temporary results will remain on this computer for a later recovery attempt.'
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' ')
+            const choice =
+              dirtyCount > 0
+                ? dialog.showMessageBoxSync(window, {
+                    buttons: ['Save', 'Discard Changes', 'Cancel'],
+                    cancelId: 2,
+                    defaultId: 0,
+                    detail,
+                    message: 'Close ImageGen Studio?',
+                    type: 'question',
+                  })
+                : hasGenerationImpact
+                  ? dialog.showMessageBoxSync(window, {
+                      buttons: [
+                        generationStorageUnavailable
+                          ? 'Close and Keep Recovery'
+                          : completedCandidateCount > 0
+                            ? 'Discard Results and Close'
+                            : 'Cancel Jobs and Close',
+                        'Cancel',
+                      ],
+                      cancelId: 1,
+                      defaultId: 1,
+                      detail,
+                      message: 'Close ImageGen Studio?',
+                      type: 'warning',
+                    })
+                  : 0
+            if ((dirtyCount > 0 && choice === 2) || (dirtyCount === 0 && choice === 1)) {
               return
             }
             // Keep every tab attached until all requested Saves have committed. If a later Save
@@ -417,13 +484,15 @@ if (!gotInstanceLock) {
                 }
               }
             }
+            closeCommitted = true
             // A canceled dialog has not stopped generation. Once the user confirms closing,
             // hold this visible window until worker exit and pending-job cancellation are durable.
             await appShutdown.prepareWindowClose()
             for (const tab of projectService.getOpenTabs()) {
-              await (tab.dirty && choice === 1
-                ? projectService.discardAndClose(tab.id)
-                : projectService.close(tab.id))
+              await projectGenerationClose.close(tab.id, {
+                confirmCloseImpact: hasGenerationImpact,
+                discardDocument: tab.dirty && choice === 1,
+              })
             }
             await appShutdown.finalize()
             exitReady = true
@@ -441,6 +510,11 @@ if (!gotInstanceLock) {
               error instanceof Error ? error.message : 'The Project could not be closed.',
             )
           } finally {
+            if (!closeCommitted) {
+              for (const tabId of fencedTabs) {
+                recoveredGeneration?.orchestrator.releaseProjectGenerationFence(tabId)
+              }
+            }
             resolvingClose = false
             if (!closingAfterResolution && !window.isDestroyed()) {
               window.webContents.send(ipcChannels.projects.windowCloseReleased)
@@ -537,6 +611,8 @@ if (!gotInstanceLock) {
         typeof value === 'string' &&
         /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
+      const closeProjectArgs = (args: unknown[]): boolean =>
+        args.length === 2 && isProjectId(args[0]) && typeof args[1] === 'boolean'
       const isImportId = (value: unknown): value is string =>
         typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value)
       const isProjectRect = (value: unknown): boolean => {
@@ -579,6 +655,11 @@ if (!gotInstanceLock) {
           } catch (error) {
             if (
               error instanceof ProjectServiceError ||
+              error instanceof ProjectGenerationCloseError ||
+              error instanceof GenerationOrchestratorError ||
+              error instanceof GenerationProcessorError ||
+              error instanceof GenerationQueueError ||
+              error instanceof GenerationStagingError ||
               error instanceof ModelServiceError ||
               error instanceof ProjectAutosaveError ||
               error instanceof ProjectSessionError ||
@@ -625,6 +706,7 @@ if (!gotInstanceLock) {
 
       registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
       registerProjectHandler(ipcChannels.projects.selectImport, noArgs, async () => {
+        const previouslyOpen = new Set(projectService.getOpenTabs().map((tab) => tab.id))
         const selection = await dialog.showOpenDialog(window, {
           filters: [{ extensions: ['igs'], name: 'ImageGen Studio Projects' }],
           properties: ['openFile'],
@@ -633,14 +715,31 @@ if (!gotInstanceLock) {
         if (selection.canceled || selection.filePaths.length !== 1) {
           return null
         }
-        return await projectService.selectImport(selection.filePaths[0])
+        const imported = await projectService.selectImport(selection.filePaths[0])
+        if (
+          imported.kind === 'opened' &&
+          imported.result.kind === 'opened' &&
+          !previouslyOpen.has(imported.result.tab.id)
+        ) {
+          recoveredGeneration?.orchestrator.reopenProjectGeneration(imported.result.tab.id)
+        }
+        return imported
       })
       registerProjectHandler(
         ipcChannels.projects.finishImport,
         (args) =>
           args.length === 2 && isImportId(args[0]) && (args[1] === 'move' || args[1] === 'copy'),
-        (importId, choice) =>
-          projectService.finishImport(importId as string, choice as 'copy' | 'move'),
+        async (importId, choice) => {
+          const previouslyOpen = new Set(projectService.getOpenTabs().map((tab) => tab.id))
+          const imported = await projectService.finishImport(
+            importId as string,
+            choice as 'copy' | 'move',
+          )
+          if (imported.result.kind === 'opened' && !previouslyOpen.has(imported.result.tab.id)) {
+            recoveredGeneration?.orchestrator.reopenProjectGeneration(imported.result.tab.id)
+          }
+          return imported
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.cancelImport,
@@ -667,19 +766,36 @@ if (!gotInstanceLock) {
             (input.height as number) <= IGS_SAFETY_CEILINGS.rasterDimension
           )
         },
-        (input) => projectService.create(input as { height: number; title: string; width: number }),
+        async (input) => {
+          const tab = await projectService.create(
+            input as { height: number; title: string; width: number },
+          )
+          recoveredGeneration?.orchestrator.reopenProjectGeneration(tab.id)
+          return tab
+        },
       )
-      registerProjectHandler(ipcChannels.projects.open, oneProjectId, (projectId) =>
-        projectService.open(projectId as string),
-      )
+      registerProjectHandler(ipcChannels.projects.open, oneProjectId, async (projectId) => {
+        const wasOpen = projectService.getOpenTabs().some((tab) => tab.id === projectId)
+        const result = await projectService.open(projectId as string)
+        if (result.kind === 'opened' && !wasOpen) {
+          recoveredGeneration?.orchestrator.reopenProjectGeneration(result.tab.id)
+        }
+        return result
+      })
       registerProjectHandler(
         ipcChannels.projects.resolveRecovery,
         (args) =>
           args.length === 2 &&
           isProjectId(args[0]) &&
           (args[1] === 'recover' || args[1] === 'discard'),
-        (projectId, decision) =>
-          projectService.resolveRecovery(projectId as string, decision as 'discard' | 'recover'),
+        async (projectId, decision) => {
+          const tab = await projectService.resolveRecovery(
+            projectId as string,
+            decision as 'discard' | 'recover',
+          )
+          recoveredGeneration?.orchestrator.reopenProjectGeneration(tab.id)
+          return tab
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.addGenerationLora,
@@ -869,11 +985,23 @@ if (!gotInstanceLock) {
           }
         },
       )
-      registerProjectHandler(ipcChannels.projects.close, oneProjectId, (tabId) =>
-        projectService.close(tabId as string),
+      registerProjectHandler(ipcChannels.projects.getCloseImpact, oneProjectId, (tabId) =>
+        projectGenerationClose.getCloseImpact(tabId as string),
       )
-      registerProjectHandler(ipcChannels.projects.discardAndClose, oneProjectId, (tabId) =>
-        projectService.discardAndClose(tabId as string),
+      registerProjectHandler(ipcChannels.projects.close, closeProjectArgs, (tabId, confirm) =>
+        projectGenerationClose.close(tabId as string, {
+          confirmCloseImpact: confirm as boolean,
+          discardDocument: false,
+        }),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.discardAndClose,
+        closeProjectArgs,
+        (tabId, confirm) =>
+          projectGenerationClose.close(tabId as string, {
+            confirmCloseImpact: confirm as boolean,
+            discardDocument: true,
+          }),
       )
 
       registerModelHandler(ipcChannels.models.getCatalog, noArgs, () => modelService.getCatalog())

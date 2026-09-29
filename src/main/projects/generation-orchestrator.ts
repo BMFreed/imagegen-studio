@@ -19,8 +19,10 @@ export class GenerationOrchestratorError extends Error {
     readonly code:
       | 'CANCELLATION_UNCERTAIN'
       | 'PROJECT_DOCUMENT_CHANGED'
+      | 'PROJECT_GENERATION_CLOSING'
       | 'PROJECT_IDENTITY_CHANGED'
       | 'PROJECT_INDEX_UNAVAILABLE'
+      | 'PROJECT_NOT_FENCED'
       | 'PROJECT_NOT_OPEN',
     message: string,
   ) {
@@ -35,7 +37,11 @@ export class GenerationOrchestratorError extends Error {
  * caller just enqueued. The caller owns both worker processes and their shutdown.
  */
 export class GenerationOrchestrator {
+  private readonly cancelingProjects = new Map<string, Promise<void>>()
+  private readonly cancellationStarted = new Set<string>()
+  private readonly completedProjectCloses = new Set<string>()
   private enqueueBarrier: Promise<void> = Promise.resolve()
+  private readonly fencedProjects = new Set<string>()
 
   constructor(
     private readonly projects: Pick<ProjectService, 'getOpenTabs' | 'prepareNormalTxt2ImgContext'>,
@@ -47,11 +53,70 @@ export class GenerationOrchestrator {
     private readonly scratchBasePath: string,
   ) {}
 
+  /** Cancel only this Project's unfinished rows; running work needs confirmed worker exit. */
+  async cancelProjectJobs(tabId: string): Promise<void> {
+    if (!this.fencedProjects.has(tabId)) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_NOT_FENCED',
+        'Fence Project generation before canceling its jobs.',
+      )
+    }
+    const existing = this.cancelingProjects.get(tabId)
+    if (existing) {
+      await existing
+      return
+    }
+    this.cancellationStarted.add(tabId)
+    const operation = (async () => {
+      await this.enqueueBarrier
+      for (;;) {
+        const unfinished = await this.queue.listUnfinishedByProject(tabId)
+        if (unfinished.length === 0) {
+          return
+        }
+        for (const item of unfinished) {
+          await this.processor.cancelAndWait(item.id)
+        }
+      }
+    })()
+    this.cancelingProjects.set(tabId, operation)
+    try {
+      await operation
+    } finally {
+      if (this.cancelingProjects.get(tabId) === operation) {
+        this.cancelingProjects.delete(tabId)
+      }
+    }
+  }
+
+  /** Convenience for callers that already obtained close confirmation. */
+  async closeProjectGeneration(tabId: string): Promise<void> {
+    await this.fenceProjectGeneration(tabId)
+    await this.cancelProjectJobs(tabId)
+  }
+
+  /** Call only after the document owner has actually detached the closed Project tab. */
+  completeProjectGenerationClose(tabId: string): void {
+    if (
+      !this.fencedProjects.has(tabId) ||
+      !this.cancellationStarted.has(tabId) ||
+      this.cancelingProjects.has(tabId) ||
+      this.projects.getOpenTabs().some((tab) => tab.id === tabId)
+    ) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'The Project document has not completed closing.',
+      )
+    }
+    this.completedProjectCloses.add(tabId)
+  }
+
   async enqueueOne(
     tabId: string,
     compositionWorker: Pick<ProjectWorkerClient, 'composeTarget'>,
     inferenceWorker: GenerationWorkerTransport,
   ): Promise<QueuedGenerationItem> {
+    this.assertGenerationOpen(tabId)
     // Keep dispatch behind the post-publication Project check, even if a caller schedules it
     // while durable queue insertion is still waiting on I/O.
     const operation = this.enqueueBarrier.then(
@@ -64,6 +129,48 @@ export class GenerationOrchestrator {
     return await operation
   }
 
+  /**
+   * Fence admission before the first await, then wait for all already-admitted preparations. The
+   * caller can inspect queue/staging impact and release this fence if the user declines close.
+   */
+  async fenceProjectGeneration(tabId: string): Promise<void> {
+    this.queue.fenceProject(tabId)
+    this.fencedProjects.add(tabId)
+    await this.enqueueBarrier
+  }
+
+  /** Only valid before destructive Project-close cancellation has begun. */
+  releaseProjectGenerationFence(tabId: string): void {
+    if (this.cancelingProjects.has(tabId) || this.cancellationStarted.has(tabId)) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'Project generation close has already begun.',
+      )
+    }
+    this.queue.releaseProjectFence(tabId)
+    this.fencedProjects.delete(tabId)
+    this.completedProjectCloses.delete(tabId)
+  }
+
+  /** A fresh open may admit a new session after the previous close fully committed. */
+  reopenProjectGeneration(tabId: string): void {
+    this.assertOpen(tabId)
+    if (
+      this.cancelingProjects.has(tabId) ||
+      (this.fencedProjects.has(tabId) && !this.completedProjectCloses.has(tabId))
+    ) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'Project generation close has not committed.',
+      )
+    }
+    // Initial/fresh opens without a prior close have no fence to lift.
+    this.queue.releaseProjectFence(tabId)
+    this.fencedProjects.delete(tabId)
+    this.cancellationStarted.delete(tabId)
+    this.completedProjectCloses.delete(tabId)
+  }
+
   async runNext(inferenceWorker: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
     await this.enqueueBarrier
     // The processor also asserts these gates before claiming. Keep them here to make this
@@ -71,6 +178,16 @@ export class GenerationOrchestrator {
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
     return await this.processor.runOne(inferenceWorker)
+  }
+
+  private assertGenerationOpen(tabId: string): void {
+    if (this.fencedProjects.has(tabId)) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'The Project is closing and cannot accept generation jobs.',
+      )
+    }
+    this.assertOpen(tabId)
   }
 
   private assertOpen(tabId: string): void {
@@ -91,7 +208,7 @@ export class GenerationOrchestrator {
     // durable input before image composition or a model-file read can begin.
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
-    this.assertOpen(tabId)
+    this.assertGenerationOpen(tabId)
     const project = await this.indexedProject(tabId)
     const prepared = await this.projects.prepareNormalTxt2ImgContext(
       tabId,
@@ -113,7 +230,7 @@ export class GenerationOrchestrator {
       use: async (request) => {
         // Preparation and request qualification both await workers and file verification. A tab
         // closed or an index reassigned during either step must not enqueue an orphaned job.
-        this.assertOpen(tabId)
+        this.assertGenerationOpen(tabId)
         const current = await this.indexedProject(tabId)
         if (
           current.canonicalPath !== project.canonicalPath ||
@@ -124,7 +241,7 @@ export class GenerationOrchestrator {
             'The indexed Project changed while generation was being prepared.',
           )
         }
-        this.assertOpen(tabId)
+        this.assertGenerationOpen(tabId)
         const queued = await this.queue.enqueueIllustriousTxt2Img({
           prepared,
           projectPath: project.canonicalPath,
@@ -132,7 +249,7 @@ export class GenerationOrchestrator {
           stagingSessionId: randomUUID(),
         })
         try {
-          this.assertOpen(tabId)
+          this.assertGenerationOpen(tabId)
           const after = await this.indexedProject(tabId)
           if (
             after.canonicalPath !== project.canonicalPath ||
@@ -143,7 +260,7 @@ export class GenerationOrchestrator {
               'The indexed Project changed after generation was queued.',
             )
           }
-          this.assertOpen(tabId)
+          this.assertGenerationOpen(tabId)
           return queued
         } catch (error) {
           // The file-first queue entry already exists. Cancel exactly that row before reporting

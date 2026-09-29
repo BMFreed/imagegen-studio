@@ -14,7 +14,10 @@ import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { GenerationQueueRepository } from './generation-queue.js'
-import { GenerationStagingRepository } from './generation-staging.js'
+import {
+  GenerationStagingRepository,
+  type VerifiedGenerationCandidate,
+} from './generation-staging.js'
 import { readIgsPackage, validateSrgbPngStream } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { localProjectRecoveryKey } from './project-identity.js'
@@ -97,14 +100,17 @@ async function srgbPng(
   ])
 }
 
-async function fixture(root: string): Promise<{
+async function fixture(
+  root: string,
+  basename = 'Project.igs',
+): Promise<{
   outputBytes: Buffer
   prepared: PreparedNormalTxt2Img
   projectPath: string
 }> {
-  await mkdir(path.join(root, 'scratch'), { mode: 0o700 })
+  await mkdir(path.join(root, 'scratch'), { mode: 0o700, recursive: true })
   const project = await ProjectSession.create(
-    path.join(root, 'Project.igs'),
+    path.join(root, basename),
     'Candidate fixture',
     { placeholdersDir: placeholders, scratchDir: path.join(root, 'scratch') },
     bbox,
@@ -207,6 +213,34 @@ async function enqueueAndClaim(
     await use(request, claim)
     return item.id
   })
+}
+
+async function publishOne(
+  root: string,
+  queue: GenerationQueueRepository,
+  staging: GenerationStagingRepository,
+  candidate: Awaited<ReturnType<typeof fixture>>,
+  actualSeed: number,
+): Promise<VerifiedGenerationCandidate> {
+  let published: VerifiedGenerationCandidate | null = null
+  await enqueueAndClaim(
+    root,
+    queue,
+    candidate.prepared,
+    candidate.projectPath,
+    async (request, claim) => {
+      await writeFile(request.job.output.pngPath, candidate.outputBytes)
+      published = await staging.publishIllustriousTxt2Img({
+        actualSeed,
+        expectedProvisionalRoot: request.job.output.stagingRoot,
+        expectedStatusSequence: claim.item.statusSequence,
+        provisionalOutputPath: request.job.output.pngPath,
+        queueItemId: claim.item.id,
+      })
+    },
+  )
+  assert.ok(published)
+  return published
 }
 
 test('real PNG and frozen job become a durable candidate without changing the .igs', async () => {
@@ -663,6 +697,182 @@ test('a completed candidate with damaged asset disappears on reopen without .igs
     assert.deepEqual(await recovered.recoverAfterRestart(), { invalidCount: 1, reconciledCount: 0 })
     assert.deepEqual(await recovered.listVerifiedCandidates(projectKey), [])
     assert.deepEqual(await readFile(projectPath), originalProject)
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('Project discard hides only its old sessions and preserves actual seed after reopen', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-project-discard-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const projectA = await fixture(root)
+    const projectB = await fixture(root, 'Other.igs')
+    const savedA = await readFile(projectA.projectPath)
+    const savedB = await readFile(projectB.projectPath)
+    const completedA = await publishOne(root, queue, staging, projectA, 111)
+    const completedB = await publishOne(root, queue, staging, projectB, 222)
+    const pendingA = await inRequestLease(
+      root,
+      projectA.prepared,
+      async (request) =>
+        await queue.enqueueIllustriousTxt2Img({
+          prepared: projectA.prepared,
+          projectPath: projectA.projectPath,
+          request,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    const pendingB = await inRequestLease(
+      root,
+      projectB.prepared,
+      async (request) =>
+        await queue.enqueueIllustriousTxt2Img({
+          prepared: projectB.prepared,
+          projectPath: projectB.projectPath,
+          request,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    await queue.cancel(pendingA.id)
+    assert.equal((await queue.listUnfinishedByProject(completedB.localProjectKey)).length, 1)
+    assert.equal((await staging.listVerifiedCandidates(completedA.localProjectKey)).length, 1)
+    const discarded = await staging.discardProject(completedA.localProjectKey)
+    assert.deepEqual(discarded, { cleanupDeferred: false, discardedSessionCount: 2 })
+    assert.deepEqual(await staging.listVerifiedCandidates(completedA.localProjectKey), [])
+    assert.equal((await staging.listVerifiedCandidates(completedB.localProjectKey)).length, 1)
+    assert.equal(await staging.readLastActualSeed(completedA.localProjectKey), 111)
+    assert.equal(
+      (
+        await first.db
+          .selectFrom('generation_queue_item')
+          .select('status')
+          .where('id', '=', pendingB.id)
+          .executeTakeFirstOrThrow()
+      ).status,
+      'pending',
+    )
+    assert.deepEqual(await readFile(projectA.projectPath), savedA)
+    assert.deepEqual(await readFile(projectB.projectPath), savedB)
+    assert.equal((await stat(completedB.assetPath)).size, projectB.outputBytes.length)
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    const restartedQueue = new GenerationQueueRepository(second.db, root)
+    await restartedQueue.recoverAfterRestart()
+    const restarted = new GenerationStagingRepository(second.db, root)
+    assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    assert.deepEqual(await restarted.listVerifiedCandidates(completedA.localProjectKey), [])
+    assert.equal((await restarted.listVerifiedCandidates(completedB.localProjectKey)).length, 1)
+    assert.equal(await restarted.readLastActualSeed(completedA.localProjectKey), 111)
+
+    // A fresh session for the same local Project is valid after reopen. An old discarded session
+    // stays forbidden even if a future queue caller accidentally reuses its UUID.
+    await inRequestLease(root, projectA.prepared, async (request) => {
+      const reused = await restartedQueue.enqueueIllustriousTxt2Img({
+        prepared: projectA.prepared,
+        projectPath: projectA.projectPath,
+        request,
+        stagingSessionId: completedA.stagingSessionId,
+      })
+      const claim = await restartedQueue.claimNextPending()
+      assert.equal(claim?.item.id, reused.id)
+      await writeFile(request.job.output.pngPath, projectA.outputBytes)
+      await assert.rejects(
+        restarted.publishIllustriousTxt2Img({
+          actualSeed: 333,
+          expectedProvisionalRoot: request.job.output.stagingRoot,
+          expectedStatusSequence: claim.item.statusSequence,
+          provisionalOutputPath: request.job.output.pngPath,
+          queueItemId: reused.id,
+        }),
+        { code: 'STAGING_STATUS_CONFLICT' },
+      )
+      const cancelRequested = await restartedQueue.cancel(reused.id)
+      await restartedQueue.acknowledgeCanceledRunning(reused.id, cancelRequested.statusSequence)
+    })
+    await publishOne(root, restartedQueue, restarted, projectA, 444)
+    assert.equal((await restarted.listVerifiedCandidates(completedA.localProjectKey)).length, 1)
+    assert.equal(await restarted.readLastActualSeed(completedA.localProjectKey), 444)
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('tombstone committed before cleanup blocks recovery after an interrupted discard', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-discard-crash-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root, {
+      afterDiscardTombstone: async () => {
+        throw new Error('injected crash before candidate cleanup')
+      },
+    })
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const candidate = await fixture(root)
+    const published = await publishOne(root, queue, staging, candidate, 901)
+    await assert.rejects(
+      staging.discardProject(published.localProjectKey),
+      /injected crash before candidate cleanup/,
+    )
+    assert.equal((await stat(published.assetPath)).size, candidate.outputBytes.length)
+    const tombstone = await first.db
+      .selectFrom('generation_staging_discarded_session')
+      .select('staging_session_id')
+      .where('local_project_key', '=', published.localProjectKey)
+      .executeTakeFirstOrThrow()
+    assert.equal(tombstone.staging_session_id, published.stagingSessionId)
+    assert.deepEqual(await staging.listVerifiedCandidates(published.localProjectKey), [])
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    await new GenerationQueueRepository(second.db, root).recoverAfterRestart()
+    const recovered = new GenerationStagingRepository(second.db, root)
+    assert.deepEqual(await recovered.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    assert.deepEqual(await recovered.listVerifiedCandidates(published.localProjectKey), [])
+    assert.equal(await recovered.readLastActualSeed(published.localProjectKey), 901)
+    await assert.rejects(stat(published.assetPath), { code: 'ENOENT' })
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('failed candidate cleanup stays hidden and is retried on restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-discard-deferred-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root, {
+      beforeSessionCleanup: async () => {
+        throw new Error('injected file deletion failure')
+      },
+    })
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const candidate = await fixture(root)
+    const published = await publishOne(root, queue, staging, candidate, 707)
+    const result = await staging.discardProject(published.localProjectKey)
+    assert.deepEqual(result, { cleanupDeferred: true, discardedSessionCount: 1 })
+    assert.equal((await stat(published.assetPath)).size, candidate.outputBytes.length)
+    assert.deepEqual(await staging.listVerifiedCandidates(published.localProjectKey), [])
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    await new GenerationQueueRepository(second.db, root).recoverAfterRestart()
+    const restarted = new GenerationStagingRepository(second.db, root)
+    assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    assert.deepEqual(await restarted.listVerifiedCandidates(published.localProjectKey), [])
+    await assert.rejects(stat(published.assetPath), { code: 'ENOENT' })
+    assert.equal(await restarted.readLastActualSeed(published.localProjectKey), 707)
     await second.close()
   } finally {
     await rm(root, { force: true, recursive: true })

@@ -320,6 +320,109 @@ test(
 )
 
 test(
+  'Project close fence preserves pending work until confirmation, then cancels only its jobs',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const transport = inferenceTransport(fixture.outputBytes)
+      const queued = await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'pending')
+      await assert.rejects(
+        fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport),
+        (error: unknown) =>
+          error instanceof GenerationOrchestratorError &&
+          error.code === 'PROJECT_GENERATION_CLOSING',
+      )
+      assert.deepEqual(await fixture.orchestrator.runNext(transport), { kind: 'idle' })
+
+      // A declined close lifts admission without touching the durable input or its worker slot.
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'pending')
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      await fixture.orchestrator.cancelProjectJobs(fixture.tabId)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'canceled')
+      await assert.rejects(
+        async () => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId),
+        (error: unknown) =>
+          error instanceof GenerationOrchestratorError &&
+          error.code === 'PROJECT_GENERATION_CLOSING',
+      )
+
+      assert.throws(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId), {
+        code: 'PROJECT_GENERATION_CLOSING',
+      })
+      assert.throws(() => fixture.orchestrator.completeProjectGenerationClose(fixture.tabId), {
+        code: 'PROJECT_GENERATION_CLOSING',
+      })
+
+      await fixture.projects.save(fixture.tabId, fixture.worker)
+      await fixture.projects.close(fixture.tabId)
+      fixture.orchestrator.completeProjectGenerationClose(fixture.tabId)
+      assert.throws(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId), {
+        code: 'PROJECT_NOT_OPEN',
+      })
+      const reopened = await fixture.projects.open(fixture.tabId)
+      assert.equal(reopened.kind, 'opened')
+      fixture.orchestrator.reopenProjectGeneration(fixture.tabId)
+      const next = await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      assert.equal((await fixture.queue.loadVerifiedInput(next.id)).item.status, 'pending')
+      assert.notEqual(next.stagingSessionId, queued.stagingSessionId)
+    })
+  },
+)
+
+test(
+  'Project close retains its fence and running slot after unconfirmed worker exit, then retries',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      let entered!: () => void
+      const dispatched = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let closeAttempts = 0
+      const transport: GenerationWorkerTransport = {
+        close: async () => {
+          closeAttempts += 1
+          if (closeAttempts === 1) {
+            throw new Error('worker exit was not confirmed')
+          }
+        },
+        generate: async () => {
+          entered()
+          return await new Promise<never>(() => undefined)
+        },
+        ready: { ...qualifiedReady, capabilities: [...qualifiedReady.capabilities] },
+      }
+      const queued = await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      const run = fixture.orchestrator.runNext(transport)
+      const failedRun = assert.rejects(run, {
+        code: 'WORKER_EXIT_UNCONFIRMED',
+      })
+      await dispatched
+      await assert.rejects(
+        fixture.orchestrator.closeProjectGeneration(fixture.tabId),
+        /worker exit was not confirmed/,
+      )
+      await failedRun
+      const uncertain = await fixture.queue.loadVerifiedInput(queued.id)
+      assert.equal(uncertain.item.status, 'running')
+      assert.equal(uncertain.item.cancelRequested, true)
+      await assert.rejects(
+        fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport),
+        { code: 'PROJECT_GENERATION_CLOSING' },
+      )
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+
+      await fixture.orchestrator.closeProjectGeneration(fixture.tabId)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'canceled')
+      assert.equal(closeAttempts, 2)
+    })
+  },
+)
+
+test(
   'an indexed Project identity mismatch blocks enqueue before a worker request',
   {
     skip: !devRuntimeRoot(),

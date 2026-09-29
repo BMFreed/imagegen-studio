@@ -281,6 +281,116 @@ test('two repository instances cannot claim a second job while one is running', 
   }
 })
 
+test('a Project fence blocks enqueue and dispatch while another Project remains runnable', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-project-fence-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const otherPath = path.join(root, 'Other.igs')
+    await writeFile(otherPath, 'other queue fixture path')
+    const first = await enqueueFixture(root, queue, prepared, projectPath)
+    const other = await enqueueFixture(root, queue, prepared, otherPath)
+
+    queue.fenceProject(first.localProjectKey)
+    await assert.rejects(enqueueFixture(root, queue, prepared, projectPath), {
+      code: 'QUEUE_PROJECT_CLOSING',
+    })
+    const claimedOther = await queue.claimNextPending()
+    assert.equal(claimedOther?.item.id, other.id)
+    assert.equal((await queue.loadVerifiedInput(first.id)).item.status, 'pending')
+
+    await queue.cancel(other.id)
+    await queue.acknowledgeCanceledRunning(other.id, claimedOther.item.statusSequence + 1)
+    assert.equal(await queue.claimNextPending(), null)
+    queue.releaseProjectFence(first.localProjectKey)
+    assert.equal((await queue.claimNextPending())?.item.id, first.id)
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('fencing during durable input publication leaves no queued Project job', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-fence-publish-'))
+  const database = openAppDatabase(root, migrations)
+  let entered!: () => void
+  const published = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  try {
+    const queue = new GenerationQueueRepository(database.db, root, {
+      afterInputPublish: async () => {
+        entered()
+        await held
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const enqueue = enqueueFixture(root, queue, prepared, projectPath)
+    await published
+    queue.fenceProject(localProjectRecoveryKey(projectPath))
+    release()
+    await assert.rejects(enqueue, { code: 'QUEUE_PROJECT_CLOSING' })
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').select('id').execute(),
+      [],
+    )
+    assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [])
+  } finally {
+    release()
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('a Project fence raised during input verification skips its claim and reaches another Project', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-fence-claim-'))
+  const database = openAppDatabase(root, migrations)
+  let entered!: () => void
+  const verifying = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let targetId = ''
+  try {
+    const queue = new GenerationQueueRepository(database.db, root, {
+      beforeClaimUpdate: async (id) => {
+        if (id === targetId) {
+          entered()
+          await held
+        }
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const otherPath = path.join(root, 'Other.igs')
+    await writeFile(otherPath, 'other queue fixture path')
+    const first = await enqueueFixture(root, queue, prepared, projectPath)
+    targetId = first.id
+    const other = await enqueueFixture(root, queue, prepared, otherPath)
+
+    const claim = queue.claimNextPending()
+    await verifying
+    queue.fenceProject(first.localProjectKey)
+    release()
+    assert.equal((await claim)?.item.id, other.id)
+    assert.equal((await queue.loadVerifiedInput(first.id)).item.status, 'pending')
+  } finally {
+    release()
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('cancel and worker failure enforce sequence guards across pending, running and terminal rows', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-cancel-'))
   try {

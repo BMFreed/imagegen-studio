@@ -117,8 +117,11 @@
   несовместимы с выбранным pipeline и блокируются с объяснением.
 - Primary generation bbox: новый Project начинает с origin `(0, 0)` и
   default `Size` 1024 × 1024; импорт изображения не двигает bbox автоматически.
-  Явное `Fit` подгоняет bbox к изображению. Помимо свободного drag через canvas
-  handles доступны числовые x/y; snapping по умолчанию выключен.
+  Явное `Fit to active layer` подгоняет bbox к выбранному видимому Raster Layer.
+  Bbox свободно перемещается drag на canvas и меняет размер через handles;
+  числовые поля x/y в Project не показываются. При активном инструменте
+  Bounding Box и фокусе canvas стрелки перемещают bbox на 1 px, с Shift — на
+  10 px; snapping по умолчанию выключен.
 - Seed `Reuse`: базой новой генерации становится последний фактический seed
   completed output того же Project. Без completed seed Generate блокируется с
   объяснением, без случайной подмены. Project-scoped operational cursor

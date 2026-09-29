@@ -64,6 +64,12 @@ export interface GenerationSeedCursor {
   updated_at: string
 }
 
+export interface GenerationStagingDiscardedSession {
+  discarded_at: string
+  local_project_key: string
+  staging_session_id: string
+}
+
 export interface LocalModelFile {
   id: string
   managed_path: string
@@ -188,6 +194,7 @@ export interface DB {
   generation_candidate_receipt: GenerationCandidateReceipt
   generation_queue_item: GenerationQueueItem
   generation_seed_cursor: GenerationSeedCursor
+  generation_staging_discarded_session: GenerationStagingDiscardedSession
   local_model_file: LocalModelFile
   model_install_artifact: ModelInstallArtifact
   model_install_job: ModelInstallJob

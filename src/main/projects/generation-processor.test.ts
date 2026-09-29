@@ -685,6 +685,68 @@ test('shutdown during claim cancels the claimed row before worker dispatch', asy
   })
 })
 
+test('Project cancellation waits for a claimed row to acquire and release its local worker owner', async () => {
+  await withFixture(async (fixture) => {
+    let claimedResolve!: () => void
+    const claimed = new Promise<void>((resolve) => {
+      claimedResolve = resolve
+    })
+    let releaseClaim!: () => void
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve
+    })
+    let cancelRecorded!: () => void
+    const cancellationRequested = new Promise<void>((resolve) => {
+      cancelRecorded = resolve
+    })
+    class PausedClaimQueue extends GenerationQueueRepository {
+      override async cancel(id: string, sequence?: number) {
+        const item = await super.cancel(id, sequence)
+        if (item.status === 'running' && item.cancelRequested) {
+          cancelRecorded()
+        }
+        return item
+      }
+
+      override async claimNextPending() {
+        const item = await super.claimNextPending()
+        claimedResolve()
+        await claimGate
+        return item
+      }
+    }
+    const queue = new PausedClaimQueue(fixture.database.db, fixture.root)
+    await queue.recoverAfterRestart()
+    const id = await enqueue(fixture)
+    const processor = new GenerationProcessor(
+      queue,
+      fixture.staging,
+      fixture.modelService,
+      path.join(fixture.root, 'scratch'),
+    )
+    let workerExits = 0
+    const run = processor.runOne(
+      transport(
+        async () => assert.fail('a Project close must stop a claimed job before dispatch'),
+        qualifiedReady,
+        async () => {
+          workerExits += 1
+        },
+      ),
+    )
+    await claimed
+    const cancel = processor.cancelAndWait(id)
+    await cancellationRequested
+    assert.equal((await queue.loadVerifiedInput(id)).item.status, 'running')
+    releaseClaim()
+    assert.equal((await cancel).status, 'canceled')
+    assert.deepEqual(await run, { kind: 'canceled', queueItemId: id })
+    assert.equal(workerExits, 1)
+    const projectKey = (await queue.loadVerifiedInput(id)).item.localProjectKey
+    assert.deepEqual(await fixture.staging.listVerifiedCandidates(projectKey), [])
+  })
+})
+
 test('shutdown keeps running slot until worker exit is confirmed', async () => {
   await withFixture(async (fixture) => {
     const id = await enqueue(fixture)

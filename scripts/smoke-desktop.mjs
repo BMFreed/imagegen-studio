@@ -66,18 +66,23 @@ const environment = {
 }
 delete environment.ELECTRON_RUN_AS_NODE
 
-async function seedUnfinishedQueueItem() {
+async function seedUnfinishedQueueItem({
+  keepDatabaseOpen = false,
+  projectId = `project-v1-${'0'.repeat(64)}`,
+  projectPath = path.join(dataRoot, 'startup-queued.igs'),
+} = {}) {
   const appDataRoot = path.join(dataRoot, 'data', 'imagegen-studio')
   mkdirSync(appDataRoot, { recursive: true })
   const database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   const id = randomUUID()
   const now = new Date().toISOString()
+  let inserted = false
   try {
     await database.db
       .insertInto('generation_queue_item')
       .values({
         batch_id: randomUUID(),
-        canonical_project_path: path.join(dataRoot, 'startup-queued.igs'),
+        canonical_project_path: projectPath,
         created_at: now,
         document_id: randomUUID(),
         document_revision: randomUUID(),
@@ -86,7 +91,7 @@ async function seedUnfinishedQueueItem() {
         finished_at: null,
         frozen_payload_json: '{}',
         id,
-        local_project_key: `project-v1-${'0'.repeat(64)}`,
+        local_project_key: projectId,
         operation: 'illustrious-txt2img',
         staging_session_id: randomUUID(),
         started_at: null,
@@ -95,10 +100,13 @@ async function seedUnfinishedQueueItem() {
         updated_at: now,
       })
       .execute()
+    inserted = true
   } finally {
-    await database.close()
+    if (!keepDatabaseOpen || !inserted) {
+      await database.close()
+    }
   }
-  return { appDataRoot, id }
+  return { appDataRoot, database: keepDatabaseOpen ? database : null, id }
 }
 
 async function seedInstalledCheckpointVersions() {
@@ -268,6 +276,7 @@ async function waitForHomeThumbnail(window, projectTitle) {
 
 let application
 let secondProcess
+let tabCloseJobDatabase
 try {
   const queuedBeforeStart = await seedUnfinishedQueueItem()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
@@ -1802,6 +1811,70 @@ try {
     'Desktop smoke passed: Project/image import, Raster controls, canvas pixels and Save/reopen through IPC.',
   )
 
+  // This row is inserted through real SQLite while the Project is open. Closing must warn even
+  // though the document is clean, and declining the warning must leave the queued job intact.
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  await recoveryWindow.getByRole('tab', { name: rasterTitle }).waitFor()
+  const tabCloseJob = await seedUnfinishedQueueItem({
+    keepDatabaseOpen: true,
+    projectId: rasterProject.id,
+    projectPath: rasterPackagePath,
+  })
+  tabCloseJobDatabase = tabCloseJob.database
+  assert.equal(
+    await application.evaluate(({ app }) => app.getPath('userData')),
+    tabCloseJob.appDataRoot,
+  )
+  const closeImpact = await recoveryWindow.evaluate(
+    (id) => window.api.projects.getCloseImpact(id),
+    rasterProject.id,
+  )
+  assert.deepEqual(closeImpact, {
+    ok: true,
+    value: {
+      completedCandidateCount: 0,
+      generationStorageUnavailable: false,
+      unfinishedJobCount: 1,
+    },
+  })
+  const unconfirmedClose = await recoveryWindow.evaluate(
+    (id) => window.api.projects.close(id, false),
+    rasterProject.id,
+  )
+  assert.equal(unconfirmedClose.ok, false)
+  assert.equal(unconfirmedClose.error.code, 'PROJECT_CLOSE_CONFIRMATION_REQUIRED')
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  const generationCloseDialog = recoveryWindow.getByRole('dialog', { name: 'Close Project' })
+  await expect(generationCloseDialog.getByText('Unfinished generation jobs', { exact: false })).toBeVisible()
+  await generationCloseDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(recoveryWindow.getByRole('tab', { name: rasterTitle })).toBeVisible()
+  const pendingAfterCancel = await tabCloseJobDatabase.db
+    .selectFrom('generation_queue_item')
+    .select('status')
+    .where('id', '=', tabCloseJob.id)
+    .executeTakeFirstOrThrow()
+  assert.equal(pendingAfterCancel.status, 'pending')
+  await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  await generationCloseDialog.getByRole('button', { name: 'Cancel Jobs and Close' }).click()
+  await expect(generationCloseDialog).toHaveCount(0)
+  await expect(recoveryWindow.getByRole('tab', { name: rasterTitle })).toHaveCount(0)
+  const canceledAfterClose = await tabCloseJobDatabase.db
+    .selectFrom('generation_queue_item')
+    .select(['status', 'error_code', 'staging_session_id'])
+    .where('id', '=', tabCloseJob.id)
+    .executeTakeFirstOrThrow()
+  const tombstone = await tabCloseJobDatabase.db
+    .selectFrom('generation_staging_discarded_session')
+    .selectAll()
+    .where('local_project_key', '=', rasterProject.id)
+    .where('staging_session_id', '=', canceledAfterClose.staging_session_id)
+    .executeTakeFirst()
+  assert.equal(canceledAfterClose.status, 'canceled')
+  assert.equal(canceledAfterClose.error_code, 'USER_CANCELED')
+  assert.ok(tombstone)
+  console.log('Desktop smoke passed: clean Project close warns, Cancel preserves, confirm cancels its job.')
+
   // A copied .igs carries portable CivitAI/file identity, but its former machine's local IDs
   // must remain untouched until the user explicitly links the same installed checkpoint.
   const portableTitle = 'Portable Model Smoke'
@@ -2122,6 +2195,8 @@ try {
     'Desktop smoke passed: native window close flushes and saves the latest Project draft.',
   )
   await application.close()
+  await tabCloseJobDatabase.close()
+  tabCloseJobDatabase = null
   const queueDatabase = openAppDatabase(
     queuedBeforeStart.appDataRoot,
     path.resolve('src/main/db/migrations'),
@@ -2152,10 +2227,19 @@ try {
   }
   application = undefined
   const runtimeDir = path.join(dataRoot, 'data', 'imagegen-studio', 'runtime')
+  const generationStagingDir = path.join(
+    dataRoot,
+    'data',
+    'imagegen-studio',
+    'recovery',
+    'generation-staging',
+  )
   const outside = path.join(dataRoot, 'outside')
   rmSync(runtimeDir, { force: true, recursive: true })
+  rmSync(generationStagingDir, { force: true, recursive: true })
   mkdirSync(outside)
   symlinkSync(outside, runtimeDir)
+  symlinkSync(outside, generationStagingDir)
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
   const damagedWindow = await application.firstWindow()
@@ -2167,10 +2251,66 @@ try {
   console.log(
     'Desktop smoke passed: damaged runtime storage still opens Home and exposes repair state.',
   )
+  await damagedWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  await damagedWindow.getByRole('tab', { name: rasterTitle }).waitFor()
+  const unavailableImpact = await damagedWindow.evaluate(
+    (id) => window.api.projects.getCloseImpact(id),
+    rasterProject.id,
+  )
+  assert.deepEqual(unavailableImpact, {
+    ok: true,
+    value: {
+      completedCandidateCount: 0,
+      generationStorageUnavailable: true,
+      unfinishedJobCount: 0,
+    },
+  })
+  await damagedWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  const unavailableCloseDialog = damagedWindow.getByRole('dialog', { name: 'Close Project' })
+  await expect(unavailableCloseDialog.getByText('Generation recovery storage cannot be inspected.', { exact: false })).toBeVisible()
+  await unavailableCloseDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(damagedWindow.getByRole('tab', { name: rasterTitle })).toBeVisible()
+  await damagedWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
+  await unavailableCloseDialog.getByRole('button', { name: 'Close and Keep Recovery' }).click()
+  await expect(damagedWindow.getByRole('tab', { name: rasterTitle })).toHaveCount(0)
+  const zeroTabCloseWarning = await application.evaluate(async ({ BrowserWindow, dialog }) => {
+    return await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Native close skipped the recovery warning with no open tabs.')),
+        5_000,
+      )
+      dialog.showMessageBoxSync = (_window, options) => {
+        clearTimeout(timeout)
+        resolve(options)
+        return 1
+      }
+      BrowserWindow.getAllWindows()[0].close()
+    })
+  })
+  assert.ok(zeroTabCloseWarning.detail.includes('Generation recovery storage cannot be inspected'))
+  assert.deepEqual(zeroTabCloseWarning.buttons, ['Close and Keep Recovery', 'Cancel'])
+  await expect(damagedWindow.getByRole('tab', { name: 'Home' })).toBeVisible()
+  await damagedWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
+  await damagedWindow.getByRole('tab', { name: rasterTitle }).waitFor()
+  await application.evaluate(({ dialog }) => {
+    dialog.showMessageBoxSync = (_window, options) => {
+      if (!options.detail.includes('Generation recovery storage cannot be inspected')) {
+        throw new Error('Native close omitted the generation recovery warning.')
+      }
+      return 0
+    }
+  })
+  const unavailableWindowClosed = damagedWindow.waitForEvent('close', { timeout: 20_000 })
+  await application.evaluate(({ app }) => {
+    setTimeout(() => app.quit(), 0)
+  })
+  await unavailableWindowClosed
+  console.log('Desktop smoke passed: unavailable generation recovery warns and allows tab/window close.')
 } finally {
   secondProcess?.kill()
   // A failed assertion can leave a dirty tab behind and a native close dialog waiting for input.
   // Stop this disposable test instance directly so cleanup never turns into a UI deadlock.
   application?.process().kill('SIGKILL')
+  await tabCloseJobDatabase?.close()
   rmSync(dataRoot, { force: true, recursive: true })
 }

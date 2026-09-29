@@ -235,6 +235,9 @@ graceful Project close removes it from staging and schedules its recovery asset
 for cleanup; neither action is undoable. Closing with staging or unfinished jobs
 warns first, cancels only that Project's jobs and prevents late completions from
 reappearing. A successful Save while Project stays open does not end staging.
+If generation recovery storage cannot be inspected, a separately confirmed
+degraded close preserves unknown local files for repair/recovery; it must not
+report them as discarded.
 
 Undo removes the accepted project mutation; it does not reconstruct the previous staging session.
 

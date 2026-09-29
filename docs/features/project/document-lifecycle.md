@@ -130,6 +130,11 @@ committed. Cancel leaves the document, jobs and staging intact. Late worker
 events from a closed/canceled session cannot recreate candidates or mutate the
 closed `.igs`. Staging candidates are never converted into layers automatically.
 
+If generation recovery storage cannot be inspected, closing a Project or the
+window requires an explicit warning. The close preserves unknown staging files
+for a later recovery attempt instead of claiming that they were discarded. The
+document's Save/Discard/Cancel choice still applies; Cancel changes nothing.
+
 ## Autosave And Recovery
 
 Autosave writes debounced dirty document state/assets into an app-managed shadow

@@ -29,6 +29,7 @@ export const ipcChannels = {
     create: 'projects:create',
     discardAndClose: 'projects:discard-and-close',
     finishImport: 'projects:finish-import',
+    getCloseImpact: 'projects:get-close-impact',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     moveRasterLayer: 'projects:move-raster-layer',
@@ -172,23 +173,30 @@ export interface ProjectRebuildResult {
   indexWarning?: string
 }
 
+export interface ProjectCloseImpact {
+  completedCandidateCount: number
+  generationStorageUnavailable: boolean
+  unfinishedJobCount: number
+}
+
 export interface ProjectApi {
   addGenerationLora: (
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,
   ) => Promise<ApiResult<ProjectTab>>
   cancelImport: (importId: string) => Promise<ApiResult<void>>
-  close: (tabId: string) => Promise<ApiResult<void>>
+  close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   create: (options: {
     height: number
     title: string
     width: number
   }) => Promise<ApiResult<ProjectTab>>
-  discardAndClose: (tabId: string) => Promise<ApiResult<void>>
+  discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   finishImport: (
     importId: string,
     choice: 'copy' | 'move',
   ) => Promise<ApiResult<ProjectImportFinishResult>>
+  getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   moveRasterLayer: (

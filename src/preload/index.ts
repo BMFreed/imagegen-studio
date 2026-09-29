@@ -6,6 +6,7 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  ProjectCloseImpact,
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectOpenResult,
@@ -182,6 +183,17 @@ async function invokeModel<T>(
 
 function isVoid(value: unknown): value is void {
   return value === undefined
+}
+
+function isProjectCloseImpact(value: unknown): value is ProjectCloseImpact {
+  return (
+    isRecord(value) &&
+    Number.isSafeInteger(value.unfinishedJobCount) &&
+    (value.unfinishedJobCount as number) >= 0 &&
+    Number.isSafeInteger(value.completedCandidateCount) &&
+    (value.completedCandidateCount as number) >= 0 &&
+    typeof value.generationStorageUnavailable === 'boolean'
+  )
 }
 
 function isProjectId(value: unknown): value is string {
@@ -544,16 +556,19 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
     cancelImport: (importId) =>
       invokeProject(ipcChannels.projects.cancelImport, [importId], isVoid),
-    close: (tabId) => invokeProject(ipcChannels.projects.close, [tabId], isVoid),
+    close: (tabId, confirmCloseImpact = false) =>
+      invokeProject(ipcChannels.projects.close, [tabId, confirmCloseImpact], isVoid),
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
-    discardAndClose: (tabId) =>
-      invokeProject(ipcChannels.projects.discardAndClose, [tabId], isVoid),
+    discardAndClose: (tabId, confirmCloseImpact = false) =>
+      invokeProject(ipcChannels.projects.discardAndClose, [tabId, confirmCloseImpact], isVoid),
     finishImport: (importId, choice) =>
       invokeProject(
         ipcChannels.projects.finishImport,
         [importId, choice],
         isProjectImportFinishResult,
       ),
+    getCloseImpact: (tabId) =>
+      invokeProject(ipcChannels.projects.getCloseImpact, [tabId], isProjectCloseImpact),
     importRasterImage: (tabId) =>
       invokeProject(
         ipcChannels.projects.importRasterImage,

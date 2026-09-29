@@ -3,6 +3,7 @@ import type {
   ApiResult,
   ModelCatalogItem,
   ProjectApi,
+  ProjectCloseImpact,
   ProjectGenerationDraftChange,
   ProjectImportSelection,
   ProjectLoraIdentity,
@@ -76,6 +77,7 @@ const pendingProjectAction = ref<PendingProjectAction | null>(null)
 const recoveryDecision = ref<RecoveryDecision | null>(null)
 const recoveryError = ref<string | null>(null)
 const closingTabId = ref<string | null>(null)
+const closeImpact = ref<ProjectCloseImpact | null>(null)
 const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
@@ -100,6 +102,20 @@ let modelCatalogRequest = 0
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
 )
+const closingTab = computed(
+  () => projectTabs.value.find((tab) => tab.id === closingTabId.value) ?? null,
+)
+const closeHasGeneration = computed(() => hasGenerationCloseImpact(closeImpact.value))
+
+function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
+  return Boolean(
+    impact &&
+    (impact.generationStorageUnavailable ||
+      impact.completedCandidateCount > 0 ||
+      impact.unfinishedJobCount > 0),
+  )
+}
+
 function openModelManager(focus: ModelManagerFocus | null = null) {
   modelManagerFocus.value = focus
   modelManagerOpen.value = true
@@ -778,6 +794,32 @@ function saveWarning(outcome: ProjectSaveResult): string | null {
   return warnings.length > 0 ? warnings.join(' ') : null
 }
 
+async function closeProjectTab(
+  tabId: string,
+  discardChanges: boolean,
+  confirmCloseImpact: boolean,
+): Promise<boolean> {
+  const result = discardChanges
+    ? await projectApi().discardAndClose(tabId, confirmCloseImpact)
+    : await projectApi().close(tabId, confirmCloseImpact)
+  if (!result.ok) {
+    if (result.error.code === 'PROJECT_CLOSE_CONFIRMATION_REQUIRED') {
+      closeImpact.value = await apiValue(() => projectApi().getCloseImpact(tabId))
+      closingTabId.value = tabId
+      activeDocument.value = tabId
+      closeError.value = 'Generation activity changed. Review what closing will discard or cancel.'
+      return false
+    }
+    throw new Error(result.error.message)
+  }
+  removeTab(tabId)
+  closingTabId.value = null
+  closeImpact.value = null
+  closeError.value = null
+  await refreshProjects()
+  return true
+}
+
 async function saveProject(tabId: string, closeAfter = false) {
   if (pendingProjectAction.value !== null || windowClosePending.value) {
     return
@@ -794,6 +836,7 @@ async function saveProject(tabId: string, closeAfter = false) {
   pendingProjectAction.value = { kind: 'save', tabId }
   setTabError(tabId, null)
   closeError.value = null
+  const confirmCloseImpact = closeAfter && closeHasGeneration.value
   try {
     await draftSync.flush(tabId)
     const outcome = await apiValue(() => projectApi().save(tabId))
@@ -810,16 +853,14 @@ async function saveProject(tabId: string, closeAfter = false) {
         return
       }
       try {
-        await apiValue(() => projectApi().close(tabId))
-        if (warning) {
+        const closed = await closeProjectTab(tabId, false, confirmCloseImpact)
+        if (closed && warning) {
           globalNotice.value = warning
         }
-        removeTab(tabId)
-        closingTabId.value = null
       } catch (cause) {
         const message = `The project was saved, but the tab could not close. ${errorMessage(cause)}`
         setTabError(tabId, message)
-        closingTabId.value = null
+        closeError.value = message
         activeDocument.value = tabId
       }
     }
@@ -840,14 +881,14 @@ async function requestClose(tabId: string) {
   }
   pendingProjectAction.value = { kind: 'close', tabId }
   setTabError(tabId, null)
+  closeError.value = null
+  closeImpact.value = null
   try {
     try {
       await draftSync.flush(tabId)
     } catch (cause) {
-      const message = `The draft could not be updated. Save and Close will retry. ${errorMessage(cause)}`
+      const message = `The draft could not be updated. Retry closing after fixing the error. ${errorMessage(cause)}`
       setTabError(tabId, message)
-      closeError.value = message
-      closingTabId.value = tabId
       activeDocument.value = tabId
       return
     }
@@ -855,14 +896,13 @@ async function requestClose(tabId: string) {
     if (!tab) {
       return
     }
-    if (tab.dirty) {
+    const impact = await apiValue(() => projectApi().getCloseImpact(tabId))
+    closeImpact.value = impact
+    if (tab.dirty || hasGenerationCloseImpact(impact)) {
       closingTabId.value = tabId
-      closeError.value = null
       return
     }
-    await apiValue(() => projectApi().close(tabId))
-    removeTab(tabId)
-    await refreshProjects()
+    await closeProjectTab(tabId, false, false)
   } catch (cause) {
     setTabError(tabId, errorMessage(cause))
     activeDocument.value = tabId
@@ -876,7 +916,25 @@ function cancelClose() {
     return
   }
   closingTabId.value = null
+  closeImpact.value = null
   closeError.value = null
+}
+
+async function confirmCleanClose() {
+  const tabId = closingTabId.value
+  if (!tabId || pendingProjectAction.value !== null || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'close', tabId }
+  closeError.value = null
+  try {
+    await closeProjectTab(tabId, false, closeHasGeneration.value)
+  } catch (cause) {
+    closeError.value = errorMessage(cause)
+    activeDocument.value = tabId
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 async function discardAndClose() {
@@ -887,12 +945,10 @@ async function discardAndClose() {
   pendingProjectAction.value = { kind: 'discard', tabId }
   closeError.value = null
   try {
-    await apiValue(() => projectApi().discardAndClose(tabId))
-    removeTab(tabId)
-    closingTabId.value = null
-    await refreshProjects()
+    await closeProjectTab(tabId, true, closeHasGeneration.value)
   } catch (cause) {
     closeError.value = errorMessage(cause)
+    activeDocument.value = tabId
   } finally {
     pendingProjectAction.value = null
   }
@@ -1291,31 +1347,68 @@ onBeforeUnmount(() => {
         @update:show="!$event && cancelClose()"
       >
         <NCard
-          aria-label="Unsaved changes"
+          aria-label="Close Project"
           class="dialog-card"
           contentScrollable
           role="dialog"
           size="small"
-          title="Unsaved changes"
+          :title="closingTab?.dirty ? 'Unsaved changes' : 'Close Project'"
         >
           <NAlert v-if="closeError" class="dialog-error" type="error">{{ closeError }}</NAlert>
-          <p>This project has changes that are not in its saved .igs file.</p>
+          <p v-if="closingTab" class="dialog-secondary">{{ closingTab.title }}</p>
+          <p v-if="closingTab?.dirty">
+            This project has changes that are not in its saved .igs file.
+          </p>
+          <p v-if="closeImpact?.completedCandidateCount">
+            Unaccepted generation results will be discarded when this project closes. Any jobs still
+            unfinished at close will also be canceled.
+          </p>
+          <p v-if="closeImpact?.unfinishedJobCount">
+            Unfinished generation jobs will be canceled when this project closes. Any results that
+            finish before closing will also be discarded.
+          </p>
+          <p v-if="closeImpact?.generationStorageUnavailable">
+            Generation recovery storage cannot be inspected. Closing will keep any temporary results
+            on this computer for another recovery attempt.
+          </p>
           <div class="dialog-actions">
             <NButton :disabled="pendingProjectAction !== null" @click="cancelClose">Cancel</NButton>
             <NButton
+              v-if="closingTab?.dirty"
               :disabled="pendingProjectAction !== null"
               :loading="pendingProjectAction?.kind === 'discard'"
+              secondary
+              type="error"
               @click="discardAndClose"
             >
               Discard Changes
             </NButton>
             <NButton
+              v-if="closingTab?.dirty"
+              key="save-and-close"
               :disabled="pendingProjectAction !== null"
               :loading="pendingProjectAction?.kind === 'save'"
               type="primary"
               @click="closingTabId && saveProject(closingTabId, true)"
             >
               Save and Close
+            </NButton>
+            <NButton
+              v-else
+              key="close-with-generation"
+              :disabled="pendingProjectAction !== null"
+              :loading="pendingProjectAction?.kind === 'close'"
+              secondary
+              type="error"
+              @click="confirmCleanClose"
+            >
+              {{
+                closeImpact?.generationStorageUnavailable
+                  ? 'Close and Keep Recovery'
+                  : closeImpact?.completedCandidateCount
+                    ? 'Discard Candidates and Close'
+                    : 'Cancel Jobs and Close'
+              }}
             </NButton>
           </div>
         </NCard>

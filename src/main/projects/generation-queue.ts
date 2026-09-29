@@ -212,6 +212,7 @@ export class GenerationQueueError extends Error {
       | 'QUEUE_INPUT_INVALID'
       | 'QUEUE_ITEM_NOT_FOUND'
       | 'QUEUE_NOT_RECONCILED'
+      | 'QUEUE_PROJECT_CLOSING'
       | 'QUEUE_PROJECT_IDENTITY_CHANGED'
       | 'QUEUE_STATUS_CONFLICT'
       | 'QUEUE_STORAGE_UNSAFE',
@@ -231,6 +232,7 @@ function sha256(bytes: Buffer): string {
  * commit first, then the SQLite row; startup removes unreferenced file commits after a crash.
  */
 export class GenerationQueueRepository {
+  private readonly fencedProjects = new Set<string>()
   private pendingOperation: Promise<void> = Promise.resolve()
   private reconciled = false
   private readonly root: string
@@ -276,6 +278,16 @@ export class GenerationQueueRepository {
       await this.requireRow(id)
       throw statusConflict()
     })
+  }
+
+  assertProjectCanEnqueue(localProjectKey: string): void {
+    validateProjectKey(localProjectKey)
+    if (this.fencedProjects.has(localProjectKey)) {
+      throw new GenerationQueueError(
+        'QUEUE_PROJECT_CLOSING',
+        'The Project is closing and cannot accept generation jobs.',
+      )
+    }
   }
 
   /** Dispatch must use the repository instance whose startup recovery completed successfully. */
@@ -385,15 +397,23 @@ export class GenerationQueueRepository {
         if (running) {
           return null
         }
-        const pending = await this.db
+        let pendingQuery = this.db
           .selectFrom('generation_queue_item')
           .selectAll()
           .where('status', '=', 'pending')
           .orderBy('created_at', 'asc')
           .orderBy('id', 'asc')
-          .executeTakeFirst()
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
         if (!pending) {
           return null
+        }
+
+        // A fence can be raised after the read and while frozen files are verified.
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
         }
 
         let verified: VerifiedQueuedInput
@@ -425,6 +445,9 @@ export class GenerationQueueRepository {
         }
 
         await this.testHooks.beforeClaimUpdate?.(pending.id)
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
         const now = new Date().toISOString()
         const claimed = await this.db
           .updateTable('generation_queue_item')
@@ -478,6 +501,7 @@ export class GenerationQueueRepository {
         )
       }
       const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
       const sourceBytes = await readStableFile(
         request.job.target.path,
         request.job.target.byteSize,
@@ -542,6 +566,9 @@ export class GenerationQueueRepository {
         renamed = true
         await syncDirectory(root)
         await this.testHooks.afterInputPublish?.()
+        // A close may have fenced the Project while durable input files were written. The
+        // catch path removes this unreferenced directory; no pending row becomes visible.
+        this.assertProjectCanEnqueue(localProjectKey)
         await this.db
           .insertInto('generation_queue_item')
           .values({
@@ -638,6 +665,12 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Synchronous admission fence for a confirmed or pending Project close. */
+  fenceProject(localProjectKey: string): void {
+    validateProjectKey(localProjectKey)
+    this.fencedProjects.add(localProjectKey)
+  }
+
   /** Snapshot unfinished jobs for one local Project; the caller must recheck each row on cancel. */
   async listUnfinishedByProject(localProjectKey: string): Promise<QueuedGenerationItem[]> {
     if (typeof localProjectKey !== 'string' || !PROJECT_KEY_PATTERN.test(localProjectKey)) {
@@ -722,6 +755,12 @@ export class GenerationQueueRepository {
       this.reconciled = true
       return { canceledCount: canceled, orphanedDirectoriesRemoved: removed }
     })
+  }
+
+  /** Only a canceled close decision or a freshly opened Project may lift this fence. */
+  releaseProjectFence(localProjectKey: string): void {
+    validateProjectKey(localProjectKey)
+    this.fencedProjects.delete(localProjectKey)
   }
 
   private async ensureRoot(): Promise<string> {
@@ -838,6 +877,15 @@ export class GenerationQueueRepository {
 function validateQueueId(id: string): void {
   if (!UUID_PATTERN.test(id)) {
     throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+  }
+}
+
+function validateProjectKey(localProjectKey: string): void {
+  if (typeof localProjectKey !== 'string' || !PROJECT_KEY_PATTERN.test(localProjectKey)) {
+    throw new GenerationQueueError(
+      'QUEUE_PROJECT_IDENTITY_CHANGED',
+      'The Project identity is invalid.',
+    )
   }
 }
 

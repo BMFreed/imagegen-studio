@@ -6,7 +6,7 @@ import type { Kysely, Selectable } from 'kysely'
 import { sql } from 'kysely'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
@@ -180,8 +180,12 @@ export interface VerifiedGenerationCandidate {
   stagingSessionId: string
 }
 export interface GenerationStagingTestHooks {
+  /** Crash window after a discard tombstone commits, before its candidate files are removed. */
+  afterDiscardTombstone?: () => Promise<void>
   /** Crash window after manifest fsync, before the SQLite completion transaction. */
   afterManifestPublish?: () => Promise<void>
+  /** A deletion failure after the tombstone must keep the candidate hidden for startup retry. */
+  beforeSessionCleanup?: () => Promise<void>
 }
 type CandidateEntry = v.InferOutput<typeof CandidateEntrySchema>
 
@@ -235,6 +239,88 @@ export class GenerationStagingRepository {
   }
 
   /**
+   * End every old staging session owned by this local Project. The caller must first fence new
+   * enqueue and confirm that this Project's unfinished workers have stopped. Tombstones commit
+   * before cleanup, so a crash or deletion failure cannot resurrect a discarded candidate.
+   */
+  async discardProject(localProjectKey: string): Promise<{
+    cleanupDeferred: boolean
+    discardedSessionCount: number
+  }> {
+    if (!PROJECT_KEY_PATTERN.test(localProjectKey)) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Project identity is invalid.')
+    }
+    return await this.serialize(async () => {
+      this.requireReconciled()
+      const root = await this.ensureStagingRoot()
+      const projectRoot = path.join(root, localProjectKey)
+      const diskSessions = new Set<string>()
+      if (await exists(projectRoot)) {
+        await checkPrivateDirectory(projectRoot)
+        for (const name of await readdir(projectRoot)) {
+          if (UUID_PATTERN.test(name)) {
+            diskSessions.add(name)
+          }
+        }
+      }
+      const sessions = await this.db.transaction().execute(async (transaction) => {
+        const queue = await transaction
+          .selectFrom('generation_queue_item')
+          .select('staging_session_id')
+          .where('local_project_key', '=', localProjectKey)
+          .execute()
+        const receipts = await transaction
+          .selectFrom('generation_candidate_receipt')
+          .select('staging_session_id')
+          .where('local_project_key', '=', localProjectKey)
+          .execute()
+        const previouslyDiscarded = await transaction
+          .selectFrom('generation_staging_discarded_session')
+          .select('staging_session_id')
+          .where('local_project_key', '=', localProjectKey)
+          .execute()
+        const all = new Set([
+          ...diskSessions,
+          ...queue.map((row) => row.staging_session_id),
+          ...receipts.map((row) => row.staging_session_id),
+          ...previouslyDiscarded.map((row) => row.staging_session_id),
+        ])
+        for (const stagingSessionId of all) {
+          if (!UUID_PATTERN.test(stagingSessionId)) {
+            throw new GenerationStagingError(
+              'STAGING_STORAGE_UNSAFE',
+              'The Project has an invalid staging session identity.',
+            )
+          }
+        }
+        if (all.size > 0) {
+          await transaction
+            .insertInto('generation_staging_discarded_session')
+            .values(
+              [...all].map((stagingSessionId) => ({
+                discarded_at: new Date().toISOString(),
+                local_project_key: localProjectKey,
+                staging_session_id: stagingSessionId,
+              })),
+            )
+            .onConflict((conflict) =>
+              conflict.columns(['local_project_key', 'staging_session_id']).doNothing(),
+            )
+            .execute()
+        }
+        return all
+      })
+      await this.testHooks.afterDiscardTombstone?.()
+      const cleanupDeferred = !(await this.cleanupDiscardedSessions(
+        root,
+        localProjectKey,
+        sessions,
+      ))
+      return { cleanupDeferred, discardedSessionCount: sessions.size }
+    })
+  }
+
+  /**
    * A processor may fail a running job only when publication definitely never reserved a receipt.
    * If this lookup fails, the processor must keep the job for restart reconciliation.
    */
@@ -262,6 +348,9 @@ export class GenerationStagingRepository {
       const candidates: VerifiedGenerationCandidate[] = []
       const scanned = await this.scanEntries(root, localProjectKey)
       for (const { entry, sessionPath } of scanned.entries) {
+        if (await this.isDiscardedSession(entry.localProjectKey, entry.stagingSessionId)) {
+          continue
+        }
         const receipt = await this.receiptFor(entry.candidateId)
         if (!receipt || receipt.status !== 'completed' || !receiptMatches(receipt, entry)) {
           continue
@@ -432,6 +521,9 @@ export class GenerationStagingRepository {
           invalidCount += 1
         }
       }
+      // A close may have committed its tombstones immediately before a crash. Cleanup is best
+      // effort; the tombstones remain authoritative even when a file cannot be removed yet.
+      await this.cleanupAllDiscardedSessions(root)
       this.reconciled = true
       return { invalidCount, reconciledCount }
     })
@@ -446,8 +538,72 @@ export class GenerationStagingRepository {
     return canonical
   }
 
+  private async cleanupAllDiscardedSessions(root: string): Promise<void> {
+    const rows = await this.db
+      .selectFrom('generation_staging_discarded_session')
+      .select(['local_project_key', 'staging_session_id'])
+      .execute()
+    const projects = new Map<string, Set<string>>()
+    for (const row of rows) {
+      const sessions = projects.get(row.local_project_key) ?? new Set<string>()
+      sessions.add(row.staging_session_id)
+      projects.set(row.local_project_key, sessions)
+    }
+    for (const [localProjectKey, sessions] of projects) {
+      await this.cleanupDiscardedSessions(root, localProjectKey, sessions)
+    }
+  }
+
+  private async cleanupDiscardedSessions(
+    root: string,
+    localProjectKey: string,
+    sessions: ReadonlySet<string>,
+  ): Promise<boolean> {
+    const projectRoot = path.join(root, localProjectKey)
+    if (!(await exists(projectRoot))) {
+      return true
+    }
+    try {
+      await checkPrivateDirectory(projectRoot)
+    } catch {
+      return false
+    }
+    let clean = true
+    for (const sessionId of sessions) {
+      if (!UUID_PATTERN.test(sessionId)) {
+        clean = false
+        continue
+      }
+      const sessionRoot = path.join(projectRoot, sessionId)
+      if (!(await exists(sessionRoot))) {
+        continue
+      }
+      try {
+        await checkPrivateDirectory(sessionRoot)
+        await this.testHooks.beforeSessionCleanup?.()
+        await rm(sessionRoot, { force: true, recursive: true })
+        await syncDirectory(projectRoot)
+      } catch {
+        clean = false
+      }
+    }
+    return clean
+  }
+
   private async commitCompletion(entry: CandidateEntry, source: 'live' | 'restart'): Promise<void> {
     await this.db.transaction().execute(async (transaction) => {
+      const discarded = await transaction
+        .selectFrom('generation_staging_discarded_session')
+        .select('staging_session_id')
+        .where('local_project_key', '=', entry.localProjectKey)
+        .where('staging_session_id', '=', entry.stagingSessionId)
+        .executeTakeFirst()
+      if (discarded) {
+        throw new GenerationStagingError(
+          'STAGING_STATUS_CONFLICT',
+          'The staging session was discarded.',
+        )
+      }
       const receipt = await transaction
         .selectFrom('generation_candidate_receipt')
         .selectAll()
@@ -535,6 +691,19 @@ export class GenerationStagingRepository {
     await ensurePrivateDirectory(recoveryRoot)
     await ensurePrivateDirectory(stagingRoot)
     return stagingRoot
+  }
+
+  private async isDiscardedSession(
+    localProjectKey: string,
+    stagingSessionId: string,
+  ): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('generation_staging_discarded_session')
+      .select('staging_session_id')
+      .where('local_project_key', '=', localProjectKey)
+      .where('staging_session_id', '=', stagingSessionId)
+      .executeTakeFirst()
+    return row !== undefined
   }
 
   private async publishFiles(entry: CandidateEntry, outputBytes: Buffer): Promise<string> {
@@ -693,6 +862,18 @@ export class GenerationStagingRepository {
     stagingSessionId: string
   }): Promise<Selectable<GenerationCandidateReceipt>> {
     return await this.db.transaction().execute(async (transaction) => {
+      const discarded = await transaction
+        .selectFrom('generation_staging_discarded_session')
+        .select('staging_session_id')
+        .where('local_project_key', '=', input.localProjectKey)
+        .where('staging_session_id', '=', input.stagingSessionId)
+        .executeTakeFirst()
+      if (discarded) {
+        throw new GenerationStagingError(
+          'STAGING_STATUS_CONFLICT',
+          'The staging session was discarded.',
+        )
+      }
       const row = await transaction
         .selectFrom('generation_queue_item')
         .selectAll()
@@ -784,6 +965,9 @@ export class GenerationStagingRepository {
       await checkPrivateDirectory(projectRoot)
       for (const sessionName of await readdir(projectRoot)) {
         if (!UUID_PATTERN.test(sessionName)) {
+          continue
+        }
+        if (await this.isDiscardedSession(projectName, sessionName)) {
           continue
         }
         const sessionRoot = path.join(projectRoot, sessionName)
