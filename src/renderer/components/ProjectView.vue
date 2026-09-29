@@ -15,6 +15,7 @@ import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import {
+  Trash as ClearHistoryIcon,
   AspectRatio as FitIcon,
   Refresh as RefreshIcon,
   DeviceFloppy as SaveIcon,
@@ -28,6 +29,7 @@ import {
   NIcon,
   NInput,
   NInputNumber,
+  NPopconfirm,
   NSelect,
   NSwitch,
   NTag,
@@ -69,7 +71,8 @@ const props = defineProps<{
   modelCatalogError: string | null
   modelCatalogLoaded: boolean
   modelCatalogLoading: boolean
-  pending: 'bbox' | 'import-image' | 'model' | 'save' | null
+  pending: 'bbox' | 'clear-history' | 'import-image' | 'model' | 'redo' | 'save' | 'undo' | null
+  promptHistoryEpoch: number
   reloadRequired: boolean
   saveNotice: string | null
   tab: ProjectTab
@@ -80,9 +83,11 @@ const emit = defineEmits<{
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   clearExportFeedback: []
+  clearHistory: []
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
   moveLayer: [layerId: string, targetIndex: number]
+  redo: []
   refreshGenerationResults: []
   refreshModels: []
   relinkLora: [identity: ProjectLoraIdentity]
@@ -90,11 +95,42 @@ const emit = defineEmits<{
   removeLora: [identity: ProjectLoraIdentity]
   save: []
   saveCandidateImage: [candidateId: string]
+  sealPromptHistory: [historyGroupId: string]
   selectModel: [selection: { resourceId: string; versionId: string } | null]
-  updateDraft: [change: ProjectGenerationDraftChange]
+  undo: []
+  updateDraft: [change: ProjectGenerationDraftChange, historyGroupId?: string]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
   validateDraft: [tabId: string, valid: boolean]
 }>()
+
+type PromptPolarity = 'negative' | 'positive'
+const promptGroups = new Map<PromptPolarity, string>()
+
+function beginPromptEdit(polarity: PromptPolarity): string {
+  let groupId = promptGroups.get(polarity)
+  if (!groupId) {
+    groupId = crypto.randomUUID()
+    promptGroups.set(polarity, groupId)
+  }
+  return groupId
+}
+
+function updatePrompt(polarity: PromptPolarity, text: string) {
+  emit('updateDraft', { kind: `${polarity}-prompt`, text }, beginPromptEdit(polarity))
+}
+
+function endPromptEdit(polarity: PromptPolarity) {
+  const groupId = promptGroups.get(polarity)
+  if (groupId) {
+    promptGroups.delete(polarity)
+    emit('sealPromptHistory', groupId)
+  }
+}
+
+watch(
+  () => props.promptHistoryEpoch,
+  () => promptGroups.clear(),
+)
 
 const models = computed(() => checkpointCatalog(props.modelCatalog))
 const promptLoraSources = computed(() =>
@@ -799,16 +835,38 @@ function applyFitBbox() {
           >
             {{ tab.dirty || draftPending ? 'Unsaved changes' : 'Saved' }}
           </span>
-          <NButton
-            aria-label="Save Project"
-            :disabled="reloadRequired || busy || draftInvalid"
-            :loading="pending === 'save'"
-            size="small"
-            @click="emit('save')"
-          >
-            <template v-slot:icon><NIcon :component="SaveIcon" /></template>
-            Save
-          </NButton>
+          <div class="document-action-buttons">
+            <NPopconfirm
+              negativeText="Cancel"
+              positiveText="Clear history"
+              @positiveClick="emit('clearHistory')"
+            >
+              <template v-slot:trigger>
+                <NButton
+                  aria-label="Clear Project History"
+                  :disabled="reloadRequired || busy || (!tab.canUndo && !tab.canRedo)"
+                  quaternary
+                  size="tiny"
+                  title="Clear Undo and Redo history"
+                >
+                  <template v-slot:icon>
+                    <NIcon :component="ClearHistoryIcon" :size="16" />
+                  </template>
+                </NButton>
+              </template>
+              Clear Undo and Redo history for this open Project? The document will not change.
+            </NPopconfirm>
+            <NButton
+              aria-label="Save Project"
+              :disabled="reloadRequired || busy || draftInvalid"
+              :loading="pending === 'save'"
+              size="small"
+              @click="emit('save')"
+            >
+              <template v-slot:icon><NIcon :component="SaveIcon" /></template>
+              Save
+            </NButton>
+          </div>
         </div>
         <section aria-label="Generation settings" class="settings-section">
           <div class="generation-heading">
@@ -949,7 +1007,9 @@ function applyFitBbox() {
               :loraSources="promptLoraSources"
               :modelValue="generationDraft.positivePrompt.text"
               polarity="positive"
-              @update:modelValue="emit('updateDraft', { kind: 'positive-prompt', text: $event })"
+              @blur="endPromptEdit('positive')"
+              @focus="beginPromptEdit('positive')"
+              @update:modelValue="updatePrompt('positive', $event)"
             />
           </div>
           <div class="prompt-field">
@@ -962,7 +1022,9 @@ function applyFitBbox() {
               :loraSources="promptLoraSources"
               :modelValue="generationDraft.negativePrompt.text"
               polarity="negative"
-              @update:modelValue="emit('updateDraft', { kind: 'negative-prompt', text: $event })"
+              @blur="endPromptEdit('negative')"
+              @focus="beginPromptEdit('negative')"
+              @update:modelValue="updatePrompt('negative', $event)"
             />
           </div>
           <ProjectLoraStack
@@ -1161,17 +1223,22 @@ function applyFitBbox() {
       <ProjectCanvas
         :key="tab.id"
         :bbox="tab.primaryBbox"
+        :canRedo="tab.canRedo"
+        :canUndo="tab.canUndo"
         :candidateActionsDisabled="busy"
         :disabled="busy || reloadRequired"
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
+        :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
         :layers="tab.layers"
         :selectedLayerId
         @acceptCandidates="emit('acceptCandidates', $event)"
         @changeBbox="emit('applyBbox', $event)"
+        @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
         @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectLayer="selectedLayerId = $event"
+        @undo="emit('undo')"
       />
 
       <DnDProvider :autoScrollViewport="false">
@@ -1251,6 +1318,12 @@ function applyFitBbox() {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 20px;
+}
+
+.document-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .project-settings h2 {

@@ -14,6 +14,8 @@ export async function checkPromptActions({ window, application, projectRegion })
     name: 'Negative prompt editor',
     exact: true,
   })
+  const historyToolbar = projectRegion.getByRole('toolbar', { name: 'Project history' })
+  const initialPositiveText = (await positive.textContent()) ?? ''
   await positive.fill('alpha phrase, beta word')
   const help = window.locator('.prompt-help')
   await expect(help).toBeVisible()
@@ -38,9 +40,11 @@ export async function checkPromptActions({ window, application, projectRegion })
   await expect.poll(() => window.evaluate(() => getSelection()?.toString())).toBe('(alpha phrase)+')
   await positive.press('Control+ArrowDown')
   await expect(positive).toHaveText('alpha phrase, beta word')
-  await positive.press('Control+z')
-  await expect(positive).toHaveText('(alpha phrase)+, beta word')
-  await positive.press('Control+Shift+Z')
+  // The entire focus session, including attention edits, is one Project history step.
+  await projectRegion.getByRole('heading', { name: 'Generation area' }).click()
+  await historyToolbar.getByRole('button', { name: 'Undo' }).click()
+  await expect(positive).toHaveText(initialPositiveText)
+  await historyToolbar.getByRole('button', { name: 'Redo' }).click()
   await expect(positive).toHaveText('alpha phrase, beta word')
 
   await positive.press('Control+Home')
@@ -84,7 +88,8 @@ export async function checkPromptActions({ window, application, projectRegion })
     positiveCard.getByRole('button', { name: 'Increase prompt attention' }),
   ).toBeDisabled()
   await expect(positiveCard.getByRole('button', { name: 'Clear prompt' })).toBeDisabled()
-  await positive.press('Control+z')
+  await projectRegion.getByRole('heading', { name: 'Generation area' }).click()
+  await window.keyboard.press('Control+z')
   await expect(positive).toHaveText('alpha phrase+, beta word')
 
   // Blank caret phrase is a disabled neighboring control, without affecting the negative editor.

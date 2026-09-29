@@ -177,6 +177,12 @@ export class ProjectService {
     this.pendingImports.delete(importId)
   }
 
+  async clearHistory(tabId: string): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    await coordinator.clearHistory()
+    return toTab(tabId, coordinator)
+  }
+
   async close(tabId: string): Promise<void> {
     const rebuilding = this.rebuilding.get(tabId)
     if (rebuilding) {
@@ -599,6 +605,12 @@ export class ProjectService {
     }
   }
 
+  async redo(tabId: string): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    await coordinator.redo()
+    return toTab(tabId, coordinator)
+  }
+
   /** Link one saved LoRA without replacing its settings or copied metadata. */
   async relinkGenerationLora(
     tabId: string,
@@ -831,6 +843,12 @@ export class ProjectService {
     }
   }
 
+  async sealPromptHistory(tabId: string, historyGroupId?: string): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    await coordinator.sealHistoryGroup(historyGroupId)
+    return toTab(tabId, coordinator)
+  }
+
   /** Call only with a path returned by Electron's main-process file picker. */
   async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
     await this.initialize()
@@ -899,12 +917,29 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async undo(tabId: string): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    await coordinator.undo()
+    return toTab(tabId, coordinator)
+  }
+
   async updateGenerationDraft(
     tabId: string,
     change: ProjectGenerationDraftChange,
+    historyGroupId?: string,
   ): Promise<ProjectTab> {
     if (!isProjectGenerationDraftChange(change)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The generation setting is invalid.')
+    }
+    if (
+      historyGroupId !== undefined &&
+      change.kind !== 'positive-prompt' &&
+      change.kind !== 'negative-prompt'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Only prompt edits can share a Project history group.',
+      )
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
@@ -988,7 +1023,7 @@ export class ProjectService {
     await coordinator.applyDocument(
       { ...document, generationDraft: nextDraft },
       {},
-      { expectedDocumentRevision: document.documentRevision },
+      { expectedDocumentRevision: document.documentRevision, historyGroupId },
     )
     return toTab(tabId, coordinator)
   }
@@ -1368,6 +1403,8 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
   const document = coordinator.document
   return {
     autosaveError: coordinator.lastAutosaveError?.message ?? null,
+    canRedo: coordinator.canRedo,
+    canUndo: coordinator.canUndo,
     dirty: coordinator.dirty,
     generationDraft: document.generationDraft,
     id,

@@ -26,6 +26,7 @@ export const ipcChannels = {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
     cancelImport: 'projects:cancel-import',
+    clearHistory: 'projects:clear-history',
     close: 'projects:close',
     create: 'projects:create',
     discardAndClose: 'projects:discard-and-close',
@@ -38,16 +39,19 @@ export const ipcChannels = {
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
     rebuildPreview: 'projects:rebuild-preview',
+    redo: 'projects:redo',
     relinkGenerationLora: 'projects:relink-generation-lora',
     relinkGenerationModel: 'projects:relink-generation-model',
     removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
     save: 'projects:save',
     saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
+    sealPromptHistory: 'projects:seal-prompt-history',
     selectImport: 'projects:select-import',
     setGenerationModel: 'projects:set-generation-model',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
+    undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
     windowCloseReady: 'projects:window-close-ready',
@@ -88,6 +92,8 @@ export interface ProjectSummary {
 
 export interface ProjectTab {
   autosaveError: string | null
+  canRedo: boolean
+  canUndo: boolean
   dirty: boolean
   generationDraft: IgsProjectDocumentV1['generationDraft']
   id: string
@@ -214,6 +220,7 @@ export interface ProjectApi {
     selection: NonNullable<ProjectGenerationModelSelection>,
   ) => Promise<ApiResult<ProjectTab>>
   cancelImport: (importId: string) => Promise<ApiResult<void>>
+  clearHistory: (tabId: string) => Promise<ApiResult<ProjectTab>>
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   create: (options: {
     height: number
@@ -238,6 +245,7 @@ export interface ProjectApi {
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
+  redo: (tabId: string) => Promise<ApiResult<ProjectTab>>
   relinkGenerationLora: (
     tabId: string,
     identity: ProjectLoraIdentity,
@@ -256,15 +264,18 @@ export interface ProjectApi {
     tabId: string,
     candidateId: string,
   ) => Promise<ApiResult<ProjectCandidateExportResult>>
+  sealPromptHistory: (tabId: string, historyGroupId?: string) => Promise<ApiResult<ProjectTab>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setGenerationModel: (
     tabId: string,
     selection: ProjectGenerationModelSelection,
   ) => Promise<ApiResult<ProjectTab>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+  undo: (tabId: string) => Promise<ApiResult<ProjectTab>>
   updateGenerationDraft: (
     tabId: string,
     change: ProjectGenerationDraftChange,
+    historyGroupId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   updateRasterLayer: (
     tabId: string,

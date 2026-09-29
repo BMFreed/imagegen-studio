@@ -641,6 +641,93 @@ try {
   assert.equal(afterAddResults.value.candidates.length, 0)
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
 
+  // Acceptance is one document mutation, regardless of the number of candidates.
+  // Rewinding it must leave staging empty; Redo must restore the real accepted assets
+  // from project history before the crash-recovery and portable Save checks below.
+  const acceptedLayerIds = acceptedTab.value.tab.layers.map((layer) => layer.id)
+  const historyToolbar = acceptanceWindow.getByRole('toolbar', { name: 'Project history' })
+  await expect(historyToolbar.getByRole('button', { name: 'Undo' })).toBeEnabled()
+  await historyToolbar.getByRole('button', { name: 'Undo' }).click()
+  await expect.poll(async () => {
+    const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+    return open.ok ? open.value.tab.layers.length : null
+  }).toBe(0)
+  await expect(historyToolbar.getByRole('button', { name: 'Redo' })).toBeEnabled()
+  const afterUndoResults = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(afterUndoResults.ok, true)
+  assert.equal(afterUndoResults.value.candidates.length, 0)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  await historyToolbar.getByRole('button', { name: 'Redo' }).click()
+  await expect.poll(async () => {
+    const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+    return open.ok ? open.value.tab.layers.map((layer) => layer.id) : null
+  }).toEqual(acceptedLayerIds)
+  const redoneTab = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(redoneTab.ok, true)
+  const redoneVisibleLayer = redoneTab.value.tab.layers.find((layer) => layer.visible)
+  assert.ok(redoneVisibleLayer)
+  await expect(
+    acceptanceWindow.locator('.entity-surface--selected .entity-preview img'),
+  ).toHaveAttribute('src', redoneVisibleLayer.imageUrl)
+  // The igs-layer scheme deliberately does not expose Fetch. Decode the same URL that
+  // the selected-layer preview renders and inspect its pixels through the browser canvas.
+  const redoneImage = await acceptanceWindow.evaluate(async (url) => {
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.src = url
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('The restored layer could not be rendered.')
+    context.drawImage(image, 0, 0)
+    return {
+      height: image.naturalHeight,
+      pixel: [...context.getImageData(32, 32, 1, 1).data],
+      width: image.naturalWidth,
+    }
+  }, redoneVisibleLayer.imageUrl)
+  assert.deepEqual(redoneImage, { height: 64, pixel: [37, 94, 181, 255], width: 64 })
+  assert.equal(
+    (await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )).value.candidates.length,
+    0,
+  )
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+
+  // Clearing Project history only drops the in-memory undo/redo stacks. Accepted
+  // layers remain editable and recoverable; no package write or staging resurrection occurs.
+  await acceptanceWindow.getByRole('button', { name: 'Clear Project History' }).click()
+  await expect(
+    acceptanceWindow.getByText(
+      'Clear Undo and Redo history for this open Project? The document will not change.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+  await acceptanceWindow.getByRole('button', { name: 'Clear history', exact: true }).click()
+  await expect(historyToolbar.getByRole('button', { name: 'Undo' })).toBeDisabled()
+  await expect(historyToolbar.getByRole('button', { name: 'Redo' })).toBeDisabled()
+  const afterClearTab = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(afterClearTab.ok, true)
+  assert.deepEqual(
+    afterClearTab.value.tab.layers.map((layer) => layer.id),
+    acceptedLayerIds,
+  )
+  assert.equal(afterClearTab.value.tab.dirty, true)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+
   // Acceptance must reach the recovery shadow before staging cleanup. Crash before Save, recover
   // the document, then Save and reopen the portable package.
   const beforeRecoveryProcess = application.process()

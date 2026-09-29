@@ -64,13 +64,17 @@ type PendingProjectAction =
       kind:
         | 'accept-candidate'
         | 'bbox'
+        | 'clear-history'
         | 'close'
         | 'discard'
         | 'export-candidate'
+        | 'history'
         | 'import-image'
         | 'layer'
         | 'model'
+        | 'redo'
         | 'save'
+        | 'undo'
       tabId: string
     }
 
@@ -85,6 +89,7 @@ const modelCatalogError = ref<string | null>(null)
 const modelCatalogLoaded = ref(false)
 const modelCatalogLoading = ref(false)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+const promptHistoryEpochs = ref<Record<string, number>>({})
 const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapshot>>({})
 const generationResultsErrors = ref<Record<string, string | null>>({})
 const generationResultsLoading = ref<Record<string, boolean>>({})
@@ -152,15 +157,20 @@ const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
 })
-const activeTabPending = computed<'bbox' | 'import-image' | 'model' | 'save' | null>(() => {
+const activeTabPending = computed<
+  'bbox' | 'clear-history' | 'import-image' | 'model' | 'redo' | 'save' | 'undo' | null
+>(() => {
   const action = pendingProjectAction.value
   if (
     !activeTab.value ||
     !action ||
     (action.kind !== 'bbox' &&
+      action.kind !== 'clear-history' &&
       action.kind !== 'import-image' &&
       action.kind !== 'model' &&
-      action.kind !== 'save') ||
+      action.kind !== 'redo' &&
+      action.kind !== 'save' &&
+      action.kind !== 'undo') ||
     action.tabId !== activeTab.value.id
   ) {
     return null
@@ -302,10 +312,17 @@ const draftSync = new ProjectDraftSync({
     }
     generationDraftOverlays.value = next
   },
-  send: (tabId, change) => apiValue(() => projectApi().updateGenerationDraft(tabId, change)),
+  seal: (tabId, historyGroupId) =>
+    apiValue(() => projectApi().sealPromptHistory(tabId, historyGroupId)),
+  send: (tabId, change, historyGroupId) =>
+    apiValue(() => projectApi().updateGenerationDraft(tabId, change, historyGroupId)),
 })
 
-function updateGenerationDraft(tabId: string, change: ProjectGenerationDraftChange) {
+function updateGenerationDraft(
+  tabId: string,
+  change: ProjectGenerationDraftChange,
+  historyGroupId?: string,
+) {
   if (
     pendingProjectAction.value !== null ||
     windowClosePending.value ||
@@ -317,7 +334,36 @@ function updateGenerationDraft(tabId: string, change: ProjectGenerationDraftChan
   if (!tab) {
     return
   }
-  draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change)
+  draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change, historyGroupId)
+}
+
+function updateActiveGenerationDraft(
+  change: ProjectGenerationDraftChange,
+  historyGroupId?: string,
+) {
+  if (activeTab.value) {
+    updateGenerationDraft(activeTab.value.id, change, historyGroupId)
+  }
+}
+
+function sealPromptHistory(tabId: string, historyGroupId: string) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (tab) {
+    draftSync.sealPromptHistory(tab, historyGroupId)
+  }
+}
+
+function rotatePromptHistoryGroup(tabId: string) {
+  promptHistoryEpochs.value = {
+    ...promptHistoryEpochs.value,
+    [tabId]: (promptHistoryEpochs.value[tabId] ?? 0) + 1,
+  }
+}
+
+async function flushProjectDraft(tabId: string) {
+  await draftSync.flush(tabId)
+  replaceTab(await apiValue(() => projectApi().sealPromptHistory(tabId)))
+  rotatePromptHistoryGroup(tabId)
 }
 
 async function runGenerationModelAction(
@@ -334,7 +380,7 @@ async function runGenerationModelAction(
   pendingProjectAction.value = { kind: 'model', tabId }
   setTabError(tabId, null)
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     replaceTab(await apiValue(request))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -390,6 +436,8 @@ function focusTab(tab: ProjectTab) {
 function removeTab(tabId: string) {
   stopExportFeedbackTimer(tabId)
   draftSync.forget(tabId)
+  const { [tabId]: _closedPromptEpoch, ...remainingPromptEpochs } = promptHistoryEpochs.value
+  promptHistoryEpochs.value = remainingPromptEpochs
   generationResultsRequests.set(tabId, (generationResultsRequests.get(tabId) ?? 0) + 1)
   const { [tabId]: _closedResults, ...remainingResults } = generationResultsByTab.value
   const { [tabId]: _closedResultsError, ...remainingResultsErrors } = generationResultsErrors.value
@@ -449,6 +497,9 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   draftValidity.value = Object.fromEntries(
     Object.entries(draftValidity.value).filter(([id]) => openIds.has(id)),
   )
+  promptHistoryEpochs.value = Object.fromEntries(
+    Object.entries(promptHistoryEpochs.value).filter(([id]) => openIds.has(id)),
+  )
   generationResultsByTab.value = Object.fromEntries(
     Object.entries(generationResultsByTab.value).filter(([id]) => openIds.has(id)),
   )
@@ -462,8 +513,7 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
 
 function openHome() {
   homeOpen.value = true
-  activeDocument.value = 'home'
-  void refreshProjects()
+  void activateDocument('home')
 }
 
 function closeHome() {
@@ -473,14 +523,36 @@ function closeHome() {
   }
 }
 
-function activateDocument(documentId: string) {
+async function activateDocument(documentId: string): Promise<boolean> {
+  if (activeDocument.value === documentId) {
+    return true
+  }
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
+    return false
+  }
+  const previous = activeTab.value
+  if (previous) {
+    pendingProjectAction.value = { kind: 'history', tabId: previous.id }
+    try {
+      await flushProjectDraft(previous.id)
+    } catch (cause) {
+      setTabError(
+        previous.id,
+        `Could not finish the Project draft before switching tabs. ${errorMessage(cause)}`,
+      )
+      return false
+    } finally {
+      pendingProjectAction.value = null
+    }
+  }
   activeDocument.value = documentId
   if (documentId === 'home') {
     void refreshProjects()
   }
+  return true
 }
 
-function onTabKeydown(event: KeyboardEvent, documentId: string) {
+async function onTabKeydown(event: KeyboardEvent, documentId: string) {
   if (event.target !== event.currentTarget) {
     return
   }
@@ -499,11 +571,10 @@ function onTabKeydown(event: KeyboardEvent, documentId: string) {
   const nextIndex = (index + direction + ids.length) % ids.length
   const nextId = ids[nextIndex]
   if (nextId) {
-    activateDocument(nextId)
-    const tabs = (event.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLElement>(
-      '[role="tab"]',
-    )
-    tabs?.[nextIndex]?.focus()
+    const tabList = (event.currentTarget as HTMLElement).parentElement
+    if (await activateDocument(nextId)) {
+      tabList?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus()
+    }
   }
 }
 
@@ -834,7 +905,7 @@ function sameCandidateIds(left: string[], right: string[]): boolean {
 async function commitGenerationCandidates(decision: PendingAcceptance) {
   acceptanceCommitting.value = true
   try {
-    await draftSync.flush(decision.tabId)
+    await flushProjectDraft(decision.tabId)
     const result = await projectApi().acceptGenerationCandidates(
       decision.tabId,
       [...decision.candidateIds],
@@ -992,7 +1063,7 @@ async function applyBbox(tabId: string, rect: IgsRectV1) {
   pendingProjectAction.value = { kind: 'bbox', tabId }
   setTabError(tabId, null)
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     replaceTab(await apiValue(() => projectApi().setPrimaryBbox(tabId, rect)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -1017,7 +1088,7 @@ async function updateRasterLayer(
   pendingProjectAction.value = { kind: 'layer', tabId }
   setTabError(tabId, null)
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     replaceTab(await apiValue(() => projectApi().updateRasterLayer(tabId, layerId, change)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -1038,7 +1109,7 @@ async function importRasterImage(tabId: string) {
   pendingProjectAction.value = { kind: 'import-image', tabId }
   setTabError(tabId, null)
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     const tab = await apiValue(() => projectApi().importRasterImage(tabId))
     if (tab) {
       replaceTab(tab)
@@ -1068,7 +1139,7 @@ async function moveRasterLayer(tabId: string, layerId: string, targetIndex: numb
   pendingProjectAction.value = { kind: 'layer', tabId }
   setTabError(tabId, null)
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     replaceTab(await apiValue(() => projectApi().moveRasterLayer(tabId, layerId, targetIndex)))
     saveNotices.value = { ...saveNotices.value, [tabId]: null }
   } catch (cause) {
@@ -1108,6 +1179,39 @@ function saveWarning(outcome: ProjectSaveResult): string | null {
     warnings.push('Reopen this project before editing further.')
   }
   return warnings.length > 0 ? warnings.join(' ') : null
+}
+
+async function runProjectHistoryAction(tabId: string, action: 'clear-history' | 'redo' | 'undo') {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: action, tabId }
+  setTabError(tabId, null)
+  try {
+    await flushProjectDraft(tabId)
+    const request =
+      action === 'undo'
+        ? projectApi().undo(tabId)
+        : action === 'redo'
+          ? projectApi().redo(tabId)
+          : projectApi().clearHistory(tabId)
+    replaceTab(await apiValue(() => request))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function runActiveProjectHistoryAction(action: 'redo' | 'undo') {
+  if (activeTab.value) {
+    void runProjectHistoryAction(activeTab.value.id, action)
+  }
 }
 
 async function closeProjectTab(
@@ -1154,7 +1258,7 @@ async function saveProject(tabId: string, closeAfter = false) {
   closeError.value = null
   const confirmCloseImpact = closeAfter && closeHasGeneration.value
   try {
-    await draftSync.flush(tabId)
+    await flushProjectDraft(tabId)
     const outcome = await apiValue(() => projectApi().save(tabId))
     replaceTab(outcome.tab)
     const warning = saveWarning(outcome)
@@ -1201,7 +1305,7 @@ async function requestClose(tabId: string) {
   closeImpact.value = null
   try {
     try {
-      await draftSync.flush(tabId)
+      await flushProjectDraft(tabId)
     } catch (cause) {
       const message = `The draft could not be updated. Retry closing after fixing the error. ${errorMessage(cause)}`
       setTabError(tabId, message)
@@ -1301,19 +1405,53 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
 }
 
 function onAppKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-    const tab = activeTab.value
-    if (
-      tab &&
-      !modelManagerOpen.value &&
-      !showNewProject.value &&
-      !recoveryDecision.value &&
-      !closingTabId.value
-    ) {
-      event.preventDefault()
-      void saveProject(tab.id)
-    }
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    (!event.ctrlKey && !event.metaKey) ||
+    event.altKey
+  ) {
+    return
   }
+  const tab = activeTab.value
+  if (
+    !tab ||
+    modelManagerOpen.value ||
+    showNewProject.value ||
+    importDialogVisible.value ||
+    recoveryDecision.value ||
+    closingTabId.value ||
+    pendingAcceptance.value
+  ) {
+    return
+  }
+  const target = event.target instanceof Element ? event.target : null
+  if (target?.closest('[role="dialog"]')) {
+    return
+  }
+  const key = event.key.toLowerCase()
+  if (key === 's' && !event.shiftKey) {
+    event.preventDefault()
+    void saveProject(tab.id)
+    return
+  }
+  const action =
+    key === 'z' && !event.shiftKey
+      ? 'undo'
+      : (key === 'z' && event.shiftKey) || (key === 'y' && !event.shiftKey)
+        ? 'redo'
+        : null
+  if (!action) {
+    return
+  }
+  if (
+    target?.closest('input, textarea, [contenteditable="true"]') &&
+    !target.closest('.prompt-editor .cm-content')
+  ) {
+    return
+  }
+  event.preventDefault()
+  void runProjectHistoryAction(tab.id, action)
 }
 
 onMounted(() => {
@@ -1353,6 +1491,10 @@ onMounted(() => {
             throw new Error('Correct invalid generation settings before closing the app.')
           }
           await draftSync.flushAll()
+          for (const tab of projectTabs.value) {
+            replaceTab(await apiValue(() => projectApi().sealPromptHistory(tab.id)))
+            rotatePromptHistoryGroup(tab.id)
+          }
         } catch (cause) {
           windowClosePending.value = false
           globalNotice.value = `Window close was canceled because a Project draft could not be updated. ${errorMessage(cause)}`
@@ -1386,7 +1528,25 @@ onBeforeUnmount(() => {
 <template>
   <NConfigProvider :theme="darkTheme" :themeOverrides="imageGenNaiveTheme">
     <div class="app-shell">
-      <AppChrome :homeOpen @home="openHome" />
+      <AppChrome
+        :canRedo="
+          Boolean(activeTab?.canRedo) &&
+          pendingProjectAction === null &&
+          !windowClosePending &&
+          !reloadRequiredIds.has(activeTab?.id ?? '')
+        "
+        :canUndo="
+          Boolean(activeTab?.canUndo) &&
+          pendingProjectAction === null &&
+          !windowClosePending &&
+          !reloadRequiredIds.has(activeTab?.id ?? '')
+        "
+        :homeOpen
+        :projectActive="Boolean(activeTab)"
+        @home="openHome"
+        @redo="runActiveProjectHistoryAction('redo')"
+        @undo="runActiveProjectHistoryAction('undo')"
+      />
       <nav aria-label="Open documents" class="document-tabs" role="tablist">
         <div
           v-if="homeOpen"
@@ -1490,6 +1650,7 @@ onBeforeUnmount(() => {
           :modelCatalogLoaded
           :modelCatalogLoading
           :pending="activeTabPending"
+          :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
@@ -1497,9 +1658,11 @@ onBeforeUnmount(() => {
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
+          @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
           @moveLayer="moveActiveRasterLayer"
+          @redo="runProjectHistoryAction(activeTab.id, 'redo')"
           @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
           @refreshModels="refreshModelCatalog"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
@@ -1507,8 +1670,10 @@ onBeforeUnmount(() => {
           @removeLora="removeGenerationLora(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
+          @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
-          @updateDraft="updateGenerationDraft(activeTab.id, $event)"
+          @undo="runProjectHistoryAction(activeTab.id, 'undo')"
+          @updateDraft="updateActiveGenerationDraft"
           @updateLayer="updateActiveRasterLayer"
           @validateDraft="setDraftValidity"
         />

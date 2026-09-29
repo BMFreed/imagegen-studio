@@ -3,7 +3,7 @@ import { parseProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { mkdir, mkdtemp, open, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ProjectShadowStore } from './project-shadow.js'
@@ -42,6 +42,8 @@ export type CoordinatedSaveOutcome = ProjectSaveOutcome & {
 type AssetRef = { bytes: number; height?: number; path: string; sha256: string; width?: number }
 
 type PendingSource = { ref: AssetRef; source: IgsAssetSource }
+
+type HistoryGroup = { baseline: IgsProjectDocumentV1; id: string }
 
 const PROJECT_HISTORY_LIMIT = 64
 
@@ -96,10 +98,21 @@ const processLeases = new ProjectAutosaveLeaseRegistry()
  */
 export class ProjectAutosaveCoordinator {
   get canRedo(): boolean {
-    return !this.closed && !this.activeSave && !this.editGate && this.future.length > 0
+    return (
+      !this.closed &&
+      !this.activeSave &&
+      !this.editGate &&
+      this.future.length > 0 &&
+      !this.hasChangedHistoryGroup()
+    )
   }
   get canUndo(): boolean {
-    return !this.closed && !this.activeSave && !this.editGate && this.past.length > 0
+    return (
+      !this.closed &&
+      !this.activeSave &&
+      !this.editGate &&
+      (this.past.length > 0 || this.hasChangedHistoryGroup())
+    )
   }
   get dirty(): boolean {
     return this.session.dirty
@@ -124,8 +137,13 @@ export class ProjectAutosaveCoordinator {
   private editGeneration = 0
   private readonly future: IgsProjectDocumentV1[] = []
   private readonly historicalSources = new Map<string, PendingSource>()
+  private historyCleanup: Promise<void> = Promise.resolve()
+  private historyEpoch = 0
+  private historyGroup: HistoryGroup | undefined
+  private readonly orphanedSourcePaths = new Set<string>()
   private readonly ownedStaging = new Set<string>()
   private readonly past: IgsProjectDocumentV1[] = []
+  private readonly pendingGroupedEdits = new Map<string, Set<Promise<void>>>()
   private pendingWrite: Promise<void> = Promise.resolve()
 
   private rebasing = false
@@ -328,8 +346,10 @@ export class ProjectAutosaveCoordinator {
       // available, so old history must not be allowed to replace this edit on Undo.
       this.past.length = 0
       this.future.length = 0
+      this.historyGroup = undefined
       this.editGeneration += 1
       this.schedule()
+      await this.pruneHistorySources()
     } catch (error) {
       await this.removeNewStaging(staged)
       throw error
@@ -344,24 +364,60 @@ export class ProjectAutosaveCoordinator {
   async applyDocument(
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>> = {},
-    options: { expectedDocumentRevision?: string } = {},
+    options: { expectedDocumentRevision?: string; historyGroupId?: string } = {},
   ): Promise<{ documentRevision: string }> {
-    const documentRevision = await this.applyDocumentInternal(
-      input,
-      assetSources,
-      options,
-      (before, after) => {
-        if (sameContent(before, after)) {
-          return
-        }
-        this.past.push(before)
-        if (this.past.length > PROJECT_HISTORY_LIMIT) {
-          this.past.shift()
-        }
-        this.future.length = 0
-      },
-    )
-    return { documentRevision }
+    if (
+      options.historyGroupId !== undefined &&
+      (typeof options.historyGroupId !== 'string' ||
+        options.historyGroupId.length === 0 ||
+        options.historyGroupId.length > 128)
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'Invalid Project history group.')
+    }
+    const pending = options.historyGroupId
+      ? this.registerGroupedEdit(options.historyGroupId)
+      : undefined
+    try {
+      const documentRevision = await this.applyDocumentInternal(
+        input,
+        assetSources,
+        options,
+        (before, after) => {
+          if (this.historyGroup?.id !== options.historyGroupId) {
+            this.sealHistoryGroupNow()
+          }
+          if (sameContent(before, after)) {
+            return
+          }
+          if (options.historyGroupId) {
+            this.historyGroup ??= { baseline: before, id: options.historyGroupId }
+          } else {
+            this.pushHistory(before)
+            this.future.length = 0
+          }
+        },
+      )
+      await this.pruneHistorySources()
+      return { documentRevision }
+    } finally {
+      pending?.()
+    }
+  }
+
+  /** Explicitly forget this tab's snapshots without changing or saving its current document. */
+  async clearHistory(): Promise<void> {
+    this.assertOpen()
+    if (this.activeSave || this.editGate) {
+      throw new ProjectAutosaveError(
+        'SAVE_IN_PROGRESS',
+        'Wait for the Project operation to finish.',
+      )
+    }
+    this.historyGroup = undefined
+    this.past.length = 0
+    this.future.length = 0
+    this.historyEpoch += 1
+    await this.pruneHistorySources()
   }
 
   /** Release retained undo/import assets after the tab is clean and writes have settled. */
@@ -379,6 +435,7 @@ export class ProjectAutosaveCoordinator {
     this.closed = true
     this.clearTimer()
     try {
+      await this.historyCleanup
       await this.pendingWrite
       await this.queueWrite()
       await this.cleanupStaging()
@@ -391,6 +448,7 @@ export class ProjectAutosaveCoordinator {
     this.releaseLease = undefined
     this.past.length = 0
     this.future.length = 0
+    this.historyGroup = undefined
   }
 
   /** Graceful Discard Changes; reopen the saved package as a fresh session. */
@@ -402,6 +460,7 @@ export class ProjectAutosaveCoordinator {
     this.closed = true
     this.clearTimer()
     try {
+      await this.historyCleanup
       await this.pendingWrite
       const { savedPackage, session } = await openConsistent(this.filePath, roots)
       await this.shadow.discard(this.filePath)
@@ -418,6 +477,7 @@ export class ProjectAutosaveCoordinator {
       this.releaseLease = undefined
       this.past.length = 0
       this.future.length = 0
+      this.historyGroup = undefined
       return replacement
     } catch (error) {
       this.closed = false
@@ -515,6 +575,14 @@ export class ProjectAutosaveCoordinator {
     if (this.activeSave || this.editGate) {
       throw new ProjectAutosaveError('SAVE_IN_PROGRESS', 'A Project Save is already running.')
     }
+    if (this.pendingGroupedEdits.size > 0) {
+      await this.waitForGroupedEdits()
+      this.assertOpen()
+      if (this.activeSave || this.editGate) {
+        throw new ProjectAutosaveError('SAVE_IN_PROGRESS', 'A Project Save is already running.')
+      }
+    }
+    this.sealHistoryGroupNow()
     this.clearTimer()
     const savingDocument = this.session.document
     const assets = this.changedSources(savingDocument)
@@ -534,6 +602,7 @@ export class ProjectAutosaveCoordinator {
     const coordinated = (async (): Promise<CoordinatedSaveOutcome> => {
       let committed: ProjectSaveOutcome
       try {
+        await this.pruneHistorySources()
         // A must be durable in the shadow before package assembly starts. Edits arriving during
         // this preflight wait to enter the session until ProjectSession has captured A.
         if (this.session.dirty) {
@@ -633,6 +702,18 @@ export class ProjectAutosaveCoordinator {
       this.rebasing = false
       this.releasePreparedEdits()
       this.activeSave = undefined
+      await this.pruneHistorySources()
+    }
+  }
+
+  /** End one prompt focus transaction; a late blur cannot seal a newer focus session. */
+  async sealHistoryGroup(historyGroupId?: string): Promise<void> {
+    this.assertOpen()
+    await this.waitForGroupedEdits(historyGroupId)
+    this.assertOpen()
+    if (historyGroupId === undefined || this.historyGroup?.id === historyGroupId) {
+      this.sealHistoryGroupNow()
+      await this.pruneHistorySources()
     }
   }
 
@@ -650,8 +731,10 @@ export class ProjectAutosaveCoordinator {
   ): Promise<string> {
     this.assertOpen()
     await this.editGate
+    await this.historyCleanup
     this.assertOpen()
     const before = this.session.document
+    const historyEpoch = this.historyEpoch
     if (
       options.expectedDocumentRevision !== undefined &&
       before.documentRevision !== options.expectedDocumentRevision
@@ -675,6 +758,12 @@ export class ProjectAutosaveCoordinator {
       this.assertOpen()
       if (!sameDocument(this.session.document, before)) {
         throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed during this edit.')
+      }
+      if (this.historyEpoch !== historyEpoch) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'Project history was cleared during this edit.',
+        )
       }
       this.requireChangedSources(candidate, staged)
       beforeCommit?.()
@@ -728,10 +817,16 @@ export class ProjectAutosaveCoordinator {
     this.timer = undefined
   }
 
+  private hasChangedHistoryGroup(): boolean {
+    return Boolean(
+      this.historyGroup && !sameContent(this.historyGroup.baseline, this.session.document),
+    )
+  }
+
   private installSources(staged: Map<string, PendingSource>): void {
     for (const [memberPath, source] of staged) {
       this.sources.set(memberPath, source)
-      this.historicalSources.set(assetKey(source.ref), source)
+      this.rememberHistoricalSource(source)
     }
     const references = referencedMembers(this.session.document)
     for (const [memberPath, source] of this.sources) {
@@ -750,6 +845,18 @@ export class ProjectAutosaveCoordinator {
         'Wait for the Project operation to finish.',
       )
     }
+    if (this.pendingGroupedEdits.size > 0) {
+      await this.waitForGroupedEdits()
+      this.assertOpen()
+      if (this.activeSave || this.editGate) {
+        throw new ProjectAutosaveError(
+          'SAVE_IN_PROGRESS',
+          'Wait for the Project operation to finish.',
+        )
+      }
+    }
+    this.sealHistoryGroupNow()
+    await this.pruneHistorySources()
     const source = direction === 'undo' ? this.past : this.future
     const destination = direction === 'undo' ? this.future : this.past
     const target = source.at(-1)
@@ -780,6 +887,7 @@ export class ProjectAutosaveCoordinator {
         }
       },
     )
+    await this.pruneHistorySources()
   }
 
   private async preserveSaveBaseAssets(savingDocument: IgsProjectDocumentV1): Promise<void> {
@@ -807,13 +915,89 @@ export class ProjectAutosaveCoordinator {
         this.saveBaseSources.set(ref.path, { ref, source: { sourcePath: destination } })
       }
       for (const source of this.saveBaseSources.values()) {
-        this.historicalSources.set(assetKey(source.ref), source)
+        this.rememberHistoricalSource(source)
       }
       this.ownedStaging.add(directory)
     } catch (error) {
       this.saveBaseSources.clear()
       await rm(directory, { force: true, recursive: true })
       throw error
+    }
+  }
+
+  /** Reclaim only sources no current document, saved base, pending Save or retained snapshot needs. */
+  private async pruneHistorySources(): Promise<void> {
+    const cleanup = this.historyCleanup.then(async () => {
+      // A queued shadow writer may still be reading the previous document and its staged assets.
+      await this.pendingWrite
+      const keep = new Set<string>()
+      for (const document of [
+        this.session.document,
+        this.baseDocument,
+        this.saveTarget,
+        this.historyGroup?.baseline,
+        ...this.past,
+        ...this.future,
+      ]) {
+        if (document) {
+          for (const ref of referencedMembers(document).values()) {
+            keep.add(assetKey(ref))
+          }
+        }
+      }
+      const candidates = new Set(this.orphanedSourcePaths)
+      this.orphanedSourcePaths.clear()
+      for (const [key, pending] of this.historicalSources) {
+        if (!keep.has(key)) {
+          this.historicalSources.delete(key)
+          if ('sourcePath' in pending.source) {
+            candidates.add(pending.source.sourcePath)
+          }
+        }
+      }
+      const livePaths = new Set<string>()
+      for (const pending of [
+        ...this.sources.values(),
+        ...this.saveBaseSources.values(),
+        ...this.historicalSources.values(),
+      ]) {
+        if ('sourcePath' in pending.source) {
+          livePaths.add(pending.source.sourcePath)
+        }
+      }
+      for (const sourcePath of candidates) {
+        if (livePaths.has(sourcePath)) {
+          continue
+        }
+        await unlink(sourcePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') {
+            process.emitWarning(`Project history asset cleanup failed: ${String(error)}`)
+          }
+        })
+        const directory = path.dirname(sourcePath)
+        if (this.ownedStaging.has(directory)) {
+          await rmdir(directory)
+            .then(() => this.ownedStaging.delete(directory))
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') {
+                process.emitWarning(`Project history staging cleanup failed: ${String(error)}`)
+              }
+            })
+        }
+      }
+    })
+    // Asset cleanup is best effort; a committed document edit must never become a reported
+    // failure because scratch maintenance could not unlink a historical copy.
+    this.historyCleanup = cleanup.catch((error: unknown) => {
+      process.emitWarning(`Project history cleanup failed: ${String(error)}`)
+    })
+    await this.historyCleanup
+  }
+
+  private pushHistory(snapshot: IgsProjectDocumentV1): void {
+    this.past.push(snapshot)
+    if (this.past.length > PROJECT_HISTORY_LIMIT) {
+      this.past.shift()
     }
   }
 
@@ -826,10 +1010,36 @@ export class ProjectAutosaveCoordinator {
     return queued
   }
 
+  private registerGroupedEdit(groupId: string): () => void {
+    let release!: () => void
+    const completion = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const group = this.pendingGroupedEdits.get(groupId) ?? new Set<Promise<void>>()
+    group.add(completion)
+    this.pendingGroupedEdits.set(groupId, group)
+    return () => {
+      group.delete(completion)
+      if (group.size === 0) {
+        this.pendingGroupedEdits.delete(groupId)
+      }
+      release()
+    }
+  }
+
   private releasePreparedEdits(): void {
     this.releaseEditGate?.()
     this.releaseEditGate = undefined
     this.editGate = undefined
+  }
+
+  private rememberHistoricalSource(source: PendingSource): void {
+    const key = assetKey(source.ref)
+    const previous = this.historicalSources.get(key)
+    if (previous && 'sourcePath' in previous.source && previous !== source) {
+      this.orphanedSourcePaths.add(previous.source.sourcePath)
+    }
+    this.historicalSources.set(key, source)
   }
 
   private async removeNewStaging(staged: Map<string, PendingSource>): Promise<void> {
@@ -901,6 +1111,18 @@ export class ProjectAutosaveCoordinator {
     this.timer.unref()
   }
 
+  private sealHistoryGroupNow(): void {
+    const group = this.historyGroup
+    if (!group) {
+      return
+    }
+    this.historyGroup = undefined
+    if (!sameContent(group.baseline, this.session.document)) {
+      this.pushHistory(group.baseline)
+      this.future.length = 0
+    }
+  }
+
   private sourceFor(ref: AssetRef, staged?: Map<string, PendingSource>): PendingSource | undefined {
     for (const candidate of [
       staged?.get(ref.path),
@@ -957,6 +1179,18 @@ export class ProjectAutosaveCoordinator {
         await rm(directory, { force: true, recursive: true })
       }
       throw error
+    }
+  }
+
+  private async waitForGroupedEdits(groupId?: string): Promise<void> {
+    while (true) {
+      const pending = groupId
+        ? [...(this.pendingGroupedEdits.get(groupId) ?? [])]
+        : [...this.pendingGroupedEdits.values()].flatMap((group) => [...group])
+      if (pending.length === 0) {
+        return
+      }
+      await Promise.all(pending)
     }
   }
 

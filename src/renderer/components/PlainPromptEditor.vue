@@ -9,7 +9,7 @@ import {
   completionKeymap,
   startCompletion,
 } from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap } from '@codemirror/commands'
 import { Compartment, EditorState, Transaction } from '@codemirror/state'
 import { EditorView, keymap, tooltips } from '@codemirror/view'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -33,6 +33,7 @@ const props = defineProps<{
   loraSources: LoraTriggerSource[]
   polarity: 'negative' | 'positive'
 }>()
+const emit = defineEmits<{ blur: []; focus: [] }>()
 const text = defineModel<string>({ required: true })
 const host = ref<HTMLElement | null>(null)
 const focused = ref(false)
@@ -63,8 +64,9 @@ function focus() {
 }
 
 function attention(direction: -1 | 1) {
-  if (view && !props.disabled && applyPromptAttention(view, direction)) {
+  if (view && !props.disabled) {
     view.focus()
+    applyPromptAttention(view, direction)
   }
 }
 function browse() {
@@ -79,8 +81,8 @@ function clear() {
   }
   const transaction = clearPromptTransaction(view.state)
   if (transaction) {
-    view.dispatch(transaction)
     view.focus()
+    view.dispatch(transaction)
   }
 }
 async function copy() {
@@ -127,19 +129,15 @@ onMounted(() => {
           EditorState.readOnly.of(props.disabled),
           EditorView.editable.of(!props.disabled),
         ]),
-        history(),
-        keymap.of([
-          ...promptAttentionKeymap,
-          ...completionKeymap,
-          ...defaultKeymap,
-          ...historyKeymap,
-        ]),
+        keymap.of([...promptAttentionKeymap, ...completionKeymap, ...defaultKeymap]),
         EditorView.domEventHandlers({
           blur() {
             focused.value = false
+            emit('blur')
           },
           focus() {
             focused.value = true
+            emit('focus')
           },
         }),
         EditorView.updateListener.of((update) => {

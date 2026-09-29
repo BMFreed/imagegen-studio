@@ -10,6 +10,8 @@ function projectTab(): ProjectTab {
   const document = createEmptyProjectDocumentV1({ title: 'Draft test' })
   return {
     autosaveError: null,
+    canRedo: false,
+    canUndo: false,
     dirty: false,
     generationDraft: document.generationDraft,
     id: document.documentId,
@@ -19,6 +21,91 @@ function projectTab(): ProjectTab {
     title: document.title,
   }
 }
+
+test('blur seal stays between queued prompt focus groups while earlier IPC is in flight', async () => {
+  let saved = projectTab()
+  const operations: string[] = []
+  let releaseFirst: (() => void) | undefined
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => {
+      saved = tab
+    },
+    onError: () => assert.fail('Unexpected draft error'),
+    onOverlay: () => {},
+    seal: async (_tabId, groupId) => {
+      operations.push(`seal:${groupId}`)
+      return saved
+    },
+    send: async (_tabId, change, groupId) => {
+      assert.equal(change.kind, 'positive-prompt')
+      operations.push(`send:${groupId}:${change.text}`)
+      if (operations.length === 1) {
+        await first
+      }
+      saved = apply(saved, change)
+      return saved
+    },
+  })
+
+  sync.change(saved, { kind: 'positive-prompt', text: 'first' }, 'first-focus')
+  sync.change(saved, { kind: 'positive-prompt', text: 'first complete' }, 'first-focus')
+  sync.sealPromptHistory(saved, 'first-focus')
+  sync.change(saved, { kind: 'positive-prompt', text: 'second focus' }, 'second-focus')
+  const flush = sync.flush(saved.id)
+  releaseFirst?.()
+  await flush
+  assert.deepEqual(operations, [
+    'send:first-focus:first',
+    'send:first-focus:first complete',
+    'seal:first-focus',
+    'send:second-focus:second focus',
+  ])
+  assert.equal(saved.generationDraft.positivePrompt.text, 'second focus')
+})
+
+test('coalescing keeps an intervening setting mutation in its original Project history order', async () => {
+  let saved = projectTab()
+  const order: string[] = []
+  let releaseFirst: (() => void) | undefined
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => {
+      saved = tab
+    },
+    onError: () => assert.fail('Unexpected draft error'),
+    onOverlay: () => {},
+    send: async (_tabId, change) => {
+      order.push(
+        change.kind === 'positive-prompt'
+          ? `prompt:${change.text}`
+          : change.kind === 'seed'
+            ? `seed:${change.value}`
+            : change.kind,
+      )
+      if (order.length === 1) {
+        await first
+      }
+      saved = apply(saved, change)
+      return saved
+    },
+  })
+
+  sync.change(saved, { kind: 'positive-prompt', text: 'in flight' })
+  sync.change(saved, { kind: 'seed', policy: 'fixed', value: 1 })
+  sync.change(saved, { kind: 'positive-prompt', text: 'after seed' })
+  sync.change(saved, { kind: 'seed', policy: 'fixed', value: 2 })
+  const flush = sync.flush(saved.id)
+  releaseFirst?.()
+  await flush
+  assert.deepEqual(order, ['prompt:in flight', 'seed:1', 'prompt:after seed', 'seed:2'])
+  assert.equal(saved.generationDraft.positivePrompt.text, 'after seed')
+  assert.deepEqual(saved.generationDraft.seed, { policy: 'fixed', value: 2 })
+})
 
 function apply(tab: ProjectTab, change: ProjectGenerationDraftChange): ProjectTab {
   const next = structuredClone(tab)

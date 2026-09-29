@@ -473,8 +473,71 @@ try {
   await expect(positive).toHaveText('(soft light')
   await expect(positive.locator('.cm-prompt-syntax-error')).toHaveText('(')
   await expect(negative.locator('.cm-prompt-syntax-warning')).toHaveText('abc')
+
+  // Real CodeMirror input is a single Project transaction from focus to blur,
+  // rather than local per-keystroke history. Undo restores the saved document
+  // baseline, and Redo restores the entire edit.
+  await positive.fill('group')
+  await positive.press('End')
+  await positive.pressSequentially('ed')
+  await expect(positive).toHaveText('grouped')
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.positivePrompt.text === 'grouped',
+    'Grouped prompt input did not reach the Project document',
+  )
+  await positive.press('Control+z')
+  await expect(positive).toHaveText('(soft light')
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.positivePrompt.text === '(soft light',
+    'Project Undo did not restore the prompt baseline',
+  )
+  const promptHistory = projectRegion.getByRole('toolbar', { name: 'Project history' })
+  await expect(promptHistory.getByRole('button', { name: 'Redo' })).toBeEnabled()
+  if (process.env.IMAGEGEN_SMOKE_UNDO_SCREENSHOT) {
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
+    await window.waitForFunction(() => window.innerWidth === 1380)
+    await window.screenshot({ path: process.env.IMAGEGEN_SMOKE_UNDO_SCREENSHOT })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(900, 620),
+    )
+    await window.waitForFunction(() => window.innerWidth === 900)
+    await expect(promptHistory.getByRole('button', { name: 'Redo' })).toBeVisible()
+    await window.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_UNDO_SCREENSHOT.replace('.png', '-small.png'),
+    })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1380, 900),
+    )
+    await window.waitForFunction(() => window.innerWidth === 1380)
+  }
+  await positive.press('Control+Shift+Z')
+  await expect(positive).toHaveText('grouped')
+  await waitForOpenTab(
+    window,
+    projectId,
+    (tab) => tab.generationDraft.positivePrompt.text === 'grouped',
+    'Project Redo did not restore the grouped prompt edit',
+  )
+  await promptHistory.getByRole('button', { name: 'Undo' }).click()
+  await expect(positive).toHaveText('(soft light')
+  await window.getByRole('button', { name: 'Edit menu' }).click()
+  await window
+    .locator('.n-dropdown-menu')
+    .getByText('Redo · Ctrl+Shift+Z / Ctrl+Y', { exact: true })
+    .click()
+  await expect(positive).toHaveText('grouped')
+  await window.getByRole('button', { name: 'Edit menu' }).click()
+  await window.locator('.n-dropdown-menu').getByText('Undo · Ctrl+Z', { exact: true }).click()
+  await expect(positive).toHaveText('(soft light')
   await positive.fill('trigger 905, portrait')
   await negative.fill('trigger 905, blur')
+  await expect(promptHistory.getByRole('button', { name: 'Redo' })).toBeDisabled()
   await expect(positive.locator('.cm-prompt-lora-trigger')).toHaveCount(0)
   await lorasRegion.locator('[aria-label="Add LoRA"]').click()
   await window.getByText('trigger 905', { exact: true }).last().click()
@@ -533,10 +596,6 @@ try {
     await window.waitForFunction(() => window.innerWidth === 1380)
   }
   await triggerOption.click()
-  await expect(positive).toHaveText('portrait, trigger 905, untouched')
-  await positive.press('Control+z')
-  await expect(positive).toHaveText('portrait, trigger 90, untouched')
-  await positive.press('Control+Shift+Z')
   await expect(positive).toHaveText('portrait, trigger 905, untouched')
   await projectRegion.getByRole('button', { name: 'Save Project' }).click()
   await projectRegion.getByText('Saved', { exact: true }).waitFor()

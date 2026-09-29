@@ -543,6 +543,56 @@ test('Project prompt and seed edits survive shadow recovery, Save and reopen wit
   })
 })
 
+test('ProjectService groups prompt edits for Undo while keeping later controls and Clear History separate', async () => {
+  await withService(async ({ repository, service }) => {
+    const created = await service.create({ height: 512, title: 'Prompt history', width: 512 })
+    const projectPath = (await repository.listProjects())[0].canonicalPath
+    const groupId = randomUUID()
+    for (const text of ['a', 'a blue', 'a blue lantern']) {
+      const tab = await service.updateGenerationDraft(
+        created.id,
+        { kind: 'positive-prompt', text },
+        groupId,
+      )
+      assert.equal(tab.generationDraft.positivePrompt.text, text)
+    }
+    await service.flushAutosave(created.id)
+    assert.equal(
+      (await readIgsPackage(projectPath)).project.generationDraft.positivePrompt.text,
+      '',
+    )
+    await service.sealPromptHistory(created.id, groupId)
+    const seeded = await service.updateGenerationDraft(created.id, {
+      kind: 'seed',
+      policy: 'fixed',
+      value: 42,
+    })
+    assert.equal(seeded.canUndo, true)
+    await assert.rejects(
+      service.updateGenerationDraft(
+        created.id,
+        { kind: 'sampling-steps', value: 35 },
+        randomUUID(),
+      ),
+      { code: 'PROJECT_INVALID_INPUT' },
+    )
+    const undoSeed = await service.undo(created.id)
+    assert.deepEqual(undoSeed.generationDraft.seed, created.generationDraft.seed)
+    assert.equal(undoSeed.generationDraft.positivePrompt.text, 'a blue lantern')
+    const undoPrompt = await service.undo(created.id)
+    assert.equal(undoPrompt.generationDraft.positivePrompt.text, '')
+    assert.equal(undoPrompt.canUndo, false)
+    assert.equal(undoPrompt.canRedo, true)
+    const redoPrompt = await service.redo(created.id)
+    assert.equal(redoPrompt.generationDraft.positivePrompt.text, 'a blue lantern')
+    const cleared = await service.clearHistory(created.id)
+    assert.equal(cleared.generationDraft.positivePrompt.text, 'a blue lantern')
+    assert.equal(cleared.canUndo, false)
+    assert.equal(cleared.canRedo, false)
+    assert.equal(cleared.dirty, true)
+  })
+})
+
 test('Project sampling edits survive shadow recovery, Save and reopen independently', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
     const created = await service.create({ height: 512, title: 'Sampling persistence', width: 512 })

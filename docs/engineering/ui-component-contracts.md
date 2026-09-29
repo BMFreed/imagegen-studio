@@ -177,8 +177,10 @@ and LoRA triggers. Обычная Info-справка доступна чере�
 [Общие правила](../../src/shared/projects/prompt-text.ts) работают с обычным
 текстом и диапазонами. [CodeMirror adapter](../../src/renderer/components/prompt-editing-codemirror.ts)
 применяет attention только к выделению/фразе, уважает read-only и выделяет
-локальные undo steps. Он не управляет Project history или embedding refs.
-Prototype сохраняет свою document history; Electron пока имеет local text undo.
+локальные undo steps там, где владелец редактора подключает history. Он не
+управляет Project history или embedding refs. Prototype сохраняет свою document
+history; production Project CodeMirror не подключает local history и передаёт
+focus-сессию общему [Project Undo/Redo](../features/project/undo-redo.md).
 [Проверки](./project-prompt-actions-research.md): реальные EditorState/history,
 Electron pointer/keyboard, clipboard, сохранённый `.igs`, prototype consumers.
 

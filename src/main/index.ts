@@ -11,6 +11,7 @@ import type {
   ProjectGenerationModelSelection,
   ProjectLoraIdentity,
   ProjectRasterLayerChange,
+  ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
@@ -732,6 +733,9 @@ if (!gotInstanceLock) {
       const isCandidateId = (value: unknown): value is string =>
         typeof value === 'string' &&
         /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)
+      const isHistoryGroupId = (value: unknown): value is string =>
+        typeof value === 'string' &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
       const closeProjectArgs = (args: unknown[]): boolean =>
         args.length === 2 && isProjectId(args[0]) && typeof args[1] === 'boolean'
@@ -1029,13 +1033,58 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(
         ipcChannels.projects.updateGenerationDraft,
-        (args) =>
-          args.length === 2 && isProjectId(args[0]) && isProjectGenerationDraftChange(args[1]),
-        (tabId, change) =>
+        (args) => {
+          const change = args[1]
+          return (
+            args.length === 3 &&
+            isProjectId(args[0]) &&
+            isProjectGenerationDraftChange(change) &&
+            (args[2] === null ||
+              (isHistoryGroupId(args[2]) &&
+                (change.kind === 'positive-prompt' || change.kind === 'negative-prompt')))
+          )
+        },
+        (tabId, change, historyGroupId) =>
           projectService.updateGenerationDraft(
             tabId as string,
             change as ProjectGenerationDraftChange,
+            (historyGroupId as string | null) ?? undefined,
           ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.sealPromptHistory,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          (args[1] === null || isHistoryGroupId(args[1])),
+        (tabId, historyGroupId) =>
+          projectGenerationGate.run(tabId as string, () =>
+            projectService.sealPromptHistory(
+              tabId as string,
+              (historyGroupId as string | null) ?? undefined,
+            ),
+          ),
+      )
+      const runProjectHistoryAction = (tabId: string, action: () => Promise<ProjectTab>) =>
+        projectGenerationGate.run(tabId, async () => {
+          if (resolvingClose || generationAcceptance?.hasPendingHandoff(tabId)) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish the Project close or accepted-result recovery before changing history.',
+            )
+          }
+          return await action()
+        })
+      registerProjectHandler(ipcChannels.projects.undo, oneProjectId, (tabId) =>
+        runProjectHistoryAction(tabId as string, () => projectService.undo(tabId as string)),
+      )
+      registerProjectHandler(ipcChannels.projects.redo, oneProjectId, (tabId) =>
+        runProjectHistoryAction(tabId as string, () => projectService.redo(tabId as string)),
+      )
+      registerProjectHandler(ipcChannels.projects.clearHistory, oneProjectId, (tabId) =>
+        runProjectHistoryAction(tabId as string, () =>
+          projectService.clearHistory(tabId as string),
+        ),
       )
       registerProjectHandler(
         ipcChannels.projects.updateRasterLayer,

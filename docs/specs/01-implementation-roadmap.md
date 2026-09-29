@@ -48,7 +48,9 @@ LoRA draft добавлен в `a188cd2`: [границы и проверки](.
 Поверх него реализован явный portable LoRA relink: [проверки](../engineering/phase-2a-project-storage-research.md#portable-lora-relinking-validation).
 LoRA-контекст prompt перенесён в Electron: [проверки](../engineering/project-lora-prompt-research.md).
 Выделение фраз, attention, Copy/Clear и общая справка редактора также подключены:
-[проверки и границы local undo](../engineering/project-prompt-actions-research.md).
+[исторические проверки редактора](../engineering/project-prompt-actions-research.md).
+Позднее локальная история Electron Project prompt заменена
+[общей Project history](../engineering/phase-2b-project-undo-research.md).
 Добавлены общие неблокирующие syntax diagnostics prompt:
 [проверки](../engineering/project-prompt-diagnostics-research.md).
 Строка «есть» означает указанный сценарий, а не завершение всей фазы.
@@ -59,11 +61,11 @@ LoRA-контекст prompt перенесён в Electron: [проверки](
 | Каркас | Main/preload/renderer, typed IPC, SQLite, single instance; внутренний live qualification и эксклюзивный generation worker lease | Release runtime install/repair вместо заглушек, проверка release artifact | 2A, 5 |
 | Model Manager | CivitAI URL install/repair, install queue, integrity, versions/default; поддерживаемые Illustrious/Anima `.safetensors`, custom Anima с закреплёнными Qwen3/VAE; единственный editable Illustrious prediction override по SHA-256+size с отмеченным `epsilon` default; Project → Manager focus и Electron smoke изменения библиотечного типа; первый SDXL structural preflight перед Prepare | Полная model/component compatibility для обоих семейств, условия custom checkpoint от источника, hard remove, остальные resource handoff, release model-load/download checks | 2B–2C, 3, 4, 5 |
 | Home | Create/list/search/open, external `.igs` Copy/Move в Uncategorized, thumbnails/Rebuild | Пользовательские workspaces, rename/move/Trash/restore/permanent delete, Status/sort/view/Inspector и unavailable-workspace flows | 4 |
-| Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate; подтверждённый Project close с отменой своих jobs и долговечным staging discard; [read-only Results recovery view](../engineering/phase-2b-results-recovery-ui.md) после restart проверен Electron smoke; явный Add Raster с typed provenance, shadow-before-staging cleanup и Save/reopen; Project-local Undo/Redo foundation в main | Пользовательские Undo/Redo и prompt grouping, Smart Patch acceptance, derived accepted history | 2B–2C |
+| Project document | Реальные `.igs` Save/reopen, close guards, document shadow autosave/recovery, exact checkpoint/LoRA relink; отдельный repository для первого непринятого Illustrious candidate; подтверждённый Project close с отменой своих jobs и долговечным staging discard; [read-only Results recovery view](../engineering/phase-2b-results-recovery-ui.md) после restart проверен Electron smoke; явный Add Raster с typed provenance, shadow-before-staging cleanup и Save/reopen; Project-local Undo/Redo с grouped prompt input, toolbar/shortcuts и bounded asset retention | Smart Patch acceptance, derived accepted history, остальные production Canvas gestures | 2B–2C |
 | Raster Canvas | Konva, pan/zoom/bbox, import PNG/JPEG/WebP, visibility/lock/opacity/blend/reorder | Остальные layer actions, undo/redo, инструменты, masks, Smart Patch и Regional Guidance | 4 |
 | Generation draft | Exact checkpoint, read-only текущий prediction type из библиотеки и advisory snapshot в `.igs`, exact LoRA stack (версии/вес/enabled/remove/relink), plain prompts с exact-version LoRA autocomplete/подсветкой, phrase selection/attention/Copy/Clear, общей справкой и локальными syntax diagnostics, Seed policy/Fixed, явная пара sampler/scheduler для Illustrious, Steps/CFG; общий UI размера для New Project и bbox | Остальные sampling/resource/advanced controls, embedding diagnostics/insertion, Danbooru autocomplete, tokenizer, dynamic preview; фактический Seed Reuse | 2B–2C |
 | Python worker | Dev import normalization, sRGB/ICC, composition/previews, frozen raster target; отдельный локально проверенный Linux/NVIDIA entrypoint для Illustrious `txt2img` с ограниченным dual-CLIP Compel conditioning и маской padding в закреплённом Diffusers 0.40 | Устанавливаемый app-owned ML runtime, остальной Invoke-like conditioning, LoRA/Anima, кэш моделей, progress и остальные generation operations | 2A–2C |
-| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, TS subprocess transport, внутренний Project → queue → staging handoff и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight; Electron удерживает recovered repositories и создаёт coordinator с подтверждаемым worker lease и барьером закрытия; pending jobs отменяются при app close; per-Project fence/cancel и staging tombstones проверены сквозным Electron сценарием; recovered candidate виден в Project через typed IPC и приватный canvas preview; `Save Candidate Image` сохраняет проверенный PNG отдельно; Results multi-selection и Add Raster проходят renderer→IPC→shadow→Save с immutable provenance | Подключить Generate action и полный pipeline, early-accept cancel, Smart Patch variants, пользовательский Undo, derived history/comparison | 2B–2C, 4 |
+| Generate/results | Frozen raster target, exact Illustrious txt2img context и строгий TS/Python request boundary; app-owned durable input и SQLite queue; repository публикации проверенного candidate, seed cursor и restart reconciliation; приватный processor, TS subprocess transport, внутренний Project → queue → staging handoff и локальный GPU smoke до provisional sRGB PNG; SDXL structural preflight; Electron удерживает recovered repositories и создаёт coordinator с подтверждаемым worker lease и барьером закрытия; pending jobs отменяются при app close; per-Project fence/cancel и staging tombstones проверены сквозным Electron сценарием; recovered candidate виден в Project через typed IPC и приватный canvas preview; `Save Candidate Image` сохраняет проверенный PNG отдельно; Results multi-selection и Add Raster проходят renderer→IPC→shadow→Save с immutable provenance; Project Undo/Redo восстанавливает принятое Raster-изменение одним шагом без staging | Подключить Generate action и полный pipeline, early-accept cancel, Smart Patch variants, derived history/comparison | 2B–2C, 4 |
 | Preset Manager | Только отдельный in-memory Vue prototype | Production manager/SQLite, create/edit/result-to-preset, full/partial Apply, resource diagnostics, 30-day delete/restore/cleanup | 3 |
 | Image export | Контракт bounds/sRGB | Export As, Export Generation BBox, Save Candidate Image; worker→main→file checks | 2B, 4 |
 | Релиз и app updates | Продуктовые контракты | Artifact/install/repair/rollback, GPU qualification, ручной Electron updater, clean install/upgrade evidence | 5 |
@@ -525,12 +527,24 @@ Illustrious context, Raster provenance, Project recovery shadow и явный Sa
 Выбор нескольких результатов из разных staging sessions создаёт одно изменение
 документа; shadow подтверждается до точечного tombstone, а повтор не создаёт
 дубликаты. Project-local Undo/Redo foundation сохраняет 64 снимка и ассеты для
-Redo после Save, но пользовательские controls и группировка ввода prompt ещё
-не подключены. Ранний Add при незавершённых jobs, Smart Patch variants, derived
+Redo после Save. [Production Project Undo/Redo](../engineering/phase-2b-project-undo-research.md)
+подключает typed IPC, grouped prompt focus sessions, toolbar/shortcuts и очистку
+недостижимых исторических ассетов. Ранний Add при незавершённых jobs, Smart Patch variants, derived
 SQLite history, обычный Generate и полный pipeline остаются следующими шагами.
 После crash в узком окне между shadow commit и tombstone непринятые сессии
 сохраняются: нужен durable acceptance journal для полного автоматического
 cleanup без риска удалить более новые результаты.
+
+**Project Undo/Redo checkpoint (30.09.2026):**
+[сквозной Project history](../engineering/phase-2b-project-undo-research.md)
+подключает per-tab историю к typed IPC и Electron Project: Undo/Redo доступны
+через кнопки, Edit и клавиатуру, Clear History — в настройках проекта.
+Редактирование prompt группируется от focus до blur при сохранении
+инкрементального recovery shadow. Принятие нескольких Raster candidates остаётся
+одним шагом; Redo проверяет исторические ассеты, а вытесненные состояния
+освобождают больше не нужные копии. История не входит в `.igs` и не переживает
+закрытие вкладки. Это не подтверждает остальные Canvas gestures, Smart Patch
+variants, ordinary Generate или release runtime.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

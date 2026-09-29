@@ -3,9 +3,17 @@ import type { ProjectGenerationResultView, ProjectRasterLayerView } from '../../
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
-import { ArrowsMaximize, Box, HandMove, ZoomIn, ZoomOut } from '@vicons/tabler'
+import {
+  ArrowsMaximize,
+  Box,
+  HandMove,
+  ArrowForwardUp as RedoIcon,
+  ArrowBackUp as UndoIcon,
+  ZoomIn,
+  ZoomOut,
+} from '@vicons/tabler'
 import Konva from 'konva'
-import { NButton, NIcon, NSelect } from 'naive-ui'
+import { NButton, NIcon, NSelect, NTooltip } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
@@ -21,9 +29,12 @@ import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
 const props = defineProps<{
   bbox: IgsRectV1
   candidateActionsDisabled: boolean
+  canRedo: boolean
+  canUndo: boolean
   disabled: boolean
   generationResults: ProjectGenerationResultView[]
   generationResultsLoading: boolean
+  historyPending: 'redo' | 'undo' | null
   layers: ProjectRasterLayerView[]
   selectedLayerId: string | null
 }>()
@@ -31,9 +42,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   changeBbox: [rect: IgsRectV1]
+  redo: []
   refreshGenerationResults: []
   saveCandidateImage: [candidateId: string]
   selectLayer: [layerId: string]
+  undo: []
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -889,6 +902,38 @@ watch(
       </div>
     </div>
     <div class="viewport-bar">
+      <div aria-label="Project history" class="history-controls" role="toolbar">
+        <NTooltip>
+          <template v-slot:trigger>
+            <NButton
+              aria-label="Undo"
+              :disabled="disabled || !canUndo"
+              :loading="historyPending === 'undo'"
+              quaternary
+              size="tiny"
+              @click="emit('undo')"
+            >
+              <template v-slot:icon><NIcon :component="UndoIcon" :size="16" /></template>
+            </NButton>
+          </template>
+          Undo · Ctrl/Cmd+Z
+        </NTooltip>
+        <NTooltip>
+          <template v-slot:trigger>
+            <NButton
+              aria-label="Redo"
+              :disabled="disabled || !canRedo"
+              :loading="historyPending === 'redo'"
+              quaternary
+              size="tiny"
+              @click="emit('redo')"
+            >
+              <template v-slot:icon><NIcon :component="RedoIcon" :size="16" /></template>
+            </NButton>
+          </template>
+          Redo · Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y
+        </NTooltip>
+      </div>
       <div aria-label="Canvas viewport" class="viewport-controls" role="toolbar">
         <NButton aria-label="Zoom out" quaternary size="tiny" @click="setZoom(camera.scale / 1.25)">
           <template v-slot:icon><NIcon :component="ZoomOut" :size="16" /></template>
@@ -1039,6 +1084,13 @@ watch(
   display: flex;
   align-items: center;
   gap: 2px;
+}
+.history-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  border-right: 1px solid var(--app-border);
 }
 .zoom-select {
   width: 84px;

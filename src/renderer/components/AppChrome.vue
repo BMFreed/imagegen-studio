@@ -1,15 +1,34 @@
 <script setup lang="ts">
-import { NButton } from 'naive-ui'
+import { NButton, NDropdown } from 'naive-ui'
+import { computed } from 'vue'
 
 import logoUrl from '../../../docs/assets/brand/imagegen-studio-logo-horizontal-no-bg.svg'
 
-defineProps<{
+const props = defineProps<{
+  canRedo: boolean
+  canUndo: boolean
   homeOpen: boolean
+  projectActive: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   home: []
+  redo: []
+  undo: []
 }>()
+
+const editOptions = computed(() => [
+  { disabled: !props.canUndo, key: 'undo', label: 'Undo · Ctrl+Z' },
+  { disabled: !props.canRedo, key: 'redo', label: 'Redo · Ctrl+Shift+Z / Ctrl+Y' },
+])
+
+function selectEditAction(key: number | string) {
+  if (key === 'undo' && props.canUndo) {
+    emit('undo')
+  } else if (key === 'redo' && props.canRedo) {
+    emit('redo')
+  }
+}
 </script>
 
 <template>
@@ -18,6 +37,11 @@ defineEmits<{
       <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
     </NButton>
     <span class="chrome-context">{{ homeOpen ? 'Projects' : 'No document' }}</span>
+    <NDropdown :options="editOptions" trigger="click" @select="selectEditAction">
+      <NButton aria-label="Edit menu" class="chrome-menu" :disabled="!projectActive" text>
+        Edit
+      </NButton>
+    </NDropdown>
   </header>
 </template>
 
@@ -49,5 +73,9 @@ defineEmits<{
 .chrome-context {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-meta);
+}
+
+.chrome-menu {
+  -webkit-app-region: no-drag;
 }
 </style>

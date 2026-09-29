@@ -881,6 +881,263 @@ test('no-op and rejected edits keep history, but a new edit after Undo clears Re
   })
 })
 
+test('prompt focus edits update the shadow per keystroke but seal as one Project Undo step', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const groupId = randomUUID()
+    for (const text of ['a', 'ab', 'abc']) {
+      const document = coordinator.document
+      await coordinator.applyDocument(
+        {
+          ...document,
+          generationDraft: {
+            ...document.generationDraft,
+            positivePrompt: { ...document.generationDraft.positivePrompt, text },
+          },
+        },
+        {},
+        { historyGroupId: groupId },
+      )
+      await coordinator.flush()
+      const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
+      assert.equal(inspection.status, 'recoverable')
+      if (inspection.status === 'recoverable') {
+        assert.equal(inspection.document.generationDraft.positivePrompt.text, text)
+      }
+    }
+    assert.equal(coordinator.canUndo, true)
+    await coordinator.sealHistoryGroup(groupId)
+    await coordinator.sealHistoryGroup(groupId)
+    await coordinator.undo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, '')
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, true)
+    await coordinator.redo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, 'abc')
+    assert.equal(coordinator.canRedo, false)
+  })
+})
+
+test('net-zero prompt focus preserves an older Redo, while ordinary edits and Save seal the focus', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    await coordinator.applyDocument({ ...coordinator.document, title: 'First' })
+    await coordinator.undo()
+    assert.equal(coordinator.canRedo, true)
+    const revertedGroup = randomUUID()
+    for (const text of ['temporary', '']) {
+      const document = coordinator.document
+      await coordinator.applyDocument(
+        {
+          ...document,
+          generationDraft: {
+            ...document.generationDraft,
+            positivePrompt: { ...document.generationDraft.positivePrompt, text },
+          },
+        },
+        {},
+        { historyGroupId: revertedGroup },
+      )
+    }
+    await coordinator.sealHistoryGroup(revertedGroup)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, true)
+    await coordinator.redo()
+    assert.equal(coordinator.document.title, 'First')
+
+    const groupId = randomUUID()
+    const document = coordinator.document
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          positivePrompt: { ...document.generationDraft.positivePrompt, text: 'one focus' },
+        },
+      },
+      {},
+      { historyGroupId: groupId },
+    )
+    await coordinator.applyDocument({ ...coordinator.document, title: 'After prompt' })
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'First')
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, 'one focus')
+    await coordinator.undo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, '')
+    await coordinator.redo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, 'one focus')
+
+    const next = coordinator.document
+    await coordinator.applyDocument(
+      {
+        ...next,
+        generationDraft: {
+          ...next.generationDraft,
+          positivePrompt: { ...next.generationDraft.positivePrompt, text: 'saved focus' },
+        },
+      },
+      {},
+      { historyGroupId: randomUUID() },
+    )
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    await coordinator.undo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, 'one focus')
+    assert.equal(
+      (await readIgsPackage(projectPath)).project.generationDraft.positivePrompt.text,
+      'saved focus',
+    )
+  })
+})
+
+test('a rejected delayed prompt edit cannot add a phantom group or undo a later Project edit', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const entered = deferred()
+    const release = deferred()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      beforeEditCommit: async (document) => {
+        if (document.generationDraft.positivePrompt.text === 'late') {
+          entered.release()
+          await release.promise
+        }
+      },
+    })
+    const document = coordinator.document
+    const late = coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          positivePrompt: { ...document.generationDraft.positivePrompt, text: 'late' },
+        },
+      },
+      {},
+      { historyGroupId: randomUUID() },
+    )
+    await entered.promise
+    await coordinator.applyDocument({ ...coordinator.document, title: 'Later' })
+    release.release()
+    await assert.rejects(late, { code: 'EDIT_CONFLICT' })
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'Saved')
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, '')
+    assert.equal(coordinator.canUndo, false)
+  })
+})
+
+test('blur waits for the final in-flight prompt edit before sealing its focus history', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const entered = deferred()
+    const release = deferred()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      beforeEditCommit: async (document) => {
+        if (document.generationDraft.positivePrompt.text === 'last character') {
+          entered.release()
+          await release.promise
+        }
+      },
+    })
+    const groupId = randomUUID()
+    const document = coordinator.document
+    const editing = coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          positivePrompt: { ...document.generationDraft.positivePrompt, text: 'last character' },
+        },
+      },
+      {},
+      { historyGroupId: groupId },
+    )
+    await entered.promise
+    const sealing = coordinator.sealHistoryGroup(groupId)
+    release.release()
+    await Promise.all([editing, sealing])
+    await coordinator.undo()
+    assert.equal(coordinator.document.generationDraft.positivePrompt.text, '')
+    assert.equal(coordinator.canUndo, false)
+  })
+})
+
+test('Clear History conflicts an older in-flight edit even if its document revision is unchanged', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const entered = deferred()
+    const release = deferred()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      beforeEditCommit: async (document) => {
+        if (document.title === 'Older edit') {
+          entered.release()
+          await release.promise
+        }
+      },
+    })
+    const editing = coordinator.applyDocument({ ...coordinator.document, title: 'Older edit' })
+    await entered.promise
+    await coordinator.clearHistory()
+    release.release()
+    await assert.rejects(editing, { code: 'EDIT_CONFLICT' })
+    assert.equal(coordinator.document.title, 'Saved')
+    assert.equal(coordinator.canUndo, false)
+  })
+})
+
+test('Clear History keeps the current document but frees unneeded staged raster copies', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const sourcePath = path.join(directory, 'raster.png')
+    await writeFile(sourcePath, raster)
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const first = withRaster(coordinator.document)
+    await coordinator.applyDocument(first.document, { [first.assetPath]: { sourcePath } })
+    const firstSource = coordinator.getCurrentAssetSource(first.document.layers[0].asset)
+    assert.ok(firstSource && 'sourcePath' in firstSource)
+    const firstStagedPath = firstSource.sourcePath
+    const second = withRaster(coordinator.document)
+    await coordinator.applyDocument(second.document, { [second.assetPath]: { sourcePath } })
+    assert.equal(coordinator.canUndo, true)
+    await coordinator.clearHistory()
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, false)
+    assert.equal(coordinator.document.layers[0].id, second.document.layers[0].id)
+    await assert.rejects(readFile(firstStagedPath), { code: 'ENOENT' })
+    const currentSource = coordinator.getCurrentAssetSource(second.document.layers[0].asset)
+    assert.ok(currentSource && 'sourcePath' in currentSource)
+    assert.deepEqual(await readFile(currentSource.sourcePath), raster)
+    await coordinator.flush()
+    assert.equal(
+      (await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)).status,
+      'recoverable',
+    )
+  })
+})
+
+test('oldest of 64 retained raster snapshots releases its staged source on overflow', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const sourcePath = path.join(directory, 'raster.png')
+    await writeFile(sourcePath, raster)
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    let firstStagedPath = ''
+    for (let index = 0; index < 66; index += 1) {
+      const next = withRaster(coordinator.document)
+      await coordinator.applyDocument(next.document, { [next.assetPath]: { sourcePath } })
+      if (index === 0) {
+        const source = coordinator.getCurrentAssetSource(next.document.layers[0].asset)
+        assert.ok(source && 'sourcePath' in source)
+        firstStagedPath = source.sourcePath
+      }
+    }
+    await assert.rejects(readFile(firstStagedPath), { code: 'ENOENT' })
+    const currentLayer = coordinator.document.layers[0]
+    const currentSource = coordinator.getCurrentAssetSource(currentLayer.asset)
+    assert.ok(currentSource && 'sourcePath' in currentSource)
+    assert.deepEqual(await readFile(currentSource.sourcePath), raster)
+    for (let index = 0; index < 64; index += 1) {
+      await coordinator.undo()
+    }
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.document.layers[0].id !== currentLayer.id, true)
+  })
+})
+
 test('Redo rejects a corrupted retained asset without consuming history or exposing a broken layer', async () => {
   await withProject(async ({ projectPath, roots, shadow }) => {
     const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)

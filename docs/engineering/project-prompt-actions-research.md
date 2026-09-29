@@ -1,5 +1,11 @@
 # Project prompt editing actions
 
+This document records the 27.09.2026 editor checkpoint. Its production
+CodeMirror-local Undo decision was superseded by the later
+[Project Undo/Redo checkpoint](./phase-2b-project-undo-research.md), which groups
+focus-session edits in document history. The evidence below describes the
+earlier revision, not the current Undo behavior.
+
 ## Research
 
 Base `95927be`, clean checkout. Medium risk: shared editor behavior and UI.

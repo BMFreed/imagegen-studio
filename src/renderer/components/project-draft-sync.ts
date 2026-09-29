@@ -4,15 +4,24 @@ export interface ProjectDraftSyncOptions {
   onAcknowledged: (tab: ProjectTab) => void
   onError: (tabId: string, error: Error) => void
   onOverlay: (tabId: string, draft: GenerationDraft | null) => void
-  send: (tabId: string, change: ProjectGenerationDraftChange) => Promise<ProjectTab>
+  seal?: (tabId: string, historyGroupId?: string) => Promise<ProjectTab>
+  send: (
+    tabId: string,
+    change: ProjectGenerationDraftChange,
+    historyGroupId?: string,
+  ) => Promise<ProjectTab>
 }
 type GenerationDraft = ProjectTab['generationDraft']
+
+type DraftOperation =
+  | { change: ProjectGenerationDraftChange; historyGroupId?: string; key: string; kind: 'change' }
+  | { historyGroupId?: string; kind: 'seal' }
 
 interface DraftState {
   desired: GenerationDraft
   disposed: boolean
   error: Error | null
-  pending: Map<string, ProjectGenerationDraftChange>
+  pending: DraftOperation[]
   running: Promise<void> | null
   tabId: string
 }
@@ -23,27 +32,39 @@ export class ProjectDraftSync {
 
   constructor(private readonly options: ProjectDraftSyncOptions) {}
 
-  change(tab: ProjectTab, change: ProjectGenerationDraftChange): void {
+  change(tab: ProjectTab, change: ProjectGenerationDraftChange, historyGroupId?: string): void {
     let state = this.states.get(tab.id)
     if (!state) {
       state = {
         desired: structuredClone(tab.generationDraft),
         disposed: false,
         error: null,
-        pending: new Map(),
+        pending: [],
         running: null,
         tabId: tab.id,
       }
       this.states.set(tab.id, state)
     }
     if (!applyChange(state.desired, change)) {
-      if (state.pending.size === 0 && !state.running) {
+      if (state.pending.length === 0 && !state.running) {
         this.states.delete(tab.id)
       }
       return
     }
     state.error = null
-    state.pending.set(changeKey(change), change)
+    const key = changeKey(change)
+    const previous = state.pending.at(-1)
+    if (
+      previous?.kind === 'change' &&
+      previous.key === key &&
+      previous.historyGroupId === historyGroupId
+    ) {
+      // Only adjacent updates commute. Moving an edit before an intervening
+      // setting change or history seal would change the resulting Undo order.
+      previous.change = change
+    } else {
+      state.pending.push({ change, historyGroupId, key, kind: 'change' })
+    }
     this.options.onOverlay(tab.id, structuredClone(state.desired))
     this.start(state)
   }
@@ -69,7 +90,7 @@ export class ProjectDraftSync {
       if (this.states.get(tabId) !== state) {
         continue
       }
-      if (state.pending.size === 0) {
+      if (state.pending.length === 0) {
         return
       }
     }
@@ -94,40 +115,63 @@ export class ProjectDraftSync {
     this.options.onOverlay(tabId, null)
   }
 
+  /** Serializes blur's history boundary after all preceding incremental edits. */
+  sealPromptHistory(tab: ProjectTab, historyGroupId?: string): void {
+    if (!this.options.seal) {
+      return
+    }
+    let state = this.states.get(tab.id)
+    if (!state) {
+      state = {
+        desired: structuredClone(tab.generationDraft),
+        disposed: false,
+        error: null,
+        pending: [],
+        running: null,
+        tabId: tab.id,
+      }
+      this.states.set(tab.id, state)
+    }
+    state.error = null
+    state.pending.push({ historyGroupId, kind: 'seal' })
+    this.start(state)
+  }
+
   private async run(state: DraftState): Promise<void> {
-    while (state.pending.size > 0 && !state.disposed) {
-      const entry = state.pending.entries().next().value
-      if (!entry) {
+    while (state.pending.length > 0 && !state.disposed) {
+      const operation = state.pending.shift()
+      if (!operation) {
         break
       }
-      const [field, change] = entry
-      state.pending.delete(field)
       try {
-        const tab = await this.options.send(state.tabId, change)
+        const tab =
+          operation.kind === 'change'
+            ? await this.options.send(state.tabId, operation.change, operation.historyGroupId)
+            : await this.options.seal?.(state.tabId, operation.historyGroupId)
         if (state.disposed) {
           return
         }
-        this.options.onAcknowledged(tab)
+        if (tab) {
+          this.options.onAcknowledged(tab)
+        }
       } catch (cause) {
         if (state.disposed) {
           return
         }
-        if (!state.pending.has(field)) {
-          state.pending.set(field, change)
-        }
+        state.pending.unshift(operation)
         state.error = cause instanceof Error ? cause : new Error('The draft could not be updated.')
         this.options.onError(state.tabId, state.error)
         return
       }
     }
-    if (!state.disposed && state.pending.size === 0) {
+    if (!state.disposed && state.pending.length === 0) {
       this.states.delete(state.tabId)
       this.options.onOverlay(state.tabId, null)
     }
   }
 
   private start(state: DraftState): void {
-    if (state.running || state.pending.size === 0 || state.disposed) {
+    if (state.running || state.pending.length === 0 || state.disposed) {
       return
     }
     const running = this.run(state)
@@ -135,7 +179,7 @@ export class ProjectDraftSync {
     void running.finally(() => {
       if (state.running === running) {
         state.running = null
-        if (!state.error && state.pending.size > 0) {
+        if (!state.error && state.pending.length > 0) {
           this.start(state)
         }
       }

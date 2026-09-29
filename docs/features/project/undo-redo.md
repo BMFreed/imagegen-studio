@@ -176,6 +176,28 @@ Menu:
 
 The visible actions remain generic (`Undo`, `Redo`). The current prototype already stores named internal history entries for diagnostics and tests; it does not expose a History panel or named Undo label in the toolbar.
 
+## Production Electron checkpoint
+
+The Electron Project keeps history in the open tab only. Main owns up to 64
+document snapshots; typed IPC exposes `canUndo`/`canRedo`, Undo, Redo and Clear
+History. Project prompt edits continue to reach the recovery shadow while
+typing, then form one history step per focus session. Save, Add, ordinary
+Project commands, tab switch and close flush and seal the session. The Project
+CodeMirror editor uses Project history for its shortcuts; controls outside the
+Project keep their own text-editing behavior.
+
+Accepted Raster candidates form one Undo step even when several layers were
+added. Undo does not recreate staging; Redo verifies retained raster sources.
+History eviction and Clear History release unreferenced staged copies while
+preserving assets still needed by the current document, saved package, or
+reachable Undo/Redo states. These behaviors are covered by the
+[production research and checks](../../engineering/phase-2b-project-undo-research.md).
+
+This checkpoint covers production document edits already implemented. Smart
+Patch variants, Regional Guidance, mask gestures and several Canvas operations
+remain prototype behavior, so their Undo semantics are not yet production
+evidence. Project history remains transient and is never written into `.igs`.
+
 ## Vue Prototype Coverage
 
 The current prototype implements a 64-entry per-project document snapshot history. Undo and Redo are available from the bottom viewport bar, the `Edit` menu and `mod+z` / `mod+shift+z` / `mod+y` shortcuts.

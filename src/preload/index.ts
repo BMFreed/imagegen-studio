@@ -255,6 +255,8 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isRecord(value) &&
     isProjectId(value.id) &&
     typeof value.title === 'string' &&
+    typeof value.canUndo === 'boolean' &&
+    typeof value.canRedo === 'boolean' &&
     isGenerationDraft(value.generationDraft) &&
     isUInt32OrNull(value.lastActualSeedSnapshot) &&
     isProjectRect(value.primaryBbox) &&
@@ -582,6 +584,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
     cancelImport: (importId) =>
       invokeProject(ipcChannels.projects.cancelImport, [importId], isVoid),
+    clearHistory: (tabId) =>
+      invokeProject(ipcChannels.projects.clearHistory, [tabId], isProjectTab),
     close: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.close, [tabId, confirmCloseImpact], isVoid),
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
@@ -656,6 +660,7 @@ const api: StudioApi = {
     open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
+    redo: (tabId) => invokeProject(ipcChannels.projects.redo, [tabId], isProjectTab),
     relinkGenerationLora: (tabId, identity) =>
       invokeProject(ipcChannels.projects.relinkGenerationLora, [tabId, identity], isProjectTab),
     relinkGenerationModel: (tabId) =>
@@ -671,14 +676,25 @@ const api: StudioApi = {
         [tabId, candidateId],
         isProjectCandidateExportResult,
       ),
+    sealPromptHistory: (tabId, historyGroupId) =>
+      invokeProject(
+        ipcChannels.projects.sealPromptHistory,
+        [tabId, historyGroupId ?? null],
+        isProjectTab,
+      ),
     selectImport: () =>
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setGenerationModel: (tabId, selection) =>
       invokeProject(ipcChannels.projects.setGenerationModel, [tabId, selection], isProjectTab),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
-    updateGenerationDraft: (tabId, change) =>
-      invokeProject(ipcChannels.projects.updateGenerationDraft, [tabId, change], isProjectTab),
+    undo: (tabId) => invokeProject(ipcChannels.projects.undo, [tabId], isProjectTab),
+    updateGenerationDraft: (tabId, change, historyGroupId) =>
+      invokeProject(
+        ipcChannels.projects.updateGenerationDraft,
+        [tabId, change, historyGroupId ?? null],
+        isProjectTab,
+      ),
     updateRasterLayer: (tabId, layerId, change) =>
       invokeProject(ipcChannels.projects.updateRasterLayer, [tabId, layerId, change], isProjectTab),
   },
