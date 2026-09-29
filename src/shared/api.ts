@@ -23,6 +23,7 @@ export const ipcChannels = {
     startInstall: 'models:start-install',
   },
   projects: {
+    acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
     cancelImport: 'projects:cancel-import',
     close: 'projects:close',
@@ -202,6 +203,12 @@ export type ProjectCandidateExportResult =
   { fileName: string; kind: 'saved' } | { kind: 'canceled' }
 
 export interface ProjectApi {
+  acceptGenerationCandidates: (
+    tabId: string,
+    candidateIds: string[],
+    focusedCandidateId: string | null,
+    expectedAvailableIds: string[],
+  ) => Promise<ApiResult<ProjectTab>>
   addGenerationLora: (
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,

@@ -76,6 +76,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   clearExportFeedback: []
@@ -606,8 +607,8 @@ watch(
     const previousLayers = previous?.[1] ?? []
     const previousIds = new Set(previousLayers.map((layer) => layer.id))
     const added = layers.filter((layer) => !previousIds.has(layer.id))
-    if (previous && layers.length === previousLayers.length + 1 && added.length === 1) {
-      selectedLayerId.value = added[0]?.id ?? null
+    if (previous && added.length > 0 && layers.length === previousLayers.length + added.length) {
+      selectedLayerId.value = (added.find((layer) => layer.visible) ?? added[0])?.id ?? null
       return
     }
     if (selectedLayerId.value && !layers.some((layer) => layer.id === selectedLayerId.value)) {
@@ -1166,6 +1167,7 @@ function applyFitBbox() {
         :generationResultsLoading
         :layers="tab.layers"
         :selectedLayerId
+        @acceptCandidates="emit('acceptCandidates', $event)"
         @changeBbox="emit('applyBbox', $event)"
         @refreshGenerationResults="emit('refreshGenerationResults')"
         @saveCandidateImage="emit('saveCandidateImage', $event)"

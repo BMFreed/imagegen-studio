@@ -47,13 +47,20 @@ import {
   ProjectCandidateImageExportError,
 } from './projects/project-candidate-image-export.js'
 import {
+  ProjectGenerationAcceptance,
+  ProjectGenerationAcceptanceError,
+} from './projects/project-generation-acceptance.js'
+import {
   ProjectGenerationClose,
   ProjectGenerationCloseError,
 } from './projects/project-generation-close.js'
+import { ProjectGenerationOperationGate } from './projects/project-generation-operation-gate.js'
+import { ProjectGenerationProvenanceError } from './projects/project-generation-provenance.js'
 import {
   ProjectGenerationResultResource,
   ProjectGenerationResultResourceError,
 } from './projects/project-generation-result-resource.js'
+import { releaseCanceledWindowCloseFences } from './projects/project-generation-window-close.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
 import {
@@ -313,7 +320,41 @@ if (!gotInstanceLock) {
         ownedGenerationContext.availability.kind === 'storage-recovered'
           ? ownedGenerationContext.requireRecoveredServices()
           : null
-      const projectGenerationClose = new ProjectGenerationClose(projectService, recoveredGeneration)
+      const projectGenerationGate = new ProjectGenerationOperationGate()
+      const generationAcceptance = recoveredGeneration
+        ? new ProjectGenerationAcceptance({
+            documents: {
+              getOpenDocument: (tabId) => projectService.getOpenDocumentForAcceptance(tabId),
+            },
+            gate: projectGenerationGate,
+            orchestrator: recoveredGeneration.orchestrator,
+            queue: recoveredGeneration.queue,
+            staging: recoveredGeneration.staging,
+          })
+        : null
+      const projectGenerationClose = new ProjectGenerationClose(
+        projectService,
+        recoveredGeneration,
+        projectGenerationGate,
+        (tabId) => generationAcceptance?.hasPendingHandoff(tabId) ?? false,
+      )
+      const reconcileOpenedProject = async (
+        tabId: string,
+        wasOpen: boolean,
+      ): Promise<string | null> => {
+        if (!wasOpen) {
+          recoveredGeneration?.orchestrator.reopenProjectGeneration(tabId)
+        }
+        try {
+          await generationAcceptance?.reconcile(tabId)
+          return null
+        } catch (error) {
+          // A Project is still usable when local candidate cleanup needs another attempt.
+          // Keep the generation fence from reconciliation and surface the repairable condition.
+          console.error('Accepted result recovery needs attention', error)
+          return `Accepted result cleanup needs attention. Reopen or retry Add after checking the Results panel. ${error instanceof Error ? error.message : ''}`.trim()
+        }
+      }
       const generationResults = new ProjectGenerationResultResource(
         recoveredGeneration?.staging ?? null,
         (tabId) => projectService.getOpenDocumentId(tabId),
@@ -468,6 +509,20 @@ if (!gotInstanceLock) {
               await flushRendererDraftsBeforeClose()
             }
             const tabs = projectService.getOpenTabs()
+            // An Add admitted before native close must finish its shadow handoff before close
+            // snapshots staging or fences dispatch. New Add requests see resolvingClose.
+            for (const tab of tabs) {
+              await projectGenerationGate.drain(tab.id)
+            }
+            const unresolvedTab = tabs.find((tab) =>
+              generationAcceptance?.hasPendingHandoff(tab.id),
+            )
+            if (unresolvedTab) {
+              throw new ProjectGenerationAcceptanceError(
+                'ACCEPTANCE_HANDOFF_PENDING',
+                `Finish recovering accepted results in ${unresolvedTab.title} before closing the application.`,
+              )
+            }
             // Fence each open Project before taking the close-impact snapshot. Cancel releases
             // every fence without changing jobs or candidates.
             for (const tab of tabs) {
@@ -542,7 +597,7 @@ if (!gotInstanceLock) {
             if (choice === 0) {
               for (const tab of projectService.getOpenTabs()) {
                 if (tab.dirty) {
-                  await saveProjectWithPreview(tab.id)
+                  await projectGenerationGate.run(tab.id, () => saveProjectWithPreview(tab.id))
                 }
               }
             }
@@ -573,9 +628,11 @@ if (!gotInstanceLock) {
             )
           } finally {
             if (!closeCommitted) {
-              for (const tabId of fencedTabs) {
-                recoveredGeneration?.orchestrator.releaseProjectGenerationFence(tabId)
-              }
+              releaseCanceledWindowCloseFences(
+                fencedTabs,
+                (tabId) => generationAcceptance?.hasPendingHandoff(tabId) ?? false,
+                (tabId) => recoveredGeneration?.orchestrator.releaseProjectGenerationFence(tabId),
+              )
             }
             resolvingClose = false
             if (!closingAfterResolution && !window.isDestroyed()) {
@@ -722,6 +779,8 @@ if (!gotInstanceLock) {
               error instanceof ProjectServiceError ||
               error instanceof ProjectCandidateImageExportError ||
               error instanceof ProjectGenerationCloseError ||
+              error instanceof ProjectGenerationAcceptanceError ||
+              error instanceof ProjectGenerationProvenanceError ||
               error instanceof ProjectGenerationResultResourceError ||
               error instanceof GenerationOrchestratorError ||
               error instanceof GenerationProcessorError ||
@@ -783,12 +842,14 @@ if (!gotInstanceLock) {
           return null
         }
         const imported = await projectService.selectImport(selection.filePaths[0])
-        if (
-          imported.kind === 'opened' &&
-          imported.result.kind === 'opened' &&
-          !previouslyOpen.has(imported.result.tab.id)
-        ) {
-          recoveredGeneration?.orchestrator.reopenProjectGeneration(imported.result.tab.id)
+        if (imported.kind === 'opened' && imported.result.kind === 'opened') {
+          const warning = await reconcileOpenedProject(
+            imported.result.tab.id,
+            previouslyOpen.has(imported.result.tab.id),
+          )
+          if (warning) {
+            imported.result.tab.storageWarning = warning
+          }
         }
         return imported
       })
@@ -802,8 +863,14 @@ if (!gotInstanceLock) {
             importId as string,
             choice as 'copy' | 'move',
           )
-          if (imported.result.kind === 'opened' && !previouslyOpen.has(imported.result.tab.id)) {
-            recoveredGeneration?.orchestrator.reopenProjectGeneration(imported.result.tab.id)
+          if (imported.result.kind === 'opened') {
+            const warning = await reconcileOpenedProject(
+              imported.result.tab.id,
+              previouslyOpen.has(imported.result.tab.id),
+            )
+            if (warning) {
+              imported.result.tab.storageWarning = warning
+            }
           }
           return imported
         },
@@ -837,15 +904,21 @@ if (!gotInstanceLock) {
           const tab = await projectService.create(
             input as { height: number; title: string; width: number },
           )
-          recoveredGeneration?.orchestrator.reopenProjectGeneration(tab.id)
+          const warning = await reconcileOpenedProject(tab.id, false)
+          if (warning) {
+            tab.storageWarning = warning
+          }
           return tab
         },
       )
       registerProjectHandler(ipcChannels.projects.open, oneProjectId, async (projectId) => {
         const wasOpen = projectService.getOpenTabs().some((tab) => tab.id === projectId)
         const result = await projectService.open(projectId as string)
-        if (result.kind === 'opened' && !wasOpen) {
-          recoveredGeneration?.orchestrator.reopenProjectGeneration(result.tab.id)
+        if (result.kind === 'opened') {
+          const warning = await reconcileOpenedProject(result.tab.id, wasOpen)
+          if (warning) {
+            result.tab.storageWarning = warning
+          }
         }
         return result
       })
@@ -860,7 +933,10 @@ if (!gotInstanceLock) {
             projectId as string,
             decision as 'discard' | 'recover',
           )
-          recoveredGeneration?.orchestrator.reopenProjectGeneration(tab.id)
+          const warning = await reconcileOpenedProject(tab.id, false)
+          if (warning) {
+            tab.storageWarning = warning
+          }
           return tab
         },
       )
@@ -1024,7 +1100,7 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
-        saveProjectWithPreview(tabId as string),
+        projectGenerationGate.run(tabId as string, () => saveProjectWithPreview(tabId as string)),
       )
       registerProjectHandler(
         ipcChannels.projects.rebuildPreview,
@@ -1057,6 +1133,54 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.listGenerationResults, oneProjectId, (tabId) =>
         generationResults.list(tabId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.acceptGenerationCandidates,
+        (args) => {
+          const selected = args[1]
+          const expected = args[3]
+          return (
+            args.length === 4 &&
+            isProjectId(args[0]) &&
+            Array.isArray(selected) &&
+            selected.length >= 1 &&
+            selected.length <= 64 &&
+            selected.every(isCandidateId) &&
+            new Set(selected).size === selected.length &&
+            (args[2] === null || isCandidateId(args[2])) &&
+            Array.isArray(expected) &&
+            expected.length >= selected.length &&
+            expected.length <= IGS_SAFETY_CEILINGS.archiveEntries &&
+            expected.every(isCandidateId) &&
+            new Set(expected).size === expected.length &&
+            selected.every((id: string) => expected.includes(id))
+          )
+        },
+        async (tabId, candidateIds, focusedCandidateId, expectedAvailableIds) => {
+          if (resolvingClose) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_CONFLICT',
+              'Wait for the application close decision before adding results.',
+            )
+          }
+          if (!generationAcceptance) {
+            throw new ProjectServiceError(
+              'PROJECT_NOT_READY',
+              'Temporary result recovery is unavailable. Try again after repair.',
+            )
+          }
+          await generationAcceptance.accept(
+            tabId as string,
+            candidateIds as string[],
+            focusedCandidateId as string | null,
+            expectedAvailableIds as string[],
+          )
+          const tab = projectService.getOpenTabs().find((item) => item.id === tabId)
+          if (!tab) {
+            throw new ProjectServiceError('PROJECT_NOT_OPEN', 'Open the Project first.')
+          }
+          return tab
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.saveGenerationCandidateImage,

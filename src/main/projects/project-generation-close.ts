@@ -1,5 +1,7 @@
 import type { ProjectCloseImpact, ProjectTab } from '../../shared/api.js'
 
+import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
+
 /** The close owner sees the same recovered repositories used by generation dispatch. */
 export interface ProjectGenerationCloseServices {
   orchestrator: {
@@ -26,6 +28,7 @@ export interface ProjectGenerationCloseDocuments {
 export class ProjectGenerationCloseError extends Error {
   constructor(
     readonly code:
+      | 'PROJECT_ACCEPTANCE_PENDING'
       | 'PROJECT_CLOSE_ALREADY_RUNNING'
       | 'PROJECT_CLOSE_CONFIRMATION_REQUIRED'
       | 'PROJECT_DIRTY'
@@ -48,6 +51,8 @@ export class ProjectGenerationClose {
   constructor(
     private readonly documents: ProjectGenerationCloseDocuments,
     private readonly services: ProjectGenerationCloseServices | null,
+    private readonly gate?: ProjectGenerationOperationGate,
+    private readonly hasPendingHandoff?: (tabId: string) => boolean,
   ) {}
 
   async close(
@@ -61,10 +66,47 @@ export class ProjectGenerationClose {
       )
     }
     this.closing.add(tabId)
+    try {
+      await (this.gate
+        ? this.gate.run(tabId, async () => await this.closeUnlocked(tabId, options))
+        : this.closeUnlocked(tabId, options))
+    } finally {
+      this.closing.delete(tabId)
+    }
+  }
+
+  async getCloseImpact(tabId: string): Promise<ProjectCloseImpact> {
+    this.assertOpen(tabId)
+    this.assertNoPendingHandoff(tabId)
+    return await this.readImpact(tabId)
+  }
+
+  private assertNoPendingHandoff(tabId: string): void {
+    if (this.hasPendingHandoff?.(tabId)) {
+      throw new ProjectGenerationCloseError(
+        'PROJECT_ACCEPTANCE_PENDING',
+        'Finish recovering the accepted generation results before closing this Project.',
+      )
+    }
+  }
+
+  private assertOpen(tabId: string): ProjectTab {
+    const tab = this.documents.getOpenTabs().find((candidate) => candidate.id === tabId)
+    if (!tab) {
+      throw new ProjectGenerationCloseError('PROJECT_NOT_OPEN', 'This Project is not open.')
+    }
+    return tab
+  }
+
+  private async closeUnlocked(
+    tabId: string,
+    options: { confirmCloseImpact: boolean; discardDocument: boolean },
+  ): Promise<void> {
     let destructiveStarted = false
     let fenced = false
     try {
       const tab = this.assertOpen(tabId)
+      this.assertNoPendingHandoff(tabId)
       if (tab.dirty && !options.discardDocument) {
         // This preflight prevents discarding generation before the document close guard runs.
         throw new ProjectGenerationCloseError(
@@ -110,21 +152,7 @@ export class ProjectGenerationClose {
       if (fenced && !destructiveStarted) {
         this.services?.orchestrator.releaseProjectGenerationFence(tabId)
       }
-      this.closing.delete(tabId)
     }
-  }
-
-  async getCloseImpact(tabId: string): Promise<ProjectCloseImpact> {
-    this.assertOpen(tabId)
-    return await this.readImpact(tabId)
-  }
-
-  private assertOpen(tabId: string): ProjectTab {
-    const tab = this.documents.getOpenTabs().find((candidate) => candidate.id === tabId)
-    if (!tab) {
-      throw new ProjectGenerationCloseError('PROJECT_NOT_OPEN', 'This Project is not open.')
-    }
-    return tab
   }
 
   private async readImpact(tabId: string): Promise<ProjectCloseImpact> {

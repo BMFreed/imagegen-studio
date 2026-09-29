@@ -49,11 +49,20 @@ import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
+type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string | null }
+type PendingAcceptance = {
+  candidateIds: string[]
+  expectedCandidateIds: string[]
+  focusedCandidateId: string | null
+  tabId: string
+  uncheckedCandidateIds: string[]
+}
 type PendingProjectAction =
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
+        | 'accept-candidate'
         | 'bbox'
         | 'close'
         | 'discard'
@@ -90,6 +99,9 @@ const saveNotices = ref<Record<string, string | null>>({})
 const reloadRequiredIds = ref<Set<string>>(new Set())
 const globalNotice = ref<string | null>(null)
 const pendingProjectAction = ref<PendingProjectAction | null>(null)
+const pendingAcceptance = ref<PendingAcceptance | null>(null)
+const acceptanceCommitting = ref(false)
+const acceptanceNotice = ref<{ message: string; type: 'error' | 'warning' } | null>(null)
 const recoveryDecision = ref<RecoveryDecision | null>(null)
 const recoveryError = ref<string | null>(null)
 const closingTabId = ref<string | null>(null)
@@ -231,7 +243,7 @@ watch(
   },
 )
 
-async function refreshGenerationResults(tabId: string) {
+async function readGenerationResults(tabId: string): Promise<ProjectGenerationResultsSnapshot> {
   const request = (generationResultsRequests.get(tabId) ?? 0) + 1
   generationResultsRequests.set(tabId, request)
   generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: true }
@@ -244,6 +256,7 @@ async function refreshGenerationResults(tabId: string) {
     ) {
       generationResultsByTab.value = { ...generationResultsByTab.value, [tabId]: snapshot }
     }
+    return snapshot
   } catch (cause) {
     if (generationResultsRequests.get(tabId) === request) {
       const { [tabId]: _stale, ...remaining } = generationResultsByTab.value
@@ -253,11 +266,16 @@ async function refreshGenerationResults(tabId: string) {
         [tabId]: errorMessage(cause),
       }
     }
+    throw cause
   } finally {
     if (generationResultsRequests.get(tabId) === request) {
       generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: false }
     }
   }
+}
+
+async function refreshGenerationResults(tabId: string) {
+  await readGenerationResults(tabId).catch(() => undefined)
 }
 
 watch(modelManagerOpen, (open, previous) => {
@@ -784,6 +802,185 @@ async function saveCandidateImage(tabId: string, candidateId: string) {
   }
 }
 
+function candidateSetsForAcceptance(
+  snapshot: ProjectGenerationResultsSnapshot,
+  selection: CandidateSelection,
+): { expectedCandidateIds: string[]; uncheckedCandidateIds: string[] } {
+  if (snapshot.recoveryUnavailable) {
+    throw new Error('Temporary result recovery is unavailable. Repair it before adding results.')
+  }
+  const selected = new Set(selection.candidateIds)
+  const eligible = snapshot.candidates.filter((candidate) => !candidate.sourceDocumentMismatch)
+  const expectedCandidateIds = eligible.map((candidate) => candidate.candidateId)
+  const available = new Set(expectedCandidateIds)
+  if (
+    selected.size === 0 ||
+    selected.size !== selection.candidateIds.length ||
+    [...selected].some((candidateId) => !available.has(candidateId))
+  ) {
+    throw new Error('Selected results changed. Review the current results and try Add again.')
+  }
+  return {
+    expectedCandidateIds,
+    uncheckedCandidateIds: expectedCandidateIds.filter((candidateId) => !selected.has(candidateId)),
+  }
+}
+
+function sameCandidateIds(left: string[], right: string[]): boolean {
+  const other = new Set(right)
+  return left.length === right.length && left.every((candidateId) => other.has(candidateId))
+}
+
+async function commitGenerationCandidates(decision: PendingAcceptance) {
+  acceptanceCommitting.value = true
+  try {
+    await draftSync.flush(decision.tabId)
+    const result = await projectApi().acceptGenerationCandidates(
+      decision.tabId,
+      [...decision.candidateIds],
+      decision.focusedCandidateId,
+      [...decision.expectedCandidateIds],
+    )
+    if (!result.ok && result.error.code === 'ACCEPTANCE_SELECTION_STALE') {
+      setTabError(
+        decision.tabId,
+        'Generation results changed before Add. Review the refreshed results and confirm Add again.',
+      )
+      return
+    }
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    replaceTab(result.value)
+    saveNotices.value = { ...saveNotices.value, [decision.tabId]: null }
+  } catch (cause) {
+    // The shadow may already contain the accepted layers if only staging cleanup failed.
+    // Re-read the open document instead of assuming that an error means no mutation occurred.
+    try {
+      const opened = await apiValue(() => projectApi().open(decision.tabId))
+      if (opened.kind === 'opened') {
+        replaceTab(opened.tab)
+      }
+    } catch {
+      // Keep the original acceptance error visible; the next Project refresh can retry.
+    }
+    setTabError(
+      decision.tabId,
+      `Acceptance could not be confirmed. Check the layer stack and temporary results before retrying. ${errorMessage(cause)}`,
+    )
+  } finally {
+    await refreshGenerationResults(decision.tabId)
+    pendingAcceptance.value = null
+    acceptanceNotice.value = null
+    acceptanceCommitting.value = false
+    pendingProjectAction.value = null
+  }
+}
+
+async function acceptGenerationCandidates(tabId: string, selection: CandidateSelection) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    selection.candidateIds.length === 0
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'accept-candidate', tabId }
+  setTabError(tabId, null)
+  acceptanceNotice.value = null
+  try {
+    const snapshot = await readGenerationResults(tabId)
+    if (windowClosePending.value || !projectTabs.value.some((tab) => tab.id === tabId)) {
+      return
+    }
+    const { expectedCandidateIds, uncheckedCandidateIds } = candidateSetsForAcceptance(
+      snapshot,
+      selection,
+    )
+    const decision: PendingAcceptance = {
+      candidateIds: [...selection.candidateIds],
+      expectedCandidateIds,
+      focusedCandidateId: selection.focusedCandidateId,
+      tabId,
+      uncheckedCandidateIds,
+    }
+    if (uncheckedCandidateIds.length > 0) {
+      pendingAcceptance.value = decision
+    } else {
+      await commitGenerationCandidates(decision)
+    }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    if (!pendingAcceptance.value && !acceptanceCommitting.value) {
+      pendingProjectAction.value = null
+    }
+  }
+}
+
+function cancelAcceptance() {
+  if (acceptanceCommitting.value) {
+    return
+  }
+  pendingAcceptance.value = null
+  acceptanceNotice.value = null
+  pendingProjectAction.value = null
+}
+
+async function confirmAcceptance() {
+  const decision = pendingAcceptance.value
+  if (!decision || acceptanceCommitting.value || windowClosePending.value) {
+    return
+  }
+  acceptanceCommitting.value = true
+  acceptanceNotice.value = null
+  try {
+    const snapshot = await readGenerationResults(decision.tabId)
+    if (windowClosePending.value) {
+      return
+    }
+    const eligibleIds = new Set(
+      snapshot.candidates
+        .filter((candidate) => !candidate.sourceDocumentMismatch)
+        .map((candidate) => candidate.candidateId),
+    )
+    if (decision.candidateIds.some((candidateId) => !eligibleIds.has(candidateId))) {
+      pendingAcceptance.value = null
+      pendingProjectAction.value = null
+      setTabError(
+        decision.tabId,
+        'Selected results changed. Review the refreshed results and try Add again.',
+      )
+      return
+    }
+    const current = candidateSetsForAcceptance(snapshot, decision)
+    if (!sameCandidateIds(decision.expectedCandidateIds, current.expectedCandidateIds)) {
+      if (current.uncheckedCandidateIds.length === 0) {
+        await commitGenerationCandidates({ ...decision, ...current })
+        return
+      }
+      pendingAcceptance.value = { ...decision, ...current }
+      acceptanceNotice.value = {
+        message:
+          'Results changed while this dialog was open. Review the discard count and confirm again.',
+        type: 'warning',
+      }
+      return
+    }
+    await commitGenerationCandidates(decision)
+  } catch (cause) {
+    acceptanceNotice.value = { message: errorMessage(cause), type: 'error' }
+  } finally {
+    acceptanceCommitting.value = false
+    if (windowClosePending.value) {
+      pendingAcceptance.value = null
+      acceptanceNotice.value = null
+      pendingProjectAction.value = null
+    }
+  }
+}
+
 async function applyBbox(tabId: string, rect: IgsRectV1) {
   if (
     pendingProjectAction.value !== null ||
@@ -1148,6 +1345,9 @@ onMounted(() => {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async () => {
         windowClosePending.value = true
+        if (pendingAcceptance.value && !acceptanceCommitting.value) {
+          cancelAcceptance()
+        }
         try {
           if (Object.values(draftValidity.value).includes(false)) {
             throw new Error('Correct invalid generation settings before closing the app.')
@@ -1293,6 +1493,7 @@ onBeforeUnmount(() => {
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
+          @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
@@ -1464,6 +1665,48 @@ onBeforeUnmount(() => {
               @click="resolveRecovery('recover')"
             >
               Recover
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
+
+      <NModal
+        :closeOnEsc="!acceptanceCommitting"
+        :maskClosable="false"
+        :show="pendingAcceptance !== null"
+        @update:show="!$event && cancelAcceptance()"
+      >
+        <NCard
+          aria-label="Accept generation results"
+          class="dialog-card"
+          contentScrollable
+          role="dialog"
+          size="small"
+          title="Add selected results"
+        >
+          <NAlert
+            v-if="acceptanceNotice"
+            key="acceptance-notice"
+            class="dialog-error"
+            :type="acceptanceNotice.type"
+          >
+            {{ acceptanceNotice.message }}
+          </NAlert>
+          <p v-if="pendingAcceptance">
+            Add {{ pendingAcceptance.candidateIds.length }} selected
+            {{ pendingAcceptance.candidateIds.length === 1 ? 'result' : 'results' }} as Raster
+            {{ pendingAcceptance.candidateIds.length === 1 ? 'Layer' : 'Layers' }}.
+          </p>
+          <NAlert v-if="pendingAcceptance" key="discard-warning" type="warning">
+            {{ pendingAcceptance.uncheckedCandidateIds.length }} unchecked temporary
+            {{ pendingAcceptance.uncheckedCandidateIds.length === 1 ? 'result' : 'results' }} will
+            be discarded. To keep one, cancel and select it or save its image first.
+          </NAlert>
+          <div class="dialog-actions">
+            <NButton :disabled="acceptanceCommitting" @click="cancelAcceptance">Cancel</NButton>
+            <NButton :loading="acceptanceCommitting" type="primary" @click="confirmAcceptance">
+              Add {{ pendingAcceptance?.candidateIds.length }}, Discard
+              {{ pendingAcceptance?.uncheckedCandidateIds.length }}
             </NButton>
           </div>
         </NCard>

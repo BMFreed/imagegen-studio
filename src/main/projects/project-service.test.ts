@@ -32,7 +32,7 @@ import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
-import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectAutosaveLeaseRegistry, type ProjectAutosaveOptions } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { parseProjectLayerImageUrl, streamStagedProjectLayer } from './project-layer-resource.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
@@ -195,6 +195,7 @@ async function withService(
     service: ProjectService
     shadow: ProjectShadowStore
   }) => Promise<void>,
+  autosaveOptions: Pick<ProjectAutosaveOptions, 'beforeEditCommit'> = {},
 ): Promise<void> {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-service-'))
   const database = openAppDatabase(dataRoot, migrations)
@@ -215,7 +216,11 @@ async function withService(
   const repository = new ProjectIndexRepository(database.db)
   const shadow = new ProjectShadowStore(path.join(dataRoot, 'autosave'))
   const service = new ProjectService({
-    autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+    autosaveOptions: {
+      ...autosaveOptions,
+      debounceMs: 0,
+      leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+    },
     dataRoot,
     repository,
     roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
@@ -1868,6 +1873,38 @@ test('Raster Layer commands reject invalid or locked edits and preserve a clean 
       layerIds,
     )
   })
+})
+
+test('rejected Project commands never mutate the attached document before revision-guarded commit', async () => {
+  let rejectEdit = false
+  await withService(
+    async ({ dataRoot, repository, service }) => {
+      const { layerIds, tabId } = await openTwoLayerProject(dataRoot, repository, service)
+      const coordinator = service.getOpenDocumentForAcceptance(tabId)
+      assert.ok(coordinator)
+      const before = structuredClone(coordinator.document)
+      rejectEdit = true
+
+      await assert.rejects(service.moveRasterLayer(tabId, layerIds[1], 0), /injected edit failure/)
+      await assert.rejects(
+        service.updateRasterLayer(tabId, layerIds[0], { kind: 'visibility', visible: false }),
+        /injected edit failure/,
+      )
+      await assert.rejects(
+        service.updateGenerationDraft(tabId, { kind: 'seed', policy: 'fixed', value: 42 }),
+        /injected edit failure/,
+      )
+      assert.deepEqual(coordinator.document, before)
+      assert.equal(coordinator.canUndo, false)
+    },
+    {
+      beforeEditCommit: async () => {
+        if (rejectEdit) {
+          throw new Error('injected edit failure')
+        }
+      },
+    },
+  )
 })
 
 test('Save marks an all-hidden or zero-opacity raster Project empty without dropping layer assets', async () => {

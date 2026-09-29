@@ -449,6 +449,248 @@ try {
   console.log(
     'Desktop Results smoke passed: verified recovery, preview, exact image export, Save, Cancel and discard.',
   )
+
+  // A separate fixture preserves the preview/export/close assertions above. Independently
+  // published outputs exercise grouped acceptance across staging sessions and discard of one
+  // unselected candidate.
+  const beforeAcceptanceProcess = application.process()
+  const beforeAcceptanceExited = new Promise((resolve) =>
+    beforeAcceptanceProcess.once('exit', resolve),
+  )
+  assert.equal(beforeAcceptanceProcess.kill('SIGKILL'), true)
+  await Promise.race([
+    beforeAcceptanceExited,
+    delay(10_000).then(() => {
+      throw new Error('The Results app did not exit before acceptance fixture publication.')
+    }),
+  ])
+  application = undefined
+  const packageBeforeAcceptance = readFileSync(packagePath)
+  const acceptanceSource = (await readIgsPackage(packagePath)).project
+  assert.equal(acceptanceSource.layers.length, 0)
+  const acceptedCandidates = []
+  const acceptanceDatabase = openAppDatabase(appDataRoot, migrations)
+  try {
+    const queue = new GenerationQueueRepository(acceptanceDatabase.db, appDataRoot)
+    const staging = new GenerationStagingRepository(acceptanceDatabase.db, appDataRoot)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    for (const seed of [71, 72, 73]) {
+      const candidatePrepared = {
+        ...prepared,
+        context: {
+          ...prepared.context,
+          bbox: acceptanceSource.primaryBbox,
+          documentId: acceptanceSource.documentId,
+          documentRevision: acceptanceSource.documentRevision,
+          sampling: { ...prepared.context.sampling, seed },
+        },
+      }
+      await withIllustriousTxt2ImgRequest({
+        modelService: {
+          resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
+            managedPath: modelPath,
+            reference,
+          }),
+        },
+        prepared: candidatePrepared,
+        ready,
+        scratchBasePath: path.join(appDataRoot, 'scratch'),
+        use: async (request) => {
+          const queued = await queue.enqueueIllustriousTxt2Img({
+            prepared: candidatePrepared,
+            projectPath: packagePath,
+            request,
+            stagingSessionId: randomUUID(),
+          })
+          const claim = await queue.claimNextPending()
+          assert.equal(claim?.item.id, queued.id)
+          writeFileSync(request.job.output.pngPath, output)
+          acceptedCandidates.push(
+            await staging.publishIllustriousTxt2Img({
+              actualSeed: seed,
+              expectedProvisionalRoot: request.job.output.stagingRoot,
+              expectedStatusSequence: claim.item.statusSequence,
+              provisionalOutputPath: request.job.output.pngPath,
+              queueItemId: queued.id,
+            }),
+          )
+        },
+      })
+    }
+  } finally {
+    await acceptanceDatabase.close()
+  }
+  assert.equal(acceptedCandidates.length, 3)
+  assert.notEqual(acceptedCandidates[0].stagingSessionId, acceptedCandidates[1].stagingSessionId)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+
+  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  const acceptanceWindow = await application.firstWindow()
+  await acceptanceWindow.getByRole('tab', { name: 'Home' }).waitFor()
+  await acceptanceWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  await acceptanceWindow.getByRole('tab', { name: projectTitle }).waitFor()
+  const acceptanceSnapshot = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(acceptanceSnapshot.ok, true)
+  assert.deepEqual(
+    acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
+    acceptedCandidates.map((item) => item.candidateId),
+  )
+  const firstCheckbox = acceptanceWindow.getByLabel('Select candidate 1')
+  const secondCheckbox = acceptanceWindow.getByLabel('Select candidate 2')
+  const thirdCheckbox = acceptanceWindow.getByLabel('Select candidate 3')
+  await expect(firstCheckbox).toBeChecked()
+  await expect(secondCheckbox).not.toBeChecked()
+  await expect(thirdCheckbox).not.toBeChecked()
+  await acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' }).click()
+  await expect(acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect(firstCheckbox).toBeChecked()
+  await expect(secondCheckbox).not.toBeChecked()
+  await secondCheckbox.click()
+  await expect(acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' })).toBeEnabled()
+  await acceptanceWindow.getByRole('button', { name: 'Refresh results' }).click()
+  await expect(firstCheckbox).toBeChecked()
+  await expect(secondCheckbox).toBeChecked()
+  await expect(thirdCheckbox).not.toBeChecked()
+  await expect(acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(900, 620)
+  })
+  await expect.poll(async () =>
+    acceptanceWindow.evaluate(() => {
+      const canvas = document.querySelector('[aria-label="Project Canvas"] .canvas-area')
+      const tray = canvas?.querySelector('.results-tray')
+      const addButton = tray?.querySelector('.results-toolbar .n-button--primary-type')
+      if (!canvas || !tray || !addButton) return false
+      const canvasBox = canvas.getBoundingClientRect()
+      const trayBox = tray.getBoundingClientRect()
+      const addBox = addButton.getBoundingClientRect()
+      return (
+        trayBox.left >= canvasBox.left &&
+        trayBox.right <= canvasBox.right &&
+        trayBox.bottom <= canvasBox.bottom &&
+        addBox.left >= canvasBox.left &&
+        addBox.right <= canvasBox.right
+      )
+    }),
+  ).toBe(true)
+
+  await acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' }).click()
+  const acceptanceDialog = acceptanceWindow.getByRole('dialog', {
+    name: 'Accept generation results',
+  })
+  await expect(acceptanceDialog).toBeVisible()
+  await expect(acceptanceDialog.getByText('1 unchecked temporary result will be discarded.', {
+    exact: false,
+  })).toBeVisible()
+  if (process.env.IMAGEGEN_SMOKE_ACCEPTANCE_DIALOG_SCREENSHOT) {
+    await acceptanceWindow.screenshot({
+      animations: 'disabled',
+      path: process.env.IMAGEGEN_SMOKE_ACCEPTANCE_DIALOG_SCREENSHOT,
+    })
+  }
+  await acceptanceDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(acceptanceDialog).toBeHidden()
+  await expect(acceptanceWindow.getByRole('region', { name: 'Generation Results' })).toBeVisible()
+  const afterCanceledAdd = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(afterCanceledAdd.ok, true)
+  assert.equal(afterCanceledAdd.value.candidates.length, 3)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  const tabAfterCanceledAdd = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(tabAfterCanceledAdd.ok, true)
+  assert.equal(tabAfterCanceledAdd.value.tab.layers.length, 0)
+  assert.equal(tabAfterCanceledAdd.value.tab.dirty, false)
+  await acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' }).click()
+  await expect(acceptanceDialog).toBeVisible()
+  await acceptanceDialog.getByRole('button', { name: 'Add 2, Discard 1' }).click()
+  await expect(acceptanceWindow.getByRole('region', { name: 'Generation Results' })).toHaveCount(0)
+  const acceptedTab = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(acceptedTab.ok, true)
+  assert.equal(acceptedTab.value.tab.layers.length, 2)
+  assert.equal(acceptedTab.value.tab.dirty, true)
+  assert.equal(acceptedTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
+  const visibleAcceptedLayer = acceptedTab.value.tab.layers.find((layer) => layer.visible)
+  assert.ok(visibleAcceptedLayer)
+  await expect(
+    acceptanceWindow.locator('.entity-surface--selected .entity-preview img'),
+  ).toHaveAttribute('src', visibleAcceptedLayer.imageUrl)
+  if (process.env.IMAGEGEN_SMOKE_ACCEPTED_SCREENSHOT) {
+    await acceptanceWindow.screenshot({ path: process.env.IMAGEGEN_SMOKE_ACCEPTED_SCREENSHOT })
+  }
+  const afterAddResults = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(afterAddResults.ok, true)
+  assert.equal(afterAddResults.value.candidates.length, 0)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+
+  // Acceptance must reach the recovery shadow before staging cleanup. Crash before Save, recover
+  // the document, then Save and reopen the portable package.
+  const beforeRecoveryProcess = application.process()
+  const beforeRecoveryExited = new Promise((resolve) => beforeRecoveryProcess.once('exit', resolve))
+  assert.equal(beforeRecoveryProcess.kill('SIGKILL'), true)
+  await Promise.race([
+    beforeRecoveryExited,
+    delay(10_000).then(() => {
+      throw new Error('The acceptance app did not exit after the simulated crash.')
+    }),
+  ])
+  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  const recoveryWindow = await application.firstWindow()
+  await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
+  await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  const recoveryDialog = recoveryWindow.getByRole('dialog', { name: 'Recovery available' })
+  await recoveryDialog.waitFor()
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  await recoveryDialog.getByRole('button', { name: 'Recover', exact: true }).click()
+  await recoveryWindow.getByRole('tab', { name: projectTitle }).waitFor()
+  const recoveredTab = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(recoveredTab.ok, true)
+  assert.equal(recoveredTab.value.tab.layers.length, 2)
+  assert.equal(recoveredTab.value.tab.dirty, true)
+  assert.equal(recoveredTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
+  await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
+  await expect.poll(async () => (await readIgsPackage(packagePath)).project.layers.length).toBe(2)
+  const savedAcceptance = (await readIgsPackage(packagePath)).project
+  assert.deepEqual(savedAcceptance.primaryBbox, acceptanceSource.primaryBbox)
+  assert.deepEqual(
+    savedAcceptance.layers.map((layer) => layer.generationProvenance?.executionResultContext.candidateId),
+    acceptedCandidates.slice(0, 2).map((item) => item.candidateId),
+  )
+  assert.deepEqual(
+    savedAcceptance.layers.map((layer) => layer.generationProvenance?.generationConfiguration.sampling.actualSeed),
+    [71, 72],
+  )
+  assert.equal(savedAcceptance.layers.filter((layer) => layer.visible).length, 1)
+  assert.equal(
+    savedAcceptance.layers.find((layer) => layer.visible)?.generationProvenance?.executionResultContext.candidateId,
+    acceptedCandidates[1].candidateId,
+  )
+  await recoveryWindow.getByRole('button', { name: `Close ${projectTitle}` }).click()
+  await expect(recoveryWindow.getByRole('tab', { name: projectTitle })).toHaveCount(0)
+  await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  await recoveryWindow.getByRole('tab', { name: projectTitle }).waitFor()
+  const reopened = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(reopened.ok, true)
+  assert.equal(reopened.value.tab.layers.length, 2)
+  console.log('Desktop acceptance smoke passed: selected Add, shadow recovery and portable Save/reopen.')
 } finally {
   application?.process().kill('SIGKILL')
   rmSync(dataRoot, { force: true, recursive: true })

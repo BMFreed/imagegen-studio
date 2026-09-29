@@ -4,10 +4,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { ProjectGenerationClose, ProjectGenerationCloseError } from './project-generation-close.js'
+import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 
 const TAB_ID = `project-v1-${'a'.repeat(64)}`
 
-function closeFixture() {
+function closeFixture(gate?: ProjectGenerationOperationGate, hasPendingHandoff?: () => boolean) {
   const actions: string[] = []
   const state = {
     completed: 0,
@@ -59,9 +60,55 @@ function closeFixture() {
         listVerifiedCandidates: async () => Array.from({ length: state.completed }, () => ({})),
       },
     },
+    gate,
+    hasPendingHandoff,
   )
   return { actions, close, state }
 }
+
+test('Project close waits for an accepted-result handoff before reading or discarding staging', async () => {
+  const gate = new ProjectGenerationOperationGate()
+  const fixture = closeFixture(gate)
+  let releaseHandoff!: () => void
+  const handoffBarrier = new Promise<void>((resolve) => {
+    releaseHandoff = resolve
+  })
+  const handoff = gate.run(TAB_ID, async () => {
+    fixture.actions.push('accepted-shadow')
+    await handoffBarrier
+    fixture.actions.push('handoff-done')
+  })
+  const closing = fixture.close.close(TAB_ID, {
+    confirmCloseImpact: true,
+    discardDocument: false,
+  })
+  await Promise.resolve()
+  assert.deepEqual(fixture.actions, ['accepted-shadow'])
+  releaseHandoff()
+  await Promise.all([handoff, closing])
+  assert.deepEqual(fixture.actions, [
+    'accepted-shadow',
+    'handoff-done',
+    'fence',
+    'cancel-jobs',
+    'discard-staging',
+    'document-close',
+    'complete-generation-close',
+  ])
+})
+
+test('pending accepted-result recovery blocks Project close before touching generation', async () => {
+  const fixture = closeFixture(new ProjectGenerationOperationGate(), () => true)
+  await assert.rejects(fixture.close.getCloseImpact(TAB_ID), {
+    code: 'PROJECT_ACCEPTANCE_PENDING',
+  })
+  await assert.rejects(
+    fixture.close.close(TAB_ID, { confirmCloseImpact: true, discardDocument: false }),
+    { code: 'PROJECT_ACCEPTANCE_PENDING' },
+  )
+  assert.deepEqual(fixture.actions, [])
+  assert.equal(fixture.state.open, true)
+})
 
 test('a late impact requires confirmation without canceling a job or discarding a candidate', async () => {
   const fixture = closeFixture()

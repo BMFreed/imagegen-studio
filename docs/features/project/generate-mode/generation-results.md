@@ -298,11 +298,30 @@ the current document. An existing destination is not overwritten; the user
 must choose another name. See the
 [export boundary](../../../engineering/phase-2b-candidate-image-export.md).
 
-User-triggered Generate, acceptance into Raster/Smart Patch, attachment of
-accepted provenance and storage quota/cleanup remain open; preview/export do
-not fulfill PP-008. A separate
-[Raster provenance storage checkpoint](../../../engineering/phase-2b-accepted-provenance-storage.md)
-defines and preserves a typed record, but does not attach one through Add.
+## Production Raster acceptance checkpoint
+
+The desktop Results tray now keeps preview focus separate from checkbox
+selection and offers `Add N as Layers` for completed candidates. Main accepts
+only verified candidates from the open document, attaches the typed immutable
+provenance, inserts adjacent Raster Layers at each frozen bbox, and chooses one
+visible anchor. If unchecked results would be lost, Add first shows their
+count and requires confirmation; a changed staging snapshot is rejected and
+must be reviewed again. A single document edit creates one in-memory history step. The
+recovery shadow must confirm the exact accepted revision before the captured
+staging sessions are tombstoned; `.igs` changes only after explicit Save.
+Candidates from another document at the same path remain previewable and
+exportable but cannot be added. See the
+[Raster acceptance evidence](../../../engineering/phase-2b-raster-acceptance-research.md).
+
+This is a partial implementation of the contract above. Add currently rejects
+while any job for that Project is unfinished; the early-accept confirmation and
+cancellation flow remains open. User-facing Undo/Redo, Smart Patch variants,
+derived global history and storage quota/cleanup policy also remain open. If a
+process crashes after shadow commit but before staging tombstones, restart
+reconciliation removes sessions containing accepted candidates. It retains
+other temporary sessions because no durable acceptance journal yet identifies
+which unselected candidates belonged to that interrupted Add. This favors
+preserving work over the normal same-process discard rule.
 
 ## Vue Prototype Coverage
 

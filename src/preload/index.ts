@@ -572,6 +572,12 @@ const api: StudioApi = {
       ),
   },
   projects: {
+    acceptGenerationCandidates: (tabId, candidateIds, focusedCandidateId, expectedAvailableIds) =>
+      invokeProject(
+        ipcChannels.projects.acceptGenerationCandidates,
+        [tabId, candidateIds, focusedCandidateId, expectedAvailableIds],
+        isProjectTab,
+      ),
     addGenerationLora: (tabId, selection) =>
       invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
     cancelImport: (importId) =>

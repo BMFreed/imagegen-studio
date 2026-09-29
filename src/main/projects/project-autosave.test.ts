@@ -127,6 +127,8 @@ test('debounced dirty document recovers after restart without changing saved .ig
     )
     assert.equal(recovered.document.title, 'Recovered edit')
     assert.equal(recovered.dirty, true)
+    assert.equal(recovered.canUndo, false)
+    assert.equal(recovered.canRedo, false)
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Saved')
     const saved = await recovered.save()
     assert.equal(saved.committed, true)
@@ -507,12 +509,15 @@ test('Save A keeps later B dirty and rebases its recovery shadow on committed A'
     await coordinator.applyDocument({ ...coordinator.document, title: 'Save A' })
     await coordinator.flush()
     const saving = coordinator.save()
+    assert.equal(coordinator.canUndo, false)
+    await assert.rejects(coordinator.undo(), { code: 'SAVE_IN_PROGRESS' })
     await coordinator.applyDocument({ ...coordinator.document, title: 'Later B' })
     await committed.promise
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Save A')
     assert.equal(coordinator.document.title, 'Later B')
     gate.release()
     const outcome = await saving
+    assert.equal(coordinator.canUndo, true)
     assert.equal(outcome.recovery.status, 'dirty')
     assert.equal(coordinator.dirty, true)
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
@@ -770,5 +775,227 @@ test('explicit Discard Recovery removes only the local shadow and opens the save
       'absent',
     )
     assert.equal((await readIgsPackage(projectPath)).project.title, 'Saved')
+  })
+})
+
+test('one grouped Raster edit undoes and redoes both layers and their provenance across Save', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const originalPackage = await readFile(projectPath)
+    const before = coordinator.document
+    const output = await acceptedOutputPngFixture()
+    const first = withRaster(before, output, { height: 8, width: 8 })
+    const second = withRaster(before, output, { height: 8, width: 8 })
+    first.document.layers[0].generationProvenance = acceptedRasterProvenanceFixture(
+      before,
+      output,
+      { height: 8, width: 8, x: 0, y: 0 },
+    )
+    second.document.layers[0].generationProvenance = acceptedRasterProvenanceFixture(
+      before,
+      output,
+      { height: 8, width: 8, x: 0, y: 0 },
+    )
+    await coordinator.applyDocument(
+      { ...before, layers: [first.document.layers[0], second.document.layers[0]] },
+      { [first.assetPath]: { bytes: output }, [second.assetPath]: { bytes: output } },
+    )
+    assert.equal(coordinator.document.layers.length, 2)
+    assert.equal(coordinator.canUndo, true)
+    assert.equal(coordinator.canRedo, false)
+    await coordinator.flush()
+    assert.deepEqual(await readFile(projectPath), originalPackage)
+
+    await coordinator.undo()
+    assert.equal(coordinator.document.layers.length, 0)
+    assert.equal(coordinator.dirty, false)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, true)
+    await coordinator.redo()
+    assert.deepEqual(
+      coordinator.document.layers.map((layer) => layer.id),
+      [first.document.layers[0].id, second.document.layers[0].id],
+    )
+    assert.deepEqual(
+      coordinator.document.layers.map((layer) => layer.generationProvenance),
+      [
+        first.document.layers[0].generationProvenance,
+        second.document.layers[0].generationProvenance,
+      ],
+    )
+    assert.equal(coordinator.canUndo, true)
+    assert.equal(coordinator.canRedo, false)
+
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    await coordinator.undo()
+    assert.equal(coordinator.document.layers.length, 0)
+    assert.equal(coordinator.dirty, true)
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    assert.equal((await readIgsPackage(projectPath)).project.layers.length, 0)
+    await coordinator.redo()
+    await coordinator.flush()
+    const recovered = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
+    assert.equal(recovered.status, 'recoverable')
+    if (recovered.status === 'recoverable') {
+      assert.equal(recovered.document.layers.length, 2)
+      const firstSource = recovered.dirtyAssets[first.assetPath]
+      const secondSource = recovered.dirtyAssets[second.assetPath]
+      assert.ok(firstSource && 'sourcePath' in firstSource)
+      assert.ok(secondSource && 'sourcePath' in secondSource)
+      assert.deepEqual(await readFile(firstSource.sourcePath), output)
+      assert.deepEqual(await readFile(secondSource.sourcePath), output)
+    }
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    const saved = await readIgsPackage(projectPath)
+    assert.deepEqual(await saved.readMember(first.assetPath), output)
+    assert.deepEqual(await saved.readMember(second.assetPath), output)
+  })
+})
+
+test('no-op and rejected edits keep history, but a new edit after Undo clears Redo', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const saved = coordinator.document
+    await coordinator.applyDocument({ ...saved, title: 'First' })
+    assert.equal(coordinator.canUndo, true)
+    await coordinator.undo()
+    assert.equal(coordinator.canRedo, true)
+    await coordinator.applyDocument(coordinator.document)
+    assert.equal(coordinator.canRedo, true)
+    await assert.rejects(
+      coordinator.applyDocument(
+        { ...coordinator.document, title: 'Stale' },
+        {},
+        {
+          expectedDocumentRevision: randomUUID(),
+        },
+      ),
+      { code: 'EDIT_CONFLICT' },
+    )
+    assert.equal(coordinator.canRedo, true)
+    await coordinator.applyDocument({ ...coordinator.document, title: 'Different' })
+    assert.equal(coordinator.canRedo, false)
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'Saved')
+    assert.equal(coordinator.canUndo, false)
+  })
+})
+
+test('Redo rejects a corrupted retained asset without consuming history or exposing a broken layer', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const imported = withRaster(coordinator.document)
+    await coordinator.applyDocument(imported.document, {
+      [imported.assetPath]: { bytes: raster },
+    })
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    await coordinator.undo()
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    const retainedDirectory = (await readdir(roots.scratchDir)).find((entry) =>
+      entry.startsWith('igs-save-base-'),
+    )
+    assert.ok(retainedDirectory)
+    const retainedAsset = path.join(roots.scratchDir, retainedDirectory, '0.asset')
+    await writeFile(retainedAsset, Buffer.alloc(raster.length))
+
+    await assert.rejects(coordinator.redo(), { code: 'ASSET_SOURCE_MISSING' })
+    assert.equal(coordinator.document.layers.length, 0)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, true)
+    await writeFile(retainedAsset, raster)
+    await coordinator.redo()
+    assert.equal(coordinator.document.layers.length, 1)
+    assert.equal(coordinator.canRedo, false)
+  })
+})
+
+test('a concurrent edit cannot consume an outdated Undo snapshot', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const entered = deferred()
+    const release = deferred()
+    let pauseUndo = true
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      beforeEditCommit: async (document) => {
+        if (pauseUndo && document.title === 'Saved') {
+          entered.release()
+          await release.promise
+        }
+      },
+    })
+    await coordinator.applyDocument({ ...coordinator.document, title: 'First' })
+    const undoing = coordinator.undo()
+    await entered.promise
+    await coordinator.applyDocument({ ...coordinator.document, title: 'Later' })
+    pauseUndo = false
+    release.release()
+    await assert.rejects(undoing, { code: 'EDIT_CONFLICT' })
+    assert.equal(coordinator.document.title, 'Later')
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'First')
+    await coordinator.undo()
+    assert.equal(coordinator.document.title, 'Saved')
+  })
+})
+
+test('two open Project coordinators keep independent histories', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const secondSession = await ProjectSession.create(
+      path.join(directory, 'second.igs'),
+      'Second',
+      roots,
+    )
+    const first = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    const second = await ProjectAutosaveCoordinator.attach(secondSession, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    await first.applyDocument({ ...first.document, title: 'First edited' })
+    await second.applyDocument({ ...second.document, title: 'Second edited' })
+    await first.undo()
+    assert.equal(first.document.title, 'Saved')
+    assert.equal(first.canRedo, true)
+    assert.equal(second.document.title, 'Second edited')
+    assert.equal(second.canUndo, true)
+    assert.equal(second.canRedo, false)
+    await second.undo()
+    assert.equal(second.document.title, 'Second')
+    await first.redo()
+    assert.equal(first.document.title, 'First edited')
+    assert.equal(second.document.title, 'Second')
+  })
+})
+
+test('history is limited to 64 steps and belongs only to the open coordinator lifetime', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    for (let index = 1; index <= 65; index += 1) {
+      await coordinator.applyDocument({ ...coordinator.document, title: `Edit ${index}` })
+    }
+    for (let index = 0; index < 64; index += 1) {
+      assert.equal(coordinator.canUndo, true)
+      await coordinator.undo()
+    }
+    assert.equal(coordinator.document.title, 'Edit 1')
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, true)
+    for (let index = 0; index < 64; index += 1) {
+      await coordinator.redo()
+    }
+    assert.equal(coordinator.document.title, 'Edit 65')
+    assert.equal(coordinator.canRedo, false)
+    assert.equal((await coordinator.save()).recovery.status, 'clean')
+    await coordinator.close()
+    assert.equal(coordinator.canUndo, false)
+    const reopened = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    assert.equal(reopened.canUndo, false)
+    assert.equal(reopened.canRedo, false)
+    await reopened.close()
   })
 })

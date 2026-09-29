@@ -43,6 +43,8 @@ type AssetRef = { bytes: number; height?: number; path: string; sha256: string; 
 
 type PendingSource = { ref: AssetRef; source: IgsAssetSource }
 
+const PROJECT_HISTORY_LIMIT = 64
+
 export class ProjectAutosaveError extends Error {
   constructor(
     readonly code:
@@ -93,6 +95,12 @@ const processLeases = new ProjectAutosaveLeaseRegistry()
  * resolves. Generation candidate staging is deliberately separate.
  */
 export class ProjectAutosaveCoordinator {
+  get canRedo(): boolean {
+    return !this.closed && !this.activeSave && !this.editGate && this.future.length > 0
+  }
+  get canUndo(): boolean {
+    return !this.closed && !this.activeSave && !this.editGate && this.past.length > 0
+  }
   get dirty(): boolean {
     return this.session.dirty
   }
@@ -114,8 +122,10 @@ export class ProjectAutosaveCoordinator {
   private readonly debounceMs: number
   private editGate: Promise<void> | undefined
   private editGeneration = 0
+  private readonly future: IgsProjectDocumentV1[] = []
   private readonly historicalSources = new Map<string, PendingSource>()
   private readonly ownedStaging = new Set<string>()
+  private readonly past: IgsProjectDocumentV1[] = []
   private pendingWrite: Promise<void> = Promise.resolve()
 
   private rebasing = false
@@ -276,7 +286,14 @@ export class ProjectAutosaveCoordinator {
       )
       // ProjectSession assigns a fresh revision when applying a recovered document. Republish
       // that revision before exposing the session; original recovery survives failure.
-      await coordinator.applyDocument(inspection.document, inspection.dirtyAssets)
+      await coordinator.applyDocumentInternal(
+        inspection.document,
+        inspection.dirtyAssets,
+        {},
+        () => {
+          // Recovery restores the document state; it is not a user edit in this process.
+        },
+      )
       await coordinator.flush()
       return coordinator
     } catch (error) {
@@ -307,6 +324,10 @@ export class ProjectAutosaveCoordinator {
       }
       this.requireChangedSources(document, staged)
       this.installSources(staged)
+      // A caller already changed ProjectSession before adoption. Its previous document is not
+      // available, so old history must not be allowed to replace this edit on Undo.
+      this.past.length = 0
+      this.future.length = 0
       this.editGeneration += 1
       this.schedule()
     } catch (error) {
@@ -324,44 +345,23 @@ export class ProjectAutosaveCoordinator {
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>> = {},
     options: { expectedDocumentRevision?: string } = {},
-  ): Promise<void> {
-    this.assertOpen()
-    await this.editGate
-    this.assertOpen()
-    const before = this.session.document
-    if (
-      options.expectedDocumentRevision !== undefined &&
-      before.documentRevision !== options.expectedDocumentRevision
-    ) {
-      throw new ProjectAutosaveError(
-        'EDIT_CONFLICT',
-        'The Project changed while preparing this edit.',
-      )
-    }
-    const candidate = parseProjectDocumentV1(input)
-    if (
-      options.expectedDocumentRevision !== undefined &&
-      candidate.documentRevision !== options.expectedDocumentRevision
-    ) {
-      throw new ProjectAutosaveError('EDIT_CONFLICT', 'This edit has an outdated Project revision.')
-    }
-    const staged = await this.stageSources(candidate, assetSources)
-    try {
-      await this.options.beforeEditCommit?.(candidate)
-      await this.editGate
-      this.assertOpen()
-      if (!sameDocument(this.session.document, before)) {
-        throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed during this edit.')
-      }
-      this.requireChangedSources(candidate, staged)
-      this.session.applyDocument(candidate)
-      this.installSources(staged)
-      this.editGeneration += 1
-      this.schedule()
-    } catch (error) {
-      await this.removeNewStaging(staged)
-      throw error
-    }
+  ): Promise<{ documentRevision: string }> {
+    const documentRevision = await this.applyDocumentInternal(
+      input,
+      assetSources,
+      options,
+      (before, after) => {
+        if (sameContent(before, after)) {
+          return
+        }
+        this.past.push(before)
+        if (this.past.length > PROJECT_HISTORY_LIMIT) {
+          this.past.shift()
+        }
+        this.future.length = 0
+      },
+    )
+    return { documentRevision }
   }
 
   /** Release retained undo/import assets after the tab is clean and writes have settled. */
@@ -389,6 +389,8 @@ export class ProjectAutosaveCoordinator {
     }
     this.releaseLease?.()
     this.releaseLease = undefined
+    this.past.length = 0
+    this.future.length = 0
   }
 
   /** Graceful Discard Changes; reopen the saved package as a fresh session. */
@@ -414,6 +416,8 @@ export class ProjectAutosaveCoordinator {
       )
       // Transfer ownership synchronously: the new clean tab remains the only writer for this path.
       this.releaseLease = undefined
+      this.past.length = 0
+      this.future.length = 0
       return replacement
     } catch (error) {
       this.closed = false
@@ -496,6 +500,11 @@ export class ProjectAutosaveCoordinator {
     } finally {
       this.releasePreparedEdits()
     }
+  }
+
+  /** Restore the document that the latest successful Undo moved away from. */
+  async redo(): Promise<void> {
+    await this.moveHistory('redo')
   }
 
   /** Explicit Save commits `.igs`, then cleans only that revision and rebases any later edit. */
@@ -627,6 +636,61 @@ export class ProjectAutosaveCoordinator {
     }
   }
 
+  /** Restore one document state without rewinding queue or staging. Failed edits keep both stacks. */
+  async undo(): Promise<void> {
+    await this.moveHistory('undo')
+  }
+
+  private async applyDocumentInternal(
+    input: unknown,
+    assetSources: Readonly<Record<string, IgsAssetSource>>,
+    options: { expectedDocumentRevision?: string },
+    afterCommit: (before: IgsProjectDocumentV1, after: IgsProjectDocumentV1) => void,
+    beforeCommit?: () => void,
+  ): Promise<string> {
+    this.assertOpen()
+    await this.editGate
+    this.assertOpen()
+    const before = this.session.document
+    if (
+      options.expectedDocumentRevision !== undefined &&
+      before.documentRevision !== options.expectedDocumentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while preparing this edit.',
+      )
+    }
+    const candidate = parseProjectDocumentV1(input)
+    if (
+      options.expectedDocumentRevision !== undefined &&
+      candidate.documentRevision !== options.expectedDocumentRevision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'This edit has an outdated Project revision.')
+    }
+    const staged = await this.stageSources(candidate, assetSources)
+    try {
+      await this.options.beforeEditCommit?.(candidate)
+      await this.editGate
+      this.assertOpen()
+      if (!sameDocument(this.session.document, before)) {
+        throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed during this edit.')
+      }
+      this.requireChangedSources(candidate, staged)
+      beforeCommit?.()
+      this.session.applyDocument(candidate)
+      const documentRevision = this.session.document.documentRevision
+      this.installSources(staged)
+      afterCommit(before, this.session.document)
+      this.editGeneration += 1
+      this.schedule()
+      return documentRevision
+    } catch (error) {
+      await this.removeNewStaging(staged)
+      throw error
+    }
+  }
+
   private assertOpen(): void {
     if (this.closed) {
       throw new ProjectAutosaveError('COORDINATOR_CLOSED', 'This Project session is closed.')
@@ -676,6 +740,46 @@ export class ProjectAutosaveCoordinator {
         this.sources.delete(memberPath)
       }
     }
+  }
+
+  private async moveHistory(direction: 'redo' | 'undo'): Promise<void> {
+    this.assertOpen()
+    if (this.activeSave || this.editGate) {
+      throw new ProjectAutosaveError(
+        'SAVE_IN_PROGRESS',
+        'Wait for the Project operation to finish.',
+      )
+    }
+    const source = direction === 'undo' ? this.past : this.future
+    const destination = direction === 'undo' ? this.future : this.past
+    const target = source.at(-1)
+    if (!target) {
+      return
+    }
+    const expectedDocumentRevision = this.session.document.documentRevision
+    const restored = { ...target, documentRevision: expectedDocumentRevision }
+    // Re-copy/hash every asset reintroduced by this snapshot before changing the document. A
+    // retained historical source can disappear or be corrupted independently of the Undo stack.
+    const assetSources = this.changedSources(restored)
+    await this.applyDocumentInternal(
+      restored,
+      assetSources,
+      { expectedDocumentRevision },
+      (before) => {
+        // This callback runs synchronously after the verified document/asset commit. A competing
+        // edit fails its revision check before it can alter either stack.
+        source.pop()
+        destination.push(before)
+      },
+      () => {
+        if (source.at(-1) !== target) {
+          throw new ProjectAutosaveError(
+            'EDIT_CONFLICT',
+            'Project history changed during Undo/Redo.',
+          )
+        }
+      },
+    )
   }
 
   private async preserveSaveBaseAssets(savingDocument: IgsProjectDocumentV1): Promise<void> {

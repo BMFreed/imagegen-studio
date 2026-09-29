@@ -401,6 +401,11 @@ export class ProjectService {
       : { filePath: coordinator.filePath, kind: 'saved', member }
   }
 
+  /** Main-only acceptance owner. Never expose this coordinator or its paths through IPC. */
+  getOpenDocumentForAcceptance(tabId: string): ProjectAutosaveCoordinator | null {
+    return PROJECT_ID_PATTERN.test(tabId) ? (this.openTabs.get(tabId) ?? null) : null
+  }
+
   /** Main-only identity for linking local recovery to the document actually open in this tab. */
   getOpenDocumentId(tabId: string): string | null {
     return PROJECT_ID_PATTERN.test(tabId)
@@ -497,10 +502,13 @@ export class ProjectService {
     if (index === targetIndex) {
       return toTab(tabId, coordinator)
     }
-    document.layers.splice(index, 1)
-    document.layers.splice(targetIndex, 0, layer)
+    // The coordinator document is shared with acceptance/undo readers. Never mutate it before
+    // the revision-guarded apply, or a concurrent operation can observe an uncommitted reorder.
+    const layers = [...document.layers]
+    layers.splice(index, 1)
+    layers.splice(targetIndex, 0, layer)
     await coordinator.applyDocument(
-      document,
+      { ...document, layers },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -901,6 +909,7 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
     const draft = document.generationDraft
+    let nextDraft = draft
     switch (change.kind) {
       case 'lora-enabled':
       case 'lora-weight': {
@@ -910,7 +919,7 @@ export class ProjectService {
         if (lora[field] === change.value) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           loras: draft.loras.map((entry, current) =>
             current === index ? { ...entry, [field]: change.value } : entry,
@@ -922,7 +931,7 @@ export class ProjectService {
         if (draft.sampling.cfgScale === change.value) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           sampling: { ...draft.sampling, cfgScale: change.value },
         }
@@ -935,7 +944,7 @@ export class ProjectService {
         ) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           sampling: { ...draft.sampling, sampler: change.sampler, scheduler: change.scheduler },
         }
@@ -945,7 +954,7 @@ export class ProjectService {
         if (draft.sampling.steps === change.value) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           sampling: { ...draft.sampling, steps: change.value },
         }
@@ -955,7 +964,7 @@ export class ProjectService {
         if (draft.seed.policy === change.policy && draft.seed.value === change.value) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           seed: { policy: change.policy, value: change.value },
         }
@@ -970,14 +979,14 @@ export class ProjectService {
         if (before.text === change.text && embeddingRefs.length === before.embeddingRefs.length) {
           return toTab(tabId, coordinator)
         }
-        document.generationDraft = {
+        nextDraft = {
           ...draft,
           [field]: { embeddingRefs, text: change.text },
         }
       }
     }
     await coordinator.applyDocument(
-      document,
+      { ...document, generationDraft: nextDraft },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1035,9 +1044,10 @@ export class ProjectService {
     ) {
       return toTab(tabId, coordinator)
     }
-    document.layers[index] = updated
+    const layers = [...document.layers]
+    layers[index] = updated
     await coordinator.applyDocument(
-      document,
+      { ...document, layers },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )

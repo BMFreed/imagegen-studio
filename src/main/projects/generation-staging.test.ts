@@ -20,9 +20,13 @@ import {
 } from './generation-staging.js'
 import { readIgsPackage, validateSrgbPngStream } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
+import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import { ProjectGenerationResultResource } from './project-generation-result-resource.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
+import { ProjectShadowStore } from './project-shadow.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -800,6 +804,145 @@ test('Project discard hides only its old sessions and preserves actual seed afte
     await publishOne(root, restartedQueue, restarted, projectA, 444)
     assert.equal((await restarted.listVerifiedCandidates(completedA.localProjectKey)).length, 1)
     assert.equal(await restarted.readLastActualSeed(completedA.localProjectKey), 444)
+    await second.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('targeted acceptance tombstones only captured sessions and preserves newer candidates', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-targeted-discard-'))
+  try {
+    const firstDatabase = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(firstDatabase.db, root)
+    const staging = new GenerationStagingRepository(firstDatabase.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const project = await fixture(root)
+    const accepted = await publishOne(root, queue, staging, project, 101)
+    const unselected = await publishOne(root, queue, staging, project, 102)
+    const before = await readFile(project.projectPath)
+    assert.notEqual(accepted.stagingSessionId, unselected.stagingSessionId)
+    assert.deepEqual(
+      await staging.discardSessions(accepted.localProjectKey, [accepted.stagingSessionId]),
+      { cleanupDeferred: false, discardedSessionCount: 1 },
+    )
+    assert.deepEqual(
+      (await staging.listVerifiedCandidates(accepted.localProjectKey)).map(
+        (item) => item.candidateId,
+      ),
+      [unselected.candidateId],
+    )
+    const later = await publishOne(root, queue, staging, project, 103)
+    assert.deepEqual(
+      await staging.discardSessions(accepted.localProjectKey, [accepted.stagingSessionId]),
+      { cleanupDeferred: false, discardedSessionCount: 1 },
+    )
+    assert.deepEqual(
+      (await staging.listVerifiedCandidates(accepted.localProjectKey)).map(
+        (item) => item.candidateId,
+      ),
+      [unselected.candidateId, later.candidateId],
+    )
+    assert.deepEqual(await readFile(project.projectPath), before)
+    await firstDatabase.close()
+
+    const reopenedDatabase = openAppDatabase(root, migrations)
+    const recovered = new GenerationStagingRepository(reopenedDatabase.db, root)
+    assert.deepEqual(await recovered.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    assert.deepEqual(
+      (await recovered.listVerifiedCandidates(accepted.localProjectKey)).map(
+        (item) => item.candidateId,
+      ),
+      [unselected.candidateId, later.candidateId],
+    )
+    await reopenedDatabase.close()
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('interrupted Add recovers its exact Raster from real shadow and SQLite staging', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-add-restart-'))
+  try {
+    const first = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const project = await fixture(root)
+    const published = await publishOne(root, queue, staging, project, 42)
+    const savedBefore = await readFile(project.projectPath)
+    const roots = { placeholdersDir: placeholders, scratchDir: path.join(root, 'scratch') }
+    const shadow = new ProjectShadowStore(path.join(root, 'shadow'))
+    let owner = await ProjectAutosaveCoordinator.attach(
+      await ProjectSession.open(project.projectPath, roots),
+      roots,
+      shadow,
+      { debounceMs: 60_000 },
+    )
+    let fenced = false
+    const orchestrator = {
+      fenceProjectGeneration: async () => {
+        fenced = true
+      },
+      releaseProjectGenerationFence: () => {
+        fenced = false
+      },
+    }
+    const key = published.localProjectKey
+    const interrupted = new ProjectGenerationAcceptance({
+      afterDurableShadow: async () => {
+        throw new Error('interrupted after synced shadow')
+      },
+      documents: { getOpenDocument: (id) => (id === key ? owner : null) },
+      gate: new ProjectGenerationOperationGate(),
+      orchestrator,
+      queue: { listUnfinishedByProject: (id) => queue.listUnfinishedByProject(id) },
+      staging,
+    })
+    await assert.rejects(
+      interrupted.accept(key, [published.candidateId], null, [published.candidateId]),
+      /interrupted after synced shadow/,
+    )
+    assert.equal(fenced, true)
+    assert.deepEqual(await readFile(project.projectPath), savedBefore)
+    assert.equal(
+      (await ProjectAutosaveCoordinator.inspectRecovery(project.projectPath, shadow)).status,
+      'recoverable',
+    )
+    assert.deepEqual(
+      (await staging.listVerifiedCandidates(key)).map((item) => item.candidateId),
+      [published.candidateId],
+    )
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    const restartedQueue = new GenerationQueueRepository(second.db, root)
+    await restartedQueue.recoverAfterRestart()
+    const restartedStaging = new GenerationStagingRepository(second.db, root)
+    await restartedStaging.recoverAfterRestart()
+    owner = await ProjectAutosaveCoordinator.recover(project.projectPath, roots, shadow, {
+      debounceMs: 60_000,
+      leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+    })
+    const recovered = new ProjectGenerationAcceptance({
+      documents: { getOpenDocument: (id) => (id === key ? owner : null) },
+      gate: new ProjectGenerationOperationGate(),
+      orchestrator,
+      queue: { listUnfinishedByProject: (id) => restartedQueue.listUnfinishedByProject(id) },
+      staging: restartedStaging,
+    })
+    assert.equal(await recovered.reconcile(key), 'cleaned')
+    assert.equal(fenced, false)
+    assert.deepEqual(await restartedStaging.listVerifiedCandidates(key), [])
+    assert.equal(owner.document.layers.length, 1)
+    assert.equal(
+      owner.document.layers[0]?.generationProvenance?.executionResultContext.candidateId,
+      published.candidateId,
+    )
+    assert.equal((await owner.save()).committed, true)
+    assert.equal((await readIgsPackage(project.projectPath)).project.layers.length, 1)
     await second.close()
   } finally {
     await rm(root, { force: true, recursive: true })

@@ -323,6 +323,59 @@ export class GenerationStagingRepository {
   }
 
   /**
+   * Consume exactly the sessions captured by a completed Project handoff. New results published
+   * after that capture must remain visible. Tombstones commit before best-effort asset cleanup.
+   */
+  async discardSessions(
+    localProjectKey: string,
+    stagingSessionIds: readonly string[],
+  ): Promise<{ cleanupDeferred: boolean; discardedSessionCount: number }> {
+    if (
+      !PROJECT_KEY_PATTERN.test(localProjectKey) ||
+      stagingSessionIds.some((id) => !UUID_PATTERN.test(id))
+    ) {
+      throw new GenerationStagingError(
+        'STAGING_INPUT_INVALID',
+        'Staging session identity is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.requireReconciled()
+      const sessions = new Set(stagingSessionIds)
+      if (sessions.size === 0) {
+        return { cleanupDeferred: false, discardedSessionCount: 0 }
+      }
+      const root = await this.ensureStagingRoot()
+      await this.db.transaction().execute(async (transaction) => {
+        const ids = [...sessions]
+        const discardedAt = new Date().toISOString()
+        for (let index = 0; index < ids.length; index += 400) {
+          await transaction
+            .insertInto('generation_staging_discarded_session')
+            .values(
+              ids.slice(index, index + 400).map((stagingSessionId) => ({
+                discarded_at: discardedAt,
+                local_project_key: localProjectKey,
+                staging_session_id: stagingSessionId,
+              })),
+            )
+            .onConflict((conflict) =>
+              conflict.columns(['local_project_key', 'staging_session_id']).doNothing(),
+            )
+            .execute()
+        }
+      })
+      await this.testHooks.afterDiscardTombstone?.()
+      const cleanupDeferred = !(await this.cleanupDiscardedSessions(
+        root,
+        localProjectKey,
+        sessions,
+      ))
+      return { cleanupDeferred, discardedSessionCount: sessions.size }
+    })
+  }
+
+  /**
    * A processor may fail a running job only when publication definitely never reserved a receipt.
    * If this lookup fails, the processor must keep the job for restart reconciliation.
    */

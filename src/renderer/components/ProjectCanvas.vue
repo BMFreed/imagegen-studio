@@ -29,6 +29,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   changeBbox: [rect: IgsRectV1]
   refreshGenerationResults: []
   saveCandidateImage: [candidateId: string]
@@ -44,6 +45,8 @@ const viewport = ref<CanvasSize>({ height: 0, width: 0 })
 const failedImageUrls = ref<Set<string>>(new Set())
 const failedCandidateUrls = ref<Set<string>>(new Set())
 const focusedCandidateId = ref<string | null>(null)
+const selectedCandidateIds = ref<string[]>([])
+const stagingHeight = ref(0)
 const previewVisible = ref(true)
 const localBboxPosition = ref<{ x: number; y: number } | null>(null)
 const focusedCandidate = computed(
@@ -83,6 +86,8 @@ let bboxShape: Konva.Rect | null = null
 let bboxTransformer: Konva.Transformer | null = null
 let resizeObserver: ResizeObserver | null = null
 let fitMode = true
+let candidateFitMode = false
+let selectionInitialized = false
 let panMoved = false
 let lastPointer = { x: 0, y: 0 }
 let keyboardBboxDirty = false
@@ -116,6 +121,7 @@ function fitView() {
     return
   }
   fitMode = true
+  candidateFitMode = false
   const bounds = fitTargetBounds(props.layers, props.bbox)
   const candidate = previewVisible.value ? focusedCandidate.value : null
   const previewBounds = candidate ? rectBounds(candidate.bbox) : null
@@ -130,10 +136,32 @@ function fitView() {
           }
         : bounds,
       {
-        height: Math.max(1, viewport.value.height - (candidate ? 120 : 0)),
+        height: Math.max(1, viewport.value.height - stagingSpace()),
         width: viewport.value.width,
       },
     ),
+  )
+}
+
+function stagingSpace(): number {
+  return props.generationResults.length > 0 ? (stagingHeight.value || 108) + 12 : 0
+}
+
+function fitFocusedCandidate() {
+  const candidate = focusedCandidate.value
+  if (
+    !candidate ||
+    !previewVisible.value ||
+    viewport.value.width === 0 ||
+    viewport.value.height === 0
+  ) {
+    return
+  }
+  applyCamera(
+    fitCamera(rectBounds(candidate.bbox), {
+      height: Math.max(1, viewport.value.height - stagingSpace()),
+      width: viewport.value.width,
+    }),
   )
 }
 
@@ -143,21 +171,60 @@ function focusCandidate(candidateId: string) {
     return
   }
   fitMode = false
+  candidateFitMode = true
   focusedCandidateId.value = candidateId
   previewVisible.value = true
-  if (viewport.value.width > 0 && viewport.value.height > 0) {
-    applyCamera(
-      fitCamera(rectBounds(candidate.bbox), {
-        height: Math.max(1, viewport.value.height - 120),
-        width: viewport.value.width,
-      }),
-    )
+  fitFocusedCandidate()
+}
+
+function setCandidateSelected(candidateId: string, selected: boolean) {
+  const candidate = props.generationResults.find((item) => item.candidateId === candidateId)
+  if (!candidate || candidate.sourceDocumentMismatch || props.candidateActionsDisabled) {
+    return
+  }
+  const ids = new Set(selectedCandidateIds.value)
+  if (selected) {
+    ids.add(candidateId)
+  } else {
+    ids.delete(candidateId)
+  }
+  selectedCandidateIds.value = props.generationResults
+    .filter((item) => !item.sourceDocumentMismatch && ids.has(item.candidateId))
+    .map((item) => item.candidateId)
+}
+
+function selectAllCandidates() {
+  if (props.candidateActionsDisabled) {
+    return
+  }
+  selectedCandidateIds.value = props.generationResults
+    .filter((candidate) => !candidate.sourceDocumentMismatch)
+    .map((candidate) => candidate.candidateId)
+}
+
+function clearSelection() {
+  if (!props.candidateActionsDisabled) {
+    selectedCandidateIds.value = []
+  }
+}
+
+function acceptCandidates() {
+  if (props.candidateActionsDisabled) {
+    return
+  }
+  const ids = new Set(selectedCandidateIds.value)
+  const candidateIds = props.generationResults
+    .filter((candidate) => !candidate.sourceDocumentMismatch && ids.has(candidate.candidateId))
+    .map((candidate) => candidate.candidateId)
+  if (candidateIds.length > 0) {
+    emit('acceptCandidates', { candidateIds, focusedCandidateId: focusedCandidateId.value })
   }
 }
 
 function setZoom(scale: number, point?: { x: number; y: number }) {
   const center = point ?? { x: viewport.value.width / 2, y: viewport.value.height / 2 }
   fitMode = false
+  candidateFitMode = false
   applyCamera(zoomCameraAt(camera.value, scale, center.x, center.y))
 }
 
@@ -189,6 +256,7 @@ function startPan(event: PointerEvent) {
   panning.value = true
   panMoved = false
   fitMode = false
+  candidateFitMode = false
   lastPointer = { x: event.clientX, y: event.clientY }
   host.value.setPointerCapture(event.pointerId)
 }
@@ -257,6 +325,7 @@ function handleKeydown(event: KeyboardEvent) {
     sceneLayer?.batchDraw()
     keyboardBboxDirty = true
     fitMode = false
+    candidateFitMode = false
     return
   }
   switch (event.key) {
@@ -356,6 +425,7 @@ function commitBbox() {
   ) {
     localBboxPosition.value = { x: rect.x, y: rect.y }
     fitMode = false
+    candidateFitMode = false
     emit('changeBbox', rect)
   } else {
     localBboxPosition.value = null
@@ -613,7 +683,9 @@ onMounted(() => {
     const next = { height: entry.contentRect.height, width: entry.contentRect.width }
     viewport.value = next
     stage.size(next)
-    if (fitMode || previous.width === 0 || previous.height === 0) {
+    if (candidateFitMode) {
+      fitFocusedCandidate()
+    } else if (fitMode || previous.width === 0 || previous.height === 0) {
       fitView()
     } else {
       applyCamera({
@@ -672,17 +744,37 @@ watch(
   () => props.generationResults,
   (candidates) => {
     const ids = new Set(candidates.map((candidate) => candidate.candidateId))
+    const eligible = candidates.filter((candidate) => !candidate.sourceDocumentMismatch)
+    const selected = new Set(selectedCandidateIds.value)
+    selectedCandidateIds.value = eligible
+      .filter((candidate) => selected.has(candidate.candidateId))
+      .map((candidate) => candidate.candidateId)
+    if (candidates.length === 0) {
+      selectionInitialized = false
+    } else if (!selectionInitialized && eligible.length > 0) {
+      selectedCandidateIds.value = [eligible[0]!.candidateId]
+      selectionInitialized = true
+    }
     if (!focusedCandidateId.value || !ids.has(focusedCandidateId.value)) {
-      focusedCandidateId.value = candidates[0]?.candidateId ?? null
+      focusedCandidateId.value = (eligible[0] ?? candidates[0])?.candidateId ?? null
     }
     releaseStaleCandidateImages()
     renderCandidatePreview()
     if (fitMode) {
       fitView()
+    } else if (candidateFitMode) {
+      fitFocusedCandidate()
     }
   },
   { immediate: true },
 )
+watch(stagingHeight, () => {
+  if (fitMode) {
+    fitView()
+  } else if (candidateFitMode) {
+    fitFocusedCandidate()
+  }
+})
 watch([focusedCandidateId, previewVisible], renderCandidatePreview)
 watch(tool, () => {
   panMoved = false
@@ -780,9 +872,15 @@ watch(
         :focusedCandidateId
         :loading="generationResultsLoading"
         :previewVisible
+        :selectedCandidateIds
+        @acceptCandidates="acceptCandidates"
+        @clearSelection="clearSelection"
         @focus="focusCandidate"
         @refresh="emit('refreshGenerationResults')"
+        @resize="stagingHeight = $event"
         @saveCandidateImage="emit('saveCandidateImage', $event)"
+        @selectAll="selectAllCandidates"
+        @selectCandidate="setCandidateSelected"
         @togglePreview="previewVisible = !previewVisible"
       />
       <div v-if="layers.length === 0 && !(focusedCandidate && previewVisible)" class="canvas-empty">

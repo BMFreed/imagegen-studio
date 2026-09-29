@@ -10,10 +10,11 @@ import {
   DotsVertical,
   Eye,
   EyeOff,
+  ListCheck,
   Refresh,
 } from '@vicons/tabler'
-import { NButton, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { NButton, NCheckbox, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   actionsDisabled: boolean
@@ -21,17 +22,35 @@ const props = defineProps<{
   focusedCandidateId: string | null
   loading: boolean
   previewVisible: boolean
+  selectedCandidateIds: string[]
 }>()
 
 const emit = defineEmits<{
+  acceptCandidates: []
+  clearSelection: []
   focus: [candidateId: string]
   refresh: []
+  resize: [height: number]
   saveCandidateImage: [candidateId: string]
+  selectAll: []
+  selectCandidate: [candidateId: string, selected: boolean]
   togglePreview: []
 }>()
 
 const collapsed = ref(false)
+const tray = ref<HTMLElement | null>(null)
+const strip = ref<HTMLElement | null>(null)
 const candidateActions = [{ key: 'save-image', label: 'Save Candidate Image' }]
+const selectionActions = [
+  { key: 'all', label: 'Select all completed' },
+  { key: 'none', label: 'Clear selection' },
+]
+const selectedCount = computed(() => props.selectedCandidateIds.length)
+const addLabel = computed(() =>
+  selectedCount.value === 0
+    ? 'Add as Layers'
+    : `Add ${selectedCount.value} as ${selectedCount.value === 1 ? 'Layer' : 'Layers'}`,
+)
 const focusedIndex = computed(() =>
   props.candidates.findIndex((candidate) => candidate.candidateId === props.focusedCandidateId),
 )
@@ -49,11 +68,51 @@ function focusStep(delta: number) {
     emit('focus', next.candidateId)
   }
 }
+
+watch(tray, (element, _previous, onCleanup) => {
+  if (!element) {
+    emit('resize', 0)
+    return
+  }
+  const observer = new ResizeObserver(([entry]) => {
+    if (entry) {
+      emit('resize', Math.ceil(entry.contentRect.height))
+    }
+  })
+  observer.observe(element)
+  onCleanup(() => observer.disconnect())
+})
+
+watch(
+  () => props.focusedCandidateId,
+  () => {
+    requestAnimationFrame(() => {
+      const candidate = strip.value?.querySelector<HTMLElement>('.candidate--focused')
+      const container = strip.value
+      if (!candidate || !container) {
+        return
+      }
+      const bounds = candidate.getBoundingClientRect()
+      const viewport = container.getBoundingClientRect()
+      if (bounds.left < viewport.left) {
+        container.scrollLeft -= viewport.left - bounds.left + 3
+      } else if (bounds.right > viewport.right) {
+        container.scrollLeft += bounds.right - viewport.right + 3
+      }
+    })
+  },
+)
 </script>
 
 <template>
-  <section aria-label="Generation Results" class="results-tray" @pointerdown.stop @wheel.stop>
-    <div v-if="!collapsed" class="candidate-strip">
+  <section
+    ref="tray"
+    aria-label="Generation Results"
+    class="results-tray"
+    @pointerdown.stop
+    @wheel.stop
+  >
+    <div v-if="!collapsed" ref="strip" class="candidate-strip">
       <article
         v-for="(candidate, index) of candidates"
         :key="candidate.candidateId"
@@ -78,6 +137,21 @@ function focusStep(delta: number) {
             <NIcon :component="AlertTriangle" :size="12" />
           </NTag>
         </button>
+        <div
+          class="candidate-select"
+          :title="
+            candidate.sourceDocumentMismatch
+              ? 'This result belongs to a different Project document and cannot be added here.'
+              : 'Select this result to add it as a Raster Layer.'
+          "
+        >
+          <NCheckbox
+            :aria-label="`Select candidate ${index + 1}`"
+            :checked="selectedCandidateIds.includes(candidate.candidateId)"
+            :disabled="actionsDisabled || candidate.sourceDocumentMismatch"
+            @update:checked="emit('selectCandidate', candidate.candidateId, $event)"
+          />
+        </div>
         <div class="candidate-footer">
           <NDropdown
             :menuProps="() => ({ role: 'menu', 'aria-label': `Result ${index + 1} actions` })"
@@ -137,6 +211,21 @@ function focusStep(delta: number) {
       </div>
       <NTooltip>
         <template v-slot:trigger>
+          <span>
+            <NButton
+              :disabled="actionsDisabled || selectedCount === 0"
+              size="small"
+              type="primary"
+              @click="emit('acceptCandidates')"
+            >
+              {{ addLabel }}
+            </NButton>
+          </span>
+        </template>
+        Add checked results to Project. Previewing an image does not select it.
+      </NTooltip>
+      <NTooltip>
+        <template v-slot:trigger>
           <NButton
             :aria-label="previewVisible ? 'Hide candidate preview' : 'Show candidate preview'"
             quaternary
@@ -148,6 +237,25 @@ function focusStep(delta: number) {
         </template>
         {{ previewVisible ? 'Show project canvas' : 'Show result preview' }}
       </NTooltip>
+      <NDropdown
+        :menuProps="() => ({ role: 'menu', 'aria-label': 'Result selection actions' })"
+        :nodeProps="() => ({ role: 'menuitem' })"
+        :options="selectionActions"
+        placement="top-start"
+        size="small"
+        trigger="click"
+        @select="(key) => (key === 'all' ? emit('selectAll') : emit('clearSelection'))"
+      >
+        <NButton
+          aria-haspopup="menu"
+          aria-label="Result selection actions"
+          :disabled="actionsDisabled"
+          quaternary
+          size="small"
+        >
+          <NIcon :component="ListCheck" />
+        </NButton>
+      </NDropdown>
       <NButton
         aria-label="Refresh results"
         :loading
@@ -170,7 +278,7 @@ function focusStep(delta: number) {
       <NTag size="small" type="warning">Different document</NTag>
       <span>
         One or more results were created for a different Project document previously at this path.
-        You can preview or save their images; they have not been added to this Project.
+        You can preview or save their images, but cannot add them to this Project.
       </span>
     </p>
   </section>
@@ -197,6 +305,19 @@ function focusStep(delta: number) {
   padding: 2px;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+.candidate-select {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--app-radius);
+  background: var(--app-elevated);
 }
 
 .candidate {
@@ -268,7 +389,10 @@ function focusStep(delta: number) {
 .results-toolbar {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 2px;
+  width: max-content;
   max-width: 100%;
   padding: 2px 4px;
   border: 1px solid var(--app-border);
