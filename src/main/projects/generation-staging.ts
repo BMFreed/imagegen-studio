@@ -1,5 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
-import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import {
+  IGS_GENERATION_PNG_MAX_BYTES,
+  IGS_SAFETY_CEILINGS,
+} from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable } from 'kysely'
 
@@ -17,7 +20,7 @@ import { GenerationQueueRepository } from './generation-queue.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
-const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
 const MAX_FROZEN_PAYLOAD_BYTES = 128 * 1024
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -187,11 +190,10 @@ export interface GenerationStagingTestHooks {
   /** A deletion failure after the tombstone must keep the candidate hidden for startup retry. */
   beforeSessionCleanup?: () => Promise<void>
 }
+export type FrozenGenerationCandidatePayloadV1 = v.InferOutput<typeof FrozenPayloadSchema>
 type CandidateEntry = v.InferOutput<typeof CandidateEntrySchema>
-
+type FrozenPayload = FrozenGenerationCandidatePayloadV1
 type SessionManifest = v.InferOutput<typeof SessionManifestSchema>
-
-type FrozenPayload = v.InferOutput<typeof FrozenPayloadSchema>
 
 export class GenerationStagingError extends Error {
   constructor(
@@ -1108,6 +1110,13 @@ export class GenerationStagingRepository {
     }
     return toVerifiedCandidate(entry, sessionPath)
   }
+}
+
+/** Parse a candidate's operational payload with the same strict checks as staging recovery. */
+export function parseFrozenGenerationCandidatePayloadV1(
+  json: string,
+): FrozenGenerationCandidatePayloadV1 {
+  return parseFrozenPayload(json)
 }
 
 function parseFrozenPayload(json: string): FrozenPayload {

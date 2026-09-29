@@ -1,8 +1,12 @@
 import * as v from 'valibot'
 
+import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
+
 /** An internal package marker; it does not claim IANA registration. */
 export const IGS_MIMETYPE = 'application/vnd.imagegen-studio.project+zip'
 export const IGS_SCHEMA_VERSION = 1
+/** Defensive ceiling shared by temporary output verification and accepted-result metadata. */
+export const IGS_GENERATION_PNG_MAX_BYTES = 32 * 1024 * 1024
 
 /**
  * Defensive format ceilings, not measured generation/runtime capacity. The ZIP reader must also
@@ -138,6 +142,112 @@ const LoraSchema = v.strictObject({
   weight: FiniteNumberSchema,
 })
 
+const GenerationDimensionSchema = v.pipe(
+  BoundedDimensionSchema,
+  v.minValue(8),
+  v.maxValue(2048),
+  v.check((dimension) => dimension % 8 === 0, 'Generation size must be divisible by 8.'),
+)
+const IsoUtcTimestampSchema = v.pipe(
+  v.string(),
+  v.check(
+    (timestamp) =>
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(timestamp) &&
+      Number.isFinite(Date.parse(timestamp)) &&
+      new Date(timestamp).toISOString() === timestamp,
+    'Expected a canonical UTC timestamp.',
+  ),
+)
+const PortableResourceRefSchema = v.strictObject({
+  ...ExactResourceRefSchema.entries,
+  localModelId: UuidSchema,
+  localVersionId: UuidSchema,
+})
+const IllustriousCheckpointRefSchema = v.strictObject({
+  ...PortableResourceRefSchema.entries,
+  baseModelFamily: v.literal('illustrious'),
+  kind: v.literal('checkpoint'),
+  predictionType: v.picklist(['epsilon', 'sample', 'v_prediction']),
+})
+const ProvenanceEmbeddingRefSchema = v.strictObject({
+  resource: v.strictObject({ ...PortableResourceRefSchema.entries, kind: v.literal('embedding') }),
+  token: NonemptyTextSchema,
+})
+const ProvenancePromptSchema = v.strictObject({
+  embeddingRefs: v.pipe(
+    v.array(ProvenanceEmbeddingRefSchema),
+    v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+  ),
+  text: PromptTextSchema,
+})
+
+/**
+ * The first accepted-result format records the exact supported Illustrious txt2img run. The owning
+ * Raster Layer ID is the accepted-result identity; candidateId records staging origin.
+ */
+const RasterGenerationProvenanceV1Schema = v.pipe(
+  v.strictObject({
+    executionResultContext: v.strictObject({
+      acceptedAt: IsoUtcTimestampSchema,
+      candidateId: UuidSchema,
+      completedAt: IsoUtcTimestampSchema,
+      output: v.strictObject({
+        byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(IGS_GENERATION_PNG_MAX_BYTES)),
+        colorSpace: v.literal('srgb'),
+        format: v.literal('png'),
+        height: GenerationDimensionSchema,
+        iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+        sha256: Sha256Schema,
+        width: GenerationDimensionSchema,
+      }),
+      queueItemId: UuidSchema,
+    }),
+    generationConfiguration: v.strictObject({
+      mode: v.literal('txt2img'),
+      model: IllustriousCheckpointRefSchema,
+      negativePrompt: ProvenancePromptSchema,
+      positivePrompt: ProvenancePromptSchema,
+      sampling: v.strictObject({
+        actualSeed: UInt32Schema,
+        cfgScale: v.pipe(FiniteNumberSchema, v.minValue(1), v.maxValue(30)),
+        invokeScheduler: v.picklist([
+          'dpmpp_2m_k',
+          'dpmpp_2m',
+          'euler_a',
+          'dpmpp_sde_k',
+          'dpmpp_sde',
+        ]),
+        requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
+        sampler: NonemptyTextSchema,
+        scheduler: NonemptyTextSchema,
+        steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
+      }),
+      size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
+    }),
+    kind: v.literal('illustrious-txt2img'),
+    layerSourceContext: v.strictObject({
+      bbox: v.strictObject({
+        height: GenerationDimensionSchema,
+        width: GenerationDimensionSchema,
+        x: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+        y: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+      }),
+      sourceDocumentId: UuidSchema,
+      sourceDocumentRevision: UuidSchema,
+      sourceTargetSha256: Sha256Schema,
+    }),
+    schemaVersion: v.literal(1),
+  }),
+  v.check(
+    ({ executionResultContext, generationConfiguration, layerSourceContext }) =>
+      generationConfiguration.size.width === layerSourceContext.bbox.width &&
+      generationConfiguration.size.height === layerSourceContext.bbox.height &&
+      generationConfiguration.size.width === executionResultContext.output.width &&
+      generationConfiguration.size.height === executionResultContext.output.height,
+    'The accepted result size must match its frozen bbox and output image.',
+  ),
+)
+
 const GenerationDraftSchema = v.strictObject({
   cfgRescale: v.optional(UnitIntervalSchema),
   clipSkip: v.optional(PositiveIntegerSchema),
@@ -173,6 +283,7 @@ const RasterLayerSchema = v.strictObject({
     width: BoundedDimensionSchema,
   }),
   blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
+  generationProvenance: v.optional(RasterGenerationProvenanceV1Schema),
   id: UuidSchema,
   kind: v.literal('raster'),
   locked: v.boolean(),
@@ -218,6 +329,9 @@ const IgsManifestV1Schema = v.strictObject({
 export type IgsRectV1 = v.InferOutput<typeof RectSchema>
 export type IgsPreviewRectV1 = v.InferOutput<typeof PreviewRectSchema>
 export type IgsMemberRefV1 = v.InferOutput<typeof MemberRefSchema>
+export type IgsRasterGenerationProvenanceV1 = v.InferOutput<
+  typeof RasterGenerationProvenanceV1Schema
+>
 export type IgsProjectDocumentV1 = v.InferOutput<typeof ProjectDocumentV1Schema>
 export type IgsManifestV1 = v.InferOutput<typeof IgsManifestV1Schema>
 
@@ -288,6 +402,15 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
     }
   }
   return document
+}
+
+/** Validate a mapper-produced record before it is attached to a generated Raster Layer. */
+export function parseRasterGenerationProvenanceV1(input: unknown): IgsRasterGenerationProvenanceV1 {
+  const parsed = v.safeParse(RasterGenerationProvenanceV1Schema, input)
+  if (!parsed.success) {
+    throw new IgsSchemaError('INVALID_PROJECT', 'The generated Raster Layer provenance is invalid.')
+  }
+  return parsed.output
 }
 
 export function parseIgsManifestV1(input: unknown): IgsManifestV1 {

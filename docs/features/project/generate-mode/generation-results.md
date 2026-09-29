@@ -298,8 +298,11 @@ the current document. An existing destination is not overwritten; the user
 must choose another name. See the
 [export boundary](../../../engineering/phase-2b-candidate-image-export.md).
 
-User-triggered Generate, acceptance into Raster/Smart Patch, provenance and
-storage quota/cleanup remain open; preview/export do not fulfill PP-008.
+User-triggered Generate, acceptance into Raster/Smart Patch, attachment of
+accepted provenance and storage quota/cleanup remain open; preview/export do
+not fulfill PP-008. A separate
+[Raster provenance storage checkpoint](../../../engineering/phase-2b-accepted-provenance-storage.md)
+defines and preserves a typed record, but does not attach one through Add.
 
 ## Vue Prototype Coverage
 

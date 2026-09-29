@@ -186,6 +186,26 @@ Crash recovery can reconstruct the unsaved projection from the document shadow.
 - discarded staging candidates never appear in history;
 - Queue Manager rows remain operational job records and are independently prunable.
 
+## Production Raster storage checkpoint
+
+The first production storage form is an optional, strict
+`generationProvenance` record on a Raster Layer in the v1 `.igs` document. It
+supports the currently frozen Illustrious `txt2img` context only. A main-only
+mapper validates the candidate's frozen job, exact checkpoint/prediction type,
+Project and bbox identity, actual seed and verified sRGB output before creating
+the portable record. It deliberately omits managed model, worker and staging
+paths and all Regional Guidance data. The owning Raster Layer ID is the
+accepted-result identity; the record retains the candidate and queue IDs as
+its origin.
+
+Old Raster Layers without provenance still parse, and a malformed record is
+rejected instead of being silently dropped. Real `.igs` Save/reopen and dirty
+shadow recovery preserve the record when it is attached to a layer; ordinary
+layer property edits preserve it as well. This storage foundation does not yet
+implement the user-facing Add action, immutable attachment at handoff, undo,
+history projection, comparison or result-to-preset. See the
+[storage evidence](../../../engineering/phase-2b-accepted-provenance-storage.md).
+
 ## Vue Prototype Coverage
 
 The Project prototype freezes a detached generation record when each mock job is

@@ -39,6 +39,10 @@ import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import {
+  acceptedOutputPngFixture,
+  acceptedRasterProvenanceFixture,
+} from './test-fixtures/accepted-provenance.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -1722,6 +1726,92 @@ test('Raster Layer commands persist top-first order and properties through shado
       assert.equal(reopened.tab.layers[1].visible, false)
       await service.close(tabId)
     }
+  })
+})
+
+test('editing an accepted Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const output = await acceptedOutputPngFixture()
+    const externalPath = path.join(dataRoot, 'Generated source.igs')
+    const document = createEmptyProjectDocumentV1({ title: 'Generated source' })
+    const layerId = randomUUID()
+    const assetPath = `assets/layers/${layerId}.png`
+    const bbox = { height: 8, width: 8, x: 13, y: -17 }
+    const provenance = acceptedRasterProvenanceFixture(document, output, bbox)
+    const placeholders = await readProjectPlaceholders(placeholdersDir, 'unavailable')
+    await saveIgsPackage(externalPath, {
+      assets: { [assetPath]: { bytes: output } },
+      preview: { ...placeholders, rect: bbox, status: 'unavailable' },
+      project: {
+        ...document,
+        layers: [
+          {
+            asset: {
+              bytes: output.length,
+              height: 8,
+              path: assetPath,
+              sha256: createHash('sha256').update(output).digest('hex'),
+              width: 8,
+            },
+            blendMode: 'normal',
+            generationProvenance: provenance,
+            id: layerId,
+            kind: 'raster',
+            locked: false,
+            name: 'Accepted image',
+            opacity: 1,
+            transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: bbox.x, y: bbox.y },
+            visible: true,
+          },
+        ],
+      },
+    })
+
+    const selected = await service.selectImport(externalPath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      return
+    }
+    const imported = await service.finishImport(selected.importId, 'copy')
+    assert.equal(imported.result.kind, 'opened')
+    if (imported.result.kind !== 'opened') {
+      return
+    }
+    const tabId = imported.result.tab.id
+    const [indexed] = await repository.listProjects()
+    assert.ok(indexed)
+    const savedBeforeEdit = await readIgsPackage(indexed.canonicalPath)
+    assert.deepEqual(savedBeforeEdit.project.layers[0].generationProvenance, provenance)
+
+    const changed = await service.updateRasterLayer(tabId, layerId, {
+      kind: 'opacity',
+      opacity: 0.4,
+    })
+    assert.equal(changed.dirty, true)
+    await service.flushAutosave(tabId)
+    const recovery = await shadow.inspect({
+      projectPath: indexed.canonicalPath,
+      savedPackage: savedBeforeEdit,
+    })
+    assert.equal(recovery.status, 'recoverable')
+    if (recovery.status === 'recoverable') {
+      assert.deepEqual(recovery.document.layers[0].generationProvenance, provenance)
+      assert.equal(recovery.document.layers[0].opacity, 0.4)
+    }
+    assert.equal((await readIgsPackage(indexed.canonicalPath)).project.layers[0].opacity, 1)
+
+    assert.equal((await service.save(tabId)).committed, true)
+    const saved = await readIgsPackage(indexed.canonicalPath)
+    assert.equal(saved.project.layers[0].opacity, 0.4)
+    assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(await saved.readMember(assetPath), output)
+    await service.close(tabId)
+    const reopened = await service.open(tabId)
+    assert.equal(reopened.kind, 'opened')
+    assert.deepEqual(
+      (await readIgsPackage(indexed.canonicalPath)).project.layers[0].generationProvenance,
+      provenance,
+    )
   })
 })
 

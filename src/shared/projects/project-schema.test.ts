@@ -1,22 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { IgsManifestV1, IgsProjectDocumentV1 } from './project-schema.js'
+import type {
+  IgsManifestV1,
+  IgsProjectDocumentV1,
+  IgsRasterGenerationProvenanceV1,
+} from './project-schema.js'
 
+import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
 import {
   createEmptyProjectDocumentV1,
+  IGS_GENERATION_PNG_MAX_BYTES,
   IGS_MIMETYPE,
   IGS_REQUIRED_MEMBER_PATHS,
   IgsSchemaError,
   isIgsMemberPathV1,
   parseIgsManifestV1,
   parseProjectDocumentV1,
+  parseRasterGenerationProvenanceV1,
   validateIgsPackageMetadataV1,
 } from './project-schema.js'
 
 const DOCUMENT_ID = 'f1099bf4-05ea-44d8-b5de-6884ece7ba45'
 const REVISION_ID = '6ea21a66-41e5-43ee-80e2-e9837b7c0eb8'
 const LAYER_ID = 'b8468727-804a-4522-a3e7-c5145967e43f'
+const MODEL_ID = '57424ef4-e87e-4413-9c38-17ec576265f2'
+const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const SHA256 = 'a'.repeat(64)
 const SECOND_SHA256 = 'b'.repeat(64)
 const ASSET_PATH = `assets/layers/${LAYER_ID}.png`
@@ -53,6 +62,72 @@ function exactResource(kind: 'checkpoint' | 'embedding' | 'lora' | 'vae') {
     predictionType: 'epsilon' as const,
     versionName: 'v1',
   }
+}
+
+function rasterGenerationProvenance(): IgsRasterGenerationProvenanceV1 {
+  return {
+    executionResultContext: {
+      acceptedAt: '2026-09-29T12:01:00.000Z',
+      candidateId: 'b445fc9d-260e-4ad2-b1e0-408dcb054edd',
+      completedAt: '2026-09-29T12:00:00.000Z',
+      output: {
+        byteSize: 1024,
+        colorSpace: 'srgb',
+        format: 'png',
+        height: 128,
+        iccSha256: IGS_SRGB_ICC_SHA256,
+        sha256: SECOND_SHA256,
+        width: 64,
+      },
+      queueItemId: 'e7fd735d-54ce-46e8-a101-60565130182a',
+    },
+    generationConfiguration: {
+      mode: 'txt2img',
+      model: {
+        ...exactResource('checkpoint'),
+        kind: 'checkpoint',
+        localModelId: MODEL_ID,
+        localVersionId: VERSION_ID,
+      },
+      negativePrompt: { embeddingRefs: [], text: '' },
+      positivePrompt: { embeddingRefs: [], text: 'portrait' },
+      sampling: {
+        actualSeed: 4_294_967_295,
+        cfgScale: 7,
+        invokeScheduler: 'dpmpp_2m_k',
+        requestedSeedPolicy: 'random',
+        sampler: 'DPM++ 2M',
+        scheduler: 'Karras',
+        steps: 30,
+      },
+      size: { height: 128, width: 64 },
+    },
+    kind: 'illustrious-txt2img',
+    layerSourceContext: {
+      bbox: { height: 128, width: 64, x: -12, y: 25 },
+      sourceDocumentId: DOCUMENT_ID,
+      sourceDocumentRevision: REVISION_ID,
+      sourceTargetSha256: SHA256,
+    },
+    schemaVersion: 1,
+  }
+}
+
+function generatedDocument(): IgsProjectDocumentV1 {
+  const document = emptyDocument()
+  document.layers.push({
+    asset: { bytes: 1024, height: 128, path: ASSET_PATH, sha256: SECOND_SHA256, width: 64 },
+    blendMode: 'normal',
+    generationProvenance: rasterGenerationProvenance(),
+    id: LAYER_ID,
+    kind: 'raster',
+    locked: false,
+    name: 'Generated portrait',
+    opacity: 1,
+    transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -12, y: 25 },
+    visible: true,
+  })
+  return document
 }
 
 function assertSchemaCode(code: IgsSchemaError['code']): (error: unknown) => boolean {
@@ -92,6 +167,68 @@ test('exact resource refs, plain prompts, embedding sidecars and typed advanced 
   document.lastActualSeedSnapshot = 4_294_967_295
 
   assert.deepEqual(parseProjectDocumentV1(document), document)
+})
+
+test('accepted Illustrious provenance parses on the actual Raster Layer without changing legacy layers', () => {
+  const generated = generatedDocument()
+  assert.notEqual(
+    generated.layers[0].id,
+    generated.layers[0].generationProvenance?.executionResultContext.candidateId,
+  )
+  assert.deepEqual(
+    parseRasterGenerationProvenanceV1(generated.layers[0].generationProvenance),
+    rasterGenerationProvenance(),
+  )
+  assert.deepEqual(parseProjectDocumentV1(generated), generated)
+
+  const legacy = generatedDocument()
+  delete legacy.layers[0].generationProvenance
+  assert.deepEqual(parseProjectDocumentV1(legacy), legacy)
+})
+
+test('accepted provenance rejects unportable fields, invalid model/geometry and forged output metadata', () => {
+  assert.equal(IGS_GENERATION_PNG_MAX_BYTES, 32 * 1024 * 1024)
+  const invalidCases: ((document: IgsProjectDocumentV1) => void)[] = [
+    (document) => {
+      Object.assign(document.layers[0].generationProvenance!, { regionalGuidance: [] })
+    },
+    (document) => {
+      Object.assign(document.layers[0].generationProvenance!.executionResultContext.output, {
+        localPath: '/tmp/result.png',
+      })
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.generationConfiguration.model.predictionType =
+        null as never
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.generationConfiguration.model.localModelId =
+        '/home/user/models/checkpoint'
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.generationConfiguration.size.width = 72
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.executionResultContext.output.sha256 = 'not-a-hash'
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.executionResultContext.output.byteSize =
+        IGS_GENERATION_PNG_MAX_BYTES + 1
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.executionResultContext.acceptedAt =
+        '2026-02-30T12:01:00.000Z'
+    },
+    (document) => {
+      document.layers[0].generationProvenance!.generationConfiguration.positivePrompt.embeddingRefs =
+        [{ resource: exactResource('lora'), token: '<style>' }] as never
+    },
+  ]
+  for (const mutate of invalidCases) {
+    const document = generatedDocument()
+    mutate(document)
+    assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
+  }
 })
 
 test('v1 document rejects finite-canvas mock fields, malformed kinds and invalid seed', () => {

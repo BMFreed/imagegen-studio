@@ -2,7 +2,7 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -16,6 +16,10 @@ import {
   type ProjectShadowWriteInput,
   type ProjectShadowWriteOptions,
 } from './project-shadow.js'
+import {
+  acceptedOutputPngFixture,
+  acceptedRasterProvenanceFixture,
+} from './test-fixtures/accepted-provenance.js'
 
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 const raster = Buffer.from(
@@ -50,6 +54,7 @@ async function withProject(
 function withRaster(
   document: IgsProjectDocumentV1,
   bytes: Buffer = raster,
+  size: { height: number; width: number } = { height: 2, width: 2 },
 ): {
   assetPath: string
   document: IgsProjectDocumentV1
@@ -64,10 +69,10 @@ function withRaster(
         {
           asset: {
             bytes: bytes.length,
-            height: 2,
+            height: size.height,
             path: assetPath,
             sha256: sha256(bytes),
-            width: 2,
+            width: size.width,
           },
           blendMode: 'normal',
           id,
@@ -313,6 +318,68 @@ test('pending imported raster survives caller staging disposal, shadow publicati
     assert.equal(packageResult.project.title, 'Imported and renamed')
     assert.deepEqual(await packageResult.readMember(edit.assetPath), raster)
     assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
+  })
+})
+
+test('accepted raster provenance survives dirty shadow recovery and portable Save without rewriting the old package early', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const oldPackage = await readIgsPackage(projectPath)
+    assert.equal(oldPackage.project.layers.length, 0)
+    const oldBytes = await readFile(projectPath)
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
+    const sourceDocument = coordinator.document
+    const output = await acceptedOutputPngFixture()
+    const accepted = withRaster(sourceDocument, output, { height: 8, width: 8 })
+    const provenance = acceptedRasterProvenanceFixture(sourceDocument, output, {
+      height: 8,
+      width: 8,
+      x: 64,
+      y: -32,
+    })
+    accepted.document.layers[0].generationProvenance = provenance
+    accepted.document.layers[0].transform.x = provenance.layerSourceContext.bbox.x
+    accepted.document.layers[0].transform.y = provenance.layerSourceContext.bbox.y
+    const candidatePath = path.join(directory, 'accepted-output.png')
+    await writeFile(candidatePath, output)
+
+    await coordinator.applyDocument(accepted.document, {
+      [accepted.assetPath]: { sourcePath: candidatePath },
+    })
+    await rm(candidatePath)
+    await coordinator.flush()
+
+    assert.deepEqual(await readFile(projectPath), oldBytes)
+    const inspection = await ProjectAutosaveCoordinator.inspectRecovery(projectPath, shadow)
+    assert.equal(inspection.status, 'recoverable')
+    if (inspection.status !== 'recoverable') {
+      return
+    }
+    assert.deepEqual(inspection.document.layers[0].generationProvenance, provenance)
+    const shadowAsset = inspection.dirtyAssets[accepted.assetPath]
+    assert.ok(shadowAsset && 'sourcePath' in shadowAsset)
+    assert.deepEqual(await readFile(shadowAsset.sourcePath), output)
+
+    const recovered = await ProjectAutosaveCoordinator.recover(projectPath, roots, shadow, {
+      leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+    })
+    assert.deepEqual(recovered.document.layers[0].generationProvenance, provenance)
+    assert.equal(recovered.dirty, true)
+    assert.deepEqual(await readFile(projectPath), oldBytes)
+
+    const saved = await recovered.save()
+    assert.equal(saved.committed, true)
+    const persisted = await readIgsPackage(projectPath)
+    assert.deepEqual(persisted.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(await persisted.readMember(accepted.assetPath), output)
+
+    const portablePath = path.join(directory, 'portable.igs')
+    await copyFile(projectPath, portablePath)
+    const portable = await ProjectSession.open(portablePath, roots)
+    assert.deepEqual(portable.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      await (await readIgsPackage(portablePath)).readMember(accepted.assetPath),
+      output,
+    )
   })
 })
 

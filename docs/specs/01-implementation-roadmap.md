@@ -509,6 +509,15 @@ Main повторно сверяет кандидата после диалог�
 Generate, acceptance, provenance и полный pipeline остаются следующими
 подэтапами фазы 2B/2C.
 
+**Accepted Raster provenance storage checkpoint (29.09.2026):**
+[строгая запись происхождения](../engineering/phase-2b-accepted-provenance-storage.md)
+для первого Illustrious `txt2img` теперь имеет переносимый тип, parser и
+проверяемое отображение из frozen staging context без локальных путей. Поле
+опционально для старых Raster Layers; package Save/reopen и dirty shadow
+сохраняют его вместе со слоем. Это основа для Add, а не готовое принятие:
+production UI, идемпотентный staging → shadow handoff, Project Undo/Redo и
+производная история ещё не подключены.
+
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат
 остаётся вне `.igs` до явного Add; принятие можно отменить и повторить как

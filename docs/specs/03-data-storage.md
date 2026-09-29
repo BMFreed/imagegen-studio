@@ -115,8 +115,12 @@ document ID/revision, title, primary bbox, generation draft, ordered Raster
 Layers с точными asset references и saved last-actual-seed snapshot. ZIP member
 names и ссылки валидируются строго; неизвестное или более новое schema version
 не переписывается молча. В этом первом срезе Smart Patch, Regional Guidance,
-masks и accepted provenance ещё не сериализуются: их добавление требует явной
-schema extension/migration до поддержки production Project. Project и рабочие
+masks и Smart Patch ещё не сериализуются: их добавление требует явной schema
+extension/migration до поддержки production Project. Для первого Illustrious
+`txt2img` Raster Layer уже определена опциональная, строго валидируемая запись
+`generationProvenance` прямо в `project.json`; старые v1 файлы без неё читаются.
+Это pre-release расширение v1, а не подключённый пользовательский Add: запись
+пока создаёт только проверяемый mapper из кандидата staging. Project и рабочие
 raster assets используют sRGB. При импорте worker приводит pixels с исходным
 ICC к sRGB, а оригинальные ICC bytes сохраняются в
 `assets/profiles/{sha256}.icc` и ссылаются из metadata слоя; одинаковые profiles
@@ -221,6 +225,18 @@ accepted layer/variant. Its payload logically distinguishes portable
 `generationConfiguration`, diagnostic `layerSourceContext` and
 `executionResultContext`. The eventual physical schema may encode these as
 explicit nested groups, but must preserve the ownership boundary.
+
+The first production storage slice uses these three nested groups as an optional
+inline `generationProvenance` value on a Raster Layer in v1 `project.json`. It
+supports only a verified Illustrious `txt2img` candidate, with strict
+version/kind, exact model and actual prediction type, source and output hashes,
+frozen bbox, actual seed and canonical completion/acceptance timestamps. The
+owning `layer.id` is the accepted-result identity; `candidateId` records its
+staging origin. Imported/manual Raster Layers have no provenance. Package Save,
+reopen and dirty shadow recovery preserve this value, but no production Add
+action yet attaches it to a real generated layer. Smart Patch/other modes and
+the durable accepted-history index remain open. See the
+[storage checkpoint](../engineering/phase-2b-accepted-provenance-storage.md).
 
 `generationConfiguration` contains:
 
