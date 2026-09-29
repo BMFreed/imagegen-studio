@@ -546,6 +546,15 @@ cleanup без риска удалить более новые результа�
 закрытие вкладки. Это не подтверждает остальные Canvas gestures, Smart Patch
 variants, ordinary Generate или release runtime.
 
+**Queue history lifecycle checkpoint (30.09.2026):**
+[проверяемый frozen retry и terminal cleanup](../engineering/phase-2b-queue-history-research.md)
+добавляют на уровне main repository повтор failed/canceled job как новую
+попытку с отдельной staging session и удаление/очистку terminal queue rows.
+SQLite CAS не допускает дублирования одного устаревшего retry; `reserved`
+candidate receipt удерживает исходную строку для recovery. Удаление истории
+не удаляет completed candidate или actual-seed cursor. Renderer Queue Manager,
+пользовательский Generate и полный release inference pipeline ещё не подключены.
+
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат
 остаётся вне `.igs` до явного Add; принятие можно отменить и повторить как

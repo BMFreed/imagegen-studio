@@ -17,6 +17,7 @@ import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { GenerationQueueRepository, type QueuedGenerationItem } from './generation-queue.js'
+import { GenerationStagingRepository } from './generation-staging.js'
 import {
   type IllustriousTxt2ImgRequestV1,
   withIllustriousTxt2ImgRequest,
@@ -56,6 +57,28 @@ async function transparentSrgbPng(width: number, height: number): Promise<Buffer
   ihdr[8] = 8
   ihdr[9] = 6
   const scanlines = Buffer.alloc((1 + width * 4) * height)
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('iCCP', Buffer.concat([Buffer.from('sRGB\0\0'), deflateSync(profile)])),
+    pngChunk('IDAT', deflateSync(scanlines)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+async function opaqueSrgbPng(width: number, height: number): Promise<Buffer> {
+  const profile = await readFile(iccPath)
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  ihdr[9] = 6
+  const scanlines = Buffer.alloc((1 + width * 4) * height)
+  for (let row = 0; row < height; row += 1) {
+    for (let column = 0; column < width; column += 1) {
+      scanlines[row * (1 + width * 4) + 1 + column * 4 + 3] = 255
+    }
+  }
   return Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
     pngChunk('IHDR', ihdr),
@@ -1220,6 +1243,300 @@ test('queue inputs use canonical app data storage through a symlinked root', asy
     )
     await database.close()
   } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('retry consumes one terminal revision and creates a fresh frozen attempt across repository instances', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-retry-'))
+  const first = openAppDatabase(root, migrations)
+  const second = openAppDatabase(root, migrations)
+  try {
+    const queueA = new GenerationQueueRepository(first.db, root)
+    const queueB = new GenerationQueueRepository(second.db, root)
+    await queueA.recoverAfterRestart()
+    await queueB.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const originalProjectBytes = await readFile(projectPath)
+    const original = await enqueueFixture(root, queueA, prepared, projectPath)
+    const canceled = await queueA.cancel(original.id, original.statusSequence)
+    const source = await queueA.loadVerifiedInput(original.id)
+    const sourceBytes = await readFile(source.targetPath)
+
+    // Both instances read the same terminal sequence, but the SQLite compare-and-swap permits
+    // just one retry. A second click on the original is stale; it cannot spawn a duplicate.
+    const attempts = await Promise.allSettled([
+      queueA.retryTerminal(original.id, canceled.statusSequence),
+      queueB.retryTerminal(original.id, canceled.statusSequence),
+    ])
+    const successful = attempts.filter((attempt) => attempt.status === 'fulfilled')
+    const rejected = attempts.filter((attempt) => attempt.status === 'rejected')
+    assert.equal(successful.length, 1)
+    assert.equal(rejected.length, 1)
+    const retry = successful[0].value
+    assert.equal(rejected[0].reason.code, 'QUEUE_STATUS_CONFLICT')
+    assert.equal(retry.status, 'pending')
+    assert.notEqual(retry.id, original.id)
+    assert.notEqual(retry.batchId, original.batchId)
+    assert.notEqual(retry.stagingSessionId, original.stagingSessionId)
+    assert.equal(retry.localProjectKey, original.localProjectKey)
+    const retried = await queueA.loadVerifiedInput(retry.id)
+    assert.deepEqual(retried.payload, source.payload)
+    assert.deepEqual(await readFile(retried.targetPath), sourceBytes)
+    assert.deepEqual(await readFile(projectPath), originalProjectBytes)
+    assert.equal((await queueA.loadVerifiedInput(original.id)).item.status, 'canceled')
+    assert.equal((await queueA.loadVerifiedInput(original.id)).item.statusSequence, 2)
+    const runningRetry = await queueB.claimNextPending()
+    assert.equal(runningRetry?.item.id, retry.id)
+    const failedRetry = await queueB.failRunning(retry.id, runningRetry.item.statusSequence, {
+      code: 'GENERATION_WORKER_FAILED',
+      message: 'The worker failed.',
+    })
+    const next = await queueA.retryTerminal(retry.id, failedRetry.statusSequence)
+    assert.equal(next.status, 'pending')
+    assert.notEqual(next.id, retry.id)
+    assert.deepEqual((await queueB.loadVerifiedInput(next.id)).payload, source.payload)
+  } finally {
+    await first.close()
+    await second.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('retry refuses corrupt input and a Project fence raised before durable insertion', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-retry-guards-'))
+  const database = openAppDatabase(root, migrations)
+  let queue: GenerationQueueRepository | null = null
+  try {
+    let fencedKey = ''
+    queue = new GenerationQueueRepository(database.db, root, {
+      afterRetryInputPublish: async () => queue?.fenceProject(fencedKey),
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const corrupt = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceledCorrupt = await queue.cancel(corrupt.id)
+    const corruptInput = await queue.loadVerifiedInput(corrupt.id)
+    await writeFile(corruptInput.targetPath, 'corrupt target')
+    await assert.rejects(queue.retryTerminal(corrupt.id, canceledCorrupt.statusSequence), {
+      code: 'QUEUE_INPUT_INVALID',
+    })
+    assert.equal(await queue.loadVerifiedInput(corrupt.id).catch(() => null), null)
+
+    const original = await enqueueFixture(root, queue, prepared, projectPath)
+    fencedKey = original.localProjectKey
+    const canceled = await queue.cancel(original.id)
+    await assert.rejects(queue.retryTerminal(original.id, canceled.statusSequence), {
+      code: 'QUEUE_PROJECT_CLOSING',
+    })
+    assert.equal(
+      (await database.db.selectFrom('generation_queue_item').select('id').execute()).length,
+      2,
+    )
+    assert.deepEqual(
+      (await readdir(path.join(root, 'generation-inputs'))).sort(),
+      [corrupt.id, original.id].sort(),
+    )
+    assert.equal(
+      (await queue.loadVerifiedInput(original.id)).item.statusSequence,
+      canceled.statusSequence,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('interruption after retry file publication leaves the original terminal row and sequence intact', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-retry-interrupt-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root, {
+      afterRetryInputPublish: async () => {
+        throw new Error('Simulated interruption before SQLite insertion.')
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const original = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceled = await queue.cancel(original.id)
+    await assert.rejects(queue.retryTerminal(original.id, canceled.statusSequence), {
+      message: 'Simulated interruption before SQLite insertion.',
+    })
+    assert.deepEqual(
+      await database.db
+        .selectFrom('generation_queue_item')
+        .select(['id', 'status', 'status_sequence'])
+        .execute(),
+      [{ id: original.id, status: 'canceled', status_sequence: canceled.statusSequence }],
+    )
+    assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [original.id])
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('reserved publication survives retry/prune attempts and a completed candidate survives queue deletion', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-receipt-'))
+  const first = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(first.db, root)
+    const staging = new GenerationStagingRepository(first.db, root, {
+      afterManifestPublish: async () => {
+        throw new Error('Simulated process interruption after manifest publication.')
+      },
+    })
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    let itemId = ''
+    await inQualifiedLease(root, prepared, async (request) => {
+      const item = await queue.enqueueIllustriousTxt2Img({
+        prepared,
+        projectPath,
+        request,
+        stagingSessionId: randomUUID(),
+      })
+      itemId = item.id
+      const claimed = await queue.claimNextPending()
+      assert.equal(claimed?.item.id, item.id)
+      await writeFile(request.job.output.pngPath, await opaqueSrgbPng(64, 64), {
+        flag: 'wx',
+      })
+      await assert.rejects(
+        staging.publishIllustriousTxt2Img({
+          actualSeed: 42,
+          expectedProvisionalRoot: request.job.output.stagingRoot,
+          expectedStatusSequence: claimed.item.statusSequence,
+          provisionalOutputPath: request.job.output.pngPath,
+          queueItemId: item.id,
+        }),
+        /Simulated process interruption/,
+      )
+    })
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    try {
+      const recoveredQueue = new GenerationQueueRepository(second.db, root)
+      await recoveredQueue.recoverAfterRestart()
+      const canceled = (await recoveredQueue.loadVerifiedInput(itemId)).item
+      assert.equal(canceled.status, 'canceled')
+      await assert.rejects(recoveredQueue.retryTerminal(itemId, canceled.statusSequence), {
+        code: 'QUEUE_PUBLICATION_UNCERTAIN',
+      })
+      await assert.rejects(recoveredQueue.deleteTerminal(itemId, canceled.statusSequence), {
+        code: 'QUEUE_PUBLICATION_UNCERTAIN',
+      })
+      assert.equal(await recoveredQueue.pruneTerminal(['canceled']), 0)
+      const recoveredStaging = new GenerationStagingRepository(second.db, root)
+      assert.deepEqual(await recoveredStaging.recoverAfterRestart(), {
+        invalidCount: 0,
+        reconciledCount: 1,
+      })
+      const beforePrune = await recoveredStaging.listVerifiedCandidates(canceled.localProjectKey)
+      assert.equal(beforePrune.length, 1)
+      assert.equal(beforePrune[0].queueItemId, itemId)
+      assert.equal(await recoveredQueue.pruneTerminal(['completed']), 1)
+      assert.equal(
+        (await second.db.selectFrom('generation_queue_item').select('id').execute()).length,
+        0,
+      )
+      assert.equal(
+        (await recoveredStaging.listVerifiedCandidates(canceled.localProjectKey)).length,
+        1,
+      )
+      assert.equal(await recoveredStaging.readLastActualSeed(canceled.localProjectKey), 42)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await first.close().catch(() => undefined)
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('terminal prune reports committed rows when input cleanup fails and restart removes orphans', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-prune-'))
+  const first = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(first.db, root, {
+      beforePruneInputCleanup: async () => {
+        throw new Error('Simulated filesystem cleanup failure.')
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const canceled = await enqueueFixture(root, queue, prepared, projectPath)
+    await queue.cancel(canceled.id)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    assert.equal(await queue.pruneTerminal(['failed', 'canceled']), 1)
+    assert.deepEqual(
+      (await first.db.selectFrom('generation_queue_item').select('id').execute()).map(
+        (row) => row.id,
+      ),
+      [pending.id],
+    )
+    assert.ok((await readdir(path.join(root, 'generation-inputs'))).includes(canceled.id))
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    try {
+      const restarted = new GenerationQueueRepository(second.db, root)
+      assert.deepEqual(await restarted.recoverAfterRestart(), {
+        canceledCount: 1,
+        orphanedDirectoriesRemoved: 1,
+      })
+      assert.equal((await restarted.loadVerifiedInput(pending.id)).item.status, 'canceled')
+      assert.equal(
+        (await readdir(path.join(root, 'generation-inputs'))).includes(canceled.id),
+        false,
+      )
+      await restarted.deleteTerminal(pending.id, 1)
+      assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [])
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await first.close().catch(() => undefined)
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('a process interruption after terminal row deletion leaves only an orphan input for startup recovery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-prune-crash-'))
+  const first = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(first.db, root, {
+      afterPruneCommit: async () => {
+        throw new Error('Simulated crash after SQLite deletion.')
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const item = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceled = await queue.cancel(item.id)
+    await assert.rejects(queue.deleteTerminal(item.id, canceled.statusSequence), {
+      message: 'Simulated crash after SQLite deletion.',
+    })
+    assert.deepEqual(await first.db.selectFrom('generation_queue_item').select('id').execute(), [])
+    assert.ok((await readdir(path.join(root, 'generation-inputs'))).includes(item.id))
+    await first.close()
+
+    const second = openAppDatabase(root, migrations)
+    try {
+      const reopened = new GenerationQueueRepository(second.db, root)
+      assert.deepEqual(await reopened.recoverAfterRestart(), {
+        canceledCount: 0,
+        orphanedDirectoriesRemoved: 1,
+      })
+      assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [])
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await first.close().catch(() => undefined)
     await rm(root, { force: true, recursive: true })
   }
 })

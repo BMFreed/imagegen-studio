@@ -174,6 +174,8 @@ export interface QueuedGenerationItem {
   statusSequence: number
 }
 
+export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
+
 export interface VerifiedQueuedInput {
   item: QueuedGenerationItem
   payload: FrozenQueuedIllustriousTxt2ImgV1
@@ -188,8 +190,14 @@ export interface NormalizedQueueFailure {
 export interface GenerationQueueTestHooks {
   /** Failure after durable directory publication, before SQLite insertion. */
   afterInputPublish?: () => Promise<void>
+  /** Failure after terminal rows are deleted, before their inputs are reclaimed. */
+  afterPruneCommit?: () => Promise<void>
+  /** Failure after a retry input is durable, before its row is committed. */
+  afterRetryInputPublish?: () => Promise<void>
   /** Pause after frozen-input verification, before the cross-instance claim CAS. */
   beforeClaimUpdate?: (itemId: string) => Promise<void>
+  /** Simulate a nonfatal filesystem cleanup failure after a committed prune. */
+  beforePruneInputCleanup?: () => Promise<void>
 }
 
 type WorkerJobWithoutPaths = Omit<IllustriousTxt2ImgRequestV1['job'], 'output' | 'target'> & {
@@ -214,6 +222,7 @@ export class GenerationQueueError extends Error {
       | 'QUEUE_NOT_RECONCILED'
       | 'QUEUE_PROJECT_CLOSING'
       | 'QUEUE_PROJECT_IDENTITY_CHANGED'
+      | 'QUEUE_PUBLICATION_UNCERTAIN'
       | 'QUEUE_STATUS_CONFLICT'
       | 'QUEUE_STORAGE_UNSAFE',
     message: string,
@@ -477,6 +486,36 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Delete one terminal queue row without touching its independent staging candidate. */
+  async deleteTerminal(id: string, expectedStatusSequence: number): Promise<void> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const root = await this.ensureRoot()
+      const row = await this.requireRow(id)
+      if (row.status_sequence !== expectedStatusSequence || !isTerminalStatus(row.status)) {
+        throw statusConflict()
+      }
+      if (await this.hasReservedReceipt(id)) {
+        throw publicationUncertain()
+      }
+      const deleted = await this.db
+        .deleteFrom('generation_queue_item')
+        .where('id', '=', id)
+        .where('status', '=', row.status)
+        .where('status_sequence', '=', expectedStatusSequence)
+        .where(noReservedReceipt())
+        .returning('id')
+        .executeTakeFirst()
+      if (!deleted) {
+        throw statusConflict()
+      }
+      await this.testHooks.afterPruneCommit?.()
+      await this.cleanupPrunedInputs(root, [id])
+    })
+  }
+
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
   async enqueueIllustriousTxt2Img(input: {
     prepared: PreparedNormalTxt2Img
@@ -699,6 +738,35 @@ export class GenerationQueueRepository {
     return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
   }
 
+  /** Clear selected terminal statuses; uncertain manifest-first completions remain recoverable. */
+  async pruneTerminal(statuses: readonly TerminalGenerationStatus[]): Promise<number> {
+    if (statuses.some((status) => !isTerminalStatus(status))) {
+      throw statusConflict()
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const selected = [...new Set(statuses)]
+      if (selected.length === 0) {
+        return 0
+      }
+      const root = await this.ensureRoot()
+      const removed = await this.db
+        .deleteFrom('generation_queue_item')
+        .where('status', 'in', selected)
+        .where(noReservedReceipt())
+        .returning('id')
+        .execute()
+      if (removed.length > 0) {
+        await this.testHooks.afterPruneCommit?.()
+        await this.cleanupPrunedInputs(
+          root,
+          removed.map((row) => row.id),
+        )
+      }
+      return removed.length
+    })
+  }
+
   /** Restart never resumes old work; registered inputs remain for a future explicit retry. */
   async recoverAfterRestart(): Promise<{
     canceledCount: number
@@ -763,6 +831,168 @@ export class GenerationQueueRepository {
     this.fencedProjects.delete(localProjectKey)
   }
 
+  /**
+   * Retry from the original frozen bytes, never from today's Project draft. A fresh queue item and
+   * staging session keep an old candidate/receipt independent of this new attempt. The source row's
+   * sequence is consumed atomically with insertion, so a stale second click cannot create another
+   * retry even across repository instances.
+   */
+  async retryTerminal(id: string, expectedStatusSequence: number): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const source = await this.requireRow(id)
+      if (
+        source.status_sequence !== expectedStatusSequence ||
+        (source.status !== 'failed' && source.status !== 'canceled')
+      ) {
+        throw statusConflict()
+      }
+      this.assertProjectCanEnqueue(source.local_project_key)
+      if (await this.hasReceipt(id)) {
+        throw publicationUncertain()
+      }
+      const canonicalPath = await canonicalProjectPath(source.canonical_project_path)
+      if (
+        canonicalPath !== source.canonical_project_path ||
+        localProjectRecoveryKey(canonicalPath) !== source.local_project_key
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before retrying.',
+        )
+      }
+      const verified = await this.verifyRow(source)
+      const targetBytes = await readStableFile(
+        verified.targetPath,
+        verified.payload.workerJob.target.byteSize,
+        verified.payload.workerJob.target.sha256,
+      )
+      const nextId = randomUUID()
+      const nextBatchId = randomUUID()
+      const nextSessionId = randomUUID()
+      const now = new Date().toISOString()
+      const manifest: InputManifestV1 = {
+        payloadSha256: sha256(Buffer.from(source.frozen_payload_json, 'utf8')),
+        queueInputVersion: QUEUE_INPUT_VERSION,
+        queueItemId: nextId,
+        targetByteSize: targetBytes.length,
+        targetFile: 'target.png',
+        targetSha256: sha256(targetBytes),
+      }
+      const root = await this.ensureRoot()
+      const temporary = await mkdtemp(path.join(root, '.tmp-'))
+      const published = path.join(root, nextId)
+      let renamed = false
+      try {
+        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+        await writeDurableFile(
+          path.join(temporary, 'manifest.json'),
+          Buffer.from(JSON.stringify(manifest), 'utf8'),
+        )
+        await syncDirectory(temporary)
+        await rename(temporary, published)
+        renamed = true
+        await syncDirectory(root)
+        await this.testHooks.afterRetryInputPublish?.()
+        this.assertProjectCanEnqueue(source.local_project_key)
+        await this.db.transaction().execute(async (transaction) => {
+          const consumed = await transaction
+            .updateTable('generation_queue_item')
+            .set({
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', id)
+            .where('status', '=', source.status)
+            .where('status_sequence', '=', expectedStatusSequence)
+            .where(
+              sql<boolean>`NOT EXISTS (
+                SELECT 1 FROM generation_candidate_receipt AS receipt
+                WHERE receipt.queue_item_id = generation_queue_item.id
+              )`,
+            )
+            .returning('id')
+            .executeTakeFirst()
+          if (!consumed) {
+            throw statusConflict()
+          }
+          await transaction
+            .insertInto('generation_queue_item')
+            .values({
+              batch_id: nextBatchId,
+              canonical_project_path: canonicalPath,
+              created_at: now,
+              document_id: source.document_id,
+              document_revision: source.document_revision,
+              error_code: null,
+              error_message: null,
+              finished_at: null,
+              frozen_payload_json: source.frozen_payload_json,
+              id: nextId,
+              local_project_key: source.local_project_key,
+              operation: source.operation,
+              staging_session_id: nextSessionId,
+              started_at: null,
+              status: 'pending',
+              status_sequence: 0,
+              updated_at: now,
+            })
+            .execute()
+        })
+        return {
+          batchId: nextBatchId,
+          cancelRequested: false,
+          createdAt: now,
+          id: nextId,
+          localProjectKey: source.local_project_key,
+          projectPath: canonicalPath,
+          stagingSessionId: nextSessionId,
+          status: 'pending',
+          statusSequence: 0,
+        }
+      } catch (error) {
+        // A lost commit acknowledgement must not make a valid input disappear. Startup recovery
+        // removes any published directory that has no committed queue row.
+        let safeToRemove = !renamed
+        if (renamed) {
+          try {
+            const committed = await this.db
+              .selectFrom('generation_queue_item')
+              .select('id')
+              .where('id', '=', nextId)
+              .executeTakeFirst()
+            safeToRemove = !committed
+          } catch {
+            safeToRemove = false
+          }
+        }
+        if (safeToRemove) {
+          await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
+            (cleanupError: unknown) => {
+              process.emitWarning(`Generation retry input cleanup failed: ${String(cleanupError)}`)
+            },
+          )
+        }
+        throw error
+      }
+    })
+  }
+
+  private async cleanupPrunedInputs(root: string, ids: readonly string[]): Promise<void> {
+    try {
+      await this.testHooks.beforePruneInputCleanup?.()
+      await removeInputDirectories(root, ids)
+    } catch {
+      // SQLite deletion is already durable. Report the committed outcome; startup recovery owns
+      // remaining unreferenced inputs after an interrupted or denied filesystem cleanup.
+      process.emitWarning('Generation queue input cleanup deferred until restart.', {
+        code: 'GENERATION_INPUT_CLEANUP_DEFERRED',
+      })
+    }
+  }
+
   private async ensureRoot(): Promise<string> {
     const parent = path.dirname(this.root)
     const canonicalParent = await realpath(parent)
@@ -789,6 +1019,27 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Generation input storage is unsafe.')
     }
     return canonical
+  }
+
+  private async hasReceipt(queueItemId: string): Promise<boolean> {
+    return Boolean(
+      await this.db
+        .selectFrom('generation_candidate_receipt')
+        .select('candidate_id')
+        .where('queue_item_id', '=', queueItemId)
+        .executeTakeFirst(),
+    )
+  }
+
+  private async hasReservedReceipt(queueItemId: string): Promise<boolean> {
+    return Boolean(
+      await this.db
+        .selectFrom('generation_candidate_receipt')
+        .select('candidate_id')
+        .where('queue_item_id', '=', queueItemId)
+        .where('status', '=', 'reserved')
+        .executeTakeFirst(),
+    )
   }
 
   private async requireRow(id: string): Promise<Selectable<GenerationQueueItem>> {
@@ -893,6 +1144,24 @@ function validateExpectedSequence(sequence: number): void {
   if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence >= Number.MAX_SAFE_INTEGER) {
     throw statusConflict()
   }
+}
+
+function isTerminalStatus(value: string): value is TerminalGenerationStatus {
+  return value === 'canceled' || value === 'completed' || value === 'failed'
+}
+
+function noReservedReceipt() {
+  return sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM generation_candidate_receipt AS receipt
+    WHERE receipt.queue_item_id = generation_queue_item.id AND receipt.status = 'reserved'
+  )`
+}
+
+function publicationUncertain(): GenerationQueueError {
+  return new GenerationQueueError(
+    'QUEUE_PUBLICATION_UNCERTAIN',
+    'Candidate publication needs recovery before this queue item can change.',
+  )
 }
 
 function statusConflict(): GenerationQueueError {
@@ -1123,6 +1392,30 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await file.close()
   }
+}
+
+/** The row is already gone; failure leaves only an app-owned orphan for restart recovery. */
+async function removeInputDirectories(root: string, ids: readonly string[]): Promise<void> {
+  for (const id of ids) {
+    const candidate = path.join(root, id)
+    const entry = await lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        return null
+      }
+      throw error
+    })
+    if (!entry) {
+      continue
+    }
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new GenerationQueueError(
+        'QUEUE_STORAGE_UNSAFE',
+        'Generation input storage contains an unsafe entry.',
+      )
+    }
+    await rm(candidate, { force: true, recursive: true })
+  }
+  await syncDirectory(root)
 }
 
 function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {

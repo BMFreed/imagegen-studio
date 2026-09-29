@@ -253,9 +253,21 @@ the owner available for an explicit retry. Missing or invalid output without
 a publication receipt becomes `failed` after confirmed worker exit, while an
 uncertain receipt is left for restart reconciliation.
 
+The private queue repository also provides explicit retry of a failed/canceled
+item from its verified frozen input. A retry creates a new pending item and
+staging session; a status-sequence compare-and-swap prevents the same stale
+action from queuing twice. Terminal-row deletion and bulk pruning remove queue
+history and its owned input files, while completed staging candidates and the
+actual-seed cursor remain independent. Rows with an unresolved `reserved`
+candidate receipt are retained for startup reconciliation. Queue files left
+between a committed row deletion and filesystem cleanup are reclaimed at the
+next startup. These operations do not silently discard staging candidates.
+
 This is still an internal boundary tested with a substitute inference transport.
 There is no production GPU worker dispatch or renderer Generate/Queue Manager
-action; progress, retry, pruning and candidate acceptance are unconnected.
+action; progress and user-facing retry/pruning are unconnected. Candidate
+acceptance has a separate production Raster path, but Smart Patch acceptance
+and early Add while sibling jobs run remain open.
 
 ## Queue Manager UI
 
