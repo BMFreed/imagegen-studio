@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectRasterLayerView } from '../../shared/api.js'
+import type { ProjectGenerationResultView, ProjectRasterLayerView } from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -13,18 +13,23 @@ import {
   type CanvasSize,
   fitCamera,
   fitTargetBounds,
+  rectBounds,
   zoomCameraAt,
 } from './project-canvas-geometry.js'
+import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
 
 const props = defineProps<{
   bbox: IgsRectV1
   disabled: boolean
+  generationResults: ProjectGenerationResultView[]
+  generationResultsLoading: boolean
   layers: ProjectRasterLayerView[]
   selectedLayerId: string | null
 }>()
 
 const emit = defineEmits<{
   changeBbox: [rect: IgsRectV1]
+  refreshGenerationResults: []
   selectLayer: [layerId: string]
 }>()
 
@@ -35,7 +40,16 @@ const panning = ref(false)
 const camera = ref<CanvasCamera>({ scale: 1, x: 0, y: 0 })
 const viewport = ref<CanvasSize>({ height: 0, width: 0 })
 const failedImageUrls = ref<Set<string>>(new Set())
+const failedCandidateUrls = ref<Set<string>>(new Set())
+const focusedCandidateId = ref<string | null>(null)
+const previewVisible = ref(true)
 const localBboxPosition = ref<{ x: number; y: number } | null>(null)
+const focusedCandidate = computed(
+  () =>
+    props.generationResults.find(
+      (candidate) => candidate.candidateId === focusedCandidateId.value,
+    ) ?? null,
+)
 const zoomPercent = computed(() => Number((camera.value.scale * 100).toPrecision(3)))
 const zoomOptions = computed(() =>
   [...new Set([25, 50, 75, 100, 125, 200, 400, zoomPercent.value])]
@@ -61,6 +75,8 @@ let stage: Konva.Stage | null = null
 let sceneLayer: Konva.Layer | null = null
 let world: Konva.Group | null = null
 let rasters: Konva.Group | null = null
+let candidatePreview: Konva.Group | null = null
+let previewBorder: Konva.Rect | null = null
 let bboxShape: Konva.Rect | null = null
 let bboxTransformer: Konva.Transformer | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -70,6 +86,7 @@ let lastPointer = { x: 0, y: 0 }
 let keyboardBboxDirty = false
 const heldArrowKeys = new Set<string>()
 const images = new Map<string, HTMLImageElement>()
+const candidateImages = new Map<string, HTMLImageElement>()
 
 function token(name: string): string {
   return host.value ? getComputedStyle(host.value).getPropertyValue(name).trim() : ''
@@ -81,6 +98,9 @@ function applyCamera(next: CanvasCamera) {
   world?.scale({ x: next.scale, y: next.scale })
   if (bboxShape) {
     bboxShape.strokeWidth(1 / next.scale)
+  }
+  if (previewBorder) {
+    previewBorder.strokeWidth(1 / next.scale)
   }
   if (bboxTransformer) {
     bboxTransformer.anchorSize(8 / next.scale)
@@ -94,7 +114,43 @@ function fitView() {
     return
   }
   fitMode = true
-  applyCamera(fitCamera(fitTargetBounds(props.layers, props.bbox), viewport.value))
+  const bounds = fitTargetBounds(props.layers, props.bbox)
+  const candidate = previewVisible.value ? focusedCandidate.value : null
+  const previewBounds = candidate ? rectBounds(candidate.bbox) : null
+  applyCamera(
+    fitCamera(
+      previewBounds
+        ? {
+            bottom: Math.max(bounds.bottom, previewBounds.bottom),
+            left: Math.min(bounds.left, previewBounds.left),
+            right: Math.max(bounds.right, previewBounds.right),
+            top: Math.min(bounds.top, previewBounds.top),
+          }
+        : bounds,
+      {
+        height: Math.max(1, viewport.value.height - (candidate ? 120 : 0)),
+        width: viewport.value.width,
+      },
+    ),
+  )
+}
+
+function focusCandidate(candidateId: string) {
+  const candidate = props.generationResults.find((item) => item.candidateId === candidateId)
+  if (!candidate) {
+    return
+  }
+  fitMode = false
+  focusedCandidateId.value = candidateId
+  previewVisible.value = true
+  if (viewport.value.width > 0 && viewport.value.height > 0) {
+    applyCamera(
+      fitCamera(rectBounds(candidate.bbox), {
+        height: Math.max(1, viewport.value.height - 120),
+        width: viewport.value.width,
+      }),
+    )
+  }
 }
 
 function setZoom(scale: number, point?: { x: number; y: number }) {
@@ -338,6 +394,80 @@ function releaseStaleImages() {
   failedImageUrls.value = new Set([...failedImageUrls.value].filter((url) => activeUrls.has(url)))
 }
 
+function loadCandidateImage(candidate: ProjectGenerationResultView): HTMLImageElement | null {
+  const cached = candidateImages.get(candidate.imageUrl)
+  if (cached) {
+    return cached.complete && cached.naturalWidth > 0 ? cached : null
+  }
+  const image = new Image()
+  image.crossOrigin = 'anonymous'
+  candidateImages.set(candidate.imageUrl, image)
+  image.onload = () => {
+    if (stage) {
+      renderCandidatePreview()
+    }
+  }
+  image.onerror = () => {
+    failedCandidateUrls.value = new Set([...failedCandidateUrls.value, candidate.imageUrl])
+  }
+  image.src = candidate.imageUrl
+  return null
+}
+
+function releaseStaleCandidateImages() {
+  const activeUrls = new Set(props.generationResults.map((candidate) => candidate.imageUrl))
+  for (const [url, image] of candidateImages) {
+    if (activeUrls.has(url) && !failedCandidateUrls.value.has(url)) {
+      continue
+    }
+    image.onload = null
+    image.onerror = null
+    image.removeAttribute('src')
+    candidateImages.delete(url)
+  }
+  failedCandidateUrls.value = new Set()
+}
+
+function renderCandidatePreview() {
+  if (!candidatePreview || !sceneLayer) {
+    return
+  }
+  candidatePreview.destroyChildren()
+  previewBorder = null
+  const candidate = previewVisible.value ? focusedCandidate.value : null
+  if (!candidate) {
+    sceneLayer.batchDraw()
+    return
+  }
+  const image = loadCandidateImage(candidate)
+  if (!image) {
+    sceneLayer.batchDraw()
+    return
+  }
+  candidatePreview.add(
+    new Konva.Image({
+      height: candidate.bbox.height,
+      image,
+      listening: false,
+      width: candidate.bbox.width,
+      x: candidate.bbox.x,
+      y: candidate.bbox.y,
+    }),
+  )
+  previewBorder = new Konva.Rect({
+    dash: [5, 4],
+    height: candidate.bbox.height,
+    listening: false,
+    stroke: token('--app-tab-active-text'),
+    strokeWidth: 1 / camera.value.scale,
+    width: candidate.bbox.width,
+    x: candidate.bbox.x,
+    y: candidate.bbox.y,
+  })
+  candidatePreview.add(previewBorder)
+  sceneLayer.batchDraw()
+}
+
 function renderRasters() {
   if (!rasters || !sceneLayer) {
     return
@@ -418,6 +548,7 @@ function createStage() {
   sceneLayer = new Konva.Layer()
   world = new Konva.Group()
   rasters = new Konva.Group()
+  candidatePreview = new Konva.Group({ listening: false })
   bboxShape = new Konva.Rect({
     dash: [7, 5],
     fill: 'rgba(0,0,0,0.001)',
@@ -456,12 +587,14 @@ function createStage() {
   })
   bboxShape.on('dragend transformend', commitBbox)
   world.add(rasters)
+  world.add(candidatePreview)
   world.add(bboxShape)
   world.add(bboxTransformer)
   sceneLayer.add(world)
   stage.add(sceneLayer)
   restoreBbox()
   renderRasters()
+  renderCandidatePreview()
   updateBboxTool()
 }
 
@@ -500,6 +633,11 @@ onBeforeUnmount(() => {
     image.onerror = null
   }
   images.clear()
+  for (const image of candidateImages.values()) {
+    image.onload = null
+    image.onerror = null
+  }
+  candidateImages.clear()
   stage?.destroy()
   stage = null
 })
@@ -508,7 +646,11 @@ watch(
   () => props.bbox,
   () => {
     restoreBbox()
-    if (fitMode && !props.layers.some((layer) => layer.visible && layer.opacity > 0)) {
+    if (
+      fitMode &&
+      !(focusedCandidate.value && previewVisible.value) &&
+      !props.layers.some((layer) => layer.visible && layer.opacity > 0)
+    ) {
       fitView()
     }
   },
@@ -524,6 +666,22 @@ watch(
   },
 )
 watch(() => props.selectedLayerId, renderRasters)
+watch(
+  () => props.generationResults,
+  (candidates) => {
+    const ids = new Set(candidates.map((candidate) => candidate.candidateId))
+    if (!focusedCandidateId.value || !ids.has(focusedCandidateId.value)) {
+      focusedCandidateId.value = candidates[0]?.candidateId ?? null
+    }
+    releaseStaleCandidateImages()
+    renderCandidatePreview()
+    if (fitMode) {
+      fitView()
+    }
+  },
+  { immediate: true },
+)
+watch([focusedCandidateId, previewVisible], renderCandidatePreview)
 watch(tool, () => {
   panMoved = false
   heldArrowKeys.clear()
@@ -604,7 +762,26 @@ watch(
         {{ failedLayerCount }} layer {{ failedLayerCount === 1 ? 'image' : 'images' }} could not be
         displayed
       </div>
-      <div v-if="layers.length === 0" class="canvas-empty">
+      <div
+        v-if="
+          previewVisible && focusedCandidate && failedCandidateUrls.has(focusedCandidate.imageUrl)
+        "
+        class="candidate-warning"
+        role="status"
+      >
+        The result preview could not be displayed. Refresh results to try again.
+      </div>
+      <ProjectGenerationResultsTray
+        v-if="generationResults.length > 0"
+        :candidates="generationResults"
+        :focusedCandidateId
+        :loading="generationResultsLoading"
+        :previewVisible
+        @focus="focusCandidate"
+        @refresh="emit('refreshGenerationResults')"
+        @togglePreview="previewVisible = !previewVisible"
+      />
+      <div v-if="layers.length === 0 && !(focusedCandidate && previewVisible)" class="canvas-empty">
         <strong>Canvas ready</strong>
         <span>Raster Layers will appear here.</span>
       </div>
@@ -686,7 +863,8 @@ watch(
 }
 
 .bbox-readout,
-.image-warning {
+.image-warning,
+.candidate-warning {
   position: absolute;
   z-index: 2;
   left: 48px;
@@ -708,6 +886,10 @@ watch(
 }
 .image-warning {
   top: 42px;
+}
+
+.candidate-warning {
+  top: 74px;
 }
 
 .tool-rail {

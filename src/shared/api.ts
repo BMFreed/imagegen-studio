@@ -32,6 +32,7 @@ export const ipcChannels = {
     getCloseImpact: 'projects:get-close-impact',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
+    listGenerationResults: 'projects:list-generation-results',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
@@ -179,6 +180,23 @@ export interface ProjectCloseImpact {
   unfinishedJobCount: number
 }
 
+export interface ProjectGenerationResultView {
+  actualSeed: number
+  bbox: IgsRectV1
+  candidateId: string
+  completedAt: string
+  completionOrder: number
+  imageUrl: string
+  queueItemId: string
+  sourceDocumentMismatch: boolean
+  stagingSessionId: string
+}
+
+export interface ProjectGenerationResultsSnapshot {
+  candidates: ProjectGenerationResultView[]
+  recoveryUnavailable: boolean
+}
+
 export interface ProjectApi {
   addGenerationLora: (
     tabId: string,
@@ -199,6 +217,7 @@ export interface ProjectApi {
   getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
+  listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
   moveRasterLayer: (
     tabId: string,
     layerId: string,

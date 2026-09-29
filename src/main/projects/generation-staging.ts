@@ -337,35 +337,9 @@ export class GenerationStagingRepository {
     if (!PROJECT_KEY_PATTERN.test(localProjectKey)) {
       throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Project identity is invalid.')
     }
-    return await this.serialize(async () => {
-      this.requireReconciled()
-      const root = await this.ensureStagingRoot()
-      const projectPath = path.join(root, localProjectKey)
-      if (!(await exists(projectPath))) {
-        return []
-      }
-      await checkPrivateDirectory(projectPath)
-      const candidates: VerifiedGenerationCandidate[] = []
-      const scanned = await this.scanEntries(root, localProjectKey)
-      for (const { entry, sessionPath } of scanned.entries) {
-        if (await this.isDiscardedSession(entry.localProjectKey, entry.stagingSessionId)) {
-          continue
-        }
-        const receipt = await this.receiptFor(entry.candidateId)
-        if (!receipt || receipt.status !== 'completed' || !receiptMatches(receipt, entry)) {
-          continue
-        }
-        const row = await this.queueRow(entry.queueItemId)
-        if (row && (row.status !== 'completed' || !queueRowMatches(row, entry))) {
-          continue
-        }
-        const verified = await this.verifyEntry(entry, sessionPath).catch(() => null)
-        if (verified) {
-          candidates.push(verified)
-        }
-      }
-      return candidates.sort((a, b) => a.completionOrder - b.completionOrder)
-    })
+    return await this.serialize(
+      async () => await this.listVerifiedCandidatesUnlocked(localProjectKey),
+    )
   }
 
   /**
@@ -472,6 +446,42 @@ export class GenerationStagingRepository {
         .where('local_project_key', '=', localProjectKey)
         .executeTakeFirst()
       return row?.actual_seed ?? null
+    })
+  }
+
+  /** Copy only a currently visible, verified PNG while serialized with staging discard. */
+  async readVerifiedCandidatePng(input: {
+    candidateId: string
+    imageSha256: string
+    localProjectKey: string
+    stagingSessionId: string
+  }): Promise<Buffer | null> {
+    if (
+      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
+      !UUID_PATTERN.test(input.candidateId) ||
+      !UUID_PATTERN.test(input.stagingSessionId) ||
+      !SHA256_PATTERN.test(input.imageSha256)
+    ) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Candidate identity is invalid.')
+    }
+    return await this.serialize(async () => {
+      const candidate = (await this.listVerifiedCandidatesUnlocked(input.localProjectKey)).find(
+        (entry) =>
+          entry.candidateId === input.candidateId &&
+          entry.stagingSessionId === input.stagingSessionId &&
+          entry.image.sha256 === input.imageSha256,
+      )
+      if (!candidate) {
+        return null
+      }
+      // The list verified the image; the second stable read prevents a changed file from being
+      // served between that verification and the byte copy returned to the protocol handler.
+      const bytes = await readStableFile(candidate.assetPath, MAX_IMAGE_BYTES).catch(() => null)
+      return bytes &&
+        bytes.length === candidate.image.byteSize &&
+        sha256(bytes) === candidate.image.sha256
+        ? bytes
+        : null
     })
   }
 
@@ -704,6 +714,38 @@ export class GenerationStagingRepository {
       .where('staging_session_id', '=', stagingSessionId)
       .executeTakeFirst()
     return row !== undefined
+  }
+
+  private async listVerifiedCandidatesUnlocked(
+    localProjectKey: string,
+  ): Promise<VerifiedGenerationCandidate[]> {
+    this.requireReconciled()
+    const root = await this.ensureStagingRoot()
+    const projectPath = path.join(root, localProjectKey)
+    if (!(await exists(projectPath))) {
+      return []
+    }
+    await checkPrivateDirectory(projectPath)
+    const candidates: VerifiedGenerationCandidate[] = []
+    const scanned = await this.scanEntries(root, localProjectKey)
+    for (const { entry, sessionPath } of scanned.entries) {
+      if (await this.isDiscardedSession(entry.localProjectKey, entry.stagingSessionId)) {
+        continue
+      }
+      const receipt = await this.receiptFor(entry.candidateId)
+      if (!receipt || receipt.status !== 'completed' || !receiptMatches(receipt, entry)) {
+        continue
+      }
+      const row = await this.queueRow(entry.queueItemId)
+      if (row && (row.status !== 'completed' || !queueRowMatches(row, entry))) {
+        continue
+      }
+      const verified = await this.verifyEntry(entry, sessionPath).catch(() => null)
+      if (verified) {
+        candidates.push(verified)
+      }
+    }
+    return candidates.sort((a, b) => a.completionOrder - b.completionOrder)
   }
 
   private async publishFiles(entry: CandidateEntry, outputBytes: Buffer): Promise<string> {

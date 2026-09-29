@@ -5,6 +5,7 @@ import type {
   ProjectApi,
   ProjectCloseImpact,
   ProjectGenerationDraftChange,
+  ProjectGenerationResultsSnapshot,
   ProjectImportSelection,
   ProjectLoraIdentity,
   ProjectOpenResult,
@@ -66,6 +67,10 @@ const modelCatalogError = ref<string | null>(null)
 const modelCatalogLoaded = ref(false)
 const modelCatalogLoading = ref(false)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapshot>>({})
+const generationResultsErrors = ref<Record<string, string | null>>({})
+const generationResultsLoading = ref<Record<string, boolean>>({})
+const generationResultsRequests = new Map<string, number>()
 const draftValidity = ref<Record<string, boolean>>({})
 const projectsLoading = ref(false)
 const homeError = ref<string | null>(null)
@@ -210,9 +215,39 @@ watch(
   (tabId) => {
     if (tabId) {
       void refreshModelCatalog()
+      void refreshGenerationResults(tabId)
     }
   },
 )
+
+async function refreshGenerationResults(tabId: string) {
+  const request = (generationResultsRequests.get(tabId) ?? 0) + 1
+  generationResultsRequests.set(tabId, request)
+  generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: true }
+  generationResultsErrors.value = { ...generationResultsErrors.value, [tabId]: null }
+  try {
+    const snapshot = await apiValue(() => projectApi().listGenerationResults(tabId))
+    if (
+      generationResultsRequests.get(tabId) === request &&
+      projectTabs.value.some((tab) => tab.id === tabId)
+    ) {
+      generationResultsByTab.value = { ...generationResultsByTab.value, [tabId]: snapshot }
+    }
+  } catch (cause) {
+    if (generationResultsRequests.get(tabId) === request) {
+      const { [tabId]: _stale, ...remaining } = generationResultsByTab.value
+      generationResultsByTab.value = remaining
+      generationResultsErrors.value = {
+        ...generationResultsErrors.value,
+        [tabId]: errorMessage(cause),
+      }
+    }
+  } finally {
+    if (generationResultsRequests.get(tabId) === request) {
+      generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: false }
+    }
+  }
+}
 
 watch(modelManagerOpen, (open, previous) => {
   if (previous && !open && activeTab.value) {
@@ -325,6 +360,14 @@ function focusTab(tab: ProjectTab) {
 
 function removeTab(tabId: string) {
   draftSync.forget(tabId)
+  generationResultsRequests.set(tabId, (generationResultsRequests.get(tabId) ?? 0) + 1)
+  const { [tabId]: _closedResults, ...remainingResults } = generationResultsByTab.value
+  const { [tabId]: _closedResultsError, ...remainingResultsErrors } = generationResultsErrors.value
+  const { [tabId]: _closedResultsLoading, ...remainingResultsLoading } =
+    generationResultsLoading.value
+  generationResultsByTab.value = remainingResults
+  generationResultsErrors.value = remainingResultsErrors
+  generationResultsLoading.value = remainingResultsLoading
   const { [tabId]: _closedValidity, ...remainingValidity } = draftValidity.value
   draftValidity.value = remainingValidity
   projectTabs.value = projectTabs.value.filter((tab) => tab.id !== tabId)
@@ -345,6 +388,7 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   for (const tab of projectTabs.value) {
     if (!openIds.has(tab.id)) {
       draftSync.forget(tab.id)
+      generationResultsRequests.set(tab.id, (generationResultsRequests.get(tab.id) ?? 0) + 1)
     }
   }
   projectTabs.value = nextTabs
@@ -368,6 +412,15 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   )
   draftValidity.value = Object.fromEntries(
     Object.entries(draftValidity.value).filter(([id]) => openIds.has(id)),
+  )
+  generationResultsByTab.value = Object.fromEntries(
+    Object.entries(generationResultsByTab.value).filter(([id]) => openIds.has(id)),
+  )
+  generationResultsErrors.value = Object.fromEntries(
+    Object.entries(generationResultsErrors.value).filter(([id]) => openIds.has(id)),
+  )
+  generationResultsLoading.value = Object.fromEntries(
+    Object.entries(generationResultsLoading.value).filter(([id]) => openIds.has(id)),
   )
 }
 
@@ -1159,6 +1212,9 @@ onBeforeUnmount(() => {
           :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
           :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
+          :generationResults="generationResultsByTab[activeTab.id] ?? null"
+          :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
+          :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
           :modelCatalog
           :modelCatalogError
           :modelCatalogLoaded
@@ -1172,6 +1228,7 @@ onBeforeUnmount(() => {
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
           @moveLayer="moveActiveRasterLayer"
+          @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
           @refreshModels="refreshModelCatalog"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"

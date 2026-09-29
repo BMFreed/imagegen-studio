@@ -18,6 +18,7 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { isProjectGenerationResultsSnapshot } from '../shared/projects/project-generation-results.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
 
@@ -580,6 +581,12 @@ const api: StudioApi = {
         ipcChannels.projects.list,
         [],
         (value): value is ProjectSummary[] => Array.isArray(value) && value.every(isProjectSummary),
+      ),
+    listGenerationResults: (tabId) =>
+      invokeProject(
+        ipcChannels.projects.listGenerationResults,
+        [tabId],
+        isProjectGenerationResultsSnapshot,
       ),
     moveRasterLayer: (tabId, layerId, targetIndex) =>
       invokeProject(

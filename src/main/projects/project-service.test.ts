@@ -392,6 +392,34 @@ test('Project service creates, edits, saves and reopens an actual .igs with inde
   })
 })
 
+test('an open Project reports the replacement document identity when its .igs path is reused', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const created = await service.create({ height: 64, title: 'Original', width: 64 })
+    const originalDocumentId = service.getOpenDocumentId(created.id)
+    assert.ok(originalDocumentId)
+    assert.equal(service.getOpenDocumentId('invalid-project-key'), null)
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    await service.close(created.id)
+    assert.equal(service.getOpenDocumentId(created.id), null)
+
+    const replacement = createEmptyProjectDocumentV1({ title: 'Replacement' })
+    const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+    const replacementPath = path.join(dataRoot, 'replacement.igs')
+    await saveIgsPackage(replacementPath, {
+      assets: {},
+      preview: { ...placeholders, rect: null, status: 'empty' },
+      project: replacement,
+    })
+    await rename(replacementPath, savedPath)
+
+    const reopened = await service.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    assert.equal(service.getOpenDocumentId(created.id), replacement.documentId)
+    assert.notEqual(service.getOpenDocumentId(created.id), originalDocumentId)
+    await service.close(created.id)
+  })
+})
+
 test('Project service asks before recovery and restores dirty document without replacing saved .igs', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
     const created = await service.create({ height: 512, title: 'Recovery', width: 512 })

@@ -401,6 +401,13 @@ export class ProjectService {
       : { filePath: coordinator.filePath, kind: 'saved', member }
   }
 
+  /** Main-only identity for linking local recovery to the document actually open in this tab. */
+  getOpenDocumentId(tabId: string): string | null {
+    return PROJECT_ID_PATTERN.test(tabId)
+      ? (this.openTabs.get(tabId)?.document.documentId ?? null)
+      : null
+  }
+
   getOpenTabs(): ProjectTab[] {
     return [...this.openTabs].map(([id, coordinator]) => toTab(id, coordinator))
   }

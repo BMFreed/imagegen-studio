@@ -20,6 +20,7 @@ import {
 } from './generation-staging.js'
 import { readIgsPackage, validateSrgbPngStream } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import { ProjectGenerationResultResource } from './project-generation-result-resource.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 
@@ -875,6 +876,71 @@ test('failed candidate cleanup stays hidden and is retried on restart', async ()
     assert.equal(await restarted.readLastActualSeed(published.localProjectKey), 707)
     await second.close()
   } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('verified image bytes are copied under staging serialization and a discarded session cannot serve them', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-result-read-'))
+  let allowDiscard!: () => void
+  let discardStarted!: () => void
+  const discardPaused = new Promise<void>((resolve) => {
+    discardStarted = resolve
+  })
+  const resumeDiscard = new Promise<void>((resolve) => {
+    allowDiscard = resolve
+  })
+  try {
+    const database = openAppDatabase(root, migrations)
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root, {
+      afterDiscardTombstone: async () => {
+        discardStarted()
+        await resumeDiscard
+      },
+      beforeSessionCleanup: async () => {
+        throw new Error('retain the bytes after a durable tombstone')
+      },
+    })
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const candidate = await fixture(root)
+    const published = await publishOne(root, queue, staging, candidate, 42)
+    const identity = {
+      candidateId: published.candidateId,
+      imageSha256: published.image.sha256,
+      localProjectKey: published.localProjectKey,
+      stagingSessionId: published.stagingSessionId,
+    }
+    assert.deepEqual(await staging.readVerifiedCandidatePng(identity), candidate.outputBytes)
+    const resource = new ProjectGenerationResultResource(staging, (projectKey) =>
+      projectKey === published.localProjectKey ? published.documentId : null,
+    )
+    const snapshot = await resource.list(published.localProjectKey)
+    assert.equal(snapshot.candidates.length, 1)
+    const imageUrl = snapshot.candidates[0].imageUrl
+    assert.deepEqual(await resource.readImage(imageUrl), candidate.outputBytes)
+    assert.equal(
+      await staging.readVerifiedCandidatePng({ ...identity, imageSha256: 'f'.repeat(64) }),
+      null,
+    )
+    assert.equal(
+      await staging.readVerifiedCandidatePng({ ...identity, stagingSessionId: randomUUID() }),
+      null,
+    )
+
+    const discarding = staging.discardProject(published.localProjectKey)
+    await discardPaused
+    const overlappingRead = staging.readVerifiedCandidatePng(identity)
+    allowDiscard()
+    assert.deepEqual(await discarding, { cleanupDeferred: true, discardedSessionCount: 1 })
+    assert.equal(await overlappingRead, null)
+    assert.equal((await stat(published.assetPath)).size, candidate.outputBytes.length)
+    assert.equal(await staging.readVerifiedCandidatePng(identity), null)
+    assert.equal(await resource.readImage(imageUrl), null)
+    await database.close()
+  } finally {
+    allowDiscard()
     await rm(root, { force: true, recursive: true })
   }
 })

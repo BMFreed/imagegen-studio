@@ -3,6 +3,7 @@ import type {
   ModelCatalogItem,
   ProjectApi,
   ProjectGenerationDraftChange,
+  ProjectGenerationResultsSnapshot,
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
@@ -15,6 +16,7 @@ import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import {
   AspectRatio as FitIcon,
+  Refresh as RefreshIcon,
   DeviceFloppy as SaveIcon,
   ArrowsShuffle as ShuffleIcon,
 } from '@vicons/tabler'
@@ -58,6 +60,9 @@ const props = defineProps<{
   draftPending: boolean
   error: string | null
   generationDraft: ProjectTab['generationDraft']
+  generationResults: ProjectGenerationResultsSnapshot | null
+  generationResultsError: string | null
+  generationResultsLoading: boolean
   modelCatalog: ModelCatalogItem[]
   modelCatalogError: string | null
   modelCatalogLoaded: boolean
@@ -74,6 +79,7 @@ const emit = defineEmits<{
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
   moveLayer: [layerId: string, targetIndex: number]
+  refreshGenerationResults: []
   refreshModels: []
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
@@ -743,6 +749,26 @@ function applyFitBbox() {
         Your changes are still open here. Save the project to keep them in the .igs file.
         {{ tab.autosaveError }}
       </NAlert>
+      <NAlert
+        v-if="generationResultsError || generationResults?.recoveryUnavailable"
+        key="n-alert-5"
+        title="Generation results unavailable"
+        type="warning"
+      >
+        {{
+          generationResultsError ??
+          'Temporary results could not be recovered. They remain on this computer for a later recovery attempt.'
+        }}
+        <NButton
+          :disabled="generationResultsLoading"
+          :loading="generationResultsLoading"
+          size="tiny"
+          tertiary
+          @click="emit('refreshGenerationResults')"
+        >
+          Retry
+        </NButton>
+      </NAlert>
     </div>
 
     <div class="project-layout">
@@ -766,7 +792,24 @@ function applyFitBbox() {
           </NButton>
         </div>
         <section aria-label="Generation settings" class="settings-section">
-          <h2>Generation</h2>
+          <div class="generation-heading">
+            <h2>Generation</h2>
+            <NTooltip v-if="!generationResults?.candidates.length">
+              <template v-slot:trigger>
+                <NButton
+                  aria-label="Refresh results"
+                  circle
+                  :loading="generationResultsLoading"
+                  quaternary
+                  size="tiny"
+                  @click="emit('refreshGenerationResults')"
+                >
+                  <template v-slot:icon><NIcon :component="RefreshIcon" :size="16" /></template>
+                </NButton>
+              </template>
+              Check for temporary generation results on this computer
+            </NTooltip>
+          </div>
           <div class="model-fields">
             <div class="model-heading">
               <span class="field-label">Model</span>
@@ -1100,9 +1143,12 @@ function applyFitBbox() {
         :key="tab.id"
         :bbox="tab.primaryBbox"
         :disabled="busy || reloadRequired"
+        :generationResults="generationResults?.candidates ?? []"
+        :generationResultsLoading
         :layers="tab.layers"
         :selectedLayerId
         @changeBbox="emit('applyBbox', $event)"
+        @refreshGenerationResults="emit('refreshGenerationResults')"
         @selectLayer="selectedLayerId = $event"
       />
 
@@ -1178,6 +1224,13 @@ function applyFitBbox() {
 .project-settings h2 {
   margin: 0;
   font-size: 13px;
+}
+
+.generation-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .settings-section + .settings-section {

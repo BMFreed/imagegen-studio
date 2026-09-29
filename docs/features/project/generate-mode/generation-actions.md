@@ -115,15 +115,23 @@ frozen raster-only target for the primary bbox. Neither operation enqueued a job
 or ran Generate; no production candidate, staging session or acceptance path
 existed then.
 
-## Current production boundary: Phase 2B repository checkpoint
+## Earlier production boundary: Phase 2B repository checkpoint
 
 The Project now saves an explicit Illustrious sampler/scheduler draft pair, and
 main can enqueue one frozen Illustrious `txt2img` input in SQLite. The queue
 repository can claim it; given a qualifying provisional output, the separate
 staging repository can publish/recover a temporary candidate and advance the
-Project's actual-seed cursor. The production Project still has no Generate
-action, worker inference, queue dispatcher or candidate preview/acceptance UI.
-Prototype interactions above do not prove those flows.
+Project's actual-seed cursor. That checkpoint had no Project Generate action,
+worker dispatch or candidate preview/acceptance UI.
+
+## Current production boundary: read-only Results recovery
+
+The Project can now display and preview an already verified, locally recovered
+candidate. This does not enable the Generate action or acceptance. The current
+worker does not cover all visible generation inputs, and the release runtime
+installer is not complete. Prototype interactions above do not prove a full
+production generation flow. See the
+[Results recovery checkpoint](../../../engineering/phase-2b-results-recovery-ui.md).
 
 ## Acceptance Criteria
 

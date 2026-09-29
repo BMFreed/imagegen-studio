@@ -33,8 +33,8 @@
 | PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Библиотека моделей](./contracts/managed-model-library.md): CivitAI Illustrious/Anima `.safetensors` install/version/repair и custom Anima с закреплёнными Qwen3/VAE проверены в SQLite/filesystem tests; Electron smoke покрывает Model Manager prediction override по SHA-256+size, точный Project checkpoint, LoRA stack и Project → Manager focus; [первый SDXL structural preflight](./engineering/phase-2b-inference-worker-research.md) перед Prepare проверен; полная совместимость/загрузка managed моделей, embedding/VAE selectors и обратный handoff ещё отсутствуют |
 | PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Provenance](./features/project/generate-mode/generation-provenance.md#vue-prototype-coverage): mock comparison/result-to-preset; Project сохраняет sampler/scheduler draft; [внутренний handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) связывает frozen Illustrious job с queue/processor/staging на реальных SQLite/filesystem, а отдельный GPU smoke проверяет dual-CLIP conditioning; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) создаёт внутренний dispatch owner и ждёт worker exit при закрытии; renderer Generate, полный pipeline и accepted provenance/storage ещё не реализованы |
 | PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Presets](./features/presets.md#known-pp-006-prototype-gaps): Project diagnostics и сквозной Apply на mocks; resource handoff/persistence не завершены                                                                                                                                                                                                                                                                                                         |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs и ждёт worker exit; проверен per-Project close с отменой своих jobs и staging tombstones, а при недоступном storage — явный close с сохранением recovery; installer и staging recovery/acceptance UI отсутствуют |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-repository-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и приватный processor с cancel/late-done guards; [Project → staging handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) проверен с подставным inference transport и настоящей SQLite/filesystem; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs при app close; per-Project close/discard проверен SQLite/filesystem и Electron smoke, включая degraded recovery close; Generate/Results IPC, staging preview/recovery и принятие результата в `.igs` отсутствуют |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Document lifecycle](./features/project/document-lifecycle.md) и [Phase 2A evidence](./engineering/phase-2a-project-storage-research.md#production-sampling-draft-controls): Electron с dev worker проверяет Save/reopen, recovery, Move/Copy `.igs`, raster Canvas/controls, PNG import, previews/Home thumbnails/Rebuild, prompts/Seed/Steps/CFG и sampler/scheduler draft, read-only Project prediction display из Model Manager, LoRA stack/relink, [prompt actions](./engineering/project-prompt-actions-research.md), native-close Save; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs и ждёт worker exit; проверен per-Project close с отменой своих jobs и staging tombstones, а при недоступном storage — явный close с сохранением recovery; [Results recovery view](./engineering/phase-2b-results-recovery-ui.md) проверяет, что Save не включает непринятый кандидат в `.igs`; installer и acceptance UI отсутствуют |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Staging](./features/project/generate-mode/generation-results.md#production-recovery-preview-checkpoint): mock acceptance, production repository для validated candidate/seed recovery и приватный processor с cancel/late-done guards; [Project → staging handoff](./engineering/phase-2b-internal-handoff-and-conditioning.md) проверен с подставным inference transport и настоящей SQLite/filesystem; [Electron shutdown](./engineering/phase-2b-electron-shutdown.md) отменяет pending jobs при app close; per-Project close/discard проверен SQLite/filesystem и Electron smoke, включая degraded recovery close; [Results recovery view](./engineering/phase-2b-results-recovery-ui.md) проверяет typed IPC, приватный PNG preview, Save/Cancel/discard после crash/restart; Generate и принятие результата в `.igs` отсутствуют |
 
 ### Статусы и доказательства
 
@@ -423,14 +423,16 @@ text Undo/Redo работают в Electron. Это не общий Project undo
 [Проверки LoRA](./engineering/phase-2a-project-storage-research.md#project-lora-stack-validation)
 не доказывают её загрузку и применение в ML pipeline.
 Не готовы полный generation pipeline/export, устанавливаемый
-Linux/NVIDIA runtime и пользовательский flow восстановления непринятых
-результатов; локальный staging repository пока не подключён к Project UI.
+Linux/NVIDIA runtime и принятие непринятых результатов в Project. Локальное
+[восстановление и read-only preview](./engineering/phase-2b-results-recovery-ui.md)
+из staging repository теперь подключены к Project UI.
 Electron удерживает одну восстановленную queue/staging пару; [проверки](./engineering/phase-2b-owned-dispatch-and-recovery.md)
 на том checkpoint не покрывали Project close/discard или acceptance; [следующий checkpoint](./engineering/phase-2b-electron-shutdown.md#per-project-close-extension-проверенный-checkpoint) проверяет close/discard, но не acceptance. Live self-test app-owned runtime
 проверен как внутренняя граница, но без
 проверенного release artifact и installer он не доказывает готовую установку.
 [Native app close](./engineering/phase-2b-electron-shutdown.md) теперь отменяет
-ожидающие jobs до закрытия SQLite; recovery результатов в Project UI всё ещё нет.
+ожидающие jobs до закрытия SQLite; Project показывает проверенные recovered
+results до явного закрытия с discard.
 Home загружает
 подписанные thumbnails из проверенного `.igs` или пересобираемого cache.
 Clean Rebuild Preview проверен
@@ -478,7 +480,9 @@ undo показаны на in-memory candidates. Main имеет локальн�
 для проверенного кандидата и seed и приватный processor для cancel/completion;
 внутренний Project → queue → staging handoff проверен на реальных SQLite/filesystem
 с подставным inference transport. Отдельный GPU worker проверен локально, но
-запуск job через Electron и пользовательские preview/acceptance/storage handoff отсутствуют.
+запуск job через Electron и acceptance/storage handoff отсутствуют. Project
+показывает [read-only recovered results](./engineering/phase-2b-results-recovery-ui.md)
+с приватным превью после перезапуска; это ещё не пользовательская генерация.
 [Внутренний coordinator](./engineering/phase-2b-owned-dispatch-and-recovery.md)
 владеет одним worker lease и отменой при shutdown. Electron теперь создаёт его
 при готовых storage/runtime и [ждёт при закрытии приложения](./engineering/phase-2b-electron-shutdown.md),

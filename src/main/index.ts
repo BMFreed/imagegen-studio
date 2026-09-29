@@ -46,6 +46,10 @@ import {
   ProjectGenerationClose,
   ProjectGenerationCloseError,
 } from './projects/project-generation-close.js'
+import {
+  ProjectGenerationResultResource,
+  ProjectGenerationResultResourceError,
+} from './projects/project-generation-result-resource.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
 import {
@@ -77,6 +81,16 @@ protocol.registerSchemesAsPrivileged([
   {
     privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
     scheme: 'igs-preview',
+  },
+  {
+    privileges: {
+      corsEnabled: true,
+      secure: true,
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+    },
+    scheme: 'igs-staging',
   },
 ])
 const gotInstanceLock = app.requestSingleInstanceLock()
@@ -296,6 +310,40 @@ if (!gotInstanceLock) {
           ? ownedGenerationContext.requireRecoveredServices()
           : null
       const projectGenerationClose = new ProjectGenerationClose(projectService, recoveredGeneration)
+      const generationResults = new ProjectGenerationResultResource(
+        recoveredGeneration?.staging ?? null,
+        (tabId) => projectService.getOpenDocumentId(tabId),
+      )
+      protocol.handle('igs-staging', async (request) => {
+        const responseHeaders = {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        }
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { headers: responseHeaders, status: 405 })
+        }
+        try {
+          const bytes = await generationResults.readImage(request.url)
+          return bytes
+            ? new Response(new Uint8Array(bytes), {
+                headers: {
+                  ...responseHeaders,
+                  'Content-Length': String(bytes.length),
+                  'Content-Type': 'image/png',
+                },
+              })
+            : new Response('Generation result not found.', {
+                headers: responseHeaders,
+                status: 404,
+              })
+        } catch {
+          return new Response('Generation result unavailable.', {
+            headers: responseHeaders,
+            status: 503,
+          })
+        }
+      })
       const appShutdown = new GenerationAppShutdown({
         closeDatabase: database.close,
         context: ownedGenerationContext,
@@ -656,6 +704,7 @@ if (!gotInstanceLock) {
             if (
               error instanceof ProjectServiceError ||
               error instanceof ProjectGenerationCloseError ||
+              error instanceof ProjectGenerationResultResourceError ||
               error instanceof GenerationOrchestratorError ||
               error instanceof GenerationProcessorError ||
               error instanceof GenerationQueueError ||
@@ -987,6 +1036,9 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.getCloseImpact, oneProjectId, (tabId) =>
         projectGenerationClose.getCloseImpact(tabId as string),
+      )
+      registerProjectHandler(ipcChannels.projects.listGenerationResults, oneProjectId, (tabId) =>
+        generationResults.list(tabId as string),
       )
       registerProjectHandler(ipcChannels.projects.close, closeProjectArgs, (tabId, confirm) =>
         projectGenerationClose.close(tabId as string, {

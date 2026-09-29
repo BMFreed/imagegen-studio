@@ -256,7 +256,7 @@ Undo removes the accepted project mutation; it does not reconstruct the previous
 
 It is not a permanent right sidebar and does not replace Queue Manager or the layer stack.
 
-## Production repository checkpoint
+## Earlier production repository checkpoint
 
 Main has a separate local recovery store for one completed Illustrious
 `txt2img` candidate. Publication checks the frozen queue item and output PNG,
@@ -267,10 +267,26 @@ output is not exposed. A verified candidate remains listable after its queue
 row is pruned. The Electron startup invokes this reconciliation after queue
 recovery.
 
-The production renderer does not yet list or accept these candidates. No
-worker inference, candidate preview/resource URL, acceptance, provenance,
-export, session discard or storage quota/cleanup is connected. The repository
-checkpoint therefore does not fulfill the user-facing PP-008 flow.
+At that checkpoint, the production renderer did not list or accept these
+candidates. The repository checkpoint alone did not fulfill the user-facing
+PP-008 flow.
+
+## Production recovery preview checkpoint
+
+The Project now lists verified local candidates through typed IPC and draws
+the focused candidate at its frozen bbox over the canvas. Pixels use a private,
+process-lifetime URL; neither an asset path nor the frozen job payload reaches
+the renderer. A new image read verifies the candidate again and requires the
+Project to remain open. The tray labels this as a temporary, read-only result.
+It marks a candidate created for a different document previously at the same
+path, without presenting it as selected for acceptance.
+
+Save does not put the candidate in `.igs`. Canceling Project close leaves it
+available; confirmed close discards its staging session and revokes new reads.
+The [Phase 2B Results recovery view](../../../engineering/phase-2b-results-recovery-ui.md)
+records the end-to-end test boundary. User-triggered Generate, acceptance into
+Raster/Smart Patch, provenance, export and storage quota/cleanup remain open;
+the current tray does not claim the full PP-008 flow.
 
 ## Vue Prototype Coverage
 
