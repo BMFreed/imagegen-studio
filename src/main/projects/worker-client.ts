@@ -97,6 +97,12 @@ export interface ComposeTargetInput {
   targetPngPath: string
 }
 
+export type ComposeTargetPayload = {
+  bbox: IgsPreviewRectV1
+  layers: ComposeTargetInput['layers']
+  output: { stagingRoot: string; targetPngPath: string }
+}
+
 export type ComposeTargetMode = 'img2img' | 'outpaint' | 'txt2img'
 
 export interface ComposeTargetResult {
@@ -375,41 +381,9 @@ export class ProjectWorkerClient {
           'The image worker cannot compose generation targets.',
         )
       }
-      // Freeze every caller-owned value before the first await. The worker rechecks each source
-      // hash, so a subsequent file change cannot silently alter this target.
-      const layers = snapshotCompositionLayers(input.layers)
-      const bbox = { ...input.bbox }
-      validateTargetBbox(bbox)
-      const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
-        [input.targetPngPath, '.png'],
-      ])
-      for (const layer of layers) {
-        await validateInputPath(layer.path, layer.sha256, paths)
-        await verifyCompositionInput(layer)
-      }
-      const response = await this.request('compose-target', 'target-done', {
-        bbox,
-        layers,
-        output: { stagingRoot, targetPngPath: paths[0] },
-      })
-      if (!['img2img', 'outpaint', 'txt2img'].includes(response.mode as string)) {
-        throw this.protocolFailure('The generation target mode is invalid.')
-      }
-      validateTargetRect(response.rect, bbox)
-      const composite = await verifyImageOutput(
-        paths[0],
-        response.composite,
-        MAX_TARGET_BYTES,
-        'png',
+      return composeTargetWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('compose-target', 'target-done', payload),
       )
-      if (composite.width !== bbox.width || composite.height !== bbox.height) {
-        throw this.outputFailure('The generation target dimensions differ from its frozen bbox.')
-      }
-      const actualMode = await verifyTargetAlphaMode(composite)
-      if (response.mode !== actualMode) {
-        throw this.outputFailure('The generation target mode differs from its pixels.')
-      }
-      return { composite, mode: actualMode, rect: bbox }
     })
   }
 
@@ -733,35 +707,7 @@ export class ProjectWorkerClient {
     stagingRootInput: string,
     outputs: [string, string][],
   ): Promise<OutputPaths> {
-    const stagingRoot = await canonicalDirectory(stagingRootInput, 'Staging root')
-    if (!isWithin(this.stagingBasePath, stagingRoot)) {
-      throw new ProjectWorkerError('INVALID_PATH', 'Staging root is outside app-owned storage.')
-    }
-    const paths: string[] = []
-    for (const [output, suffix] of outputs) {
-      if (
-        !path.isAbsolute(output) ||
-        path.resolve(output) !== output ||
-        path.extname(output).toLowerCase() !== suffix
-      ) {
-        throw new ProjectWorkerError('INVALID_PATH', 'Worker output path is invalid.')
-      }
-      if (
-        !isWithin(stagingRoot, output) ||
-        (await canonicalDirectory(path.dirname(output), 'Output directory')) !==
-          path.dirname(output)
-      ) {
-        throw new ProjectWorkerError('INVALID_PATH', 'Worker output is outside staging.')
-      }
-      if (await pathExists(output)) {
-        throw new ProjectWorkerError('INVALID_PATH', 'Worker output already exists.')
-      }
-      paths.push(output)
-    }
-    if (new Set(paths).size !== paths.length) {
-      throw new ProjectWorkerError('INVALID_PATH', 'Worker output paths must be distinct.')
-    }
-    return { paths, stagingRoot }
+    return validateOutputPathsWithinBase(this.stagingBasePath, stagingRootInput, outputs)
   }
 
   private async waitForExit(timeoutMs: number): Promise<boolean> {
@@ -779,6 +725,87 @@ export class ProjectWorkerClient {
     clearTimeout(timeout)
     return this.exitObserved
   }
+}
+
+/** Reuses target verification with a transport owned and serialized by the caller. */
+export async function composeTargetWithTransport(
+  input: ComposeTargetInput,
+  stagingBasePath: string,
+  request: (payload: ComposeTargetPayload) => Promise<Record<string, unknown>>,
+): Promise<ComposeTargetResult> {
+  // Freeze every caller-owned value before the first await. The worker rechecks each source
+  // hash, so a subsequent file change cannot silently alter this target.
+  const layers = snapshotCompositionLayers(input.layers)
+  const bbox = { ...input.bbox }
+  validateTargetBbox(bbox)
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    [[input.targetPngPath, '.png']],
+  )
+  for (const layer of layers) {
+    await validateInputPath(layer.path, layer.sha256, paths)
+    await verifyCompositionInput(layer)
+  }
+  const response = await request({
+    bbox,
+    layers,
+    output: { stagingRoot, targetPngPath: paths[0] },
+  })
+  if (!['img2img', 'outpaint', 'txt2img'].includes(response.mode as string)) {
+    throw new ProjectWorkerError('PROTOCOL_ERROR', 'The generation target mode is invalid.')
+  }
+  validateTargetRect(response.rect, bbox)
+  const composite = await verifyImageOutput(paths[0], response.composite, MAX_TARGET_BYTES, 'png')
+  if (composite.width !== bbox.width || composite.height !== bbox.height) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'The generation target dimensions differ from its frozen bbox.',
+    )
+  }
+  const actualMode = await verifyTargetAlphaMode(composite)
+  if (response.mode !== actualMode) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'The generation target mode differs from its pixels.',
+    )
+  }
+  return { composite, mode: actualMode, rect: bbox }
+}
+
+async function validateOutputPathsWithinBase(
+  stagingBasePath: string,
+  stagingRootInput: string,
+  outputs: [string, string][],
+): Promise<OutputPaths> {
+  const stagingRoot = await canonicalDirectory(stagingRootInput, 'Staging root')
+  if (!isWithin(stagingBasePath, stagingRoot)) {
+    throw new ProjectWorkerError('INVALID_PATH', 'Staging root is outside app-owned storage.')
+  }
+  const paths: string[] = []
+  for (const [output, suffix] of outputs) {
+    if (
+      !path.isAbsolute(output) ||
+      path.resolve(output) !== output ||
+      path.extname(output).toLowerCase() !== suffix
+    ) {
+      throw new ProjectWorkerError('INVALID_PATH', 'Worker output path is invalid.')
+    }
+    if (
+      !isWithin(stagingRoot, output) ||
+      (await canonicalDirectory(path.dirname(output), 'Output directory')) !== path.dirname(output)
+    ) {
+      throw new ProjectWorkerError('INVALID_PATH', 'Worker output is outside staging.')
+    }
+    if (await pathExists(output)) {
+      throw new ProjectWorkerError('INVALID_PATH', 'Worker output already exists.')
+    }
+    paths.push(output)
+  }
+  if (new Set(paths).size !== paths.length) {
+    throw new ProjectWorkerError('INVALID_PATH', 'Worker output paths must be distinct.')
+  }
+  return { paths, stagingRoot }
 }
 
 function deadline(value: number | undefined, fallback: number, label: string): number {

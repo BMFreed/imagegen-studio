@@ -10,6 +10,7 @@
 - [Qualified batch grouping](./phase-2b-batch-grouping-research.md) — atomic queue publication, shared staging session, escaped-manifest capacity and early Add integration; renderer Generate and release runtime remain open.
 - [Prepared batch planning and capacity](./phase-2b-batch-planning-research.md) — bounded concrete prompt/seed planning, shared request qualification, optional seed behavior in immutable provenance and reproducible persistent-storage measurements; Generate UI remains separate.
 - [Persisted dynamic settings and prompt preview](./phase-2b-dynamic-preview-research.md) — production toolbar/modal, shared bounded planner, typed draft IPC and real history/shadow/portable Save evidence; preview uses one iteration and does not start inference.
+- [Target composition in the qualified inference worker](./phase-2b-inference-target-composition.md) — one child for frozen Canvas preparation and inference, shared path/PNG/ICC/alpha verification and correlated serial transport; Generate UI and runtime installation remain separate.
 - [Product audit fixes](./product-audit-fixes.md) — actual seed при Add, принадлежность вкладок прототипа, размер файла до install и актуальное описание native acceptance; выполненные red/green и границы evidence.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.

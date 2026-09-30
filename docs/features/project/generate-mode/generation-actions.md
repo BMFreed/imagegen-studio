@@ -124,16 +124,29 @@ staging repository can publish/recover a temporary candidate and advance the
 Project's actual-seed cursor. That checkpoint had no Project Generate action,
 worker dispatch or candidate preview/acceptance UI.
 
-## Current production boundary: Results recovery and image export
+## Earlier production boundary: Results recovery and image export
 
-The Project can now display, preview and explicitly save the raw PNG of an
-already verified, locally recovered candidate. This does not enable the
-Generate action or acceptance. The current
+At that checkpoint, Project could display, preview and explicitly save the raw
+PNG of an already verified, locally recovered candidate. This did not enable
+Generate or acceptance. The current
 worker does not cover all visible generation inputs, and the release runtime
 installer is not complete. Prototype interactions above do not prove a full
 production generation flow. See the
 [Results recovery checkpoint](../../../engineering/phase-2b-results-recovery-ui.md)
 and [candidate image export](../../../engineering/phase-2b-candidate-image-export.md).
+
+## Current production boundary: explicit Add, preview and target preparation
+
+[Explicit Raster Add](../../../engineering/phase-2b-raster-acceptance-research.md),
+[confirmed early Add](../../../engineering/phase-2b-early-raster-acceptance.md) and
+[Project Undo/Redo](../../../engineering/phase-2b-project-undo-research.md) now
+connect verified recovered candidates to shadow/Undo and explicit `.igs` Save.
+[Dynamic settings/preview](../../../engineering/phase-2b-dynamic-preview-research.md)
+uses the shared bounded planner without creating jobs or choosing actual seeds.
+[Target composition](../../../engineering/phase-2b-inference-target-composition.md)
+now runs through the same qualified inference client with real PNG verification;
+it is an internal prerequisite. Renderer Generate, current queue/cancel actions,
+Keep/Discard replacement and release runtime installation remain open.
 
 ## Acceptance Criteria
 

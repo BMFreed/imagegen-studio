@@ -71,10 +71,10 @@ export async function checkPromptActions({ window, application, projectRegion })
   try {
     await positiveCard.getByRole('button', { name: 'Copy prompt' }).click()
     await expect(positiveCard.getByRole('status')).toHaveText('Copied')
-    assert.equal(
-      await application.evaluate(({ clipboard }) => clipboard.readText()),
-      'alpha phrase+, beta word',
-    )
+    // The OS clipboard is a separate async boundary, even after renderer write completion.
+    await expect
+      .poll(() => application.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('alpha phrase+, beta word')
   } finally {
     await application.evaluate(
       ({ clipboard }, previous) => clipboard.writeText(previous),

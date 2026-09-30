@@ -10,6 +10,7 @@ import traceback
 from pathlib import Path
 
 from imagegen_worker import PROTOCOL_VERSION
+from imagegen_worker.compositor import compose_target
 from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
@@ -22,6 +23,7 @@ from imagegen_worker.inference import (
 from imagegen_worker.inference_config import configured_sdxl_path
 from imagegen_worker.protocol import (
     MAX_MESSAGE_BYTES,
+    ComposeTargetCommand,
     GenerateIllustriousTxt2ImgCommand,
     error_message,
     parse_request,
@@ -44,7 +46,7 @@ def inference_ready_message() -> dict[str, object]:
         "workerVersion": INFERENCE_WORKER_VERSION,
         "pythonVersion": platform.python_version(),
         "runtimeProfile": INFERENCE_RUNTIME_PROFILE,
-        "capabilities": [INFERENCE_CAPABILITY],
+        "capabilities": [INFERENCE_CAPABILITY, "target-composition"],
     }
 
 
@@ -66,9 +68,18 @@ def process_inference_request(
     request_id = request_id_hint(value)
     try:
         command = parse_request(value)
+        if isinstance(command, ComposeTargetCommand):
+            with contextlib.redirect_stdout(sys.stderr):
+                result = compose_target(command.target)
+            return {
+                "type": "target-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **result,
+            }
         if not isinstance(command, GenerateIllustriousTxt2ImgCommand):
             raise DerivativeError(
-                "INVALID_REQUEST", "This worker accepts generation requests only."
+                "INVALID_REQUEST", "This worker accepts generation and target requests only."
             )
         with contextlib.redirect_stdout(sys.stderr):
             return generate_illustrious_txt2img(command, config_dir=config_dir, runtime=runtime)
@@ -79,7 +90,7 @@ def process_inference_request(
         return error_message(
             request_id,
             "GENERATION_WORKER_FAILED",
-            "The inference worker could not complete this generation.",
+            "The inference worker could not complete this request.",
         )
 
 

@@ -705,5 +705,6 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert inference_ready_message()["workerVersion"] == "0.2.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
-        "illustrious-txt2img"
+        "illustrious-txt2img",
+        "target-composition",
     ]

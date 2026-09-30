@@ -145,7 +145,9 @@ recovery byte preflight. Новая optional `seedBehavior` metadata храни�
 frozen main context и accepted provenance; отсутствие поля у legacy результата
 не восполняется догадкой. Это не новое поле Python denoising DTO. Каждый concrete
 request отдельно проверяется на escaped 64 KiB transport envelope до queue
-publication. Renderer dynamic preview/settings/Generate ещё не подключены.
+publication. [Renderer dynamic preview/settings](../engineering/phase-2b-dynamic-preview-research.md)
+теперь подключены к draft и shared planner; они не создают jobs. Generate из UI
+ещё не подключён.
 
 Production ProjectService создаёт
 [подготовительный контекст Illustrious `txt2img`](../engineering/phase-2b-generation-preparation-research.md):
@@ -177,6 +179,18 @@ runtime и не полная capability MVP: Electron wiring, LoRA, другие
 Invoke-like conditioning и renderer actions ещё нужны перед Generate. Маска
 padding при разной длине positive/negative conditioning локально проверена для
 закреплённого Diffusers 0.40, но не доказывает пиксельный паритет с Invoke.
+
+[Qualified inference target checkpoint](../engineering/phase-2b-inference-target-composition.md)
+добавляет `target-composition` к тому же inference child версии 0.2.0: его
+strict parser/compositor выполняет `compose-target`, а GenerationWorkerClient
+проверяет actual paths/hash/ICC/geometry/alpha тем же verifier, что и derivatives
+client. Composition и generation сериализуются одним владельцем с correlated
+request ID и completion type, ограничением 64 KiB и прежними deadlines/close.
+Старый inference ready без target capability допускает прежний Generate request,
+но отказывает composeTarget до отправки. Это prerequisite подготовки frozen
+Canvas через runtime lease; Generate IPC/UI и installer от него не становятся
+готовыми. Новые transport tests используют реальный child с подставным peer,
+Python route tests — настоящий compositor/PNG без CUDA startup.
 
 ## Минимальные сообщения worker'а
 

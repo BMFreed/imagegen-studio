@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
@@ -8,6 +9,13 @@ import type {
   IllustriousTxt2ImgRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
+
+import {
+  type ComposeTargetInput,
+  type ComposeTargetResult,
+  composeTargetWithTransport,
+  ProjectWorkerError,
+} from './worker-client.js'
 
 const PROTOCOL_VERSION = '1'
 const WORKER_VERSION = '0.2.0'
@@ -39,6 +47,7 @@ export interface GenerationWorkerReady extends InferenceWorkerReady {
 }
 
 type PendingGeneration = {
+  completionType: 'generation-done' | 'target-done'
   outputPath: string
   reject: (error: GenerationWorkerError) => void
   requestId: string
@@ -51,8 +60,10 @@ export class GenerationWorkerError extends Error {
     readonly code:
       | 'BUSY'
       | 'CLOSED'
+      | 'IMAGE_TOO_LARGE'
       | 'INVALID_PATH'
       | 'INVALID_REQUEST'
+      | 'OUTPUT_MISMATCH'
       | 'PROTOCOL_ERROR'
       | 'REQUEST_TIMEOUT'
       | 'STARTUP_TIMEOUT'
@@ -70,7 +81,7 @@ export class GenerationWorkerError extends Error {
 
 /**
  * Production JSONL transport for the separate Linux/NVIDIA inference worker. It owns one child and
- * admits one generation at a time. It does not claim queue rows or publish worker output.
+ * admits one composition or generation at a time. It does not claim queue rows or publish output.
  */
 export class GenerationWorkerClient implements GenerationWorkerTransport {
   private static startupTail: Promise<void> = Promise.resolve()
@@ -232,6 +243,55 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     await this.closePromise
   }
 
+  async composeTarget(input: ComposeTargetInput): Promise<ComposeTargetResult> {
+    if (this.closed) {
+      throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+    }
+    if (this.busy) {
+      throw new GenerationWorkerError('BUSY', 'The generation worker is already processing a job.')
+    }
+    this.busy = true
+    try {
+      if (!this.ready.capabilities.includes('target-composition')) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The generation worker does not support target composition.',
+        )
+      }
+      const result = await composeTargetWithTransport(input, this.scratchBasePath, (payload) => {
+        const requestId = randomUUID()
+        const line = Buffer.from(
+          `${JSON.stringify({
+            ...payload,
+            protocolVersion: PROTOCOL_VERSION,
+            requestId,
+            type: 'compose-target',
+          })}\n`,
+          'utf8',
+        )
+        if (line.length > MAX_PROTOCOL_LINE_BYTES) {
+          throw new GenerationWorkerError('INVALID_REQUEST', 'The target request is too large.')
+        }
+        return this.exchange(line, requestId, payload.output.targetPngPath, 'target-done')
+      })
+      if (this.closed) {
+        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+      }
+      return result
+    } catch (error) {
+      if (error instanceof ProjectWorkerError) {
+        const mapped = new GenerationWorkerError(error.code, error.message, error.workerCode)
+        if (mapped.code === 'OUTPUT_MISMATCH' || mapped.code === 'PROTOCOL_ERROR') {
+          this.fail(mapped)
+        }
+        throw mapped
+      }
+      throw error
+    } finally {
+      this.busy = false
+    }
+  }
+
   async generate(request: IllustriousTxt2ImgRequestV1): Promise<unknown> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -254,28 +314,12 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
       }
       await this.validateRequestPaths(frozen)
-      if (this.closed) {
-        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
-      }
-      const response = await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.fail(
-            new GenerationWorkerError('REQUEST_TIMEOUT', 'The generation worker timed out.'),
-          )
-        }, this.requestTimeoutMs)
-        this.active = {
-          outputPath: frozen.job.output.pngPath,
-          reject,
-          requestId: frozen.requestId,
-          resolve,
-          timer,
-        }
-        this.child.stdin.write(line, (error) => {
-          if (error) {
-            this.fail(new GenerationWorkerError('WORKER_EXITED', 'The worker input closed.'))
-          }
-        })
-      })
+      const response = await this.exchange(
+        line,
+        frozen.requestId,
+        frozen.job.output.pngPath,
+        'generation-done',
+      )
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
       }
@@ -303,6 +347,28 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         )
       }
     }
+  }
+
+  private exchange(
+    line: Buffer,
+    requestId: string,
+    outputPath: string,
+    completionType: PendingGeneration['completionType'],
+  ): Promise<Record<string, unknown>> {
+    if (this.closed) {
+      throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+    }
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.fail(new GenerationWorkerError('REQUEST_TIMEOUT', 'The generation worker timed out.'))
+      }, this.requestTimeoutMs)
+      this.active = { completionType, outputPath, reject, requestId, resolve, timer }
+      this.child.stdin.write(line, (error) => {
+        if (error) {
+          this.fail(new GenerationWorkerError('WORKER_EXITED', 'The worker input closed.'))
+        }
+      })
+    })
   }
 
   private fail(error: GenerationWorkerError): void {
@@ -376,20 +442,21 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       this.fail(
         new GenerationWorkerError(
           'WORKER_REQUEST_FAILED',
-          'The generation worker rejected the job.',
+          'The generation worker rejected the request.',
           input.code,
         ),
       )
       return
     }
     if (
-      input.type !== 'generation-done' ||
-      input.outputPath !== active.outputPath ||
-      !Number.isInteger(input.seed) ||
-      (input.seed as number) < 0 ||
-      (input.seed as number) > 0xff_ff_ff_ff
+      input.type !== active.completionType ||
+      (active.completionType === 'generation-done' &&
+        (input.outputPath !== active.outputPath ||
+          !Number.isInteger(input.seed) ||
+          (input.seed as number) < 0 ||
+          (input.seed as number) > 0xff_ff_ff_ff))
     ) {
-      this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Invalid generation completion.'))
+      this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Invalid worker completion.'))
       return
     }
     clearTimeout(active.timer)
