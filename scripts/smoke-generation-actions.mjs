@@ -18,6 +18,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -45,6 +46,7 @@ const appDataRoot = path.join(fixtureRoot, 'data', 'imagegen-studio')
 mkdirSync(appDataRoot, { mode: 0o700, recursive: true })
 const peerRequests = path.join(fixtureRoot, 'peer-requests.jsonl')
 const peerLaunches = path.join(fixtureRoot, 'peer-launches.jsonl')
+const peerProgress = path.join(fixtureRoot, 'peer-progress.jsonl')
 const projectTitle = 'Native Generate actions'
 const checkpointName = 'Native structural checkpoint fixture'
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -64,6 +66,7 @@ const report = {
     'Actual managed model hash and SDXL anchor-header qualification; zero-weight miniature fixture.',
     'Actual target PNG/ICC/hash verification, queue SQLite, staging publication and resource delivery.',
     'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
+    'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -78,6 +81,7 @@ let application
 let window
 let mainStderr = ''
 let liveDatabase
+let nextProgressMarker = 0
 
 function checked(name, evidence = {}) {
   report.checks.push({ evidence, name })
@@ -133,7 +137,7 @@ async function resizeNativeWindow(width, height) {
     .toEqual({ height, width })
 }
 
-async function screenshotManagerAtViewport(width, height) {
+async function screenshotManagerAtViewport(width, height, name = '08-native-queue-manager') {
   await resizeNativeWindow(width, height)
   const bounds = await window.locator('[data-testid="queue-manager"]').boundingBox()
   assert.ok(bounds)
@@ -143,8 +147,8 @@ async function screenshotManagerAtViewport(width, height) {
     .locator('[data-testid="queue-manager"]')
     .evaluate((element) => element.scrollWidth > element.clientWidth)
   assert.equal(horizontalOverflow, false)
-  await screenshot(`08-native-queue-manager-${width}x${height}`)
-  report.viewportChecks.push({ bounds, height, horizontalOverflow, width })
+  await screenshot(`${name}-${width}x${height}`)
+  report.viewportChecks.push({ bounds, height, horizontalOverflow, name, width })
 }
 
 async function resultVisibleOnCanvas() {
@@ -217,6 +221,85 @@ async function managerItems() {
   } while (cursor)
   assert.equal(new Set(items.map(({ id }) => id)).size, items.length)
   return items
+}
+
+/** Observe the production event channels rather than treating an API snapshot as UI evidence. */
+async function watchProgress() {
+  await window.evaluate(() => {
+    const evidence = { events: [], queueInvalidations: 0 }
+    window.__igsNativeProgress = evidence
+    evidence.stopProgress = window.api.projects.onGenerationProgress((snapshot) => {
+      evidence.events.push(snapshot)
+    })
+    evidence.stopQueue = window.api.projects.onGenerationChanged(() => {
+      evidence.queueInvalidations += 1
+    })
+  })
+}
+
+async function progressEvidence() {
+  return await window.evaluate(() => ({
+    events: window.__igsNativeProgress.events,
+    queueInvalidations: window.__igsNativeProgress.queueInvalidations,
+  }))
+}
+
+async function stopWatchingProgress() {
+  const evidence = await progressEvidence()
+  await window.evaluate(() => {
+    window.__igsNativeProgress.stopProgress()
+    window.__igsNativeProgress.stopQueue()
+    delete window.__igsNativeProgress
+  })
+  return evidence
+}
+
+/** Marker files drive only the substituted peer; app state continues through its real owners. */
+function sendProgress(entry, step, totalSteps = 2) {
+  const marker = `progress-${entry.request.requestId}-${String(nextProgressMarker++).padStart(6, '0')}.json`
+  const pendingMarker = path.join(fixtureRoot, `.${marker}.tmp`)
+  writeFileSync(pendingMarker, JSON.stringify({ step, totalSteps }))
+  renameSync(pendingMarker, path.join(fixtureRoot, marker))
+  return marker
+}
+
+async function waitForProgress(entry, job, step) {
+  await expect
+    .poll(async () => (await api('getGenerationProgress')).current)
+    .toEqual({
+      documentId: job.document_id,
+      jobId: job.id,
+      projectKey: job.local_project_key,
+      statusSequence: job.status_sequence,
+      step,
+      totalSteps: 2,
+    })
+  const snapshot = await api('getGenerationProgress')
+  assert.ok(snapshot.revision > 0)
+  assert.equal(entry.request.job.sampling.steps, 2)
+  return snapshot
+}
+
+async function progressDurableState(projectId, packagePath) {
+  return {
+    candidates: await api('listGenerationResults', projectId),
+    document: await tab(projectId),
+    generationState: await api('getGenerationState', projectId),
+    packageSha256: digest(readFileSync(packagePath)),
+    queueItems: await managerItems(),
+    queueRows: await rows(projectId),
+    receipts: await liveDatabase.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .where('local_project_key', '=', projectId)
+      .orderBy('completion_order')
+      .execute(),
+    seedCursor: await liveDatabase.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .where('local_project_key', '=', projectId)
+      .execute(),
+  }
 }
 
 /** Seed display/cancel preconditions only; every observed action still enters through the UI. */
@@ -363,6 +446,7 @@ const crypto = require('node:crypto')
 const {crc32, deflateSync} = require('node:zlib')
 const requestLog = ${JSON.stringify(peerRequests)}
 const launchLog = ${JSON.stringify(peerLaunches)}
+const progressLog = ${JSON.stringify(peerProgress)}
 const fixtureRoot = ${JSON.stringify(fixtureRoot)}
 const expectedConfig = ${JSON.stringify(config)}
 const expectedCache = ${JSON.stringify(roots.cacheDir)}
@@ -388,7 +472,7 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify({type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',
-  workerVersion:'0.2.0',runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition']})+'\n')
+  workerVersion:'0.3.0',runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress']})+'\n')
 process.stdin.setEncoding('utf8')
 let buffer=''
 process.stdin.on('data',data=>{
@@ -406,13 +490,27 @@ process.stdin.on('data',data=>{
     } else if(request.type==='generate-illustrious-txt2img') {
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
+      const emitProgress = (progress, source, prefix='') => {
+        const message = {type:'generation-progress',protocolVersion:'1',requestId:request.requestId,...progress}
+        fs.appendFileSync(progressLog,JSON.stringify({message,pid:process.pid,source})+'\n')
+        process.stdout.write(prefix+JSON.stringify(message)+'\n')
+      }
       const timer=setInterval(()=>{
+        for(const marker of fs.readdirSync(fixtureRoot).filter(name=>name.startsWith('progress-'+request.requestId+'-')).sort()) {
+          const markerPath=path.join(fixtureRoot,marker)
+          const progress=JSON.parse(fs.readFileSync(markerPath,'utf8'))
+          fs.unlinkSync(markerPath)
+          emitProgress(progress,marker)
+        }
         if(!fs.existsSync(path.join(fixtureRoot,'release-'+request.requestId))) return
         clearInterval(timer)
         const bytes=png(request.job.bbox.width,request.job.bbox.height,true)
         fs.writeFileSync(request.job.output.pngPath,bytes,{flag:'wx',mode:0o600})
-        process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:request.requestId,
-          outputPath:request.job.output.pngPath,seed:request.job.sampling.seed})+'\n')
+        const terminalLine=JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:request.requestId,
+          outputPath:request.job.output.pngPath,seed:request.job.sampling.seed})+'\n'
+        if(fs.existsSync(path.join(fixtureRoot,'late-progress-'+request.requestId))) {
+          emitProgress({step:1,totalSteps:2},'after-terminal',terminalLine)
+        } else process.stdout.write(terminalLine)
       },10)
     } else process.exit(24)
   }
@@ -653,6 +751,71 @@ try {
     { jobIds: state.jobs.map((job) => job.id), batchId: initialRows[0].batch_id },
   )
 
+  const firstRunningRow = initialRows.find(({ id }) => id === state.runningJobId)
+  assert.ok(firstRunningRow)
+  assert.equal((await api('getGenerationProgress')).current, null)
+  const beforeProgress = await progressDurableState(projectId, packagePath)
+  await watchProgress()
+  const firstProgressMarker = sendProgress(first, 1)
+  const firstProgressSnapshot = await waitForProgress(first, firstRunningRow, 1)
+  const projectProgress = queue.locator('[data-testid="generation-progress"]')
+  await expect(projectProgress).toContainText('Denoising step 1 of 2')
+  await expect(projectProgress.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+  await screenshot('03a-native-generation-progress-project')
+  await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  const progressManager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  const progressManagerRow = progressManager.locator(
+    `[data-testid="queue-job-row"][data-job-id="${firstRunningRow.id}"]`,
+  )
+  await progressManagerRow.getByRole('button', { name: 'Show job details', exact: true }).click()
+  const managerProgress = progressManagerRow.locator('[data-testid="generation-progress"]')
+  const managerProgressDetails = progressManager
+    .locator('[data-testid="queue-job-details"]')
+    .locator('[data-testid="generation-progress"]')
+  await expect(managerProgress).toContainText('Denoising step 1 of 2')
+  await expect(managerProgressDetails).toContainText('Denoising step 1 of 2')
+  const secondProgressMarker = sendProgress(first, 2)
+  const secondProgressSnapshot = await waitForProgress(first, firstRunningRow, 2)
+  assert.ok(secondProgressSnapshot.revision > firstProgressSnapshot.revision)
+  await expect(managerProgress).toContainText('Denoising step 2 of 2')
+  await expect(managerProgress.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+  await expect(managerProgressDetails).toContainText('Denoising step 2 of 2')
+  await expect(progressManagerRow).toHaveAttribute('data-status', 'running')
+  assert.deepEqual(await progressDurableState(projectId, packagePath), beforeProgress)
+  const firstProgressEvents = await stopWatchingProgress()
+  assert.equal(firstProgressEvents.queueInvalidations, 0)
+  assert.deepEqual(firstProgressEvents.events, [firstProgressSnapshot, secondProgressSnapshot])
+  assert.deepEqual(
+    lines(peerProgress).map(({ source }) => source),
+    [firstProgressMarker, secondProgressMarker],
+  )
+  report.progressResponseMeasurement = {
+    eventCount: firstProgressEvents.events.length,
+    queueInvalidations: firstProgressEvents.queueInvalidations,
+    serializedUtf8Bytes: Buffer.byteLength(JSON.stringify(secondProgressSnapshot), 'utf8'),
+    snapshot: secondProgressSnapshot,
+  }
+  await screenshot('03b-native-generation-progress-manager')
+  for (const [width, height] of [
+    [900, 620],
+    [1440, 900],
+  ]) {
+    await screenshotManagerAtViewport(width, height, '03b-native-generation-progress-manager')
+  }
+  await resizeNativeWindow(1380, 900)
+  await window.keyboard.press('Escape')
+  await expect(progressManager).toHaveCount(0)
+  await expect(projectProgress).toContainText('Denoising step 2 of 2')
+  checked(
+    'Actual progress updates Project and Queue Manager without durable mutations or queue invalidations; final denoising step remains running until verified completion',
+    {
+      jobId: firstRunningRow.id,
+      packageSha256: beforeProgress.packageSha256,
+      progressEvents: firstProgressEvents.events,
+      queueInvalidations: firstProgressEvents.queueInvalidations,
+    },
+  )
+
   await projectRegion
     .getByRole('textbox', { name: 'Positive prompt', exact: true })
     .fill('edited after admission')
@@ -666,9 +829,25 @@ try {
   const afterCancel = await rows(projectId)
   assert.equal(afterCancel.find((row) => row.id === state.runningJobId)?.status, 'canceled')
   assert.equal(afterCancel.filter((row) => row.status === 'running').length, 1)
+  const clearedAfterCancel = await api('getGenerationProgress')
+  assert.equal(clearedAfterCancel.current, null)
+  assert.ok(clearedAfterCancel.revision > secondProgressSnapshot.revision)
+  await expect(projectProgress).toHaveCount(0)
   assert.equal(second.request.job.prompts.positive, 'native admission snapshot')
   assert.equal(second.request.job.bbox.width, 96)
   assert.deepEqual(readFileSync(packagePath), beforeGenerate)
+  const secondRunningRow = afterCancel.find(({ status }) => status === 'running')
+  assert.ok(secondRunningRow)
+  const beforeSiblingProgress = await progressDurableState(projectId, packagePath)
+  sendProgress(second, 1)
+  const siblingProgressSnapshot = await waitForProgress(second, secondRunningRow, 1)
+  assert.ok(siblingProgressSnapshot.revision > clearedAfterCancel.revision)
+  assert.notEqual(siblingProgressSnapshot.current.jobId, firstRunningRow.id)
+  await expect(projectProgress).toContainText('Denoising step 1 of 2')
+  assert.deepEqual(await progressDurableState(projectId, packagePath), beforeSiblingProgress)
+  // Same-client, post-terminal progress must be ignored. This peer writes done followed by the
+  // old observation before lease close; it does not fabricate a different client's request ID.
+  writeFileSync(path.join(fixtureRoot, `late-progress-${second.request.requestId}`), 'late fixture')
   release(second)
   await expect
     .poll(async () => (await api('listGenerationResults', projectId)).candidates.length, {
@@ -676,6 +855,15 @@ try {
     })
     .toBe(1)
   await expect.poll(async () => (await api('getGenerationState', projectId)).phase).toBe('idle')
+  await expect.poll(async () => (await api('getGenerationProgress')).current).toBe(null)
+  await expect(projectProgress).toHaveCount(0)
+  assert.equal(
+    lines(peerProgress).filter(
+      ({ message, source }) =>
+        message.requestId === second.request.requestId && source === 'after-terminal',
+    ).length,
+    1,
+  )
   const completed = await api('listGenerationResults', projectId)
   assert.equal(completed.lastActualSeed, second.request.job.sampling.seed)
   const candidate = completed.candidates[0]
@@ -874,6 +1062,31 @@ try {
     sourceReview.statusSequence + 1,
   )
 
+  await managerRow(retriedRow.id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  const retriedProgress = managerRow(retriedRow.id).locator('[data-testid="generation-progress"]')
+  const beforeRetryProgress = await progressDurableState(projectId, packagePath)
+  await watchProgress()
+  sendProgress(retriedRequest, 1)
+  const retryFirstProgress = await waitForProgress(retriedRequest, retriedRow, 1)
+  await expect(retriedProgress).toContainText('Denoising step 1 of 2')
+  await expect(details.locator('[data-testid="generation-progress"]')).toContainText(
+    'Denoising step 1 of 2',
+  )
+  sendProgress(retriedRequest, 2)
+  const retryFinalProgress = await waitForProgress(retriedRequest, retriedRow, 2)
+  assert.ok(retryFinalProgress.revision > retryFirstProgress.revision)
+  await expect(retriedProgress).toContainText('Denoising step 2 of 2')
+  await expect(retriedProgress.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+  await expect(managerRow(retriedRow.id)).toHaveAttribute('data-status', 'running')
+  assert.deepEqual(await progressDurableState(projectId, packagePath), beforeRetryProgress)
+  const retryProgressEvents = await stopWatchingProgress()
+  assert.equal(retryProgressEvents.queueInvalidations, 0)
+  assert.deepEqual(retryProgressEvents.events, [retryFirstProgress, retryFinalProgress])
+  await assertQueueActionsPreserveProject()
+  await screenshot('07a-native-retry-denoising-progress')
+
   // Hold the genuine retry in its one running slot. Direct fixture publication supplies only
   // the neighboring pending-cancel and failed-display preconditions, with their own verified
   // input directory/manifest identities. It does not substitute any Queue Manager action.
@@ -931,9 +1144,13 @@ try {
     .toBe('canceled')
   await expect(managerRow(pendingFixture.id)).toHaveAttribute('data-status', 'canceled')
   assert.equal(generations().length, 4)
+  assert.deepEqual(await api('getGenerationProgress'), retryFinalProgress)
+  await expect(retriedProgress).toContainText('Denoising step 2 of 2')
   await managerRow(retriedRow.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
   await expect.poll(async () => (await api('getGenerationState', projectId)).phase).toBe('idle')
   await expect(managerRow(retriedRow.id)).toHaveAttribute('data-status', 'canceled')
+  await expect.poll(async () => (await api('getGenerationProgress')).current).toBe(null)
+  await expect(retriedProgress).toHaveCount(0)
   assert.throws(() => process.kill(retriedRequest.pid, 0), { code: 'ESRCH' })
   assert.equal(generations().length, 4)
   await assertQueueActionsPreserveProject()
@@ -945,6 +1162,8 @@ try {
       frozenBbox: retriedRequest.request.job.bbox,
       frozenSeed: retriedRequest.request.job.sampling.seed,
       pendingFixtureId: pendingFixture.id,
+      progressEvents: retryProgressEvents.events,
+      progressQueueInvalidations: retryProgressEvents.queueInvalidations,
       retriedJobId: retriedRow.id,
       seedBeforeAndAfter: preservedResults.lastActualSeed,
     },
@@ -1086,6 +1305,7 @@ try {
 } finally {
   report.peerRequests = lines(peerRequests)
   report.peerLaunches = lines(peerLaunches)
+  report.peerProgress = lines(peerProgress)
   writeFileSync(path.join(artifacts, 'native-main-stderr.log'), mainStderr)
   writeFileSync(path.join(artifacts, 'native-report.json'), `${JSON.stringify(report, null, 2)}\n`)
   application?.process().kill('SIGKILL')

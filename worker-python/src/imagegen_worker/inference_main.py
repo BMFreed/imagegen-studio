@@ -7,13 +7,16 @@ import json
 import os
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
+from typing import BinaryIO
 
 from imagegen_worker import PROTOCOL_VERSION
 from imagegen_worker.compositor import compose_target
 from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
+    INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
     INFERENCE_WORKER_VERSION,
     MLRuntime,
@@ -31,10 +34,10 @@ from imagegen_worker.protocol import (
 )
 
 
-def _emit(message: dict[str, object]) -> None:
+def _emit(message: dict[str, object], output: BinaryIO) -> None:
     encoded = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
-    sys.stdout.buffer.write(encoded)
-    sys.stdout.buffer.flush()
+    output.write(encoded)
+    output.flush()
 
 
 def inference_ready_message() -> dict[str, object]:
@@ -46,7 +49,7 @@ def inference_ready_message() -> dict[str, object]:
         "workerVersion": INFERENCE_WORKER_VERSION,
         "pythonVersion": platform.python_version(),
         "runtimeProfile": INFERENCE_RUNTIME_PROFILE,
-        "capabilities": [INFERENCE_CAPABILITY, "target-composition"],
+        "capabilities": [INFERENCE_CAPABILITY, "target-composition", INFERENCE_PROGRESS_CAPABILITY],
     }
 
 
@@ -63,7 +66,11 @@ def _qualify() -> tuple[Path, MLRuntime]:
 
 
 def process_inference_request(
-    value: object, *, config_dir: Path, runtime: MLRuntime
+    value: object,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     request_id = request_id_hint(value)
     try:
@@ -81,8 +88,26 @@ def process_inference_request(
             raise DerivativeError(
                 "INVALID_REQUEST", "This worker accepts generation and target requests only."
             )
+
+        def report_progress(step: int, total_steps: int) -> None:
+            if on_progress is not None:
+                on_progress(
+                    {
+                        "type": "generation-progress",
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "requestId": command.request_id,
+                        "step": step,
+                        "totalSteps": total_steps,
+                    }
+                )
+
         with contextlib.redirect_stdout(sys.stderr):
-            return generate_illustrious_txt2img(command, config_dir=config_dir, runtime=runtime)
+            return generate_illustrious_txt2img(
+                command,
+                config_dir=config_dir,
+                runtime=runtime,
+                on_progress=report_progress if on_progress is not None else None,
+            )
     except DerivativeError as error:
         return error_message(request_id, error.code, str(error))
     except Exception:
@@ -95,6 +120,12 @@ def process_inference_request(
 
 
 def main() -> int:
+    # Generation redirects library stdout to stderr; protocol output keeps its original stream.
+    protocol_output = sys.stdout.buffer
+
+    def emit(message: dict[str, object]) -> None:
+        _emit(message, protocol_output)
+
     try:
         with contextlib.redirect_stdout(sys.stderr):
             config_dir, runtime = _qualify()
@@ -104,21 +135,23 @@ def main() -> int:
     except Exception:
         traceback.print_exc(file=sys.stderr)
         return 78
-    _emit(inference_ready_message())
+    emit(inference_ready_message())
     while line := sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1):
         if len(line) > MAX_MESSAGE_BYTES:
             while line and not line.endswith(b"\n"):
                 line = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
-            _emit(
-                error_message(None, "MESSAGE_TOO_LARGE", "Worker request exceeds the line limit.")
-            )
+            emit(error_message(None, "MESSAGE_TOO_LARGE", "Worker request exceeds the line limit."))
             continue
         try:
             value: object = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            _emit(error_message(None, "INVALID_REQUEST", "Request is not valid UTF-8 JSON."))
+            emit(error_message(None, "INVALID_REQUEST", "Request is not valid UTF-8 JSON."))
             continue
-        _emit(process_inference_request(value, config_dir=config_dir, runtime=runtime))
+        emit(
+            process_inference_request(
+                value, config_dir=config_dir, runtime=runtime, on_progress=emit
+            )
+        )
     return 0
 
 

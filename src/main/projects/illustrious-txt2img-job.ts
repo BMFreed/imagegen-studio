@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -18,7 +19,6 @@ const MAX_PROMPT_BYTES = 16 * 1024
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const MAX_STEPS = 200
 const MAX_CFG_SCALE = 30
-const INFERENCE_WORKER_VERSION = '0.2.0'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 /** Protocol v1 request shape; this is not a queue row or a released inference capability. */
@@ -95,12 +95,7 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
   const context = structuredClone(input.prepared.context)
   const bytes = Buffer.from(input.prepared.targetPngBytes)
   const qualified = validatePrepared(context, bytes)
-  if (
-    input.ready.protocolVersion !== '1' ||
-    input.ready.workerVersion !== INFERENCE_WORKER_VERSION ||
-    input.ready.runtimeProfile !== 'linux-nvidia' ||
-    !input.ready.capabilities.includes('illustrious-txt2img')
-  ) {
+  if (!isQualifiedInferenceWorkerReady(input.ready)) {
     throw new IllustriousJobError(
       'INFERENCE_UNAVAILABLE',
       'The active worker has not qualified Illustrious txt2img inference.',

@@ -1,0 +1,30 @@
+/** Explicitly qualified worker versions; unknown versions never inherit an inference capability. */
+export interface QualifiedInferenceWorkerReady {
+  capabilities: readonly string[]
+  protocolVersion: '1'
+  runtimeProfile: 'linux-nvidia'
+  workerVersion: '0.2.0' | '0.3.0'
+}
+
+export function isQualifiedInferenceWorkerReady(
+  value: unknown,
+): value is QualifiedInferenceWorkerReady {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const ready = value as Record<string, unknown>
+  return (
+    ready.protocolVersion === '1' &&
+    ready.runtimeProfile === 'linux-nvidia' &&
+    Array.isArray(ready.capabilities) &&
+    ready.capabilities.every((capability) => typeof capability === 'string') &&
+    ready.capabilities.includes('illustrious-txt2img') &&
+    (ready.workerVersion === '0.2.0' ||
+      (ready.workerVersion === '0.3.0' && ready.capabilities.includes('denoising-progress')))
+  )
+}
+
+/** Legacy 0.2.0 remains usable but may not send progress, even if it advertises extra strings. */
+export function supportsInferenceDenoisingProgress(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.3.0'
+}

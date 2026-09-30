@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -15,7 +18,7 @@ from typing import Any, cast
 import pytest
 from PIL import Image
 
-from imagegen_worker import inference_config
+from imagegen_worker import inference, inference_config, inference_main
 from imagegen_worker.compositor import ComposeTargetRequest, compose_target
 from imagegen_worker.derivatives import SRGB_ICC_PROFILE, DerivativeError
 from imagegen_worker.inference import (
@@ -436,16 +439,19 @@ def _run_mask_pipeline(
     *,
     width: int = 64,
     height: int = 64,
+    steps: int = 2,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> object:
     return run_sdxl_pipeline(
         pipeline,
         conditioning,
         width=width,
         height=height,
-        steps=2,
+        steps=steps,
         cfg_scale=cfg,
         generator=object(),
         torch=_MaskTorch,
+        on_progress=on_progress,
     )
 
 
@@ -507,6 +513,268 @@ def test_sdxl_micro_conditioning_stays_at_invoke_defaults_when_output_aspect_cha
         assert pipeline.last_kwargs["negative_target_size"] == (1024, 1024)
         assert pipeline.last_kwargs["crops_coords_top_left"] == (0, 0)
         assert pipeline.last_kwargs["negative_crops_coords_top_left"] == (0, 0)
+
+
+class _ProgressPipeline(_MaskPipeline):
+    def __init__(
+        self,
+        *,
+        total: int = 2,
+        indices: tuple[object, ...] | None = None,
+        changed_total: int | None = None,
+        equal_lengths: bool = False,
+    ) -> None:
+        super().__init__(2, hidden_length=77 if equal_lengths else 154)
+        self.scheduler = SimpleNamespace(timesteps=tuple(range(total)))
+        self.indices = indices if indices is not None else tuple(range(total))
+        self.changed_total = changed_total
+        self.callback_returns: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs: object) -> object:
+        result = super().__call__(**kwargs)
+        assert kwargs["callback_on_step_end_tensor_inputs"] == []
+        callback = cast(Any, kwargs["callback_on_step_end"])
+        if callback is not None:
+            for index, step in enumerate(self.indices):
+                if index == 1 and self.changed_total is not None:
+                    self.scheduler.timesteps = tuple(range(self.changed_total))
+                # The real pinned pipeline creates one empty dict for the requested empty inputs.
+                callback_kwargs: dict[str, object] = {}
+                returned = callback(self, step, object(), callback_kwargs)
+                assert returned is callback_kwargs
+                assert callback_kwargs == {}
+                self.callback_returns.append(returned)
+        return result
+
+
+@pytest.mark.parametrize("total,steps", [(2, 2), (3, 2), (399, 200), (400, 200)])
+@pytest.mark.parametrize("equal_lengths", [False, True])
+def test_denoising_callbacks_report_actual_schedule_without_changing_masks_or_tensors(
+    total: int, steps: int, equal_lengths: bool
+) -> None:
+    pipeline = _ProgressPipeline(total=total, equal_lengths=equal_lengths)
+    events: list[tuple[int, int]] = []
+    conditioning = _conditioned_lengths(77, 77) if equal_lengths else _conditioned_lengths(154, 77)
+    _run_mask_pipeline(
+        pipeline,
+        conditioning,
+        5,
+        steps=steps,
+        on_progress=lambda step, count: events.append((step, count)),
+    )
+    assert events == [(step, total) for step in range(1, total + 1)]
+    assert len(pipeline.callback_returns) == total
+    assert pipeline.unet.hook is None
+    if equal_lengths:
+        assert pipeline.mask is None
+        assert pipeline.unet.register_count == pipeline.unet.remove_count == 0
+    else:
+        assert pipeline.mask is not None
+        assert pipeline.mask.rows == ((1,) * 77 + (0,) * 77, (1,) * 154)
+        assert pipeline.unet.register_count == pipeline.unet.remove_count == 1
+
+
+@pytest.mark.parametrize(
+    "total,indices,changed_total",
+    [
+        (2, (0, 0), None),
+        (2, (0, -1), None),
+        (2, (1,), None),
+        (2, (False,), None),
+        (2, (0.0,), None),
+        (2, (0, 1), 3),
+        (0, (0,), None),
+        (5, (0,), None),
+        (401, (0,), None),
+        (2, (0, 1, 2), None),
+        (2, (0,), None),
+    ],
+)
+def test_invalid_or_incomplete_callback_schedule_fails_and_releases_attention_hook(
+    total: int, indices: tuple[object, ...], changed_total: int | None
+) -> None:
+    pipeline = _ProgressPipeline(total=total, indices=indices, changed_total=changed_total)
+    with pytest.raises(DerivativeError) as error:
+        _run_mask_pipeline(
+            pipeline, _conditioned_lengths(154, 77), 5, on_progress=lambda _step, _count: None
+        )
+    assert error.value.code == "GENERATION_WORKER_FAILED"
+    assert pipeline.unet.hook is None
+    assert pipeline.unet.remove_count == 1
+
+
+def test_progress_sink_failure_does_not_leave_attention_hook_attached() -> None:
+    pipeline = _ProgressPipeline()
+
+    def fail_progress(_step: int, _total: int) -> None:
+        raise BrokenPipeError("main closed its protocol pipe")
+
+    with pytest.raises(BrokenPipeError):
+        _run_mask_pipeline(pipeline, _conditioned_lengths(154, 77), 5, on_progress=fail_progress)
+    assert pipeline.unet.hook is None
+    assert pipeline.unet.remove_count == 1
+
+
+def test_generation_connects_real_pipeline_progress_before_provisional_png_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command(tmp_path)
+
+    class GenerationPipeline(_ProgressPipeline):
+        def __init__(self) -> None:
+            super().__init__(total=3, equal_lengths=True)
+
+        def set_progress_bar_config(self, *, disable: bool) -> None:
+            assert disable
+
+        def to(self, device: str) -> GenerationPipeline:
+            assert device == "cuda"
+            return self
+
+        def __call__(self, **kwargs: object) -> object:
+            super().__call__(**kwargs)
+            assert not command.output_path.exists()
+            return SimpleNamespace(images=[Image.new("RGB", (command.width, command.height))])
+
+    pipeline = GenerationPipeline()
+
+    def manual_seed(_seed: int) -> object:
+        return object()
+
+    def generator(*, device: str) -> SimpleNamespace:
+        assert device == "cpu"
+        return SimpleNamespace(manual_seed=manual_seed)
+
+    def load_pipeline(*_args: object, **_kwargs: object) -> GenerationPipeline:
+        return pipeline
+
+    def verify_config(_path: str) -> None:
+        pass
+
+    def select_scheduler(*_args: object) -> SimpleNamespace:
+        return pipeline.scheduler
+
+    def build_conditioning(*_args: object) -> SdxlConditioning:
+        return _conditioned_lengths(77, 77)
+
+    torch = SimpleNamespace(
+        float16="float16",
+        inference_mode=contextlib.nullcontext,
+        Generator=generator,
+    )
+    diffusers = SimpleNamespace(
+        StableDiffusionXLPipeline=SimpleNamespace(from_single_file=load_pipeline)
+    )
+    runtime = MLRuntime(
+        torch=cast(ModuleType, torch),
+        diffusers=cast(ModuleType, diffusers),
+        compel=ModuleType("fake_compel"),
+    )
+    monkeypatch.setattr(inference, "verify_pinned_config", verify_config)
+    monkeypatch.setattr(inference, "select_inference_scheduler", select_scheduler)
+    monkeypatch.setattr(inference, "build_sdxl_conditioning", build_conditioning)
+    events: list[tuple[int, int]] = []
+
+    def observe(step: int, total: int) -> None:
+        assert not command.output_path.exists()
+        events.append((step, total))
+
+    result = generate_illustrious_txt2img(
+        command, config_dir=tmp_path, runtime=runtime, on_progress=observe
+    )
+    assert events == [(1, 3), (2, 3), (3, 3)]
+    assert result == {
+        "type": "generation-done",
+        "protocolVersion": "1",
+        "requestId": command.request_id,
+        "outputPath": str(command.output_path),
+        "seed": command.seed,
+    }
+    assert command.output_path.exists()
+    with Image.open(command.output_path) as output:
+        assert output.size == (command.width, command.height)
+        assert output.info["icc_profile"] == SRGB_ICC_PROFILE
+
+
+def test_inference_main_flushes_correlated_progress_to_original_stdout_during_redirect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command(tmp_path)
+    request = _request(
+        command.staging_root,
+        command.checkpoint_path,
+        command.target_sha256,
+        command.target_byte_size,
+    )
+    protocol_bytes = io.BytesIO()
+    stdout = io.TextIOWrapper(protocol_bytes, encoding="utf-8", write_through=True)
+    stderr = io.StringIO()
+    stdin = io.TextIOWrapper(io.BytesIO((json.dumps(request) + "\n").encode("utf-8")))
+    runtime = MLRuntime(
+        torch=ModuleType("fake_torch"),
+        diffusers=ModuleType("fake_diffusers"),
+        compel=ModuleType("fake_compel"),
+    )
+
+    def generate(
+        parsed: GenerateIllustriousTxt2ImgCommand,
+        *,
+        config_dir: Path,
+        runtime: MLRuntime,
+        on_progress: Callable[[int, int], None] | None,
+    ) -> dict[str, object]:
+        assert parsed.request_id == command.request_id
+        assert config_dir == tmp_path
+        assert runtime.torch.__name__ == "fake_torch"
+        assert sys.stdout is stderr
+        print("Library diagnostic must stay off the protocol pipe.")
+        assert on_progress is not None
+
+        def observe(step: int, total: int) -> None:
+            on_progress(step, total)
+            # The original binary stream is flushed while generation is still redirected.
+            latest = json.loads(protocol_bytes.getvalue().splitlines()[-1])
+            assert latest == {
+                "type": "generation-progress",
+                "protocolVersion": "1",
+                "requestId": parsed.request_id,
+                "step": step,
+                "totalSteps": total,
+            }
+
+        _run_mask_pipeline(
+            _ProgressPipeline(total=3), _conditioned_lengths(154, 77), 5, on_progress=observe
+        )
+        return {
+            "type": "generation-done",
+            "protocolVersion": "1",
+            "requestId": parsed.request_id,
+            "outputPath": str(parsed.output_path),
+            "seed": parsed.seed,
+        }
+
+    monkeypatch.setattr(inference_main, "_qualify", lambda: (tmp_path, runtime))
+    monkeypatch.setattr(inference_main, "generate_illustrious_txt2img", generate)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    assert inference_main.main() == 0
+    messages = [json.loads(line) for line in protocol_bytes.getvalue().splitlines()]
+    assert messages[0] == inference_ready_message()
+    assert [message["type"] for message in messages] == [
+        "ready",
+        "generation-progress",
+        "generation-progress",
+        "generation-progress",
+        "generation-done",
+    ]
+    assert [(message["step"], message["totalSteps"]) for message in messages[1:-1]] == [
+        (1, 3),
+        (2, 3),
+        (3, 3),
+    ]
+    assert messages[-1]["requestId"] == command.request_id
+    assert stderr.getvalue() == "Library diagnostic must stay off the protocol pipe.\n"
 
 
 def test_two_clip_conditioning_pads_long_positive_and_zeroes_empty_negative(
@@ -702,9 +970,10 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.2.0"
+    assert inference_ready_message()["workerVersion"] == "0.3.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
         "target-composition",
+        "denoising-progress",
     ]

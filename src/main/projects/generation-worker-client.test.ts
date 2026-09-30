@@ -1,3 +1,5 @@
+import type { GenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
+
 import assert from 'node:assert/strict'
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -39,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion:mode === 'bad-version' ? '0.1.0' : '0.2.0',
+  workerVersion: mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.4.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'no-capability' ? [] : ['illustrious-txt2img']
+  capabilities: mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -63,6 +65,7 @@ else {
     : startup)
   process.stdin.setEncoding('utf8')
   let buffer = ''
+  let precedingRequestId = null
   process.stdin.on('data', chunk => {
     buffer += chunk
     while (buffer.includes('\n')) {
@@ -82,6 +85,30 @@ else {
         type:'generation-done', protocolVersion:'1', requestId:request.requestId,
         outputPath:request.job.output.pngPath, seed:0xffffffff
       }
+      if (mode.startsWith('progress-') || mode === 'legacy-progress') {
+        const send = (step, totalSteps = 3, extras = {}) => process.stdout.write(JSON.stringify({
+          type:'generation-progress', protocolVersion:'1', requestId:request.requestId,
+          step, totalSteps, ...extras
+        }) + '\n')
+        if (mode === 'progress-wrong-id') send(1, 3, {requestId:randomId()})
+        else if (mode === 'progress-zero') send(0)
+        else if (mode === 'progress-over-total') send(4)
+        else if (mode === 'progress-too-many') send(1, 401)
+        else if (mode === 'progress-too-many-for-request') send(1, 2 * request.job.sampling.steps + 1)
+        else if (mode === 'progress-changed-total') { send(1); send(2, 4) }
+        else if (mode === 'progress-extra-field') send(1, 3, {outputPath:'/private/weights'})
+        else if (mode === 'progress-timeout') {
+          let step = 0
+          setInterval(() => send(Math.min(++step, 40), 40), 15)
+        } else if (mode === 'progress-held') send(1)
+        else if (mode === 'progress-complete-no-done') { send(1); send(2); send(3) }
+        else if (mode === 'progress-stale') {
+          if (precedingRequestId) send(2, 3, {requestId:precedingRequestId})
+          send(1)
+          precedingRequestId = request.requestId
+        } else { send(1); send(2); send(2); send(1); send(3) }
+        if (['progress-timeout','progress-held','progress-complete-no-done'].includes(mode)) continue
+      }
       if (mode === 'wrong-id') response.requestId = randomId()
       if (mode === 'wrong-output') response.outputPath = '/tmp/other.png'
       if (mode === 'bad-seed') response.seed = -1
@@ -90,7 +117,13 @@ else {
       if (mode === 'late-done-after-wrong') {
         const wrong = {...response, requestId:randomId()}
         process.stdout.write(JSON.stringify(wrong)+'\n'+answer)
-      } else process.stdout.write(answer)
+      } else {
+        process.stdout.write(answer)
+        if (mode === 'progress-stale') process.stdout.write(JSON.stringify({
+          type:'generation-progress', protocolVersion:'1', requestId:request.requestId,
+          step:2, totalSteps:3
+        })+'\n')
+      }
     }
   })
 }
@@ -178,7 +211,14 @@ test('real inference subprocess requires an exact ready and returns correlated a
 
 test('unqualified, silent, malformed, and unsolicited startup fail before a client is returned', async () => {
   await withFixture(async (fixture) => {
-    for (const mode of ['bad-protocol', 'bad-version', 'bad-profile', 'no-capability']) {
+    for (const mode of [
+      'bad-protocol',
+      'bad-version',
+      'future-version',
+      'bad-profile',
+      'no-capability',
+      'new-missing-progress',
+    ]) {
       await assert.rejects(
         GenerationWorkerClient.start(fixture.location, options(mode)),
         isCode('WORKER_VERSION_MISMATCH'),
@@ -198,6 +238,158 @@ test('unqualified, silent, malformed, and unsolicited startup fail before a clie
     )
   })
 })
+
+test('qualified JSONL progress is monotonic, request-scoped, and cannot replace the terminal result', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, options('progress-done'))
+    try {
+      assert.equal(client.ready.workerVersion, '0.3.0', 'preserve the actual qualified version')
+      const observed: GenerationDenoisingProgress[] = []
+      const request = await requestFor(fixture)
+      const done = await client.generate(request, (progress) => {
+        assert.equal(Object.isFrozen(progress), true)
+        observed.push(progress)
+      })
+      assert.deepEqual(observed, [
+        { step: 1, totalSteps: 3 },
+        { step: 2, totalSteps: 3 },
+        { step: 3, totalSteps: 3 },
+      ])
+      assert.equal((done as { requestId: string }).requestId, request.requestId)
+      assert.equal((done as { type: string }).type, 'generation-done')
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('a throwing progress observer does not reject a valid inference result', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, options('progress-done'))
+    try {
+      let callbacks = 0
+      const done = await client.generate(await requestFor(fixture), () => {
+        callbacks += 1
+        throw new Error('presentation observer failed')
+      })
+      assert.equal(callbacks, 3)
+      assert.equal((done as { type: string }).type, 'generation-done')
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('settled generation progress is ignored after completion and while the next request is active', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, options('progress-stale'))
+    try {
+      const first: GenerationDenoisingProgress[] = []
+      const second: GenerationDenoisingProgress[] = []
+      await client.generate(await requestFor(fixture), (progress) => first.push(progress))
+      await client.generate(await requestFor(fixture), (progress) => second.push(progress))
+      assert.deepEqual(first, [{ step: 1, totalSteps: 3 }])
+      assert.deepEqual(second, [{ step: 1, totalSteps: 3 }])
+      assert.equal(client.ready.workerVersion, '0.3.0')
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('legacy, crossed, malformed, unbounded and inconsistent progress fail the actual exchange', async () => {
+  await withFixture(async (fixture) => {
+    for (const mode of [
+      'legacy-progress',
+      'progress-wrong-id',
+      'progress-zero',
+      'progress-over-total',
+      'progress-too-many',
+      'progress-too-many-for-request',
+      'progress-changed-total',
+      'progress-extra-field',
+    ]) {
+      const client = await GenerationWorkerClient.start(fixture.location, options(mode))
+      try {
+        await assert.rejects(
+          client.generate(await requestFor(fixture)),
+          isCode('PROTOCOL_ERROR'),
+          mode,
+        )
+        await assert.rejects(client.generate(await requestFor(fixture)), isCode('CLOSED'), mode)
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('progress keeps the request slot occupied and close rejects a generation without done', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      ...options('progress-held'),
+      requestTimeoutMs: 5000,
+    })
+    try {
+      let acknowledge!: () => void
+      const observed = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      const pending = client.generate(await requestFor(fixture), () => acknowledge())
+      void pending.catch(() => undefined)
+      await observed
+      await assert.rejects(client.generate(await requestFor(fixture)), isCode('BUSY'))
+      await client.close()
+      await assert.rejects(pending, isCode('CLOSED'))
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('complete denoising progress still times out without a terminal completion', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(
+      fixture.location,
+      options('progress-complete-no-done'),
+    )
+    try {
+      const observed: GenerationDenoisingProgress[] = []
+      await assert.rejects(
+        client.generate(await requestFor(fixture), (progress) => observed.push(progress)),
+        isCode('REQUEST_TIMEOUT'),
+      )
+      assert.equal(observed.at(-1)?.step, 3)
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test(
+  'continuous valid progress does not reset the original request deadline',
+  { timeout: 2500 },
+  async () => {
+    await withFixture(async (fixture) => {
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        ...options('progress-timeout'),
+        requestTimeoutMs: 120,
+      })
+      try {
+        let callbacks = 0
+        await assert.rejects(
+          client.generate(await requestFor(fixture), () => {
+            callbacks += 1
+          }),
+          isCode('REQUEST_TIMEOUT'),
+        )
+        assert.ok(callbacks > 1, 'the real child emitted multiple steps before the deadline')
+      } finally {
+        await client.close()
+      }
+    })
+  },
+)
 
 test('transport rejects unowned executable, scratch, and unsafe target paths', async () => {
   await withFixture(async (fixture) => {

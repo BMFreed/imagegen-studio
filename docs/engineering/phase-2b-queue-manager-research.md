@@ -133,3 +133,10 @@ release installation remain open. Reserved invalid receipts intentionally stay
 protected; a restart does not promise to resolve a persistently invalid record.
 There is no retention policy or automatic eviction. Phase 2B and the public
 PP-007/008 flows remain incomplete.
+
+## Subsequent checkpoint
+
+[Actual denoising progress](./phase-2b-generation-progress-research.md) now adds
+request-scoped step events and independent transient UI. The progress gaps above
+describe this earlier Queue Manager checkpoint. Preview images, result/session
+navigation, busy admission and release runtime/pipeline remain open.

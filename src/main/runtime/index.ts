@@ -1,4 +1,5 @@
 import type { ApiResult, RuntimeStatus } from '../../shared/api.js'
+import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -438,7 +439,7 @@ export class RuntimeManager {
       return false
     }
     try {
-      return lease.client.ready.workerVersion === '0.2.0'
+      return isQualifiedInferenceWorkerReady(lease.client.ready)
     } catch {
       return false
     }

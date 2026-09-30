@@ -16,6 +16,7 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 
@@ -169,6 +170,8 @@ let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
 let unsubscribeBeforeWindowClose: (() => void) | undefined
 let unsubscribeModelInstall: (() => void) | undefined
+const generationProgress = ref<GenerationProgressSnapshot>({ current: null, revision: 0 })
+let unsubscribeProgress: (() => void) | undefined
 let unsubscribeGeneration: (() => void) | undefined
 let projectListRequest = 0
 let modelCatalogRequest = 0
@@ -1804,7 +1807,24 @@ function onAppKeydown(event: KeyboardEvent) {
   void runProjectHistoryAction(tab.id, action)
 }
 
+function updateGenerationProgress(snapshot: GenerationProgressSnapshot): void {
+  if (!rendererDisposed && snapshot.revision >= generationProgress.value.revision) {
+    generationProgress.value = snapshot
+  }
+}
+
 onMounted(() => {
+  try {
+    unsubscribeProgress =
+      globalThis.window.api?.projects.onGenerationProgress(updateGenerationProgress)
+    void apiValue(() => projectApi().getGenerationProgress())
+      .then(updateGenerationProgress)
+      .catch((cause) => {
+        globalNotice.value = errorMessage(cause)
+      })
+  } catch (cause) {
+    globalNotice.value = errorMessage(cause)
+  }
   try {
     unsubscribeModelInstall = globalThis.window.api?.models.onInstallChanged((job) => {
       if (job.status === 'completed' && activeTab.value) {
@@ -1892,6 +1912,7 @@ onBeforeUnmount(() => {
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()
   unsubscribeGeneration?.()
+  unsubscribeProgress?.()
   globalThis.window.removeEventListener('keydown', onAppKeydown)
 })
 </script>
@@ -2018,6 +2039,7 @@ onBeforeUnmount(() => {
           :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
           :generationError="generationStateErrors[activeTab.id] ?? null"
           :generationNotice="generationNotices[activeTab.id] ?? null"
+          :generationProgress
           :generationResults="generationResultsByTab[activeTab.id] ?? null"
           :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
           :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
@@ -2078,6 +2100,7 @@ onBeforeUnmount(() => {
         :appBusy="pendingProjectAction !== null || windowClosePending"
         :generationErrors="generationStateErrors"
         :generationLoading="generationStateLoading"
+        :generationProgress
         :generationStates="generationStatesByTab"
         :projectTabs
         :refreshEpoch="generationQueueEpoch"

@@ -9,6 +9,8 @@ import type {
   ProjectTab,
 } from '../../shared/api.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
+import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
+import { progressForJob } from '../../shared/projects/generation-progress.js'
 import {
   ILLUSTRIOUS_SCHEDULER_PAIRS,
   isIllustriousSamplingDraftPair,
@@ -49,6 +51,7 @@ import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
+import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
@@ -75,6 +78,7 @@ const props = defineProps<{
   generationDraft: ProjectTab['generationDraft']
   generationError: string | null
   generationNotice: string | null
+  generationProgress: GenerationProgressSnapshot
   generationResults: ProjectGenerationResultsSnapshot | null
   generationResultsError: string | null
   generationResultsLoading: boolean
@@ -92,6 +96,20 @@ const props = defineProps<{
   saveNotice: string | null
   tab: ProjectTab
 }>()
+
+const currentProgress = computed(() => {
+  const job = props.generationState?.jobs.find(
+    (job) => job.id === props.generationState?.runningJobId,
+  )
+  return job && props.generationState?.documentId === props.tab.documentId
+    ? progressForJob(props.generationProgress, {
+        ...job,
+        cancelRequested: props.generationCanceling,
+        documentId: props.tab.documentId,
+        projectKey: props.tab.id,
+      })
+    : null
+})
 
 const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
@@ -1048,6 +1066,11 @@ function applyFitBbox() {
               <template v-slot:icon><NIcon :component="CancelIcon" /></template>
             </NButton>
           </div>
+          <GenerationProgressIndicator
+            v-if="currentProgress"
+            class="generation-footer-progress"
+            :progress="currentProgress"
+          />
           <p v-if="generationBlockingReason" class="generation-blocking-reason" role="status">
             {{ generationBlockingReason }}
           </p>
@@ -1482,6 +1505,7 @@ function applyFitBbox() {
             :error="generationError"
             :jobs="generationState?.jobs ?? []"
             :loading="generationStateLoading"
+            :progress="currentProgress"
             :runningJobId="generationState?.runningJobId ?? null"
             @cancelCurrent="emit('cancelGeneration')"
             @close="closeQueue"
@@ -1607,9 +1631,12 @@ function applyFitBbox() {
   width: 70px;
 }
 
+.generation-footer-progress {
+  grid-column: 1 / -1;
+}
+
 .project-settings .generation-blocking-reason {
   grid-column: 1 / -1;
-  grid-row: 2;
   margin: 0;
   font-size: 11px;
 }

@@ -1,4 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type {
+  GenerationDenoisingProgress,
+  GenerationProgressSnapshot,
+} from '../../shared/projects/generation-progress.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1084,5 +1088,160 @@ test('cancel retains the running slot until worker exit and rejects a late done'
       [],
     )
     assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+  })
+})
+
+const progressReady: InferenceWorkerReady = {
+  ...qualifiedReady,
+  capabilities: ['illustrious-txt2img', 'denoising-progress'],
+  workerVersion: '0.3.0',
+}
+
+test('denoising progress is transient: final step does not publish or mutate frozen jobs', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    let send!: (progress: GenerationDenoisingProgress) => void
+    let finish!: () => void
+    let entered!: () => void
+    const dispatched = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const terminal = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const beforeIgs = await readFile(path.join(fixture.root, 'Project.igs'))
+    let lifecycleChanges = 0
+    const snapshots: GenerationProgressSnapshot[] = []
+    fixture.processor.onChanged(() => {
+      lifecycleChanges += 1
+    })
+    fixture.processor.onProgress(() => {
+      throw new Error('observer failure')
+    })
+    fixture.processor.onProgress((snapshot) => {
+      snapshots.push(snapshot)
+      if (snapshot.current) {
+        snapshot.current.step = 99
+      }
+    })
+    const run = fixture.processor.runOne({
+      close: async () => undefined,
+      generate: async (request, onProgress) => {
+        assert.ok(onProgress)
+        send = onProgress
+        entered()
+        await terminal
+        return await writeDone(request, fixture.outputBytes)
+      },
+      ready: progressReady,
+    })
+    await dispatched
+    const before = await fixture.queue.loadVerifiedInput(id)
+    const changesBefore = lifecycleChanges
+    send({ step: 1, totalSteps: 24 })
+    assert.equal(fixture.processor.getProgressSnapshot().current?.step, 1)
+    const first = fixture.processor.getProgressSnapshot()
+    send({ step: 1, totalSteps: 24 })
+    send({ step: 0, totalSteps: 24 })
+    send({ step: 2, totalSteps: 25 })
+    assert.deepEqual(fixture.processor.getProgressSnapshot(), first)
+    send({ step: 24, totalSteps: 24 })
+    assert.equal(fixture.processor.getProgressSnapshot().current?.step, 24)
+    assert.deepEqual(await fixture.queue.loadVerifiedInput(id), before)
+    assert.equal(
+      lifecycleChanges,
+      changesBefore,
+      'steps must not trigger staging/history invalidation',
+    )
+    assert.deepEqual(await fixture.staging.listVerifiedCandidates(before.item.localProjectKey), [])
+    assert.deepEqual(await readFile(path.join(fixture.root, 'Project.igs')), beforeIgs)
+    finish()
+    assert.equal((await run).kind, 'completed')
+    assert.equal(fixture.processor.getProgressSnapshot().current, null)
+    assert.ok(fixture.processor.getProgressSnapshot().revision > first.revision)
+    assert.equal(
+      (await fixture.staging.listVerifiedCandidates(before.item.localProjectKey)).length,
+      1,
+    )
+    const completed = fixture.processor.getProgressSnapshot()
+    send({ step: 23, totalSteps: 24 })
+    assert.deepEqual(fixture.processor.getProgressSnapshot(), completed)
+    assert.equal(snapshots.length, 3)
+  })
+})
+
+test('cancellation clears progress before confirmed exit and old callbacks cannot affect the next job', async () => {
+  await withFixture(async (fixture) => {
+    const firstId = await enqueue(fixture)
+    let firstSend!: (progress: GenerationDenoisingProgress) => void
+    let firstEntered!: () => void
+    let closeEntered!: () => void
+    let releaseExit!: () => void
+    const dispatched = new Promise<void>((resolve) => {
+      firstEntered = resolve
+    })
+    const closing = new Promise<void>((resolve) => {
+      closeEntered = resolve
+    })
+    const exit = new Promise<void>((resolve) => {
+      releaseExit = resolve
+    })
+    const firstRun = fixture.processor.runOne({
+      close: async () => {
+        closeEntered()
+        await exit
+      },
+      generate: async (_request, onProgress) => {
+        assert.ok(onProgress)
+        firstSend = onProgress
+        firstEntered()
+        return await new Promise(() => {})
+      },
+      ready: progressReady,
+    })
+    await dispatched
+    firstSend({ step: 1, totalSteps: 24 })
+    const cancel = fixture.processor.cancelAndWait(firstId)
+    assert.equal(fixture.processor.getProgressSnapshot().current, null)
+    await closing
+    firstSend({ step: 2, totalSteps: 24 })
+    assert.equal(fixture.processor.getProgressSnapshot().current, null)
+    assert.equal((await fixture.queue.loadVerifiedInput(firstId)).item.status, 'running')
+    releaseExit()
+    assert.equal((await cancel).status, 'canceled')
+    assert.equal((await firstRun).kind, 'canceled')
+    const secondId = await enqueue(fixture)
+    let secondSend!: (progress: GenerationDenoisingProgress) => void
+    let secondEntered!: () => void
+    let finish!: () => void
+    const secondDispatched = new Promise<void>((resolve) => {
+      secondEntered = resolve
+    })
+    const done = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const secondRun = fixture.processor.runOne({
+      close: async () => undefined,
+      generate: async (request, onProgress) => {
+        assert.ok(onProgress)
+        secondSend = onProgress
+        secondEntered()
+        await done
+        return await writeDone(request, fixture.outputBytes)
+      },
+      ready: progressReady,
+    })
+    await secondDispatched
+    secondSend({ step: 1, totalSteps: 47 })
+    const current = fixture.processor.getProgressSnapshot()
+    assert.equal(current.current?.jobId, secondId)
+    assert.equal(current.current?.step, 1)
+    firstSend({ step: 3, totalSteps: 24 })
+    assert.deepEqual(fixture.processor.getProgressSnapshot(), current)
+    secondSend({ step: 2, totalSteps: 47 })
+    assert.equal(fixture.processor.getProgressSnapshot().current?.step, 2)
+    finish()
+    assert.equal((await secondRun).kind, 'completed')
+    assert.equal(fixture.processor.getProgressSnapshot().current, null)
   })
 })

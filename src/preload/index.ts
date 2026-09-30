@@ -20,6 +20,7 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
+import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import { isGenerationQueuePage } from '../shared/projects/generation-queue-manager.js'
 import {
   isProjectDocumentId,
@@ -626,6 +627,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.generate, [tabId, options], isProjectGenerateResult),
     getCloseImpact: (tabId) =>
       invokeProject(ipcChannels.projects.getCloseImpact, [tabId], isProjectCloseImpact),
+    getGenerationProgress: () =>
+      invokeProject(ipcChannels.projects.getGenerationProgress, [], isGenerationProgressSnapshot),
     getGenerationQueue: (cursor = null) =>
       invokeProject(ipcChannels.projects.getGenerationQueue, [cursor], isGenerationQueuePage),
     getGenerationState: (tabId) =>
@@ -687,6 +690,15 @@ const api: StudioApi = {
       const handler = () => listener()
       ipcRenderer.on(ipcChannels.projects.generationChanged, handler)
       return () => ipcRenderer.removeListener(ipcChannels.projects.generationChanged, handler)
+    },
+    onGenerationProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: unknown): void => {
+        if (isGenerationProgressSnapshot(snapshot)) {
+          listener(snapshot)
+        }
+      }
+      ipcRenderer.on(ipcChannels.projects.generationProgress, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.projects.generationProgress, handler)
     },
     onTabsChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {

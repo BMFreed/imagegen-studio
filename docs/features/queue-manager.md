@@ -478,7 +478,7 @@ statuses at execution time, including newly terminal rows, and skips reserved
 publication receipts. Its UI states this and reports the removed count.
 History and terminal cleanup remain available when runtime installation is absent.
 
-Progress events/preview thumbnails, output navigation for unavailable sessions,
+Preview thumbnails, output navigation for unavailable sessions,
 busy-engine admission, full conditioning/Anima and the release installer remain
 open. The native action checks use a controlled qualified peer; they do not prove
 CUDA model loading or a packaged release.
@@ -501,3 +501,30 @@ CUDA model loading or a packaged release.
   discards staging without affecting other projects.
 - Queue storage is SQLite-backed and prunable.
 - Queue status changes are not part of undo/redo.
+
+## Production denoising progress checkpoint
+
+[Actual progress boundary](../engineering/phase-2b-generation-progress-research.md)
+connects the pinned pipeline's step-end callback to the qualified worker0.3.0,
+strict request-scoped JSONL transport and a separate typed renderer notification.
+Legacy worker0.2.0 remains usable with a Running status and no invented step count.
+Project footer/queue and global Queue Manager rows/details show the same transient
+`Denoising step X of Y`; the denominator is actual scheduler evaluations, which
+can exceed requested sampling Steps for DPM++ SDE. Completion still requires the
+existing validated PNG publication.
+
+Current transport event is exactly
+`{type:'generation-progress', protocolVersion:'1', requestId, step, totalSteps}`.
+Main attaches its own jobId, projectKey, documentId and claimed statusSequence.
+A separate app-lifetime revision fences getter/event races; it does not advance
+durable statusSequence. UI overlays require all those identities, a running row
+and no cancellation. Main invalidates before waiting for worker exit and before
+result publication. Progress updates neither perform DB/manifest writes nor trigger
+the lifecycle notification that rereads staging and queue pages.
+
+The general `QueueEvent` example above describes product intent, not an additional
+implemented event bus. Durable statuses continue through the existing invalidation;
+`projects:generation-progress` carries only the validated transient snapshot.
+Progress is discarded on restart, while job/candidate recovery follows its durable
+contract. Preview images, ETA, other generation operations and release GPU/runtime
+qualification remain separate work.

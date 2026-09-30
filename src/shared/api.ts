@@ -1,4 +1,5 @@
 import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
+import type { GenerationProgressSnapshot } from './projects/generation-progress.js'
 import type {
   GenerationQueueCursor,
   GenerationQueuePage,
@@ -56,7 +57,9 @@ export const ipcChannels = {
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
     generationChanged: 'projects:generation-changed',
+    generationProgress: 'projects:generation-progress',
     getCloseImpact: 'projects:get-close-impact',
+    getGenerationProgress: 'projects:get-generation-progress',
     getGenerationQueue: 'projects:get-generation-queue',
     getGenerationState: 'projects:get-generation-state',
     importRasterImage: 'projects:import-raster-image',
@@ -280,6 +283,7 @@ export interface ProjectApi {
     options: ProjectGenerateOptions,
   ) => Promise<ApiResult<ProjectGenerateResult>>
   getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
+  getGenerationProgress: () => Promise<ApiResult<GenerationProgressSnapshot>>
   getGenerationQueue: (
     cursor?: GenerationQueueCursor | null,
   ) => Promise<ApiResult<GenerationQueuePage>>
@@ -294,6 +298,7 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab>>
   onBeforeWindowClose: (listener: () => Promise<void>, onCanceled: () => void) => () => void
   onGenerationChanged: (listener: () => void) => () => void
+  onGenerationProgress: (listener: (snapshot: GenerationProgressSnapshot) => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   pruneGenerationQueue: (statuses: GenerationQueueTerminalStatus[]) => Promise<ApiResult<number>>

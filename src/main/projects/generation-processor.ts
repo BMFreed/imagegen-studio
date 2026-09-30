@@ -1,3 +1,13 @@
+import type {
+  GenerationDenoisingProgress,
+  GenerationProgressSnapshot,
+} from '../../shared/projects/generation-progress.js'
+import { isGenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
+import {
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceDenoisingProgress,
+} from '../../shared/projects/inference-worker-capabilities.js'
+
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
@@ -14,14 +24,16 @@ import type {
 } from './illustrious-txt2img-job.js'
 
 const PROTOCOL_VERSION = '1'
-const INFERENCE_WORKER_VERSION = '0.2.0'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 
 /** A qualified, long-lived worker borrowed for one job. close() must resolve only after exit. */
 export interface GenerationWorkerTransport {
   close: () => Promise<void>
-  generate: (request: IllustriousTxt2ImgRequestV1) => Promise<unknown>
+  generate: (
+    request: IllustriousTxt2ImgRequestV1,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ) => Promise<unknown>
   readonly ready: InferenceWorkerReady
 }
 
@@ -37,6 +49,7 @@ type ActiveJob = {
   exitUnconfirmed: boolean
   item: QueuedGenerationItem
   provisionalRoot: string | null
+  receivingProgress: boolean
   releasePromise: Promise<void> | null
   runSettled: boolean
   signalCancel: (value: { completion: Promise<QueuedGenerationItem> }) => void
@@ -68,6 +81,8 @@ export class GenerationProcessor {
   private active: ActiveJob | null = null
   private currentRun: Promise<GenerationProcessorResult> | null = null
   private readonly listeners = new Set<() => void>()
+  private progress: GenerationProgressSnapshot = { current: null, revision: 0 }
+  private readonly progressListeners = new Set<(snapshot: GenerationProgressSnapshot) => void>()
   private running = false
   private stopping = false
 
@@ -134,10 +149,19 @@ export class GenerationProcessor {
     return settled
   }
 
+  getProgressSnapshot(): GenerationProgressSnapshot {
+    return structuredClone(this.progress)
+  }
+
   /** Signal real queue transitions to the app owner without polling or retaining renderer state. */
   onChanged(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  onProgress(listener: (snapshot: GenerationProgressSnapshot) => void): () => void {
+    this.progressListeners.add(listener)
+    return () => this.progressListeners.delete(listener)
   }
 
   async runOne(transport: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
@@ -170,6 +194,7 @@ export class GenerationProcessor {
       // Until SQLite says this job was already terminal, process exit is unconfirmed. A failed
       // close leaves this owner available for an explicit retry instead of stranding its row.
       active.exitUnconfirmed = true
+      this.clearProgress(active)
       const operation = (async () => {
         const item = await this.queue.cancel(active.item.id)
         this.emitChanged()
@@ -201,12 +226,30 @@ export class GenerationProcessor {
     return active.cancelPromise
   }
 
+  private clearProgress(active: ActiveJob): void {
+    active.receivingProgress = false
+    if (this.progress.current?.jobId === active.item.id) {
+      this.publishProgress(null)
+    }
+  }
+
   private emitChanged(): void {
     for (const listener of this.listeners) {
       try {
         listener()
       } catch {
         // A failed observer must not change the queue or worker lifecycle.
+      }
+    }
+  }
+
+  private publishProgress(current: GenerationProgressSnapshot['current']): void {
+    this.progress = { current, revision: this.progress.revision + 1 }
+    for (const listener of this.progressListeners) {
+      try {
+        listener(this.getProgressSnapshot())
+      } catch {
+        // Observers cannot change inference, durable state or other observers' snapshots.
       }
     }
   }
@@ -301,6 +344,7 @@ export class GenerationProcessor {
         exitUnconfirmed: false,
         item: claimed.item,
         provisionalRoot: null,
+        receivingProgress: false,
         releasePromise: null,
         runSettled: false,
         signalCancel,
@@ -332,10 +376,44 @@ export class GenerationProcessor {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
         dispatched = true
+        const capturedActive = active
+        active.receivingProgress = true
+        const onProgress = (progress: GenerationDenoisingProgress): void => {
+          if (
+            this.active !== capturedActive ||
+            !capturedActive.receivingProgress ||
+            capturedActive.cancelPromise ||
+            capturedActive.exitUnconfirmed ||
+            this.stopping ||
+            !supportsInferenceDenoisingProgress(transport.ready) ||
+            !isGenerationDenoisingProgress(progress) ||
+            progress.totalSteps > 2 * request.job.sampling.steps
+          ) {
+            return
+          }
+          const previous = this.progress.current
+          if (
+            previous &&
+            (previous.totalSteps !== progress.totalSteps || previous.step >= progress.step)
+          ) {
+            return
+          }
+          this.publishProgress({
+            documentId: claimed.payload.context.documentId,
+            jobId: claimed.item.id,
+            projectKey: claimed.item.localProjectKey,
+            statusSequence: claimed.item.statusSequence,
+            step: progress.step,
+            totalSteps: progress.totalSteps,
+          })
+        }
         const outcome = await Promise.race([
-          transport.generate(request).then((response) => ({ kind: 'done' as const, response })),
+          transport
+            .generate(request, onProgress)
+            .then((response) => ({ kind: 'done' as const, response })),
           active.cancelSignal.then(({ completion }) => ({ completion, kind: 'cancel' as const })),
         ])
+        this.clearProgress(active)
         if (outcome.kind === 'cancel') {
           await outcome.completion
           return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -355,6 +433,7 @@ export class GenerationProcessor {
         })
         return { candidate, kind: 'completed', queueItemId: claimed.item.id }
       } catch {
+        this.clearProgress(active)
         if (active.cancelPromise) {
           await active.cancelPromise
           return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -413,6 +492,7 @@ export class GenerationProcessor {
       if (!active) {
         this.running = false
       } else {
+        this.clearProgress(active)
         try {
           if (active.cancelPromise) {
             await active.cancelPromise
@@ -459,13 +539,7 @@ export class GenerationProcessor {
 }
 
 function requireInferenceReady(ready: InferenceWorkerReady): void {
-  if (
-    ready.protocolVersion !== PROTOCOL_VERSION ||
-    ready.workerVersion !== INFERENCE_WORKER_VERSION ||
-    ready.runtimeProfile !== 'linux-nvidia' ||
-    !Array.isArray(ready.capabilities) ||
-    !ready.capabilities.includes('illustrious-txt2img')
-  ) {
+  if (!isQualifiedInferenceWorkerReady(ready)) {
     throw new GenerationProcessorError(
       'INFERENCE_UNAVAILABLE',
       'The active worker has not qualified Illustrious txt2img inference.',

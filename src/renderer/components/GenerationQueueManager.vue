@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { ApiResult, ProjectGenerationActionState, ProjectTab } from '../../shared/api.js'
+import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
+import { progressForJob } from '../../shared/projects/generation-progress.js'
 import type {
   GenerationQueueCursor,
   GenerationQueueEntry,
@@ -14,11 +16,14 @@ import { X as XIcon } from '@vicons/tabler'
 import { NAlert, NButton, NCard, NDropdown, NEmpty, NIcon, NModal, NSpin, NTag } from 'naive-ui'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
+
 const show = defineModel<boolean>('show', { required: true })
 const props = defineProps<{
   appBusy: boolean
   generationErrors: Record<string, string | null>
   generationLoading: Record<string, boolean>
+  generationProgress: GenerationProgressSnapshot
   generationStates: Record<string, ProjectGenerationActionState>
   projectTabs: ProjectTab[]
   refreshEpoch: number
@@ -547,6 +552,10 @@ onBeforeUnmount(() => {
                     }}
                   </span>
                   <span class="job-time">Queued {{ timestamp(item.createdAt) }}</span>
+                  <GenerationProgressIndicator
+                    v-if="progressForJob(generationProgress, item)"
+                    :progress="progressForJob(generationProgress, item)!"
+                  />
                 </button>
                 <div class="job-actions">
                   <NButton
@@ -647,6 +656,10 @@ onBeforeUnmount(() => {
                 <dd>{{ timestamp(selected.finishedAt) }}</dd>
               </div>
             </dl>
+            <GenerationProgressIndicator
+              v-if="progressForJob(generationProgress, selected)"
+              :progress="progressForJob(generationProgress, selected)!"
+            />
             <template v-if="selected.details">
               <section class="detail-section">
                 <h3>Frozen model</h3>

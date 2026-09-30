@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { ProjectGenerationQueueJob } from '../../shared/api.js'
+import type { GenerationProgressCurrent } from '../../shared/projects/generation-progress.js'
 
 import { X as CloseIcon } from '@vicons/tabler'
 import { NAlert, NButton, NIcon, NTag } from 'naive-ui'
 import { ref } from 'vue'
+
+import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 
 defineProps<{
   canceling: boolean
@@ -11,6 +14,7 @@ defineProps<{
   error: string | null
   jobs: ProjectGenerationQueueJob[]
   loading: boolean
+  progress: GenerationProgressCurrent | null
   runningJobId: string | null
 }>()
 const emit = defineEmits<{ cancelCurrent: []; close: []; refresh: [] }>()
@@ -59,6 +63,7 @@ defineExpose({ focusClose: () => closeButton.value?.$el.focus({ preventScroll: t
           </div>
           <p class="queue-prompt">{{ job.prompt || 'Empty positive prompt' }}</p>
           <p class="queue-seed">Seed {{ job.seed }}</p>
+          <GenerationProgressIndicator v-if="progress?.jobId === job.id" :progress />
         </article>
       </div>
       <p v-else class="queue-empty" role="status">

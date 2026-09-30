@@ -58,8 +58,8 @@ const mode = fs.readFileSync(path.join(environment, 'mode'), 'utf8')
 if (mode === 'no-ready') process.exit(78)
 const ready = {
   type: 'ready', protocolVersion: '1', pythonVersion: '3.12.13',
-  workerVersion: mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : '0.2.0',
-  runtimeProfile: 'linux-nvidia', capabilities: ['illustrious-txt2img']
+  workerVersion: mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
+  runtimeProfile: 'linux-nvidia', capabilities: mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 process.on('SIGTERM', () => {
   process.exit(0)
@@ -109,6 +109,34 @@ test('creates app-owned roots and reports a missing runtime without probing syst
         'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
     },
   })
+})
+
+test('runtime qualification and active advisory readiness share the 0.3.0 progress capability gate', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'progress-ready')
+  const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+  assert.equal(
+    await manager.withGenerationWorker(scratch, async (worker) => {
+      assert.equal(worker.ready.workerVersion, '0.3.0')
+      assert.equal((await manager.getStatus()).value.kind, 'ready')
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+      return worker.ready.workerVersion
+    }),
+    '0.3.0',
+  )
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'progress-missing-capability')
+  const refusing = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+  assert.equal(
+    await refusing.withGenerationWorker(scratch, async () =>
+      assert.fail('unqualified worker cannot lease'),
+    ),
+    null,
+  )
+  assert.equal((await refusing.getStatus()).value.kind, 'needs-repair')
 })
 
 test('rejects an app-owned root redirected through a symlink', async () => {

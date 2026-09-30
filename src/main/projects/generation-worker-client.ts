@@ -1,3 +1,13 @@
+import {
+  type GenerationDenoisingProgress,
+  isGenerationDenoisingProgress,
+  MAX_DENOISING_STEPS,
+} from '../../shared/projects/generation-progress.js'
+import {
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceDenoisingProgress,
+} from '../../shared/projects/inference-worker-capabilities.js'
+
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -18,9 +28,7 @@ import {
 } from './worker-client.js'
 
 const PROTOCOL_VERSION = '1'
-const WORKER_VERSION = '0.2.0'
 const RUNTIME_PROFILE = 'linux-nvidia'
-const CAPABILITY = 'illustrious-txt2img'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const SHUTDOWN_WAIT_MS = 2000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -49,6 +57,12 @@ export interface GenerationWorkerReady extends InferenceWorkerReady {
 type PendingGeneration = {
   completionType: 'generation-done' | 'target-done'
   outputPath: string
+  progress: {
+    lastStep: number
+    maxSteps: number
+    onProgress?: (progress: GenerationDenoisingProgress) => void
+    totalSteps: number | null
+  } | null
   reject: (error: GenerationWorkerError) => void
   requestId: string
   resolve: (response: Record<string, unknown>) => void
@@ -105,6 +119,9 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private readyMessage: GenerationWorkerReady | null = null
   private readonly requestTimeoutMs: number
   private readonly scratchBasePath: string
+  // The worker executes synchronous requests serially. Retain the previous generation's ID to
+  // discard its trailing progress without accepting unknown/crossed request IDs.
+  private settledGeneration: { maxSteps: number; requestId: string } | null = null
   private readonly shutdownWaitMs: number
   private readonly startupPromise: Promise<GenerationWorkerReady>
   private startupReject!: (error: GenerationWorkerError) => void
@@ -292,7 +309,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     }
   }
 
-  async generate(request: IllustriousTxt2ImgRequestV1): Promise<unknown> {
+  async generate(
+    request: IllustriousTxt2ImgRequestV1,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ): Promise<unknown> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
     }
@@ -319,6 +339,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         frozen.requestId,
         frozen.job.output.pngPath,
         'generation-done',
+        { maxSteps: 2 * frozen.job.sampling.steps, onProgress },
       )
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -354,6 +375,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     requestId: string,
     outputPath: string,
     completionType: PendingGeneration['completionType'],
+    progress?: { maxSteps: number; onProgress?: (progress: GenerationDenoisingProgress) => void },
   ): Promise<Record<string, unknown>> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -362,7 +384,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       const timer = setTimeout(() => {
         this.fail(new GenerationWorkerError('REQUEST_TIMEOUT', 'The generation worker timed out.'))
       }, this.requestTimeoutMs)
-      this.active = { completionType, outputPath, reject, requestId, resolve, timer }
+      this.active = {
+        completionType,
+        outputPath,
+        progress: progress ? { ...progress, lastStep: 0, totalSteps: null } : null,
+        reject,
+        requestId,
+        resolve,
+        timer,
+      }
       this.child.stdin.write(line, (error) => {
         if (error) {
           this.fail(new GenerationWorkerError('WORKER_EXITED', 'The worker input closed.'))
@@ -419,9 +449,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           protocolVersion: PROTOCOL_VERSION,
           pythonVersion: input.pythonVersion,
           runtimeProfile: RUNTIME_PROFILE,
-          workerVersion: WORKER_VERSION,
+          workerVersion: input.workerVersion,
         }),
       )
+      return
+    }
+    if (input.type === 'generation-progress') {
+      this.onProgressMessage(input)
       return
     }
     const active = this.active
@@ -461,7 +495,59 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     }
     clearTimeout(active.timer)
     this.active = null
+    if (active.progress) {
+      this.settledGeneration = {
+        maxSteps: active.progress.maxSteps,
+        requestId: active.requestId,
+      }
+    }
     active.resolve(input)
+  }
+
+  private onProgressMessage(input: Record<string, unknown>): void {
+    const progress = { step: input.step, totalSteps: input.totalSteps }
+    if (
+      !supportsInferenceDenoisingProgress(this.readyMessage) ||
+      Object.keys(input).length !== 5 ||
+      typeof input.requestId !== 'string' ||
+      !UUID_PATTERN.test(input.requestId) ||
+      !isGenerationDenoisingProgress(progress)
+    ) {
+      this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Invalid worker progress.'))
+      return
+    }
+    const active = this.active
+    if (!active || input.requestId !== active.requestId) {
+      if (
+        this.settledGeneration?.requestId === input.requestId &&
+        progress.totalSteps <= this.settledGeneration.maxSteps
+      ) {
+        return
+      }
+      this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Unexpected worker progress.'))
+      return
+    }
+    const owner = active.progress
+    if (
+      !owner ||
+      progress.totalSteps > owner.maxSteps ||
+      (owner.totalSteps !== null && progress.totalSteps !== owner.totalSteps)
+    ) {
+      this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Inconsistent worker progress.'))
+      return
+    }
+    // Duplicate or older steps cannot move the UI backwards. They do not extend the deadline or
+    // relinquish the active exchange; only a validated terminal response can complete it.
+    if (progress.step <= owner.lastStep) {
+      return
+    }
+    owner.lastStep = progress.step
+    owner.totalSteps = progress.totalSteps
+    try {
+      owner.onProgress?.(Object.freeze(progress))
+    } catch {
+      // A presentation observer cannot turn a valid inference result into a failed generation.
+    }
   }
 
   private onStdout(chunk: Buffer): void {
@@ -565,7 +651,10 @@ function validRequestShape(request: IllustriousTxt2ImgRequestV1): boolean {
     UUID_PATTERN.test(request.requestId) &&
     typeof request.job?.output?.stagingRoot === 'string' &&
     typeof request.job.output.pngPath === 'string' &&
-    typeof request.job?.target?.path === 'string'
+    typeof request.job?.target?.path === 'string' &&
+    Number.isSafeInteger(request.job?.sampling?.steps) &&
+    request.job.sampling.steps >= 1 &&
+    request.job.sampling.steps <= MAX_DENOISING_STEPS / 2
   )
 }
 
@@ -574,13 +663,9 @@ function validReady(
 ): message is GenerationWorkerReady & Record<string, unknown> {
   return (
     message.type === 'ready' &&
-    message.workerVersion === WORKER_VERSION &&
-    message.runtimeProfile === RUNTIME_PROFILE &&
+    isQualifiedInferenceWorkerReady(message) &&
     typeof message.pythonVersion === 'string' &&
-    /^\d+\.\d+\.\d+$/.test(message.pythonVersion) &&
-    Array.isArray(message.capabilities) &&
-    message.capabilities.every((capability) => typeof capability === 'string') &&
-    message.capabilities.includes(CAPABILITY)
+    /^\d+\.\d+\.\d+$/.test(message.pythonVersion)
   )
 }
 

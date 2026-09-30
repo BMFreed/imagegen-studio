@@ -511,6 +511,14 @@ if (!gotInstanceLock) {
           window.webContents.send(ipcChannels.projects.generationChanged)
         }
       })
+      const unsubscribeProgress = recoveredGeneration?.processor.onProgress((snapshot) => {
+        if (!window.webContents.isDestroyed()) {
+          window.webContents.send(ipcChannels.projects.generationProgress, snapshot)
+        }
+      })
+      if (unsubscribeProgress) {
+        window.on('closed', unsubscribeProgress)
+      }
       if (unsubscribeGeneration) {
         window.on('closed', unsubscribeGeneration)
       }
@@ -959,6 +967,12 @@ if (!gotInstanceLock) {
         (args) => args.length === 1 && isGenerationQueueTerminalStatuses(args[0]),
         async (statuses) =>
           await requireGenerationActions().pruneQueue(statuses as GenerationQueueTerminalStatus[]),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.getGenerationProgress,
+        noArgs,
+        async () =>
+          recoveredGeneration?.processor.getProgressSnapshot() ?? { current: null, revision: 0 },
       )
       registerProjectHandler(
         ipcChannels.projects.getGenerationState,

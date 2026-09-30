@@ -15,7 +15,7 @@ import os
 import re
 import stat
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -32,11 +32,14 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
-from imagegen_worker.protocol import GenerateIllustriousTxt2ImgCommand
+from imagegen_worker.protocol import MAX_GENERATION_STEPS, GenerateIllustriousTxt2ImgCommand
 
-INFERENCE_WORKER_VERSION = "0.2.0"
+INFERENCE_WORKER_VERSION = "0.3.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
+INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
+
+DenoisingProgressSink = Callable[[int, int], None]
 
 # This is the tested dev runtime, not a new dependency of the derivatives-only package.
 PINNED_ML_VERSIONS: dict[str, str] = {
@@ -486,6 +489,7 @@ def run_sdxl_pipeline(
     cfg_scale: float,
     generator: Any,
     torch: Any,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> Any:
     """Mask only the final positive/negative padding through a scoped UNet hook.
 
@@ -506,8 +510,45 @@ def run_sdxl_pipeline(
     ):
         raise DerivativeError("GENERATION_WORKER_FAILED", "Invalid SDXL conditioning mask input.")
 
+    completed_step = 0
+    total_steps: int | None = None
+
+    def report_step(
+        callback_pipeline: Any,
+        step_index: int,
+        _timestep: Any,
+        callback_kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal completed_step, total_steps
+        # The pinned DPMSolverSDE schedule includes second-order evaluations: its loop has
+        # 2 * requested Steps - 1 timesteps. Read the actual schedule after initialization.
+        try:
+            actual_total = len(callback_pipeline.scheduler.timesteps)
+        except (AttributeError, TypeError, OverflowError) as error:
+            raise DerivativeError(
+                "GENERATION_WORKER_FAILED", "Invalid denoising progress schedule."
+            ) from error
+        if (
+            callback_pipeline is not pipeline
+            or type(step_index) is not int
+            or not 1 <= actual_total <= 2 * MAX_GENERATION_STEPS
+            or actual_total > 2 * steps
+            or (total_steps is not None and actual_total != total_steps)
+            or step_index != completed_step
+            or step_index >= actual_total
+        ):
+            raise DerivativeError(
+                "GENERATION_WORKER_FAILED", "Invalid denoising progress sequence."
+            )
+        total_steps = actual_total
+        completed_step = step_index + 1
+        if on_progress is not None:
+            on_progress(completed_step, actual_total)
+        # Request no tensors and preserve the callback payload; progress cannot alter inference.
+        return callback_kwargs
+
     def call_pipeline() -> Any:
-        return pipeline(
+        result = pipeline(
             prompt_embeds=positive,
             negative_prompt_embeds=negative,
             pooled_prompt_embeds=conditioning.positive_pooled,
@@ -524,7 +565,14 @@ def run_sdxl_pipeline(
             num_images_per_prompt=1,
             guidance_scale=cfg_scale,
             generator=generator,
+            callback_on_step_end=report_step if on_progress is not None else None,
+            callback_on_step_end_tensor_inputs=[],
         )
+        if on_progress is not None and (total_steps is None or completed_step != total_steps):
+            raise DerivativeError(
+                "GENERATION_WORKER_FAILED", "Denoising progress did not finish its schedule."
+            )
+        return result
 
     if conditioning.positive_length == conditioning.negative_length:
         return call_pipeline()
@@ -588,7 +636,11 @@ def run_sdxl_pipeline(
 
 
 def generate_illustrious_txt2img(
-    command: GenerateIllustriousTxt2ImgCommand, *, config_dir: Path, runtime: MLRuntime
+    command: GenerateIllustriousTxt2ImgCommand,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
     """Execute one exact SDXL job and publish only its provisional PNG."""
     if command.prediction_type == "sample":
@@ -626,6 +678,7 @@ def generate_illustrious_txt2img(
         cfg_scale=command.cfg_scale,
         generator=generator,
         torch=torch,
+        on_progress=on_progress,
     )
     image = result.images[0]
     if not isinstance(image, Image.Image) or image.size != (command.width, command.height):
