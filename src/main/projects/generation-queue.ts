@@ -100,6 +100,7 @@ const FrozenContextSchema = v.strictObject({
     sampler: NonemptySchema,
     scheduler: NonemptySchema,
     seed: Uint32Schema,
+    seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
     steps: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(200)),
   }),
   schemaVersion: v.literal(1),

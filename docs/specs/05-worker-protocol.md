@@ -139,6 +139,14 @@ or `Per prompt` then schedules the batch from that base. The frozen request
 keeps the concrete seed and requested policy separately, so later completions
 cannot silently change an already queued batch.
 
+[Prepared-batch checkpoint](../engineering/phase-2b-batch-planning-research.md)
+реализует это планирование внутри main: начальный cap 32 jobs и независимый
+recovery byte preflight. Новая optional `seedBehavior` metadata хранится в
+frozen main context и accepted provenance; отсутствие поля у legacy результата
+не восполняется догадкой. Это не новое поле Python denoising DTO. Каждый concrete
+request отдельно проверяется на escaped 64 KiB transport envelope до queue
+publication. Renderer dynamic preview/settings/Generate ещё не подключены.
+
 Production ProjectService создаёт
 [подготовительный контекст Illustrious `txt2img`](../engineering/phase-2b-generation-preparation-research.md):
 он фиксирует точную модель, Project target, prompts, Steps/CFG и конкретный

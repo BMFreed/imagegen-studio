@@ -386,8 +386,19 @@ explicit Add; accepted document changes still need explicit Save.
 
 The existing 64-candidate, 128 KiB payload and 8 MiB manifest ceilings are checked
 before admission, including JSON escaping and maximum completion metadata.
-They do not qualify a public capacity limit. Renderer Generate, expansion/seed
-planning, full GPU/release runtime and Smart Patch remain open.
+At this historical grouping checkpoint they did not qualify a public capacity
+limit; planning was still caller-owned.
+
+The subsequent [prepared-batch checkpoint](../../../engineering/phase-2b-batch-planning-research.md)
+adds bounded concrete expansion and seed scheduling from one prepared base,
+checks every varied request envelope and stores selected seed behavior in new
+frozen contexts and immutable accepted provenance. Its integration test goes
+from authored templates through the planner to actual grouped admission,
+completion, early Add and portable Save; the live source templates stay in the
+Project draft, while provenance contains concrete prompts. Legacy records keep
+seed behavior unspecified. Persistent-storage capacity is measured separately
+from GPU throughput. Renderer Generate, persisted dynamic options/preview UI,
+full GPU/release runtime and Smart Patch remain open.
 
 ## Vue Prototype Coverage
 

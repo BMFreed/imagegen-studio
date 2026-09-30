@@ -206,6 +206,17 @@ implement the user-facing Add action, immutable attachment at handoff, undo,
 history projection, comparison or result-to-preset. See the
 [storage evidence](../../../engineering/phase-2b-accepted-provenance-storage.md).
 
+Subsequent [explicit Add Raster](../../../engineering/phase-2b-raster-acceptance-research.md)
+and [Project Undo/Redo](../../../engineering/phase-2b-project-undo-research.md)
+checkpoints connect immutable attachment to renderer/IPC/shadow/Save.
+The [prepared-batch checkpoint](../../../engineering/phase-2b-batch-planning-research.md)
+stores optional `sampling.seedBehavior` (`per-iteration` or `per-prompt`) from
+the frozen main context; legacy absence remains unspecified. Concrete prompts
+and the actual completed seed belong to the accepted result, while authored
+dynamic templates remain in the live draft. These integration checks replace
+external inference; history projection, comparison and result-to-preset remain
+unimplemented in production.
+
 ## Vue Prototype Coverage
 
 The Project prototype freezes a detached generation record when each mock job is

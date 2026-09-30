@@ -317,3 +317,29 @@ test('noncanonical completion and acceptance times do not enter immutable proven
     { code: 'PROVENANCE_INPUT_INVALID' },
   )
 })
+
+test('accepted provenance retains planned seed behavior while legacy results remain unspecified', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const legacy = provenanceFromVerifiedRasterCandidate({
+    acceptedAt: '2026-09-29T12:01:00.000Z',
+    candidate,
+    imagePngBytes,
+  })
+  assert.equal(legacy.generationConfiguration.sampling.seedBehavior, undefined)
+  for (const behavior of ['per-iteration', 'per-prompt'] as const) {
+    const payload = JSON.parse(candidate.frozenPayloadJson)
+    payload.context.sampling.seedBehavior = behavior
+    const frozenPayloadJson = JSON.stringify(payload)
+    const planned = {
+      ...candidate,
+      frozenPayloadJson,
+      frozenPayloadSha256: sha256(frozenPayloadJson),
+    }
+    const provenance = provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-09-29T12:01:00.000Z',
+      candidate: planned,
+      imagePngBytes,
+    })
+    assert.equal(provenance.generationConfiguration.sampling.seedBehavior, behavior)
+  }
+})

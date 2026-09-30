@@ -238,8 +238,13 @@ frozen bbox, actual seed and canonical completion/acceptance timestamps. The
 owning `layer.id` is the accepted-result identity; `candidateId` records its
 staging origin. Imported/manual Raster Layers have no provenance. Package Save,
 reopen and dirty shadow recovery preserve this value, but no production Add
-action yet attaches it to a real generated layer. Smart Patch/other modes and
-the durable accepted-history index remain open. See the
+action was connected at that first storage checkpoint. The subsequent
+[explicit Add Raster](../engineering/phase-2b-raster-acceptance-research.md)
+attaches it through renderer → IPC → shadow → Save. New
+[prepared batches](../engineering/phase-2b-batch-planning-research.md) retain
+optional `sampling.seedBehavior` in frozen metadata and accepted provenance;
+legacy absence remains unspecified. Smart Patch/other modes and the durable
+accepted-history index remain open. See the
 [storage checkpoint](../engineering/phase-2b-accepted-provenance-storage.md).
 
 `generationConfiguration` contains:

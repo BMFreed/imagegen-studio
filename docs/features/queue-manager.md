@@ -273,10 +273,20 @@ acknowledgement; an unknown outcome retains inputs and blocks Project admission,
 dispatch and fence release until successful startup recovery. See
 [qualified batch evidence](../engineering/phase-2b-batch-grouping-research.md).
 
+The subsequent [prepared-batch planner](../engineering/phase-2b-batch-planning-research.md)
+turns one frozen preparation/resolved base seed and explicit options into that
+qualified group. It validates all syntax, enumerates only a bounded prefix,
+preserves prompt-pair/iteration ordering and uint32 seed behavior, and refuses
+count/transport overflow before publication. Each concrete request fits the
+wire envelope; selected seed behavior remains frozen main metadata and enters
+accepted provenance. Legacy records need no synthesized behavior.
+The initial prepared-job cap is 32 from persistent-storage measurements;
+the existing 64-candidate recovery ceiling and byte preflight remain mandatory.
+
 This is still an internal boundary tested with a substitute inference transport.
 There is no renderer Generate/Queue Manager action or qualified full release GPU
-pipeline; expansion/seed planning, progress and user-facing retry/pruning are
-unconnected. Candidate acceptance has a separate production Raster path,
+pipeline; persisted dynamic options, preview/Generate UI, progress and user-facing
+retry/pruning are unconnected. Candidate acceptance has a separate production Raster path,
 including [confirmed early Add](./project/generate-mode/generation-results.md#production-confirmed-early-raster-acceptance-checkpoint)
 while sibling jobs run. Smart Patch acceptance remains open.
 

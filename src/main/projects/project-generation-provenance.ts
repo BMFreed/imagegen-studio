@@ -132,6 +132,7 @@ export function provenanceFromVerifiedRasterCandidate(input: {
           cfgScale: context.sampling.cfgScale,
           invokeScheduler: context.sampling.invokeScheduler,
           requestedSeedPolicy: context.sampling.requestedSeedPolicy,
+          ...(context.sampling.seedBehavior ? { seedBehavior: context.sampling.seedBehavior } : {}),
           sampler: context.sampling.sampler,
           scheduler: context.sampling.scheduler,
           steps: context.sampling.steps,

@@ -399,3 +399,25 @@ test('manifest and document must agree on IDs, revision, and every raster asset'
     assertSchemaCode('PACKAGE_MISMATCH'),
   )
 })
+
+test('accepted seed behavior is optional for legacy provenance and restricted to the two supported schedules', () => {
+  const legacy = rasterGenerationProvenance()
+  assert.equal(
+    parseRasterGenerationProvenanceV1(legacy).generationConfiguration.sampling.seedBehavior,
+    undefined,
+  )
+  for (const behavior of ['per-iteration', 'per-prompt'] as const) {
+    const planned = structuredClone(legacy)
+    planned.generationConfiguration.sampling.seedBehavior = behavior
+    assert.equal(
+      parseRasterGenerationProvenanceV1(planned).generationConfiguration.sampling.seedBehavior,
+      behavior,
+    )
+  }
+  const invalid = structuredClone(legacy)
+  Object.assign(invalid.generationConfiguration.sampling, { seedBehavior: 'unknown' })
+  assert.throws(
+    () => parseRasterGenerationProvenanceV1(invalid),
+    assertSchemaCode('INVALID_PROJECT'),
+  )
+})

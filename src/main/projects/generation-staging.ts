@@ -104,6 +104,7 @@ const FrozenPayloadSchema = v.strictObject({
       sampler: v.pipe(v.string(), v.nonEmpty()),
       scheduler: v.pipe(v.string(), v.nonEmpty()),
       seed: Uint32Schema,
+      seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
       steps: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(200)),
     }),
     schemaVersion: v.literal(1),

@@ -220,6 +220,7 @@ const RasterGenerationProvenanceV1Schema = v.pipe(
         requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
         sampler: NonemptyTextSchema,
         scheduler: NonemptyTextSchema,
+        seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
         steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
       }),
       size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),

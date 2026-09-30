@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1405,6 +1406,438 @@ test(
         await fixture.database.db.selectFrom('generation_queue_item').selectAll().execute(),
         [],
       )
+    })
+  },
+)
+
+test(
+  'prepared batch plans concrete pairs through completion, early Add and portable seed behavior',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: '{red|blue} lantern',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'negative-prompt',
+        text: '{blur|noise}',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: 0xff_ff_ff_fe,
+      })
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      const indexed = await fixture.projectIndex.getProject(fixture.tabId)
+      assert.ok(indexed)
+      const before = await readFile(indexed.canonicalPath)
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        {
+          iterations: 2,
+          maxPrompts: 3,
+          seedBehavior: 'per-prompt',
+        },
+        inferenceTransport(fixture.outputBytes),
+      )
+      assert.equal(admitted.plan.truncated, true)
+      assert.equal(admitted.items.length, 6)
+      assert.equal(new Set(admitted.items.map((item) => item.batchId)).size, 1)
+      const expected = [
+        ['red lantern', 'blur', 0xff_ff_ff_fe],
+        ['red lantern', 'blur', 0xff_ff_ff_ff],
+        ['red lantern', 'noise', 0],
+        ['red lantern', 'noise', 1],
+        ['blue lantern', 'blur', 2],
+        ['blue lantern', 'blur', 3],
+      ]
+      for (const [index, item] of admitted.items.entries()) {
+        const { payload } = await fixture.queue.loadVerifiedInput(item.id)
+        assert.deepEqual(
+          [
+            payload.context.prompts.positive,
+            payload.context.prompts.negative,
+            payload.context.sampling.seed,
+          ],
+          expected[index],
+        )
+        assert.equal(payload.context.sampling.requestedSeedPolicy, 'fixed')
+        assert.equal(payload.context.sampling.seedBehavior, 'per-prompt')
+        assert.equal(Object.hasOwn(payload.workerJob.sampling, 'seedBehavior'), false)
+      }
+      const completed = await fixture.orchestrator.runNext(inferenceTransport(fixture.outputBytes))
+      assert.equal(completed.kind, 'completed')
+      const resource = new ProjectGenerationResultResource(
+        fixture.staging,
+        (key) => fixture.projects.getOpenDocumentId(key),
+        fixture.queue,
+      )
+      const snapshot = await resource.list(fixture.tabId)
+      assert.equal(snapshot.unfinishedSiblingJobIds.length, 5)
+      const selected = snapshot.candidates[0].candidateId
+      const acceptance = new ProjectGenerationAcceptance({
+        documents: { getOpenDocument: (key) => fixture.projects.getOpenDocumentForAcceptance(key) },
+        gate: new ProjectGenerationOperationGate(),
+        journal: new GenerationAcceptanceJournalRepository(fixture.database.db),
+        orchestrator: fixture.orchestrator,
+        queue: fixture.queue,
+        staging: fixture.staging,
+      })
+      assert.equal(
+        (
+          await acceptance.accept(
+            fixture.tabId,
+            [selected],
+            selected,
+            [selected],
+            snapshot.unfinishedSiblingJobIds,
+          )
+        ).kind,
+        'accepted',
+      )
+      assert.deepEqual(await readFile(indexed.canonicalPath), before)
+      assert.equal((await fixture.projects.save(fixture.tabId, fixture.worker)).committed, true)
+      const saved = await readIgsPackage(indexed.canonicalPath)
+      const provenance = saved.project.layers[0].generationProvenance
+      assert.ok(provenance)
+      assert.equal(provenance.generationConfiguration.sampling.seedBehavior, 'per-prompt')
+      assert.equal(provenance.generationConfiguration.sampling.actualSeed, 0xff_ff_ff_fe)
+      assert.equal(provenance.generationConfiguration.positivePrompt.text, 'red lantern')
+      assert.equal(provenance.generationConfiguration.negativePrompt.text, 'blur')
+      assert.equal(saved.project.generationDraft.positivePrompt.text, '{red|blue} lantern')
+      assert.deepEqual(
+        await saved.readMember(saved.project.layers[0].asset.path),
+        fixture.outputBytes,
+      )
+    })
+  },
+)
+
+test(
+  'prepared batch uses one Random base and per-iteration uint32 seeds',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: '{red|blue}',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'random',
+        value: null,
+      })
+      let picks = 0
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+        () => {
+          picks++
+          return 0xff_ff_ff_ff
+        },
+      )
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        { iterations: 2, maxPrompts: 4, seedBehavior: 'per-iteration' },
+        inferenceTransport(fixture.outputBytes),
+      )
+      assert.equal(picks, 1)
+      assert.deepEqual(
+        admitted.plan.items.map((item) => item.seed),
+        [0xff_ff_ff_ff, 0, 0xff_ff_ff_ff, 0],
+      )
+      for (const item of admitted.items) {
+        const { payload } = await fixture.queue.loadVerifiedInput(item.id)
+        assert.equal(payload.context.sampling.requestedSeedPolicy, 'random')
+        assert.equal(payload.context.sampling.seedBehavior, 'per-iteration')
+      }
+    })
+  },
+)
+
+test(
+  'prepared batch snapshots caller options metadata and target before qualification awaits',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: '{red|blue}',
+      })
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      const options = { iterations: 2, maxPrompts: 4, seedBehavior: 'per-prompt' as const }
+      const resolve = fixture.modelService.resolveVerifiedGenerationCheckpointForPlan.bind(
+        fixture.modelService,
+      )
+      let changed = false
+      fixture.modelService.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
+        if (!changed) {
+          changed = true
+          prepared.context.prompts.positive = 'caller changed'
+          prepared.context.sampling.seed = 10
+          prepared.targetPngBytes.fill(0)
+          options.iterations = 50
+        }
+        return await resolve(reference)
+      }
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        options,
+        inferenceTransport(fixture.outputBytes),
+      )
+      assert.equal(changed, true)
+      assert.equal(admitted.items.length, 4)
+      const { payload, targetPath } = await fixture.queue.loadVerifiedInput(admitted.items[0].id)
+      assert.equal(payload.context.prompts.positive, 'red')
+      assert.equal(payload.context.sampling.seed, 42)
+      assert.ok((await readFile(targetPath)).some((byte) => byte !== 0))
+    })
+  },
+)
+
+test(
+  'prepared batch rejects malformed syntax and excessive count before qualification',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      let calls = 0
+      fixture.modelService.resolveVerifiedGenerationCheckpointForPlan = async () => {
+        calls++
+        throw new Error('qualification must not start')
+      }
+      prepared.context.prompts.positive = '{red|blue'
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          { iterations: 1, maxPrompts: 4, seedBehavior: 'per-prompt' },
+          inferenceTransport(fixture.outputBytes),
+        ),
+        { code: 'PROMPT_INVALID' },
+      )
+      prepared.context.prompts.positive = 'red'
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          { iterations: Number.MAX_SAFE_INTEGER, maxPrompts: 4, seedBehavior: 'per-prompt' },
+          inferenceTransport(fixture.outputBytes),
+        ),
+        { code: 'BATCH_TOO_LARGE' },
+      )
+      assert.equal(calls, 0)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+    })
+  },
+)
+
+test(
+  'prepared batch enforces the measured policy at its exact boundary before qualification',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      assert.equal(GENERATION_BATCH_JOB_LIMIT, 32)
+      const resolve = fixture.modelService.resolveVerifiedGenerationCheckpointForPlan.bind(
+        fixture.modelService,
+      )
+      let calls = 0
+      fixture.modelService.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
+        calls++
+        return await resolve(reference)
+      }
+      const options = {
+        iterations: GENERATION_BATCH_JOB_LIMIT + 1,
+        maxJobs: 64,
+        maxPrompts: 1,
+        seedBehavior: 'per-iteration' as const,
+      }
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          options,
+          inferenceTransport(fixture.outputBytes),
+        ),
+        { code: 'BATCH_TOO_LARGE' },
+      )
+      assert.equal(calls, 0)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+      options.iterations = GENERATION_BATCH_JOB_LIMIT
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        options,
+        inferenceTransport(fixture.outputBytes),
+      )
+      assert.equal(admitted.items.length, GENERATION_BATCH_JOB_LIMIT)
+      assert.ok(calls > 0)
+      assert.equal(new Set(admitted.items.map((item) => item.batchId)).size, 1)
+      assert.equal(
+        (await fixture.queue.listUnfinishedByProject(fixture.tabId)).length,
+        GENERATION_BATCH_JOB_LIMIT,
+      )
+    })
+  },
+)
+
+test(
+  'prepared batch checks transport envelope for a later concrete prompt pair',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const longAlternative = String.fromCharCode(92).repeat(16_370)
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: `{ok|${longAlternative}}`,
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'negative-prompt',
+        text: `{ok|${longAlternative}}`,
+      })
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      let enqueueCalls = 0
+      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
+      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+        enqueueCalls++
+        return await enqueue(input)
+      }
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          { iterations: 1, maxPrompts: 4, seedBehavior: 'per-prompt' },
+          inferenceTransport(fixture.outputBytes),
+        ),
+        { code: 'GENERATION_PARAMETER_UNSUPPORTED' },
+      )
+      assert.equal(enqueueCalls, 0)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+    })
+  },
+)
+
+test(
+  'prepared batch reuses a completed zero seed without another Random choice',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const first = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        inferenceTransport(fixture.outputBytes),
+      )
+      const transport = inferenceTransport(fixture.outputBytes)
+      const generate = transport.generate.bind(transport)
+      transport.generate = async (request) => {
+        const done = await generate(request)
+        assert.ok(done && typeof done === 'object' && !Array.isArray(done))
+        return { ...done, seed: 0 }
+      }
+      assert.equal((await fixture.orchestrator.runNext(transport)).kind, 'completed')
+      assert.equal((await fixture.queue.loadVerifiedInput(first.id)).item.status, 'completed')
+      const lastSeed = await fixture.staging.readLastActualSeed(
+        fixture.tabId,
+        currentDocumentId(fixture),
+      )
+      assert.equal(lastSeed, 0)
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'reuse',
+        value: null,
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: '{red|blue}',
+      })
+      let picks = 0
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+        () => {
+          picks++
+          return 42
+        },
+        lastSeed,
+      )
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        { iterations: 2, maxPrompts: 4, seedBehavior: 'per-prompt' },
+        transport,
+      )
+      assert.equal(picks, 0)
+      assert.deepEqual(
+        admitted.plan.items.map((item) => item.seed),
+        [0, 1, 2, 3],
+      )
+      assert.notEqual(admitted.items[0].stagingSessionId, first.stagingSessionId)
+      assert.equal(
+        (await fixture.queue.loadVerifiedInput(admitted.items[0].id)).payload.context.sampling
+          .requestedSeedPolicy,
+        'reuse',
+      )
+    })
+  },
+)
+
+test(
+  'prepared batch refuses literal escaped braces unsupported by the current worker before qualification',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: `${String.fromCharCode(92)}{literal${String.fromCharCode(92)}}`,
+      })
+      const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      let calls = 0
+      fixture.modelService.resolveVerifiedGenerationCheckpointForPlan = async () => {
+        calls++
+        throw new Error('must refuse before qualification')
+      }
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          { iterations: 1, maxPrompts: 4, seedBehavior: 'per-prompt' },
+          inferenceTransport(fixture.outputBytes),
+        ),
+        { code: 'GENERATION_PROMPT_UNSUPPORTED' },
+      )
+      assert.equal(calls, 0)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
     })
   },
 )

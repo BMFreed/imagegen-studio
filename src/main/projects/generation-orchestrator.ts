@@ -1,3 +1,9 @@
+import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
+import type {
+  GenerationBatchPlan,
+  GenerationBatchPlanInput,
+} from '../../shared/projects/generation-batch-plan.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
@@ -19,7 +25,10 @@ import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
-import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import {
+  assertIllustriousTxt2ImgRequestFitsTransport,
+  withIllustriousTxt2ImgRequest,
+} from './illustrious-txt2img-job.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -28,6 +37,16 @@ const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3
 export interface QualifiedGenerationBatchItem {
   prepared: PreparedNormalTxt2Img
   request: IllustriousTxt2ImgRequestV1
+}
+
+export type GenerationPreparedBatchOptions = Pick<
+  GenerationBatchPlanInput,
+  'iterations' | 'maxPrompts' | 'seedBehavior'
+>
+
+export interface PreparedBatchAdmissionResult {
+  items: QueuedGenerationItem[]
+  plan: GenerationBatchPlan
 }
 
 interface AcceptanceCancellationScope {
@@ -41,6 +60,7 @@ export class GenerationOrchestratorError extends Error {
     readonly code:
       | 'CANCELLATION_UNCERTAIN'
       | 'GENERATION_BATCH_INVALID'
+      | 'GENERATION_PROMPT_UNSUPPORTED'
       | 'PROJECT_DOCUMENT_CHANGED'
       | 'PROJECT_GENERATION_CLOSING'
       | 'PROJECT_IDENTITY_CHANGED'
@@ -247,6 +267,109 @@ export class GenerationOrchestrator {
     const operation = this.enqueueBarrier.then(
       async () => await this.enqueueOneUnlocked(tabId, compositionWorker, inferenceWorker),
     )
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** Plan one already-frozen Project preparation; its caller owns base-seed resolution. */
+  async enqueuePreparedBatch(
+    tabId: string,
+    prepared: PreparedNormalTxt2Img,
+    options: GenerationPreparedBatchOptions,
+    inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
+  ): Promise<PreparedBatchAdmissionResult> {
+    this.assertGenerationOpen(tabId)
+    if (
+      !Buffer.isBuffer(prepared?.targetPngBytes) ||
+      prepared.targetPngBytes.length < 1 ||
+      prepared.targetPngBytes.length > IGS_GENERATION_PNG_MAX_BYTES
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The frozen batch target is invalid.',
+      )
+    }
+    // Freeze before the admission barrier and before any model verification await. The caller
+    // retains its original preparation; the plan can never reread later Project edits.
+    const context = structuredClone(prepared.context)
+    const targetPngBytes = Buffer.from(prepared.targetPngBytes)
+    const plannedOptions = { ...options }
+    const ready = {
+      ...inferenceWorker.ready,
+      capabilities: [...inferenceWorker.ready.capabilities],
+    }
+    const plan = planGenerationBatch({
+      ...plannedOptions,
+      baseSeed: context.sampling.seed,
+      maxJobs: GENERATION_BATCH_JOB_LIMIT,
+      negativePrompt: context.prompts.negative,
+      positivePrompt: context.prompts.positive,
+    })
+    // Current Python/Compel qualification rejects literal braces, even escaped ones. The pure
+    // planner preserves them; admission must explicitly refuse that remaining worker limitation.
+    if (
+      plan.items.some(
+        (item) => /[{}]/.test(item.prompts.positive) || /[{}]/.test(item.prompts.negative),
+      )
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_PROMPT_UNSUPPORTED',
+        'The active Illustrious pipeline does not support literal brace text yet.',
+      )
+    }
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      this.assertGenerationOpen(tabId)
+      const project = await this.indexedProject(tabId)
+      this.requireBatchDocument(tabId, project.documentId, [
+        { prepared: { context, targetPngBytes } },
+      ])
+      const first = plan.items[0]
+      const firstContext = {
+        ...context,
+        prompts: { ...first.prompts },
+        sampling: {
+          ...context.sampling,
+          seed: first.seed,
+          seedBehavior: plannedOptions.seedBehavior,
+        },
+      }
+      return await withIllustriousTxt2ImgRequest({
+        modelService: this.models,
+        prepared: { context: firstContext, targetPngBytes },
+        ready,
+        scratchBasePath: this.scratchBasePath,
+        use: async (request) => {
+          const concrete = plan.items.map((item, index) => {
+            const jobContext = {
+              ...context,
+              prompts: { ...item.prompts },
+              sampling: {
+                ...context.sampling,
+                seed: item.seed,
+                seedBehavior: plannedOptions.seedBehavior,
+              },
+            }
+            const job = {
+              ...request,
+              job: {
+                ...request.job,
+                prompts: { ...item.prompts },
+                sampling: { ...request.job.sampling, seed: item.seed },
+              },
+              requestId: index === 0 ? request.requestId : randomUUID(),
+            }
+            assertIllustriousTxt2ImgRequestFitsTransport(job)
+            return { prepared: { context: jobContext, targetPngBytes }, request: job }
+          })
+          return { items: await this.enqueueBatchUnlocked(tabId, concrete), plan }
+        },
+      })
+    })
     this.enqueueBarrier = operation.then(
       () => undefined,
       () => undefined,
@@ -577,7 +700,7 @@ export class GenerationOrchestrator {
   private requireBatchDocument(
     tabId: string,
     documentId: string,
-    items: readonly QualifiedGenerationBatchItem[],
+    items: readonly Pick<QualifiedGenerationBatchItem, 'prepared'>[],
   ): void {
     if (
       this.projects.getOpenDocumentId(tabId) !== documentId ||

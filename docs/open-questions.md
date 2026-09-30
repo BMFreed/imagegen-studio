@@ -28,17 +28,20 @@
   Продуктовое решение о встроенной проверке и установке уже принято; это
   инженерный контракт доставки, отдельный от Python runtime update. User flow
   описан в [Application Updates](./features/application-updates.md).
-- До production dynamic batch expansion определить верхний лимит jobs по
-  capacity tests для поддерживаемого Linux/NVIDIA профиля; прототипный лимит
-  не является автоматически production-значением. Freeze/queue и UI должны
-  показывать один и тот же лимит и причину отказа.
+- Для renderer dynamic preview/Generate использовать общий начальный лимит
+  32 jobs из [persistent-storage замеров](./engineering/phase-2b-batch-planning-research.md).
+  Внутренний planner/admission уже применяет его; UI ещё не подключён и должен
+  показывать тот же лимит, explicit truncation и причину отказа. Замеры storage
+  на одном Linux-компьютере не заменяют Linux/NVIDIA release qualification.
 
 ## Можно решить позже
 
-- Числовой лимит локального staging recovery остаётся инженерным параметром
-  до capacity tests перед disk-backed generation. Уже принято: валидные
-  неразрешённые candidates нельзя молча вытеснять ради quota; нехватка места
-  требует понятной ошибки и действия для пользователя.
+- Локальный staging recovery имеет проверенные storage ceilings: 64 candidates,
+  128 KiB frozen payload и 8 MiB escaped manifest. Начальный prepared-batch cap
+  равен 32; byte preflight обязателен независимо от count. Валидные неразрешённые
+  candidates нельзя молча вытеснять ради quota; нехватка места требует понятной
+  ошибки и действия для пользователя. Fleet/driver/VRAM и пользовательская
+  responsiveness гарантия остаются отдельной release qualification.
 - Отдельный privacy/offline promise: определить допустимые внешние запросы,
   telemetry/crash reports и поведение без сети. Local desktop/inference scope
   сам по себе не доказывает, что данные никогда не покидают устройство.

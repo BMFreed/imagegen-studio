@@ -104,6 +104,43 @@ without marking the document dirty or adding Undo history. This does not yet
 implement renderer Generate, dynamic batch expansion in the production worker
 or a packaged Linux/NVIDIA release pipeline.
 
+## Production prepared-batch planning checkpoint
+
+The [internal planner and capacity checkpoint](../../../engineering/phase-2b-batch-planning-research.md)
+adds `planGenerationBatch` and `enqueuePreparedBatch`. The caller supplies one
+already frozen Project preparation with a resolved Fixed/Random/Reuse base;
+main snapshots it and the options before asynchronous admission. The pure
+planner validates all source syntax before selecting a bounded Cartesian prefix,
+uses positive outer/negative inner and pair outer/iteration inner order, and
+returns an explicit `truncated` flag when `maxPrompts` selects only a prefix.
+Overflow of the independent job limit refuses the whole batch instead of
+silently truncating it again. Huge products are not eagerly allocated.
+
+The initial shared prepared-batch policy is 32 jobs, selected by persistent
+storage measurements. Recovery's 64-candidate ceiling and escaped-byte
+preflight remain separate constraints; this is not GPU or release qualification.
+
+The current internal grammar supports non-nested alternatives, preserves
+duplicates and literal dollar text, rejects empty/single alternatives, and
+retains backslash escapes. Sources and concrete strings are bounded to 16 KiB
+UTF-8. The current Python worker cannot condition literal brace text, even
+escaped; main explicitly refuses remaining braces before qualification. Pure
+lexical preservation is not evidence of Compel/GPU support.
+
+One common target lease qualifies the group, and every varied concrete request
+is checked against the transport envelope before atomic queue publication.
+New frozen contexts and accepted provenance retain the selected `seedBehavior`;
+legacy records without it remain readable and unspecified. Integration tests
+use real Project preparation for Fixed, one Random choice and completed Reuse
+seed zero, then actual queue/staging/Add/portable Save with external inference
+substituted. Seed behavior remains main metadata rather than a Python sampling
+parameter.
+
+Renderer Generate, preview/settings UI, persisted dynamic draft options,
+full conditioning and release inference remain unconnected. The prototype's
+100-job guard remains separate from production admission policy; the future UI
+must use the shared measured policy and expose truncation/refusal before enqueue.
+
 ## Vue Prototype Coverage
 
 The shared preview modal parses non-nested brace alternatives directly from `GenerationPrompt.text`, produces deterministic Cartesian prompt pairs and exposes `maxPrompts` plus `per-iteration` / `per-prompt` seed behavior. Opening preview is transient; changing these settings is a Project generation-draft mutation. Nested braces and malformed expressions show local errors.

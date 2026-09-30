@@ -369,6 +369,13 @@ test('atomic batch rejects mixed identities, duplicate requests and capacity ref
           items[1].request.job.sampling.steps += 1
         },
         (items: BatchItem[]) => {
+          items[0].prepared.context.sampling.seedBehavior = 'per-prompt'
+          items[1].prepared.context.sampling.seedBehavior = 'per-iteration'
+        },
+        (items: BatchItem[]) => {
+          Object.assign(items[1].prepared.context.sampling, { seedBehavior: 'invalid' })
+        },
+        (items: BatchItem[]) => {
           items[1].prepared.context.model.reference.localVersionId = randomUUID()
         },
         (items: BatchItem[]) => {

@@ -163,15 +163,22 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
       requestId: randomUUID(),
       type: 'generate-illustrious-txt2img',
     }
-    if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
-      throw new IllustriousJobError(
-        'GENERATION_PARAMETER_UNSUPPORTED',
-        'The generation request exceeds the worker transport limit.',
-      )
-    }
+    assertIllustriousTxt2ImgRequestFitsTransport(request)
     return await input.use(request)
   } finally {
     await rm(stage, { force: true, recursive: true })
+  }
+}
+
+/** Check each concrete request, including JSON escaping, before grouped queue publication. */
+export function assertIllustriousTxt2ImgRequestFitsTransport(
+  request: IllustriousTxt2ImgRequestV1,
+): void {
+  if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
+    throw new IllustriousJobError(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'The generation request exceeds the worker transport limit.',
+    )
   }
 }
 

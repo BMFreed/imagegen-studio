@@ -30,6 +30,7 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
     sampler: string | null
     scheduler: string | null
     seed: number
+    seedBehavior?: 'per-iteration' | 'per-prompt'
     steps: number
   }
   schemaVersion: 1
