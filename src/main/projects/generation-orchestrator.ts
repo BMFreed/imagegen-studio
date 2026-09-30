@@ -1,4 +1,7 @@
-import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import {
+  IGS_GENERATION_PNG_MAX_BYTES,
+  IGS_SAFETY_CEILINGS,
+} from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
 
@@ -9,14 +12,23 @@ import type { GenerationProcessor } from './generation-processor.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
+import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+
+/** Concrete jobs whose caller retains the qualified target lease until enqueue resolves. */
+export interface QualifiedGenerationBatchItem {
+  prepared: PreparedNormalTxt2Img
+  request: IllustriousTxt2ImgRequestV1
+}
 
 interface AcceptanceCancellationScope {
   documentId: string
@@ -28,6 +40,7 @@ export class GenerationOrchestratorError extends Error {
   constructor(
     readonly code:
       | 'CANCELLATION_UNCERTAIN'
+      | 'GENERATION_BATCH_INVALID'
       | 'PROJECT_DOCUMENT_CHANGED'
       | 'PROJECT_GENERATION_CLOSING'
       | 'PROJECT_IDENTITY_CHANGED'
@@ -52,6 +65,7 @@ export class GenerationOrchestrator {
     string,
     { operation: Promise<void>; scope: AcceptanceCancellationScope }
   >()
+  private readonly batchCleanupUnconfirmed = new Set<string>()
   private readonly cancelingProjects = new Map<string, Promise<void>>()
   private readonly cancellationStarted = new Set<string>()
   private readonly completedProjectCloses = new Set<string>()
@@ -162,6 +176,7 @@ export class GenerationOrchestrator {
         if (unfinished.length === 0) {
           // A confirmed whole-Project close may resolve a previous acceptance cancellation.
           this.acceptanceCanceled.delete(tabId)
+          this.batchCleanupUnconfirmed.delete(tabId)
           return
         }
         for (const item of unfinished) {
@@ -193,6 +208,7 @@ export class GenerationOrchestrator {
       this.cancelingProjects.has(tabId) ||
       this.acceptanceCancelingProjects.has(tabId) ||
       this.acceptanceCanceled.has(tabId) ||
+      this.batchCleanupUnconfirmed.has(tabId) ||
       this.projects.getOpenTabs().some((tab) => tab.id === tabId)
     ) {
       throw new GenerationOrchestratorError(
@@ -201,6 +217,23 @@ export class GenerationOrchestrator {
       )
     }
     this.completedProjectCloses.add(tabId)
+  }
+
+  /** Atomically admit a concrete planned group; prompt expansion and seed scheduling are upstream. */
+  async enqueueBatch(
+    tabId: string,
+    items: readonly QualifiedGenerationBatchItem[],
+  ): Promise<QueuedGenerationItem[]> {
+    this.assertGenerationOpen(tabId)
+    const frozen = snapshotQualifiedBatch(items)
+    const operation = this.enqueueBarrier.then(
+      async () => await this.enqueueBatchUnlocked(tabId, frozen),
+    )
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
   }
 
   async enqueueOne(
@@ -233,6 +266,11 @@ export class GenerationOrchestrator {
 
   /** Only valid before destructive Project-close cancellation has begun. */
   releaseProjectGenerationFence(tabId: string): void {
+    if (this.batchCleanupUnconfirmed.has(tabId)) {
+      throw cancellationUncertain(
+        'The failed batch has not confirmed cancellation. Close the Project or restart to recover.',
+      )
+    }
     if (this.acceptanceCancelingProjects.has(tabId) || this.acceptanceCanceled.has(tabId)) {
       throw cancellationUncertain('Acceptance cancellation has not confirmed all worker exits.')
     }
@@ -254,6 +292,7 @@ export class GenerationOrchestrator {
       this.cancelingProjects.has(tabId) ||
       this.acceptanceCancelingProjects.has(tabId) ||
       this.acceptanceCanceled.has(tabId) ||
+      this.batchCleanupUnconfirmed.has(tabId) ||
       (this.fencedProjects.has(tabId) && !this.completedProjectCloses.has(tabId))
     ) {
       throw new GenerationOrchestratorError(
@@ -307,6 +346,94 @@ export class GenerationOrchestrator {
         'PROJECT_NOT_OPEN',
         'Open the Project before preparing a generation.',
       )
+    }
+  }
+
+  private async enqueueBatchUnlocked(
+    tabId: string,
+    items: readonly QualifiedGenerationBatchItem[],
+  ): Promise<QueuedGenerationItem[]> {
+    this.queue.assertReadyForDispatch()
+    this.staging.assertReadyForPublication()
+    this.assertGenerationOpen(tabId)
+    const project = await this.indexedProject(tabId)
+    this.requireBatchDocument(tabId, project.documentId, items)
+    const model = items[0].prepared.context.model
+    const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(model.reference)
+    if (
+      verified.managedPath !== model.managedPath ||
+      verified.reference.fileSha256 !== model.reference.fileSha256 ||
+      verified.reference.predictionType !== model.reference.predictionType
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The exact checkpoint changed after the batch was qualified. Prepare it again.',
+      )
+    }
+    this.assertGenerationOpen(tabId)
+    const before = await this.indexedProject(tabId)
+    this.requireBatchDocument(tabId, project.documentId, items)
+    if (
+      before.canonicalPath !== project.canonicalPath ||
+      before.documentId !== project.documentId
+    ) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_DOCUMENT_CHANGED',
+        'The indexed Project changed while the batch was being prepared.',
+      )
+    }
+    const stagingSessionId = randomUUID()
+    const queued = await this.queue.enqueueIllustriousTxt2ImgBatch({
+      items,
+      preflight: async (entries) => {
+        this.assertGenerationOpen(tabId)
+        this.requireBatchDocument(tabId, project.documentId, items)
+        await this.staging.preflightBatchCapacity({
+          entries,
+          localProjectKey: tabId,
+          projectPath: project.canonicalPath,
+          stagingSessionId,
+        })
+        this.assertGenerationOpen(tabId)
+        this.requireBatchDocument(tabId, project.documentId, items)
+      },
+      projectPath: project.canonicalPath,
+      stagingSessionId,
+    })
+    try {
+      this.assertGenerationOpen(tabId)
+      const after = await this.indexedProject(tabId)
+      this.requireBatchDocument(tabId, project.documentId, items)
+      if (
+        after.canonicalPath !== project.canonicalPath ||
+        after.documentId !== project.documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The indexed Project changed after the batch was queued.',
+        )
+      }
+      this.assertGenerationOpen(tabId)
+      return queued
+    } catch (error) {
+      // Own dispatch waits for this admission barrier. Cancel exactly the newly committed group;
+      // if a worker exit cannot be proved, a later fence release must not admit replacement work.
+      try {
+        for (const item of queued) {
+          const stopped = await this.processor.cancelAndWait(item.id)
+          if (stopped.status !== 'canceled') {
+            throw cancellationUncertain('A failed batch job has not stopped.')
+          }
+        }
+      } catch {
+        this.batchCleanupUnconfirmed.add(tabId)
+        this.fencedProjects.add(tabId)
+        this.queue.fenceProject(tabId)
+        throw cancellationUncertain(
+          'The Project changed after batch enqueue, and its cancellation needs recovery.',
+        )
+      }
+      throw error
     }
   }
 
@@ -446,6 +573,58 @@ export class GenerationOrchestrator {
     }
     return scoped
   }
+
+  private requireBatchDocument(
+    tabId: string,
+    documentId: string,
+    items: readonly QualifiedGenerationBatchItem[],
+  ): void {
+    if (
+      this.projects.getOpenDocumentId(tabId) !== documentId ||
+      items.some((item) => item.prepared.context.documentId !== documentId)
+    ) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_DOCUMENT_CHANGED',
+        'The prepared batch does not belong to the currently open Project document.',
+      )
+    }
+  }
+}
+
+/** Copy one common image and every metadata object before entering the asynchronous barrier. */
+function snapshotQualifiedBatch(
+  items: readonly QualifiedGenerationBatchItem[],
+): QualifiedGenerationBatchItem[] {
+  const source = items?.[0]?.prepared?.targetPngBytes
+  if (
+    !Array.isArray(items) ||
+    items.length < 1 ||
+    items.length > GENERATION_STAGING_LIMITS.candidates ||
+    !Buffer.isBuffer(source) ||
+    source.length < 1 ||
+    source.length > IGS_GENERATION_PNG_MAX_BYTES
+  ) {
+    throw new GenerationOrchestratorError(
+      'GENERATION_BATCH_INVALID',
+      'The prepared batch is invalid or exceeds recovery capacity.',
+    )
+  }
+  const targetPngBytes = Buffer.from(source)
+  return items.map((item) => {
+    if (
+      !Buffer.isBuffer(item?.prepared?.targetPngBytes) ||
+      !item.prepared.targetPngBytes.equals(targetPngBytes)
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'All batch jobs must share one frozen target.',
+      )
+    }
+    return {
+      prepared: { context: structuredClone(item.prepared.context), targetPngBytes },
+      request: structuredClone(item.request),
+    }
+  })
 }
 
 function cancellationUncertain(message: string): GenerationOrchestratorError {

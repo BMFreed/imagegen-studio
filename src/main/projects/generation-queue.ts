@@ -18,6 +18,7 @@ import type {
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
+import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
@@ -188,12 +189,16 @@ export interface NormalizedQueueFailure {
 }
 
 export interface GenerationQueueTestHooks {
+  /** Lost acknowledgement after the complete batch transaction committed. */
+  afterBatchCommit?: () => Promise<void>
   /** Failure after durable directory publication, before SQLite insertion. */
   afterInputPublish?: () => Promise<void>
   /** Failure after terminal rows are deleted, before their inputs are reclaimed. */
   afterPruneCommit?: () => Promise<void>
   /** Failure after a retry input is durable, before its row is committed. */
   afterRetryInputPublish?: () => Promise<void>
+  /** Pause or fail after all batch inserts but before their single transaction commits. */
+  beforeBatchCommit?: () => Promise<void>
   /** Pause after frozen-input verification, before the cross-instance claim CAS. */
   beforeClaimUpdate?: (itemId: string) => Promise<void>
   /** Simulate a nonfatal filesystem cleanup failure after a committed prune. */
@@ -243,6 +248,7 @@ function sha256(bytes: Buffer): string {
 export class GenerationQueueRepository {
   private readonly fencedProjects = new Set<string>()
   private pendingOperation: Promise<void> = Promise.resolve()
+  private readonly publicationUncertainProjects = new Set<string>()
   private reconciled = false
   private readonly root: string
 
@@ -291,6 +297,9 @@ export class GenerationQueueRepository {
 
   assertProjectCanEnqueue(localProjectKey: string): void {
     validateProjectKey(localProjectKey)
+    if (this.publicationUncertainProjects.has(localProjectKey)) {
+      throw batchPublicationUncertain()
+    }
     if (this.fencedProjects.has(localProjectKey)) {
       throw new GenerationQueueError(
         'QUEUE_PROJECT_CLOSING',
@@ -669,6 +678,199 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Publish one fresh group of already qualified concrete jobs, with no partial visible batch. */
+  async enqueueIllustriousTxt2ImgBatch(input: {
+    items: readonly { prepared: PreparedNormalTxt2Img; request: IllustriousTxt2ImgRequestV1 }[]
+    preflight: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    projectPath: string
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    if (
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > GENERATION_STAGING_LIMITS.candidates ||
+      typeof input.preflight !== 'function'
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The qualified batch selection is invalid.',
+      )
+    }
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    const preflight = input.preflight
+    if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
+    }
+    // One shared target snapshot bounds memory independently of the number of jobs. All mutable
+    // metadata and caller buffers are consumed before the first await, including the item order.
+    const targetBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
+    const items = input.items.map((item) => {
+      if (
+        !Buffer.isBuffer(item?.prepared?.targetPngBytes) ||
+        !item.prepared.targetPngBytes.equals(targetBytes)
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'A batch must share one frozen target.',
+        )
+      }
+      const context = structuredClone(item.prepared.context)
+      const request = structuredClone(item.request)
+      validateSnapshot(context, request, targetBytes, stagingSessionId)
+      return { context, request }
+    })
+    const group = comparableBatchContext(items[0].context)
+    if (
+      new Set(items.map((item) => item.request.requestId)).size !== items.length ||
+      items.some((item) => !isDeepStrictEqual(comparableBatchContext(item.context), group))
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The batch contains mixed frozen inputs.',
+      )
+    }
+
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
+      for (const item of items) {
+        const source = await readStableFile(
+          item.request.job.target.path,
+          item.context.target.byteSize,
+          item.context.target.sha256,
+        )
+        if (!source.equals(targetBytes)) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The qualified batch target changed.',
+          )
+        }
+      }
+      await validateTargetPng(targetBytes, items[0].context)
+      const batchId = randomUUID()
+      // IDs remain opaque random UUIDs. Canonical assignment to plan slots preserves supplied
+      // order through the existing created_at/id query without synthetic timestamps or migration.
+      const ids = items.map(() => randomUUID()).sort()
+      const now = new Date().toISOString()
+      const rows: Selectable<GenerationQueueItem>[] = items.map((item, index) => ({
+        batch_id: batchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: item.context.documentId,
+        document_revision: item.context.documentRevision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: frozenBatchPayloadJson(item.context, item.request),
+        id: ids[index],
+        local_project_key: localProjectKey,
+        operation: 'illustrious-txt2img',
+        staging_session_id: stagingSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }))
+      await preflight(
+        Object.freeze(
+          rows.map((row) =>
+            Object.freeze({
+              frozenPayloadJson: row.frozen_payload_json,
+              queueItemId: row.id,
+            }),
+          ),
+        ),
+      )
+      this.assertProjectCanEnqueue(localProjectKey)
+      const root = await this.ensureRoot()
+      const directories: { path: string; published: boolean }[] = []
+      try {
+        for (const row of rows) {
+          const temporary = await mkdtemp(path.join(root, '.tmp-'))
+          const directory = { path: temporary, published: false }
+          directories.push(directory)
+          const manifest: InputManifestV1 = {
+            payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
+            queueInputVersion: QUEUE_INPUT_VERSION,
+            queueItemId: row.id,
+            targetByteSize: targetBytes.length,
+            targetFile: 'target.png',
+            targetSha256: sha256(targetBytes),
+          }
+          await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          await writeDurableFile(
+            path.join(temporary, 'manifest.json'),
+            Buffer.from(JSON.stringify(manifest), 'utf8'),
+          )
+          await syncDirectory(temporary)
+          const published = path.join(root, row.id)
+          await rename(temporary, published)
+          directory.path = published
+          directory.published = true
+          await syncDirectory(root)
+          await this.testHooks.afterInputPublish?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
+          for (const row of rows) {
+            await transaction.insertInto('generation_queue_item').values(row).execute()
+            this.assertProjectCanEnqueue(localProjectKey)
+          }
+          await this.testHooks.beforeBatchCommit?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return rows.map(toItem)
+      } catch (error) {
+        if (!directories.some((directory) => directory.published)) {
+          await removeUnregisteredBatchDirectories(
+            directories.map((directory) => directory.path),
+            root,
+          )
+          throw error
+        }
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', 'in', ids)
+            .execute()
+        } catch {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        if (batchRowsMatch(committed, rows)) {
+          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
+        }
+        if (committed.length !== 0) {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        await removeUnregisteredBatchDirectories(
+          directories.map((directory) => directory.path),
+          root,
+        )
+        throw error
+      }
+    })
+  }
+
   /** A worker failure is accepted only for the exact running revision it was started for. */
   async failRunning(
     id: string,
@@ -884,6 +1086,7 @@ export class GenerationQueueRepository {
         await syncDirectory(root)
       }
       this.reconciled = true
+      this.publicationUncertainProjects.clear()
       return { canceledCount: canceled, orphanedDirectoriesRemoved: removed }
     })
   }
@@ -891,6 +1094,9 @@ export class GenerationQueueRepository {
   /** Only a canceled close decision or a freshly opened Project may lift this fence. */
   releaseProjectFence(localProjectKey: string): void {
     validateProjectKey(localProjectKey)
+    if (this.publicationUncertainProjects.has(localProjectKey)) {
+      throw batchPublicationUncertain()
+    }
     this.fencedProjects.delete(localProjectKey)
   }
 
@@ -1191,6 +1397,94 @@ export class GenerationQueueRepository {
 function validateQueueId(id: string): void {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+  }
+}
+
+function comparableBatchContext(context: FrozenNormalTxt2ImgPreparationV1) {
+  return {
+    ...context,
+    prompts: { negative: '', positive: '' },
+    sampling: { ...context.sampling, seed: 0 },
+  }
+}
+
+function frozenBatchPayloadJson(
+  context: FrozenNormalTxt2ImgPreparationV1,
+  request: IllustriousTxt2ImgRequestV1,
+): string {
+  const payload: FrozenQueuedIllustriousTxt2ImgV1 = {
+    context,
+    kind: 'illustrious-txt2img',
+    originRequestId: request.requestId,
+    schemaVersion: 1,
+    workerJob: {
+      bbox: request.job.bbox,
+      checkpoint: request.job.checkpoint,
+      prompts: request.job.prompts,
+      sampling: request.job.sampling,
+      schemaVersion: request.job.schemaVersion,
+      target: {
+        byteSize: request.job.target.byteSize,
+        height: request.job.target.height,
+        iccSha256: request.job.target.iccSha256,
+        sha256: request.job.target.sha256,
+        width: request.job.target.width,
+      },
+    },
+  }
+  const json = JSON.stringify(payload)
+  if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
+  }
+  parsePayload(json)
+  return json
+}
+
+function batchRowsMatch(
+  actual: readonly Selectable<GenerationQueueItem>[],
+  expected: readonly Selectable<GenerationQueueItem>[],
+): boolean {
+  const keys = [
+    'id',
+    'batch_id',
+    'canonical_project_path',
+    'created_at',
+    'document_id',
+    'document_revision',
+    'frozen_payload_json',
+    'local_project_key',
+    'operation',
+    'staging_session_id',
+  ] as const
+  return (
+    actual.length === expected.length &&
+    expected.every((entry) => {
+      const row = actual.find((item) => item.id === entry.id)
+      return row !== undefined && keys.every((key) => row[key] === entry[key])
+    })
+  )
+}
+
+function batchPublicationUncertain(): GenerationQueueError {
+  return new GenerationQueueError(
+    'QUEUE_PUBLICATION_UNCERTAIN',
+    'The batch publication outcome is unknown. Restart recovery is required before this Project can generate again.',
+  )
+}
+
+async function removeUnregisteredBatchDirectories(
+  directories: readonly string[],
+  root: string,
+): Promise<void> {
+  try {
+    for (const directory of directories) {
+      await rm(directory, { force: true, recursive: true })
+    }
+    await syncDirectory(root)
+  } catch {
+    process.emitWarning('Unregistered generation batch input cleanup deferred until restart.', {
+      code: 'GENERATION_INPUT_CLEANUP_DEFERRED',
+    })
   }
 }
 

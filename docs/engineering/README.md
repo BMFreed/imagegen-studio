@@ -6,7 +6,8 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
-- [Confirmed early Raster Add](./phase-2b-early-raster-acceptance.md) — exact candidate/job confirmation, scoped cancellation, confirmed worker exit and preserved journal/shadow/Save boundary; production batch grouping remains separate.
+- [Confirmed early Raster Add](./phase-2b-early-raster-acceptance.md) — exact candidate/job confirmation, scoped cancellation, confirmed worker exit and preserved journal/shadow/Save boundary; qualified batch grouping follows in a separate internal checkpoint.
+- [Qualified batch grouping](./phase-2b-batch-grouping-research.md) — atomic queue publication, shared staging session, escaped-manifest capacity and early Add integration; renderer Generate and release runtime remain open.
 - [Product audit fixes](./product-audit-fixes.md) — actual seed при Add, принадлежность вкладок прототипа, размер файла до install и актуальное описание native acceptance; выполненные red/green и границы evidence.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.

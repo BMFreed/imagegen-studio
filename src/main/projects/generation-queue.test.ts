@@ -5,7 +5,7 @@ import {
   type IgsProjectDocumentV1,
 } from '../../shared/projects/project-schema.js'
 
-import { sql } from 'kysely'
+import { type KyselyPlugin, sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
@@ -33,6 +33,8 @@ const ready = {
   runtimeProfile: 'linux-nvidia',
   workerVersion: '0.2.0',
 }
+
+type BatchItem = { prepared: PreparedNormalTxt2Img; request: IllustriousTxt2ImgRequestV1 }
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -187,6 +189,453 @@ async function enqueueFixture(
       }),
   )
 }
+
+// Every item enters through the real qualified-request lease. Model verification remains the
+// existing queue-fixture adapter; publication, SQLite, rollback and recovery are the subjects.
+async function inQualifiedBatchLeases<T>(
+  root: string,
+  prepared: PreparedNormalTxt2Img,
+  count: number,
+  use: (items: BatchItem[]) => Promise<T>,
+): Promise<T> {
+  const items: BatchItem[] = []
+  const next = async (index: number): Promise<T> => {
+    if (index === count) {
+      return await use(items)
+    }
+    const member: PreparedNormalTxt2Img = {
+      context: structuredClone(prepared.context),
+      targetPngBytes: prepared.targetPngBytes,
+    }
+    member.context.prompts.positive = `concrete prompt ${index}`
+    member.context.sampling.seed = index === 0 ? 0xff_ff_ff_ff : index - 1
+    return await inQualifiedLease(root, member, async (request) => {
+      items.push({ prepared: member, request })
+      return await next(index + 1)
+    })
+  }
+  return await next(0)
+}
+
+test('atomic batch publishes one ordered group from immutable qualified inputs and survives restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-atomic-batch-'))
+  const database = openAppDatabase(root, migrations)
+  const observer = openAppDatabase(root, migrations)
+  let originalsClosed = false
+  let reopened: ReturnType<typeof openAppDatabase> | undefined
+  try {
+    let publications = 0
+    const stagedRowCounts: number[] = []
+    let rowsBeforeCommit = -1
+    const queue = new GenerationQueueRepository(database.db, root, {
+      afterInputPublish: async () => {
+        publications += 1
+        stagedRowCounts.push(
+          (await observer.db.selectFrom('generation_queue_item').select('id').execute()).length,
+        )
+      },
+      beforeBatchCommit: async () => {
+        rowsBeforeCommit = (
+          await observer.db.selectFrom('generation_queue_item').select('id').execute()
+        ).length
+      },
+    })
+    await queue.recoverAfterRestart()
+    const source = await fixture(root)
+    const sessionId = randomUUID()
+    let preflightCalls = 0
+    const queued = await inQualifiedBatchLeases(root, source.prepared, 3, async (items) => {
+      const enqueue = queue.enqueueIllustriousTxt2ImgBatch({
+        items,
+        preflight: async (entries) => {
+          preflightCalls += 1
+          assert.equal(entries.length, 3)
+          assert.deepEqual(
+            entries.map((entry) => JSON.parse(entry.frozenPayloadJson).context.sampling.seed),
+            [0xff_ff_ff_ff, 0, 1],
+          )
+          assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [])
+          assert.deepEqual(
+            await observer.db.selectFrom('generation_queue_item').select('id').execute(),
+            [],
+          )
+        },
+        projectPath: source.projectPath,
+        stagingSessionId: sessionId,
+      })
+      for (const member of items) {
+        member.prepared.context.prompts.positive = 'caller changed prompt'
+        member.request.job.prompts.positive = 'caller changed request'
+      }
+      source.prepared.targetPngBytes.fill(0)
+      items.reverse()
+      return await enqueue
+    })
+    assert.equal(preflightCalls, 1)
+    assert.equal(publications, 3)
+    assert.deepEqual(stagedRowCounts, [0, 0, 0])
+    assert.equal(rowsBeforeCommit, 0)
+    assert.equal(new Set(queued.map((item) => item.batchId)).size, 1)
+    assert.equal(new Set(queued.map((item) => item.createdAt)).size, 1)
+    assert.deepEqual(
+      queued.map((item) => item.id),
+      queued.map((item) => item.id).sort(),
+    )
+    assert.ok(
+      queued.every((item) => item.stagingSessionId === sessionId && item.status === 'pending'),
+    )
+    assert.equal(
+      (await observer.db.selectFrom('generation_queue_item').select('id').execute()).length,
+      3,
+    )
+    for (const [index, item] of queued.entries()) {
+      const loaded = await queue.loadVerifiedInput(item.id)
+      assert.equal(loaded.payload.context.prompts.positive, `concrete prompt ${index}`)
+      assert.equal(loaded.payload.context.sampling.seed, index === 0 ? 0xff_ff_ff_ff : index - 1)
+      assert.equal(sha256(await readFile(loaded.targetPath)), loaded.payload.context.target.sha256)
+    }
+    const claimant = new GenerationQueueRepository(observer.db, root)
+    for (const item of queued) {
+      const claimed = await claimant.claimNextPending()
+      assert.equal(claimed?.item.id, item.id)
+      await claimant.failRunning(item.id, 1, {
+        code: 'CONTROL_FAILURE',
+        message: 'ordered control',
+      })
+    }
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ error_code: null, error_message: null, status: 'pending', status_sequence: 0 })
+      .execute()
+    await observer.close()
+    await database.close()
+    originalsClosed = true
+    reopened = openAppDatabase(root, migrations)
+    const restarted = new GenerationQueueRepository(reopened.db, root)
+    assert.deepEqual(await restarted.recoverAfterRestart(), {
+      canceledCount: 3,
+      orphanedDirectoriesRemoved: 0,
+    })
+    assert.deepEqual(await restarted.listUnfinishedByProject(queued[0].localProjectKey), [])
+    for (const item of queued) {
+      assert.equal((await restarted.loadVerifiedInput(item.id)).item.status, 'canceled')
+    }
+  } finally {
+    await reopened?.close()
+    if (!originalsClosed) {
+      await observer.close()
+      await database.close()
+    }
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('atomic batch rejects mixed identities, duplicate requests and capacity refusal before publication', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-batch-invalid-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const source = await fixture(root)
+    await inQualifiedBatchLeases(root, source.prepared, 2, async (original) => {
+      const sessionId = randomUUID()
+      const enqueue = async (items: BatchItem[], preflight = async () => undefined) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items,
+          preflight,
+          projectPath: source.projectPath,
+          stagingSessionId: sessionId,
+        })
+      await assert.rejects(enqueue([]), { code: 'QUEUE_INPUT_INVALID' })
+      await assert.rejects(enqueue(Array.from({ length: 65 }, () => original[0])), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      for (const mutate of [
+        (items: BatchItem[]) => {
+          items[1].request.requestId = items[0].request.requestId
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.context.documentId = randomUUID()
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.context.documentRevision = randomUUID()
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.context.bbox.x += 8
+          items[1].request.job.bbox.x += 8
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.context.sampling.steps += 1
+          items[1].request.job.sampling.steps += 1
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.context.model.reference.localVersionId = randomUUID()
+        },
+        (items: BatchItem[]) => {
+          items[1].prepared.targetPngBytes = Buffer.from('different target')
+        },
+      ]) {
+        const items = original.map((item) => ({
+          prepared: {
+            context: structuredClone(item.prepared.context),
+            targetPngBytes: Buffer.from(item.prepared.targetPngBytes),
+          },
+          request: structuredClone(item.request),
+        }))
+        mutate(items)
+        await assert.rejects(enqueue(items), { code: 'QUEUE_INPUT_INVALID' })
+      }
+      await assert.rejects(
+        enqueue(original, async () => {
+          throw new Error('capacity preflight refused')
+        }),
+        /capacity preflight refused/,
+      )
+      await assert.rejects(
+        queue.enqueueIllustriousTxt2ImgBatch({
+          items: original,
+          preflight: undefined as unknown as (
+            entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+          ) => Promise<void>,
+          projectPath: source.projectPath,
+          stagingSessionId: sessionId,
+        }),
+        { code: 'QUEUE_INPUT_INVALID' },
+      )
+      assert.deepEqual(
+        await database.db.selectFrom('generation_queue_item').select('id').execute(),
+        [],
+      )
+      assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [])
+    })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('atomic batch accepts the bounded 64-item control with distinct durable IDs', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-batch-limit-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const source = await fixture(root)
+    const queued = await inQualifiedBatchLeases(
+      root,
+      source.prepared,
+      64,
+      async (items) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items,
+          preflight: async () => undefined,
+          projectPath: source.projectPath,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    assert.equal(queued.length, 64)
+    assert.equal(new Set(queued.map((item) => item.id)).size, 64)
+    assert.equal(new Set(queued.map((item) => item.batchId)).size, 1)
+    assert.deepEqual(
+      (
+        await database.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .orderBy('created_at')
+          .orderBy('id')
+          .execute()
+      ).map((row) => row.id),
+      queued.map((item) => item.id),
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('atomic batch file/SQL/fence failures leave no partial group and preserve adjacent jobs', async (t) => {
+  for (const failure of ['file', 'sql', 'fence'] as const) {
+    await t.test(failure, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), `igs-queue-batch-${failure}-`))
+      const database = openAppDatabase(root, migrations)
+      const observer = openAppDatabase(root, migrations)
+      try {
+        let armed = false
+        let publications = 0
+        const queue = new GenerationQueueRepository(database.db, root, {
+          afterInputPublish: async () => {
+            if (armed && failure === 'file' && ++publications === 2) {
+              throw new Error('second file publication failed')
+            }
+          },
+          beforeBatchCommit: async () => {
+            if (armed && failure === 'fence') {
+              assert.equal(
+                (await observer.db.selectFrom('generation_queue_item').select('id').execute())
+                  .length,
+                1,
+              )
+              queue.fenceProject(localProjectRecoveryKey(source.projectPath))
+            }
+          },
+        })
+        await queue.recoverAfterRestart()
+        const source = await fixture(root)
+        const neighbor = await enqueueFixture(root, queue, source.prepared, source.projectPath)
+        const before = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+        if (failure === 'sql') {
+          await sql`CREATE TRIGGER fail_second_batch_insert BEFORE INSERT ON generation_queue_item
+          WHEN (SELECT COUNT(*) FROM generation_queue_item WHERE staging_session_id=NEW.staging_session_id)=1
+          BEGIN SELECT RAISE(ABORT,'second batch row refused'); END`.execute(database.db)
+        }
+        armed = true
+        await assert.rejects(
+          inQualifiedBatchLeases(
+            root,
+            source.prepared,
+            3,
+            async (items) =>
+              await queue.enqueueIllustriousTxt2ImgBatch({
+                items,
+                preflight: async () => undefined,
+                projectPath: source.projectPath,
+                stagingSessionId: randomUUID(),
+              }),
+          ),
+          failure === 'file'
+            ? /second file publication failed/
+            : failure === 'sql'
+              ? /second batch row refused/
+              : { code: 'QUEUE_PROJECT_CLOSING' },
+        )
+        assert.deepEqual(
+          await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+          before,
+        )
+        assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [neighbor.id])
+        assert.equal((await queue.loadVerifiedInput(neighbor.id)).item.status, 'pending')
+      } finally {
+        await observer.close()
+        await database.close()
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+  }
+})
+
+test('atomic batch resolves a lost commit acknowledgement from exact durable rows', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-batch-ack-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root, {
+      afterBatchCommit: async () => {
+        throw new Error('commit acknowledgement lost')
+      },
+    })
+    await queue.recoverAfterRestart()
+    const source = await fixture(root)
+    const queued = await inQualifiedBatchLeases(
+      root,
+      source.prepared,
+      3,
+      async (items) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items,
+          preflight: async () => undefined,
+          projectPath: source.projectPath,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    assert.equal(queued.length, 3)
+    assert.equal(
+      (await database.db.selectFrom('generation_queue_item').select('id').execute()).length,
+      3,
+    )
+    for (const item of queued) {
+      assert.equal((await queue.loadVerifiedInput(item.id)).item.status, 'pending')
+    }
+    queue.releaseProjectFence(queued[0].localProjectKey)
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('atomic batch unreadable commit outcomes retain inputs and fence admission/dispatch/release until restart recovery', async (t) => {
+  for (const committed of [false, true]) {
+    await t.test(committed ? 'committed' : 'rolled back', async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-batch-unknown-'))
+      const database = openAppDatabase(root, migrations)
+      try {
+        let denyInspection = false
+        const plugin: KyselyPlugin = {
+          transformQuery: ({ node }) => {
+            if (
+              denyInspection &&
+              node.kind === 'SelectQueryNode' &&
+              JSON.stringify(node).includes('generation_queue_item')
+            ) {
+              throw new Error('SQLite inspection unavailable')
+            }
+            return node
+          },
+          transformResult: async ({ result }) => result,
+        }
+        const loseAcknowledgement = async () => {
+          denyInspection = true
+          throw new Error('publication outcome unknown')
+        }
+        const queue = new GenerationQueueRepository(database.db.withPlugin(plugin), root, {
+          afterBatchCommit: committed ? loseAcknowledgement : undefined,
+          beforeBatchCommit: committed ? undefined : loseAcknowledgement,
+        })
+        await queue.recoverAfterRestart()
+        const source = await fixture(root)
+        const projectKey = localProjectRecoveryKey(source.projectPath)
+        await assert.rejects(
+          inQualifiedBatchLeases(
+            root,
+            source.prepared,
+            3,
+            async (items) =>
+              await queue.enqueueIllustriousTxt2ImgBatch({
+                items,
+                preflight: async () => undefined,
+                projectPath: source.projectPath,
+                stagingSessionId: randomUUID(),
+              }),
+          ),
+          { code: 'QUEUE_PUBLICATION_UNCERTAIN' },
+        )
+        const rows = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+        assert.equal(rows.length, committed ? 3 : 0)
+        assert.equal((await readdir(path.join(root, 'generation-inputs'))).length, 3)
+        assert.throws(() => queue.assertProjectCanEnqueue(projectKey), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        assert.throws(() => queue.releaseProjectFence(projectKey), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        denyInspection = false
+        assert.equal(await queue.claimNextPending(), null)
+        assert.throws(() => queue.releaseProjectFence(projectKey), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        assert.deepEqual(await queue.recoverAfterRestart(), {
+          canceledCount: committed ? 3 : 0,
+          orphanedDirectoriesRemoved: committed ? 0 : 3,
+        })
+        queue.releaseProjectFence(projectKey)
+        for (const row of rows) {
+          assert.equal((await queue.loadVerifiedInput(row.id)).item.status, 'canceled')
+        }
+      } finally {
+        await database.close()
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+  }
+})
 
 test('claim verifies durable input before moving a pending row to running across reopen', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-claim-'))

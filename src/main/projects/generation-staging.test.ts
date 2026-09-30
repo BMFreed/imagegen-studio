@@ -1,9 +1,11 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { IGS_GENERATION_PNG_MAX_BYTES } from '../../shared/projects/project-schema.js'
 
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -25,6 +27,7 @@ import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 import { openAppDatabase } from '../db/database.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { GenerationQueueRepository } from './generation-queue.js'
+import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   GenerationStagingRepository,
   type VerifiedGenerationCandidate,
@@ -258,6 +261,384 @@ async function publishOne(
   assert.ok(published)
   return published
 }
+
+async function batchCapacityFixture(root: string, escapedMetadata = false) {
+  const database = openAppDatabase(root, migrations)
+  const queue = new GenerationQueueRepository(database.db, root)
+  const staging = new GenerationStagingRepository(database.db, root)
+  await queue.recoverAfterRestart()
+  await staging.recoverAfterRestart()
+  const source = await fixture(root)
+  if (escapedMetadata) {
+    source.prepared.context.model.reference.displayName = '\\'.repeat(60_000)
+  }
+  // Derive the exact frozen bytes from the real queue serializer, then remove this fixture's
+  // terminal source attempt. Capacity checks never insert the planned batch rows themselves.
+  const frozenPayloadJson = await inRequestLease(root, source.prepared, async (request) => {
+    const item = await queue.enqueueIllustriousTxt2Img({
+      prepared: source.prepared,
+      projectPath: source.projectPath,
+      request,
+      stagingSessionId: randomUUID(),
+    })
+    await queue.loadVerifiedInput(item.id)
+    const row = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', item.id)
+      .executeTakeFirstOrThrow()
+    await queue.cancel(item.id)
+    assert.equal(await queue.pruneTerminal(['canceled']), 1)
+    return row.frozen_payload_json
+  })
+  return { database, frozenPayloadJson, queue, source, staging }
+}
+
+function batchCapacityInput(projectPath: string, frozenPayloadJson: string, count = 1) {
+  return {
+    entries: Array.from({ length: count }, () => ({
+      frozenPayloadJson,
+      queueItemId: randomUUID(),
+    })),
+    localProjectKey: localProjectRecoveryKey(projectPath),
+    projectPath,
+    stagingSessionId: randomUUID(),
+  }
+}
+
+async function batchCapacityState(
+  database: ReturnType<typeof openAppDatabase>,
+  root: string,
+  projectPath: string,
+) {
+  return {
+    candidates: await database.db.selectFrom('generation_candidate_receipt').selectAll().execute(),
+    cursor: await database.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+    paths: (
+      await readdir(path.join(root, 'recovery', 'generation-staging'), { recursive: true })
+    ).sort(),
+    project: await readFile(projectPath),
+    queue: await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+    tombstones: await database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .execute(),
+  }
+}
+
+test('batch capacity allows 64 real small payloads and rejects escaped aggregate overflow without publishing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-'))
+  const data = await batchCapacityFixture(root)
+  try {
+    const before = await batchCapacityState(data.database, root, data.source.projectPath)
+    await data.staging.preflightBatchCapacity(
+      batchCapacityInput(
+        data.source.projectPath,
+        data.frozenPayloadJson,
+        GENERATION_STAGING_LIMITS.candidates,
+      ),
+    )
+    assert.deepEqual(await batchCapacityState(data.database, root, data.source.projectPath), before)
+    const escapedRoot = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-escaped-'))
+    const escaped = await batchCapacityFixture(escapedRoot, true)
+    try {
+      const input = batchCapacityInput(escaped.source.projectPath, escaped.frozenPayloadJson, 64)
+      const rawBytes = Buffer.byteLength(escaped.frozenPayloadJson, 'utf8') * input.entries.length
+      assert.ok(
+        Buffer.byteLength(escaped.frozenPayloadJson, 'utf8') <
+          GENERATION_STAGING_LIMITS.frozenPayloadBytes,
+      )
+      assert.ok(rawBytes < GENERATION_STAGING_LIMITS.manifestBytes)
+      const escapedBefore = await batchCapacityState(
+        escaped.database,
+        escapedRoot,
+        escaped.source.projectPath,
+      )
+      await assert.rejects(escaped.staging.preflightBatchCapacity(input), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+      assert.deepEqual(
+        await batchCapacityState(escaped.database, escapedRoot, escaped.source.projectPath),
+        escapedBefore,
+      )
+    } finally {
+      await escaped.database.close()
+      await rm(escapedRoot, { force: true, recursive: true })
+    }
+  } finally {
+    await data.database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('batch capacity respects exact serialized manifest bytes including maximum completion metadata', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-border-'))
+  const data = await batchCapacityFixture(root)
+  try {
+    const published = await publishOne(root, data.queue, data.staging, data.source, 42)
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(
+          root,
+          'recovery',
+          'generation-staging',
+          published.localProjectKey,
+          published.stagingSessionId,
+          'manifest.json',
+        ),
+        'utf8',
+      ),
+    ) as { candidates: Record<string, unknown>[] }
+    const actualEntry = manifest.candidates[0]
+    const input = batchCapacityInput(data.source.projectPath, data.frozenPayloadJson, 64)
+    // Start with a manifest actually written by publication; replace only the fresh identities,
+    // supplied frozen contexts and future completion fields whose lengths are not yet known.
+    const expectedBytes = () =>
+      Buffer.byteLength(
+        JSON.stringify({
+          candidates: input.entries.map((entry) => ({
+            ...actualEntry,
+            actualSeed: 0xff_ff_ff_ff,
+            candidateId: entry.queueItemId,
+            completedAt: new Date(8_640_000_000_000_000).toISOString(),
+            completionOrder: Number.MAX_SAFE_INTEGER,
+            expectedStatusSequence: Number.MAX_SAFE_INTEGER,
+            frozenPayloadJson: entry.frozenPayloadJson,
+            frozenPayloadSha256: sha256(Buffer.from(entry.frozenPayloadJson, 'utf8')),
+            image: {
+              ...(actualEntry.image as Record<string, unknown>),
+              byteSize: IGS_GENERATION_PNG_MAX_BYTES,
+              relativePath: `assets/${entry.queueItemId}.png`,
+              sha256: 'f'.repeat(64),
+            },
+            queueItemId: entry.queueItemId,
+            stagingSessionId: input.stagingSessionId,
+          })),
+          localProjectKey: input.localProjectKey,
+          schemaVersion: 1,
+          stagingSessionId: input.stagingSessionId,
+        }),
+        'utf8',
+      )
+    const remaining = GENERATION_STAGING_LIMITS.manifestBytes - expectedBytes()
+    const perEntry = Math.floor(remaining / input.entries.length)
+    const remainder = remaining % input.entries.length
+    input.entries.forEach((entry, index) => {
+      const payload = JSON.parse(entry.frozenPayloadJson) as {
+        context: { model: { reference: { displayName: string } } }
+      }
+      payload.context.model.reference.displayName += 'x'.repeat(
+        perEntry + (index < remainder ? 1 : 0),
+      )
+      entry.frozenPayloadJson = JSON.stringify(payload)
+      assert.ok(
+        Buffer.byteLength(entry.frozenPayloadJson, 'utf8') <=
+          GENERATION_STAGING_LIMITS.frozenPayloadBytes,
+      )
+    })
+    assert.equal(expectedBytes(), GENERATION_STAGING_LIMITS.manifestBytes)
+    const before = await batchCapacityState(data.database, root, data.source.projectPath)
+    await data.staging.preflightBatchCapacity(input)
+    const payload = JSON.parse(input.entries[0].frozenPayloadJson) as {
+      context: { model: { reference: { displayName: string } } }
+    }
+    payload.context.model.reference.displayName += 'x'
+    input.entries[0].frozenPayloadJson = JSON.stringify(payload)
+    assert.equal(expectedBytes(), GENERATION_STAGING_LIMITS.manifestBytes + 1)
+    await assert.rejects(data.staging.preflightBatchCapacity(input), {
+      code: 'STAGING_INPUT_INVALID',
+    })
+    assert.deepEqual(await batchCapacityState(data.database, root, data.source.projectPath), before)
+  } finally {
+    await data.database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('batch capacity rejects empty oversized invalid and unrecovered inputs without reserving candidates', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-input-'))
+  const data = await batchCapacityFixture(root)
+  try {
+    const input = batchCapacityInput(data.source.projectPath, data.frozenPayloadJson)
+    const before = await batchCapacityState(data.database, root, data.source.projectPath)
+    await assert.rejects(
+      new GenerationStagingRepository(data.database.db, root).preflightBatchCapacity(input),
+      {
+        code: 'STAGING_NOT_RECONCILED',
+      },
+    )
+    const invalidInputs = [
+      { ...input, entries: [] },
+      batchCapacityInput(input.projectPath, data.frozenPayloadJson, 65),
+      { ...input, entries: [input.entries[0], input.entries[0]] },
+      { ...input, entries: [{ frozenPayloadJson: '{}', queueItemId: randomUUID() }] },
+      {
+        ...input,
+        entries: [{ frozenPayloadJson: ' '.repeat(128 * 1024 + 1), queueItemId: randomUUID() }],
+      },
+      {
+        ...input,
+        entries: [{ frozenPayloadJson: data.frozenPayloadJson, queueItemId: 'not-a-job' }],
+      },
+      { ...input, projectPath: 'Project.igs' },
+      { ...input, localProjectKey: localProjectRecoveryKey(path.join(root, 'Other.igs')) },
+      { ...input, stagingSessionId: '../session' },
+    ]
+    for (const invalid of invalidInputs) {
+      await assert.rejects(data.staging.preflightBatchCapacity(invalid), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+    }
+    assert.deepEqual(await batchCapacityState(data.database, root, data.source.projectPath), before)
+  } finally {
+    await data.database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('batch capacity rejects known queue receipt tombstone and orphan disk sessions without cleanup', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-fresh-'))
+  const data = await batchCapacityFixture(root)
+  try {
+    const input = batchCapacityInput(data.source.projectPath, data.frozenPayloadJson)
+    await inRequestLease(root, data.source.prepared, async (request) => {
+      const item = await data.queue.enqueueIllustriousTxt2Img({
+        prepared: data.source.prepared,
+        projectPath: input.projectPath,
+        request,
+        stagingSessionId: input.stagingSessionId,
+      })
+      for (const canceled of [false, true]) {
+        if (canceled) {
+          await data.queue.cancel(item.id)
+        }
+        const before = await batchCapacityState(data.database, root, input.projectPath)
+        await assert.rejects(data.staging.preflightBatchCapacity(input), {
+          code: 'STAGING_INPUT_INVALID',
+        })
+        await assert.rejects(
+          data.staging.preflightBatchCapacity({
+            ...input,
+            entries: [{ ...input.entries[0], queueItemId: item.id }],
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'STAGING_INPUT_INVALID' },
+        )
+        assert.deepEqual(await batchCapacityState(data.database, root, input.projectPath), before)
+      }
+      await data.queue.pruneTerminal(['canceled'])
+    })
+    const receiptId = randomUUID()
+    await data.database.db
+      .insertInto('generation_candidate_receipt')
+      .values({
+        actual_seed: 42,
+        candidate_id: receiptId,
+        canonical_project_path: input.projectPath,
+        completed_at: null,
+        expected_status_sequence: 1,
+        frozen_payload_sha256: sha256(Buffer.from(data.frozenPayloadJson)),
+        image_byte_size: 100,
+        image_sha256: 'a'.repeat(64),
+        local_project_key: input.localProjectKey,
+        queue_item_id: receiptId,
+        reserved_at: new Date().toISOString(),
+        staging_session_id: input.stagingSessionId,
+        status: 'reserved',
+      })
+      .execute()
+    for (const completed of [false, true]) {
+      if (completed) {
+        await data.database.db
+          .updateTable('generation_candidate_receipt')
+          .set({ completed_at: new Date().toISOString(), status: 'completed' })
+          .execute()
+      }
+      const before = await batchCapacityState(data.database, root, input.projectPath)
+      await assert.rejects(data.staging.preflightBatchCapacity(input), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+      await assert.rejects(
+        data.staging.preflightBatchCapacity({
+          ...input,
+          entries: [{ ...input.entries[0], queueItemId: receiptId }],
+          stagingSessionId: randomUUID(),
+        }),
+        { code: 'STAGING_INPUT_INVALID' },
+      )
+      assert.deepEqual(await batchCapacityState(data.database, root, input.projectPath), before)
+    }
+    await data.database.db.deleteFrom('generation_candidate_receipt').execute()
+    await data.database.db
+      .insertInto('generation_staging_discarded_session')
+      .values({
+        discarded_at: new Date().toISOString(),
+        local_project_key: input.localProjectKey,
+        staging_session_id: input.stagingSessionId,
+      })
+      .execute()
+    const tombstoneBefore = await batchCapacityState(data.database, root, input.projectPath)
+    await assert.rejects(data.staging.preflightBatchCapacity(input), {
+      code: 'STAGING_INPUT_INVALID',
+    })
+    assert.deepEqual(
+      await batchCapacityState(data.database, root, input.projectPath),
+      tombstoneBefore,
+    )
+    const projectRoot = path.join(root, 'recovery', 'generation-staging', input.localProjectKey)
+    await mkdir(projectRoot, { mode: 0o700 })
+    for (const diskCase of ['empty', 'invalid', 'dangling']) {
+      const fresh = { ...input, stagingSessionId: randomUUID() }
+      const sessionRoot = path.join(projectRoot, fresh.stagingSessionId)
+      if (diskCase === 'dangling') {
+        await symlink(path.join(root, 'missing-session'), sessionRoot)
+      } else {
+        await mkdir(sessionRoot, { mode: 0o700 })
+        if (diskCase === 'invalid') {
+          await writeFile(path.join(sessionRoot, 'manifest.json'), '{}')
+        }
+      }
+      const before = await batchCapacityState(data.database, root, input.projectPath)
+      await assert.rejects(data.staging.preflightBatchCapacity(fresh), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+      assert.deepEqual(await batchCapacityState(data.database, root, input.projectPath), before)
+    }
+  } finally {
+    await data.database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('batch capacity refuses unsafe existing ancestors without changing permissions', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-capacity-permissions-'))
+  const data = await batchCapacityFixture(root)
+  try {
+    const input = batchCapacityInput(data.source.projectPath, data.frozenPayloadJson)
+    const recoveryRoot = path.join(root, 'recovery')
+    const stagingRoot = path.join(recoveryRoot, 'generation-staging')
+    const projectRoot = path.join(stagingRoot, input.localProjectKey)
+    await mkdir(projectRoot, { mode: 0o700 })
+    for (const directory of [root, recoveryRoot, stagingRoot, projectRoot]) {
+      await chmod(directory, 0o755)
+      const before = await batchCapacityState(data.database, root, input.projectPath)
+      await assert.rejects(data.staging.preflightBatchCapacity(input), {
+        code: 'STAGING_STORAGE_UNSAFE',
+      })
+      assert.equal((await stat(directory)).mode & 0o777, 0o755)
+      assert.deepEqual(await batchCapacityState(data.database, root, input.projectPath), before)
+      await chmod(directory, 0o700)
+    }
+    await data.staging.preflightBatchCapacity(input)
+    // Existing recovery retains permission hardening; only admission uses validation alone.
+    await chmod(root, 0o755)
+    await data.staging.recoverAfterRestart()
+    assert.equal((await stat(root)).mode & 0o777, 0o700)
+  } finally {
+    await data.database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 test('real PNG and frozen job become a durable candidate without changing the .igs', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-valid-'))

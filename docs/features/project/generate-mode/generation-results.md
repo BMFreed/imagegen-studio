@@ -54,21 +54,21 @@ acceptance and explicit Save.
 ## State Model
 
 ```ts
-type GenerationCandidateStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
+type GenerationCandidateStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
 
 interface GenerationCandidate {
-  assetId?: string;
-  id: string;
-  imageIndex: number;
-  queueItemId: string;
-  status: GenerationCandidateStatus;
+  assetId?: string
+  id: string
+  imageIndex: number
+  queueItemId: string
+  status: GenerationCandidateStatus
 }
 
 interface GenerationStagingSession {
-  candidates: GenerationCandidate[];
-  focusedCandidateId?: string;
-  selectedCandidateIds: string[];
-  target: { kind: 'project-canvas' } | { kind: 'smart-patch'; layerId: string };
+  candidates: GenerationCandidate[]
+  focusedCandidateId?: string
+  selectedCandidateIds: string[]
+  target: { kind: 'project-canvas' } | { kind: 'smart-patch'; layerId: string }
 }
 ```
 
@@ -361,9 +361,33 @@ Accepted assets still reach the main `.igs` only on explicit Save.
 See [early Add evidence](../../../engineering/phase-2b-early-raster-acceptance.md).
 Tests and native smoke inject shared-session queue preconditions, use actual
 SQLite/processor/IPC/Project storage, and replace the external inference transport.
-Production `enqueueOne` assigns a fresh session to each job: ordinary batch
-Generate still needs one durable group/session ID for its N jobs. This slice does
-not implement that scheduler, renderer Generate, GPU inference or runtime install.
+Production `enqueueOne` assigns a fresh session to each job. At this historical
+early Add checkpoint, ordinary batch Generate still needed shared group/session
+creation; that slice did not implement scheduling, renderer Generate, GPU
+inference or runtime install.
+
+## Production qualified batch grouping checkpoint
+
+The [internal `enqueueBatch`](../../../engineering/phase-2b-batch-grouping-research.md)
+now creates real shared membership for already qualified concrete Illustrious
+jobs from one frozen snapshot. One fresh batch/session, required recovery-capacity
+preflight and atomic SQLite publication follow synced per-job inputs. Metadata,
+item order and target pixels are copied before asynchronous admission. Replaced
+document identity cancels exactly the newly admitted group; unconfirmed cleanup
+keeps its Project fence. Unknown commit outcomes retain inputs until successful
+startup recovery.
+
+Integration coverage creates the group through the production orchestrator,
+completes one job through the real processor/staging boundary, observes its
+unfinished siblings in Results, accepts it with exact sibling cancellation,
+preserves an independent batch and saves portable assets/provenance in `.igs`.
+The external inference transport is substituted. Completed pixels still need
+explicit Add; accepted document changes still need explicit Save.
+
+The existing 64-candidate, 128 KiB payload and 8 MiB manifest ceilings are checked
+before admission, including JSON escaping and maximum completion metadata.
+They do not qualify a public capacity limit. Renderer Generate, expansion/seed
+planning, full GPU/release runtime and Smart Patch remain open.
 
 ## Vue Prototype Coverage
 
@@ -397,7 +421,7 @@ history and never reconstructs discarded staging candidates.
 - Recovery keeps a valid candidate with a missing Smart Patch target visible
   as orphaned; only explicit, geometry-valid `Add as Raster Layer` or Discard
   can resolve its staging status, never implicit retargeting. `Save Candidate
-  Image` remains available for a valid asset even when conversion is blocked.
+Image` remains available for a valid asset even when conversion is blocked.
 - The focused selected result, or otherwise the first selected result, becomes the visible/active accepted anchor; accepted alternatives remain hidden/inactive.
 - Accepting before a batch finishes explicitly cancels unfinished sibling jobs and discards unselected candidates.
 - Existing project content is never overwritten implicitly.

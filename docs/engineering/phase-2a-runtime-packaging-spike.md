@@ -9,7 +9,7 @@ The governing contracts are
 [Python runtime management](../specs/07-python-runtime-management.md#release-artifacts)
 and [Phase 2A](../specs/01-implementation-roadmap.md#фаза-2a-runtime-project-document-и-реальное-сохранение).
 
-## Evidence from the current checkout
+## Evidence from the historical 25 September checkout
 
 | Boundary                  | Checked evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Consequence                                                                                                                                                                                                          |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -18,6 +18,13 @@ and [Phase 2A](../specs/01-implementation-roadmap.md#фаза-2a-runtime-project
 | Local development venv    | `worker-python/.venv/bin/python` is an absolute symlink to `/home/user/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12`; `pyvenv.cfg` records that absolute `home`; `bin/imagegen-worker` starts with an absolute shebang under this checkout.                                                                                                                                                                                                                                    | Copying this venv as-is would depend on this machine's paths. It was not built as a release bundle, so this observation does not disprove a purpose-built relocatable bundle.                                        |
 | Invoke launcher reference | The clean checkout uses a pinned `uv` download/checksum (`download_uv.ts:92-124`, `package.json:127-139`), advisory GPU detection (`src/main/gpu-detection.ts:9-24,310-334`), and a managed Python via `uv python install ... --python-preference only-managed` (`src/main/install-manager.ts:547-565`). It passes `uv venv --relocatable` (`:619-641`) but installs at one path rather than proving a later move. Repair deletes the current `.venv` (`:594-605`) and sync uses `--inexact` (`:743-763`). | Reuse download/progress/probe ideas only. Its destructive repair and inexact sync violate our previous-known-good and exact-install contracts. A flag alone does not qualify Torch/CUDA native files for relocation. |
 | Ambient sources           | The launcher documents that `--no-config` does not remove `UV_INDEX`, `UV_EXTRA_INDEX_URL`, or `UV_FIND_LINKS` from the process environment (`src/main/torch-index.ts:60-79`).                                                                                                                                                                                                                                                                                                                             | Our installer must construct a restricted environment as well as passing offline/no-index flags.                                                                                                                     |
+
+Current status (30 September): `worker-python/pyproject.toml` and `uv.lock`
+contain an optional pinned `inference` extra, including Torch, Diffusers and
+Transformers; the default derivative environment remains Pillow-only. This
+supersedes the historical worker-graph row, but does not provide a verified
+app-owned release artifact. See
+[inference handoff and qualification](./phase-2b-internal-handoff-and-conditioning.md).
 
 The local checkout and environment were checked with these read-only commands
 from the ImageGen Studio root (plus targeted `rg` and `nl -ba` reads of the
@@ -116,7 +123,7 @@ are checked again before activation, not inferred from archive filenames.
 
 ## Qualification gates and current blockers
 
-1. **Build the missing inference graph.** Pin the Invoke-like pipeline,
+1. **Build and qualify release inference artifacts.** Pin the Invoke-like pipeline,
    PyTorch/CUDA, Diffusers, Transformers and native extension versions in a
    production Linux/NVIDIA lock; build the worker wheel and CI-selected
    wheelhouse. At the time of this spike the lock had only Pillow and the
@@ -139,7 +146,7 @@ are checked again before activation, not inferred from archive filenames.
    and run the same checks with the build prefix absent. Inspect symlinks,
    `pyvenv.cfg`, script shebangs, `.pth` files, native library load paths and
    absolute build-prefix references. Repeat with the full CUDA/native graph,
-   not just the current Pillow-only worker. Any failed relocation keeps the
+   not just the default Pillow-only derivative environment. Any failed relocation keeps the
    wheelhouse route.
 4. **Prove failure isolation.** Inject interrupted download, bad signature or
    hash, unsafe archive, full disk, installation failure, failed self-test,

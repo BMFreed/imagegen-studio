@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
 
 import type { AppDatabase } from '../db/database.js'
+import type { QualifiedGenerationBatchItem } from './generation-orchestrator.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
@@ -19,12 +20,17 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator, GenerationOrchestratorError } from './generation-orchestrator.js'
 import { GenerationProcessor } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
+import { readIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
+import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
+import { ProjectGenerationResultResource } from './project-generation-result-resource.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
@@ -52,6 +58,7 @@ type Fixture = {
   modelService: ModelService
   orchestrator: GenerationOrchestrator
   outputBytes: Buffer
+  processor: GenerationProcessor
   projectIndex: ProjectIndexRepository
   projects: ProjectService
   queue: GenerationQueueRepository
@@ -237,6 +244,7 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>): Promise<vo
       modelService,
       orchestrator,
       outputBytes: await opaqueSrgbPng(),
+      processor,
       projectIndex,
       projects,
       queue,
@@ -286,6 +294,260 @@ function currentDocumentId(fixture: Fixture): string {
   assert.ok(documentId)
   return documentId
 }
+
+/** One genuine qualified target lease, with already planned concrete seeds/prompts. */
+async function withQualifiedBatch<T>(
+  fixture: Fixture,
+  seeds: readonly number[],
+  use: (items: QualifiedGenerationBatchItem[]) => Promise<T>,
+): Promise<T> {
+  const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+    fixture.tabId,
+    fixture.worker,
+    fixture.modelService,
+  )
+  return await withIllustriousTxt2ImgRequest({
+    modelService: fixture.modelService,
+    prepared,
+    ready: qualifiedReady,
+    scratchBasePath: path.join(fixture.root, 'scratch'),
+    use: async (request) => {
+      const items = seeds.map((seed, index) => {
+        const context = structuredClone(prepared.context)
+        context.sampling.seed = seed
+        context.prompts.positive = `blue lantern ${index}`
+        const job = structuredClone(request)
+        job.requestId = randomUUID()
+        job.job.sampling.seed = seed
+        job.job.prompts = { ...context.prompts }
+        return { prepared: { context, targetPngBytes: prepared.targetPngBytes }, request: job }
+      })
+      return await use(items)
+    },
+  })
+}
+
+test(
+  'qualified batch creates real sibling scope through completion, early Add and portable Save',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const indexed = await fixture.projectIndex.getProject(fixture.tabId)
+      assert.ok(indexed)
+      const packageBefore = await readFile(indexed.canonicalPath)
+      const batch = await withQualifiedBatch(
+        fixture,
+        [42, 43, 44],
+        async (items) => await fixture.orchestrator.enqueueBatch(fixture.tabId, items),
+      )
+      const neighbor = await withQualifiedBatch(
+        fixture,
+        [71, 72],
+        async (items) => await fixture.orchestrator.enqueueBatch(fixture.tabId, items),
+      )
+      assert.equal(batch.length, 3)
+      assert.equal(new Set(batch.map((item) => item.batchId)).size, 1)
+      assert.equal(new Set(batch.map((item) => item.stagingSessionId)).size, 1)
+      assert.notEqual(neighbor[0].stagingSessionId, batch[0].stagingSessionId)
+      for (let index = 0; index < batch.length; index++) {
+        const verified = await fixture.queue.loadVerifiedInput(batch[index].id)
+        assert.equal(verified.payload.context.sampling.seed, 42 + index)
+        assert.equal(verified.payload.context.prompts.positive, `blue lantern ${index}`)
+      }
+      const transport = inferenceTransport(fixture.outputBytes)
+      const completed = await fixture.orchestrator.runNext(transport)
+      assert.equal(completed.kind, 'completed')
+      const resource = new ProjectGenerationResultResource(
+        fixture.staging,
+        (key) => fixture.projects.getOpenDocumentId(key),
+        fixture.queue,
+      )
+      const snapshot = await resource.list(fixture.tabId)
+      assert.equal(snapshot.candidates.length, 1)
+      assert.equal(snapshot.candidates[0].queueItemId, batch[0].id)
+      assert.deepEqual(
+        snapshot.unfinishedSiblingJobIds,
+        batch.slice(1).map((item) => item.id),
+      )
+      const acceptance = new ProjectGenerationAcceptance({
+        documents: { getOpenDocument: (key) => fixture.projects.getOpenDocumentForAcceptance(key) },
+        gate: new ProjectGenerationOperationGate(),
+        journal: new GenerationAcceptanceJournalRepository(fixture.database.db),
+        orchestrator: fixture.orchestrator,
+        queue: fixture.queue,
+        staging: fixture.staging,
+      })
+      const selected = snapshot.candidates[0].candidateId
+      assert.equal(
+        (
+          await acceptance.accept(
+            fixture.tabId,
+            [selected],
+            selected,
+            [selected],
+            snapshot.unfinishedSiblingJobIds,
+          )
+        ).kind,
+        'accepted',
+      )
+      assert.deepEqual(await readFile(indexed.canonicalPath), packageBefore)
+      assert.deepEqual(
+        (await fixture.queue.listUnfinishedByProject(fixture.tabId)).map((item) => item.id),
+        neighbor.map((item) => item.id),
+      )
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+      for (const item of batch.slice(1)) {
+        assert.equal((await fixture.queue.loadVerifiedInput(item.id)).item.status, 'canceled')
+      }
+      const save = await fixture.projects.save(fixture.tabId, fixture.worker)
+      assert.equal(save.committed, true)
+      const saved = await readIgsPackage(indexed.canonicalPath)
+      assert.equal(saved.project.layers.length, 1)
+      const layer = saved.project.layers[0]
+      assert.equal(layer.generationProvenance?.generationConfiguration.sampling.actualSeed, 42)
+      assert.equal(layer.generationProvenance?.executionResultContext.candidateId, selected)
+      assert.deepEqual(await saved.readMember(layer.asset.path), fixture.outputBytes)
+      await fixture.projects.setPrimaryBbox(fixture.tabId, {
+        height: 64,
+        width: 64,
+        x: 128,
+        y: 128,
+      })
+      const later = await withQualifiedBatch(
+        fixture,
+        [99],
+        async (items) => await fixture.orchestrator.enqueueBatch(fixture.tabId, items),
+      )
+      assert.equal(later[0].status, 'pending')
+    })
+  },
+)
+
+test(
+  'batch admission freezes caller data before the asynchronous model verification',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await withQualifiedBatch(fixture, [42, 43], async (items) => {
+        const original = fixture.modelService.resolveVerifiedGenerationCheckpointForPlan.bind(
+          fixture.modelService,
+        )
+        let changed = false
+        fixture.modelService.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
+          if (!changed) {
+            changed = true
+            items[0].prepared.context.prompts.positive = 'caller replaced prompt'
+            items[0].request.job.prompts.positive = 'caller replaced prompt'
+            items[0].prepared.targetPngBytes.fill(0)
+            items.reverse()
+          }
+          return await original(reference)
+        }
+        const queued = await fixture.orchestrator.enqueueBatch(fixture.tabId, items)
+        assert.equal(changed, true)
+        assert.equal(queued.length, 2)
+        const frozen = await fixture.queue.loadVerifiedInput(queued[0].id)
+        assert.equal(frozen.payload.context.prompts.positive, 'blue lantern 0')
+        assert.equal(frozen.payload.context.sampling.seed, 42)
+        assert.notEqual((await readFile(frozen.targetPath))[0], 0)
+      })
+    })
+  },
+)
+
+test(
+  'batch admission rejects empty and mixed-document groups without queue publication',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      await assert.rejects(fixture.orchestrator.enqueueBatch(fixture.tabId, []), {
+        code: 'GENERATION_BATCH_INVALID',
+      })
+      await withQualifiedBatch(fixture, [42, 43], async (items) => {
+        items[1].prepared.context.documentId = randomUUID()
+        await assert.rejects(fixture.orchestrator.enqueueBatch(fixture.tabId, items), {
+          code: 'PROJECT_DOCUMENT_CHANGED',
+        })
+      })
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+    })
+  },
+)
+
+test(
+  'a document reassigned after atomic batch commit cancels exactly that group',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const neighbor = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        inferenceTransport(fixture.outputBytes),
+      )
+      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
+      let published: string[] = []
+      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+        const queued = await enqueue(input)
+        published = queued.map((item) => item.id)
+        await fixture.database.db
+          .updateTable('project_index')
+          .set({ document_id: randomUUID() })
+          .where('local_project_key', '=', fixture.tabId)
+          .execute()
+        return queued
+      }
+      await withQualifiedBatch(fixture, [42, 43, 44], async (items) => {
+        await assert.rejects(fixture.orchestrator.enqueueBatch(fixture.tabId, items), {
+          code: 'PROJECT_DOCUMENT_CHANGED',
+        })
+      })
+      assert.equal(published.length, 3)
+      for (const id of published) {
+        assert.equal((await fixture.queue.loadVerifiedInput(id)).item.status, 'canceled')
+      }
+      assert.equal((await fixture.queue.loadVerifiedInput(neighbor.id)).item.status, 'pending')
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+    })
+  },
+)
+
+test(
+  'unconfirmed batch cancellation preserves its fence until confirmed Project close',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
+      const cancel = fixture.processor.cancelAndWait.bind(fixture.processor)
+      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+        const queued = await enqueue(input)
+        await fixture.database.db
+          .updateTable('project_index')
+          .set({ document_id: randomUUID() })
+          .where('local_project_key', '=', fixture.tabId)
+          .execute()
+        return queued
+      }
+      fixture.processor.cancelAndWait = async () => {
+        throw new Error('worker exit unconfirmed')
+      }
+      await withQualifiedBatch(fixture, [42, 43], async (items) => {
+        await assert.rejects(fixture.orchestrator.enqueueBatch(fixture.tabId, items), {
+          code: 'CANCELLATION_UNCERTAIN',
+        })
+      })
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      assert.equal((await fixture.queue.listUnfinishedByProject(fixture.tabId)).length, 2)
+      fixture.processor.cancelAndWait = cancel
+      await fixture.orchestrator.cancelProjectJobs(fixture.tabId)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'PROJECT_GENERATION_CLOSING',
+      })
+    })
+  },
+)
 
 // A concurrent queue owner prepares actual qualified frozen inputs; only the historical document
 // or session identity is varied. This does not substitute the cancellation or SQLite boundary.

@@ -78,50 +78,50 @@ Rejected:
 Suggested baseline:
 
 ```ts
-type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled';
+type QueueItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
 
-type ProjectJobOperation = 'generate' | 'smart-patch-generate' | 'upscale'; // reserved follow-up
+type ProjectJobOperation = 'generate' | 'smart-patch-generate' | 'upscale' // reserved follow-up
 
 type ProjectQueueItem = {
-  id: string;
-  batchId: string;
-  status: QueueItemStatus;
-  statusSequence: number;
-  operation: ProjectJobOperation;
+  id: string
+  batchId: string
+  status: QueueItemStatus
+  statusSequence: number
+  operation: ProjectJobOperation
 
-  projectId: string;
-  projectPath: string;
-  projectDisplayName: string;
+  projectId: string
+  projectPath: string
+  projectDisplayName: string
 
-  targetLayerId?: string;
-  targetLayerName?: string;
+  targetLayerId?: string
+  targetLayerName?: string
   stagingTarget:
     | { kind: 'project-canvas'; sessionId: string }
     | { kind: 'smart-patch'; layerId: string; sessionId: string }
-    | { kind: 'upscale'; sessionId: string };
+    | { kind: 'upscale'; sessionId: string }
 
-  jobPayload: WorkerJob;
+  jobPayload: WorkerJob
 
   progress?: {
-    value: number;
-    step?: number;
-    totalSteps?: number;
-    message?: string;
-    previewAssetId?: string;
-  };
+    value: number
+    step?: number
+    totalSteps?: number
+    message?: string
+    previewAssetId?: string
+  }
 
-  resultAssetIds: string[];
+  resultAssetIds: string[]
   error?: {
-    code: string;
-    message: string;
-    details?: unknown;
-  };
+    code: string
+    message: string
+    details?: unknown
+  }
 
-  createdAt: string;
-  updatedAt: string;
-  startedAt?: string;
-  completedAt?: string;
-};
+  createdAt: string
+  updatedAt: string
+  startedAt?: string
+  completedAt?: string
+}
 ```
 
 The queue item stores a frozen job payload. It must not read mutable renderer/project state at execution time. Worker completion creates a temporary candidate for `stagingTarget`; it does not commit a project layer. A completed candidate's separate recovery manifest retains the frozen context needed for later acceptance, so pruning a queue item cannot make that candidate unusable.
@@ -141,13 +141,13 @@ Batch metadata:
 
 ```ts
 type QueueBatch = {
-  id: string;
-  origin: 'generate' | 'smart-patch' | 'upscale';
-  destination: 'project-staging' | 'smart-patch-staging' | 'upscale-staging';
-  projectId: string;
-  itemIds: string[];
-  createdAt: string;
-};
+  id: string
+  origin: 'generate' | 'smart-patch' | 'upscale'
+  destination: 'project-staging' | 'smart-patch-staging' | 'upscale-staging'
+  projectId: string
+  itemIds: string[]
+  createdAt: string
+}
 ```
 
 The batch is mostly for grouping UI actions and status summaries. Individual queue items remain independently cancelable/retryable.
@@ -263,11 +263,22 @@ candidate receipt are retained for startup reconciliation. Queue files left
 between a committed row deletion and filesystem cleanup are reclaimed at the
 next startup. These operations do not silently discard staging candidates.
 
+The internal qualified batch entry point now groups an ordered list of concrete
+Illustrious jobs from one frozen snapshot with one fresh batch/session identity.
+Required staging preflight checks recovery capacity and identity reuse before
+publication. Independent per-job input directories are synced before one SQLite
+transaction exposes all rows. Supplied order is preserved within the batch;
+independent batches can interleave. Exact matching rows reconcile a lost commit
+acknowledgement; an unknown outcome retains inputs and blocks Project admission,
+dispatch and fence release until successful startup recovery. See
+[qualified batch evidence](../engineering/phase-2b-batch-grouping-research.md).
+
 This is still an internal boundary tested with a substitute inference transport.
-There is no production GPU worker dispatch or renderer Generate/Queue Manager
-action; progress and user-facing retry/pruning are unconnected. Candidate
-acceptance has a separate production Raster path, but Smart Patch acceptance
-and early Add while sibling jobs run remain open.
+There is no renderer Generate/Queue Manager action or qualified full release GPU
+pipeline; expansion/seed planning, progress and user-facing retry/pruning are
+unconnected. Candidate acceptance has a separate production Raster path,
+including [confirmed early Add](./project/generate-mode/generation-results.md#production-confirmed-early-raster-acceptance-checkpoint)
+while sibling jobs run. Smart Patch acceptance remains open.
 
 ## Queue Manager UI
 
@@ -357,14 +368,14 @@ Main process normalizes worker messages and publishes typed renderer events:
 type QueueEvent =
   | { type: 'queue:item-created'; item: ProjectQueueItem }
   | {
-      type: 'queue:item-status-changed';
-      itemId: string;
-      status: QueueItemStatus;
-      statusSequence: number;
+      type: 'queue:item-status-changed'
+      itemId: string
+      status: QueueItemStatus
+      statusSequence: number
     }
   | { type: 'queue:item-progress'; itemId: string; progress: ProjectQueueItem['progress'] }
   | { type: 'queue:item-completed'; itemId: string; resultAssetIds: string[] }
-  | { type: 'queue:item-failed'; itemId: string; error: ProjectQueueItem['error'] };
+  | { type: 'queue:item-failed'; itemId: string; error: ProjectQueueItem['error'] }
 ```
 
 Use a monotonically increasing `statusSequence` or revision number to avoid stale progress/status events overriding newer terminal states.
