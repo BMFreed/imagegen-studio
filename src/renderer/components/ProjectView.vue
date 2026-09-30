@@ -2,6 +2,7 @@
 import type {
   ModelCatalogItem,
   ProjectApi,
+  ProjectGenerationActionState,
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
   ProjectLoraIdentity,
@@ -16,8 +17,11 @@ import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import {
+  X as CancelIcon,
   Trash as ClearHistoryIcon,
   AspectRatio as FitIcon,
+  Wand as GenerateIcon,
+  ListCheck as QueueIcon,
   Refresh as RefreshIcon,
   DeviceFloppy as SaveIcon,
   ArrowsShuffle as ShuffleIcon,
@@ -25,6 +29,7 @@ import {
 import { DnDProvider } from '@vue-dnd-kit/core'
 import {
   NAlert,
+  NBadge,
   NButton,
   NFormItem,
   NIcon,
@@ -58,6 +63,7 @@ import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
+import ProjectQueuePanel from './ProjectQueuePanel.vue'
 import ResolutionControl from './ResolutionControl.vue'
 
 const props = defineProps<{
@@ -65,10 +71,16 @@ const props = defineProps<{
   draftPending: boolean
   error: string | null
   exportFeedback: CandidateExportFeedback | null
+  generationCanceling: boolean
   generationDraft: ProjectTab['generationDraft']
+  generationError: string | null
+  generationNotice: string | null
   generationResults: ProjectGenerationResultsSnapshot | null
   generationResultsError: string | null
   generationResultsLoading: boolean
+  generationState: ProjectGenerationActionState | null
+  generationStateLoading: boolean
+  generationSubmitting: boolean
   modelCatalog: ModelCatalogItem[]
   modelCatalogError: string | null
   modelCatalogLoaded: boolean
@@ -76,6 +88,7 @@ const props = defineProps<{
   pending: 'bbox' | 'clear-history' | 'import-image' | 'model' | 'redo' | 'save' | 'undo' | null
   promptHistoryEpoch: number
   reloadRequired: boolean
+  runtimeUnavailableReason: string | null
   saveNotice: string | null
   tab: ProjectTab
 }>()
@@ -84,13 +97,16 @@ const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
+  cancelGeneration: []
   clearExportFeedback: []
   clearHistory: []
+  generate: [iterations: number]
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
   moveLayer: [layerId: string, targetIndex: number]
   redo: []
   refreshGenerationResults: []
+  refreshGenerationState: []
   refreshModels: []
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
@@ -105,7 +121,49 @@ const emit = defineEmits<{
   validateDraft: [tabId: string, valid: boolean]
 }>()
 
+const imagesPerClick = defineModel<number | null>('imagesPerClick', { default: 4 })
+const countInputTheme = { peers: { Input: { paddingMedium: '0 4px' } } }
+const rawCountInvalid = ref(false)
+const queueOpen = ref(false)
+const queueTrigger = ref<{ $el: HTMLButtonElement } | null>(null)
+const queuePanel = ref<InstanceType<typeof ProjectQueuePanel> | null>(null)
+const activeQueueCount = computed(() => props.generationState?.jobs.length ?? 0)
+
 type PromptPolarity = 'negative' | 'positive'
+
+function normalizeCount(value: number | null) {
+  imagesPerClick.value =
+    value === null || !Number.isFinite(value) ? null : Math.min(100, Math.max(1, Math.round(value)))
+}
+
+function captureCountInput(event: Event) {
+  if (event.target instanceof HTMLInputElement) {
+    const raw = event.target.value.trim()
+    const value = Number(raw)
+    rawCountInvalid.value =
+      !/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > 100
+  }
+}
+
+function reviewCountOnEnter(event: KeyboardEvent) {
+  if (!event.isComposing && event.target instanceof HTMLInputElement) {
+    captureCountInput(event)
+  }
+}
+
+async function toggleQueue() {
+  queueOpen.value = !queueOpen.value
+  if (queueOpen.value) {
+    emit('refreshGenerationState')
+    await nextTick()
+    queuePanel.value?.focusClose()
+  }
+}
+
+function closeQueue() {
+  queueOpen.value = false
+  void nextTick(() => queueTrigger.value?.$el.focus({ preventScroll: true }))
+}
 const promptGroups = new Map<PromptPolarity, string>()
 const dynamicPreviewOpen = ref(false)
 const dynamicSettings = computed({
@@ -682,9 +740,44 @@ const draftSize = computed<ResolutionSize>({
   set: (size) => Object.assign(draft, size),
 })
 
+const rawBboxInvalid = reactive({ height: false, width: false })
+
+function captureBboxInput(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return
+  }
+  const label = event.target.getAttribute('aria-label')
+  const key =
+    label === 'Generation area width'
+      ? 'width'
+      : label === 'Generation area height'
+        ? 'height'
+        : null
+  if (key) {
+    const raw = event.target.value.trim()
+    const value = Number(raw)
+    rawBboxInvalid[key] =
+      !/^\d+$/.test(raw) ||
+      !Number.isSafeInteger(value) ||
+      value < 1 ||
+      value > IGS_SAFETY_CEILINGS.rasterDimension
+  }
+}
+
 watch(
-  () => props.tab.primaryBbox,
-  (bbox) => Object.assign(draft, bbox),
+  [
+    () => props.tab.id,
+    () => props.tab.documentId,
+    () => props.tab.primaryBbox.height,
+    () => props.tab.primaryBbox.width,
+    () => props.tab.primaryBbox.x,
+    () => props.tab.primaryBbox.y,
+  ],
+  () => {
+    Object.assign(draft, props.tab.primaryBbox)
+    rawBboxInvalid.height = false
+    rawBboxInvalid.width = false
+  },
   { immediate: true },
 )
 
@@ -730,11 +823,66 @@ function applyBboxOnEnter(event: KeyboardEvent) {
     return
   }
   // NInputNumber parses its displayed text on Enter before this bubbling handler runs.
+  captureBboxInput(event)
   commitBboxAfterUpdate()
 }
 
 function commitBboxAfterUpdate() {
   void nextTick(applyBbox)
+}
+
+const generationBlockingReason = computed(() => {
+  if (rawBboxInvalid.height || rawBboxInvalid.width || !validBbox.value) {
+    return 'Enter a valid generation area size and press Enter before generating.'
+  }
+  if (bboxChanged.value) {
+    return 'Press Enter to apply the generation area size before generating.'
+  }
+  if (
+    rawCountInvalid.value ||
+    imagesPerClick.value === null ||
+    !Number.isSafeInteger(imagesPerClick.value) ||
+    imagesPerClick.value < 1 ||
+    imagesPerClick.value > 100
+  ) {
+    return 'Choose an integer from 1 to 100 for Images per click.'
+  }
+  if (draftInvalid.value) {
+    return 'Correct invalid generation settings before generating.'
+  }
+  if (!selectedModel.value || modelStatus.value !== 'ready') {
+    return 'Choose an installed model before generating.'
+  }
+  if (props.generationDraft.seed.policy === 'reuse' && lastActualSeed.value === null) {
+    return 'Complete a generation before using Reuse.'
+  }
+  if (props.runtimeUnavailableReason) {
+    return props.runtimeUnavailableReason
+  }
+  if (!props.generationState) {
+    return props.generationError ?? 'Checking generation availability…'
+  }
+  if (props.generationState.phase === 'blocked') {
+    return `${props.generationState.error?.message ?? 'Generation recovery needs attention.'} Restart the app to retry generation recovery.`
+  }
+  if (props.generationState.phase === 'closed') {
+    return 'Generation has stopped for this app session. Save your work and restart the app.'
+  }
+  if (props.generationState.phase === 'preparing' || props.generationState.phase === 'processing') {
+    return 'Wait for the current generation to finish. You can keep editing this Project.'
+  }
+  return null
+})
+
+function generate() {
+  if (
+    !props.busy &&
+    !props.reloadRequired &&
+    !generationBlockingReason.value &&
+    imagesPerClick.value !== null
+  ) {
+    emit('generate', imagesPerClick.value)
+  }
 }
 
 const activeFitLayer = computed(
@@ -798,6 +946,9 @@ function applyFitBbox() {
       {{ exportFeedback.message }}
     </NAlert>
     <div class="project-notices">
+      <NAlert v-if="generationNotice" key="n-alert-2" title="Generation batch" type="warning">
+        {{ generationNotice }}
+      </NAlert>
       <NAlert v-if="error" key="n-alert-2" title="Project action failed" type="error">
         {{ error }}
       </NAlert>
@@ -840,400 +991,466 @@ function applyFitBbox() {
 
     <div class="project-layout">
       <aside aria-label="Project settings" class="project-settings">
-        <div class="document-actions">
-          <span
-            class="document-state"
-            :class="{ 'document-state--dirty': tab.dirty || draftPending }"
-          >
-            {{ tab.dirty || draftPending ? 'Unsaved changes' : 'Saved' }}
-          </span>
-          <div class="document-action-buttons">
-            <NPopconfirm
-              negativeText="Cancel"
-              positiveText="Clear history"
-              @positiveClick="emit('clearHistory')"
-            >
-              <template v-slot:trigger>
-                <NButton
-                  aria-label="Clear Project History"
-                  :disabled="reloadRequired || busy || (!tab.canUndo && !tab.canRedo)"
-                  quaternary
-                  size="tiny"
-                  title="Clear Undo and Redo history"
-                >
-                  <template v-slot:icon>
-                    <NIcon :component="ClearHistoryIcon" :size="16" />
-                  </template>
-                </NButton>
-              </template>
-              Clear Undo and Redo history for this open Project? The document will not change.
-            </NPopconfirm>
+        <footer aria-label="Generation actions" class="generation-footer">
+          <div class="generation-primary-actions">
             <NButton
-              aria-label="Save Project"
-              :disabled="reloadRequired || busy || draftInvalid"
-              :loading="pending === 'save'"
-              size="small"
-              @click="emit('save')"
+              :disabled="busy || reloadRequired || Boolean(generationBlockingReason)"
+              :loading="generationSubmitting"
+              type="primary"
+              @click="generate"
             >
-              <template v-slot:icon><NIcon :component="SaveIcon" /></template>
-              Save
+              <template v-slot:icon><NIcon :component="GenerateIcon" /></template>
+              <strong>Generate</strong>
+            </NButton>
+            <div @input.capture="captureCountInput" @keydown.enter="reviewCountOnEnter">
+              <NInputNumber
+                class="count-input"
+                :disabled="busy || reloadRequired"
+                :inputProps="{ 'aria-label': 'Images per click' }"
+                :max="100"
+                :min="1"
+                :step="1"
+                :themeOverrides="countInputTheme"
+                :value="imagesPerClick"
+                @update:value="normalizeCount"
+              />
+            </div>
+          </div>
+          <div class="generation-secondary-actions">
+            <NBadge
+              :max="99"
+              :offset="[-3, 3]"
+              :show="activeQueueCount > 0"
+              type="success"
+              :value="activeQueueCount"
+            >
+              <NButton
+                ref="queueTrigger"
+                :aria-expanded="queueOpen"
+                :aria-label="`Generation queue${activeQueueCount ? `, ${activeQueueCount} active jobs` : ''}`"
+                circle
+                secondary
+                @click="toggleQueue"
+              >
+                <template v-slot:icon><NIcon :component="QueueIcon" /></template>
+              </NButton>
+            </NBadge>
+            <NButton
+              aria-label="Cancel current generation"
+              circle
+              :disabled="
+                busy || reloadRequired || !generationState?.runningJobId || generationCanceling
+              "
+              :loading="generationCanceling"
+              secondary
+              @click="emit('cancelGeneration')"
+            >
+              <template v-slot:icon><NIcon :component="CancelIcon" /></template>
             </NButton>
           </div>
-        </div>
-        <section aria-label="Generation settings" class="settings-section">
-          <div class="generation-heading">
-            <h2>Generation</h2>
-            <NTooltip v-if="!generationResults?.candidates.length">
-              <template v-slot:trigger>
-                <NButton
-                  aria-label="Refresh results"
-                  circle
-                  :loading="generationResultsLoading"
-                  quaternary
-                  size="tiny"
-                  @click="emit('refreshGenerationResults')"
-                >
-                  <template v-slot:icon><NIcon :component="RefreshIcon" :size="16" /></template>
-                </NButton>
-              </template>
-              Check for temporary generation results on this computer
-            </NTooltip>
-          </div>
-          <div class="model-fields">
-            <div class="model-heading">
-              <span class="field-label">Model</span>
-              <div class="model-actions">
-                <NButton
-                  aria-label="Refresh models"
-                  :disabled="modelCatalogLoading"
-                  size="tiny"
-                  text
-                  @click="emit('refreshModels')"
-                >
-                  Refresh
-                </NButton>
-                <NButton aria-label="Manage Models" size="tiny" text @click="openModelManager">
-                  Manage Models
-                </NButton>
-              </div>
-            </div>
-            <NSelect
-              aria-label="Generation model"
-              clearable
-              :disabled="modelPickerDisabled"
-              :filter="filterModelOption"
-              :filterable="models.length > 0"
-              :loading="modelCatalogLoading || pending === 'model'"
-              :options="modelOptions"
-              placeholder="Choose an installed model"
-              :renderLabel="renderModelLabel"
-              :renderTag="renderModelTag"
-              showOnFocus
-              size="small"
-              :value="pickerResourceId"
-              :virtualScroll="false"
-              @update:value="selectModelResource"
-            />
-            <NFormItem label="Version" :showFeedback="false">
-              <NSelect
-                aria-label="Model version"
-                :disabled="modelPickerDisabled || !selectedResource"
-                :loading="pending === 'model'"
-                :options="versionOptions"
-                :placeholder="
-                  selectedResource ? 'Choose an available version' : 'Choose a model first'
-                "
-                :renderTag="renderVersionTag"
-                size="small"
-                :value="versionValue"
-                @update:value="selectModelVersion"
-              />
-            </NFormItem>
-            <p v-if="stagedResourceId" class="model-message" role="status">
-              Choose a version. Current:
-              {{
-                selectedModel
-                  ? `${selectedModel.displayName} · ${selectedModel.versionName}`
-                  : 'None'
-              }}.
-              <NButton
-                aria-label="Cancel model choice"
-                size="tiny"
-                text
-                @click="stagedResourceId = null"
+          <p v-if="generationBlockingReason" class="generation-blocking-reason" role="status">
+            {{ generationBlockingReason }}
+          </p>
+        </footer>
+        <div class="settings-scroll">
+          <div class="document-actions">
+            <span
+              class="document-state"
+              :class="{ 'document-state--dirty': tab.dirty || draftPending }"
+            >
+              {{ tab.dirty || draftPending ? 'Unsaved changes' : 'Saved' }}
+            </span>
+            <div class="document-action-buttons">
+              <NPopconfirm
+                negativeText="Cancel"
+                positiveText="Clear history"
+                @positiveClick="emit('clearHistory')"
               >
-                Cancel
-              </NButton>
-            </p>
-            <div v-if="selectedModel && !stagedResourceId" class="model-summary">
-              <NTag :bordered="false" size="tiny">
-                {{
-                  selectedModel.baseModelFamily === 'anima'
-                    ? 'Anima'
-                    : selectedModel.baseModelFamily === 'illustrious'
-                      ? 'Illustrious'
-                      : 'Unknown family'
-                }}
-              </NTag>
-              <span
-                v-if="selectedModel.baseModelFamily === 'illustrious' && selectedModelVersion"
-                class="model-prediction"
-              >
-                Prediction: {{ selectedModelVersion.predictionType
-                }}{{ selectedModelVersion.predictionTypeSource === 'default' ? ' (assumed)' : '' }}
-              </span>
-            </div>
-            <p v-if="modelCatalogError" class="model-message" role="alert">
-              Could not check installed models. {{ modelCatalogError }}
-            </p>
-            <p v-else-if="modelDiagnostic" class="model-message" role="status">
-              {{ modelDiagnostic }}
-            </p>
-            <p v-else-if="modelCatalogLoaded && models.length === 0" class="model-message">
-              No checkpoints installed yet.
-            </p>
-            <div v-if="relinkCandidate && !stagedResourceId" class="model-relink">
-              <p class="model-message">
-                Matching version: {{ relinkCandidate.resource.name }} ·
-                {{ relinkCandidate.version.name }}.
-              </p>
-              <NButton
-                aria-label="Link installed version"
-                :disabled="modelPickerDisabled"
-                :loading="pending === 'model'"
-                secondary
-                size="small"
-                @click="emit('relinkModel')"
-              >
-                Link installed version
-              </NButton>
-            </div>
-          </div>
-          <div class="prompt-field">
-            <PlainPromptEditor
-              ariaLabel="Positive prompt"
-              :disabled="busy || reloadRequired"
-              dynamicPreviewAvailable
-              :embeddingTokens="
-                generationDraft.positivePrompt.embeddingRefs.map((ref) => ref.token)
-              "
-              :loraSources="promptLoraSources"
-              :modelValue="generationDraft.positivePrompt.text"
-              polarity="positive"
-              @blur="endPromptEdit('positive')"
-              @dynamicPreview="dynamicPreviewOpen = true"
-              @focus="beginPromptEdit('positive')"
-              @update:modelValue="updatePrompt('positive', $event)"
-            />
-          </div>
-          <div class="prompt-field">
-            <PlainPromptEditor
-              ariaLabel="Negative prompt"
-              :disabled="busy || reloadRequired"
-              dynamicPreviewAvailable
-              :embeddingTokens="
-                generationDraft.negativePrompt.embeddingRefs.map((ref) => ref.token)
-              "
-              :loraSources="promptLoraSources"
-              :modelValue="generationDraft.negativePrompt.text"
-              polarity="negative"
-              @blur="endPromptEdit('negative')"
-              @dynamicPreview="dynamicPreviewOpen = true"
-              @focus="beginPromptEdit('negative')"
-              @update:modelValue="updatePrompt('negative', $event)"
-            />
-          </div>
-          <ProjectLoraStack
-            :catalog="modelCatalog"
-            :catalogReady="modelCatalogLoaded && !modelCatalogError"
-            :disabled="busy || reloadRequired"
-            :draft="generationDraft"
-            :loading="modelCatalogLoading"
-            @add="emit('addLora', $event)"
-            @change="emit('updateDraft', $event)"
-            @relink="emit('relinkLora', $event)"
-            @remove="emit('removeLora', $event)"
-            @validity="lorasValid = $event"
-          />
-          <div class="sampling-fields">
-            <NFormItem label="Sampler" :showFeedback="false">
-              <NSelect
-                aria-label="Sampler"
-                clearable
-                :disabled="busy || reloadRequired || illustriousSamplingUnavailable"
-                :options="samplerOptions"
-                placeholder="Choose sampler"
-                size="small"
-                :value="generationDraft.sampling.sampler"
-                @update:value="updateSampler"
-              />
-            </NFormItem>
-            <NFormItem label="Scheduler" :showFeedback="false">
-              <NSelect
-                aria-label="Scheduler"
-                clearable
-                :disabled="
-                  busy ||
-                  reloadRequired ||
-                  illustriousSamplingUnavailable ||
-                  generationDraft.sampling.sampler === null
-                "
-                :options="schedulerOptions"
-                placeholder="Choose scheduler"
-                size="small"
-                :value="generationDraft.sampling.scheduler"
-                @update:value="updateScheduler"
-              />
-            </NFormItem>
-          </div>
-          <p v-if="samplingPairDiagnostic" class="sampling-validation" role="status">
-            {{ samplingPairDiagnostic }}
-          </p>
-          <p v-if="samplingFamilyNotice" class="sampling-validation" role="status">
-            {{ samplingFamilyNotice }}
-          </p>
-          <div class="sampling-fields">
-            <NFormItem label="Steps" :showFeedback="false">
-              <div class="sampling-input" @input.capture="captureSamplingStepsInput">
-                <NInputNumber
-                  :disabled="busy || reloadRequired"
-                  :inputProps="{ 'aria-label': 'Steps' }"
-                  :min="1"
-                  :showButton="false"
-                  size="small"
-                  :value="samplingStepsInput"
-                  @blur="restoreInvalidSamplingSteps"
-                  @update:value="updateSamplingSteps"
-                />
-              </div>
-            </NFormItem>
-            <NFormItem label="CFG scale" :showFeedback="false">
-              <NInput
-                :disabled="busy || reloadRequired"
-                :inputProps="{ 'aria-label': 'CFG scale', inputmode: 'decimal' }"
-                size="small"
-                :value="samplingCfgScaleText"
-                @blur="normalizeSamplingCfgScaleOnBlur"
-                @focus="samplingCfgScaleFocused = true"
-                @update:value="updateSamplingCfgScaleText"
-              />
-            </NFormItem>
-          </div>
-          <p v-if="samplingStepsInvalid" class="sampling-validation" role="alert">
-            Enter a positive whole number of steps, or leave it unset.
-          </p>
-          <p v-if="samplingCfgScaleInvalid" class="sampling-validation" role="alert">
-            Enter a CFG scale of zero or greater, or leave it unset.
-          </p>
-          <div class="seed-fields">
-            <NFormItem label="Seed" :showFeedback="false">
-              <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">
-                <NInputNumber
-                  :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
-                  :inputProps="{ 'aria-label': 'Generation seed' }"
-                  :max="0xff_ff_ff_ff"
-                  :min="0"
-                  :showButton="false"
-                  size="small"
-                  :value="displayedSeed"
-                  @blur="restoreInvalidFixedSeed"
-                  @update:value="updateFixedSeed"
-                />
-              </div>
-            </NFormItem>
-            <NFormItem label="Random" :showFeedback="false">
-              <NSwitch
-                aria-label="Random seed switch"
-                :disabled="busy || reloadRequired"
-                size="small"
-                :value="generationDraft.seed.policy === 'random'"
-                @update:value="updateSeedPolicy($event ? 'random' : 'fixed')"
-              />
-            </NFormItem>
-            <div class="seed-actions">
-              <NButton
-                :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
-                secondary
-                size="small"
-                @click="shuffleSeed"
-              >
-                <template v-slot:icon><NIcon :component="ShuffleIcon" :size="16" /></template>
-                Shuffle Seed
-              </NButton>
-              <NButton
-                :aria-pressed="generationDraft.seed.policy === 'reuse'"
-                :disabled="
-                  busy ||
-                  reloadRequired ||
-                  (lastActualSeed === null && generationDraft.seed.policy !== 'reuse')
-                "
-                secondary
-                size="small"
-                :type="generationDraft.seed.policy === 'reuse' ? 'primary' : 'default'"
-                @click="reuseLastSeed"
-              >
-                Reuse last seed
-              </NButton>
-            </div>
-          </div>
-          <p v-if="fixedSeedInvalid" class="seed-validation" role="alert">
-            Enter a fixed seed from 0 to 4294967295 before saving.
-          </p>
-          <p
-            v-if="generationDraft.seed.policy === 'reuse' && lastActualSeed === null"
-            class="seed-diagnostic"
-            role="status"
-          >
-            No completed generation has a seed to reuse. Generate will be unavailable until one
-            completes.
-          </p>
-          <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
-            Last completed seed: {{ lastActualSeed }}
-          </p>
-        </section>
-        <section
-          aria-label="Generation area"
-          class="settings-section"
-          @keydown.enter="applyBboxOnEnter"
-        >
-          <div class="generation-area-heading">
-            <h2>Generation area</h2>
-            <NTooltip>
-              <template v-slot:trigger>
-                <span class="fit-bbox-trigger">
+                <template v-slot:trigger>
                   <NButton
-                    aria-label="Fit to active layer"
-                    circle
-                    :disabled="!canFitBbox || busy || reloadRequired"
-                    :loading="pending === 'bbox'"
+                    aria-label="Clear Project History"
+                    :disabled="reloadRequired || busy || (!tab.canUndo && !tab.canRedo)"
                     quaternary
                     size="tiny"
-                    @click="applyFitBbox"
+                    title="Clear Undo and Redo history"
                   >
-                    <template v-slot:icon><NIcon :component="FitIcon" :size="16" /></template>
+                    <template v-slot:icon>
+                      <NIcon :component="ClearHistoryIcon" :size="16" />
+                    </template>
                   </NButton>
-                </span>
-              </template>
-              {{
-                !activeFitLayer
-                  ? 'Select a visible layer to fit'
-                  : canFitBbox
-                    ? 'Fit to active layer'
-                    : 'Generation area already fits the active layer'
-              }}
-            </NTooltip>
+                </template>
+                Clear Undo and Redo history for this open Project? The document will not change.
+              </NPopconfirm>
+              <NButton
+                aria-label="Save Project"
+                :disabled="reloadRequired || busy || draftInvalid"
+                :loading="pending === 'save'"
+                size="small"
+                @click="emit('save')"
+              >
+                <template v-slot:icon><NIcon :component="SaveIcon" /></template>
+                Save
+              </NButton>
+            </div>
           </div>
-          <ResolutionControl
-            v-model="draftSize"
-            class="bbox-size"
-            :disabled="busy || reloadRequired"
-            heightLabel="Generation area height"
-            layout="expanded-preview"
-            :max="IGS_SAFETY_CEILINGS.rasterDimension"
-            widthLabel="Generation area width"
-            @commit="commitBboxAfterUpdate"
-          />
-        </section>
+          <section aria-label="Generation settings" class="settings-section">
+            <div class="generation-heading">
+              <h2>Generation</h2>
+              <NTooltip v-if="!generationResults?.candidates.length">
+                <template v-slot:trigger>
+                  <NButton
+                    aria-label="Refresh results"
+                    circle
+                    :loading="generationResultsLoading"
+                    quaternary
+                    size="tiny"
+                    @click="emit('refreshGenerationResults')"
+                  >
+                    <template v-slot:icon><NIcon :component="RefreshIcon" :size="16" /></template>
+                  </NButton>
+                </template>
+                Check for temporary generation results on this computer
+              </NTooltip>
+            </div>
+            <div class="model-fields">
+              <div class="model-heading">
+                <span class="field-label">Model</span>
+                <div class="model-actions">
+                  <NButton
+                    aria-label="Refresh models"
+                    :disabled="modelCatalogLoading"
+                    size="tiny"
+                    text
+                    @click="emit('refreshModels')"
+                  >
+                    Refresh
+                  </NButton>
+                  <NButton aria-label="Manage Models" size="tiny" text @click="openModelManager">
+                    Manage Models
+                  </NButton>
+                </div>
+              </div>
+              <NSelect
+                aria-label="Generation model"
+                clearable
+                :disabled="modelPickerDisabled"
+                :filter="filterModelOption"
+                :filterable="models.length > 0"
+                :loading="modelCatalogLoading || pending === 'model'"
+                :options="modelOptions"
+                placeholder="Choose an installed model"
+                :renderLabel="renderModelLabel"
+                :renderTag="renderModelTag"
+                showOnFocus
+                size="small"
+                :value="pickerResourceId"
+                :virtualScroll="false"
+                @update:value="selectModelResource"
+              />
+              <NFormItem label="Version" :showFeedback="false">
+                <NSelect
+                  aria-label="Model version"
+                  :disabled="modelPickerDisabled || !selectedResource"
+                  :loading="pending === 'model'"
+                  :options="versionOptions"
+                  :placeholder="
+                    selectedResource ? 'Choose an available version' : 'Choose a model first'
+                  "
+                  :renderTag="renderVersionTag"
+                  size="small"
+                  :value="versionValue"
+                  @update:value="selectModelVersion"
+                />
+              </NFormItem>
+              <p v-if="stagedResourceId" class="model-message" role="status">
+                Choose a version. Current:
+                {{
+                  selectedModel
+                    ? `${selectedModel.displayName} · ${selectedModel.versionName}`
+                    : 'None'
+                }}.
+                <NButton
+                  aria-label="Cancel model choice"
+                  size="tiny"
+                  text
+                  @click="stagedResourceId = null"
+                >
+                  Cancel
+                </NButton>
+              </p>
+              <div v-if="selectedModel && !stagedResourceId" class="model-summary">
+                <NTag :bordered="false" size="tiny">
+                  {{
+                    selectedModel.baseModelFamily === 'anima'
+                      ? 'Anima'
+                      : selectedModel.baseModelFamily === 'illustrious'
+                        ? 'Illustrious'
+                        : 'Unknown family'
+                  }}
+                </NTag>
+                <span
+                  v-if="selectedModel.baseModelFamily === 'illustrious' && selectedModelVersion"
+                  class="model-prediction"
+                >
+                  Prediction: {{ selectedModelVersion.predictionType
+                  }}{{
+                    selectedModelVersion.predictionTypeSource === 'default' ? ' (assumed)' : ''
+                  }}
+                </span>
+              </div>
+              <p v-if="modelCatalogError" class="model-message" role="alert">
+                Could not check installed models. {{ modelCatalogError }}
+              </p>
+              <p v-else-if="modelDiagnostic" class="model-message" role="status">
+                {{ modelDiagnostic }}
+              </p>
+              <p v-else-if="modelCatalogLoaded && models.length === 0" class="model-message">
+                No checkpoints installed yet.
+              </p>
+              <div v-if="relinkCandidate && !stagedResourceId" class="model-relink">
+                <p class="model-message">
+                  Matching version: {{ relinkCandidate.resource.name }} ·
+                  {{ relinkCandidate.version.name }}.
+                </p>
+                <NButton
+                  aria-label="Link installed version"
+                  :disabled="modelPickerDisabled"
+                  :loading="pending === 'model'"
+                  secondary
+                  size="small"
+                  @click="emit('relinkModel')"
+                >
+                  Link installed version
+                </NButton>
+              </div>
+            </div>
+            <div class="prompt-field">
+              <PlainPromptEditor
+                ariaLabel="Positive prompt"
+                :disabled="busy || reloadRequired"
+                dynamicPreviewAvailable
+                :embeddingTokens="
+                  generationDraft.positivePrompt.embeddingRefs.map((ref) => ref.token)
+                "
+                :loraSources="promptLoraSources"
+                :modelValue="generationDraft.positivePrompt.text"
+                polarity="positive"
+                @blur="endPromptEdit('positive')"
+                @dynamicPreview="dynamicPreviewOpen = true"
+                @focus="beginPromptEdit('positive')"
+                @update:modelValue="updatePrompt('positive', $event)"
+              />
+            </div>
+            <div class="prompt-field">
+              <PlainPromptEditor
+                ariaLabel="Negative prompt"
+                :disabled="busy || reloadRequired"
+                dynamicPreviewAvailable
+                :embeddingTokens="
+                  generationDraft.negativePrompt.embeddingRefs.map((ref) => ref.token)
+                "
+                :loraSources="promptLoraSources"
+                :modelValue="generationDraft.negativePrompt.text"
+                polarity="negative"
+                @blur="endPromptEdit('negative')"
+                @dynamicPreview="dynamicPreviewOpen = true"
+                @focus="beginPromptEdit('negative')"
+                @update:modelValue="updatePrompt('negative', $event)"
+              />
+            </div>
+            <ProjectLoraStack
+              :catalog="modelCatalog"
+              :catalogReady="modelCatalogLoaded && !modelCatalogError"
+              :disabled="busy || reloadRequired"
+              :draft="generationDraft"
+              :loading="modelCatalogLoading"
+              @add="emit('addLora', $event)"
+              @change="emit('updateDraft', $event)"
+              @relink="emit('relinkLora', $event)"
+              @remove="emit('removeLora', $event)"
+              @validity="lorasValid = $event"
+            />
+            <div class="sampling-fields">
+              <NFormItem label="Sampler" :showFeedback="false">
+                <NSelect
+                  aria-label="Sampler"
+                  clearable
+                  :disabled="busy || reloadRequired || illustriousSamplingUnavailable"
+                  :options="samplerOptions"
+                  placeholder="Choose sampler"
+                  size="small"
+                  :value="generationDraft.sampling.sampler"
+                  @update:value="updateSampler"
+                />
+              </NFormItem>
+              <NFormItem label="Scheduler" :showFeedback="false">
+                <NSelect
+                  aria-label="Scheduler"
+                  clearable
+                  :disabled="
+                    busy ||
+                    reloadRequired ||
+                    illustriousSamplingUnavailable ||
+                    generationDraft.sampling.sampler === null
+                  "
+                  :options="schedulerOptions"
+                  placeholder="Choose scheduler"
+                  size="small"
+                  :value="generationDraft.sampling.scheduler"
+                  @update:value="updateScheduler"
+                />
+              </NFormItem>
+            </div>
+            <p v-if="samplingPairDiagnostic" class="sampling-validation" role="status">
+              {{ samplingPairDiagnostic }}
+            </p>
+            <p v-if="samplingFamilyNotice" class="sampling-validation" role="status">
+              {{ samplingFamilyNotice }}
+            </p>
+            <div class="sampling-fields">
+              <NFormItem label="Steps" :showFeedback="false">
+                <div class="sampling-input" @input.capture="captureSamplingStepsInput">
+                  <NInputNumber
+                    :disabled="busy || reloadRequired"
+                    :inputProps="{ 'aria-label': 'Steps' }"
+                    :min="1"
+                    :showButton="false"
+                    size="small"
+                    :value="samplingStepsInput"
+                    @blur="restoreInvalidSamplingSteps"
+                    @update:value="updateSamplingSteps"
+                  />
+                </div>
+              </NFormItem>
+              <NFormItem label="CFG scale" :showFeedback="false">
+                <NInput
+                  :disabled="busy || reloadRequired"
+                  :inputProps="{ 'aria-label': 'CFG scale', inputmode: 'decimal' }"
+                  size="small"
+                  :value="samplingCfgScaleText"
+                  @blur="normalizeSamplingCfgScaleOnBlur"
+                  @focus="samplingCfgScaleFocused = true"
+                  @update:value="updateSamplingCfgScaleText"
+                />
+              </NFormItem>
+            </div>
+            <p v-if="samplingStepsInvalid" class="sampling-validation" role="alert">
+              Enter a positive whole number of steps, or leave it unset.
+            </p>
+            <p v-if="samplingCfgScaleInvalid" class="sampling-validation" role="alert">
+              Enter a CFG scale of zero or greater, or leave it unset.
+            </p>
+            <div class="seed-fields">
+              <NFormItem label="Seed" :showFeedback="false">
+                <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">
+                  <NInputNumber
+                    :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                    :inputProps="{ 'aria-label': 'Generation seed' }"
+                    :max="0xff_ff_ff_ff"
+                    :min="0"
+                    :showButton="false"
+                    size="small"
+                    :value="displayedSeed"
+                    @blur="restoreInvalidFixedSeed"
+                    @update:value="updateFixedSeed"
+                  />
+                </div>
+              </NFormItem>
+              <NFormItem label="Random" :showFeedback="false">
+                <NSwitch
+                  aria-label="Random seed switch"
+                  :disabled="busy || reloadRequired"
+                  size="small"
+                  :value="generationDraft.seed.policy === 'random'"
+                  @update:value="updateSeedPolicy($event ? 'random' : 'fixed')"
+                />
+              </NFormItem>
+              <div class="seed-actions">
+                <NButton
+                  :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                  secondary
+                  size="small"
+                  @click="shuffleSeed"
+                >
+                  <template v-slot:icon><NIcon :component="ShuffleIcon" :size="16" /></template>
+                  Shuffle Seed
+                </NButton>
+                <NButton
+                  :aria-pressed="generationDraft.seed.policy === 'reuse'"
+                  :disabled="
+                    busy ||
+                    reloadRequired ||
+                    (lastActualSeed === null && generationDraft.seed.policy !== 'reuse')
+                  "
+                  secondary
+                  size="small"
+                  :type="generationDraft.seed.policy === 'reuse' ? 'primary' : 'default'"
+                  @click="reuseLastSeed"
+                >
+                  Reuse last seed
+                </NButton>
+              </div>
+            </div>
+            <p v-if="fixedSeedInvalid" class="seed-validation" role="alert">
+              Enter a fixed seed from 0 to 4294967295 before saving.
+            </p>
+            <p
+              v-if="generationDraft.seed.policy === 'reuse' && lastActualSeed === null"
+              class="seed-diagnostic"
+              role="status"
+            >
+              No completed generation has a seed to reuse. Generate will be unavailable until one
+              completes.
+            </p>
+            <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
+              Last completed seed: {{ lastActualSeed }}
+            </p>
+          </section>
+          <section
+            aria-label="Generation area"
+            class="settings-section"
+            @input.capture="captureBboxInput"
+            @keydown.enter="applyBboxOnEnter"
+          >
+            <div class="generation-area-heading">
+              <h2>Generation area</h2>
+              <NTooltip>
+                <template v-slot:trigger>
+                  <span class="fit-bbox-trigger">
+                    <NButton
+                      aria-label="Fit to active layer"
+                      circle
+                      :disabled="!canFitBbox || busy || reloadRequired"
+                      :loading="pending === 'bbox'"
+                      quaternary
+                      size="tiny"
+                      @click="applyFitBbox"
+                    >
+                      <template v-slot:icon><NIcon :component="FitIcon" :size="16" /></template>
+                    </NButton>
+                  </span>
+                </template>
+                {{
+                  !activeFitLayer
+                    ? 'Select a visible layer to fit'
+                    : canFitBbox
+                      ? 'Fit to active layer'
+                      : 'Generation area already fits the active layer'
+                }}
+              </NTooltip>
+            </div>
+            <ResolutionControl
+              v-model="draftSize"
+              class="bbox-size"
+              :disabled="busy || reloadRequired"
+              heightLabel="Generation area height"
+              layout="expanded-preview"
+              :max="IGS_SAFETY_CEILINGS.rasterDimension"
+              widthLabel="Generation area width"
+              @commit="commitBboxAfterUpdate"
+            />
+          </section>
+        </div>
       </aside>
 
       <ProjectCanvas
@@ -1255,7 +1472,23 @@ function applyFitBbox() {
         @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectLayer="selectedLayerId = $event"
         @undo="emit('undo')"
-      />
+      >
+        <template v-slot:queue>
+          <ProjectQueuePanel
+            v-if="queueOpen"
+            ref="queuePanel"
+            :canceling="generationCanceling"
+            :disabled="busy || reloadRequired"
+            :error="generationError"
+            :jobs="generationState?.jobs ?? []"
+            :loading="generationStateLoading"
+            :runningJobId="generationState?.runningJobId ?? null"
+            @cancelCurrent="emit('cancelGeneration')"
+            @close="closeQueue"
+            @refresh="emit('refreshGenerationState')"
+          />
+        </template>
+      </ProjectCanvas>
 
       <DnDProvider :autoScrollViewport="false">
         <ProjectLayerStack
@@ -1326,13 +1559,59 @@ function applyFitBbox() {
 }
 
 .project-settings {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-surface);
+}
+
+.settings-scroll {
+  min-height: 0;
   overflow: auto;
   scrollbar-color: var(--app-border) transparent;
   scrollbar-width: thin;
   padding: 14px 12px;
-  border-right: 1px solid var(--app-border);
-  background: var(--app-surface);
+}
+
+.generation-footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--app-elevated);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.generation-primary-actions,
+.generation-secondary-actions {
+  display: grid;
+  align-items: center;
+  gap: 5px;
+}
+
+.generation-primary-actions {
+  grid-template-columns: auto 70px;
+  grid-column: 1;
+}
+
+.generation-secondary-actions {
+  grid-template-columns: repeat(2, auto);
+  grid-column: 3;
+}
+
+.count-input {
+  width: 70px;
+}
+
+.project-settings .generation-blocking-reason {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  font-size: 11px;
 }
 
 .document-actions {

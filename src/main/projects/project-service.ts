@@ -27,6 +27,7 @@ import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { ModelService } from '../models/model-service.js'
+import type { buildFrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
@@ -42,7 +43,10 @@ import {
   prepareNormalTxt2Img,
   validateNormalTxt2ImgDraft,
 } from './project-generation-preparation.js'
-import { buildFrozenGenerationTarget } from './project-generation-target.js'
+import {
+  composeFrozenGenerationTarget,
+  type FrozenGenerationTarget,
+} from './project-generation-target.js'
 import {
   canonicalProjectPath,
   localProjectRecoveryKey,
@@ -56,6 +60,7 @@ import {
 } from './project-layer-resource.js'
 import { projectThumbnailImageUrl } from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
+import { withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
   type ProjectRebuildPreviewInput,
   ProjectSession,
@@ -552,26 +557,9 @@ export class ProjectService {
     tabId: string,
     worker: Pick<ProjectWorkerClient, 'composeTarget'>,
   ): ReturnType<typeof buildFrozenGenerationTarget> {
-    const coordinator = this.requireTab(tabId)
-    const document = coordinator.document
-    const pendingSources = new Map(
-      document.layers
-        .filter((layer) => layer.visible && layer.opacity > 0)
-        .map(
-          (layer) =>
-            [
-              `${layer.asset.path}:${layer.asset.sha256}`,
-              coordinator.getCurrentAssetSource(layer.asset),
-            ] as const,
-        ),
+    return await this.withCapturedNormalGenerationInput(tabId, (capture) =>
+      capture.composeTarget(worker),
     )
-    return await buildFrozenGenerationTarget({
-      document,
-      packagePath: coordinator.filePath,
-      pendingSource: (asset) => pendingSources.get(`${asset.path}:${asset.sha256}`) ?? null,
-      scratchBasePath: this.options.roots.scratchDir,
-      worker,
-    })
   }
 
   /** Prepare one verified Project context; queue and worker qualification are separate gates. */
@@ -1109,6 +1097,46 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** Capture before runtime awaits and retain frozen raster files through callback admission. */
+  async withCapturedNormalGenerationInput<T>(
+    tabId: string,
+    use: (capture: {
+      composeTarget: (
+        worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+      ) => Promise<FrozenGenerationTarget>
+      document: IgsProjectDocumentV1
+    }) => Promise<T>,
+  ): Promise<T> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const pendingSources = new Map(
+      document.layers
+        .filter((layer) => layer.visible && layer.opacity > 0)
+        .map(
+          (layer) =>
+            [
+              `${layer.asset.path}:${layer.asset.sha256}`,
+              coordinator.getCurrentAssetSource(layer.asset),
+            ] as const,
+        ),
+    )
+    return await withFrozenRasterComposition(
+      {
+        document,
+        packagePath: coordinator.filePath,
+        pendingSource: (asset) => pendingSources.get(`${asset.path}:${asset.sha256}`) ?? null,
+        scratchBasePath: this.options.roots.scratchDir,
+        stagePrefix: 'project-target-',
+      },
+      (composition) =>
+        use({
+          composeTarget: (worker) => composeFrozenGenerationTarget(composition, worker),
+          // The callback can own this value without changing the private composition snapshot.
+          document: structuredClone(composition.document),
+        }),
+    )
+  }
+
   private loraIndex(document: IgsProjectDocumentV1, identity: ProjectLoraIdentity): number {
     const matches = document.generationDraft.loras.flatMap((lora, index) =>
       lora.resource.localModelId === identity.resourceId &&
@@ -1443,6 +1471,7 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     canRedo: coordinator.canRedo,
     canUndo: coordinator.canUndo,
     dirty: coordinator.dirty,
+    documentId: document.documentId,
     generationDraft: document.generationDraft,
     id,
     lastActualSeedSnapshot: document.lastActualSeedSnapshot,

@@ -135,7 +135,7 @@ production generation flow. See the
 [Results recovery checkpoint](../../../engineering/phase-2b-results-recovery-ui.md)
 and [candidate image export](../../../engineering/phase-2b-candidate-image-export.md).
 
-## Current production boundary: explicit Add, preview and target preparation
+## Earlier production boundary: explicit Add, preview and target preparation
 
 [Explicit Raster Add](../../../engineering/phase-2b-raster-acceptance-research.md),
 [confirmed early Add](../../../engineering/phase-2b-early-raster-acceptance.md) and
@@ -147,6 +147,33 @@ uses the shared bounded planner without creating jobs or choosing actual seeds.
 now runs through the same qualified inference client with real PNG verification;
 it is an internal prerequisite. Renderer Generate, current queue/cancel actions,
 Keep/Discard replacement and release runtime installation remain open.
+
+## Current production boundary: Generate and serial dispatch
+
+[Production Generate actions](../../../engineering/phase-2b-generate-actions-research.md)
+connect the fixed action bar, transient images-per-click, typed main/preload IPC,
+real SQLite queue and serial dispatch. Main freezes the admitted document and
+raster sources before reading result impact or qualifying runtime. Each concrete
+job gets its own qualified worker lease. The Project queue shows actual pending/
+running rows, concrete prompts and seeds; current Cancel checks the document and
+reviewed running job ID and awaits worker exit. Notifications also refresh Results.
+
+Keep/Escape cancels the replacement action. Discard and generate confirms exact
+current-document candidate/job sets and rechecks them. New batch publication must
+succeed before old sessions are discarded; known preparation/queue failures keep
+old PNGs. Uncertain post-publication cleanup cancels new jobs and fences generation.
+Completed outputs remain in staging until Add; Generate does not dirty the Project
+or save `.igs`. Raw invalid/uncommitted bbox size blocks Generate until Enter;
+this guard and the transient count do not block Save or enter Undo/recovery.
+
+This first slice supports the existing narrow Illustrious txt2img worker and
+requires a qualified app-owned runtime. While admission or inference is busy,
+another Generate is explicitly unavailable; editing, Save, current Cancel and
+early Add remain available during inference. LoRA/embeddings/advanced conditioning,
+Anima, img2img/outpaint/inpaint, Smart Patch, progress, terminal Queue Manager
+history/retry/prune and release runtime install/repair remain open. Visible
+unsupported inputs are rejected rather than ignored. UI/mock tests do not prove
+installed CUDA inference or completion of Phase 2B.
 
 ## Acceptance Criteria
 

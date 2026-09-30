@@ -176,6 +176,17 @@ export interface QueuedGenerationItem {
   statusSequence: number
 }
 
+/** Metadata-only view for the Project action bar; no target or checkpoint file is read. */
+export interface QueuedGenerationActionJob {
+  batchId: string
+  createdAt: string
+  id: string
+  prompt: string
+  seed: number
+  status: 'pending' | 'running'
+  statusSequence: number
+}
+
 export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
 
 export interface VerifiedQueuedInput {
@@ -911,6 +922,61 @@ export class GenerationQueueRepository {
   fenceProject(localProjectKey: string): void {
     validateProjectKey(localProjectKey)
     this.fencedProjects.add(localProjectKey)
+  }
+
+  /** Read every unfinished job's frozen display fields without rehashing its image payload. */
+  async listUnfinishedActionJobsByProjectDocument(
+    localProjectKey: string,
+    documentId: string,
+  ): Promise<QueuedGenerationActionJob[]> {
+    validateProjectKey(localProjectKey)
+    if (typeof documentId !== 'string' || !UUID_PATTERN.test(documentId)) {
+      throw new GenerationQueueError(
+        'QUEUE_PROJECT_IDENTITY_CHANGED',
+        'The Project document identity is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const rows = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('local_project_key', '=', localProjectKey)
+        .where('document_id', '=', documentId)
+        .where('status', 'in', ['pending', 'running'])
+        .orderBy('created_at', 'asc')
+        .orderBy('id', 'asc')
+        .execute()
+      return rows.map((row) => {
+        const item = toItem(row)
+        const payloadBytes = Buffer.from(row.frozen_payload_json, 'utf8')
+        if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The frozen queue payload is invalid.',
+          )
+        }
+        const payload = parsePayload(row.frozen_payload_json)
+        if (
+          payload.context.documentId !== row.document_id ||
+          payload.context.documentRevision !== row.document_revision ||
+          payload.workerJob.prompts.positive !== payload.context.prompts.positive ||
+          payload.workerJob.sampling.seed !== payload.context.sampling.seed ||
+          (item.status !== 'pending' && item.status !== 'running')
+        ) {
+          throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue context changed.')
+        }
+        return {
+          batchId: item.batchId,
+          createdAt: item.createdAt,
+          id: item.id,
+          prompt: payload.context.prompts.positive,
+          seed: payload.context.sampling.seed,
+          status: item.status,
+          statusSequence: item.statusSequence,
+        }
+      })
+    })
   }
 
   /** Check confirmed IDs without loading or hashing their frozen image inputs. */

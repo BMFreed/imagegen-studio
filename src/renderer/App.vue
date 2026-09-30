@@ -4,6 +4,8 @@ import type {
   ModelCatalogItem,
   ProjectApi,
   ProjectCloseImpact,
+  ProjectGenerateOptions,
+  ProjectGenerationActionState,
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
   ProjectImportSelection,
@@ -58,6 +60,13 @@ type PendingAcceptance = {
   tabId: string
   uncheckedCandidateIds: string[]
 }
+type PendingGeneration = {
+  candidateIds: string[]
+  documentId: string
+  iterations: number
+  tabId: string
+  unfinishedJobIds: string[]
+}
 type PendingProjectAction =
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open' | 'rebuild'; projectId: string }
@@ -69,6 +78,7 @@ type PendingProjectAction =
         | 'close'
         | 'discard'
         | 'export-candidate'
+        | 'generate'
         | 'history'
         | 'import-image'
         | 'layer'
@@ -95,6 +105,15 @@ const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapsh
 const generationResultsErrors = ref<Record<string, string | null>>({})
 const generationResultsLoading = ref<Record<string, boolean>>({})
 const generationResultsRequests = new Map<string, number>()
+const generationStatesByTab = ref<Record<string, ProjectGenerationActionState>>({})
+const generationStateErrors = ref<Record<string, string | null>>({})
+const generationStateLoading = ref<Record<string, boolean>>({})
+const generationNotices = ref<Record<string, string | null>>({})
+const generationCanceling = ref<Record<string, boolean>>({})
+const imagesPerClickByTab = ref<Record<string, number | null>>({})
+const generationStateRequests = new Map<string, number>()
+const generationCommandRequests = new Map<string, number>()
+const generationCancelRequests = new Map<string, number>()
 const draftValidity = ref<Record<string, boolean>>({})
 const projectsLoading = ref(false)
 const homeError = ref<string | null>(null)
@@ -106,6 +125,9 @@ const reloadRequiredIds = ref<Set<string>>(new Set())
 const globalNotice = ref<string | null>(null)
 const pendingProjectAction = ref<PendingProjectAction | null>(null)
 const pendingAcceptance = ref<PendingAcceptance | null>(null)
+const pendingGeneration = ref<PendingGeneration | null>(null)
+const generationCommitting = ref(false)
+const generationConfirmationNotice = ref<string | null>(null)
 const acceptanceActionLabel = computed(() => {
   const decision = pendingAcceptance.value
   if (!decision) {
@@ -144,12 +166,47 @@ let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
 let unsubscribeBeforeWindowClose: (() => void) | undefined
 let unsubscribeModelInstall: (() => void) | undefined
+let unsubscribeGeneration: (() => void) | undefined
 let projectListRequest = 0
 let modelCatalogRequest = 0
+let rendererDisposed = false
 
 const activeTab = computed(
   () => projectTabs.value.find((tab) => tab.id === activeDocument.value) ?? null,
 )
+const activeImagesPerClick = computed<number | null>({
+  get: () => {
+    const id = activeTab.value?.id
+    return id && Object.hasOwn(imagesPerClickByTab.value, id) ? imagesPerClickByTab.value[id] : 4
+  },
+  set: (value) => {
+    if (activeTab.value) {
+      imagesPerClickByTab.value = { ...imagesPerClickByTab.value, [activeTab.value.id]: value }
+    }
+  },
+})
+const runtimeUnavailableReason = computed(() => {
+  if (runtimeError.value) {
+    return 'Check the image generation connection with Check again above.'
+  }
+  switch (status.value?.kind) {
+    case 'needs-repair': {
+      return 'Use Repair in the image generation notice above before generating.'
+    }
+    case 'not-installed': {
+      return 'Use Set up in the image generation notice above before generating.'
+    }
+    case 'ready': {
+      return null
+    }
+    case 'unsupported': {
+      return 'Generation is unavailable on this computer. See the image generation notice above.'
+    }
+    default: {
+      return 'Wait for the image generation check above.'
+    }
+  }
+})
 const closingTab = computed(
   () => projectTabs.value.find((tab) => tab.id === closingTabId.value) ?? null,
 )
@@ -258,17 +315,16 @@ async function refreshModelCatalog() {
   }
 }
 
-watch(
-  () => activeTab.value?.id,
-  (tabId) => {
-    if (tabId) {
-      void refreshModelCatalog()
-      void refreshGenerationResults(tabId)
-    }
-  },
-)
+watch([() => activeTab.value?.id, () => activeTab.value?.documentId], ([tabId]) => {
+  if (tabId) {
+    void refreshModelCatalog()
+    void refreshGenerationResults(tabId)
+    void refreshGenerationState(tabId)
+  }
+})
 
 async function readGenerationResults(tabId: string): Promise<ProjectGenerationResultsSnapshot> {
+  const documentId = projectTabs.value.find((tab) => tab.id === tabId)?.documentId
   const request = (generationResultsRequests.get(tabId) ?? 0) + 1
   generationResultsRequests.set(tabId, request)
   generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: true }
@@ -277,13 +333,16 @@ async function readGenerationResults(tabId: string): Promise<ProjectGenerationRe
     const snapshot = await apiValue(() => projectApi().listGenerationResults(tabId))
     if (
       generationResultsRequests.get(tabId) === request &&
-      projectTabs.value.some((tab) => tab.id === tabId)
+      projectTabs.value.some((tab) => tab.id === tabId && tab.documentId === documentId)
     ) {
       generationResultsByTab.value = { ...generationResultsByTab.value, [tabId]: snapshot }
     }
     return snapshot
   } catch (cause) {
-    if (generationResultsRequests.get(tabId) === request) {
+    if (
+      generationResultsRequests.get(tabId) === request &&
+      projectTabs.value.some((tab) => tab.id === tabId && tab.documentId === documentId)
+    ) {
       const { [tabId]: _stale, ...remaining } = generationResultsByTab.value
       generationResultsByTab.value = remaining
       generationResultsErrors.value = {
@@ -293,7 +352,10 @@ async function readGenerationResults(tabId: string): Promise<ProjectGenerationRe
     }
     throw cause
   } finally {
-    if (generationResultsRequests.get(tabId) === request) {
+    if (
+      generationResultsRequests.get(tabId) === request &&
+      projectTabs.value.some((tab) => tab.id === tabId && tab.documentId === documentId)
+    ) {
       generationResultsLoading.value = { ...generationResultsLoading.value, [tabId]: false }
     }
   }
@@ -301,6 +363,55 @@ async function readGenerationResults(tabId: string): Promise<ProjectGenerationRe
 
 async function refreshGenerationResults(tabId: string) {
   await readGenerationResults(tabId).catch(() => undefined)
+}
+
+function generationDocumentIsOpen(tabId: string, documentId: string): boolean {
+  return (
+    !rendererDisposed &&
+    projectTabs.value.some((tab) => tab.id === tabId && tab.documentId === documentId)
+  )
+}
+
+async function refreshGenerationState(tabId: string) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (!tab) {
+    return
+  }
+  const documentId = tab.documentId
+  const request = (generationStateRequests.get(tabId) ?? 0) + 1
+  generationStateRequests.set(tabId, request)
+  generationStateLoading.value = { ...generationStateLoading.value, [tabId]: true }
+  generationStateErrors.value = { ...generationStateErrors.value, [tabId]: null }
+  const current = () =>
+    generationStateRequests.get(tabId) === request && generationDocumentIsOpen(tabId, documentId)
+  try {
+    const state = await apiValue(() => projectApi().getGenerationState(tabId))
+    if (state.documentId !== documentId) {
+      throw new Error(
+        'The Project changed while its queue was being read. Open the queue to retry.',
+      )
+    }
+    if (current()) {
+      generationStatesByTab.value = { ...generationStatesByTab.value, [tabId]: state }
+    }
+  } catch (cause) {
+    if (current()) {
+      const { [tabId]: _stale, ...remaining } = generationStatesByTab.value
+      generationStatesByTab.value = remaining
+      generationStateErrors.value = { ...generationStateErrors.value, [tabId]: errorMessage(cause) }
+    }
+  } finally {
+    if (current()) {
+      generationStateLoading.value = { ...generationStateLoading.value, [tabId]: false }
+    }
+  }
+}
+
+function refreshOpenGeneration() {
+  for (const tab of projectTabs.value) {
+    void refreshGenerationState(tab.id)
+    void refreshGenerationResults(tab.id)
+  }
 }
 
 watch(modelManagerOpen, (open, previous) => {
@@ -381,6 +492,196 @@ async function flushProjectDraft(tabId: string) {
   rotatePromptHistoryGroup(tabId)
 }
 
+async function generateProject(tabId: string, iterations: number) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  const state = generationStatesByTab.value[tabId]
+  if (
+    !tab ||
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    draftValidity.value[tabId] === false ||
+    runtimeUnavailableReason.value !== null ||
+    state?.documentId !== tab.documentId ||
+    state.phase !== 'idle' ||
+    !Number.isSafeInteger(iterations) ||
+    iterations < 1 ||
+    iterations > 100
+  ) {
+    return
+  }
+  await requestGeneration(tabId, iterations)
+}
+
+async function requestGeneration(tabId: string, iterations: number, decision?: PendingGeneration) {
+  const request = (generationCommandRequests.get(tabId) ?? 0) + 1
+  generationCommandRequests.set(tabId, request)
+  pendingProjectAction.value = { kind: 'generate', tabId }
+  generationCommitting.value = true
+  generationConfirmationNotice.value = null
+  generationNotices.value = { ...generationNotices.value, [tabId]: null }
+  setTabError(tabId, null)
+  let documentId: string | null = null
+  const currentRequest = () => !rendererDisposed && generationCommandRequests.get(tabId) === request
+  try {
+    await flushProjectDraft(tabId)
+    // Acknowledgement can replace the tab DTO; use its current document identity after flush.
+    const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (!tab || windowClosePending.value || !currentRequest()) {
+      return
+    }
+    documentId = tab.documentId
+    if (decision && decision.documentId !== documentId) {
+      throw new Error('The Project changed. Keep these results and review the reopened Project.')
+    }
+    const options: ProjectGenerateOptions = { documentId, iterations }
+    if (decision) {
+      options.confirmation = {
+        candidateIds: [...decision.candidateIds],
+        unfinishedJobIds: [...decision.unfinishedJobIds],
+      }
+    }
+    const result = await apiValue(() => projectApi().generate(tabId, options))
+    if (
+      !currentRequest() ||
+      !generationDocumentIsOpen(tabId, documentId) ||
+      windowClosePending.value
+    ) {
+      return
+    }
+    if (result.documentId !== documentId) {
+      throw new Error('The Project changed while generation was being prepared. Review it again.')
+    }
+    if (result.kind === 'confirmation-required') {
+      pendingGeneration.value = {
+        candidateIds: [...result.candidateIds],
+        documentId,
+        iterations,
+        tabId,
+        unfinishedJobIds: [...result.unfinishedJobIds],
+      }
+      generationConfirmationNotice.value = decision
+        ? 'Temporary results or unfinished jobs changed. Review the counts and confirm again.'
+        : null
+    } else {
+      pendingGeneration.value = null
+      generationNotices.value = {
+        ...generationNotices.value,
+        [tabId]: result.truncated
+          ? 'Max prompts limited the concrete prompts in this batch.'
+          : null,
+      }
+    }
+  } catch (cause) {
+    if (
+      currentRequest() &&
+      !windowClosePending.value &&
+      (!documentId || generationDocumentIsOpen(tabId, documentId))
+    ) {
+      if (decision && pendingGeneration.value) {
+        generationConfirmationNotice.value = errorMessage(cause)
+      } else {
+        setTabError(tabId, errorMessage(cause))
+      }
+    }
+  } finally {
+    if (currentRequest()) {
+      generationCommitting.value = false
+      if (!pendingGeneration.value || windowClosePending.value) {
+        pendingProjectAction.value = null
+      }
+      refreshOpenGeneration()
+    }
+  }
+}
+
+function keepGenerationResults() {
+  if (generationCommitting.value) {
+    return
+  }
+  pendingGeneration.value = null
+  generationConfirmationNotice.value = null
+  if (pendingProjectAction.value?.kind === 'generate') {
+    pendingProjectAction.value = null
+  }
+}
+
+async function confirmGenerationReplacement() {
+  const decision = pendingGeneration.value
+  if (!decision || generationCommitting.value || windowClosePending.value) {
+    return
+  }
+  await requestGeneration(decision.tabId, decision.iterations, decision)
+}
+
+async function cancelCurrentGeneration(tabId: string) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  const state = generationStatesByTab.value[tabId]
+  if (
+    !tab ||
+    !state?.runningJobId ||
+    state.documentId !== tab.documentId ||
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    generationCanceling.value[tabId] ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const documentId = tab.documentId
+  const jobId = state.runningJobId
+  const request = (generationCancelRequests.get(tabId) ?? 0) + 1
+  generationCancelRequests.set(tabId, request)
+  generationCanceling.value = { ...generationCanceling.value, [tabId]: true }
+  setTabError(tabId, null)
+  const current = () =>
+    generationCancelRequests.get(tabId) === request && generationDocumentIsOpen(tabId, documentId)
+  try {
+    const next = await apiValue(() =>
+      projectApi().cancelCurrentGeneration(tabId, documentId, jobId),
+    )
+    if (current() && next.documentId === documentId) {
+      // Supersede reads that began before the cancellation acknowledgement.
+      generationStateRequests.set(tabId, (generationStateRequests.get(tabId) ?? 0) + 1)
+      generationStatesByTab.value = { ...generationStatesByTab.value, [tabId]: next }
+      generationStateErrors.value = { ...generationStateErrors.value, [tabId]: null }
+      generationStateLoading.value = { ...generationStateLoading.value, [tabId]: false }
+    }
+  } catch (cause) {
+    if (current()) {
+      setTabError(tabId, errorMessage(cause))
+    }
+  } finally {
+    if (current()) {
+      generationCanceling.value = { ...generationCanceling.value, [tabId]: false }
+      refreshOpenGeneration()
+    }
+  }
+}
+
+function forgetGenerationUi(tabId: string, forgetCount: boolean) {
+  generationStateRequests.set(tabId, (generationStateRequests.get(tabId) ?? 0) + 1)
+  generationCommandRequests.set(tabId, (generationCommandRequests.get(tabId) ?? 0) + 1)
+  generationCancelRequests.set(tabId, (generationCancelRequests.get(tabId) ?? 0) + 1)
+  delete generationStatesByTab.value[tabId]
+  delete generationStateErrors.value[tabId]
+  delete generationStateLoading.value[tabId]
+  delete generationNotices.value[tabId]
+  delete generationCanceling.value[tabId]
+  if (forgetCount) {
+    delete imagesPerClickByTab.value[tabId]
+  }
+  if (
+    pendingGeneration.value?.tabId === tabId ||
+    (pendingProjectAction.value?.kind === 'generate' && pendingProjectAction.value.tabId === tabId)
+  ) {
+    pendingGeneration.value = null
+    generationConfirmationNotice.value = null
+    generationCommitting.value = false
+    pendingProjectAction.value = null
+  }
+}
+
 async function runGenerationModelAction(
   tabId: string,
   request: () => Promise<ApiResult<ProjectTab>>,
@@ -449,6 +750,7 @@ function focusTab(tab: ProjectTab) {
 }
 
 function removeTab(tabId: string) {
+  forgetGenerationUi(tabId, true)
   stopExportFeedbackTimer(tabId)
   draftSync.forget(tabId)
   const { [tabId]: _closedPromptEpoch, ...remainingPromptEpochs } = promptHistoryEpochs.value
@@ -481,10 +783,15 @@ function removeTab(tabId: string) {
 function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   const openIds = new Set(nextTabs.map((tab) => tab.id))
   for (const tab of projectTabs.value) {
-    if (!openIds.has(tab.id)) {
+    const next = nextTabs.find((candidate) => candidate.id === tab.id)
+    if (!next || next.documentId !== tab.documentId) {
+      forgetGenerationUi(tab.id, !next)
       stopExportFeedbackTimer(tab.id)
       draftSync.forget(tab.id)
       generationResultsRequests.set(tab.id, (generationResultsRequests.get(tab.id) ?? 0) + 1)
+      delete generationResultsByTab.value[tab.id]
+      delete generationResultsErrors.value[tab.id]
+      delete generationResultsLoading.value[tab.id]
     }
   }
   projectTabs.value = nextTabs
@@ -1443,7 +1750,8 @@ function onAppKeydown(event: KeyboardEvent) {
     importDialogVisible.value ||
     recoveryDecision.value ||
     closingTabId.value ||
-    pendingAcceptance.value
+    pendingAcceptance.value ||
+    pendingGeneration.value
   ) {
     return
   }
@@ -1492,6 +1800,9 @@ onMounted(() => {
       if (nextStatus.kind === 'ready') {
         runtimeError.value = null
       }
+      for (const tab of projectTabs.value) {
+        void refreshGenerationState(tab.id)
+      }
     })
   } catch (cause) {
     runtimeError.value = errorMessage(cause)
@@ -1502,11 +1813,25 @@ onMounted(() => {
     homeError.value = errorMessage(cause)
   }
   try {
+    unsubscribeGeneration =
+      globalThis.window.api?.projects.onGenerationChanged(refreshOpenGeneration)
+  } catch (cause) {
+    globalNotice.value = errorMessage(cause)
+  }
+  try {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async () => {
         windowClosePending.value = true
         if (pendingAcceptance.value && !acceptanceCommitting.value) {
           cancelAcceptance()
+        }
+        if (pendingGeneration.value) {
+          if (!generationCommitting.value) {
+            keepGenerationResults()
+          } else {
+            pendingGeneration.value = null
+            generationConfirmationNotice.value = null
+          }
         }
         try {
           if (Object.values(draftValidity.value).includes(false)) {
@@ -1536,6 +1861,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  rendererDisposed = true
+  pendingGeneration.value = null
+  generationConfirmationNotice.value = null
   for (const tabId of exportFeedbackTimers.keys()) {
     stopExportFeedbackTimer(tabId)
   }
@@ -1543,6 +1871,7 @@ onBeforeUnmount(() => {
   unsubscribeStatus?.()
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()
+  unsubscribeGeneration?.()
   globalThis.window.removeEventListener('keydown', onAppKeydown)
 })
 </script>
@@ -1659,14 +1988,25 @@ onBeforeUnmount(() => {
         <ProjectView
           v-else-if="activeTab"
           :key="activeTab.id"
+          v-model:imagesPerClick="activeImagesPerClick"
           :busy="pendingProjectAction !== null || windowClosePending"
           :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
           :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
+          :generationCanceling="generationCanceling[activeTab.id] ?? false"
           :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
+          :generationError="generationStateErrors[activeTab.id] ?? null"
+          :generationNotice="generationNotices[activeTab.id] ?? null"
           :generationResults="generationResultsByTab[activeTab.id] ?? null"
           :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
           :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
+          :generationState="generationStatesByTab[activeTab.id] ?? null"
+          :generationStateLoading="generationStateLoading[activeTab.id] ?? false"
+          :generationSubmitting="
+            pendingProjectAction?.kind === 'generate' &&
+            pendingProjectAction.tabId === activeTab.id &&
+            generationCommitting
+          "
           :modelCatalog
           :modelCatalogError
           :modelCatalogLoaded
@@ -1674,18 +2014,22 @@ onBeforeUnmount(() => {
           :pending="activeTabPending"
           :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
+          :runtimeUnavailableReason
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
           @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
+          @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+          @generate="generateProject(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
           @moveLayer="moveActiveRasterLayer"
           @redo="runProjectHistoryAction(activeTab.id, 'redo')"
           @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
+          @refreshGenerationState="refreshGenerationState(activeTab.id)"
           @refreshModels="refreshModelCatalog"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
@@ -1852,6 +2196,49 @@ onBeforeUnmount(() => {
               @click="resolveRecovery('recover')"
             >
               Recover
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
+
+      <NModal
+        :closeOnEsc="!generationCommitting"
+        :maskClosable="false"
+        :show="pendingGeneration !== null"
+        @update:show="!$event && keepGenerationResults()"
+      >
+        <NCard
+          aria-label="Replace temporary generation results"
+          class="dialog-card"
+          contentScrollable
+          role="dialog"
+          size="small"
+          title="Replace temporary results?"
+        >
+          <NAlert v-if="generationConfirmationNotice" class="dialog-error" type="warning">
+            {{ generationConfirmationNotice }}
+          </NAlert>
+          <p v-if="pendingGeneration?.candidateIds.length">
+            {{ pendingGeneration.candidateIds.length }} temporary
+            {{ pendingGeneration.candidateIds.length === 1 ? 'result' : 'results' }} will be
+            discarded. Keep the results to add a layer or save an image first.
+          </p>
+          <p v-if="pendingGeneration?.unfinishedJobIds.length">
+            {{ pendingGeneration.unfinishedJobIds.length }} unfinished generation
+            {{ pendingGeneration.unfinishedJobIds.length === 1 ? 'job' : 'jobs' }} will be canceled.
+          </p>
+          <p class="dialog-secondary">Existing Project layers will remain.</p>
+          <div class="dialog-actions">
+            <NButton :disabled="generationCommitting" @click="keepGenerationResults">
+              Keep results
+            </NButton>
+            <NButton
+              :disabled="windowClosePending"
+              :loading="generationCommitting"
+              type="primary"
+              @click="confirmGenerationReplacement"
+            >
+              Discard and Generate
             </NButton>
           </div>
         </NCard>

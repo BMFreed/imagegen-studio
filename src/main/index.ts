@@ -7,6 +7,7 @@ import {
 } from '../shared/api.js'
 import type {
   ApiResult,
+  ProjectGenerateOptions,
   ProjectGenerationDraftChange,
   ProjectGenerationModelSelection,
   ProjectLoraIdentity,
@@ -14,6 +15,11 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import { GenerationBatchPlanError } from '../shared/projects/generation-batch-plan.js'
+import {
+  isProjectDocumentId,
+  isProjectGenerateOptions,
+} from '../shared/projects/project-generation-actions.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
@@ -38,14 +44,21 @@ import {
   GenerationAcceptanceJournalError,
   GenerationAcceptanceJournalRepository,
 } from './projects/generation-acceptance-journal.js'
+import {
+  ProjectGenerationActionController,
+  ProjectGenerationActionError,
+  toProjectGenerationActionApiError,
+} from './projects/generation-action-controller.js'
 import { createGenerationAppContext } from './projects/generation-app-context.js'
 import { GenerationAppShutdown } from './projects/generation-app-shutdown.js'
 import { GenerationDispatchCoordinator } from './projects/generation-dispatch-coordinator.js'
+import { GenerationDispatchError } from './projects/generation-dispatch-coordinator.js'
 import { GenerationOrchestratorError } from './projects/generation-orchestrator.js'
 import { GenerationProcessorError } from './projects/generation-processor.js'
 import { GenerationQueueError } from './projects/generation-queue.js'
 import { GenerationStagingError } from './projects/generation-staging.js'
 import { IgsPackageError } from './projects/igs-package.js'
+import { IllustriousJobError } from './projects/illustrious-txt2img-job.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
 import {
   ProjectCandidateImageExporter,
@@ -60,6 +73,7 @@ import {
   ProjectGenerationCloseError,
 } from './projects/project-generation-close.js'
 import { ProjectGenerationOperationGate } from './projects/project-generation-operation-gate.js'
+import { GenerationPreparationError } from './projects/project-generation-preparation.js'
 import { ProjectGenerationProvenanceError } from './projects/project-generation-provenance.js'
 import {
   ProjectGenerationResultResource,
@@ -287,7 +301,7 @@ if (!gotInstanceLock) {
         paths.cacheRoot,
       )
       // Keep the recovered queue/staging pair and their single owner for this app lifetime.
-      // This is storage readiness only; index registers no Generate IPC entry point or worker.
+      // Recover storage before exposing any user generation action.
       const ownedGenerationContext = await createGenerationAppContext({
         database,
         dataRoot: paths.dataRoot,
@@ -334,6 +348,39 @@ if (!gotInstanceLock) {
             recoveredGeneration.staging.readLastActualSeed(projectKey, documentId)
         : null
       const projectGenerationGate = new ProjectGenerationOperationGate()
+      const generationDispatch =
+        recoveredGeneration && generationRuntime
+          ? new GenerationDispatchCoordinator(
+              generationRuntime,
+              recoveredGeneration.orchestrator,
+              recoveredGeneration.processor,
+              path.join(paths.dataRoot, 'scratch'),
+            )
+          : null
+      const generationActions =
+        recoveredGeneration && generationRuntime && generationDispatch
+          ? new ProjectGenerationActionController({
+              dispatch: generationDispatch,
+              gate: projectGenerationGate,
+              models: modelService,
+              orchestrator: recoveredGeneration.orchestrator,
+              processor: recoveredGeneration.processor,
+              projects: projectService,
+              queue: recoveredGeneration.queue,
+              runtime: generationRuntime,
+              scratchBasePath: path.join(paths.dataRoot, 'scratch'),
+              staging: recoveredGeneration.staging,
+            })
+          : null
+      const requireGenerationActions = (): ProjectGenerationActionController => {
+        if (!generationActions) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'Generation storage or the image runtime needs attention. Editing and Save remain available.',
+          )
+        }
+        return generationActions
+      }
       const generationAcceptance = recoveredGeneration
         ? new ProjectGenerationAcceptance({
             documents: {
@@ -417,15 +464,7 @@ if (!gotInstanceLock) {
       const appShutdown = new GenerationAppShutdown({
         closeDatabase: database.close,
         context: ownedGenerationContext,
-        coordinator:
-          recoveredGeneration && generationRuntime
-            ? new GenerationDispatchCoordinator(
-                generationRuntime,
-                recoveredGeneration.orchestrator,
-                recoveredGeneration.processor,
-                path.join(paths.dataRoot, 'scratch'),
-              )
-            : null,
+        coordinator: generationActions,
         pendingJobs: recoveredGeneration?.queue ?? null,
         runtimeExit: generationRuntime,
       })
@@ -453,6 +492,14 @@ if (!gotInstanceLock) {
         width: 1380,
       })
       mainWindow = window
+      const unsubscribeGeneration = generationActions?.onChanged(() => {
+        if (!window.webContents.isDestroyed()) {
+          window.webContents.send(ipcChannels.projects.generationChanged)
+        }
+      })
+      if (unsubscribeGeneration) {
+        window.on('closed', unsubscribeGeneration)
+      }
 
       // Closing the native window follows the same Save / Discard / Cancel contract as a tab.
       // This also covers Alt+F4 and app.quit(), which do not go through renderer controls.
@@ -794,12 +841,24 @@ if (!gotInstanceLock) {
             return { ok: true, value: await handler(...args) }
           } catch (error) {
             if (
+              channel === ipcChannels.projects.generate ||
+              channel === ipcChannels.projects.getGenerationState ||
+              channel === ipcChannels.projects.cancelCurrentGeneration
+            ) {
+              return { error: toProjectGenerationActionApiError(error), ok: false }
+            }
+            if (
               error instanceof ProjectServiceError ||
               error instanceof ProjectCandidateImageExportError ||
               error instanceof ProjectGenerationCloseError ||
               error instanceof ProjectGenerationAcceptanceError ||
               error instanceof ProjectGenerationProvenanceError ||
               error instanceof ProjectGenerationResultResourceError ||
+              error instanceof ProjectGenerationActionError ||
+              error instanceof GenerationPreparationError ||
+              error instanceof GenerationBatchPlanError ||
+              error instanceof GenerationDispatchError ||
+              error instanceof IllustriousJobError ||
               error instanceof GenerationOrchestratorError ||
               error instanceof GenerationProcessorError ||
               error instanceof GenerationQueueError ||
@@ -850,6 +909,34 @@ if (!gotInstanceLock) {
       }
 
       registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(
+        ipcChannels.projects.getGenerationState,
+        oneProjectId,
+        async (tabId) => await requireGenerationActions().getState(tabId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.generate,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectGenerateOptions(args[1]),
+        async (tabId, options) =>
+          await requireGenerationActions().generate(
+            tabId as string,
+            options as ProjectGenerateOptions,
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.cancelCurrentGeneration,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isCandidateId(args[2]),
+        async (tabId, documentId, expectedJobId) =>
+          await requireGenerationActions().cancelCurrent(
+            tabId as string,
+            documentId as string,
+            expectedJobId as string,
+          ),
+      )
       registerProjectHandler(ipcChannels.projects.selectImport, noArgs, async () => {
         const previouslyOpen = new Set(projectService.getOpenTabs().map((tab) => tab.id))
         const selection = await dialog.showOpenDialog(window, {

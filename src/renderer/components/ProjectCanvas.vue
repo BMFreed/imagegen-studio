@@ -837,6 +837,7 @@ watch(
       @wheel.prevent="onWheel"
     >
       <div ref="stageContainer" aria-hidden="true" class="konva-stage" />
+      <slot name="queue" />
       <div class="bbox-readout">
         Generation area · {{ bbox.width }} × {{ bbox.height }} · X
         {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}

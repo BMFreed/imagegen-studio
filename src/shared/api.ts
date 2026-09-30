@@ -1,9 +1,21 @@
 import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
+import type {
+  ProjectGenerateOptions,
+  ProjectGenerateResult,
+  ProjectGenerationActionState,
+} from './projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
 
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
+
+export type {
+  ProjectGenerateOptions,
+  ProjectGenerateResult,
+  ProjectGenerationActionState,
+  ProjectGenerationQueueJob,
+} from './projects/project-generation-actions.js'
 
 /** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
@@ -27,13 +39,17 @@ export const ipcChannels = {
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
+    cancelCurrentGeneration: 'projects:cancel-current-generation',
     cancelImport: 'projects:cancel-import',
     clearHistory: 'projects:clear-history',
     close: 'projects:close',
     create: 'projects:create',
     discardAndClose: 'projects:discard-and-close',
     finishImport: 'projects:finish-import',
+    generate: 'projects:generate',
+    generationChanged: 'projects:generation-changed',
     getCloseImpact: 'projects:get-close-impact',
+    getGenerationState: 'projects:get-generation-state',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
@@ -97,6 +113,7 @@ export interface ProjectTab {
   canRedo: boolean
   canUndo: boolean
   dirty: boolean
+  documentId: string
   generationDraft: IgsProjectDocumentV1['generationDraft']
   id: string
   lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
@@ -227,6 +244,11 @@ export interface ProjectApi {
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,
   ) => Promise<ApiResult<ProjectTab>>
+  cancelCurrentGeneration: (
+    tabId: string,
+    documentId: string,
+    expectedJobId: string,
+  ) => Promise<ApiResult<ProjectGenerationActionState>>
   cancelImport: (importId: string) => Promise<ApiResult<void>>
   clearHistory: (tabId: string) => Promise<ApiResult<ProjectTab>>
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
@@ -240,7 +262,12 @@ export interface ProjectApi {
     importId: string,
     choice: 'copy' | 'move',
   ) => Promise<ApiResult<ProjectImportFinishResult>>
+  generate: (
+    tabId: string,
+    options: ProjectGenerateOptions,
+  ) => Promise<ApiResult<ProjectGenerateResult>>
   getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
+  getGenerationState: (tabId: string) => Promise<ApiResult<ProjectGenerationActionState>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
@@ -250,6 +277,7 @@ export interface ProjectApi {
     targetIndex: number,
   ) => Promise<ApiResult<ProjectTab>>
   onBeforeWindowClose: (listener: () => Promise<void>, onCanceled: () => void) => () => void
+  onGenerationChanged: (listener: () => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>

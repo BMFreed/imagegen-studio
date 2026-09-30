@@ -13,6 +13,7 @@ function projectTab(): ProjectTab {
     canRedo: false,
     canUndo: false,
     dirty: false,
+    documentId: document.documentId,
     generationDraft: document.generationDraft,
     id: document.documentId,
     lastActualSeedSnapshot: null,

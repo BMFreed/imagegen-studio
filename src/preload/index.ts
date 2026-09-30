@@ -20,6 +20,11 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
+import {
+  isProjectDocumentId,
+  isProjectGenerateResult,
+  isProjectGenerationActionState,
+} from '../shared/projects/project-generation-actions.js'
 import { isProjectGenerationResultsSnapshot } from '../shared/projects/project-generation-results.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
@@ -255,6 +260,7 @@ function isProjectTab(value: unknown): value is ProjectTab {
   return (
     isRecord(value) &&
     isProjectId(value.id) &&
+    isProjectDocumentId(value.documentId) &&
     typeof value.title === 'string' &&
     typeof value.canUndo === 'boolean' &&
     typeof value.canRedo === 'boolean' &&
@@ -590,6 +596,12 @@ const api: StudioApi = {
       ),
     addGenerationLora: (tabId, selection) =>
       invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
+    cancelCurrentGeneration: (tabId, documentId, expectedJobId) =>
+      invokeProject(
+        ipcChannels.projects.cancelCurrentGeneration,
+        [tabId, documentId, expectedJobId],
+        isProjectGenerationActionState,
+      ),
     cancelImport: (importId) =>
       invokeProject(ipcChannels.projects.cancelImport, [importId], isVoid),
     clearHistory: (tabId) =>
@@ -605,8 +617,16 @@ const api: StudioApi = {
         [importId, choice],
         isProjectImportFinishResult,
       ),
+    generate: (tabId, options) =>
+      invokeProject(ipcChannels.projects.generate, [tabId, options], isProjectGenerateResult),
     getCloseImpact: (tabId) =>
       invokeProject(ipcChannels.projects.getCloseImpact, [tabId], isProjectCloseImpact),
+    getGenerationState: (tabId) =>
+      invokeProject(
+        ipcChannels.projects.getGenerationState,
+        [tabId],
+        isProjectGenerationActionState,
+      ),
     importRasterImage: (tabId) =>
       invokeProject(
         ipcChannels.projects.importRasterImage,
@@ -655,6 +675,11 @@ const api: StudioApi = {
         ipcRenderer.removeListener(ipcChannels.projects.prepareWindowClose, handler)
         ipcRenderer.removeListener(ipcChannels.projects.windowCloseReleased, releaseHandler)
       }
+    },
+    onGenerationChanged: (listener) => {
+      const handler = () => listener()
+      ipcRenderer.on(ipcChannels.projects.generationChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.projects.generationChanged, handler)
     },
     onTabsChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, tabs: unknown): void => {

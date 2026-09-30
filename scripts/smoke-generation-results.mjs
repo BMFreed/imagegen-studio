@@ -18,7 +18,7 @@ import { _electron as electron, expect } from '@playwright/test'
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { GenerationQueueRepository } from '../src/main/projects/generation-queue.ts'
 import { GenerationStagingRepository } from '../src/main/projects/generation-staging.ts'
-import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { IgsPackageError, readIgsPackage } from '../src/main/projects/igs-package.ts'
 import { withIllustriousTxt2ImgRequest } from '../src/main/projects/illustrious-txt2img-job.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 
@@ -122,8 +122,11 @@ async function nativeSaveDialogCalls(application) {
 }
 
 async function clickSaveCandidateImage(window) {
+  const menuItem = window.getByRole('menuitem', { name: 'Save Candidate Image' })
+  await expect(menuItem).toBeHidden()
   await window.getByRole('button', { name: 'Result 1 actions' }).click()
-  await window.getByRole('menuitem', { name: 'Save Candidate Image' }).click()
+  await menuItem.click()
+  await expect(menuItem).toBeHidden()
 }
 
 const dataRoot = mkdtempSync(path.join(os.tmpdir(), 'igs-results-smoke-'))
@@ -1066,7 +1069,20 @@ try {
   assert.equal(recoveredTab.value.tab.dirty, true)
   assert.equal(recoveredTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
   await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
-  await expect.poll(async () => (await readIgsPackage(packagePath)).project.layers.length).toBe(2)
+  await expect
+    .poll(async () => {
+      try {
+        return (await readIgsPackage(packagePath)).project.layers.length
+      } catch (error) {
+        // This read may span the Save writer's atomic rename. Keep the real loader guard and
+        // retry only that transient identity change; all corruption/storage errors still fail.
+        if (error instanceof IgsPackageError && error.code === 'PACKAGE_CHANGED') {
+          return null
+        }
+        throw error
+      }
+    })
+    .toBe(2)
   const savedAcceptance = (await readIgsPackage(packagePath)).project
   assert.equal(savedAcceptance.lastActualSeedSnapshot, 73)
   assert.deepEqual(savedAcceptance.primaryBbox, acceptanceSource.primaryBbox)

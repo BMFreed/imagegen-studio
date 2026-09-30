@@ -67,6 +67,7 @@ export class GenerationProcessorError extends Error {
 export class GenerationProcessor {
   private active: ActiveJob | null = null
   private currentRun: Promise<GenerationProcessorResult> | null = null
+  private readonly listeners = new Set<() => void>()
   private running = false
   private stopping = false
 
@@ -89,6 +90,7 @@ export class GenerationProcessor {
     if (item.status === 'running' && newlyActive?.item.id === queueItemId) {
       return await this.cancelActive(newlyActive)
     }
+    this.emitChanged()
     return item
   }
 
@@ -132,6 +134,12 @@ export class GenerationProcessor {
     return settled
   }
 
+  /** Signal real queue transitions to the app owner without polling or retaining renderer state. */
+  onChanged(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
   async runOne(transport: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
     if (this.currentRun) {
       throw new GenerationProcessorError('BUSY', 'A generation job is already being processed.')
@@ -144,6 +152,7 @@ export class GenerationProcessor {
       if (this.currentRun === run) {
         this.currentRun = null
       }
+      this.emitChanged()
     }
   }
 
@@ -163,6 +172,7 @@ export class GenerationProcessor {
       active.exitUnconfirmed = true
       const operation = (async () => {
         const item = await this.queue.cancel(active.item.id)
+        this.emitChanged()
         if (item.status !== 'running' || !item.cancelRequested) {
           active.exitUnconfirmed = false
           if (active.runSettled) {
@@ -173,6 +183,7 @@ export class GenerationProcessor {
         // The queue keeps its only running slot until the transport confirms process exit.
         await active.transport.close()
         const canceled = await this.queue.acknowledgeCanceledRunning(item.id, item.statusSequence)
+        this.emitChanged()
         active.exitUnconfirmed = false
         if (active.runSettled) {
           await this.releaseActive(active)
@@ -188,6 +199,16 @@ export class GenerationProcessor {
       })
     }
     return active.cancelPromise
+  }
+
+  private emitChanged(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {
+        // A failed observer must not change the queue or worker lifecycle.
+      }
+    }
   }
 
   private releaseActive(active: ActiveJob): Promise<void> {
@@ -286,6 +307,7 @@ export class GenerationProcessor {
         transport,
       }
       this.active = active
+      this.emitChanged()
       let dispatched = false
       let publishing = false
       try {

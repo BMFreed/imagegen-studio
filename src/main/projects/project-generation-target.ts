@@ -10,7 +10,10 @@ import type { IgsAssetSource } from './igs-package.js'
 import type { ComposeTargetMode, ProjectWorkerClient } from './worker-client.js'
 
 import { validateSrgbPngStream } from './igs-package.js'
-import { withFrozenRasterComposition } from './project-raster-snapshot.js'
+import {
+  type FrozenRasterComposition,
+  withFrozenRasterComposition,
+} from './project-raster-snapshot.js'
 
 // A defensive read ceiling matching the current worker protocol, not a measured generation limit.
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
@@ -49,52 +52,59 @@ export async function buildFrozenGenerationTarget(input: {
 }): Promise<FrozenGenerationTarget> {
   return await withFrozenRasterComposition(
     { ...input, stagePrefix: 'project-target-' },
-    async ({ document, layers, stagingRoot }) => {
-      const bbox = { ...document.primaryBbox }
-      const targetPngPath = path.join(stagingRoot, 'target.png')
-      const result = await input.worker.composeTarget({
-        // Do not let an adapter mutate the bbox we use to verify and return this snapshot.
-        bbox: { ...bbox },
-        layers,
-        stagingRoot,
-        targetPngPath,
-      })
-      if (
-        result.composite.path !== targetPngPath ||
-        !sameRect(result.rect, bbox) ||
-        result.composite.width !== bbox.width ||
-        result.composite.height !== bbox.height ||
-        result.composite.colorSpace !== 'srgb' ||
-        result.composite.iccSha256 !== IGS_SRGB_ICC_SHA256 ||
-        !['img2img', 'outpaint', 'txt2img'].includes(result.mode)
-      ) {
-        throw new Error('The generation target differs from its frozen Project inputs.')
-      }
-      const bytes = await readVerifiedTarget(
-        targetPngPath,
-        result.composite.sha256,
-        result.composite.byteSize,
-        bbox,
-      )
-      return {
-        bbox,
-        composite: {
-          bytes,
-          byteSize: bytes.length,
-          colorSpace: 'srgb',
-          height: bbox.height,
-          iccSha256: IGS_SRGB_ICC_SHA256,
-          sha256: result.composite.sha256,
-          width: bbox.width,
-        },
-        documentId: document.documentId,
-        documentRevision: document.documentRevision,
-        generationDraft: document.generationDraft,
-        lastActualSeedSnapshot: document.lastActualSeedSnapshot,
-        mode: result.mode,
-      }
-    },
+    (composition) => composeFrozenGenerationTarget(composition, input.worker),
   )
+}
+
+/** Compose a previously captured stack while its caller retains the frozen raster file lease. */
+export async function composeFrozenGenerationTarget(
+  composition: FrozenRasterComposition,
+  worker: TargetWorker,
+): Promise<FrozenGenerationTarget> {
+  const { document, layers, stagingRoot } = composition
+  const bbox = { ...document.primaryBbox }
+  const targetPngPath = path.join(stagingRoot, 'target.png')
+  const result = await worker.composeTarget({
+    // Do not let an adapter mutate the bbox we use to verify and return this snapshot.
+    bbox: { ...bbox },
+    layers,
+    stagingRoot,
+    targetPngPath,
+  })
+  if (
+    result.composite.path !== targetPngPath ||
+    !sameRect(result.rect, bbox) ||
+    result.composite.width !== bbox.width ||
+    result.composite.height !== bbox.height ||
+    result.composite.colorSpace !== 'srgb' ||
+    result.composite.iccSha256 !== IGS_SRGB_ICC_SHA256 ||
+    !['img2img', 'outpaint', 'txt2img'].includes(result.mode)
+  ) {
+    throw new Error('The generation target differs from its frozen Project inputs.')
+  }
+  const bytes = await readVerifiedTarget(
+    targetPngPath,
+    result.composite.sha256,
+    result.composite.byteSize,
+    bbox,
+  )
+  return {
+    bbox,
+    composite: {
+      bytes,
+      byteSize: bytes.length,
+      colorSpace: 'srgb',
+      height: bbox.height,
+      iccSha256: IGS_SRGB_ICC_SHA256,
+      sha256: result.composite.sha256,
+      width: bbox.width,
+    },
+    documentId: document.documentId,
+    documentRevision: document.documentRevision,
+    generationDraft: document.generationDraft,
+    lastActualSeedSnapshot: document.lastActualSeedSnapshot,
+    mode: result.mode,
+  }
 }
 
 async function readVerifiedTarget(

@@ -436,6 +436,24 @@ They are linked but not the same:
 - deleting a queue row never deletes an already accepted result or valid
   unaccepted candidate recovery.
 
+## Production Generate checkpoint
+
+[Generate actions](../engineering/phase-2b-generate-actions-research.md) now admit
+frozen Illustrious txt2img batches from Project and automatically drain SQLite
+serially with a fresh qualified lease per concrete job. The compact Project queue
+shows all of its current-document pending/running rows and supports current-job
+Cancel with an exact reviewed ID. Global engine busy status disables another
+Generate while existing jobs run; editing, Save and early Add remain available.
+Queue/status/count do not mutate the document. A real completion refreshes staging
+without accepting it; graceful app close waits admission/drain before pending
+cancellation and database close.
+
+This is a narrow Project queue UI. The app-level all-project manager, terminal
+rows, pending-item controls, retry/remove/prune, progress and admission while GPU
+is busy remain separate work. Earlier repository-only retry/cleanup evidence does
+not prove those user actions exist. Runtime qualification is required; the release
+installer and full model/conditioning paths remain unfinished.
+
 ## Acceptance Criteria
 
 - User can enqueue several generation jobs from one action.

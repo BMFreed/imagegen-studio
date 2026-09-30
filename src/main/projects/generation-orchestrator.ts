@@ -280,6 +280,7 @@ export class GenerationOrchestrator {
     prepared: PreparedNormalTxt2Img,
     options: GenerationPreparedBatchOptions,
     inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
+    beforePublication?: () => Promise<void>,
   ): Promise<PreparedBatchAdmissionResult> {
     this.assertGenerationOpen(tabId)
     if (
@@ -366,6 +367,9 @@ export class GenerationOrchestrator {
             assertIllustriousTxt2ImgRequestFitsTransport(job)
             return { prepared: { context: jobContext, targetPngBytes }, request: job }
           })
+          // Replacement is allowed only after the prepared request and every varied envelope
+          // qualify, while admission still owns the barrier and before any new queue publication.
+          await beforePublication?.()
           return { items: await this.enqueueBatchUnlocked(tabId, concrete), plan }
         },
       })
