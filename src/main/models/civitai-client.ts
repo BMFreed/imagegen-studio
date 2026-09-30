@@ -388,9 +388,13 @@ function availableFiles(
           'CivitAI returned an invalid SHA-256.',
         )
       }
-      const sizeEstimateBytes =
+      const roundedSizeBytes =
         file.sizeKB !== undefined && Number.isFinite(file.sizeKB) && file.sizeKB > 0
           ? Math.round(file.sizeKB * 1024)
+          : null
+      const sizeEstimateBytes =
+        Number.isSafeInteger(roundedSizeBytes) && (roundedSizeBytes ?? 0) > 0
+          ? roundedSizeBytes
           : null
       return {
         downloadUrl: selectedFileUrl(file.downloadUrl, file.id, rawSha256 !== undefined),

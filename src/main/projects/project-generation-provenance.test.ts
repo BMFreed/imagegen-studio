@@ -257,7 +257,7 @@ test('frozen payload hash, strict fields and context-worker agreement are requir
   assert.throws(() => map(workerMismatch), { code: 'PROVENANCE_INPUT_INVALID' })
 })
 
-test('actual seed and image bytes/metadata cannot drift during acceptance', async () => {
+test('valid reported seeds are preserved and invalid seeds or changed output are refused', async () => {
   const { candidate, imagePngBytes } = await fixture()
   const map = (entry: VerifiedGenerationCandidate, bytes = imagePngBytes) =>
     provenanceFromVerifiedRasterCandidate({
@@ -266,9 +266,17 @@ test('actual seed and image bytes/metadata cannot drift during acceptance', asyn
       imagePngBytes: bytes,
     })
 
-  const seedChanged = structuredClone(candidate)
-  seedChanged.actualSeed = 43
-  assert.throws(() => map(seedChanged), { code: 'PROVENANCE_SEED_CHANGED' })
+  for (const actualSeed of [0, 43, 0xff_ff_ff_ff]) {
+    const reported = structuredClone(candidate)
+    reported.actualSeed = actualSeed
+    assert.equal(map(reported).generationConfiguration.sampling.actualSeed, actualSeed)
+    assert.equal(JSON.parse(reported.frozenPayloadJson).context.sampling.seed, 42)
+  }
+  for (const actualSeed of [-1, 0x1_00_00_00_00, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const invalid = structuredClone(candidate)
+    invalid.actualSeed = actualSeed
+    assert.throws(() => map(invalid), { code: 'PROVENANCE_INPUT_INVALID' })
+  }
 
   const sameSizeChangedBytes = Buffer.from(imagePngBytes)
   sameSizeChangedBytes[0] ^= 1

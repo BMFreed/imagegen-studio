@@ -29,14 +29,22 @@ format must account for that compatibility boundary.
 
 ## Invariants and failure analysis
 
-| Trigger | Required result |
-| --- | --- |
-| Old Raster Layer without provenance | Parse/save unchanged; do not invent generation data. |
-| Valid accepted provenance in document/shadow | Survives package Save/reopen and dirty recovery with layer identity intact. |
-| Malformed or unsupported provenance | Reject the document; never treat it as a provenance-free layer. |
-| Candidate frozen payload contains local filesystem paths | Mapper emits only portable identity/configuration fields. |
-| Candidate/result identity, bbox, seed or hash disagrees with frozen payload | Mapper refuses the record rather than attaching false settings. |
-| Document edit changes layer display properties | Existing provenance remains byte-for-byte the same. |
+| Trigger                                                                     | Required result                                                             |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Old Raster Layer without provenance                                         | Parse/save unchanged; do not invent generation data.                        |
+| Valid accepted provenance in document/shadow                                | Survives package Save/reopen and dirty recovery with layer identity intact. |
+| Malformed or unsupported provenance                                         | Reject the document; never treat it as a provenance-free layer.             |
+| Candidate frozen payload contains local filesystem paths                    | Mapper emits only portable identity/configuration fields.                   |
+| Candidate/result identity, bbox, seed or hash disagrees with frozen payload | Mapper refuses the record rather than attaching false settings.             |
+| Document edit changes layer display properties                              | Existing provenance remains byte-for-byte the same.                         |
+
+**Audit correction, 2026-09-30:** the seed row above described the original
+mapper's over-restrictive guard. The worker contract permits an actual uint32
+seed different from the planned frozen seed. Staging verifies actual seed
+against its durable completion receipt; acceptance must preserve that actual
+value rather than compare it to the request. See
+[product-audit fixes](./product-audit-fixes.md) for the processor → staging →
+Add → Save/reopen regression and the separate manifest-tampering control.
 
 The staging payload is limited to 128 KiB and each output PNG to 32 MiB by
 `generation-staging.ts`. The `.igs` `project.json` ceiling is 16 MiB. Inline

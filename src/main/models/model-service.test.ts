@@ -45,13 +45,14 @@ function safeStorage(): SafeStorageAdapter {
 function civitaiApi(options: {
   family?: 'Anima' | 'Illustrious'
   fileHash?: string
-  fileSizeKB?: number
+  fileSizeKB?: number | string | null
   fileUrl?: string
   includeThirdVersion?: boolean
   omitSecondPublishedAt?: boolean
   requests: { authorization: string | null; pathname: string }[]
   secondVersionHash?: string
   secondVersionTrainedWords?: string[]
+  type?: 'Checkpoint' | 'LORA' | 'TextualInversion' | 'Upscaler' | 'VAE'
 }): typeof fetch {
   const family = options.family ?? 'Illustrious'
   const version = {
@@ -64,7 +65,7 @@ function civitaiApi(options: {
         metadata: { format: 'SafeTensor' },
         name: 'selected.safetensors',
         primary: true,
-        sizeKB: options.fileSizeKB ?? 1,
+        sizeKB: 'fileSizeKB' in options ? options.fileSizeKB : 1,
       },
       {
         downloadUrl: OTHER_FILE_URL,
@@ -100,7 +101,7 @@ function civitaiApi(options: {
         : []),
     ],
     name: 'Portrait Model',
-    type: 'Checkpoint',
+    type: options.type ?? 'Checkpoint',
   }
   return async (input, init) => {
     const url = new URL(String(input))
@@ -108,6 +109,9 @@ function civitaiApi(options: {
       authorization: new Headers(init?.headers).get('Authorization'),
       pathname: url.pathname,
     })
+    const files = version.files.map((file, index) =>
+      index === 0 ? { ...file, sizeKB: 'fileSizeKB' in options ? options.fileSizeKB : 1 } : file,
+    )
     const body =
       url.pathname === '/api/v1/models/42'
         ? model
@@ -116,7 +120,7 @@ function civitaiApi(options: {
               ...version,
               files: [
                 {
-                  ...version.files[0],
+                  ...files[0],
                   downloadUrl: 'https://civitai.com/api/download/models/8?fileId=801',
                   hashes: { SHA256: options.secondVersionHash },
                   id: 801,
@@ -127,7 +131,7 @@ function civitaiApi(options: {
               name: 'v2',
               trainedWords: options.secondVersionTrainedWords ?? ['portrait v2'],
             }
-          : version
+          : { ...version, files }
     return new Response(JSON.stringify(url.pathname === '/api/v1/me' ? { id: 1 } : body), {
       headers: { 'content-type': 'application/json' },
     })
@@ -181,13 +185,17 @@ function selectedFilePreview(
 async function waitForTerminalJob(
   coordinator: ModelInstallCoordinator,
   start: () => Promise<ModelInstallJobView>,
+  expectedJobId?: string,
 ): Promise<ModelInstallJobView> {
   let complete!: (job: ModelInstallJobView) => void
   const terminal = new Promise<ModelInstallJobView>((resolve) => {
     complete = resolve
   })
   const unsubscribe = coordinator.onChanged((job) => {
-    if (['canceled', 'completed', 'failed'].includes(job.status)) {
+    if (
+      (!expectedJobId || job.id === expectedJobId) &&
+      ['canceled', 'completed', 'failed'].includes(job.status)
+    ) {
       complete(job)
     }
   })
@@ -214,6 +222,318 @@ async function waitForTerminalJob(
     unsubscribe()
   }
 }
+
+// Production boundary: real API parsing -> service preview -> coordinator -> SQLite/filesystem.
+// Remote API/download transports, OS secret-storage adapter and checkpoint qualification are fixtures.
+// Neighboring control below changes only sizeKB; removing the coordinator guard must fail these.
+for (const { label, sizeKB, type } of [
+  { label: 'missing', sizeKB: undefined },
+  { label: 'zero', sizeKB: 0 },
+  { label: 'negative', sizeKB: -1 },
+  { label: 'rounded to zero bytes', sizeKB: 0.000_01 },
+  { label: 'unsafe byte count', sizeKB: Number.MAX_SAFE_INTEGER },
+  { label: 'overflowed byte count', sizeKB: Number.MAX_VALUE },
+  { label: 'LoRA missing', sizeKB: undefined, type: 'LORA' as const },
+  { label: 'embedding missing', sizeKB: undefined, type: 'TextualInversion' as const },
+  { label: 'VAE missing', sizeKB: undefined, type: 'VAE' as const },
+  { label: 'upscaler missing', sizeKB: undefined, type: 'Upscaler' as const },
+]) {
+  test(`CivitAI ${label} size refuses installation before jobs, downloads or publication`, async () => {
+    const bytes = Buffer.from('file that must never download without a known size')
+    let downloadCount = 0
+    const requests: { authorization: string | null; pathname: string }[] = []
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => {
+        downloadCount++
+        return new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      },
+    })
+    await withModelHarness(
+      civitaiApi({ fileHash: sha256(bytes), fileSizeKB: sizeKB, requests, type }),
+      downloader,
+      async ({ coordinator, databaseFile, repository, root, service }) => {
+        const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(preview.files[0]?.sizeEstimateBytes, null)
+        assert.equal(preview.totalAdditionalBytes, null)
+        await assert.rejects(
+          waitForTerminalJob(coordinator, () =>
+            coordinator.startInstall(preview.previewId, 701, false),
+          ),
+          {
+            code: 'MODEL_SIZE_UNKNOWN',
+            message: 'CivitAI must provide a valid download size before installation.',
+          },
+        )
+        assert.equal(downloadCount, 0)
+        assert.deepEqual(await coordinator.listJobs(), [])
+        assert.deepEqual(await repository.listInstalled(), [])
+        assert.deepEqual(await readdir(path.join(root, 'models')), ['.staging'])
+        assert.deepEqual(await readdir(path.join(root, 'models', '.staging')), [])
+        const stored = new Database(databaseFile, { readonly: true })
+        try {
+          for (const table of ['model_install_job', 'model_install_artifact', 'local_model_file']) {
+            assert.equal(
+              stored.prepare<[], { count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).get()
+                ?.count,
+              0,
+            )
+          }
+        } finally {
+          stored.close()
+        }
+      },
+    )
+  })
+}
+
+for (const sizeKB of [null, '10.5']) {
+  test(`malformed CivitAI size ${JSON.stringify(sizeKB)} rejects metadata without an install side effect`, async () => {
+    let downloadCount = 0
+    const requests: { authorization: string | null; pathname: string }[] = []
+    await withModelHarness(
+      civitaiApi({ fileSizeKB: sizeKB, requests }),
+      new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async () => {
+          downloadCount++
+          return new Response('unexpected download')
+        },
+      }),
+      async ({ coordinator, repository, root, service }) => {
+        await assert.rejects(service.previewImport(MODEL_URL), {
+          code: 'CIVITAI_VERSION_MISMATCH',
+        })
+        assert.equal(downloadCount, 0)
+        assert.deepEqual(await coordinator.listJobs(), [])
+        assert.deepEqual(await repository.listInstalled(), [])
+        assert.deepEqual(await readdir(path.join(root, 'models')), ['.staging'])
+      },
+    )
+  })
+}
+
+test('CivitAI fractional size is displayed before install without becoming an exact byte integrity bound', async () => {
+  const bytes = Buffer.from('valid bytes whose length differs from the rounded source estimate')
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const estimate = Math.round(10.5001 * 1024)
+  let downloadCount = 0
+  await withModelHarness(
+    civitaiApi({ fileHash: sha256(bytes), fileSizeKB: 10.5001, requests }),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => {
+        downloadCount++
+        return new Response(bytes, {
+          headers: {
+            'content-length': String(bytes.length),
+            'content-type': 'application/octet-stream',
+          },
+        })
+      },
+    }),
+    async ({ coordinator, repository, service }) => {
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      assert.equal(preview.files[0]?.sizeEstimateBytes, estimate)
+      assert.equal(preview.totalAdditionalBytes, estimate)
+      assert.notEqual(estimate, bytes.length)
+      const job = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(job.status, 'completed', job.error?.message ?? '')
+      assert.equal(downloadCount, 1)
+      const installed = (await repository.listInstalled())[0]?.versions[0]?.file
+      assert.equal(installed?.sizeBytes, bytes.length)
+      assert.ok(installed)
+      assert.deepEqual(await readFile(installed.managedPath), bytes)
+      const artifact = (await repository.listInstallJobs())[0]?.artifacts[0]
+      assert.equal(artifact?.expectedSizeBytes, null)
+    },
+  )
+})
+
+for (const action of ['repair', 'reuse'] as const) {
+  test(`CivitAI ${action} can use known exact bytes when source size disappears`, async () => {
+    const bytes = Buffer.from('known exact bytes retained independently from the source size')
+    let downloadCount = 0
+    const apiOptions: Parameters<typeof civitaiApi>[0] = {
+      fileHash: sha256(bytes),
+      fileSizeKB: 1,
+      requests: [],
+      secondVersionHash: sha256(bytes),
+    }
+    await withModelHarness(
+      civitaiApi(apiOptions),
+      new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async () => {
+          downloadCount++
+          return new Response(bytes, {
+            headers: { 'content-type': 'application/octet-stream' },
+          })
+        },
+      }),
+      async ({ coordinator, repository, service }) => {
+        const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        const firstJob = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(firstPreview.previewId, 701, false),
+        )
+        assert.equal(firstJob.status, 'completed', firstJob.error?.message ?? '')
+        const before = (await repository.listInstalled())[0]
+        const originalVersion = before?.versions[0]
+        assert.ok(originalVersion)
+        if (action === 'repair') {
+          await rm(originalVersion.file.managedPath)
+        }
+        apiOptions.fileSizeKB = undefined
+        const preview = selectedFilePreview(
+          await service.previewImport(
+            action === 'repair' ? MODEL_URL : 'https://civitai.com/models/42?modelVersionId=8',
+          ),
+        )
+        assert.equal(preview.files[0]?.sizeEstimateBytes, bytes.length)
+        assert.equal(preview.files[0]?.needsRepair, action === 'repair')
+        assert.equal(preview.files[0]?.reusesInstalledFile, action === 'reuse')
+        assert.equal(preview.totalAdditionalBytes, action === 'repair' ? bytes.length : 0)
+        const job = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, action === 'repair' ? 701 : 801, false),
+        )
+        assert.equal(job.status, 'completed', job.error?.message ?? '')
+        assert.equal(downloadCount, action === 'repair' ? 2 : 1)
+        const after = (await repository.listInstalled())[0]
+        assert.equal(after?.id, before?.id)
+        assert.equal(after?.defaultVersionId, before?.defaultVersionId)
+        assert.equal(after?.versions.length, action === 'repair' ? 1 : 2)
+        assert.equal(
+          after?.versions.find((version) => version.civitaiVersionId === 7)?.id,
+          originalVersion.id,
+        )
+        assert.deepEqual(await readFile(originalVersion.file.managedPath), bytes)
+      },
+    )
+  })
+}
+
+test('missing-source-size reuse refuses a local file corrupted after preview before any new job or download', async () => {
+  const bytes = Buffer.from('verified local file for reuse must be rechecked by the backend')
+  let downloadCount = 0
+  const apiOptions: Parameters<typeof civitaiApi>[0] = {
+    fileHash: sha256(bytes),
+    requests: [],
+    secondVersionHash: sha256(bytes),
+  }
+  await withModelHarness(
+    civitaiApi(apiOptions),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => {
+        downloadCount++
+        return new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      },
+    }),
+    async ({ coordinator, repository, service }) => {
+      const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(firstPreview.previewId, 701, false),
+      )
+      apiOptions.fileSizeKB = undefined
+      const preview = selectedFilePreview(
+        await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
+      )
+      assert.equal(preview.files[0]?.reusesInstalledFile, true)
+      const localFile = (await repository.listInstalled())[0]?.versions[0]?.file
+      assert.ok(localFile)
+      await writeFile(localFile.managedPath, Buffer.alloc(bytes.length, '!'))
+      await assert.rejects(
+        waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, 801, false),
+        ),
+        { code: 'MODEL_SIZE_UNKNOWN' },
+      )
+      assert.equal(downloadCount, 1)
+      assert.equal((await coordinator.listJobs()).length, 1)
+      assert.equal((await repository.listInstalled())[0]?.versions.length, 1)
+      const corruptPreview = selectedFilePreview(
+        await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
+      )
+      assert.equal(corruptPreview.files[0]?.reusesInstalledFile, false)
+      assert.equal(corruptPreview.files[0]?.sizeEstimateBytes, null)
+    },
+  )
+})
+
+test('a queued reuse-only install refuses downloading if its verified local file disappears', async () => {
+  const bytes = Buffer.from('verified local file for the queued reuse boundary')
+  const apiOptions: Parameters<typeof civitaiApi>[0] = {
+    fileHash: sha256(bytes),
+    requests: [],
+    secondVersionHash: sha256(bytes),
+  }
+  let releaseBlocker!: () => void
+  let blockerStarted!: () => void
+  const blocked = new Promise<void>((resolve) => {
+    releaseBlocker = resolve
+  })
+  const downloadStarted = new Promise<void>((resolve) => {
+    blockerStarted = resolve
+  })
+  const downloadedUrls: string[] = []
+  await withModelHarness(
+    civitaiApi(apiOptions),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async (input) => {
+        const url = String(input)
+        downloadedUrls.push(url)
+        if (url === OTHER_FILE_URL) {
+          blockerStarted()
+          await blocked
+        }
+        return new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      },
+    }),
+    async ({ coordinator, repository, root, service }) => {
+      const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const firstJob = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(firstPreview.previewId, 701, false),
+      )
+      assert.equal(firstJob.status, 'completed', firstJob.error?.message ?? '')
+      const localFile = (await repository.listInstalled())[0]?.versions[0]?.file
+      assert.ok(localFile)
+      apiOptions.fileSizeKB = undefined
+      const preview = selectedFilePreview(
+        await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
+      )
+      assert.equal(preview.files[0]?.reusesInstalledFile, true)
+      assert.equal(preview.totalAdditionalBytes, 0)
+      const blockerPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      await coordinator.startInstall(blockerPreview.previewId, 702, false)
+      await downloadStarted
+      const queuedJob = await coordinator.startInstall(preview.previewId, 801, false)
+      assert.equal(queuedJob.status, 'waiting')
+      await rm(localFile.managedPath)
+      const finished = await waitForTerminalJob(
+        coordinator,
+        async () => {
+          releaseBlocker()
+          return queuedJob
+        },
+        queuedJob.id,
+      )
+      assert.equal(finished.status, 'failed')
+      assert.equal(finished.error?.code, 'MODEL_SIZE_UNKNOWN')
+      assert.deepEqual(downloadedUrls, [SELECTED_FILE_URL, OTHER_FILE_URL])
+      assert.equal((await repository.listInstalled())[0]?.versions.length, 1)
+      assert.deepEqual(await readdir(path.join(root, 'models', '.staging')), [])
+    },
+  )
+})
 
 test('exact preview file installs into managed storage, survives DB reopen, and never stores a token or URL', async () => {
   const bytes = Buffer.from('verified checkpoint content')

@@ -130,17 +130,23 @@ const conditionalAnimaLicense = computed(
     filePreview.value.resourceType === 'checkpoint' &&
     selectedFile.value?.sha256 === null,
 )
+const selectedFileSizeKnown = computed(
+  () =>
+    selectedFile.value !== undefined &&
+    Number.isSafeInteger(selectedFile.value.sizeEstimateBytes) &&
+    (selectedFile.value.sizeEstimateBytes ?? 0) > 0,
+)
 const selectedAdditionalBytes = computed(() => {
   const selection = filePreview.value
   const file = selectedFile.value
   if (!selection || !file) {
     return null
   }
-  if (file.sizeEstimateBytes === null) {
+  if (!selectedFileSizeKnown.value) {
     return null
   }
   return (
-    (file.alreadyInstalled || file.reusesInstalledFile ? 0 : file.sizeEstimateBytes) +
+    (file.alreadyInstalled || file.reusesInstalledFile ? 0 : file.sizeEstimateBytes!) +
     selection.dependencies.reduce(
       (size, dependency) => size + (dependency.alreadyInstalled ? 0 : dependency.sizeBytes),
       0,
@@ -152,6 +158,7 @@ const canInstall = computed(
     isConnected.value &&
     filePreview.value !== null &&
     selectedFile.value !== undefined &&
+    selectedFileSizeKnown.value &&
     !selectedFile.value.alreadyInstalled &&
     (filePreview.value.baseModelFamily !== 'anima' ||
       filePreview.value.resourceType !== 'checkpoint' ||
@@ -1607,7 +1614,17 @@ onBeforeUnmount(() => {
             Estimated additional download: {{ formatBytes(selectedAdditionalBytes) }}
           </strong>
           <NAlert
+            v-if="selectedFile && !selectedFileSizeKnown"
+            key="model-download-size"
+            title="Download size unavailable"
+            type="error"
+          >
+            CivitAI did not provide a valid size for this file. Fetch the preview again or choose
+            another file before installing.
+          </NAlert>
+          <NAlert
             v-if="
+              selectedFileSizeKnown &&
               filePreview.resourceType === 'checkpoint' &&
               filePreview.baseModelFamily === 'anima' &&
               (selectedAdditionalBytes === null || filePreview.dependencies.length < 2)

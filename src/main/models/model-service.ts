@@ -422,11 +422,10 @@ export class ModelService {
           primary: file.primary,
           reusesInstalledFile: reusable !== null,
           sha256: file.sha256,
-          sizeEstimateBytes: needsAnimaCompanions
-            ? isPinnedAnimaBaseCheckpoint(file.sha256)
+          sizeEstimateBytes:
+            needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
               ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
-              : file.sizeEstimateBytes
-            : file.sizeEstimateBytes,
+              : (exactVersion?.file.sizeBytes ?? reusable?.sizeBytes ?? file.sizeEstimateBytes),
         }
       }),
     )

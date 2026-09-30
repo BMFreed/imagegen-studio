@@ -22,6 +22,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import {
   GenerationDispatchCoordinator,
   GenerationDispatchError,
@@ -29,8 +30,13 @@ import {
 import { GenerationProcessor, GenerationProcessorError } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { readIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
+import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import { ProjectSession } from './project-session.js'
+import { ProjectShadowStore } from './project-shadow.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -282,6 +288,142 @@ test('qualified completion publishes real PNG and actual seed through SQLite sta
     )
     assert.deepEqual(await readFile(path.join(fixture.root, 'Project.igs')), originalProject)
     assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+  })
+})
+
+async function withAcceptance(
+  fixture: Fixture,
+  tabId: string,
+  use: (
+    owner: ProjectAutosaveCoordinator,
+    acceptance: ProjectGenerationAcceptance,
+  ) => Promise<void>,
+): Promise<void> {
+  const roots = {
+    placeholdersDir: placeholders,
+    scratchDir: path.join(fixture.root, 'scratch'),
+  }
+  let owner = await ProjectAutosaveCoordinator.open(
+    path.join(fixture.root, 'Project.igs'),
+    roots,
+    new ProjectShadowStore(path.join(fixture.root, 'shadow')),
+    { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+  )
+  const acceptance = new ProjectGenerationAcceptance({
+    documents: { getOpenDocument: (key) => (key === tabId ? owner : null) },
+    gate: new ProjectGenerationOperationGate(),
+    journal: new GenerationAcceptanceJournalRepository(fixture.database.db),
+    orchestrator: {
+      fenceProjectGeneration: async () => undefined,
+      releaseProjectGenerationFence: () => undefined,
+    },
+    queue: fixture.queue,
+    staging: fixture.staging,
+  })
+  try {
+    await use(owner, acceptance)
+  } finally {
+    if (owner.dirty) {
+      owner = await owner.discardChanges(roots)
+    }
+    await owner.close()
+  }
+}
+
+test('completed candidates keep the actual worker seed through Add and portable Save', async (t) => {
+  for (const actualSeed of [42, 0, 65_535, 0xff_ff_ff_ff]) {
+    await t.test(`planned seed 42, actual seed ${actualSeed}`, async () => {
+      await withFixture(async (fixture) => {
+        const id = await enqueue(fixture)
+        const result = await fixture.processor.runOne(
+          transport(async (request) => {
+            assert.equal(request.job.sampling.seed, 42)
+            return await writeDone(request, fixture.outputBytes, actualSeed)
+          }),
+        )
+        assert.equal(result.kind, 'completed')
+        const { item } = await fixture.queue.loadVerifiedInput(id)
+        const candidates = await fixture.staging.listVerifiedCandidates(item.localProjectKey)
+        assert.equal(candidates.length, 1)
+        const candidate = candidates[0]
+        assert.equal(candidate.actualSeed, actualSeed)
+        assert.equal(
+          await fixture.staging.readLastActualSeed(item.localProjectKey, candidate.documentId),
+          actualSeed,
+        )
+        const originalPackage = await readFile(candidate.projectPath)
+        await withAcceptance(fixture, item.localProjectKey, async (owner, acceptance) => {
+          const accepted = await acceptance.accept(
+            item.localProjectKey,
+            [candidate.candidateId],
+            candidate.candidateId,
+            [candidate.candidateId],
+          )
+          assert.equal(accepted.kind, 'accepted')
+          assert.equal(owner.document.layers.length, 1)
+          const layer = owner.document.layers[0]
+          assert.equal(
+            layer.generationProvenance?.generationConfiguration.sampling.actualSeed,
+            actualSeed,
+          )
+          assert.equal(layer.generationProvenance?.executionResultContext.candidateId, id)
+          assert.equal(owner.dirty, true)
+          assert.deepEqual(await readFile(candidate.projectPath), originalPackage)
+          assert.deepEqual(await fixture.staging.listVerifiedCandidates(item.localProjectKey), [])
+          await owner.save({ lastActualSeedSnapshot: actualSeed })
+          const saved = await readIgsPackage(candidate.projectPath)
+          assert.equal(
+            saved.project.layers[0]?.generationProvenance?.generationConfiguration.sampling
+              .actualSeed,
+            actualSeed,
+          )
+          assert.equal(saved.project.lastActualSeedSnapshot, actualSeed)
+          assert.deepEqual(await saved.readMember(layer.asset.path), fixture.outputBytes)
+        })
+      })
+    })
+  }
+})
+
+test('editing a published actual seed without its durable receipt cannot become a layer', async () => {
+  await withFixture(async (fixture) => {
+    const id = await enqueue(fixture)
+    const result = await fixture.processor.runOne(
+      transport(async (request) => await writeDone(request, fixture.outputBytes)),
+    )
+    assert.equal(result.kind, 'completed')
+    const { item } = await fixture.queue.loadVerifiedInput(id)
+    const [candidate] = await fixture.staging.listVerifiedCandidates(item.localProjectKey)
+    assert.ok(candidate)
+    const manifestPath = path.join(path.dirname(path.dirname(candidate.assetPath)), 'manifest.json')
+    const originalManifest = await readFile(manifestPath)
+    const manifest = JSON.parse(originalManifest.toString('utf8')) as {
+      candidates: { actualSeed: number; candidateId: string }[]
+    }
+    const entry = manifest.candidates.find((next) => next.candidateId === id)
+    assert.ok(entry)
+    entry.actualSeed = 43
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    await withAcceptance(fixture, item.localProjectKey, async (owner, acceptance) => {
+      const originalDocument = structuredClone(owner.document)
+      const originalPackage = await readFile(candidate.projectPath)
+      await assert.rejects(acceptance.accept(item.localProjectKey, [id], id, [id]), {
+        code: 'ACCEPTANCE_SELECTION_STALE',
+      })
+      assert.deepEqual(owner.document, originalDocument)
+      assert.equal(owner.dirty, false)
+      assert.deepEqual(await readFile(candidate.projectPath), originalPackage)
+      assert.deepEqual(await readFile(candidate.assetPath), fixture.outputBytes)
+      assert.equal(
+        await fixture.staging.readLastActualSeed(item.localProjectKey, candidate.documentId),
+        42,
+      )
+    })
+    await writeFile(manifestPath, originalManifest)
+    assert.equal(
+      (await fixture.staging.listVerifiedCandidates(item.localProjectKey))[0]?.actualSeed,
+      42,
+    )
   })
 })
 

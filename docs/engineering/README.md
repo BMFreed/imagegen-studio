@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Product audit fixes](./product-audit-fixes.md) — actual seed при Add, принадлежность вкладок прототипа, размер файла до install и актуальное описание native acceptance; выполненные red/green и границы evidence.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.
 - [UI audit skill](../../.codex/skills/ui-audit/SKILL.md) — локальная проверка вёрстки и базовых правил дизайна по скриншотам и live UI; аудит завершается отчётом, исправления выполняются по запросу. [Чек-лист](../../.codex/skills/ui-audit/references/visual-checklist.md) содержит основания и исключения, [runtime guide](../../.codex/skills/ui-audit/references/runtime.md) — запуск Electron с временной библиотекой и входы в Vue-прототип.

@@ -15,10 +15,7 @@ import { localProjectRecoveryKey } from './project-identity.js'
 export class ProjectGenerationProvenanceError extends Error {
   constructor(
     readonly code:
-      | 'PROVENANCE_INPUT_INVALID'
-      | 'PROVENANCE_OUTPUT_CHANGED'
-      | 'PROVENANCE_SEED_CHANGED'
-      | 'PROVENANCE_SOURCE_CHANGED',
+      'PROVENANCE_INPUT_INVALID' | 'PROVENANCE_OUTPUT_CHANGED' | 'PROVENANCE_SOURCE_CHANGED',
     message: string,
   ) {
     super(message)
@@ -83,10 +80,16 @@ export function provenanceFromVerifiedRasterCandidate(input: {
       'The candidate no longer matches its frozen Project source.',
     )
   }
-  if (candidate.actualSeed !== context.sampling.seed) {
+  // Staging verifies this reported seed against its durable completion receipt. It may
+  // legitimately differ from the planned seed in the frozen request.
+  if (
+    !Number.isSafeInteger(candidate.actualSeed) ||
+    candidate.actualSeed < 0 ||
+    candidate.actualSeed > 0xff_ff_ff_ff
+  ) {
     throw new ProjectGenerationProvenanceError(
-      'PROVENANCE_SEED_CHANGED',
-      'The candidate seed does not match the frozen worker request.',
+      'PROVENANCE_INPUT_INVALID',
+      'The reported worker seed is invalid.',
     )
   }
   if (

@@ -32,7 +32,11 @@ function safeStorage(): SafeStorageAdapter {
   }
 }
 
-function civitaiApi(type: 'Checkpoint' | 'Upscaler', fileHash: string): typeof fetch {
+function civitaiApi(
+  type: 'Checkpoint' | 'Upscaler',
+  fileHash: string,
+  fileSizeBytes: number,
+): typeof fetch {
   return async (input) => {
     const pathname = new URL(String(input)).pathname
     const body =
@@ -56,6 +60,7 @@ function civitaiApi(type: 'Checkpoint' | 'Upscaler', fileHash: string): typeof f
                   metadata: { format: 'PickleTensor' },
                   name: 'RealESRGAN_x4plus.pth',
                   primary: true,
+                  sizeKB: fileSizeBytes / 1024,
                 },
               ],
               id: 7,
@@ -136,7 +141,7 @@ test('CivitAI Any-family .pth upscaler is streamed into managed storage and surv
     const repository = new ModelRepository(database.db)
     const service = new ModelService(
       repository,
-      new CivitaiClient(civitaiApi('Upscaler', hash)),
+      new CivitaiClient(civitaiApi('Upscaler', hash, bytes.length)),
       new CivitaiTokenStore(safeStorage(), root),
     )
     const coordinator = new ModelInstallCoordinator(repository, service, downloader, root)
@@ -150,6 +155,7 @@ test('CivitAI Any-family .pth upscaler is streamed into managed storage and surv
     assert.equal(preview.resourceType, 'upscaler')
     assert.equal(preview.baseModelFamily, null)
     assert.equal(preview.files[0]?.format, 'PyTorch')
+    assert.equal(preview.files[0]?.sizeEstimateBytes, bytes.length)
 
     const job = await waitForTerminalJob(coordinator, () =>
       coordinator.startInstall(preview.previewId, 701, false),
@@ -181,7 +187,7 @@ test('CivitAI Any-family .pth upscaler is streamed into managed storage and surv
       const restartedRepository = new ModelRepository(reopened.db)
       const restartedService = new ModelService(
         restartedRepository,
-        new CivitaiClient(civitaiApi('Upscaler', hash)),
+        new CivitaiClient(civitaiApi('Upscaler', hash, bytes.length)),
         new CivitaiTokenStore(safeStorage(), root),
       )
       await new ModelInstallCoordinator(
@@ -207,9 +213,10 @@ test('CivitAI Any-family .pth upscaler is streamed into managed storage and surv
 })
 
 test('the same .pth source is rejected when CivitAI identifies it as a checkpoint', async () => {
-  const hash = createHash('sha256').update('checkpoint control').digest('hex')
+  const bytes = Buffer.from('checkpoint control')
+  const hash = createHash('sha256').update(bytes).digest('hex')
   await assert.rejects(
-    new CivitaiClient(civitaiApi('Checkpoint', hash)).previewImport(modelUrl, token),
+    new CivitaiClient(civitaiApi('Checkpoint', hash, bytes.length)).previewImport(modelUrl, token),
     { code: 'CIVITAI_NO_SUPPORTED_FILE' },
   )
 })

@@ -225,8 +225,16 @@ selectors, denoising and advanced controls are not connected yet. A separate
 main-process repository can publish and recover a verified temporary candidate
 and its actual seed. The Project now shows a [recovery preview](../../engineering/phase-2b-results-recovery-ui.md)
 and can [save the candidate PNG separately](../../engineering/phase-2b-candidate-image-export.md)
-without adding it to `.igs`; production Generate, full worker
-inference and user-facing acceptance are not connected yet.
+without adding it to `.igs`. The explicit
+[Add Raster action](../../engineering/phase-2b-raster-acceptance-research.md)
+accepts selected verified candidates with immutable provenance into the dirty
+document, flushes recovery before staging cleanup, and writes the portable
+assets only on Save. The
+[acceptance journal](../../engineering/phase-2b-acceptance-journal-research.md)
+recovers the captured cleanup after a crash. Native Electron smoke exercises
+Add, shadow recovery and actual `.igs` Save/reopen. Production Generate and
+the full inference pipeline are not connected yet; early Add while jobs remain
+unfinished and Smart Patch variants are also pending.
 Electron smoke exercises immediate prompt editing followed by native
 `app.quit()` and the Save choice, then reads the latest prompt from the real
 `.igs` package. The timeout/error branch is an implementation guard, not yet an

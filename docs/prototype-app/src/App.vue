@@ -10,7 +10,7 @@ import {
   NModal,
   NText,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import type { DocumentTabModel } from './components/app-shell.types'
 import type { HomeProjectRecord, HomeScenarioId } from './prototypes/home/home.types'
@@ -83,6 +83,9 @@ const projectScenario = computed<ProjectScenarioId>(() =>
 const usesProjectContext = computed(
   () => activePrototype.value === 'apply-preset' || activePrototype.value === 'save-preset',
 )
+const usesDocumentSessions = computed(
+  () => activePrototype.value === 'home' || activePrototype.value === 'project',
+)
 
 const workspaceColors: Record<string, string> = {
   'archive-drive': '#b8a06a',
@@ -92,7 +95,7 @@ const workspaceColors: Record<string, string> = {
   'upscale-tests': '#f0b65f',
 }
 const homeTab: DocumentTabModel = { dirty: false, id: 'home', kind: 'home', title: 'Home' }
-const homeDocumentTabs = ref<DocumentTabModel[]>([
+const sessionDocumentTabs = ref<DocumentTabModel[]>([
   homeTab,
   {
     dirty: false,
@@ -106,7 +109,8 @@ const homeDocumentTabs = ref<DocumentTabModel[]>([
     id: 'sample-project-a',
     kind: 'project',
     title: 'Sample Project A.igs',
-    workspaceColor: workspaceColors['uncategorized'],
+    workspaceColor:
+      workspaceColors[activePrototype.value === 'project' ? 'character-studies' : 'uncategorized'],
   },
 ])
 const staticDocumentTabs: DocumentTabModel[] = [
@@ -146,7 +150,7 @@ projectSessions['sample-project-a']!.savedDocument = cloneDocument(
 )
 
 const documentTabs = computed(() => {
-  const tabs = activePrototype.value === 'home' ? homeDocumentTabs.value : staticDocumentTabs
+  const tabs = usesDocumentSessions.value ? sessionDocumentTabs.value : staticDocumentTabs
   return tabs.map((tab) =>
     tab.kind === 'project' && projectSessions[tab.id]
       ? { ...tab, dirty: projectSessions[tab.id]!.dirty }
@@ -154,9 +158,20 @@ const documentTabs = computed(() => {
   )
 })
 const activeProjectSession = computed(() =>
-  activePrototype.value === 'home' || activePrototype.value === 'project'
-    ? projectSessions[activeDocumentId.value]
-    : undefined,
+  usesDocumentSessions.value ? projectSessions[activeDocumentId.value] : undefined,
+)
+// Mount a Project when first opened and keep it mounted while its tab remains
+// open, so local UI state and mock generation timers survive tab switches.
+const visitedProjectIds = ref(new Set([activeDocumentId.value]))
+watch(activeDocumentId, (id) => {
+  if (projectSessions[id]) {
+    visitedProjectIds.value.add(id)
+  }
+})
+const mountedProjectTabs = computed(() =>
+  sessionDocumentTabs.value.filter(
+    (tab) => tab.kind === 'project' && visitedProjectIds.value.has(tab.id),
+  ),
 )
 const managerOverlayOpen = computed(() => showHomeModelManager.value || showHomePresetManager.value)
 const activeQueueCount = computed(
@@ -166,21 +181,21 @@ const activeQueueCount = computed(
     ).length ?? 0,
 )
 const openProjectIds = computed(() =>
-  homeDocumentTabs.value.filter((tab) => tab.kind === 'project').map((tab) => tab.id),
+  sessionDocumentTabs.value.filter((tab) => tab.kind === 'project').map((tab) => tab.id),
 )
 const dirtyProjectIds = computed(() =>
-  homeDocumentTabs.value
+  sessionDocumentTabs.value
     .filter((tab) => tab.kind === 'project' && (projectSessions[tab.id]?.dirty ?? tab.dirty))
     .map((tab) => tab.id),
 )
 
 function requestHome() {
-  if (activePrototype.value !== 'home') {
+  if (!usesDocumentSessions.value) {
     globalThis.location.href = '/'
     return
   }
-  if (!homeDocumentTabs.value.some((tab) => tab.id === 'home')) {
-    homeDocumentTabs.value.unshift({ ...homeTab })
+  if (!sessionDocumentTabs.value.some((tab) => tab.id === 'home')) {
+    sessionDocumentTabs.value.unshift({ ...homeTab })
   }
   activeDocumentId.value = 'home'
 }
@@ -278,7 +293,7 @@ function confirmClose(action: 'discard' | 'save') {
 }
 
 function closeDocument(id: string) {
-  if (activePrototype.value !== 'home') {
+  if (!usesDocumentSessions.value) {
     if (activeDocumentId.value === id) {
       const session = projectSessions[id]
       if (session) {
@@ -288,7 +303,7 @@ function closeDocument(id: string) {
     }
     return
   }
-  const index = homeDocumentTabs.value.findIndex((tab) => tab.id === id)
+  const index = sessionDocumentTabs.value.findIndex((tab) => tab.id === id)
   if (index < 0) {
     return
   }
@@ -296,10 +311,10 @@ function closeDocument(id: string) {
   if (session) {
     cancelUnfinishedProjectJobs(session)
   }
-  homeDocumentTabs.value.splice(index, 1)
+  sessionDocumentTabs.value.splice(index, 1)
   if (activeDocumentId.value === id) {
     activeDocumentId.value =
-      homeDocumentTabs.value[index]?.id ?? homeDocumentTabs.value[index - 1]?.id ?? ''
+      sessionDocumentTabs.value[index]?.id ?? sessionDocumentTabs.value[index - 1]?.id ?? ''
   }
 }
 
@@ -308,7 +323,7 @@ function openHomeProject(value: {
   recovered?: boolean
   target: 'current' | 'new'
 }) {
-  const existing = homeDocumentTabs.value.find((tab) => tab.id === value.project.id)
+  const existing = sessionDocumentTabs.value.find((tab) => tab.id === value.project.id)
   if (existing) {
     if (value.recovered) {
       existing.dirty = true
@@ -329,12 +344,12 @@ function openHomeProject(value: {
   if (value.recovered) {
     projectSessions[value.project.id]!.dirty = true
   }
-  const homeIndex = homeDocumentTabs.value.findIndex((candidate) => candidate.id === 'home')
+  const homeIndex = sessionDocumentTabs.value.findIndex((candidate) => candidate.id === 'home')
   if (value.target === 'current' && homeIndex >= 0) {
-    homeDocumentTabs.value.splice(homeIndex, 1, tab)
+    sessionDocumentTabs.value.splice(homeIndex, 1, tab)
   } else {
-    homeDocumentTabs.value.splice(
-      homeIndex >= 0 ? homeIndex + 1 : homeDocumentTabs.value.length,
+    sessionDocumentTabs.value.splice(
+      homeIndex >= 0 ? homeIndex + 1 : sessionDocumentTabs.value.length,
       0,
       tab,
     )
@@ -369,7 +384,7 @@ globalThis.addEventListener('keydown', handleGlobalKeydown)
 onBeforeUnmount(() => globalThis.removeEventListener('keydown', handleGlobalKeydown))
 
 function syncProjectTab(project: HomeProjectRecord) {
-  const tab = homeDocumentTabs.value.find((candidate) => candidate.id === project.id)
+  const tab = sessionDocumentTabs.value.find((candidate) => candidate.id === project.id)
   if (!tab) {
     return
   }
@@ -407,7 +422,7 @@ function syncProjectTab(project: HomeProjectRecord) {
               @close="requestCloseDocument"
             />
             <main class="prototype-stage">
-              <template v-if="activePrototype === 'home'">
+              <template v-if="usesDocumentSessions">
                 <HomePrototype
                   v-show="activeDocumentId === 'home'"
                   :aria-hidden="showHomeModelManager || showHomePresetManager || undefined"
@@ -421,7 +436,7 @@ function syncProjectTab(project: HomeProjectRecord) {
                   @projectChanged="syncProjectTab"
                 />
                 <ProjectPrototype
-                  v-for="tab of homeDocumentTabs.filter((item) => item.kind === 'project')"
+                  v-for="tab of mountedProjectTabs"
                   v-show="activeDocumentId === tab.id"
                   :key="tab.id"
                   :active="activeDocumentId === tab.id && !managerOverlayOpen"
@@ -436,19 +451,6 @@ function syncProjectTab(project: HomeProjectRecord) {
                   </template>
                 </NEmpty>
               </template>
-              <ProjectPrototype
-                v-else-if="activePrototype === 'project' && activeDocumentId"
-                :active="!managerOverlayOpen"
-                :session="projectSessions['sample-project-b']!"
-                @manageModels="openHomeModelManager"
-                @managePresets="openHomePresetManager"
-                @savePreset="openSavePreset"
-              />
-              <NEmpty v-else-if="activePrototype === 'project'" description="No document open">
-                <template v-slot:extra>
-                  <NButton type="primary" @click="requestHome">Open Home</NButton>
-                </template>
-              </NEmpty>
               <ProjectContextMock v-else-if="usesProjectContext" />
               <section v-else aria-hidden="true" class="home-context">
                 <div class="workspace-sidebar">

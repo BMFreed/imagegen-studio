@@ -130,23 +130,6 @@ export class ModelInstallCoordinator {
     const needsAnimaCompanions =
       preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
     const isPinnedBase = needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
-    if (needsAnimaCompanions) {
-      if (
-        !isPinnedBase &&
-        (!Number.isSafeInteger(file.sizeEstimateBytes) || (file.sizeEstimateBytes ?? 0) < 1)
-      ) {
-        throw new ModelServiceError(
-          'ANIMA_SIZE_UNKNOWN',
-          'CivitAI must provide the checkpoint download size before installation.',
-        )
-      }
-    }
-    if (needsAnimaCompanions && !acceptedAnimaLicense) {
-      throw new ModelServiceError(
-        'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
-        'Acknowledge the CircleStone terms for the required Anima components before installing.',
-      )
-    }
     const token = await this.modelService.requireToken()
     await this.modelService.civitai.validateToken(token)
     const duplicate = await this.repository.findExactFileDuplicate({
@@ -163,6 +146,21 @@ export class ModelInstallCoordinator {
       throw new ModelServiceError(
         'MODEL_SOURCE_CHANGED',
         'CivitAI changed the hash for this file. Verify its source before repairing.',
+      )
+    }
+    const reusablePrimary = await this.modelService.findVerifiedFileByHash(
+      file.sha256 ?? exactVersion?.file.sha256 ?? '',
+    )
+    const primarySizeBytes = requireKnownDownloadSize(
+      isPinnedBase
+        ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+        : (exactVersion?.file.sizeBytes ?? reusablePrimary?.sizeBytes ?? file.sizeEstimateBytes),
+      needsAnimaCompanions,
+    )
+    if (needsAnimaCompanions && !acceptedAnimaLicense) {
+      throw new ModelServiceError(
+        'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+        'Acknowledge the CircleStone terms for the required Anima components before installing.',
       )
     }
     if (exactVersion && (await this.isVersionVerified(exactVersion, preview.resourceType))) {
@@ -212,15 +210,8 @@ export class ModelInstallCoordinator {
       resourceType: preview.resourceType,
       versionName: preview.versionName,
     })
-    const reusablePrimary = await this.modelService.findVerifiedFileByHash(
-      file.sha256 ?? exactVersion?.file.sha256 ?? '',
-    )
     const totalBytes = needsAnimaCompanions
-      ? (reusablePrimary
-          ? 0
-          : isPinnedBase
-            ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
-            : file.sizeEstimateBytes!) +
+      ? (reusablePrimary ? 0 : primarySizeBytes) +
         (
           await Promise.all(
             companions.map(async (item) =>
@@ -639,6 +630,17 @@ export class ModelInstallCoordinator {
           stagingPath: reusablePrimary.managedPath,
         }
       } else {
+        // A reuse-only plan may have lost its verified local file while queued. Refuse a
+        // new download unless source metadata, the pinned manifest, or exact repair identity
+        // still supplies a known size; a renderer preview is not authoritative here.
+        requireKnownDownloadSize(
+          job.preview.resourceType === 'checkpoint' &&
+            job.preview.baseModelFamily === 'anima' &&
+            isPinnedAnimaBaseCheckpoint(job.file.sha256)
+            ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+            : (repairVersion?.file.sizeBytes ?? job.file.sizeEstimateBytes),
+          job.preview.resourceType === 'checkpoint' && job.preview.baseModelFamily === 'anima',
+        )
         primary = await this.downloadArtifact(job, 'primary', {
           bearerToken: job.token,
           expectedBytes:
@@ -848,6 +850,18 @@ export class ModelInstallCoordinator {
     await this.repository.updateInstallJob(jobId, input)
     await this.emitJob(jobId)
   }
+}
+
+function requireKnownDownloadSize(sizeBytes: number | null, needsAnimaCompanions: boolean): number {
+  if (!Number.isSafeInteger(sizeBytes) || (sizeBytes ?? 0) < 1) {
+    throw new ModelServiceError(
+      needsAnimaCompanions ? 'ANIMA_SIZE_UNKNOWN' : 'MODEL_SIZE_UNKNOWN',
+      needsAnimaCompanions
+        ? 'CivitAI must provide the checkpoint download size before installation.'
+        : 'CivitAI must provide a valid download size before installation.',
+    )
+  }
+  return sizeBytes!
 }
 
 function companionRole(artifact: AnimaArtifact): AnimaDependencyRole {

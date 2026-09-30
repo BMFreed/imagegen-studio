@@ -356,6 +356,31 @@ test('Anima group publishes one checkpoint linked to both pinned companion recor
   })
 })
 
+test('pinned Anima sizes still permit install when CivitAI omits its file estimate', async () => {
+  const { calls, downloader } = fakeDownloader()
+  await withHarness(
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const previewId = await preview(service)
+      const job = await waitForTerminal(coordinator, () =>
+        coordinator.startInstall(previewId, 701, true),
+      )
+      assert.equal(job.status, 'completed', job.error?.message ?? '')
+      assert.equal(job.totalBytes, ANIMA_BASE_1_0_TOTAL_BYTES)
+      assert.deepEqual(
+        calls.map((call) => call.expectedBytes),
+        [
+          ANIMA_BASE_1_0_CHECKPOINT.sizeBytes,
+          ANIMA_QWEN3_0_6B_ENCODER.sizeBytes,
+          ANIMA_QWEN_IMAGE_VAE.sizeBytes,
+        ],
+      )
+      assert.equal((await repository.listInstalled()).length, 3)
+    },
+    civitaiApi({ fileSizeKB: null }),
+  )
+})
+
 test('custom CivitAI Anima checkpoint installs with disclosed companion sizes and remains unqualified for Generate', async () => {
   const bytes = Buffer.from('custom Anima checkpoint bytes for the installation boundary')
   const digest = createHash('sha256').update(bytes).digest('hex')
