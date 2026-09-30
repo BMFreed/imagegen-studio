@@ -1,4 +1,5 @@
 import type { ProjectGenerationDraftChange, ProjectTab } from '../../shared/api.js'
+import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 
 export interface ProjectDraftSyncOptions {
   onAcknowledged: (tab: ProjectTab) => void
@@ -33,6 +34,9 @@ export class ProjectDraftSync {
   constructor(private readonly options: ProjectDraftSyncOptions) {}
 
   change(tab: ProjectTab, change: ProjectGenerationDraftChange, historyGroupId?: string): void {
+    if (change.kind === 'dynamic-prompt') {
+      change = { kind: change.kind, value: { ...change.value } }
+    }
     let state = this.states.get(tab.id)
     if (!state) {
       state = {
@@ -188,6 +192,17 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'dynamic-prompt') {
+    const before = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
+    if (
+      before.maxPrompts === change.value.maxPrompts &&
+      before.seedBehavior === change.value.seedBehavior
+    ) {
+      return false
+    }
+    draft.dynamicPrompt = { ...change.value }
+    return true
+  }
   if (change.kind === 'lora-enabled' || change.kind === 'lora-weight') {
     const lora = draft.loras.find(
       (entry) =>

@@ -1,5 +1,7 @@
+import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
 
+import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
@@ -137,6 +139,7 @@ export interface ProjectLoraIdentity {
 export type ProjectGenerationDraftChange =
   | (ProjectLoraIdentity & { kind: 'lora-enabled'; value: boolean })
   | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
+  | { kind: 'dynamic-prompt'; value: GenerationDynamicPromptSettings }
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
   | { kind: 'sampling-pair'; sampler: string | null; scheduler: string | null }
@@ -435,6 +438,14 @@ export function isProjectGenerationDraftChange(
   }
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
+  if (value.kind === 'dynamic-prompt') {
+    return (
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('value') &&
+      isGenerationDynamicPromptSettings(value.value)
+    )
+  }
   if (value.kind === 'lora-enabled' || value.kind === 'lora-weight') {
     return (
       keys.length === 4 &&

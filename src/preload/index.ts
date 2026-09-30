@@ -19,6 +19,7 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isProjectGenerationResultsSnapshot } from '../shared/projects/project-generation-results.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
@@ -282,6 +283,7 @@ function isGenerationDraft(value: unknown): value is IgsProjectDocumentV1['gener
   const seed = value.seed
   const sampling = value.sampling
   return (
+    (value.dynamicPrompt === undefined || isGenerationDynamicPromptSettings(value.dynamicPrompt)) &&
     isPrompt(value.positivePrompt) &&
     isPrompt(value.negativePrompt) &&
     Array.isArray(value.loras) &&

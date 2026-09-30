@@ -397,8 +397,10 @@ from authored templates through the planner to actual grouped admission,
 completion, early Add and portable Save; the live source templates stay in the
 Project draft, while provenance contains concrete prompts. Legacy records keep
 seed behavior unspecified. Persistent-storage capacity is measured separately
-from GPU throughput. Renderer Generate, persisted dynamic options/preview UI,
-full GPU/release runtime and Smart Patch remain open.
+from GPU throughput. [Persisted dynamic options and preview](../../../engineering/phase-2b-dynamic-preview-research.md)
+now expose one-iteration concrete pairs and cap32 errors without starting jobs
+or creating candidates. Renderer Generate, full GPU/release runtime and
+Smart Patch remain open.
 
 ## Vue Prototype Coverage
 

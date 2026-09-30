@@ -11,6 +11,7 @@ import type {
   ProjectTab,
 } from '../../shared/api.js'
 import { isProjectGenerationDraftChange, isProjectRasterLayerChange } from '../../shared/api.js'
+import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -954,6 +955,17 @@ export class ProjectService {
     const draft = document.generationDraft
     let nextDraft = draft
     switch (change.kind) {
+      case 'dynamic-prompt': {
+        const before = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
+        if (
+          before.maxPrompts === change.value.maxPrompts &&
+          before.seedBehavior === change.value.seedBehavior
+        ) {
+          return toTab(tabId, coordinator)
+        }
+        nextDraft = { ...draft, dynamicPrompt: { ...change.value } }
+        break
+      }
       case 'lora-enabled':
       case 'lora-weight': {
         const index = this.loraIndex(document, change)

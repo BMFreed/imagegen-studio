@@ -392,3 +392,71 @@ test('window-close flush waits for draft updates in every open project', async (
   assert.equal(saved.get(first.id)?.generationDraft.positivePrompt.text, 'first project')
   assert.equal(saved.get(second.id)?.generationDraft.negativePrompt.text, 'second project')
 })
+
+test('dynamic draft effective-default no-ops preserve legacy absence and avoid pending IPC', async () => {
+  for (const legacy of [true, false]) {
+    const saved = projectTab()
+    if (legacy) {
+      delete saved.generationDraft.dynamicPrompt
+    }
+    const before = structuredClone(saved)
+    const sync = new ProjectDraftSync({
+      onAcknowledged: () => assert.fail('A no-op must not acknowledge an IPC update'),
+      onError: () => assert.fail('Unexpected draft error'),
+      onOverlay: () => assert.fail('A no-op must not create an optimistic overlay'),
+      send: async () => {
+        throw new Error('A no-op must not send IPC')
+      },
+    })
+    sync.change(saved, {
+      kind: 'dynamic-prompt',
+      value: { maxPrompts: 100, seedBehavior: 'per-iteration' },
+    })
+    await sync.flushAll()
+    assert.deepEqual(saved, before)
+    assert.equal(Object.hasOwn(saved.generationDraft, 'dynamicPrompt'), !legacy)
+  }
+})
+
+test('dynamic draft retry retains the captured nested setting and leaves another tab independent', async () => {
+  const saved = projectTab()
+  const neighbor = projectTab()
+  const before = structuredClone(saved)
+  const neighborBefore = structuredClone(neighbor)
+  const sent: ProjectGenerationDraftChange[] = []
+  const overlays: (ProjectTab['generationDraft'] | null)[] = []
+  const acknowledged: ProjectTab[] = []
+  let shouldFail = true
+  const errors: Error[] = []
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => acknowledged.push(tab),
+    onError: (_tabId, error) => errors.push(error),
+    onOverlay: (_tabId, draft) => overlays.push(draft),
+    send: async (_tabId, change) => {
+      sent.push(structuredClone(change))
+      if (shouldFail) {
+        throw new Error('Temporarily unavailable')
+      }
+      return saved
+    },
+  })
+  const settings = {
+    kind: 'dynamic-prompt' as const,
+    value: { maxPrompts: 7, seedBehavior: 'per-prompt' as const },
+  }
+  sync.change(saved, settings)
+  settings.value.maxPrompts = 99
+  await assert.rejects(sync.flush(saved.id), /Temporarily unavailable/)
+  assert.deepEqual(overlays.at(-1)?.dynamicPrompt, { maxPrompts: 7, seedBehavior: 'per-prompt' })
+  assert.equal(errors.length, 1)
+  shouldFail = false
+  await sync.flush(saved.id)
+  assert.deepEqual(sent, [
+    { kind: 'dynamic-prompt', value: { maxPrompts: 7, seedBehavior: 'per-prompt' } },
+    { kind: 'dynamic-prompt', value: { maxPrompts: 7, seedBehavior: 'per-prompt' } },
+  ])
+  assert.equal(acknowledged.length, 1)
+  assert.equal(overlays.at(-1), null)
+  assert.deepEqual(saved, before)
+  assert.deepEqual(neighbor, neighborBefore)
+})

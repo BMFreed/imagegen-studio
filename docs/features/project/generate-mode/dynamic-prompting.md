@@ -136,10 +136,40 @@ seed zero, then actual queue/staging/Add/portable Save with external inference
 substituted. Seed behavior remains main metadata rather than a Python sampling
 parameter.
 
-Renderer Generate, preview/settings UI, persisted dynamic draft options,
-full conditioning and release inference remain unconnected. The prototype's
-100-job guard remains separate from production admission policy; the future UI
-must use the shared measured policy and expose truncation/refusal before enqueue.
+At that planning checkpoint renderer Generate, preview/settings UI and persisted
+dynamic draft options were unconnected. The following checkpoint closes preview
+and draft storage only; full conditioning and release inference remain open.
+The prototype's 100-job guard remains separate from production admission policy.
+
+## Production persisted-settings and preview checkpoint
+
+The [production preview checkpoint](../../../engineering/phase-2b-dynamic-preview-research.md)
+opens one modal from either prompt toolbar. It expands the current positive and
+negative source text with the real pure planner, using one iteration and the
+shared 32-job cap. It displays concrete pairs, parse/byte/count errors and an
+explicit warning when `maxPrompts` selects a shorter prefix. Literal braces
+retained by the grammar are marked as unsupported by the current worker.
+It does not select Random/Reuse seeds, call main admission or qualify a model.
+
+`generationDraft.dynamicPrompt` stores `maxPrompts` (integer 1..100, default 100)
+and `seedBehavior` (`per-iteration` by default, or `per-prompt`). These are
+Project edits with Undo/Redo, recovery shadow and explicit portable Save.
+Preview pairs, errors and modal visibility stay transient. Opening and closing
+the preview alone preserves dirty/history, the actual seed snapshot and `.igs`
+bytes. Legacy documents without settings remain readable and absent on open;
+effective defaults do not create an edit or silently add the field. New documents
+store an owned default object. Strict package/IPC guards reject invalid objects.
+
+Native Electron checks cover both toolbars, four ordered pairs, truncation,
+malformed text, job overflow, 32 long pairs at 900×620, Undo/Redo and actual
+`.igs` Save/reopen. Real service/synchronization tests additionally cover legacy
+no-ops, captured values while updates are pending and crash-shadow recovery.
+Native Save with a dynamic update still pending and native busy/reload states
+are not separate reproduced scenarios in this slice.
+
+Renderer Generate, images-per-click wiring, transport/model qualification,
+full conditioning and release inference remain open. Successful expansion
+is not a generation-readiness check.
 
 ## Vue Prototype Coverage
 

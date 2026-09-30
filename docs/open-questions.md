@@ -28,11 +28,13 @@
   Продуктовое решение о встроенной проверке и установке уже принято; это
   инженерный контракт доставки, отдельный от Python runtime update. User flow
   описан в [Application Updates](./features/application-updates.md).
-- Для renderer dynamic preview/Generate использовать общий начальный лимит
-  32 jobs из [persistent-storage замеров](./engineering/phase-2b-batch-planning-research.md).
-  Внутренний planner/admission уже применяет его; UI ещё не подключён и должен
-  показывать тот же лимит, explicit truncation и причину отказа. Замеры storage
-  на одном Linux-компьютере не заменяют Linux/NVIDIA release qualification.
+- Для будущего renderer Generate сохранить общий начальный лимит 32 jobs из
+  [persistent-storage замеров](./engineering/phase-2b-batch-planning-research.md).
+  Внутренний planner/admission и [production preview](./engineering/phase-2b-dynamic-preview-research.md)
+  уже применяют его. Preview явно показывает одну iteration, truncation и
+  причину отказа; Generate ещё должен связать тот же planner с images-per-click,
+  model/transport qualification и atomic admission. Замеры storage на одном
+  Linux-компьютере не заменяют Linux/NVIDIA release qualification.
 
 ## Можно решить позже
 

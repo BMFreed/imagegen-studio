@@ -285,8 +285,10 @@ the existing 64-candidate recovery ceiling and byte preflight remain mandatory.
 
 This is still an internal boundary tested with a substitute inference transport.
 There is no renderer Generate/Queue Manager action or qualified full release GPU
-pipeline; persisted dynamic options, preview/Generate UI, progress and user-facing
-retry/pruning are unconnected. Candidate acceptance has a separate production Raster path,
+pipeline. [Persisted dynamic options and preview](../engineering/phase-2b-dynamic-preview-research.md)
+now use the ordinary Project draft and one-iteration pure planner with cap32;
+opening preview creates no queue rows and does not choose actual seeds.
+Generate, progress and user-facing retry/pruning remain unconnected. Candidate acceptance has a separate production Raster path,
 including [confirmed early Add](./project/generate-mode/generation-results.md#production-confirmed-early-raster-acceptance-checkpoint)
 while sibling jobs run. Smart Patch acceptance remains open.
 

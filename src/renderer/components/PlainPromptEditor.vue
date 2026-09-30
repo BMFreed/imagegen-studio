@@ -29,11 +29,12 @@ import PromptEditorHelp from './PromptEditorHelp.vue'
 const props = defineProps<{
   ariaLabel: string
   disabled: boolean
+  dynamicPreviewAvailable?: boolean
   embeddingTokens: string[]
   loraSources: LoraTriggerSource[]
   polarity: 'negative' | 'positive'
 }>()
-const emit = defineEmits<{ blur: []; focus: [] }>()
+const emit = defineEmits<{ blur: []; dynamicPreview: []; focus: [] }>()
 const text = defineModel<string>({ required: true })
 const host = ref<HTMLElement | null>(null)
 const focused = ref(false)
@@ -234,11 +235,13 @@ onBeforeUnmount(() => {
       :attentionTargetAvailable="attentionAvailable"
       class="prompt-actions"
       :disabled
+      :dynamicPreviewAvailable
       :empty="!text"
       @browse="browse"
       @clear="clear"
       @copy="copy"
       @decrease="attention(-1)"
+      @dynamicPreview="emit('dynamicPreview')"
       @increase="attention(1)"
     />
   </section>

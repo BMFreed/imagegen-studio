@@ -9,6 +9,7 @@
 - [Confirmed early Raster Add](./phase-2b-early-raster-acceptance.md) — exact candidate/job confirmation, scoped cancellation, confirmed worker exit and preserved journal/shadow/Save boundary; qualified batch grouping follows in a separate internal checkpoint.
 - [Qualified batch grouping](./phase-2b-batch-grouping-research.md) — atomic queue publication, shared staging session, escaped-manifest capacity and early Add integration; renderer Generate and release runtime remain open.
 - [Prepared batch planning and capacity](./phase-2b-batch-planning-research.md) — bounded concrete prompt/seed planning, shared request qualification, optional seed behavior in immutable provenance and reproducible persistent-storage measurements; Generate UI remains separate.
+- [Persisted dynamic settings and prompt preview](./phase-2b-dynamic-preview-research.md) — production toolbar/modal, shared bounded planner, typed draft IPC and real history/shadow/portable Save evidence; preview uses one iteration and does not start inference.
 - [Product audit fixes](./product-audit-fixes.md) — actual seed при Add, принадлежность вкладок прототипа, размер файла до install и актуальное описание native acceptance; выполненные red/green и границы evidence.
 - [InvokeAI staging/canvas reference](./invoke-recovery-canvas-reference.md) — проверенные исходники и границы адаптации recovery, queue и бесконечного Canvas.
 - [Shared UI component contracts](./ui-component-contracts.md) — повторяемые компоненты Electron/прототипа, их владельцы, API и browser checks.

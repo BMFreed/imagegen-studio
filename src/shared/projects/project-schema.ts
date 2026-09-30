@@ -1,6 +1,10 @@
 import * as v from 'valibot'
 
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
+import {
+  GenerationDynamicPromptSettingsSchema,
+  getEffectiveDynamicPromptSettings,
+} from './generation-dynamic-settings.js'
 
 /** An internal package marker; it does not claim IANA registration. */
 export const IGS_MIMETYPE = 'application/vnd.imagegen-studio.project+zip'
@@ -252,6 +256,7 @@ const RasterGenerationProvenanceV1Schema = v.pipe(
 const GenerationDraftSchema = v.strictObject({
   cfgRescale: v.optional(UnitIntervalSchema),
   clipSkip: v.optional(PositiveIntegerSchema),
+  dynamicPrompt: v.optional(GenerationDynamicPromptSettingsSchema),
   loras: v.pipe(v.array(LoraSchema), v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries)),
   model: v.nullable(ExactResourceRefSchema),
   negativePrompt: PromptSchema,
@@ -512,6 +517,7 @@ export function createEmptyProjectDocumentV1(options: {
     documentId: options.documentId ?? globalThis.crypto.randomUUID(),
     documentRevision: options.documentRevision ?? globalThis.crypto.randomUUID(),
     generationDraft: {
+      dynamicPrompt: getEffectiveDynamicPromptSettings(),
       loras: [],
       model: null,
       negativePrompt: { embeddingRefs: [], text: '' },

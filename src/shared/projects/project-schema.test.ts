@@ -421,3 +421,45 @@ test('accepted seed behavior is optional for legacy provenance and restricted to
     assertSchemaCode('INVALID_PROJECT'),
   )
 })
+
+test('dynamic draft settings have explicit new-document defaults while legacy absence stays absent', () => {
+  const document = emptyDocument()
+  assert.deepEqual(document.generationDraft.dynamicPrompt, {
+    maxPrompts: 100,
+    seedBehavior: 'per-iteration',
+  })
+  delete document.generationDraft.dynamicPrompt
+  const parsed = parseProjectDocumentV1(document)
+  assert.equal(Object.hasOwn(parsed.generationDraft, 'dynamicPrompt'), false)
+  assert.deepEqual(parsed, document)
+  const neighbor = emptyDocument()
+  neighbor.generationDraft.dynamicPrompt!.maxPrompts = 1
+  assert.equal(emptyDocument().generationDraft.dynamicPrompt!.maxPrompts, 100)
+})
+
+test('dynamic draft settings strictly validate count bounds and seed behavior at the package boundary', () => {
+  for (const maxPrompts of [1, 32, 100]) {
+    for (const seedBehavior of ['per-iteration', 'per-prompt'] as const) {
+      const document = emptyDocument()
+      document.generationDraft.dynamicPrompt = { maxPrompts, seedBehavior }
+      assert.deepEqual(parseProjectDocumentV1(document), document)
+    }
+  }
+  for (const settings of [
+    null,
+    {},
+    { maxPrompts: 1 },
+    { maxPrompts: 0, seedBehavior: 'per-iteration' },
+    { maxPrompts: 101, seedBehavior: 'per-iteration' },
+    { maxPrompts: 1.5, seedBehavior: 'per-iteration' },
+    { maxPrompts: NaN, seedBehavior: 'per-iteration' },
+    { maxPrompts: Infinity, seedBehavior: 'per-iteration' },
+    { maxPrompts: '10', seedBehavior: 'per-iteration' },
+    { maxPrompts: 10, seedBehavior: 'random' },
+    { iterations: 2, maxPrompts: 10, seedBehavior: 'per-prompt' },
+  ]) {
+    const document = emptyDocument()
+    Object.assign(document.generationDraft, { dynamicPrompt: settings })
+    assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
+  }
+})

@@ -217,6 +217,25 @@ The acceptance boundary is defined by
 [PP-008](../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению)
 and the [staging contract](../features/project/generate-mode/generation-results.md).
 
+### Generation draft dynamic settings
+
+The v1 `project.json` schema accepts an optional strict
+`generationDraft.dynamicPrompt` object with `maxPrompts` (safe integer 1..100)
+and `seedBehavior` (`per-iteration` or `per-prompt`). New documents store
+explicit owned defaults: 100 and `per-iteration`. A legacy absent object stays
+absent on read/open and uses those defaults only for UI/planning. An
+effective-default no-op does not synthesize a field, revision or dirty/Undo step.
+Unknown keys and invalid values fail the package/IPC boundary before mutation.
+
+Actual settings edits use the ordinary document history, recovery shadow and
+explicit Save path. Renderer synchronization captures the full nested settings
+value before queued awaits; Save/tab close/window close flush that path.
+The preview list, parse errors, modal visibility and images-per-click are not
+added to portable storage by this checkpoint. The one-iteration preview applies
+the independent 32-job policy; `maxPrompts=100` is a prefix setting, not admission
+for 100 jobs. Editing the draft never changes frozen jobs or accepted provenance.
+See [production preview evidence](../engineering/phase-2b-dynamic-preview-research.md).
+
 ### Generation provenance
 
 Generation provenance — immutable metadata of an accepted Raster Layer or Smart Patch variant: recorded settings, resources, non-regional source context and runtime parameters associated with that persistent result. It is not a complete reconstruction recipe when Regional Guidance was used.

@@ -7,6 +7,7 @@ import type {
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
+import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import {
   ILLUSTRIOUS_SCHEDULER_PAIRS,
   isIllustriousSamplingDraftPair,
@@ -42,6 +43,7 @@ import type { CandidateExportFeedback } from './candidate-export-feedback.js'
 import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
+import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
@@ -105,6 +107,15 @@ const emit = defineEmits<{
 
 type PromptPolarity = 'negative' | 'positive'
 const promptGroups = new Map<PromptPolarity, string>()
+const dynamicPreviewOpen = ref(false)
+const dynamicSettings = computed({
+  get: () => getEffectiveDynamicPromptSettings(props.generationDraft.dynamicPrompt),
+  set: (value) => {
+    if (!props.busy && !props.reloadRequired) {
+      emit('updateDraft', { kind: 'dynamic-prompt', value })
+    }
+  },
+})
 
 function beginPromptEdit(polarity: PromptPolarity): string {
   let groupId = promptGroups.get(polarity)
@@ -1002,6 +1013,7 @@ function applyFitBbox() {
             <PlainPromptEditor
               ariaLabel="Positive prompt"
               :disabled="busy || reloadRequired"
+              dynamicPreviewAvailable
               :embeddingTokens="
                 generationDraft.positivePrompt.embeddingRefs.map((ref) => ref.token)
               "
@@ -1009,6 +1021,7 @@ function applyFitBbox() {
               :modelValue="generationDraft.positivePrompt.text"
               polarity="positive"
               @blur="endPromptEdit('positive')"
+              @dynamicPreview="dynamicPreviewOpen = true"
               @focus="beginPromptEdit('positive')"
               @update:modelValue="updatePrompt('positive', $event)"
             />
@@ -1017,6 +1030,7 @@ function applyFitBbox() {
             <PlainPromptEditor
               ariaLabel="Negative prompt"
               :disabled="busy || reloadRequired"
+              dynamicPreviewAvailable
               :embeddingTokens="
                 generationDraft.negativePrompt.embeddingRefs.map((ref) => ref.token)
               "
@@ -1024,6 +1038,7 @@ function applyFitBbox() {
               :modelValue="generationDraft.negativePrompt.text"
               polarity="negative"
               @blur="endPromptEdit('negative')"
+              @dynamicPreview="dynamicPreviewOpen = true"
               @focus="beginPromptEdit('negative')"
               @update:modelValue="updatePrompt('negative', $event)"
             />
@@ -1254,6 +1269,13 @@ function applyFitBbox() {
         />
       </DnDProvider>
     </div>
+    <DynamicPromptPreview
+      v-model:settings="dynamicSettings"
+      v-model:show="dynamicPreviewOpen"
+      :disabled="busy || reloadRequired"
+      :negativePrompt="generationDraft.negativePrompt.text"
+      :positivePrompt="generationDraft.positivePrompt.text"
+    />
   </section>
 </template>
 

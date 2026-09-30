@@ -108,7 +108,8 @@ export async function checkPromptActions({ window, application, projectRegion })
   await positive.press('Control+Home')
   await positive.press('Control+ArrowUp')
   await expect(positive).toHaveText('(alpha phrase)+, beta word')
-  await expect(positiveCard.getByRole('button', { name: 'Preview dynamic prompt' })).toHaveCount(0)
+  await expect(positiveCard.getByRole('button', { name: 'Preview dynamic prompt' })).toBeEnabled()
+  await expect(negativeCard.getByRole('button', { name: 'Preview dynamic prompt' })).toBeEnabled()
 
   if (process.env.IMAGEGEN_SMOKE_PROMPT_ACTIONS_SCREENSHOT) {
     await positiveCard.getByRole('button', { name: 'About Positive prompt editor' }).hover()

@@ -30,6 +30,7 @@ import {
 } from './desktop-layout-checks.mjs'
 import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
+import { checkDynamicPromptPreview } from './desktop-dynamic-prompt-checks.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -460,6 +461,14 @@ try {
     '(alpha phrase)+, beta word',
   )
   assert.equal(actionPackage.project.generationDraft.negativePrompt.text, '(soft lighting)-, blur')
+  await checkDynamicPromptPreview({
+    application,
+    packagePath,
+    projectId,
+    projectRegion,
+    projectTitle,
+    window,
+  })
   await checkPromptDiagnostics({ window, application, projectRegion })
   await projectRegion.getByRole('button', { name: 'Save Project' }).click()
   await projectRegion.getByText('Saved', { exact: true }).waitFor()
@@ -757,7 +766,9 @@ try {
   await expect(focusedManager.locator('.metadata-list dd').first()).toHaveText('v901')
   await expect(focusedManager.locator('.metadata-list dd').nth(1)).toContainText('v901')
   const focusedPrediction = focusedManager.locator('.version-row--project .version-prediction')
-  await expect(focusedPrediction).toContainText('Assumed default; check the model author’s guidance')
+  await expect(focusedPrediction).toContainText(
+    'Assumed default; check the model author’s guidance',
+  )
   await focusedPrediction.locator('.n-base-selection').click()
   await window.getByText('V-prediction', { exact: true }).last().click()
   await expect(focusedPrediction).toContainText('Chosen for this exact file')
@@ -1636,7 +1647,10 @@ try {
 
   await canvasRegion.getByRole('button', { name: 'Bounding Box tool' }).click()
   const rasterCanvasArea = canvasRegion.locator('.canvas-area')
-  await rasterCanvasArea.locator('canvas').first().click({ position: { x: 120, y: 120 } })
+  await rasterCanvasArea
+    .locator('canvas')
+    .first()
+    .click({ position: { x: 120, y: 120 } })
   await expect(rasterCanvasArea).toBeFocused()
   await recoveryWindow.keyboard.down('Shift')
   for (let index = 0; index < 3; index += 1) {
@@ -1905,7 +1919,9 @@ try {
   assert.equal(unconfirmedClose.error.code, 'PROJECT_CLOSE_CONFIRMATION_REQUIRED')
   await recoveryWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
   const generationCloseDialog = recoveryWindow.getByRole('dialog', { name: 'Close Project' })
-  await expect(generationCloseDialog.getByText('Unfinished generation jobs', { exact: false })).toBeVisible()
+  await expect(
+    generationCloseDialog.getByText('Unfinished generation jobs', { exact: false }),
+  ).toBeVisible()
   await generationCloseDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(recoveryWindow.getByRole('tab', { name: rasterTitle })).toBeVisible()
   const pendingAfterCancel = await tabCloseJobDatabase.db
@@ -1932,7 +1948,9 @@ try {
   assert.equal(canceledAfterClose.status, 'canceled')
   assert.equal(canceledAfterClose.error_code, 'USER_CANCELED')
   assert.ok(tombstone)
-  console.log('Desktop smoke passed: clean Project close warns, Cancel preserves, confirm cancels its job.')
+  console.log(
+    'Desktop smoke passed: clean Project close warns, Cancel preserves, confirm cancels its job.',
+  )
 
   // A copied .igs carries portable CivitAI/file identity, but its former machine's local IDs
   // must remain untouched until the user explicitly links the same installed checkpoint.
@@ -2206,9 +2224,7 @@ try {
     setTimeout(() => app.quit(), 0)
   })
   await expect.poll(() => application.evaluate(() => globalThis.igsSmokeCanceledClose)).toBe(1)
-  await expect(
-    recoveryWindow.getByRole('textbox', { name: 'Positive prompt' }),
-  ).toBeVisible()
+  await expect(recoveryWindow.getByRole('textbox', { name: 'Positive prompt' })).toBeVisible()
   const stillPendingDatabase = openAppDatabase(
     queuedBeforeQuit.appDataRoot,
     path.resolve('src/main/db/migrations'),
@@ -2326,7 +2342,11 @@ try {
   })
   await damagedWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
   const unavailableCloseDialog = damagedWindow.getByRole('dialog', { name: 'Close Project' })
-  await expect(unavailableCloseDialog.getByText('Generation recovery storage cannot be inspected.', { exact: false })).toBeVisible()
+  await expect(
+    unavailableCloseDialog.getByText('Generation recovery storage cannot be inspected.', {
+      exact: false,
+    }),
+  ).toBeVisible()
   await unavailableCloseDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(damagedWindow.getByRole('tab', { name: rasterTitle })).toBeVisible()
   await damagedWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
@@ -2364,7 +2384,9 @@ try {
     setTimeout(() => app.quit(), 0)
   })
   await unavailableWindowClosed
-  console.log('Desktop smoke passed: unavailable generation recovery warns and allows tab/window close.')
+  console.log(
+    'Desktop smoke passed: unavailable generation recovery warns and allows tab/window close.',
+  )
 } finally {
   secondProcess?.kill()
   // A failed assertion can leave a dirty tab behind and a native close dialog waiting for input.

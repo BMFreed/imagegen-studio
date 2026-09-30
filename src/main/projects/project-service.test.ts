@@ -2,6 +2,7 @@ import {
   isProjectGenerationDraftChange,
   isProjectGenerationModelSelection,
 } from '../../shared/api.js'
+import type { ProjectGenerationDraftChange } from '../../shared/api.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -235,6 +236,281 @@ async function withService(
     await rm(dataRoot, { force: true, recursive: true })
   }
 }
+
+async function openLegacyDynamicDraft(dataRoot: string, service: ProjectService) {
+  const document = createEmptyProjectDocumentV1({ title: 'Legacy dynamic draft' })
+  delete document.generationDraft.dynamicPrompt
+  const source = path.join(dataRoot, 'legacy-dynamic-draft.igs')
+  const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+  await saveIgsPackage(source, {
+    assets: {},
+    preview: { ...placeholders, rect: null, status: 'empty' },
+    project: document,
+  })
+  const selection = await service.selectImport(source)
+  assert.equal(selection.kind, 'transfer-required')
+  if (selection.kind !== 'transfer-required') {
+    throw new Error('Expected legacy Project import choice.')
+  }
+  const imported = await service.finishImport(selection.importId, 'copy')
+  assert.equal(imported.result.kind, 'opened')
+  if (imported.result.kind !== 'opened') {
+    throw new Error('Expected legacy Project to open.')
+  }
+  return imported.result.tab
+}
+
+test('dynamic draft legacy defaults are clean no-ops and real edits survive Undo, Save and reopen', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const created = await openLegacyDynamicDraft(dataRoot, service)
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const beforeBytes = await readFile(savedPath)
+    const beforeDocument = structuredClone(
+      service.getOpenDocumentForAcceptance(created.id)!.document,
+    )
+    assert.equal(Object.hasOwn(created.generationDraft, 'dynamicPrompt'), false)
+    const noop = await service.updateGenerationDraft(created.id, {
+      kind: 'dynamic-prompt',
+      value: { maxPrompts: 100, seedBehavior: 'per-iteration' },
+    })
+    assert.deepEqual(noop, created)
+    assert.deepEqual(service.getOpenDocumentForAcceptance(created.id)!.document, beforeDocument)
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(savedPath), beforeBytes)
+
+    const settings = { maxPrompts: 17, seedBehavior: 'per-prompt' as const }
+    const edited = await service.updateGenerationDraft(created.id, {
+      kind: 'dynamic-prompt',
+      value: settings,
+    })
+    assert.equal(edited.dirty, true)
+    assert.deepEqual(edited.generationDraft.dynamicPrompt, settings)
+    assert.notEqual(
+      service.getOpenDocumentForAcceptance(created.id)!.document.documentRevision,
+      beforeDocument.documentRevision,
+    )
+    const undone = await service.undo(created.id)
+    assert.equal(undone.dirty, false)
+    assert.equal(Object.hasOwn(undone.generationDraft, 'dynamicPrompt'), false)
+    assert.equal(undone.canUndo, false)
+    const redone = await service.redo(created.id)
+    assert.deepEqual(redone.generationDraft.dynamicPrompt, settings)
+    assert.deepEqual(redone.generationDraft.positivePrompt, created.generationDraft.positivePrompt)
+    assert.deepEqual(redone.generationDraft.seed, created.generationDraft.seed)
+    assert.deepEqual(redone.generationDraft.sampling, created.generationDraft.sampling)
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(savedPath), beforeBytes)
+    const saved = await service.save(created.id)
+    assert.equal(saved.tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.dynamicPrompt,
+      settings,
+    )
+    await service.close(created.id)
+    const reopened = await service.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved dynamic settings did not reopen.')
+    }
+    assert.deepEqual(reopened.tab.generationDraft.dynamicPrompt, settings)
+    const secondNoop = await service.updateGenerationDraft(created.id, {
+      kind: 'dynamic-prompt',
+      value: { ...settings },
+    })
+    assert.deepEqual(secondNoop, reopened.tab)
+    await service.close(created.id)
+  })
+})
+
+test('dynamic draft guards reject forged nested IPC settings before dirty/history/storage changes', async () => {
+  await withService(async ({ repository, service }) => {
+    const created = await service.create({ height: 64, title: 'Dynamic guards', width: 64 })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const before = structuredClone(service.getOpenDocumentForAcceptance(created.id)!.document)
+    const bytes = await readFile(savedPath)
+    for (const value of [
+      null,
+      {},
+      { maxPrompts: 0, seedBehavior: 'per-iteration' },
+      { maxPrompts: 101, seedBehavior: 'per-iteration' },
+      { maxPrompts: 1.5, seedBehavior: 'per-iteration' },
+      { maxPrompts: NaN, seedBehavior: 'per-iteration' },
+      { maxPrompts: 10, seedBehavior: 'unknown' },
+      { baseSeed: 0, maxPrompts: 10, seedBehavior: 'per-prompt' },
+    ]) {
+      const change = { kind: 'dynamic-prompt', value }
+      assert.equal(isProjectGenerationDraftChange(change), false)
+      await assert.rejects(service.updateGenerationDraft(created.id, change as never), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    const valid = {
+      kind: 'dynamic-prompt' as const,
+      value: { maxPrompts: 100, seedBehavior: 'per-prompt' as const },
+    }
+    assert.equal(isProjectGenerationDraftChange(valid), true)
+    assert.equal(isProjectGenerationDraftChange({ ...valid, iterations: 2 }), false)
+    await assert.rejects(service.updateGenerationDraft(created.id, valid, randomUUID()), {
+      code: 'PROJECT_INVALID_INPUT',
+    })
+    assert.deepEqual(service.getOpenDocumentForAcceptance(created.id)!.document, before)
+    assert.deepEqual(service.getOpenTabs()[0], created)
+    assert.deepEqual(await readFile(savedPath), bytes)
+    await service.close(created.id)
+  })
+})
+
+test('dynamic draft edits recover from shadow without rewriting the saved portable Project', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const created = await service.create({ height: 64, title: 'Dynamic recovery', width: 64 })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const bytes = await readFile(savedPath)
+    const settings = { maxPrompts: 1, seedBehavior: 'per-prompt' as const }
+    await service.updateGenerationDraft(created.id, { kind: 'dynamic-prompt', value: settings })
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(savedPath), bytes)
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.equal(recovered.dirty, true)
+    assert.deepEqual(recovered.generationDraft.dynamicPrompt, settings)
+    assert.deepEqual(await readFile(savedPath), bytes)
+    const saved = await restarted.save(created.id)
+    assert.equal(saved.tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft.dynamicPrompt,
+      settings,
+    )
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind === 'opened') {
+      assert.deepEqual(reopened.tab.generationDraft.dynamicPrompt, settings)
+    }
+    await restarted.close(created.id)
+  })
+})
+
+test('dynamic draft synchronization snapshots caller values and flushes the real service before Save', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    let acknowledged = await service.create({ height: 64, title: 'Dynamic sync', width: 64 })
+    const neighbor = await service.create({ height: 64, title: 'Untouched neighbor', width: 64 })
+    const savedPath = (await repository.listProjects()).find(
+      (project) => project.localProjectKey === acknowledged.id,
+    )!.canonicalPath
+    const beforeBytes = await readFile(savedPath)
+    const overlays: (typeof acknowledged.generationDraft | null)[] = []
+    const sent: ProjectGenerationDraftChange[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sync = new ProjectDraftSync({
+      onAcknowledged: (tab) => {
+        acknowledged = tab
+      },
+      onError: (_tabId, error) => assert.fail(String(error)),
+      onOverlay: (_tabId, draft) => overlays.push(draft),
+      send: async (id, change) => {
+        sent.push(structuredClone(change))
+        if (sent.length === 1) {
+          await gate
+        }
+        return service.updateGenerationDraft(id, change)
+      },
+    })
+    const first = {
+      kind: 'dynamic-prompt' as const,
+      value: { maxPrompts: 10, seedBehavior: 'per-iteration' as const },
+    }
+    sync.change(acknowledged, first)
+    first.value.maxPrompts = 99
+    sync.change(acknowledged, {
+      kind: 'dynamic-prompt',
+      value: { maxPrompts: 20, seedBehavior: 'per-iteration' },
+    })
+    const latest = {
+      kind: 'dynamic-prompt' as const,
+      value: { maxPrompts: 30, seedBehavior: 'per-prompt' as const },
+    }
+    sync.change(acknowledged, latest)
+    latest.value.maxPrompts = 98
+    sync.change(acknowledged, { kind: 'positive-prompt', text: 'neighbor prompt' })
+    assert.deepEqual(overlays.at(-1)?.dynamicPrompt, { maxPrompts: 30, seedBehavior: 'per-prompt' })
+    assert.deepEqual(
+      service.getOpenTabs().find((tab) => tab.id === neighbor.id),
+      neighbor,
+    )
+    assert.deepEqual(await readFile(savedPath), beforeBytes)
+    const flushed = sync.flush(acknowledged.id)
+    release()
+    await flushed
+    assert.deepEqual(sent, [
+      { kind: 'dynamic-prompt', value: { maxPrompts: 10, seedBehavior: 'per-iteration' } },
+      { kind: 'dynamic-prompt', value: { maxPrompts: 30, seedBehavior: 'per-prompt' } },
+      { kind: 'positive-prompt', text: 'neighbor prompt' },
+    ])
+    assert.equal(overlays.at(-1), null)
+    const undoPrompt = await service.undo(acknowledged.id)
+    assert.equal(undoPrompt.generationDraft.positivePrompt.text, '')
+    assert.deepEqual(undoPrompt.generationDraft.dynamicPrompt, {
+      maxPrompts: 30,
+      seedBehavior: 'per-prompt',
+    })
+    const undoSettings = await service.undo(acknowledged.id)
+    assert.deepEqual(undoSettings.generationDraft.dynamicPrompt, {
+      maxPrompts: 10,
+      seedBehavior: 'per-iteration',
+    })
+    await service.redo(acknowledged.id)
+    await service.redo(acknowledged.id)
+    await service.flushAutosave(acknowledged.id)
+    assert.deepEqual(await readFile(savedPath), beforeBytes)
+    const expectedDraft = structuredClone(
+      service.getOpenTabs().find((tab) => tab.id === acknowledged.id)!.generationDraft,
+    )
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(acknowledged.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(acknowledged.id, 'recover')
+    assert.equal(recovered.dirty, true)
+    assert.deepEqual(recovered.generationDraft, expectedDraft)
+    assert.deepEqual(recovered.generationDraft.dynamicPrompt, {
+      maxPrompts: 30,
+      seedBehavior: 'per-prompt',
+    })
+    assert.deepEqual(await readFile(savedPath), beforeBytes)
+    const saved = await restarted.save(acknowledged.id)
+    assert.equal(saved.tab.dirty, false)
+    const portable = (await readIgsPackage(savedPath)).project.generationDraft
+    assert.deepEqual(portable.dynamicPrompt, { maxPrompts: 30, seedBehavior: 'per-prompt' })
+    assert.equal(portable.positivePrompt.text, 'neighbor prompt')
+    assert.deepEqual(portable, expectedDraft)
+    assert.deepEqual(
+      service.getOpenTabs().find((tab) => tab.id === neighbor.id),
+      neighbor,
+    )
+    await restarted.close(acknowledged.id)
+    const reopened = await restarted.open(acknowledged.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind === 'opened') {
+      assert.deepEqual(reopened.tab.generationDraft, expectedDraft)
+    }
+    await restarted.close(acknowledged.id)
+    await service.close(neighbor.id)
+  })
+})
 
 test('explicit Project Save snapshots the local actual seed without a draft edit or Undo step', async () => {
   let localSeed: number | null = null
