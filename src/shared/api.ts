@@ -1,5 +1,11 @@
 import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import type {
+  GenerationQueueCursor,
+  GenerationQueuePage,
+  GenerationQueueReview,
+  GenerationQueueTerminalStatus,
+} from './projects/generation-queue-manager.js'
+import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
   ProjectGenerationActionState,
@@ -40,15 +46,18 @@ export const ipcChannels = {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
     cancelCurrentGeneration: 'projects:cancel-current-generation',
+    cancelGenerationJob: 'projects:cancel-generation-job',
     cancelImport: 'projects:cancel-import',
     clearHistory: 'projects:clear-history',
     close: 'projects:close',
     create: 'projects:create',
+    deleteGenerationJob: 'projects:delete-generation-job',
     discardAndClose: 'projects:discard-and-close',
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
     generationChanged: 'projects:generation-changed',
     getCloseImpact: 'projects:get-close-impact',
+    getGenerationQueue: 'projects:get-generation-queue',
     getGenerationState: 'projects:get-generation-state',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
@@ -56,12 +65,14 @@ export const ipcChannels = {
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
+    pruneGenerationQueue: 'projects:prune-generation-queue',
     rebuildPreview: 'projects:rebuild-preview',
     redo: 'projects:redo',
     relinkGenerationLora: 'projects:relink-generation-lora',
     relinkGenerationModel: 'projects:relink-generation-model',
     removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
+    retryGenerationJob: 'projects:retry-generation-job',
     save: 'projects:save',
     saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
     sealPromptHistory: 'projects:seal-prompt-history',
@@ -249,6 +260,7 @@ export interface ProjectApi {
     documentId: string,
     expectedJobId: string,
   ) => Promise<ApiResult<ProjectGenerationActionState>>
+  cancelGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   cancelImport: (importId: string) => Promise<ApiResult<void>>
   clearHistory: (tabId: string) => Promise<ApiResult<ProjectTab>>
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
@@ -257,6 +269,7 @@ export interface ProjectApi {
     title: string
     width: number
   }) => Promise<ApiResult<ProjectTab>>
+  deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   finishImport: (
     importId: string,
@@ -267,6 +280,9 @@ export interface ProjectApi {
     options: ProjectGenerateOptions,
   ) => Promise<ApiResult<ProjectGenerateResult>>
   getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
+  getGenerationQueue: (
+    cursor?: GenerationQueueCursor | null,
+  ) => Promise<ApiResult<GenerationQueuePage>>
   getGenerationState: (tabId: string) => Promise<ApiResult<ProjectGenerationActionState>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
@@ -280,6 +296,7 @@ export interface ProjectApi {
   onGenerationChanged: (listener: () => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void
   open: (projectId: string) => Promise<ApiResult<ProjectOpenResult>>
+  pruneGenerationQueue: (statuses: GenerationQueueTerminalStatus[]) => Promise<ApiResult<number>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
   redo: (tabId: string) => Promise<ApiResult<ProjectTab>>
   relinkGenerationLora: (
@@ -295,6 +312,7 @@ export interface ProjectApi {
     projectId: string,
     decision: 'discard' | 'recover',
   ) => Promise<ApiResult<ProjectTab>>
+  retryGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   saveGenerationCandidateImage: (
     tabId: string,

@@ -4,7 +4,7 @@ import type { ProjectGenerationActionState } from '../../shared/projects/project
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -33,6 +33,7 @@ import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
 import { IllustriousJobError } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationClose } from './project-generation-close.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import { GenerationPreparationError } from './project-generation-preparation.js'
 import { ProjectIndexRepository } from './project-index.js'
@@ -53,6 +54,7 @@ type ControlledWorker = GenerationWorkerTransport &
   Pick<ProjectWorkerClient, 'composeTarget'> & { ready: GenerationWorkerClient['ready'] }
 
 type Fixture = {
+  closeOwner: ProjectGenerationClose
   controller: ProjectGenerationActionController
   database: AppDatabase
   documentId: string
@@ -70,6 +72,7 @@ class ControlledRuntime {
   beforeCompose: (() => Promise<void>) | null = null
   beforeGenerate: (() => Promise<void>) | null = null
   closedCount = 0
+  closeFailures = 0
   generated: IllustriousTxt2ImgRequestV1[] = []
   leaseCount = 0
   private held = false
@@ -96,9 +99,16 @@ class ControlledRuntime {
     let closed = false
     const worker: ControlledWorker = {
       close: async () => {
+        if (!closed && this.closeFailures > 0) {
+          this.closeFailures -= 1
+          throw Object.assign(new Error('controlled unconfirmed worker exit'), {
+            code: 'WORKER_EXIT_UNCONFIRMED',
+          })
+        }
         if (!closed) {
           closed = true
           this.closedCount += 1
+          this.held = false
         }
       },
       composeTarget: async (input) => {
@@ -306,9 +316,11 @@ async function withFixture(
     )
     const runtime = new ControlledRuntime(await png(false), await png(true))
     const dispatch = new GenerationDispatchCoordinator(runtime, orchestrator, processor, scratch)
+    const gate = new ProjectGenerationOperationGate()
+    const closeOwner = new ProjectGenerationClose(projects, { orchestrator, queue, staging }, gate)
     controller = new ProjectGenerationActionController({
       dispatch,
-      gate: new ProjectGenerationOperationGate(),
+      gate,
       models: modelService,
       orchestrator,
       processor,
@@ -319,6 +331,7 @@ async function withFixture(
       staging,
     })
     await run({
+      closeOwner,
       controller,
       database,
       documentId,
@@ -794,5 +807,344 @@ test('shutdown fences a paused preparation before any queue publication', async 
       [],
     )
     assert.equal((await fixture.controller.getState(fixture.tabId)).phase, 'closed')
+  })
+})
+
+async function makeFailedSource(fixture: Fixture) {
+  fixture.runtime.beforeGenerate = async () => {
+    if (fixture.runtime.generated.length === 1) {
+      throw new Error('controlled first-job failure')
+    }
+  }
+  const result = await fixture.controller.generate(fixture.tabId, {
+    documentId: fixture.documentId,
+    iterations: 1,
+  })
+  assert.equal(result.kind, 'queued')
+  await waitForState(
+    fixture.controller,
+    fixture.tabId,
+    (state) => state.phase === 'idle' && state.jobs.length === 0,
+  )
+  const page = await fixture.controller.getQueue()
+  assert.equal(page.counts.failed, 1)
+  assert.equal(page.counts.completed, 3)
+  const source = page.items.find((item) => item.status === 'failed')!
+  fixture.runtime.beforeGenerate = null
+  return { id: source.id, statusSequence: source.statusSequence }
+}
+
+test('Queue Manager Retry uses frozen operation and preserves old candidates and saved document', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const before = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+    const saved = await readFile(fixture.packagePath)
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'positive-prompt',
+      text: 'current edited prompt',
+    })
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'seed',
+      policy: 'fixed',
+      value: 99,
+    })
+    await fixture.controller.retryJob(review)
+    await waitForState(
+      fixture.controller,
+      fixture.tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    const retried = fixture.runtime.generated.at(-1)!
+    assert.equal(retried.job.prompts.positive, 'red lantern')
+    assert.equal(retried.job.sampling.seed, 42)
+    assert.deepEqual(retried.job.bbox, { height: 64, width: 64, x: 0, y: 0 })
+    const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+    assert.equal(candidates.length, 4)
+    assert.ok(
+      before.every((old) => candidates.some((item) => item.candidateId === old.candidateId)),
+    )
+    assert.deepEqual(await readFile(fixture.packagePath), saved)
+    assert.equal(
+      fixture.projects.getOpenTabs()[0].generationDraft.positivePrompt.text,
+      'current edited prompt',
+    )
+    const page = await fixture.controller.getQueue()
+    assert.equal(page.counts.failed, 1, 'retry retains source history')
+    assert.equal(page.counts.completed, 4)
+    assert.ok(page.items.every((item) => item.projectName === 'Generate actions'))
+    await assert.rejects(fixture.controller.retryJob(review), {
+      code: 'GENERATION_INVALID_REQUEST',
+    })
+    assert.equal(
+      (await fixture.controller.getQueue()).items.length,
+      5,
+      'one reviewed source creates one attempt',
+    )
+  })
+})
+
+test('Queue Manager Retry refuses a different document reopened at the same path', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const leases = fixture.runtime.leaseCount
+    const original = await fixture.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .execute()
+    await fixture.projects.close(fixture.tabId)
+    const second = await fixture.projects.create({
+      height: 64,
+      title: 'Replacement document',
+      width: 64,
+    })
+    await fixture.projects.save(second.id)
+    const index = new ProjectIndexRepository(fixture.database.db)
+    const secondPath = (await index.getProject(second.id))!.canonicalPath
+    await copyFile(secondPath, fixture.packagePath)
+    const opened = await fixture.projects.open(fixture.tabId)
+    assert.equal(opened.kind, 'opened')
+    assert.notEqual(fixture.projects.getOpenDocumentId(fixture.tabId), fixture.documentId)
+    await assert.rejects(fixture.controller.retryJob(review), {
+      code: 'GENERATION_DOCUMENT_CHANGED',
+    })
+    assert.equal(
+      fixture.runtime.leaseCount,
+      leases,
+      'identity refusal precedes runtime reservation',
+    )
+    assert.deepEqual(
+      await fixture.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      original,
+    )
+  })
+})
+
+test('Queue Manager history and terminal cleanup work without runtime and preserve candidate bytes and seed', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+    const pngs = await Promise.all(candidates.map((candidate) => readFile(candidate.assetPath)))
+    const seed = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+    const document = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)
+    const saved = await readFile(fixture.packagePath)
+    fixture.runtime.available = false
+    await assert.rejects(fixture.controller.retryJob(review), {
+      code: 'GENERATION_RUNTIME_UNAVAILABLE',
+    })
+    const page = await fixture.controller.getQueue()
+    assert.equal(
+      page.items.find((item) => item.id === review.id)!.statusSequence,
+      review.statusSequence,
+    )
+    await fixture.controller.deleteJob(review)
+    assert.equal(await fixture.controller.pruneQueue(['completed', 'failed', 'canceled']), 3)
+    assert.equal((await fixture.controller.getQueue()).items.length, 0)
+    assert.deepEqual(
+      await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+      seed,
+    )
+    assert.deepEqual(fixture.projects.getOpenDocumentForAcceptance(fixture.tabId), document)
+    assert.deepEqual(await readFile(fixture.packagePath), saved)
+    assert.deepEqual(
+      await Promise.all(candidates.map((candidate) => readFile(candidate.assetPath))),
+      pngs,
+    )
+    assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 3)
+  })
+})
+
+test('Queue Manager pending Cancel is scoped to the reviewed revision and leaves the running neighbor alive', async () => {
+  await withFixture(async (fixture) => {
+    const entered = signal()
+    fixture.runtime.beforeGenerate = async () => {
+      entered.resolve()
+      await new Promise<void>(() => undefined)
+    }
+    await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    await entered.promise
+    const page = await fixture.controller.getQueue()
+    const pending = page.items.find((item) => item.status === 'pending')!
+    const running = page.items.find((item) => item.status === 'running')!
+    const leases = fixture.runtime.closedCount
+    await fixture.controller.cancelJob({ id: pending.id, statusSequence: pending.statusSequence })
+    const after = await fixture.controller.getQueue()
+    assert.equal(after.items.find((item) => item.id === pending.id)!.status, 'canceled')
+    assert.equal(after.items.find((item) => item.id === running.id)!.status, 'running')
+    assert.equal(
+      fixture.runtime.closedCount,
+      leases,
+      'pending cancellation must not close the neighbor worker',
+    )
+    await assert.rejects(
+      fixture.controller.cancelJob({ id: running.id, statusSequence: running.statusSequence - 1 }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    assert.equal(
+      (await fixture.controller.getQueue()).items.find((item) => item.id === running.id)!
+        .cancelRequested,
+      false,
+    )
+  })
+})
+
+test('Queue Manager Retry preflight refusal retains source revision and existing staging', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const before = await fixture.controller.getQueue()
+    const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+    // Controlled storage refusal at the subordinate capacity boundary; real retry publication
+    // and source CAS remain the subjects, not a fake retry implementation.
+    fixture.staging.preflightBatchCapacity = async () => {
+      throw Object.assign(new Error('controlled capacity refusal'), {
+        code: 'STAGING_CAPACITY_EXCEEDED',
+      })
+    }
+    await assert.rejects(fixture.controller.retryJob(review), { code: 'STAGING_CAPACITY_EXCEEDED' })
+    assert.deepEqual(await fixture.controller.getQueue(), before)
+    assert.deepEqual(
+      (await fixture.staging.listVerifiedCandidates(fixture.tabId)).map((item) => item.candidateId),
+      candidates.map((item) => item.candidateId),
+    )
+  })
+})
+
+test('shutdown during durable Retry copy prevents publication and waits admission', async () => {
+  const entered = signal()
+  const release = signal()
+  await withFixture(
+    async (fixture) => {
+      const review = await makeFailedSource(fixture)
+      const before = await fixture.queue.listManagerPage()
+      const retry = fixture.controller.retryJob(review)
+      await entered.promise
+      const stopped = fixture.controller.shutdown()
+      release.resolve()
+      await assert.rejects(retry, { code: 'QUEUE_PROJECT_CLOSING' })
+      await stopped
+      assert.deepEqual(await fixture.queue.listManagerPage(), before)
+    },
+    {
+      afterRetryInputPublish: async () => {
+        entered.resolve()
+        await release.promise
+      },
+    },
+  )
+})
+
+test('confirmed Project close shares Retry gate and cancels its late admitted job before closing', async () => {
+  const entered = signal()
+  const release = signal()
+  await withFixture(
+    async (fixture) => {
+      const review = await makeFailedSource(fixture)
+      const saved = await readFile(fixture.packagePath)
+      const retry = fixture.controller.retryJob(review)
+      await entered.promise
+      const closing = fixture.closeOwner.close(fixture.tabId, {
+        confirmCloseImpact: true,
+        discardDocument: false,
+      })
+      assert.equal(fixture.projects.getOpenDocumentId(fixture.tabId), fixture.documentId)
+      assert.equal(
+        (await fixture.staging.listVerifiedCandidates(fixture.tabId)).length,
+        3,
+        'close must wait the admitted operation',
+      )
+      release.resolve()
+      await retry
+      await closing
+      assert.equal(fixture.projects.getOpenDocumentId(fixture.tabId), null)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+      assert.deepEqual(
+        await readFile(fixture.packagePath),
+        saved,
+        'confirmed staging loss still does not Save document changes',
+      )
+    },
+    {
+      afterRetryInputPublish: async () => {
+        entered.resolve()
+        await release.promise
+      },
+    },
+  )
+})
+
+test('Retry verifies installed checkpoint again before consuming the reviewed source', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const source = await fixture.queue.loadVerifiedInput(review.id)
+    const before = await fixture.controller.getQueue()
+    await writeFile(source.payload.context.model.managedPath, 'corrupted replacement weights')
+    await assert.rejects(fixture.controller.retryJob(review))
+    assert.deepEqual(await fixture.controller.getQueue(), before)
+    assert.equal(fixture.runtime.generated.length, 4)
+    assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 3)
+  })
+})
+
+test('Retry consumes retained verified PNG bytes instead of reopening the display pathname', async () => {
+  await withFixture(async (fixture) => {
+    const review = await makeFailedSource(fixture)
+    const load = fixture.queue.loadVerifiedRetryInput.bind(fixture.queue)
+    fixture.queue.loadVerifiedRetryInput = async (id) => ({
+      ...(await load(id)),
+      targetPath: path.join(fixture.root, 'not-a-retained-file.png'),
+    })
+    await fixture.controller.retryJob(review)
+    await waitForState(
+      fixture.controller,
+      fixture.tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    assert.equal(fixture.runtime.generated.at(-1)!.job.prompts.positive, 'red lantern')
+    assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 4)
+  })
+})
+
+test('Queue Manager may retry cancel after unconfirmed exit without releasing the running slot early', async () => {
+  await withFixture(async (fixture) => {
+    const entered = signal()
+    fixture.runtime.beforeGenerate = async () => {
+      entered.resolve()
+      await new Promise<void>(() => undefined)
+    }
+    await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    await entered.promise
+    const running = (await fixture.controller.getQueue()).items.find(
+      (item) => item.status === 'running',
+    )!
+    fixture.runtime.closeFailures = 2
+    await assert.rejects(
+      fixture.controller.cancelJob({ id: running.id, statusSequence: running.statusSequence }),
+      { code: 'WORKER_EXIT_UNCONFIRMED' },
+    )
+    const requested = (await fixture.controller.getQueue()).items.find(
+      (item) => item.id === running.id,
+    )!
+    assert.equal(requested.status, 'running')
+    assert.equal(requested.cancelRequested, true)
+    assert.equal(
+      fixture.runtime.generated.length,
+      1,
+      'no pending neighbor takes the unconfirmed worker slot',
+    )
+    await fixture.controller.cancelJob({
+      id: requested.id,
+      statusSequence: requested.statusSequence,
+    })
+    assert.equal(
+      (await fixture.controller.getQueue()).items.find((item) => item.id === running.id)!.status,
+      'canceled',
+    )
+    assert.equal(fixture.runtime.generated.length, 1)
   })
 })

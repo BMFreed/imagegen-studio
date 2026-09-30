@@ -1,17 +1,21 @@
 /**
- * Native renderer → preload → main Generate acceptance. Run with `pnpm exec tsx` after app:build.
- * Only the app-owned executable and deterministic output pixels are substituted. RuntimeManager
- * qualification/exit, model hash/header checks, target verification, SQLite and staging are real.
- * This is neither a CUDA test nor proof that the miniature checkpoint loads in an inference
- * engine.
+ * Native renderer → preload → main Generate and Queue Manager acceptance. Run with `pnpm exec tsx`
+ * after app:build. Only the app-owned executable and deterministic output pixels are substituted.
+ * RuntimeManager qualification/exit, model hash/header checks, target verification, SQLite and
+ * staging are real. This is neither a CUDA test nor proof that the miniature checkpoint loads in an
+ * inference engine.
  */
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   chmodSync,
+  closeSync,
+  cpSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -59,6 +63,7 @@ const report = {
     'Actual RuntimeManager pointer ownership, live JSONL qualification and confirmed child exit.',
     'Actual managed model hash and SDXL anchor-header qualification; zero-weight miniature fixture.',
     'Actual target PNG/ICC/hash verification, queue SQLite, staging publication and resource delivery.',
+    'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -67,6 +72,7 @@ const report = {
   pageErrors: [],
   runId,
   screenshots: [],
+  viewportChecks: [],
 }
 let application
 let window
@@ -109,6 +115,38 @@ async function screenshot(name) {
   report.screenshots.push(file)
 }
 
+async function resizeNativeWindow(width, height) {
+  await application.evaluate(
+    ({ BrowserWindow }, size) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height)
+    },
+    { height, width },
+  )
+  await expect
+    .poll(
+      async () =>
+        await window.evaluate(() => ({
+          height: innerHeight,
+          width: innerWidth,
+        })),
+    )
+    .toEqual({ height, width })
+}
+
+async function screenshotManagerAtViewport(width, height) {
+  await resizeNativeWindow(width, height)
+  const bounds = await window.locator('[data-testid="queue-manager"]').boundingBox()
+  assert.ok(bounds)
+  assert.ok(bounds.x >= 0 && bounds.y >= 0)
+  assert.ok(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
+  const horizontalOverflow = await window
+    .locator('[data-testid="queue-manager"]')
+    .evaluate((element) => element.scrollWidth > element.clientWidth)
+  assert.equal(horizontalOverflow, false)
+  await screenshot(`08-native-queue-manager-${width}x${height}`)
+  report.viewportChecks.push({ bounds, height, horizontalOverflow, width })
+}
+
 async function resultVisibleOnCanvas() {
   return await window.evaluate(() =>
     [...document.querySelectorAll('[aria-label="Project Canvas"] canvas')].some((canvas) => {
@@ -140,12 +178,16 @@ async function launch() {
 }
 
 async function api(method, ...args) {
-  const response = await window.evaluate(
+  const response = await apiResult(method, ...args)
+  assert.equal(response.ok, true, JSON.stringify(response))
+  return response.value
+}
+
+async function apiResult(method, ...args) {
+  return await window.evaluate(
     async ({ method, args }) => await window.api.projects[method](...args),
     { args, method },
   )
-  assert.equal(response.ok, true, JSON.stringify(response))
-  return response.value
 }
 
 async function tab(id) {
@@ -162,6 +204,62 @@ async function rows(id) {
     .orderBy('created_at')
     .orderBy('id')
     .execute()
+}
+
+async function managerItems() {
+  const items = []
+  let cursor = null
+  do {
+    const page = await api('getGenerationQueue', cursor)
+    items.push(...page.items)
+    cursor = page.nextCursor
+    assert.ok(items.length <= 1000, 'Queue pagination did not terminate')
+  } while (cursor)
+  assert.equal(new Set(items.map(({ id }) => id)).size, items.length)
+  return items
+}
+
+/** Seed display/cancel preconditions only; every observed action still enters through the UI. */
+async function seedQueueFixture(source, status) {
+  assert.ok(status === 'failed' || status === 'pending')
+  const id = randomUUID()
+  const sourceInputs = path.join(appDataRoot, 'generation-inputs', source.id)
+  const ownedInputs = path.join(appDataRoot, 'generation-inputs', id)
+  cpSync(sourceInputs, ownedInputs, { recursive: true })
+  const manifestPath = path.join(ownedInputs, 'manifest.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  assert.equal(manifest.queueItemId, source.id)
+  writeFileSync(manifestPath, JSON.stringify({ ...manifest, queueItemId: id }), { mode: 0o600 })
+  for (const file of [
+    path.join(ownedInputs, 'target.png'),
+    manifestPath,
+    ownedInputs,
+    path.dirname(ownedInputs),
+  ]) {
+    const descriptor = openSync(file, 'r')
+    try {
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+  }
+  const now = new Date().toISOString()
+  const entry = {
+    ...source,
+    batch_id: randomUUID(),
+    created_at: now,
+    error_code: status === 'failed' ? 'GENERATION_WORKER_FAILED' : null,
+    error_message: status === 'failed' ? 'Controlled fixture failure' : null,
+    finished_at: status === 'failed' ? now : null,
+    id,
+    staging_session_id: randomUUID(),
+    started_at: status === 'failed' ? now : null,
+    status,
+    status_sequence: status === 'failed' ? 2 : 0,
+    updated_at: now,
+  }
+  await liveDatabase.db.insertInto('generation_queue_item').values(entry).execute()
+  return entry
 }
 
 /** Fixture format only, copied from the existing pinned-header qualification test pattern. */
@@ -348,9 +446,12 @@ try {
       'dist/main/main.cjs',
       'dist/preload/preload.cjs',
       'dist/renderer/index.html',
-      ...rendererEntryAssets,
+      ...readdirSync('dist/renderer/assets')
+        .filter((name) => /\.(?:js|css)$/.test(name))
+        .map((name) => `dist/renderer/assets/${name}`),
     ].map((file) => [file, digest(readFileSync(file))]),
   )
+  report.scriptSha256 = digest(readFileSync('scripts/smoke-generation-actions.mjs'))
   const installed = await seedCheckpoint()
   await launch()
   const unavailable = await window.evaluate(() => window.api.runtime.getStatus())
@@ -673,19 +774,310 @@ try {
     finalRows.map((row) => row.status),
     ['canceled', 'completed', 'completed'],
   )
-  report.finalRows = finalRows.map(({ batch_id, document_id, id, staging_session_id, status }) => ({
-    batch_id,
-    document_id,
-    id,
-    staging_session_id,
-    status,
-  }))
+  report.generateFinalRows = finalRows.map(
+    ({ batch_id, document_id, id, staging_session_id, status }) => ({
+      batch_id,
+      document_id,
+      id,
+      staging_session_id,
+      status,
+    }),
+  )
+
+  // Retry must observe the original admission, even after the ordinary Project editor has
+  // acknowledged another seed, prompt and bbox. These edits are intentionally left unsaved.
+  await window.locator('input[aria-label="Generation seed"]').fill('99')
+  await expect.poll(async () => (await tab(projectId)).generationDraft.seed.value).toBe(99)
+  await window.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  )
+  const beforeManagerTab = await tab(projectId)
+  assert.equal(beforeManagerTab.generationDraft.positivePrompt.text, 'edited after admission')
+  assert.equal(beforeManagerTab.primaryBbox.width, 104)
+  const queuePackageSha256 = digest(readFileSync(packagePath))
+  assert.equal(queuePackageSha256, digest(beforeGenerate))
+  const candidateReceipt = await liveDatabase.db
+    .selectFrom('generation_candidate_receipt')
+    .selectAll()
+    .where('candidate_id', '=', replacement.candidates[0].candidateId)
+    .executeTakeFirstOrThrow()
+  const preservedResults = await api('listGenerationResults', projectId)
+
+  async function assertQueueActionsPreserveProject() {
+    assert.deepEqual(await tab(projectId), beforeManagerTab)
+    assert.deepEqual(await api('listGenerationResults', projectId), preservedResults)
+    assert.equal(digest(readFileSync(packagePath)), queuePackageSha256)
+    assert.equal((await readIgsPackage(packagePath)).project.documentId, created.documentId)
+  }
+
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  const openManager = window.getByRole('button', { name: 'Open Queue Manager', exact: true })
+  await openManager.click()
+  const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  const managerRow = (id) => manager.locator(`[data-testid="queue-job-row"][data-job-id="${id}"]`)
+  await expect(manager).toBeVisible()
+  const initialManagerItems = await managerItems()
+  assert.equal(initialManagerItems.length, 3)
+  assert.deepEqual(initialManagerItems.map(({ status }) => status).sort(), [
+    'canceled',
+    'completed',
+    'completed',
+  ])
+  await expect(manager.getByRole('article')).toHaveCount(3)
+  const sourceItem = initialManagerItems.find(({ id }) => id === state.runningJobId)
+  assert.ok(sourceItem)
+  assert.equal(sourceItem.status, 'canceled')
+  assert.equal(sourceItem.documentId, created.documentId)
+  assert.equal(sourceItem.projectKey, projectId)
+  assert.equal(sourceItem.projectName, projectTitle)
+  assert.equal(sourceItem.details.prompt, 'native admission snapshot')
+  assert.equal(sourceItem.details.sampling.seed, 42)
+  assert.deepEqual(sourceItem.details.size, { height: 64, width: 96 })
+  await managerRow(sourceItem.id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  const details = manager.locator('[data-testid="queue-job-details"]')
+  await expect(details).toContainText('native admission snapshot')
+  await expect(managerRow(sourceItem.id)).toContainText(projectTitle)
+  await expect(details.getByRole('heading', { level: 2 })).toHaveText(projectTitle)
+  await expect(details).toContainText('Seed')
+  await expect(details).toContainText('42')
+  await screenshot('07-native-queue-manager-history')
+  await assertQueueActionsPreserveProject()
+  checked(
+    'App-level Queue Manager opens from Home and displays real terminal history and frozen details',
+    {
+      candidateId: replacement.candidates[0].candidateId,
+      counts: (await api('getGenerationQueue')).counts,
+      packageSha256: queuePackageSha256,
+    },
+  )
+
+  const sourceReview = { id: sourceItem.id, statusSequence: sourceItem.statusSequence }
+  await managerRow(sourceItem.id).getByRole('button', { name: 'Retry job', exact: true }).click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(4)
+  const retriedRequest = generations()[3]
+  assert.equal(retriedRequest.request.job.prompts.positive, first.request.job.prompts.positive)
+  assert.deepEqual(retriedRequest.request.job.prompts, first.request.job.prompts)
+  assert.deepEqual(retriedRequest.request.job.sampling, first.request.job.sampling)
+  assert.deepEqual(retriedRequest.request.job.bbox, first.request.job.bbox)
+  assert.equal(retriedRequest.request.job.target.sha256, first.request.job.target.sha256)
+  const retryRows = await rows(projectId)
+  const retriedRow = retryRows.find(({ status }) => status === 'running')
+  assert.ok(retriedRow)
+  assert.notEqual(retriedRow.id, sourceItem.id)
+  assert.notEqual(retriedRow.staging_session_id, finalRows[0].staging_session_id)
+  assert.equal(retriedRow.document_id, created.documentId)
+  assert.equal(retriedRow.frozen_payload_json, finalRows[0].frozen_payload_json)
+  assert.equal(
+    retryRows.find(({ id }) => id === sourceItem.id).status_sequence,
+    sourceReview.statusSequence + 1,
+  )
+
+  // Hold the genuine retry in its one running slot. Direct fixture publication supplies only
+  // the neighboring pending-cancel and failed-display preconditions, with their own verified
+  // input directory/manifest identities. It does not substitute any Queue Manager action.
+  const pendingFixture = await seedQueueFixture(finalRows[0], 'pending')
+  const failedFixture = await seedQueueFixture(finalRows[0], 'failed')
+  await window.keyboard.press('Escape')
+  await expect(manager).toHaveCount(0)
+  await openManager.click()
+  await expect(manager.getByRole('article')).toHaveCount(6)
+  const fiveStatusResponse = await apiResult('getGenerationQueue')
+  assert.equal(fiveStatusResponse.ok, true, JSON.stringify(fiveStatusResponse))
+  const fiveStatusPage = fiveStatusResponse.value
+  report.queueManagerResponseMeasurement = {
+    itemCount: fiveStatusPage.items.length,
+    serializedUtf8Bytes: Buffer.byteLength(JSON.stringify(fiveStatusResponse), 'utf8'),
+    statuses: fiveStatusPage.counts,
+  }
+  assert.deepEqual(fiveStatusPage.counts, {
+    canceled: 1,
+    completed: 2,
+    failed: 1,
+    pending: 1,
+    running: 1,
+  })
+  assert.deepEqual([...new Set(fiveStatusPage.items.map(({ status }) => status))].sort(), [
+    'canceled',
+    'completed',
+    'failed',
+    'pending',
+    'running',
+  ])
+  for (const item of fiveStatusPage.items) {
+    await expect(managerRow(item.id)).toHaveAttribute('data-status', item.status)
+  }
+  await managerRow(failedFixture.id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await expect(details).toContainText(
+    'The generation worker did not return a valid completed result.',
+  )
+  await screenshot('08-native-queue-manager-all-statuses')
+  for (const [width, height] of [
+    [900, 620],
+    [1440, 900],
+    [1920, 1080],
+  ]) {
+    await screenshotManagerAtViewport(width, height)
+  }
+  await resizeNativeWindow(1380, 900)
+  await managerRow(pendingFixture.id)
+    .getByRole('button', { name: 'Cancel job', exact: true })
+    .click()
+  await expect
+    .poll(async () => (await rows(projectId)).find(({ id }) => id === pendingFixture.id).status)
+    .toBe('canceled')
+  await expect(managerRow(pendingFixture.id)).toHaveAttribute('data-status', 'canceled')
+  assert.equal(generations().length, 4)
+  await managerRow(retriedRow.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect.poll(async () => (await api('getGenerationState', projectId)).phase).toBe('idle')
+  await expect(managerRow(retriedRow.id)).toHaveAttribute('data-status', 'canceled')
+  assert.throws(() => process.kill(retriedRequest.pid, 0), { code: 'ESRCH' })
+  assert.equal(generations().length, 4)
+  await assertQueueActionsPreserveProject()
+  checked(
+    'UI Retry dispatches frozen prompt/seed/bbox; native list shows all five statuses and UI Cancel removes pending/running work',
+    {
+      currentDraftSeed: beforeManagerTab.generationDraft.seed.value,
+      failedFixtureId: failedFixture.id,
+      frozenBbox: retriedRequest.request.job.bbox,
+      frozenSeed: retriedRequest.request.job.sampling.seed,
+      pendingFixtureId: pendingFixture.id,
+      retriedJobId: retriedRow.id,
+      seedBeforeAndAfter: preservedResults.lastActualSeed,
+    },
+  )
+
+  const beforeStaleRows = await rows(projectId)
+  const staleRetry = await apiResult('retryGenerationJob', sourceReview)
+  assert.equal(staleRetry.ok, false)
+  assert.equal(staleRetry.error.code, 'GENERATION_INVALID_REQUEST')
+  assert.deepEqual(await rows(projectId), beforeStaleRows)
+  assert.equal(generations().length, 4)
+  await assertQueueActionsPreserveProject()
+  checked(
+    'Stale reviewed Retry is refused through native IPC without another job or Project/candidate/seed mutation',
+    {
+      errorCode: staleRetry.error.code,
+      reviewed: sourceReview,
+    },
+  )
+
+  const deleteConfirmation = window.getByRole('dialog', {
+    name: 'Delete queue history',
+    exact: true,
+  })
+  const beforeDeleteRows = await rows(projectId)
+  for (const keep of ['Escape', 'Keep history']) {
+    await managerRow(candidateReceipt.queue_item_id)
+      .getByRole('button', { name: 'Delete job', exact: true })
+      .click()
+    await deleteConfirmation.waitFor()
+    if (keep === 'Escape') {
+      await screenshot('09-native-queue-delete-confirmation')
+      await window.keyboard.press('Escape')
+    } else {
+      await deleteConfirmation.getByRole('button', { name: 'Keep history', exact: true }).click()
+    }
+    await expect(deleteConfirmation).toHaveCount(0)
+    await expect(manager).toBeVisible()
+    assert.deepEqual(await rows(projectId), beforeDeleteRows)
+    await assertQueueActionsPreserveProject()
+  }
+  await managerRow(candidateReceipt.queue_item_id)
+    .getByRole('button', { name: 'Delete job', exact: true })
+    .click()
+  await deleteConfirmation.getByRole('button', { name: 'Delete job', exact: true }).click()
+  await expect(deleteConfirmation).toHaveCount(0)
+  await expect(managerRow(candidateReceipt.queue_item_id)).toHaveCount(0)
+  await expect.poll(async () => (await rows(projectId)).length).toBe(5)
+  assert.equal(
+    existsSync(path.join(appDataRoot, 'generation-inputs', candidateReceipt.queue_item_id)),
+    false,
+  )
+  await assertQueueActionsPreserveProject()
+  const candidateResourceAfterDelete = await window.evaluate(
+    async (url) => (await fetch(url)).status,
+    replacement.candidates[0].imageUrl,
+  )
+  assert.equal(candidateResourceAfterDelete, 200)
+  checked(
+    'Delete confirmation Escape/Keep preserves history; confirmed completed-row deletion preserves its candidate and resource',
+    {
+      candidateId: replacement.candidates[0].candidateId,
+      deletedJobId: candidateReceipt.queue_item_id,
+      resourceStatus: candidateResourceAfterDelete,
+    },
+  )
+
+  const clearConfirmation = window.getByRole('dialog', { name: 'Clear queue history', exact: true })
+  const beforePruneRows = await rows(projectId)
+  async function reviewPrune() {
+    await manager.getByRole('button', { name: 'Clear queue history', exact: true }).click()
+    await window.getByText('All terminal jobs', { exact: true }).click()
+    await clearConfirmation.waitFor()
+  }
+  for (const keep of ['Escape', 'Keep history']) {
+    await reviewPrune()
+    if (keep === 'Escape') await window.keyboard.press('Escape')
+    else await clearConfirmation.getByRole('button', { name: 'Keep history', exact: true }).click()
+    await expect(clearConfirmation).toHaveCount(0)
+    await expect(manager).toBeVisible()
+    assert.deepEqual(await rows(projectId), beforePruneRows)
+    await assertQueueActionsPreserveProject()
+  }
+  await reviewPrune()
+  await clearConfirmation.getByRole('button', { name: 'Clear history', exact: true }).click()
+  await expect(clearConfirmation).toHaveCount(0)
+  await expect.poll(async () => (await rows(projectId)).length).toBe(0)
+  await expect(manager.getByRole('article')).toHaveCount(0)
+  for (const { id } of beforePruneRows) {
+    assert.equal(existsSync(path.join(appDataRoot, 'generation-inputs', id)), false)
+  }
+  assert.deepEqual((await api('getGenerationQueue')).counts, {
+    canceled: 0,
+    completed: 0,
+    failed: 0,
+    pending: 0,
+    running: 0,
+  })
+  await assertQueueActionsPreserveProject()
+  assert.equal(
+    await window.evaluate(
+      async (url) => (await fetch(url)).status,
+      replacement.candidates[0].imageUrl,
+    ),
+    200,
+  )
+  await screenshot('10-native-queue-manager-cleared-history')
+  checked(
+    'Clear confirmation Escape/Keep preserves history; confirmed terminal prune preserves candidates, actual seed, draft and exact .igs bytes',
+    {
+      candidateId: replacement.candidates[0].candidateId,
+      packageSha256: queuePackageSha256,
+      removedHistoryRows: beforePruneRows.length,
+      retainedActualSeed: preservedResults.lastActualSeed,
+    },
+  )
+  report.finalRows = await rows(projectId)
   for (const entry of lines(peerLaunches)) {
     assert.throws(() => process.kill(entry.pid, 0), { code: 'ESRCH' })
   }
+  for (const [file, hash] of Object.entries(report.buildSha256)) {
+    assert.equal(
+      digest(readFileSync(file)),
+      hash,
+      `Built artifact changed during native run: ${file}`,
+    )
+  }
+  assert.equal(digest(readFileSync('scripts/smoke-generation-actions.mjs')), report.scriptSha256)
   assert.deepEqual(report.pageErrors, [])
   report.outcome = 'passed'
-  console.log('Native Generate acceptance passed; controlled runtime/pixels, no GPU claim.')
+  console.log(
+    'Native Generate and Queue Manager acceptance passed; controlled runtime/pixels, no GPU claim.',
+  )
 } catch (error) {
   report.outcome = 'failed'
   report.error = { message: error.message, stack: error.stack }

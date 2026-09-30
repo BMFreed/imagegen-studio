@@ -1,5 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
+  GENERATION_QUEUE_PAGE_SIZE,
+  isGenerationQueuePage,
+} from '../../shared/projects/generation-queue-manager.js'
+import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
   type IgsProjectDocumentV1,
@@ -2017,6 +2021,8 @@ test('reserved publication survives retry/prune attempts and a completed candida
       await recoveredQueue.recoverAfterRestart()
       const canceled = (await recoveredQueue.loadVerifiedInput(itemId)).item
       assert.equal(canceled.status, 'canceled')
+      assert.equal((await recoveredQueue.getManagerEntry(itemId)).publicationPending, true)
+      assert.equal((await recoveredQueue.listManagerPage()).items[0].publicationPending, true)
       await assert.rejects(recoveredQueue.retryTerminal(itemId, canceled.statusSequence), {
         code: 'QUEUE_PUBLICATION_UNCERTAIN',
       })
@@ -2032,6 +2038,8 @@ test('reserved publication survives retry/prune attempts and a completed candida
       const beforePrune = await recoveredStaging.listVerifiedCandidates(canceled.localProjectKey)
       assert.equal(beforePrune.length, 1)
       assert.equal(beforePrune[0].queueItemId, itemId)
+      assert.equal((await recoveredQueue.getManagerEntry(itemId)).publicationPending, false)
+      assert.equal((await recoveredQueue.getManagerEntry(itemId)).status, 'completed')
       assert.equal(await recoveredQueue.pruneTerminal(['completed']), 1)
       assert.equal(
         (await second.db.selectFrom('generation_queue_item').select('id').execute()).length,
@@ -2138,5 +2146,329 @@ test('a process interruption after terminal row deletion leaves only an orphan i
   } finally {
     await first.close().catch(() => undefined)
     await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('manager pages real SQLite history by newest stable keys without reading frozen files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-pages-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await assert.rejects(queue.listManagerPage(), { code: 'QUEUE_NOT_RECONCILED' })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const items = await inQualifiedBatchLeases(
+      root,
+      prepared,
+      GENERATION_QUEUE_PAGE_SIZE + 7,
+      async (concrete) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items: concrete,
+          preflight: async () => undefined,
+          projectPath,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    const expectedCounts = { canceled: 0, completed: 0, failed: 0, pending: 0, running: 0 }
+    const terminal = ['completed', 'failed', 'canceled'] as const
+    for (let index = 0; index < items.length; index += 1) {
+      const status = index === 0 ? 'running' : index < 5 ? 'pending' : terminal[index % 3]
+      expectedCounts[status] += 1
+      await database.db
+        .updateTable('generation_queue_item')
+        .set({
+          error_code: status === 'failed' ? 'GENERATION_WORKER_FAILED' : null,
+          error_message: status === 'failed' ? '/private/worker-output-path' : null,
+          finished_at: status === 'pending' || status === 'running' ? null : items[index].createdAt,
+          started_at: status === 'pending' ? null : items[index].createdAt,
+          status,
+          status_sequence: status === 'pending' ? 0 : 1,
+        })
+        .where('id', '=', items[index].id)
+        .execute()
+    }
+    // The projection must work with missing PNG/checkpoint files. It is not Retry verification.
+    await rm(path.join(root, 'generation-inputs'), { recursive: true })
+    await rm(prepared.context.model.managedPath)
+    const corrupt = items[5]
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: '{invalid payload' })
+      .where('id', '=', corrupt.id)
+      .execute()
+    const first = await queue.listManagerPage(null)
+    assert.equal(first.items.length, GENERATION_QUEUE_PAGE_SIZE)
+    assert.ok(isGenerationQueuePage(first))
+    assert.deepEqual(first.counts, expectedCounts)
+    assert.ok(first.nextCursor)
+    const second = await queue.listManagerPage(first.nextCursor)
+    assert.equal(second.items.length, 7)
+    assert.equal(second.nextCursor, null)
+    assert.ok(isGenerationQueuePage(second))
+    const expectedIds = items
+      .map((item) => item.id)
+      .sort()
+      .reverse()
+    const pagedIds = [...first.items, ...second.items].map((item) => item.id)
+    assert.deepEqual(pagedIds, expectedIds)
+    assert.equal(new Set(pagedIds).size, items.length)
+    const entries = [...first.items, ...second.items]
+    assert.equal(entries.find((entry) => entry.id === corrupt.id)?.details, null)
+    assert.equal(entries.find((entry) => entry.id === items[1].id)?.details?.sampling.seed, 0)
+    assert.equal(entries.find((entry) => entry.id === items[1].id)?.statusSequence, 0)
+    assert.ok(entries.every((entry) => entry.projectName === 'Project'))
+    assert.ok(entries.every((entry) => !entry.publicationPending))
+    assert.ok(!JSON.stringify(entries).includes('/private/worker-output-path'))
+    assert.ok(!JSON.stringify(entries).includes(prepared.context.model.managedPath))
+    const reviewed = await queue.getManagerEntry(corrupt.id)
+    assert.equal(reviewed.details, null)
+    assert.equal(reviewed.statusSequence, 1)
+    await assert.rejects(queue.deleteTerminal(corrupt.id, 0), { code: 'QUEUE_STATUS_CONFLICT' })
+    await queue.deleteTerminal(corrupt.id, reviewed.statusSequence)
+    await assert.rejects(queue.getManagerEntry(corrupt.id), { code: 'QUEUE_ITEM_NOT_FOUND' })
+    await assert.rejects(queue.listManagerPage({ createdAt: 'yesterday', id: randomUUID() }), {
+      code: 'QUEUE_INPUT_INVALID',
+    })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('manager cursor excludes later insertions while counts remain app-wide across Project identities', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-cursor-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const source = await fixture(root)
+    const items = await inQualifiedBatchLeases(
+      root,
+      source.prepared,
+      GENERATION_QUEUE_PAGE_SIZE + 1,
+      async (concrete) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items: concrete,
+          preflight: async () => undefined,
+          projectPath: source.projectPath,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    const first = await queue.listManagerPage()
+    assert.ok(first.nextCursor)
+    const neighborPath = path.join(root, 'Neighbor.igs')
+    await writeFile(neighborPath, 'neighbor Project path')
+    const neighborPrepared: PreparedNormalTxt2Img = {
+      context: structuredClone(source.prepared.context),
+      targetPngBytes: source.prepared.targetPngBytes,
+    }
+    neighborPrepared.context.documentId = randomUUID()
+    const neighbor = await enqueueFixture(root, queue, neighborPrepared, neighborPath)
+    // Make the arrival definitely newer; timestamp resolution is not the pagination subject.
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2999-01-01T00:00:00.000Z' })
+      .where('id', '=', neighbor.id)
+      .execute()
+    const second = await queue.listManagerPage(first.nextCursor)
+    assert.equal(second.items.length, 1)
+    assert.equal(second.nextCursor, null)
+    assert.deepEqual(
+      [...first.items, ...second.items].map((entry) => entry.id),
+      items
+        .map((item) => item.id)
+        .sort()
+        .reverse(),
+    )
+    assert.equal(second.counts.pending, items.length + 1)
+    const refreshed = await queue.listManagerPage()
+    assert.equal(refreshed.items[0].id, neighbor.id)
+    assert.equal(refreshed.items[0].projectName, 'Neighbor')
+    assert.equal(refreshed.items[0].documentId, neighborPrepared.context.documentId)
+    assert.notEqual(refreshed.items[0].projectKey, first.items[0].projectKey)
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('retry preflight sees durable new identities before CAS and refusal preserves the source revision', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-retry-preflight-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const original = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceled = await queue.cancel(original.id, original.statusSequence)
+    const originalPayload = await queue.loadVerifiedInput(original.id)
+    let called = 0
+    await assert.rejects(
+      queue.retryTerminal(original.id, canceled.statusSequence, async (input) => {
+        called += 1
+        assert.deepEqual(input.source, canceled)
+        assert.notEqual(input.queueItemId, original.id)
+        assert.notEqual(input.stagingSessionId, original.stagingSessionId)
+        assert.deepEqual(
+          await readFile(path.join(root, 'generation-inputs', input.queueItemId, 'target.png')),
+          prepared.targetPngBytes,
+        )
+        assert.equal(
+          await database.db
+            .selectFrom('generation_queue_item')
+            .select('id')
+            .where('id', '=', input.queueItemId)
+            .executeTakeFirst(),
+          undefined,
+        )
+        assert.equal(
+          JSON.parse(input.frozenPayloadJson).context.documentId,
+          prepared.context.documentId,
+        )
+        throw new Error('Current document identity no longer matches.')
+      }),
+      { message: 'Current document identity no longer matches.' },
+    )
+    assert.equal(called, 1)
+    assert.equal((await queue.getManagerEntry(original.id)).statusSequence, canceled.statusSequence)
+    assert.deepEqual(await readdir(path.join(root, 'generation-inputs')), [original.id])
+    assert.equal((await queue.listManagerPage()).counts.pending, 0)
+    await assert.rejects(
+      queue.retryTerminal(original.id, original.statusSequence, async () => {
+        called += 1
+      }),
+      { code: 'QUEUE_STATUS_CONFLICT' },
+    )
+    assert.equal(called, 1)
+    const retried = await queue.retryTerminal(
+      original.id,
+      canceled.statusSequence,
+      async (input) => {
+        called += 1
+        await staging.preflightBatchCapacity({
+          entries: [{ frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId }],
+          localProjectKey: input.source.localProjectKey,
+          projectPath: input.source.projectPath,
+          stagingSessionId: input.stagingSessionId,
+        })
+      },
+    )
+    assert.equal(called, 2)
+    assert.equal(retried.status, 'pending')
+    assert.equal(
+      (await queue.getManagerEntry(original.id)).statusSequence,
+      canceled.statusSequence + 1,
+    )
+    assert.deepEqual((await queue.loadVerifiedInput(retried.id)).payload, originalPayload.payload)
+    assert.deepEqual(
+      await readFile((await queue.loadVerifiedInput(retried.id)).targetPath),
+      prepared.targetPngBytes,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('retry resolves lost commit acknowledgement from the exact committed frozen attempt', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-retry-ack-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root, {
+      afterRetryCommit: async () => {
+        throw new Error('Retry commit acknowledgement lost.')
+      },
+    })
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const original = await enqueueFixture(root, queue, prepared, projectPath)
+    const canceled = await queue.cancel(original.id)
+    const retry = await queue.retryTerminal(original.id, canceled.statusSequence)
+    assert.equal(retry.status, 'pending')
+    assert.equal(
+      (await queue.getManagerEntry(original.id)).statusSequence,
+      canceled.statusSequence + 1,
+    )
+    assert.equal(
+      (await queue.loadVerifiedInput(retry.id)).payload.context.sampling.seed,
+      prepared.context.sampling.seed,
+    )
+    assert.equal((await queue.listManagerPage()).items.length, 2)
+    await assert.rejects(queue.retryTerminal(original.id, canceled.statusSequence), {
+      code: 'QUEUE_STATUS_CONFLICT',
+    })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('retry unreadable publication outcomes retain inputs and block admission and dispatch until recovery', async (t) => {
+  for (const committed of [false, true]) {
+    await t.test(committed ? 'committed' : 'rolled back', async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-retry-unknown-'))
+      const database = openAppDatabase(root, migrations)
+      try {
+        let denyInspection = false
+        const plugin: KyselyPlugin = {
+          transformQuery: ({ node }) => {
+            if (
+              denyInspection &&
+              node.kind === 'SelectQueryNode' &&
+              JSON.stringify(node).includes('generation_queue_item')
+            ) {
+              throw new Error('SQLite inspection unavailable')
+            }
+            return node
+          },
+          transformResult: async ({ result }) => result,
+        }
+        const loseAcknowledgement = async () => {
+          denyInspection = true
+          throw new Error('Retry publication outcome unknown')
+        }
+        const queue = new GenerationQueueRepository(database.db.withPlugin(plugin), root, {
+          afterRetryCommit: committed ? loseAcknowledgement : undefined,
+          beforeRetryCommit: committed ? undefined : loseAcknowledgement,
+        })
+        await queue.recoverAfterRestart()
+        const { prepared, projectPath } = await fixture(root)
+        const original = await enqueueFixture(root, queue, prepared, projectPath)
+        const canceled = await queue.cancel(original.id)
+        await assert.rejects(queue.retryTerminal(original.id, canceled.statusSequence), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        const rows = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+        assert.equal(rows.length, committed ? 2 : 1)
+        assert.equal((await readdir(path.join(root, 'generation-inputs'))).length, 2)
+        assert.equal(
+          rows.find((row) => row.id === original.id)?.status_sequence,
+          canceled.statusSequence + (committed ? 1 : 0),
+        )
+        assert.throws(() => queue.assertProjectCanEnqueue(original.localProjectKey), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_PUBLICATION_UNCERTAIN' })
+        assert.throws(() => queue.releaseProjectFence(original.localProjectKey), {
+          code: 'QUEUE_PUBLICATION_UNCERTAIN',
+        })
+        denyInspection = false
+        assert.deepEqual(await queue.recoverAfterRestart(), {
+          canceledCount: committed ? 1 : 0,
+          orphanedDirectoriesRemoved: committed ? 0 : 1,
+        })
+        queue.releaseProjectFence(original.localProjectKey)
+        assert.equal((await queue.listManagerPage()).counts.pending, 0)
+        assert.equal(
+          (await readdir(path.join(root, 'generation-inputs'))).length,
+          committed ? 2 : 1,
+        )
+      } finally {
+        await database.close()
+        await rm(root, { force: true, recursive: true })
+      }
+    })
   }
 })

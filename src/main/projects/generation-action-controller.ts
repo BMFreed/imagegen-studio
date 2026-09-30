@@ -1,6 +1,12 @@
 import { GenerationBatchPlanError } from '../../shared/projects/generation-batch-plan.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type {
+  GenerationQueueCursor,
+  GenerationQueuePage,
+  GenerationQueueReview,
+  GenerationQueueTerminalStatus,
+} from '../../shared/projects/generation-queue-manager.js'
+import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
   ProjectGenerationActionState,
@@ -18,7 +24,7 @@ import type { ProjectGenerationOperationGate } from './project-generation-operat
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
-import { IllustriousJobError } from './illustrious-txt2img-job.js'
+import { IllustriousJobError, withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import {
   GenerationPreparationError,
   prepareNormalTxt2Img,
@@ -55,13 +61,22 @@ interface GenerationActionDependencies {
   projects: CapturedProjectService
   queue: Pick<
     GenerationQueueRepository,
-    'fenceProject' | 'listUnfinishedActionJobsByProjectDocument' | 'listUnfinishedByProjectDocument'
+    | 'cancel'
+    | 'deleteTerminal'
+    | 'fenceProject'
+    | 'getManagerEntry'
+    | 'listManagerPage'
+    | 'listUnfinishedActionJobsByProjectDocument'
+    | 'listUnfinishedByProjectDocument'
+    | 'loadVerifiedRetryInput'
+    | 'pruneTerminal'
+    | 'retryTerminal'
   >
   runtime: GenerationActionRuntime
   scratchBasePath: string
   staging: Pick<
     GenerationStagingRepository,
-    'discardSessions' | 'listVerifiedCandidates' | 'readLastActualSeed'
+    'discardSessions' | 'listVerifiedCandidates' | 'preflightBatchCapacity' | 'readLastActualSeed'
   >
 }
 
@@ -110,7 +125,7 @@ const BLOCKING_CODES = new Set([
 
 /** Main-owned user action boundary; renderer inputs never supply paths, pixels, or worker jobs. */
 export class ProjectGenerationActionController {
-  private admission: Promise<ProjectGenerateResult> | null = null
+  private admission: Promise<unknown> | null = null
   private admittingTabId: string | null = null
   private blocked = false
   private closed = false
@@ -154,6 +169,33 @@ export class ProjectGenerationActionController {
       this.rememberError(error)
       throw error
     }
+  }
+
+  async cancelJob(review: GenerationQueueReview): Promise<void> {
+    this.assertOpen()
+    // The repository CAS rejects a pending→running race before any cancel is requested.
+    const item = await this.options.queue.cancel(review.id, review.statusSequence)
+    if (item.status === 'running') {
+      try {
+        const stopped = await this.options.processor.cancelAndWait(item.id)
+        if (stopped.status === 'running') {
+          throw new ProjectGenerationActionError(
+            'GENERATION_WORKER_EXIT_UNCONFIRMED',
+            'The generation worker has not confirmed exit.',
+          )
+        }
+      } catch (error) {
+        this.rememberError(error)
+        throw error
+      }
+    }
+    this.emitChanged()
+  }
+
+  async deleteJob(review: GenerationQueueReview): Promise<void> {
+    this.assertOpen()
+    await this.options.queue.deleteTerminal(review.id, review.statusSequence)
+    this.emitChanged()
   }
 
   async generate(tabId: string, request: ProjectGenerateOptions): Promise<ProjectGenerateResult> {
@@ -214,6 +256,12 @@ export class ProjectGenerationActionController {
     }
   }
 
+  /** Metadata/history remain available independently of the inference runtime. */
+  async getQueue(cursor?: GenerationQueueCursor | null): Promise<GenerationQueuePage> {
+    this.assertOpen()
+    return await this.options.queue.listManagerPage(cursor)
+  }
+
   async getState(tabId: string): Promise<ProjectGenerationActionState> {
     const documentId = this.requireOpenDocument(tabId)
     const jobs = await this.options.queue.listUnfinishedActionJobsByProjectDocument(
@@ -241,6 +289,51 @@ export class ProjectGenerationActionController {
   onChanged(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  async pruneQueue(statuses: readonly GenerationQueueTerminalStatus[]): Promise<number> {
+    this.assertOpen()
+    const removed = await this.options.queue.pruneTerminal(statuses)
+    this.emitChanged()
+    return removed
+  }
+
+  /** Retry copies the old operation; it never prepares from the current Project draft. */
+  async retryJob(review: GenerationQueueReview): Promise<void> {
+    this.assertOpen()
+    if (this.blocked) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BLOCKED',
+        'Generation recovery needs attention before another job can start.',
+      )
+    }
+    if (this.admission || this.drain) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BUSY',
+        'Finish the current generation before retrying a job.',
+      )
+    }
+    const operation = this.retryUnlocked(review)
+    this.admission = operation
+    this.error = null
+    this.emitChanged()
+    let queued = false
+    try {
+      await operation
+      queued = true
+    } catch (error) {
+      this.rememberError(error)
+      throw error
+    } finally {
+      if (this.admission === operation) {
+        this.admission = null
+        this.admittingTabId = null
+      }
+      if (queued && !this.closed) {
+        this.startDrain()
+      }
+      this.emitChanged()
+    }
   }
 
   shutdown(): Promise<void> {
@@ -441,6 +534,87 @@ export class ProjectGenerationActionController {
     return documentId
   }
 
+  private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
+    const source = await this.options.queue.getManagerEntry(review.id)
+    const tabId = source.projectKey
+    const documentId = source.documentId
+    this.admittingTabId = tabId
+    this.assertOpen()
+    this.assertDocument(tabId, documentId)
+    await this.options.gate.run(tabId, async () => {
+      this.assertOpen()
+      this.assertDocument(tabId, documentId)
+      const frozen = await this.options.queue.loadVerifiedRetryInput(review.id)
+      if (
+        frozen.item.statusSequence !== review.statusSequence ||
+        (frozen.item.status !== 'failed' && frozen.item.status !== 'canceled')
+      ) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_INVALID_REQUEST',
+          'The queue item changed. Refresh the queue before retrying.',
+        )
+      }
+      this.assertDocument(tabId, frozen.payload.context.documentId)
+      const prepared = {
+        context: frozen.payload.context,
+        targetPngBytes: frozen.targetPngBytes,
+      }
+      const admitted = await this.options.runtime.withGenerationWorker(
+        this.options.scratchBasePath,
+        async (worker) => {
+          this.assertOpen()
+          this.assertDocument(tabId, documentId)
+          await withIllustriousTxt2ImgRequest({
+            modelService: this.options.models,
+            prepared,
+            ready: worker.ready,
+            scratchBasePath: this.options.scratchBasePath,
+            use: async () => {
+              this.assertOpen()
+              this.assertDocument(tabId, documentId)
+              const queued = await this.options.queue.retryTerminal(
+                review.id,
+                review.statusSequence,
+                async (input) => {
+                  this.assertOpen()
+                  this.assertDocument(tabId, documentId)
+                  await this.options.staging.preflightBatchCapacity({
+                    entries: [
+                      {
+                        frozenPayloadJson: input.frozenPayloadJson,
+                        queueItemId: input.queueItemId,
+                      },
+                    ],
+                    localProjectKey: tabId,
+                    projectPath: input.source.projectPath,
+                    stagingSessionId: input.stagingSessionId,
+                  })
+                  this.assertOpen()
+                  this.assertDocument(tabId, documentId)
+                },
+              )
+              try {
+                this.assertOpen()
+                this.assertDocument(tabId, documentId)
+              } catch (error) {
+                // A late identity/shutdown refusal cannot leave this newly published retry live.
+                await this.options.processor.cancelAndWait(queued.id)
+                throw error
+              }
+            },
+          })
+          return true
+        },
+      )
+      if (admitted === null) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_RUNTIME_UNAVAILABLE',
+          'The image runtime is unavailable. The original queue item and temporary results were kept.',
+        )
+      }
+    })
+  }
+
   private async shutdownOne(): Promise<void> {
     await this.admission?.catch(() => undefined)
     await this.options.dispatch.shutdown()
@@ -523,6 +697,12 @@ function safeGenerationErrorMessage(error: unknown, code: string): string {
   }
   if (BLOCKING_CODES.has(code)) {
     return 'Generation recovery needs attention. Save your work and restart the app before generating again.'
+  }
+  if (code === 'QUEUE_STATUS_CONFLICT' || code === 'QUEUE_CHANGED') {
+    return 'The queue item changed. Refresh the queue and review the action again.'
+  }
+  if (code === 'QUEUE_ITEM_NOT_FOUND') {
+    return 'The queue item is no longer available. Refresh the queue.'
   }
   if (code.startsWith('MODEL_')) {
     return 'The selected checkpoint could not be verified for generation.'

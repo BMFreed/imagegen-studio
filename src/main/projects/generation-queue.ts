@@ -1,4 +1,13 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import {
+  GENERATION_QUEUE_PAGE_SIZE,
+  isGenerationQueueCursor,
+} from '../../shared/projects/generation-queue-manager.js'
+import type {
+  GenerationQueueCursor,
+  GenerationQueueEntry,
+  GenerationQueuePage,
+} from '../../shared/projects/generation-queue-manager.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable } from 'kysely'
@@ -200,6 +209,13 @@ export interface NormalizedQueueFailure {
   message: string
 }
 
+export interface GenerationQueueRetryPreflightInput {
+  frozenPayloadJson: string
+  queueItemId: string
+  source: QueuedGenerationItem
+  stagingSessionId: string
+}
+
 export interface GenerationQueueTestHooks {
   /** Lost acknowledgement after the complete batch transaction committed. */
   afterBatchCommit?: () => Promise<void>
@@ -207,6 +223,8 @@ export interface GenerationQueueTestHooks {
   afterInputPublish?: () => Promise<void>
   /** Failure after terminal rows are deleted, before their inputs are reclaimed. */
   afterPruneCommit?: () => Promise<void>
+  /** Lost acknowledgement after the retry transaction committed. */
+  afterRetryCommit?: () => Promise<void>
   /** Failure after a retry input is durable, before its row is committed. */
   afterRetryInputPublish?: () => Promise<void>
   /** Pause or fail after all batch inserts but before their single transaction commits. */
@@ -215,6 +233,8 @@ export interface GenerationQueueTestHooks {
   beforeClaimUpdate?: (itemId: string) => Promise<void>
   /** Simulate a nonfatal filesystem cleanup failure after a committed prune. */
   beforePruneInputCleanup?: () => Promise<void>
+  /** Failure after the retry insert but before its transaction commits. */
+  beforeRetryCommit?: () => Promise<void>
 }
 
 type WorkerJobWithoutPaths = Omit<IllustriousTxt2ImgRequestV1['job'], 'output' | 'target'> & {
@@ -327,6 +347,9 @@ export class GenerationQueueRepository {
         'QUEUE_NOT_RECONCILED',
         'Generation queue recovery must complete before dispatch.',
       )
+    }
+    if (this.publicationUncertainProjects.size > 0) {
+      throw batchPublicationUncertain()
     }
   }
 
@@ -924,6 +947,132 @@ export class GenerationQueueRepository {
     this.fencedProjects.add(localProjectKey)
   }
 
+  /** Read one reviewed identity without requiring valid frozen input files. */
+  async getManagerEntry(id: string): Promise<GenerationQueueEntry> {
+    validateQueueId(id)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      return await this.db.transaction().execute(async (transaction) => {
+        const row = await transaction
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirst()
+        if (!row) {
+          throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
+        }
+        const receipt = await transaction
+          .selectFrom('generation_candidate_receipt')
+          .select('queue_item_id')
+          .where('queue_item_id', '=', id)
+          .where('status', '=', 'reserved')
+          .executeTakeFirst()
+        const indexed = await transaction
+          .selectFrom('project_index')
+          .select('display_name')
+          .where('local_project_key', '=', row.local_project_key)
+          .where('document_id', '=', row.document_id)
+          .where('canonical_path', '=', row.canonical_project_path)
+          .executeTakeFirst()
+        return toManagerEntry(row, receipt !== undefined, indexed?.display_name)
+      })
+    })
+  }
+
+  /** App-wide history metadata. Neither target pixels nor checkpoint files are read. */
+  async listManagerPage(cursor?: GenerationQueueCursor | null): Promise<GenerationQueuePage> {
+    if (cursor !== undefined && cursor !== null && !isGenerationQueueCursor(cursor)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue page cursor is invalid.')
+    }
+    const reviewedCursor = cursor ? { ...cursor } : null
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      return await this.db.transaction().execute(async (transaction) => {
+        const counts: GenerationQueuePage['counts'] = {
+          canceled: 0,
+          completed: 0,
+          failed: 0,
+          pending: 0,
+          running: 0,
+        }
+        const grouped = await transaction
+          .selectFrom('generation_queue_item')
+          .select(['status', transaction.fn.countAll<number>().as('count')])
+          .groupBy('status')
+          .execute()
+        for (const group of grouped) {
+          if (!Object.hasOwn(counts, group.status)) {
+            throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue status is invalid.')
+          }
+          counts[group.status as keyof typeof counts] = Number(group.count)
+        }
+        let query = transaction
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .orderBy('created_at', 'desc')
+          .orderBy('id', 'desc')
+          .limit(GENERATION_QUEUE_PAGE_SIZE + 1)
+        if (reviewedCursor) {
+          query = query.where((eb) =>
+            eb.or([
+              eb('created_at', '<', reviewedCursor.createdAt),
+              eb.and([
+                eb('created_at', '=', reviewedCursor.createdAt),
+                eb('id', '<', reviewedCursor.id),
+              ]),
+            ]),
+          )
+        }
+        const rows = await query.execute()
+        const pageRows = rows.slice(0, GENERATION_QUEUE_PAGE_SIZE)
+        const reserved =
+          pageRows.length === 0
+            ? []
+            : await transaction
+                .selectFrom('generation_candidate_receipt')
+                .select('queue_item_id')
+                .where(
+                  'queue_item_id',
+                  'in',
+                  pageRows.map((row) => row.id),
+                )
+                .where('status', '=', 'reserved')
+                .execute()
+        const indexed =
+          pageRows.length === 0
+            ? []
+            : await transaction
+                .selectFrom('project_index')
+                .select(['local_project_key', 'document_id', 'canonical_path', 'display_name'])
+                .where('local_project_key', 'in', [
+                  ...new Set(pageRows.map((row) => row.local_project_key)),
+                ])
+                .execute()
+        const publicationPending = new Set(reserved.map((receipt) => receipt.queue_item_id))
+        const last = pageRows.at(-1)
+        return {
+          counts,
+          items: pageRows.map((row) =>
+            toManagerEntry(
+              row,
+              publicationPending.has(row.id),
+              indexed.find(
+                (project) =>
+                  project.local_project_key === row.local_project_key &&
+                  project.document_id === row.document_id &&
+                  project.canonical_path === row.canonical_project_path,
+              )?.display_name,
+            ),
+          ),
+          nextCursor:
+            rows.length > GENERATION_QUEUE_PAGE_SIZE && last
+              ? { createdAt: last.created_at, id: last.id }
+              : null,
+        }
+      })
+    })
+  }
+
   /** Read every unfinished job's frozen display fields without rehashing its image payload. */
   async listUnfinishedActionJobsByProjectDocument(
     localProjectKey: string,
@@ -1064,10 +1213,19 @@ export class GenerationQueueRepository {
     })
   }
 
-  /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
   async loadVerifiedInput(id: string): Promise<VerifiedQueuedInput> {
     validateQueueId(id)
     return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
+  }
+
+  /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
+  async loadVerifiedRetryInput(
+    id: string,
+  ): Promise<VerifiedQueuedInput & { targetPngBytes: Buffer }> {
+    validateQueueId(id)
+    return await this.serialize(
+      async () => await this.verifyRowWithBytes(await this.requireRow(id)),
+    )
   }
 
   /** Clear selected terminal statuses; uncertain manifest-first completions remain recoverable. */
@@ -1173,7 +1331,11 @@ export class GenerationQueueRepository {
    * sequence is consumed atomically with insertion, so a stale second click cannot create another
    * retry even across repository instances.
    */
-  async retryTerminal(id: string, expectedStatusSequence: number): Promise<QueuedGenerationItem> {
+  async retryTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
+  ): Promise<QueuedGenerationItem> {
     validateQueueId(id)
     validateExpectedSequence(expectedStatusSequence)
     return await this.serialize(async () => {
@@ -1209,6 +1371,25 @@ export class GenerationQueueRepository {
       const nextBatchId = randomUUID()
       const nextSessionId = randomUUID()
       const now = new Date().toISOString()
+      const nextRow: Selectable<GenerationQueueItem> = {
+        batch_id: nextBatchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: source.document_id,
+        document_revision: source.document_revision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: source.frozen_payload_json,
+        id: nextId,
+        local_project_key: source.local_project_key,
+        operation: source.operation,
+        staging_session_id: nextSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }
       const manifest: InputManifestV1 = {
         payloadSha256: sha256(Buffer.from(source.frozen_payload_json, 'utf8')),
         queueInputVersion: QUEUE_INPUT_VERSION,
@@ -1233,6 +1414,15 @@ export class GenerationQueueRepository {
         await syncDirectory(root)
         await this.testHooks.afterRetryInputPublish?.()
         this.assertProjectCanEnqueue(source.local_project_key)
+        await preflight?.(
+          Object.freeze({
+            frozenPayloadJson: source.frozen_payload_json,
+            queueItemId: nextId,
+            source: Object.freeze(toItem(source)),
+            stagingSessionId: nextSessionId,
+          }),
+        )
+        this.assertProjectCanEnqueue(source.local_project_key)
         await this.db.transaction().execute(async (transaction) => {
           const consumed = await transaction
             .updateTable('generation_queue_item')
@@ -1254,63 +1444,42 @@ export class GenerationQueueRepository {
           if (!consumed) {
             throw statusConflict()
           }
-          await transaction
-            .insertInto('generation_queue_item')
-            .values({
-              batch_id: nextBatchId,
-              canonical_project_path: canonicalPath,
-              created_at: now,
-              document_id: source.document_id,
-              document_revision: source.document_revision,
-              error_code: null,
-              error_message: null,
-              finished_at: null,
-              frozen_payload_json: source.frozen_payload_json,
-              id: nextId,
-              local_project_key: source.local_project_key,
-              operation: source.operation,
-              staging_session_id: nextSessionId,
-              started_at: null,
-              status: 'pending',
-              status_sequence: 0,
-              updated_at: now,
-            })
-            .execute()
+          await transaction.insertInto('generation_queue_item').values(nextRow).execute()
+          await this.testHooks.beforeRetryCommit?.()
+          this.assertProjectCanEnqueue(source.local_project_key)
         })
-        return {
-          batchId: nextBatchId,
-          cancelRequested: false,
-          createdAt: now,
-          id: nextId,
-          localProjectKey: source.local_project_key,
-          projectPath: canonicalPath,
-          stagingSessionId: nextSessionId,
-          status: 'pending',
-          statusSequence: 0,
-        }
+        await this.testHooks.afterRetryCommit?.()
+        return toItem(nextRow)
       } catch (error) {
-        // A lost commit acknowledgement must not make a valid input disappear. Startup recovery
-        // removes any published directory that has no committed queue row.
-        let safeToRemove = !renamed
+        // A lost acknowledgement is success only when the exact immutable row is observable.
+        // An unreadable or mismatched outcome retains its input and blocks further dispatch.
         if (renamed) {
+          let committed: Selectable<GenerationQueueItem>[]
           try {
-            const committed = await this.db
+            committed = await this.db
               .selectFrom('generation_queue_item')
-              .select('id')
+              .selectAll()
               .where('id', '=', nextId)
-              .executeTakeFirst()
-            safeToRemove = !committed
+              .execute()
           } catch {
-            safeToRemove = false
+            this.publicationUncertainProjects.add(source.local_project_key)
+            this.fencedProjects.add(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+          if (batchRowsMatch(committed, [nextRow])) {
+            return toItem(committed[0])
+          }
+          if (committed.length !== 0) {
+            this.publicationUncertainProjects.add(source.local_project_key)
+            this.fencedProjects.add(source.local_project_key)
+            throw batchPublicationUncertain()
           }
         }
-        if (safeToRemove) {
-          await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
-            (cleanupError: unknown) => {
-              process.emitWarning(`Generation retry input cleanup failed: ${String(cleanupError)}`)
-            },
-          )
-        }
+        await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
+          (cleanupError: unknown) => {
+            process.emitWarning(`Generation retry input cleanup failed: ${String(cleanupError)}`)
+          },
+        )
         throw error
       }
     })
@@ -1405,6 +1574,13 @@ export class GenerationQueueRepository {
   }
 
   private async verifyRow(row: Selectable<GenerationQueueItem>): Promise<VerifiedQueuedInput> {
+    const verified = await this.verifyRowWithBytes(row)
+    return { item: verified.item, payload: verified.payload, targetPath: verified.targetPath }
+  }
+
+  private async verifyRowWithBytes(
+    row: Selectable<GenerationQueueItem>,
+  ): Promise<VerifiedQueuedInput & { targetPngBytes: Buffer }> {
     const id = row.id
     const root = await this.ensureRoot()
     const directory = path.join(root, id)
@@ -1457,7 +1633,7 @@ export class GenerationQueueRepository {
       payload.workerJob.target.sha256,
     )
     await validateTargetPng(targetBytes, payload.context)
-    return { item: toItem(row), payload, targetPath }
+    return { item: toItem(row), payload, targetPath, targetPngBytes: targetBytes }
   }
 }
 
@@ -1840,6 +2016,96 @@ async function removeInputDirectories(root: string, ids: readonly string[]): Pro
     await rm(candidate, { force: true, recursive: true })
   }
   await syncDirectory(root)
+}
+
+function toManagerEntry(
+  row: Selectable<GenerationQueueItem>,
+  publicationPending: boolean,
+  indexedName?: string,
+): GenerationQueueEntry {
+  const item = toItem(row)
+  if (row.operation !== 'illustrious-txt2img' || !v.is(UuidSchema, row.document_id)) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue identity is invalid.')
+  }
+  const extension = path.extname(row.canonical_project_path)
+  return {
+    batchId: item.batchId,
+    cancelRequested: item.cancelRequested,
+    createdAt: item.createdAt,
+    details: managerDetails(row),
+    documentId: row.document_id,
+    error: managerError(row),
+    finishedAt: row.finished_at,
+    id: item.id,
+    operation: row.operation,
+    projectKey: item.localProjectKey,
+    projectName:
+      indexedName ??
+      (path.basename(
+        row.canonical_project_path,
+        extension.toLowerCase() === '.igs' ? extension : undefined,
+      ) ||
+        'Untitled Project'),
+    publicationPending,
+    startedAt: row.started_at,
+    status: item.status,
+    statusSequence: item.statusSequence,
+  }
+}
+
+function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEntry['details'] {
+  try {
+    if (Buffer.byteLength(row.frozen_payload_json, 'utf8') > MAX_PAYLOAD_BYTES) {
+      return null
+    }
+    const { context } = parsePayload(row.frozen_payload_json)
+    if (
+      context.documentId !== row.document_id ||
+      context.documentRevision !== row.document_revision ||
+      context.sampling.sampler === null ||
+      context.sampling.scheduler === null ||
+      context.model.reference.predictionType === null
+    ) {
+      return null
+    }
+    return {
+      modelName: context.model.reference.displayName,
+      modelVersion: context.model.reference.versionName,
+      negativePrompt: context.prompts.negative,
+      prompt: context.prompts.positive,
+      sampling: {
+        cfgScale: context.sampling.cfgScale,
+        predictionType: context.model.reference.predictionType,
+        sampler: context.sampling.sampler,
+        scheduler: context.sampling.scheduler,
+        seed: context.sampling.seed,
+        steps: context.sampling.steps,
+      },
+      size: { height: context.bbox.height, width: context.bbox.width },
+    }
+  } catch {
+    // Invalid frozen display data must not hide the status or terminal cleanup actions.
+    return null
+  }
+}
+
+/** Stored messages can include arbitrary worker paths. Only main-owned literals enter the DTO. */
+function managerError(row: Selectable<GenerationQueueItem>): GenerationQueueEntry['error'] {
+  if (row.error_code === null) {
+    return null
+  }
+  const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(row.error_code) ? row.error_code : 'GENERATION_FAILED'
+  const messages: Record<string, string> = {
+    APP_RESTART: 'The application closed before this job completed.',
+    GENERATION_INPUT_CHANGED: 'The frozen generation input could not be verified.',
+    GENERATION_WORKER_FAILED: 'The generation worker did not return a valid completed result.',
+    QUEUE_INPUT_INVALID: 'The frozen queue input is invalid.',
+    USER_CANCELED: row.status === 'running' ? 'Cancellation requested.' : 'The job was canceled.',
+  }
+  return {
+    code,
+    message: messages[code] ?? 'The generation job could not be completed.',
+  }
 }
 
 function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {

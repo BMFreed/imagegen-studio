@@ -17,6 +17,16 @@ import type {
 } from '../shared/api.js'
 import { GenerationBatchPlanError } from '../shared/projects/generation-batch-plan.js'
 import {
+  isGenerationQueueCursor,
+  isGenerationQueueReview,
+  isGenerationQueueTerminalStatuses,
+} from '../shared/projects/generation-queue-manager.js'
+import type {
+  GenerationQueueCursor,
+  GenerationQueueReview,
+  GenerationQueueTerminalStatus,
+} from '../shared/projects/generation-queue-manager.js'
+import {
   isProjectDocumentId,
   isProjectGenerateOptions,
 } from '../shared/projects/project-generation-actions.js'
@@ -348,17 +358,21 @@ if (!gotInstanceLock) {
             recoveredGeneration.staging.readLastActualSeed(projectKey, documentId)
         : null
       const projectGenerationGate = new ProjectGenerationOperationGate()
-      const generationDispatch =
-        recoveredGeneration && generationRuntime
-          ? new GenerationDispatchCoordinator(
-              generationRuntime,
-              recoveredGeneration.orchestrator,
-              recoveredGeneration.processor,
-              path.join(paths.dataRoot, 'scratch'),
-            )
-          : null
+      // Recovered operational history is usable even if runtime storage cannot initialize.
+      const generationLease = generationRuntime ?? {
+        retryUnconfirmedGenerationExit: async () => true,
+        withGenerationWorker: async () => null,
+      }
+      const generationDispatch = recoveredGeneration
+        ? new GenerationDispatchCoordinator(
+            generationLease,
+            recoveredGeneration.orchestrator,
+            recoveredGeneration.processor,
+            path.join(paths.dataRoot, 'scratch'),
+          )
+        : null
       const generationActions =
-        recoveredGeneration && generationRuntime && generationDispatch
+        recoveredGeneration && generationDispatch
           ? new ProjectGenerationActionController({
               dispatch: generationDispatch,
               gate: projectGenerationGate,
@@ -367,7 +381,7 @@ if (!gotInstanceLock) {
               processor: recoveredGeneration.processor,
               projects: projectService,
               queue: recoveredGeneration.queue,
-              runtime: generationRuntime,
+              runtime: generationLease,
               scratchBasePath: path.join(paths.dataRoot, 'scratch'),
               staging: recoveredGeneration.staging,
             })
@@ -843,7 +857,12 @@ if (!gotInstanceLock) {
             if (
               channel === ipcChannels.projects.generate ||
               channel === ipcChannels.projects.getGenerationState ||
-              channel === ipcChannels.projects.cancelCurrentGeneration
+              channel === ipcChannels.projects.cancelCurrentGeneration ||
+              channel === ipcChannels.projects.getGenerationQueue ||
+              channel === ipcChannels.projects.cancelGenerationJob ||
+              channel === ipcChannels.projects.retryGenerationJob ||
+              channel === ipcChannels.projects.deleteGenerationJob ||
+              channel === ipcChannels.projects.pruneGenerationQueue
             ) {
               return { error: toProjectGenerationActionApiError(error), ok: false }
             }
@@ -909,6 +928,38 @@ if (!gotInstanceLock) {
       }
 
       registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(
+        ipcChannels.projects.getGenerationQueue,
+        (args) => args.length === 1 && (args[0] === null || isGenerationQueueCursor(args[0])),
+        async (cursor) =>
+          await requireGenerationActions().getQueue(cursor as GenerationQueueCursor | null),
+      )
+      const oneQueueReview = (args: unknown[]) =>
+        args.length === 1 && isGenerationQueueReview(args[0])
+      registerProjectHandler(
+        ipcChannels.projects.cancelGenerationJob,
+        oneQueueReview,
+        async (review) =>
+          await requireGenerationActions().cancelJob(review as GenerationQueueReview),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.retryGenerationJob,
+        oneQueueReview,
+        async (review) =>
+          await requireGenerationActions().retryJob(review as GenerationQueueReview),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.deleteGenerationJob,
+        oneQueueReview,
+        async (review) =>
+          await requireGenerationActions().deleteJob(review as GenerationQueueReview),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.pruneGenerationQueue,
+        (args) => args.length === 1 && isGenerationQueueTerminalStatuses(args[0]),
+        async (statuses) =>
+          await requireGenerationActions().pruneQueue(statuses as GenerationQueueTerminalStatus[]),
+      )
       registerProjectHandler(
         ipcChannels.projects.getGenerationState,
         oneProjectId,

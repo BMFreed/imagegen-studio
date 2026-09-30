@@ -41,6 +41,7 @@ import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
 import AppChrome from './components/AppChrome.vue'
+import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
@@ -92,6 +93,8 @@ type PendingProjectAction =
 const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
+const generationQueueOpen = ref(false)
+const generationQueueEpoch = ref(0)
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
 const projectTabs = ref<ProjectTab[]>([])
@@ -408,9 +411,26 @@ async function refreshGenerationState(tabId: string) {
 }
 
 function refreshOpenGeneration() {
+  generationQueueEpoch.value += 1
   for (const tab of projectTabs.value) {
     void refreshGenerationState(tab.id)
     void refreshGenerationResults(tab.id)
+  }
+}
+
+function openGenerationQueue() {
+  generationQueueOpen.value = true
+  refreshOpenGeneration()
+}
+
+async function openQueueProject(projectKey: string) {
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
+    return
+  }
+  generationQueueOpen.value = false
+  await openProject(projectKey)
+  if (homeError.value) {
+    globalNotice.value = homeError.value
   }
 }
 
@@ -1895,6 +1915,7 @@ onBeforeUnmount(() => {
         :homeOpen
         :projectActive="Boolean(activeTab)"
         @home="openHome"
+        @queue="openGenerationQueue"
         @redo="runActiveProjectHistoryAction('redo')"
         @undo="runActiveProjectHistoryAction('undo')"
       />
@@ -2051,6 +2072,20 @@ onBeforeUnmount(() => {
       </main>
 
       <ModelManager v-model:show="modelManagerOpen" :focus="modelManagerFocus" />
+
+      <GenerationQueueManager
+        v-model:show="generationQueueOpen"
+        :appBusy="pendingProjectAction !== null || windowClosePending"
+        :generationErrors="generationStateErrors"
+        :generationLoading="generationStateLoading"
+        :generationStates="generationStatesByTab"
+        :projectTabs
+        :refreshEpoch="generationQueueEpoch"
+        :reloadRequiredIds
+        :runtimeUnavailableReason
+        @changed="refreshOpenGeneration"
+        @openProject="openQueueProject"
+      />
 
       <NModal
         :closeOnEsc="pendingProjectAction?.kind !== 'import-finish'"

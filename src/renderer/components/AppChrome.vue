@@ -13,6 +13,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   home: []
+  queue: []
   redo: []
   undo: []
 }>()
@@ -42,6 +43,15 @@ function selectEditAction(key: number | string) {
         Edit
       </NButton>
     </NDropdown>
+    <NButton
+      aria-label="Open Queue Manager"
+      class="chrome-menu queue-button"
+      quaternary
+      size="small"
+      @click="$emit('queue')"
+    >
+      Queue
+    </NButton>
   </header>
 </template>
 
@@ -77,5 +87,9 @@ function selectEditAction(key: number | string) {
 
 .chrome-menu {
   -webkit-app-region: no-drag;
+}
+
+.queue-button {
+  margin-left: auto;
 }
 </style>

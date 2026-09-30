@@ -230,7 +230,7 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
-## Current production boundary: Phase 2B private processor checkpoint
+## Historical boundary: Phase 2B private processor checkpoint
 
 Main now stores one frozen Illustrious `txt2img` input and a SQLite `pending`
 item. The queue repository verifies that input before claiming the one
@@ -448,11 +448,40 @@ Queue/status/count do not mutate the document. A real completion refreshes stagi
 without accepting it; graceful app close waits admission/drain before pending
 cancellation and database close.
 
-This is a narrow Project queue UI. The app-level all-project manager, terminal
-rows, pending-item controls, retry/remove/prune, progress and admission while GPU
-is busy remain separate work. Earlier repository-only retry/cleanup evidence does
+At this Generate checkpoint the UI was Project-local; the subsequent Queue
+Manager checkpoint below adds global terminal history and user actions. Progress
+and admission while GPU is busy remain separate work. Earlier repository-only retry/cleanup evidence does
 not prove those user actions exist. Runtime qualification is required; the release
 installer and full model/conditioning paths remain unfinished.
+
+## Production Queue Manager checkpoint
+
+[Queue Manager actions](../engineering/phase-2b-queue-manager-research.md) expose
+an app-level dialog from Home or Project with all five SQLite statuses, global
+counts, 50-row newest pages, frozen prompt/model/sampling details, safe errors
+and real timestamps. Indexed Project names are navigation labels, not frozen
+provenance. Missing/corrupt frozen details do not hide terminal cleanup.
+
+Pending Cancel uses the reviewed status sequence and refuses a concurrent claim;
+running Cancel waits confirmed worker exit, with Retry cancel available when that
+exit remains unconfirmed. Retry requires the original Project/document to be
+open and the engine idle. It requalifies the exact checkpoint and worker, copies
+bounded verified frozen target bytes, runs staging preflight before publication,
+and creates a separate fresh attempt/session without discarding older results.
+Project close uses the same admission gate. Lost commit acknowledgement resolves
+only from an exact committed row; unknown outcomes retain input and block dispatch.
+
+Delete and the three confirmed Clear actions remove terminal operational history
+and private input copies; they preserve published candidate PNGs, receipt,
+actual-seed cursor, accepted layers, dirty/Undo and `.igs`. Clear sweeps the chosen
+statuses at execution time, including newly terminal rows, and skips reserved
+publication receipts. Its UI states this and reports the removed count.
+History and terminal cleanup remain available when runtime installation is absent.
+
+Progress events/preview thumbnails, output navigation for unavailable sessions,
+busy-engine admission, full conditioning/Anima and the release installer remain
+open. The native action checks use a controlled qualified peer; they do not prove
+CUDA model loading or a packaged release.
 
 ## Acceptance Criteria
 

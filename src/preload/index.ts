@@ -20,6 +20,7 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
+import { isGenerationQueuePage } from '../shared/projects/generation-queue-manager.js'
 import {
   isProjectDocumentId,
   isProjectGenerateResult,
@@ -602,6 +603,8 @@ const api: StudioApi = {
         [tabId, documentId, expectedJobId],
         isProjectGenerationActionState,
       ),
+    cancelGenerationJob: (review) =>
+      invokeProject(ipcChannels.projects.cancelGenerationJob, [review], isVoid),
     cancelImport: (importId) =>
       invokeProject(ipcChannels.projects.cancelImport, [importId], isVoid),
     clearHistory: (tabId) =>
@@ -609,6 +612,8 @@ const api: StudioApi = {
     close: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.close, [tabId, confirmCloseImpact], isVoid),
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
+    deleteGenerationJob: (review) =>
+      invokeProject(ipcChannels.projects.deleteGenerationJob, [review], isVoid),
     discardAndClose: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.discardAndClose, [tabId, confirmCloseImpact], isVoid),
     finishImport: (importId, choice) =>
@@ -621,6 +626,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.generate, [tabId, options], isProjectGenerateResult),
     getCloseImpact: (tabId) =>
       invokeProject(ipcChannels.projects.getCloseImpact, [tabId], isProjectCloseImpact),
+    getGenerationQueue: (cursor = null) =>
+      invokeProject(ipcChannels.projects.getGenerationQueue, [cursor], isGenerationQueuePage),
     getGenerationState: (tabId) =>
       invokeProject(
         ipcChannels.projects.getGenerationState,
@@ -691,6 +698,13 @@ const api: StudioApi = {
       return () => ipcRenderer.removeListener(ipcChannels.projects.tabsChanged, handler)
     },
     open: (projectId) => invokeProject(ipcChannels.projects.open, [projectId], isProjectOpenResult),
+    pruneGenerationQueue: (statuses) =>
+      invokeProject(
+        ipcChannels.projects.pruneGenerationQueue,
+        [statuses],
+        (value): value is number =>
+          typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
+      ),
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
     redo: (tabId) => invokeProject(ipcChannels.projects.redo, [tabId], isProjectTab),
@@ -702,6 +716,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.removeGenerationLora, [tabId, identity], isProjectTab),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
+    retryGenerationJob: (review) =>
+      invokeProject(ipcChannels.projects.retryGenerationJob, [review], isVoid),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
     saveGenerationCandidateImage: (tabId, candidateId) =>
       invokeProject(
