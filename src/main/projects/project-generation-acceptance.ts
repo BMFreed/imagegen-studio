@@ -12,6 +12,10 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
+  GenerationAcceptanceHandoff,
+  GenerationAcceptanceJournalRepository,
+} from './generation-acceptance-journal.js'
+import type {
   GenerationStagingRepository,
   VerifiedGenerationCandidate,
 } from './generation-staging.js'
@@ -46,6 +50,7 @@ export interface ProjectGenerationAcceptanceOptions {
     getOpenDocument: (tabId: string) => ProjectGenerationAcceptanceDocument | null
   }
   gate: ProjectGenerationOperationGate
+  journal: Pick<GenerationAcceptanceJournalRepository, 'abandon' | 'complete' | 'read' | 'record'>
   now?: () => string
   orchestrator: {
     fenceProjectGeneration: (tabId: string) => Promise<void>
@@ -67,12 +72,6 @@ export type ProjectGenerationAcceptanceResult = {
 }
 
 type RasterLayer = IgsProjectDocumentV1['layers'][number]
-
-interface PendingHandoff {
-  candidateIdsKey: string
-  documentId: string
-  sessionIds: string[]
-}
 
 export class ProjectGenerationAcceptanceError extends Error {
   constructor(
@@ -96,13 +95,31 @@ export class ProjectGenerationAcceptanceError extends Error {
   }
 }
 
+function acceptedLayers(document: IgsProjectDocumentV1): Map<string, RasterLayer> {
+  const accepted = new Map<string, RasterLayer>()
+  for (const layer of document.layers) {
+    const candidateId = layer.generationProvenance?.executionResultContext.candidateId
+    if (!candidateId) {
+      continue
+    }
+    if (accepted.has(candidateId)) {
+      throw new ProjectGenerationAcceptanceError(
+        'ACCEPTANCE_CONFLICT',
+        'The Project contains duplicate accepted result identities.',
+      )
+    }
+    accepted.set(candidateId, layer)
+  }
+  return accepted
+}
+
 /**
  * Main-only Raster acceptance. The operation gate must also guard Project close; the temporary
  * generation fence prevents new work while the exact candidate set is handed to the shadow. This
  * first slice rejects unfinished jobs rather than canceling them without confirmation.
  */
 export class ProjectGenerationAcceptance {
-  private readonly pending = new Map<string, PendingHandoff>()
+  private readonly pending = new Map<string, GenerationAcceptanceHandoff>()
   private readonly unresolved = new Set<string>()
 
   constructor(private readonly options: ProjectGenerationAcceptanceOptions) {}
@@ -121,14 +138,29 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
-        await this.requireNoUnfinishedJobs(tabId)
         const initial = structuredClone(owner.document)
         this.requireSameDocument(tabId, owner, initial.documentId)
         const selectedKey = candidateKey(candidateIds)
-        const pending = this.pending.get(tabId)
+        retainFence = true
+        let pending = await this.loadHandoff(tabId, initial.documentId)
+        retainFence = pending !== undefined || this.unresolved.has(tabId)
+        await this.requireNoUnfinishedJobs(tabId)
+        if (pending) {
+          const proof = handoffProof(initial, pending)
+          if (pending.projectPath !== owner.filePath || proof === 'changed') {
+            throw handoffRecoveryError()
+          }
+          if (proof === 'absent') {
+            await this.options.journal.abandon(pending)
+            this.pending.delete(tabId)
+            pending = undefined
+            retainFence = false
+          }
+        }
+
         if (
           pending &&
-          (pending.documentId !== initial.documentId || pending.candidateIdsKey !== selectedKey)
+          candidateKey(pending.acceptedLayers.map(candidateIdFromLayer)) !== selectedKey
         ) {
           throw new ProjectGenerationAcceptanceError(
             'ACCEPTANCE_HANDOFF_PENDING',
@@ -191,7 +223,11 @@ export class ProjectGenerationAcceptance {
               initial.documentRevision,
               true,
             )
-            await this.options.staging.discardSessions(tabId, pending.sessionIds)
+            if (handoffProof(owner.document, pending) !== 'complete') {
+              throw handoffRecoveryError()
+            }
+            await this.options.journal.complete(pending)
+            await this.options.staging.discardSessions(tabId, pending.stagingSessionIds)
             this.pending.delete(tabId)
             retainFence = false
           }
@@ -284,16 +320,23 @@ export class ProjectGenerationAcceptance {
         const projected = { ...initial, layers: [...layers, ...initial.layers] }
         preflightProjectedDocument(projected)
         const sessionIds = [...new Set(owned.map((candidate) => candidate.stagingSessionId))]
+        const handoff: GenerationAcceptanceHandoff = {
+          acceptedLayers: structuredClone(layers),
+          documentId: initial.documentId,
+          localProjectKey: tabId,
+          operationId: randomUUID(),
+          projectPath: owner.filePath,
+          stagingSessionIds: sessionIds,
+        }
+        // Keep the in-process intent even if SQLite reports an uncertain commit. Recovery can
+        // inspect/abandon a pre-apply intent, but cannot guess whether its write reached disk.
+        this.pending.set(tabId, handoff)
+        retainFence = true
+        await this.options.journal.record(handoff)
         const applied = await owner.applyDocument(projected, sources, {
           expectedDocumentRevision: initial.documentRevision,
         })
         const after = owner.document
-        this.pending.set(tabId, {
-          candidateIdsKey: selectedKey,
-          documentId: initial.documentId,
-          sessionIds,
-        })
-        retainFence = true
         if (
           after.documentRevision !== applied.documentRevision ||
           !sameAcceptedLayers(after, layers)
@@ -305,6 +348,17 @@ export class ProjectGenerationAcceptance {
         }
         await this.requireDurable(owner, tabId, initial.documentId, applied.documentRevision, false)
         await this.options.afterDurableShadow?.()
+        this.requireSameDocument(tabId, owner, initial.documentId)
+        if (owner.document.documentRevision !== applied.documentRevision) {
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_SHADOW_UNCONFIRMED',
+            'The Project changed after its accepted revision reached recovery storage.',
+          )
+        }
+        if (handoffProof(owner.document, handoff) !== 'complete') {
+          throw handoffRecoveryError()
+        }
+        await this.options.journal.complete(handoff)
         await this.options.staging.discardSessions(tabId, sessionIds)
         this.pending.delete(tabId)
         retainFence = false
@@ -354,27 +408,53 @@ export class ProjectGenerationAcceptance {
         retainFence = true
         const document = structuredClone(owner.document)
         this.requireSameDocument(tabId, owner, document.documentId)
+        const pending = await this.loadHandoff(tabId, document.documentId)
+        if (pending) {
+          if (pending.projectPath !== owner.filePath) {
+            throw handoffRecoveryError()
+          }
+          const proof = handoffProof(document, pending)
+          if (proof === 'absent') {
+            // A durable intent is not a committed Add. This includes a crash before apply and a
+            // full Undo: keep every candidate and permit a later explicit Add.
+            await this.options.journal.abandon(pending)
+            this.pending.delete(tabId)
+            retainFence = false
+            return 'none'
+          }
+          if (proof !== 'complete') {
+            throw handoffRecoveryError()
+          }
+          await this.requireNoUnfinishedJobs(tabId)
+          await this.requireDurable(
+            owner,
+            tabId,
+            document.documentId,
+            document.documentRevision,
+            true,
+          )
+          if (handoffProof(owner.document, pending) !== 'complete') {
+            throw handoffRecoveryError()
+          }
+          await this.options.journal.complete(pending)
+          await this.options.staging.discardSessions(tabId, pending.stagingSessionIds)
+          this.pending.delete(tabId)
+          retainFence = false
+          return 'cleaned'
+        }
         const accepted = acceptedLayers(document)
         const staged = await this.options.staging.listVerifiedCandidates(tabId)
-        const pending = this.pending.get(tabId)
         const overlap = staged.some(
           (candidate) =>
             candidate.documentId === document.documentId &&
             candidate.projectPath === owner.filePath &&
             accepted.has(candidate.candidateId),
         )
-        if (!overlap && !pending) {
+        if (!overlap) {
           retainFence = false
           return 'none'
         }
         await this.requireNoUnfinishedJobs(tabId)
-        if (!overlap) {
-          // The user removed the not-yet-consumed accepted layers. Keep the candidates rather
-          // than discarding work that is no longer represented by the Project document.
-          this.pending.delete(tabId)
-          retainFence = false
-          return 'none'
-        }
         await this.requireDurable(
           owner,
           tabId,
@@ -382,23 +462,20 @@ export class ProjectGenerationAcceptance {
           document.documentRevision,
           true,
         )
-        const sessionIds =
-          pending?.documentId === document.documentId
-            ? pending.sessionIds
-            : [
-                ...new Set(
-                  staged
-                    .filter(
-                      (candidate) =>
-                        candidate.documentId === document.documentId &&
-                        candidate.projectPath === owner.filePath &&
-                        accepted.has(candidate.candidateId),
-                    )
-                    .map((candidate) => candidate.stagingSessionId),
-                ),
-              ]
-        // The process-local capture of unselected sessions is gone after a crash. Without a
-        // durable acceptance journal, deleting any other session could erase a newer result.
+        const sessionIds = [
+          ...new Set(
+            staged
+              .filter(
+                (candidate) =>
+                  candidate.documentId === document.documentId &&
+                  candidate.projectPath === owner.filePath &&
+                  accepted.has(candidate.candidateId),
+              )
+              .map((candidate) => candidate.stagingSessionId),
+          ),
+        ]
+        // Legacy Add operations have no journal. Only accepted-candidate sessions are proven;
+        // deleting other sessions could erase work that never belonged to that operation.
         await this.options.staging.discardSessions(tabId, sessionIds)
         this.pending.delete(tabId)
         retainFence = false
@@ -414,6 +491,25 @@ export class ProjectGenerationAcceptance {
         }
       }
     })
+  }
+
+  private async loadHandoff(
+    tabId: string,
+    documentId: string,
+  ): Promise<GenerationAcceptanceHandoff | undefined> {
+    const durable = await this.options.journal.read(tabId, documentId)
+    const local = this.pending.get(tabId)
+    if (durable && local && durable.operationId !== local.operationId) {
+      throw handoffRecoveryError()
+    }
+    const handoff = durable ?? local
+    if (handoff) {
+      if (handoff.documentId !== documentId) {
+        throw handoffRecoveryError()
+      }
+      this.pending.set(tabId, handoff)
+    }
+    return handoff
   }
 
   private requireDocument(tabId: string): ProjectGenerationAcceptanceDocument {
@@ -548,24 +644,6 @@ function candidateKey(candidateIds: readonly string[]): string {
   return [...candidateIds].sort().join(':')
 }
 
-function acceptedLayers(document: IgsProjectDocumentV1): Map<string, RasterLayer> {
-  const accepted = new Map<string, RasterLayer>()
-  for (const layer of document.layers) {
-    const candidateId = layer.generationProvenance?.executionResultContext.candidateId
-    if (!candidateId) {
-      continue
-    }
-    if (accepted.has(candidateId)) {
-      throw new ProjectGenerationAcceptanceError(
-        'ACCEPTANCE_CONFLICT',
-        'The Project contains duplicate accepted result identities.',
-      )
-    }
-    accepted.set(candidateId, layer)
-  }
-  return accepted
-}
-
 function uniqueLayerId(document: IgsProjectDocumentV1, prepared: readonly RasterLayer[]): string {
   let id = randomUUID()
   while (
@@ -617,11 +695,42 @@ function sameAcceptedLayers(
   return expected.every((layer) => {
     const current = document.layers.find((candidate) => candidate.id === layer.id)
     return (
-      current?.generationProvenance?.executionResultContext.candidateId ===
-        layer.generationProvenance?.executionResultContext.candidateId &&
-      current?.asset.sha256 === layer.asset.sha256
+      current !== undefined &&
+      current.kind === layer.kind &&
+      isDeepStrictEqual(current.asset, layer.asset) &&
+      isDeepStrictEqual(current.sourceIccProfile, layer.sourceIccProfile) &&
+      isDeepStrictEqual(current.generationProvenance, layer.generationProvenance)
     )
   })
+}
+
+function candidateIdFromLayer(layer: RasterLayer): string {
+  return layer.generationProvenance!.executionResultContext.candidateId
+}
+
+function handoffProof(
+  document: IgsProjectDocumentV1,
+  handoff: GenerationAcceptanceHandoff,
+): 'absent' | 'changed' | 'complete' {
+  if (sameAcceptedLayers(document, handoff.acceptedLayers)) {
+    return 'complete'
+  }
+  const represented = handoff.acceptedLayers.some((expected) =>
+    document.layers.some(
+      (current) =>
+        current.id === expected.id ||
+        current.generationProvenance?.executionResultContext.candidateId ===
+          candidateIdFromLayer(expected),
+    ),
+  )
+  return represented ? 'changed' : 'absent'
+}
+
+function handoffRecoveryError(): ProjectGenerationAcceptanceError {
+  return new ProjectGenerationAcceptanceError(
+    'ACCEPTANCE_RECOVERY_REQUIRED',
+    'The interrupted Add is only partially represented or its accepted result identity changed. Keep temporary results and repair recovery before adding more.',
+  )
 }
 
 /** Reject package limits that the new layer references can exceed before the document is edited. */

@@ -34,6 +34,10 @@ import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
+import {
+  GenerationAcceptanceJournalError,
+  GenerationAcceptanceJournalRepository,
+} from './projects/generation-acceptance-journal.js'
 import { createGenerationAppContext } from './projects/generation-app-context.js'
 import { GenerationAppShutdown } from './projects/generation-app-shutdown.js'
 import { GenerationDispatchCoordinator } from './projects/generation-dispatch-coordinator.js'
@@ -336,6 +340,7 @@ if (!gotInstanceLock) {
               getOpenDocument: (tabId) => projectService.getOpenDocumentForAcceptance(tabId),
             },
             gate: projectGenerationGate,
+            journal: new GenerationAcceptanceJournalRepository(database.db),
             orchestrator: recoveredGeneration.orchestrator,
             queue: recoveredGeneration.queue,
             staging: recoveredGeneration.staging,
@@ -798,6 +803,7 @@ if (!gotInstanceLock) {
               error instanceof GenerationProcessorError ||
               error instanceof GenerationQueueError ||
               error instanceof GenerationStagingError ||
+              error instanceof GenerationAcceptanceJournalError ||
               error instanceof ModelServiceError ||
               error instanceof ProjectAutosaveError ||
               error instanceof ProjectSessionError ||

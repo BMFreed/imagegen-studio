@@ -313,15 +313,33 @@ Candidates from another document at the same path remain previewable and
 exportable but cannot be added. See the
 [Raster acceptance evidence](../../../engineering/phase-2b-raster-acceptance-research.md).
 
-This is a partial implementation of the contract above. Add currently rejects
-while any job for that Project is unfinished; the early-accept confirmation and
-cancellation flow remains open. User-facing Undo/Redo, Smart Patch variants,
-derived global history and storage quota/cleanup policy also remain open. If a
-process crashes after shadow commit but before staging tombstones, restart
-reconciliation removes sessions containing accepted candidates. It retains
-other temporary sessions because no durable acceptance journal yet identifies
-which unselected candidates belonged to that interrupted Add. This favors
-preserving work over the normal same-process discard rule.
+At that earlier checkpoint, Add rejected unfinished jobs and crash recovery
+could remove only sessions containing already accepted candidates. Unchecked
+sessions were preserved because their membership in the interrupted Add was
+only known in memory. The journal checkpoint below closes this cleanup gap;
+the conservative rule still applies to older operations without a journal.
+
+## Production acceptance journal checkpoint
+
+Before Add mutates the document, main durably records its operation identity,
+local Project key/path and `documentId`, expected accepted layer assets and
+immutable provenance, and the exact captured staging session set. The intent
+alone never authorizes deleting a candidate. Recovery first proves every
+recorded accepted layer in a synced shadow or the exact saved `.igs`.
+
+After proof, one SQLite transaction tombstones the captured selected and
+unchecked sessions and removes the journal entry; image cleanup follows and
+can resume after restart. Newer sessions and a different document at the same
+path remain intact. If Add never happened or was fully undone, the intent is
+abandoned and all candidate pixels remain. Partial or changed immutable
+lineage preserves pixels and reports recovery required. Ordinary layer
+name, visibility or placement edits preserve accepted lineage.
+See [journal evidence](../../../engineering/phase-2b-acceptance-journal-research.md).
+
+Add still rejects while any job for that Project is unfinished; early-accept
+confirmation/cancellation, Smart Patch variants, derived global history and
+storage quota policy remain open. Project-local Undo/Redo is connected, but
+ordinary Generate and the complete release inference pipeline are still absent.
 
 ## Vue Prototype Coverage
 

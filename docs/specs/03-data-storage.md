@@ -23,6 +23,8 @@ SQLite — источник истины для:
 - Queue Manager runtime/history records: queue items, batches, status, progress, errors and serialized worker job payloads;
 - project-scoped operational last-actual-seed cursor, updated on validated
   completed outputs independently of queue and staging retention;
+- pending acceptance intents with exact captured staging sessions and expected
+  immutable accepted layers, independently verified against shadow/`.igs` before cleanup;
 - presets;
 - references на файлы изображений, масок и моделей.
 
@@ -353,6 +355,13 @@ Rules:
   provenance there. Only after that handoff is durable may their staging
   records/assets be removed. The main `.igs` receives accepted state on
   explicit Save; failed handoff leaves the candidate recoverable;
+- before Raster Add mutates the document, a durable SQLite journal captures
+  operation/local Project/document identity, expected layer assets/provenance
+  and exact staging sessions. Intent without proven durable adoption cannot
+  delete candidates. After proof, one transaction records captured-session
+  tombstones and removes the intent; restart finishes file cleanup. Newer
+  sessions and another document at the same local path are preserved. Older
+  no-journal handoffs clean only independently proven accepted sessions;
 - Save of an otherwise dirty Project clears only its document shadow, never
   unaccepted staging recovery. A clean saved Project with valid completed
   candidates can therefore offer recovery after a crash;

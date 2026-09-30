@@ -19,6 +19,15 @@ export interface CheckpointPredictionOverride {
   updated_at: string
 }
 
+export interface GenerationAcceptanceJournal {
+  canonical_project_path: string
+  document_id: string
+  local_project_key: string
+  operation_id: string
+  payload_json: string
+  recorded_at: string
+}
+
 export interface GenerationCandidateReceipt {
   actual_seed: number
   candidate_id: string
@@ -192,6 +201,7 @@ export interface SchemaMigrations {
 export interface DB {
   app_metadata: AppMetadata
   checkpoint_prediction_override: CheckpointPredictionOverride
+  generation_acceptance_journal: GenerationAcceptanceJournal
   generation_candidate_receipt: GenerationCandidateReceipt
   generation_queue_item: GenerationQueueItem
   generation_seed_cursor: GenerationSeedCursor

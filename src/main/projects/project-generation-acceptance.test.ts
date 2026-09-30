@@ -11,6 +11,8 @@ import { test } from 'node:test'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { ProjectGenerationAcceptanceOptions } from './project-generation-acceptance.js'
 
+import { openAppDatabase } from '../db/database.js'
+import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
@@ -20,6 +22,7 @@ import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { acceptedOutputPngFixture } from './test-fixtures/accepted-provenance.js'
 
+const migrationsDir = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 const bbox = { height: 8, width: 8, x: -24, y: 48 }
 const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex')
@@ -134,14 +137,18 @@ async function withFixture(
   run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-acceptance-'))
+  const fixture = await createFixture(root)
   try {
-    await run(await createFixture(root))
+    await run(fixture)
   } finally {
+    await fixture.closeDatabase()
     await rm(root, { force: true, recursive: true })
   }
 }
 
 async function createFixture(root: string) {
+  let database = openAppDatabase(root, migrationsDir)
+  let journal = new GenerationAcceptanceJournalRepository(database.db)
   const roots = { placeholdersDir, scratchDir: path.join(root, 'scratch') }
   const session = await ProjectSession.create(path.join(root, 'Project.igs'), 'Project', roots)
   const projectPath = session.filePath
@@ -178,6 +185,7 @@ async function createFixture(root: string) {
   const options: ProjectGenerationAcceptanceOptions = {
     documents: { getOpenDocument: (key) => (key === tabId ? owner : null) },
     gate,
+    journal,
     now: () => '2026-09-29T10:01:00.000Z',
     orchestrator: {
       fenceProjectGeneration: async () => {
@@ -219,18 +227,31 @@ async function createFixture(root: string) {
     get candidates() {
       return candidates
     },
+    closeDatabase: () => database.close(),
+    get db() {
+      return database.db
+    },
     discarded,
     get fenced() {
       return fenced
     },
     first,
     gate,
+    get journal() {
+      return journal
+    },
     options,
     output,
     get owner() {
       return owner
     },
     projectPath,
+    async restartJournal() {
+      await database.close()
+      database = openAppDatabase(root, migrationsDir)
+      journal = new GenerationAcceptanceJournalRepository(database.db)
+      options.journal = journal
+    },
     roots,
     second,
     setCandidates(value: VerifiedGenerationCandidate[]) {
@@ -793,15 +814,479 @@ test('recovered shadow can finish tombstones before new Generate admission', asy
       fixture.output,
       3,
     )
-    fixture.setCandidates([...fixture.candidates, later])
+    const orphan = await candidate(
+      fixture.projectPath,
+      randomUUID(),
+      randomUUID(),
+      path.join(path.dirname(fixture.projectPath), 'orphan-recovery.png'),
+      fixture.output,
+      4,
+    )
+    fixture.setCandidates([...fixture.candidates, later, orphan])
+    await fixture.restartJournal()
     const recoveredAcceptance = new ProjectGenerationAcceptance(fixture.options)
     assert.equal(await recoveredAcceptance.reconcile(fixture.tabId), 'cleaned')
+    assert.deepEqual(
+      fixture.candidates.map((item) => item.candidateId),
+      [later.candidateId, orphan.candidateId],
+    )
+    assert.deepEqual(fixture.discarded, [
+      [fixture.first.stagingSessionId, fixture.second.stagingSessionId],
+    ])
+    assert.equal(restarted.document.layers.length, 1)
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('journal write failure prevents Add mutation and preserves every temporary result', async () => {
+  await withFixture(async (fixture) => {
+    const before = structuredClone(fixture.owner!.document)
+    const packageBefore = await readFile(fixture.projectPath)
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      journal: {
+        abandon: (handoff) => fixture.journal.abandon(handoff),
+        complete: (handoff) => fixture.journal.complete(handoff),
+        read: (key, documentId) => fixture.journal.read(key, documentId),
+        record: async () => {
+          throw new Error('journal write interrupted')
+        },
+      },
+    })
+    const failure = await acceptance
+      .accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds)
+      .then(
+        () => null,
+        (cause: unknown) => cause,
+      )
+    assert.deepEqual(fixture.owner!.document, before)
+    assert.ok(failure instanceof Error)
+    assert.match(failure.message, /journal write interrupted/)
+    assert.equal(fixture.owner!.canUndo, false)
+    assert.deepEqual(await readFile(fixture.projectPath), packageBefore)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.candidates.length, 2)
+    assert.equal(acceptance.hasPendingHandoff(fixture.tabId), true)
+    assert.equal(fixture.fenced, true)
+    assert.equal(await acceptance.reconcile(fixture.tabId), 'none')
+    assert.equal(fixture.fenced, false)
+    assert.equal(fixture.candidates.length, 2)
+  })
+})
+
+test('durable intent before document apply is abandoned after restart without erasing candidates', async () => {
+  await withFixture(async (fixture) => {
+    const owner = fixture.owner!
+    const interruptedOwner = {
+      applyDocument: async () => {
+        throw new Error('process stopped before document apply')
+      },
+      get dirty() {
+        return owner.dirty
+      },
+      get document() {
+        return owner.document
+      },
+      get filePath() {
+        return owner.filePath
+      },
+      flush: () => owner.flush(),
+    }
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      documents: { getOpenDocument: () => interruptedOwner },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /process stopped before document apply/,
+    )
+    assert.ok(await fixture.journal.read(fixture.tabId, owner.document.documentId))
+    assert.equal(owner.document.layers.length, 0)
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    assert.equal(await recovered.reconcile(fixture.tabId), 'none')
+    assert.equal(await fixture.journal.read(fixture.tabId, owner.document.documentId), null)
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('a pre-apply failure permits a different explicit Add without reopening Project', async () => {
+  await withFixture(async (fixture) => {
+    const owner = fixture.owner!
+    let failApply = true
+    const controlledOwner = {
+      applyDocument: async (...args: Parameters<typeof owner.applyDocument>) => {
+        if (failApply) {
+          throw new Error('document apply unavailable')
+        }
+        return await owner.applyDocument(...args)
+      },
+      get dirty() {
+        return owner.dirty
+      },
+      get document() {
+        return owner.document
+      },
+      get filePath() {
+        return owner.filePath
+      },
+      flush: () => owner.flush(),
+    }
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      documents: { getOpenDocument: () => controlledOwner },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /document apply unavailable/,
+    )
+    assert.equal(owner.document.layers.length, 0)
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    failApply = false
+    assert.equal(
+      (
+        await acceptance.accept(
+          fixture.tabId,
+          [fixture.second.candidateId],
+          null,
+          fixture.availableIds,
+        )
+      ).kind,
+      'accepted',
+    )
+    assert.equal(owner.document.layers.length, 1)
+    assert.equal(
+      owner.document.layers[0].generationProvenance!.executionResultContext.candidateId,
+      fixture.second.candidateId,
+    )
+    assert.equal(fixture.fenced, false)
+    assert.equal(acceptance.hasPendingHandoff(fixture.tabId), false)
+  })
+})
+
+test('full Undo of interrupted Add abandons its intent and retains candidate bytes', async () => {
+  await withFixture(async (fixture) => {
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted Add')
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(
+        fixture.tabId,
+        [fixture.first.candidateId, fixture.second.candidateId],
+        null,
+        fixture.availableIds,
+      ),
+      /interrupted Add/,
+    )
+    await fixture.owner!.undo()
+    assert.equal(fixture.owner!.document.layers.length, 0)
+    assert.equal(fixture.owner!.canRedo, true)
+    assert.equal(await acceptance.reconcile(fixture.tabId), 'none')
+    assert.equal(
+      await fixture.journal.read(fixture.tabId, fixture.owner!.document.documentId),
+      null,
+    )
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(await readFile(fixture.first.assetPath), fixture.output)
+    assert.deepEqual(await readFile(fixture.second.assetPath), fixture.output)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('partial represented Add keeps journal and all candidates behind the recovery fence', async () => {
+  await withFixture(async (fixture) => {
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted Add')
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(
+        fixture.tabId,
+        [fixture.first.candidateId, fixture.second.candidateId],
+        null,
+        fixture.availableIds,
+      ),
+      /interrupted Add/,
+    )
+    const changed = structuredClone(fixture.owner!.document)
+    changed.layers = changed.layers.slice(0, 1)
+    await fixture.owner!.applyDocument(
+      changed,
+      {},
+      {
+        expectedDocumentRevision: changed.documentRevision,
+      },
+    )
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(recovered.reconcile(fixture.tabId), {
+      code: 'ACCEPTANCE_RECOVERY_REQUIRED',
+    })
+    assert.ok(await fixture.journal.read(fixture.tabId, changed.documentId))
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, true)
+    assert.equal(recovered.hasPendingHandoff(fixture.tabId), true)
+  })
+})
+
+test('changed immutable provenance cannot prove Add even with the same candidate and image hash', async () => {
+  await withFixture(async (fixture) => {
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted Add')
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /interrupted Add/,
+    )
+    const changed = structuredClone(fixture.owner!.document)
+    const originalCandidateId =
+      changed.layers[0].generationProvenance!.executionResultContext.candidateId
+    const originalHash = changed.layers[0].asset.sha256
+    changed.layers[0].generationProvenance!.generationConfiguration.positivePrompt.text =
+      'Changed lineage'
+    await fixture.owner!.applyDocument(
+      changed,
+      {},
+      {
+        expectedDocumentRevision: changed.documentRevision,
+      },
+    )
+    assert.equal(
+      changed.layers[0].generationProvenance!.executionResultContext.candidateId,
+      originalCandidateId,
+    )
+    assert.equal(changed.layers[0].asset.sha256, originalHash)
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(recovered.reconcile(fixture.tabId), {
+      code: 'ACCEPTANCE_RECOVERY_REQUIRED',
+    })
+    assert.ok(await fixture.journal.read(fixture.tabId, changed.documentId))
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, true)
+  })
+})
+
+test('ordinary name, visibility and transform edits preserve proof of interrupted Add', async () => {
+  await withFixture(async (fixture) => {
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted Add')
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /interrupted Add/,
+    )
+    const changed = structuredClone(fixture.owner!.document)
+    changed.layers[0].name = 'Moved accepted result'
+    changed.layers[0].visible = false
+    changed.layers[0].opacity = 0.4
+    changed.layers[0].transform.x = 200
+    await fixture.owner!.applyDocument(
+      changed,
+      {},
+      {
+        expectedDocumentRevision: changed.documentRevision,
+      },
+    )
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    assert.equal(await recovered.reconcile(fixture.tabId), 'cleaned')
+    assert.equal(fixture.owner!.document.layers[0].name, 'Moved accepted result')
+    assert.equal(fixture.owner!.document.layers[0].transform.x, 200)
+    assert.equal(fixture.owner!.document.layers[0].visible, false)
+    assert.equal(fixture.candidates.length, 0)
+    assert.equal(await fixture.journal.read(fixture.tabId, changed.documentId), null)
+    assert.equal(fixture.fenced, false)
+    assert.equal(await recovered.reconcile(fixture.tabId), 'none')
+  })
+})
+
+test('legacy accepted shadow without a journal preserves unchecked and later sessions', async () => {
+  await withFixture(async (fixture) => {
+    const interrupted = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted historical Add')
+      },
+    })
+    await assert.rejects(
+      interrupted.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /interrupted historical Add/,
+    )
+    const handoff = await fixture.journal.read(fixture.tabId, fixture.owner!.document.documentId)
+    assert.ok(handoff)
+    // Model an accepted shadow written by the pre-journal release, without an operation intent.
+    await fixture.journal.abandon(handoff)
+    const later = await candidate(
+      fixture.projectPath,
+      fixture.owner!.document.documentId,
+      fixture.owner!.document.documentRevision,
+      path.join(path.dirname(fixture.projectPath), 'legacy-later.png'),
+      fixture.output,
+      3,
+    )
+    fixture.setCandidates([...fixture.candidates, later])
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    assert.equal(await recovered.reconcile(fixture.tabId), 'cleaned')
     assert.deepEqual(
       fixture.candidates.map((item) => item.candidateId),
       [fixture.second.candidateId, later.candidateId],
     )
     assert.deepEqual(fixture.discarded, [[fixture.first.stagingSessionId]])
-    assert.equal(restarted.document.layers.length, 1)
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('committed journal completion can retry deferred staging cleanup without another Add', async () => {
+  await withFixture(async (fixture) => {
+    let firstCleanup = true
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      staging: {
+        ...fixture.options.staging,
+        discardSessions: async (key, sessions) => {
+          if (firstCleanup) {
+            firstCleanup = false
+            throw new Error('staging cleanup unavailable after tombstones')
+          }
+          return await fixture.options.staging.discardSessions(key, sessions)
+        },
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /staging cleanup unavailable/,
+    )
+    assert.equal(
+      await fixture.journal.read(fixture.tabId, fixture.owner!.document.documentId),
+      null,
+    )
+    assert.equal(fixture.owner!.document.layers.length, 1)
+    assert.equal(fixture.fenced, true)
+    assert.equal(await acceptance.reconcile(fixture.tabId), 'cleaned')
+    assert.equal(fixture.owner!.document.layers.length, 1)
+    assert.equal(fixture.candidates.length, 0)
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('a corrupt stored journal fences the coordinator without consuming candidate bytes', async () => {
+  await withFixture(async (fixture) => {
+    const interrupted = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted Add')
+      },
+    })
+    await assert.rejects(
+      interrupted.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /interrupted Add/,
+    )
+    await fixture.db
+      .updateTable('generation_acceptance_journal')
+      .set({ payload_json: '{corrupt stored journal' })
+      .where('local_project_key', '=', fixture.tabId)
+      .execute()
+    await fixture.restartJournal()
+    const recovered = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(recovered.reconcile(fixture.tabId), {
+      code: 'ACCEPTANCE_JOURNAL_INVALID',
+    })
+    assert.equal(fixture.fenced, true)
+    assert.equal(recovered.hasPendingHandoff(fixture.tabId), true)
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(await readFile(fixture.first.assetPath), fixture.output)
+    assert.deepEqual(fixture.discarded, [])
+  })
+})
+
+test('same-path replacement cannot consume the old document journal or its candidates', async () => {
+  await withFixture(async (fixture) => {
+    const originalDocumentId = fixture.owner!.document.documentId
+    const interrupted = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        throw new Error('interrupted old document Add')
+      },
+    })
+    await assert.rejects(
+      interrupted.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      /interrupted old document Add/,
+    )
+    const replacement = await ProjectSession.create(
+      path.join(path.dirname(fixture.projectPath), 'Replacement.igs'),
+      'Replacement',
+      fixture.roots,
+    )
+    await writeFile(fixture.projectPath, await readFile(replacement.filePath))
+    // Opening a replacement first resolves the stale old shadow explicitly. This decision
+    // must leave generation staging and its separate acceptance journal intact.
+    const replaced = await ProjectAutosaveCoordinator.discardRecovery(
+      fixture.projectPath,
+      fixture.roots,
+      fixture.shadow,
+      { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+    )
+    fixture.setOwner(replaced)
+    await fixture.restartJournal()
+    const current = new ProjectGenerationAcceptance(fixture.options)
+    assert.equal(await current.reconcile(fixture.tabId), 'none')
+    assert.equal(replaced.document.layers.length, 0)
+    assert.notEqual(replaced.document.documentId, originalDocumentId)
+    assert.ok(await fixture.journal.read(fixture.tabId, originalDocumentId))
+    assert.equal(await fixture.journal.read(fixture.tabId, replaced.document.documentId), null)
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, false)
+  })
+})
+
+test('an edit after durable proof is rechecked before journal tombstones commit', async () => {
+  await withFixture(async (fixture) => {
+    const acceptance = new ProjectGenerationAcceptance({
+      ...fixture.options,
+      afterDurableShadow: async () => {
+        const changed = structuredClone(fixture.owner!.document)
+        changed.title = 'Edit after accepted shadow proof'
+        await fixture.owner!.applyDocument(
+          changed,
+          {},
+          {
+            expectedDocumentRevision: changed.documentRevision,
+          },
+        )
+      },
+    })
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds),
+      { code: 'ACCEPTANCE_SHADOW_UNCONFIRMED' },
+    )
+    assert.equal(fixture.owner!.document.title, 'Edit after accepted shadow proof')
+    assert.ok(await fixture.journal.read(fixture.tabId, fixture.owner!.document.documentId))
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(fixture.fenced, true)
+    assert.equal(await acceptance.reconcile(fixture.tabId), 'cleaned')
+    assert.equal(fixture.candidates.length, 0)
+    assert.equal(fixture.owner!.document.title, 'Edit after accepted shadow proof')
     assert.equal(fixture.fenced, false)
   })
 })

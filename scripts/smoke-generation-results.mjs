@@ -744,6 +744,28 @@ try {
       throw new Error('The acceptance app did not exit after the simulated crash.')
     }),
   ])
+  // Inspect durable Main state after the actual renderer -> IPC Add, without opening another
+  // database connection while Electron is alive. No pending intent remains; each captured
+  // session, including the unchecked result, has a tombstone before portable Save.
+  const completedAcceptanceDatabase = openAppDatabase(appDataRoot, migrations)
+  try {
+    assert.deepEqual(
+      await completedAcceptanceDatabase.db
+        .selectFrom('generation_acceptance_journal')
+        .selectAll()
+        .execute(),
+      [],
+    )
+    const discarded = await completedAcceptanceDatabase.db
+      .selectFrom('generation_staging_discarded_session')
+      .select('staging_session_id')
+      .where('local_project_key', '=', project.id)
+      .execute()
+    const discardedIds = new Set(discarded.map((row) => row.staging_session_id))
+    assert.ok(acceptedCandidates.every((candidate) => discardedIds.has(candidate.stagingSessionId)))
+  } finally {
+    await completedAcceptanceDatabase.close()
+  }
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
   const recoveryWindow = await application.firstWindow()
   await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()

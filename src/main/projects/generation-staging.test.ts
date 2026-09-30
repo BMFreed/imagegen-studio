@@ -23,6 +23,7 @@ import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 
 import { openAppDatabase } from '../db/database.js'
+import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import {
   GenerationStagingRepository,
@@ -920,7 +921,7 @@ test('targeted acceptance tombstones only captured sessions and preserves newer 
   }
 })
 
-test('interrupted Add recovers its exact Raster from real shadow and SQLite staging', async () => {
+test('interrupted Add journal consumes its captured sessions and preserves newer or orphan results', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-add-restart-'))
   try {
     const first = openAppDatabase(root, migrations)
@@ -930,6 +931,8 @@ test('interrupted Add recovers its exact Raster from real shadow and SQLite stag
     await staging.recoverAfterRestart()
     const project = await fixture(root)
     const published = await publishOne(root, queue, staging, project, 42)
+    const unchecked = await publishOne(root, queue, staging, project, 43)
+    const journal = new GenerationAcceptanceJournalRepository(first.db)
     const savedBefore = await readFile(project.projectPath)
     const roots = { placeholdersDir: placeholders, scratchDir: path.join(root, 'scratch') }
     const shadow = new ProjectShadowStore(path.join(root, 'shadow'))
@@ -955,12 +958,16 @@ test('interrupted Add recovers its exact Raster from real shadow and SQLite stag
       },
       documents: { getOpenDocument: (id) => (id === key ? owner : null) },
       gate: new ProjectGenerationOperationGate(),
+      journal,
       orchestrator,
       queue: { listUnfinishedByProject: (id) => queue.listUnfinishedByProject(id) },
       staging,
     })
     await assert.rejects(
-      interrupted.accept(key, [published.candidateId], null, [published.candidateId]),
+      interrupted.accept(key, [published.candidateId], null, [
+        published.candidateId,
+        unchecked.candidateId,
+      ]),
       /interrupted after synced shadow/,
     )
     assert.equal(fenced, true)
@@ -971,8 +978,9 @@ test('interrupted Add recovers its exact Raster from real shadow and SQLite stag
     )
     assert.deepEqual(
       (await staging.listVerifiedCandidates(key)).map((item) => item.candidateId),
-      [published.candidateId],
+      [published.candidateId, unchecked.candidateId],
     )
+    assert.ok(await journal.read(key, project.prepared.context.documentId))
     await first.close()
 
     const second = openAppDatabase(root, migrations)
@@ -980,6 +988,21 @@ test('interrupted Add recovers its exact Raster from real shadow and SQLite stag
     await restartedQueue.recoverAfterRestart()
     const restartedStaging = new GenerationStagingRepository(second.db, root)
     await restartedStaging.recoverAfterRestart()
+    const later = await publishOne(root, restartedQueue, restartedStaging, project, 44)
+    const orphan = await publishOne(
+      root,
+      restartedQueue,
+      restartedStaging,
+      {
+        ...project,
+        prepared: {
+          ...project.prepared,
+          context: { ...project.prepared.context, documentId: randomUUID() },
+        },
+      },
+      45,
+    )
+    const restartedJournal = new GenerationAcceptanceJournalRepository(second.db)
     owner = await ProjectAutosaveCoordinator.recover(project.projectPath, roots, shadow, {
       debounceMs: 60_000,
       leaseRegistry: new ProjectAutosaveLeaseRegistry(),
@@ -987,13 +1010,18 @@ test('interrupted Add recovers its exact Raster from real shadow and SQLite stag
     const recovered = new ProjectGenerationAcceptance({
       documents: { getOpenDocument: (id) => (id === key ? owner : null) },
       gate: new ProjectGenerationOperationGate(),
+      journal: restartedJournal,
       orchestrator,
       queue: { listUnfinishedByProject: (id) => restartedQueue.listUnfinishedByProject(id) },
       staging: restartedStaging,
     })
     assert.equal(await recovered.reconcile(key), 'cleaned')
     assert.equal(fenced, false)
-    assert.deepEqual(await restartedStaging.listVerifiedCandidates(key), [])
+    assert.deepEqual(
+      (await restartedStaging.listVerifiedCandidates(key)).map((item) => item.candidateId),
+      [later.candidateId, orphan.candidateId],
+    )
+    assert.equal(await restartedJournal.read(key, project.prepared.context.documentId), null)
     assert.equal(owner.document.layers.length, 1)
     assert.equal(
       owner.document.layers[0]?.generationProvenance?.executionResultContext.candidateId,
