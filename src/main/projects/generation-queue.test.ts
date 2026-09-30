@@ -1,6 +1,7 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   createEmptyProjectDocumentV1,
+  IGS_SAFETY_CEILINGS,
   type IgsProjectDocumentV1,
 } from '../../shared/projects/project-schema.js'
 
@@ -623,6 +624,143 @@ test('unfinished Project listing isolates identities and excludes every terminal
         .select(['id', 'status', 'status_sequence'])
         .orderBy('id')
         .execute(),
+      before,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+// Production boundary: real SQLite metadata query, with durable frozen input fixtures.
+// A same-path foreign document is the neighboring control; dropping document_id must fail.
+test('unfinished document listing isolates same-path documents without reading frozen target files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-document-list-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const first = await fixture(root)
+    const projectKey = localProjectRecoveryKey(first.projectPath)
+    const documentId = first.prepared.context.documentId
+    await assert.rejects(queue.listUnfinishedByProjectDocument(projectKey, documentId), {
+      code: 'QUEUE_NOT_RECONCILED',
+    })
+    await queue.recoverAfterRestart()
+    const running = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    assert.equal((await queue.claimNextPending())?.item.id, running.id)
+    const pending = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const canceled = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    await queue.cancel(canceled.id)
+    const failed = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const completed = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ status: 'failed' })
+      .where('id', '=', failed.id)
+      .execute()
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ status: 'completed' })
+      .where('id', '=', completed.id)
+      .execute()
+    const foreign = structuredClone(first.prepared)
+    foreign.context.documentId = randomUUID()
+    const samePathForeign = await enqueueFixture(root, queue, foreign, first.projectPath)
+    const otherRoot = path.join(root, 'other-project')
+    await mkdir(otherRoot)
+    const other = await fixture(otherRoot)
+    const otherProject = await enqueueFixture(root, queue, other.prepared, other.projectPath)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2026-09-30T00:00:00.000Z' })
+      .where('id', 'in', [running.id, pending.id])
+      .execute()
+    await rm(path.join(root, 'generation-inputs', running.id, 'target.png'))
+    await rm(path.join(root, 'generation-inputs', pending.id, 'target.png'))
+    const before = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    assert.deepEqual(
+      (await queue.listUnfinishedByProjectDocument(projectKey, documentId)).map((item) => item.id),
+      [running.id, pending.id].sort(),
+    )
+    assert.deepEqual(
+      (await queue.listUnfinishedByProjectDocument(projectKey, foreign.context.documentId)).map(
+        (item) => item.id,
+      ),
+      [samePathForeign.id],
+    )
+    assert.deepEqual(
+      (
+        await queue.listUnfinishedByProjectDocument(
+          otherProject.localProjectKey,
+          other.prepared.context.documentId,
+        )
+      ).map((item) => item.id),
+      [otherProject.id],
+    )
+    await assert.rejects(queue.listUnfinishedByProjectDocument('bad-project', documentId), {
+      code: 'QUEUE_PROJECT_IDENTITY_CHANGED',
+    })
+    await assert.rejects(queue.listUnfinishedByProjectDocument(projectKey, 'not-a-document-id'), {
+      code: 'QUEUE_PROJECT_IDENTITY_CHANGED',
+    })
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
+      before,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('unfinished ID listing validates bounded unique IDs and merges query chunks in stable order', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-id-list-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await assert.rejects(queue.listUnfinishedByIds([]), { code: 'QUEUE_NOT_RECONCILED' })
+    await queue.recoverAfterRestart()
+    const first = await fixture(root)
+    const pending = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const other = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    const canceled = await enqueueFixture(root, queue, first.prepared, first.projectPath)
+    await queue.cancel(canceled.id)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ created_at: '2026-09-30T00:00:00.000Z' })
+      .where('id', 'in', [pending.id, other.id])
+      .execute()
+    const ids: string[] = Array.from({ length: IGS_SAFETY_CEILINGS.archiveEntries }, () =>
+      randomUUID(),
+    )
+    ids[0] = other.id
+    ids[600] = pending.id
+    ids[9999] = canceled.id
+    const before = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    assert.deepEqual(
+      (await queue.listUnfinishedByIds(ids)).map((item) => item.id),
+      [pending.id, other.id].sort(),
+    )
+    assert.deepEqual(await queue.listUnfinishedByIds([]), [])
+    await assert.rejects(queue.listUnfinishedByIds([pending.id, pending.id]), {
+      code: 'QUEUE_INPUT_INVALID',
+    })
+    await assert.rejects(queue.listUnfinishedByIds(['not-a-job-id']), {
+      code: 'QUEUE_ITEM_NOT_FOUND',
+    })
+    await assert.rejects(queue.listUnfinishedByIds([...ids, randomUUID()]), {
+      code: 'QUEUE_INPUT_INVALID',
+    })
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
       before,
     )
   } finally {

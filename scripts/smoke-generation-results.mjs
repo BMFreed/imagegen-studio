@@ -137,10 +137,21 @@ const environment = {
 }
 delete environment.ELECTRON_RUN_AS_NODE
 
+const pageErrors = []
+function trackPageErrors(window) {
+  window.on('pageerror', (error) => pageErrors.push(error.message))
+}
+function trackMainErrors(application) {
+  application.process().stderr?.on('data', (chunk) => process.stderr.write(chunk))
+}
+
 let application
+let liveFixtureDatabase
 try {
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  trackMainErrors(application)
   const initialWindow = await application.firstWindow()
+  trackPageErrors(initialWindow)
   await initialWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await initialWindow.getByRole('button', { name: 'New Project' }).first().click()
   const createDialog = initialWindow.getByRole('dialog', { name: 'New Project' })
@@ -284,11 +295,16 @@ try {
   console.log('Results smoke fixture: published verified candidate through queue and staging.')
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  trackMainErrors(application)
   const window = await application.firstWindow()
+  trackPageErrors(window)
   await window.getByRole('tab', { name: 'Home' }).waitFor()
   await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
   await window.getByRole('tab', { name: projectTitle }).waitFor()
-  const snapshot = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  const snapshot = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
   assert.equal(snapshot.ok, true)
   assert.equal(snapshot.value.recoveryUnavailable, false)
   assert.equal(snapshot.value.candidates.length, 1)
@@ -329,10 +345,12 @@ try {
   const initialPreviewBounds = await renderedBlueBounds(window)
   assert.ok(initialPreviewBounds)
   await window.getByRole('button', { name: 'Zoom in' }).click()
-  await expect.poll(async () => {
-    const bounds = await renderedBlueBounds(window)
-    return bounds ? bounds.right - bounds.left : 0
-  }).toBeGreaterThan(initialPreviewBounds.right - initialPreviewBounds.left + 1)
+  await expect
+    .poll(async () => {
+      const bounds = await renderedBlueBounds(window)
+      return bounds ? bounds.right - bounds.left : 0
+    })
+    .toBeGreaterThan(initialPreviewBounds.right - initialPreviewBounds.left + 1)
   const frozenPreviewBounds = await renderedBlueBounds(window)
   assert.ok(frozenPreviewBounds && frozenPreviewBounds.right > frozenPreviewBounds.left + 20)
   const openTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
@@ -344,18 +362,25 @@ try {
   await canvas.locator('.canvas-area').focus()
   await canvas.locator('.canvas-area').press('Shift+ArrowRight')
   await expect(window.locator('.bbox-readout')).toContainText(`X ${movedBbox.x}`)
-  await expect.poll(async () => {
-    const open = await window.evaluate((id) => window.api.projects.open(id), project.id)
-    return open.ok ? open.value.tab.primaryBbox.x : null
-  }).toBe(movedBbox.x)
+  await expect
+    .poll(async () => {
+      const open = await window.evaluate((id) => window.api.projects.open(id), project.id)
+      return open.ok ? open.value.tab.primaryBbox.x : null
+    })
+    .toBe(movedBbox.x)
   await expect.poll(async () => await renderedBlueBounds(window)).toEqual(frozenPreviewBounds)
   await window.getByRole('button', { name: 'Save Project' }).click()
-  await expect.poll(async () => (await readIgsPackage(packagePath)).project.primaryBbox.x).toBe(movedBbox.x)
+  await expect
+    .poll(async () => (await readIgsPackage(packagePath)).project.primaryBbox.x)
+    .toBe(movedBbox.x)
   const savedProject = (await readIgsPackage(packagePath)).project
   assert.deepEqual(savedProject.primaryBbox, movedBbox)
   assert.equal(savedProject.layers.length, 0)
   assert.equal(savedProject.lastActualSeedSnapshot, 42)
-  const afterSave = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  const afterSave = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
   assert.equal(afterSave.ok, true)
   assert.equal(afterSave.value.candidates.length, 1)
   assert.equal(afterSave.value.lastActualSeed, 42)
@@ -364,7 +389,10 @@ try {
   // candidate verification, path handling and output publication stay in the production code.
   const packageBeforeExport = readFileSync(packagePath)
   const candidateBeforeExport = readFileSync(candidate.assetPath)
-  const stagingManifestPath = path.join(path.dirname(path.dirname(candidate.assetPath)), 'manifest.json')
+  const stagingManifestPath = path.join(
+    path.dirname(path.dirname(candidate.assetPath)),
+    'manifest.json',
+  )
   const manifestBeforeExport = readFileSync(stagingManifestPath)
   const exportDirectory = path.join(dataRoot, 'exports')
   mkdirSync(exportDirectory)
@@ -376,15 +404,23 @@ try {
   await clickSaveCandidateImage(window)
   await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
   await expect(window.getByText('Image exported')).toBeVisible()
-  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  await expect
+    .poll(() => canvas.locator('.konva-stage').boundingBox())
+    .toEqual(canvasBoundsBeforeExport)
   await expect.poll(() => existsSync(exportedPath)).toBe(true)
   assert.deepEqual(readFileSync(exportedPath), output)
   assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
   assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
   assert.deepEqual(readFileSync(stagingManifestPath), manifestBeforeExport)
-  const afterExport = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  const afterExport = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
   assert.equal(afterExport.ok, true)
-  assert.deepEqual(afterExport.value.candidates.map((item) => item.candidateId), [candidate.candidateId])
+  assert.deepEqual(
+    afterExport.value.candidates.map((item) => item.candidateId),
+    [candidate.candidateId],
+  )
   const afterExportTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
   assert.equal(afterExportTab.ok, true)
   assert.equal(afterExportTab.value.tab.layers.length, 0)
@@ -396,7 +432,9 @@ try {
   await clickSaveCandidateImage(window)
   await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
   await expect(window.getByText('Image exported')).toHaveCount(0)
-  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  await expect
+    .poll(() => canvas.locator('.konva-stage').boundingBox())
+    .toEqual(canvasBoundsBeforeExport)
   assert.deepEqual(readdirSync(exportDirectory).sort(), filesBeforeCancel)
   assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
   assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
@@ -413,9 +451,14 @@ try {
   await expect.poll(() => nativeSaveDialogCalls(application)).toBe(dialogCalls + 1)
   await expect(window.getByText('Image export failed')).toBeVisible()
   await expect(window.getByText(/A file with that name already exists/)).toBeVisible()
-  await expect.poll(() => canvas.locator('.konva-stage').boundingBox()).toEqual(canvasBoundsBeforeExport)
+  await expect
+    .poll(() => canvas.locator('.konva-stage').boundingBox())
+    .toEqual(canvasBoundsBeforeExport)
   assert.deepEqual(readFileSync(existingPath), existingBytes)
-  assert.deepEqual(readdirSync(exportDirectory).sort(), [path.basename(existingPath), path.basename(exportedPath)].sort())
+  assert.deepEqual(
+    readdirSync(exportDirectory).sort(),
+    [path.basename(existingPath), path.basename(exportedPath)].sort(),
+  )
   assert.deepEqual(readFileSync(packagePath), packageBeforeExport)
   assert.deepEqual(readFileSync(candidate.assetPath), candidateBeforeExport)
   assert.deepEqual(readFileSync(stagingManifestPath), manifestBeforeExport)
@@ -424,29 +467,49 @@ try {
     project.id,
   )
   assert.equal(afterFailedExport.ok, true)
-  assert.deepEqual(afterFailedExport.value.candidates.map((item) => item.candidateId), [candidate.candidateId])
-  const afterFailedExportTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.deepEqual(
+    afterFailedExport.value.candidates.map((item) => item.candidateId),
+    [candidate.candidateId],
+  )
+  const afterFailedExportTab = await window.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
   assert.equal(afterFailedExportTab.ok, true)
   assert.equal(afterFailedExportTab.value.tab.layers.length, 0)
   assert.equal(afterFailedExportTab.value.tab.dirty, false)
 
   await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
   const closeDialog = window.getByRole('dialog', { name: 'Close Project' })
-  await expect(closeDialog.getByText('Unaccepted generation results', { exact: false })).toBeVisible()
+  await expect(
+    closeDialog.getByText('Unaccepted generation results', { exact: false }),
+  ).toBeVisible()
   await closeDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(window.getByRole('toolbar', { name: 'Temporary generation results' })).toBeVisible()
-  const afterCancel = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  const afterCancel = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
   assert.equal(afterCancel.ok, true)
-  assert.deepEqual(afterCancel.value.candidates.map((item) => item.candidateId), [candidate.candidateId])
+  assert.deepEqual(
+    afterCancel.value.candidates.map((item) => item.candidateId),
+    [candidate.candidateId],
+  )
   await window.evaluate(async (url) => await (await fetch(url)).arrayBuffer(), recovered.imageUrl)
   await window.getByRole('button', { name: `Close ${projectTitle}` }).click()
   await closeDialog.getByRole('button', { name: 'Discard Candidates and Close' }).click()
   await expect(window.getByRole('tab', { name: projectTitle })).toHaveCount(0)
-  const revokedStatus = await window.evaluate(async (url) => (await fetch(url)).status, recovered.imageUrl)
+  const revokedStatus = await window.evaluate(
+    async (url) => (await fetch(url)).status,
+    recovered.imageUrl,
+  )
   assert.equal(revokedStatus, 404)
   await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
   await window.getByRole('tab', { name: projectTitle }).waitFor()
-  const afterClose = await window.evaluate((id) => window.api.projects.listGenerationResults(id), project.id)
+  const afterClose = await window.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
   assert.equal(afterClose.ok, true)
   assert.equal(afterClose.value.candidates.length, 0)
   assert.equal(afterClose.value.lastActualSeed, 42)
@@ -531,7 +594,9 @@ try {
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  trackMainErrors(application)
   const acceptanceWindow = await application.firstWindow()
+  trackPageErrors(acceptanceWindow)
   await acceptanceWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await acceptanceWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
   await acceptanceWindow.getByRole('tab', { name: projectTitle }).waitFor()
@@ -544,6 +609,101 @@ try {
     acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
     acceptedCandidates.map((item) => item.candidateId),
   )
+  assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+
+  // Startup correctly cancels unfinished work from a previous application lifetime. Insert these
+  // genuine frozen queue inputs only after recovery has completed; a second WAL connection prepares
+  // the fixture, without rerunning restart recovery or replacing the production Add entry point.
+  const unfinishedJobs = []
+  const neighborJobs = []
+  liveFixtureDatabase = openAppDatabase(appDataRoot, migrations)
+  const liveFixtureQueue = new GenerationQueueRepository(liveFixtureDatabase.db, appDataRoot)
+  async function enqueuePendingFixture({
+    documentId,
+    projectPath = packagePath,
+    stagingSessionId,
+  }) {
+    const pendingPrepared = {
+      ...prepared,
+      context: {
+        ...prepared.context,
+        bbox: acceptanceSource.primaryBbox,
+        documentId,
+        documentRevision: acceptanceSource.documentRevision,
+      },
+    }
+    return await withIllustriousTxt2ImgRequest({
+      modelService: {
+        resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
+          managedPath: modelPath,
+          reference,
+        }),
+      },
+      prepared: pendingPrepared,
+      ready,
+      scratchBasePath: path.join(appDataRoot, 'scratch'),
+      use: async (request) =>
+        await liveFixtureQueue.enqueueIllustriousTxt2Img({
+          prepared: pendingPrepared,
+          projectPath,
+          request,
+          stagingSessionId,
+        }),
+    })
+  }
+  async function fixtureQueueRows() {
+    return await liveFixtureDatabase.db
+      .selectFrom('generation_queue_item')
+      .select(['id', 'status', 'status_sequence', 'error_code'])
+      .where(
+        'id',
+        'in',
+        [...unfinishedJobs, ...neighborJobs].map((job) => job.id),
+      )
+      .orderBy('id')
+      .execute()
+  }
+  for (const completed of [acceptedCandidates[0], acceptedCandidates[2]]) {
+    unfinishedJobs.push(
+      await enqueuePendingFixture({
+        documentId: acceptanceSource.documentId,
+        stagingSessionId: completed.stagingSessionId,
+      }),
+    )
+  }
+  neighborJobs.push(
+    await enqueuePendingFixture({
+      documentId: acceptanceSource.documentId,
+      stagingSessionId: randomUUID(),
+    }),
+  )
+  neighborJobs.push(
+    await enqueuePendingFixture({
+      documentId: randomUUID(),
+      stagingSessionId: acceptedCandidates[0].stagingSessionId,
+    }),
+  )
+  const neighborPackagePath = path.join(dataRoot, 'neighbor.igs')
+  writeFileSync(neighborPackagePath, packageBeforeAcceptance)
+  neighborJobs.push(
+    await enqueuePendingFixture({
+      documentId: acceptanceSource.documentId,
+      projectPath: neighborPackagePath,
+      stagingSessionId: acceptedCandidates[0].stagingSessionId,
+    }),
+  )
+  const pendingSnapshot = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(pendingSnapshot.ok, true, JSON.stringify(pendingSnapshot))
+  assert.deepEqual(
+    [...pendingSnapshot.value.unfinishedSiblingJobIds].sort(),
+    unfinishedJobs.map((job) => job.id).sort(),
+  )
+  const pendingRows = await fixtureQueueRows()
+  assert.equal(pendingRows.length, unfinishedJobs.length + neighborJobs.length)
+  assert.ok(pendingRows.every((row) => row.status === 'pending' && row.status_sequence === 0))
   const firstCheckbox = acceptanceWindow.getByLabel('Select candidate 1')
   const secondCheckbox = acceptanceWindow.getByLabel('Select candidate 2')
   const thirdCheckbox = acceptanceWindow.getByLabel('Select candidate 3')
@@ -551,60 +711,150 @@ try {
   await expect(secondCheckbox).not.toBeChecked()
   await expect(thirdCheckbox).not.toBeChecked()
   await acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' }).click()
-  await expect(acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await expect(
+    acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' }),
+  ).toHaveAttribute('aria-pressed', 'true')
   await expect(firstCheckbox).toBeChecked()
   await expect(secondCheckbox).not.toBeChecked()
   await secondCheckbox.click()
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(900, 620)
+  })
+
+  // Unfinished siblings alone require an explicit cancellation decision, even if every completed
+  // result is selected. Declining must preserve the real rows, candidates and saved document.
+  await thirdCheckbox.click()
+  await acceptanceWindow.getByRole('button', { name: 'Add 3 as Layers' }).click()
+  const acceptanceDialog = acceptanceWindow.getByRole('dialog', {
+    name: 'Accept generation results',
+  })
+  await expect(acceptanceDialog).toBeVisible()
+  await expect(
+    acceptanceDialog.getByText('2 unfinished generation jobs will be canceled before Add.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    acceptanceDialog.getByRole('button', { name: 'Add 3, Cancel 2', exact: true }),
+  ).toBeVisible()
+  if (process.env.IMAGEGEN_SMOKE_EARLY_ADD_DIALOG_SCREENSHOT) {
+    await acceptanceWindow.screenshot({
+      animations: 'disabled',
+      path: process.env.IMAGEGEN_SMOKE_EARLY_ADD_DIALOG_SCREENSHOT,
+    })
+  }
+  await acceptanceDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(acceptanceDialog).toBeHidden()
+  assert.deepEqual(await fixtureQueueRows(), pendingRows)
+  const afterJobsOnlyCancel = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.listGenerationResults(id),
+    project.id,
+  )
+  assert.equal(afterJobsOnlyCancel.ok, true)
+  assert.deepEqual(
+    afterJobsOnlyCancel.value.candidates.map((item) => item.candidateId),
+    acceptedCandidates.map((item) => item.candidateId),
+  )
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  const afterJobsOnlyCancelTab = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(afterJobsOnlyCancelTab.ok, true)
+  assert.equal(afterJobsOnlyCancelTab.value.tab.layers.length, 0)
+  assert.equal(afterJobsOnlyCancelTab.value.tab.dirty, false)
+  assert.ok(acceptedCandidates.every((item) => readFileSync(item.assetPath).equals(output)))
+  await thirdCheckbox.click()
+  await expect(firstCheckbox).toBeChecked()
+  await expect(secondCheckbox).toBeChecked()
   await expect(acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' })).toBeEnabled()
   await acceptanceWindow.getByRole('button', { name: 'Refresh results' }).click()
   await expect(firstCheckbox).toBeChecked()
   await expect(secondCheckbox).toBeChecked()
   await expect(thirdCheckbox).not.toBeChecked()
-  await expect(acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await expect(
+    acceptanceWindow.getByRole('button', { name: 'Preview candidate 2' }),
+  ).toHaveAttribute('aria-pressed', 'true')
 
-  await application.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setSize(900, 620)
-  })
-  await expect.poll(async () =>
-    acceptanceWindow.evaluate(() => {
-      const canvas = document.querySelector('[aria-label="Project Canvas"] .canvas-area')
-      const tray = canvas?.querySelector('.results-tray')
-      const addButton = tray?.querySelector('.results-toolbar .n-button--primary-type')
-      if (!canvas || !tray || !addButton) return false
-      const canvasBox = canvas.getBoundingClientRect()
-      const trayBox = tray.getBoundingClientRect()
-      const addBox = addButton.getBoundingClientRect()
-      return (
-        trayBox.left >= canvasBox.left &&
-        trayBox.right <= canvasBox.right &&
-        trayBox.bottom <= canvasBox.bottom &&
-        addBox.left >= canvasBox.left &&
-        addBox.right <= canvasBox.right
-      )
-    }),
-  ).toBe(true)
+  await expect
+    .poll(async () =>
+      acceptanceWindow.evaluate(() => {
+        const canvas = document.querySelector('[aria-label="Project Canvas"] .canvas-area')
+        const tray = canvas?.querySelector('.results-tray')
+        const addButton = tray?.querySelector('.results-toolbar .n-button--primary-type')
+        if (!canvas || !tray || !addButton) return false
+        const canvasBox = canvas.getBoundingClientRect()
+        const trayBox = tray.getBoundingClientRect()
+        const addBox = addButton.getBoundingClientRect()
+        return (
+          trayBox.left >= canvasBox.left &&
+          trayBox.right <= canvasBox.right &&
+          trayBox.bottom <= canvasBox.bottom &&
+          addBox.left >= canvasBox.left &&
+          addBox.right <= canvasBox.right
+        )
+      }),
+    )
+    .toBe(true)
 
   await acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' }).click()
-  const acceptanceDialog = acceptanceWindow.getByRole('dialog', {
-    name: 'Accept generation results',
-  })
   await expect(acceptanceDialog).toBeVisible()
-  await expect(acceptanceDialog.getByText('1 unchecked temporary result will be discarded.', {
-    exact: false,
-  })).toBeVisible()
+  await expect(
+    acceptanceDialog.getByText('2 unfinished generation jobs will be canceled before Add.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    acceptanceDialog.getByText('1 unchecked temporary result will be discarded.', {
+      exact: false,
+    }),
+  ).toBeVisible()
   if (process.env.IMAGEGEN_SMOKE_ACCEPTANCE_DIALOG_SCREENSHOT) {
     await acceptanceWindow.screenshot({
       animations: 'disabled',
       path: process.env.IMAGEGEN_SMOKE_ACCEPTANCE_DIALOG_SCREENSHOT,
     })
   }
-  await acceptanceDialog.getByRole('button', { name: 'Cancel' }).click()
+
+  // A newly admitted sibling while the dialog is open changes the destructive impact. The first
+  // confirmation must update the counts and require a second decision, leaving every row pending.
+  unfinishedJobs.push(
+    await enqueuePendingFixture({
+      documentId: acceptanceSource.documentId,
+      stagingSessionId: acceptedCandidates[1].stagingSessionId,
+    }),
+  )
+  const changedPendingRows = await fixtureQueueRows()
+  await acceptanceDialog
+    .getByRole('button', { name: 'Add 2, Cancel 2, Discard 1', exact: true })
+    .click()
+  await expect(
+    acceptanceDialog.getByText(
+      'Results or unfinished jobs changed while this dialog was open. Review the counts and confirm again.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+  await expect(
+    acceptanceDialog.getByText('3 unfinished generation jobs will be canceled before Add.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    acceptanceDialog.getByRole('button', {
+      name: 'Add 2, Cancel 3, Discard 1',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(acceptanceDialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
+  if (process.env.IMAGEGEN_SMOKE_EARLY_ADD_CHANGED_SCREENSHOT) {
+    await acceptanceWindow.screenshot({
+      animations: 'disabled',
+      path: process.env.IMAGEGEN_SMOKE_EARLY_ADD_CHANGED_SCREENSHOT,
+    })
+  }
+  assert.deepEqual(await fixtureQueueRows(), changedPendingRows)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  await acceptanceDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(acceptanceDialog).toBeHidden()
   await expect(acceptanceWindow.getByRole('region', { name: 'Generation Results' })).toBeVisible()
   const afterCanceledAdd = await acceptanceWindow.evaluate(
@@ -613,6 +863,7 @@ try {
   )
   assert.equal(afterCanceledAdd.ok, true)
   assert.equal(afterCanceledAdd.value.candidates.length, 3)
+  assert.deepEqual(await fixtureQueueRows(), changedPendingRows)
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
   const tabAfterCanceledAdd = await acceptanceWindow.evaluate(
     (id) => window.api.projects.open(id),
@@ -621,11 +872,18 @@ try {
   assert.equal(tabAfterCanceledAdd.ok, true)
   assert.equal(tabAfterCanceledAdd.value.tab.layers.length, 0)
   assert.equal(tabAfterCanceledAdd.value.tab.dirty, false)
+  assert.ok(acceptedCandidates.every((item) => readFileSync(item.assetPath).equals(output)))
   await acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' }).click()
   await expect(acceptanceDialog).toBeVisible()
-  await acceptanceDialog.getByRole('button', { name: 'Add 2, Discard 1' }).click()
+  await acceptanceDialog
+    .getByRole('button', { name: 'Add 2, Cancel 3, Discard 1', exact: true })
+    .click()
   await expect(acceptanceWindow.getByRole('region', { name: 'Generation Results' })).toHaveCount(0)
-  const acceptedTab = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+  await expect(acceptanceDialog).toBeHidden()
+  const acceptedTab = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
   assert.equal(acceptedTab.ok, true)
   assert.equal(acceptedTab.value.tab.layers.length, 2)
   assert.equal(acceptedTab.value.tab.dirty, true)
@@ -644,6 +902,20 @@ try {
   )
   assert.equal(afterAddResults.ok, true)
   assert.equal(afterAddResults.value.candidates.length, 0)
+  assert.equal(afterAddResults.value.lastActualSeed, 73)
+  assert.deepEqual(afterAddResults.value.unfinishedSiblingJobIds, [])
+  const afterAddRows = await fixtureQueueRows()
+  assert.equal(afterAddRows.length, changedPendingRows.length)
+  assert.ok(
+    afterAddRows
+      .filter((row) => unfinishedJobs.some((job) => job.id === row.id))
+      .every((row) => row.status === 'canceled' && row.error_code === 'USER_CANCELED'),
+  )
+  assert.deepEqual(
+    afterAddRows.filter((row) => neighborJobs.some((job) => job.id === row.id)),
+    changedPendingRows.filter((row) => neighborJobs.some((job) => job.id === row.id)),
+  )
+  assert.deepEqual(readFileSync(neighborPackagePath), packageBeforeAcceptance)
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
 
   // Acceptance is one document mutation, regardless of the number of candidates.
@@ -653,10 +925,12 @@ try {
   const historyToolbar = acceptanceWindow.getByRole('toolbar', { name: 'Project history' })
   await expect(historyToolbar.getByRole('button', { name: 'Undo' })).toBeEnabled()
   await historyToolbar.getByRole('button', { name: 'Undo' }).click()
-  await expect.poll(async () => {
-    const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
-    return open.ok ? open.value.tab.layers.length : null
-  }).toBe(0)
+  await expect
+    .poll(async () => {
+      const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+      return open.ok ? open.value.tab.layers.length : null
+    })
+    .toBe(0)
   await expect(historyToolbar.getByRole('button', { name: 'Redo' })).toBeEnabled()
   const afterUndoResults = await acceptanceWindow.evaluate(
     (id) => window.api.projects.listGenerationResults(id),
@@ -666,10 +940,12 @@ try {
   assert.equal(afterUndoResults.value.candidates.length, 0)
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
   await historyToolbar.getByRole('button', { name: 'Redo' }).click()
-  await expect.poll(async () => {
-    const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
-    return open.ok ? open.value.tab.layers.map((layer) => layer.id) : null
-  }).toEqual(acceptedLayerIds)
+  await expect
+    .poll(async () => {
+      const open = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+      return open.ok ? open.value.tab.layers.map((layer) => layer.id) : null
+    })
+    .toEqual(acceptedLayerIds)
   const redoneTab = await acceptanceWindow.evaluate(
     (id) => window.api.projects.open(id),
     project.id,
@@ -701,10 +977,12 @@ try {
   }, redoneVisibleLayer.imageUrl)
   assert.deepEqual(redoneImage, { height: 64, pixel: [37, 94, 181, 255], width: 64 })
   assert.equal(
-    (await acceptanceWindow.evaluate(
-      (id) => window.api.projects.listGenerationResults(id),
-      project.id,
-    )).value.candidates.length,
+    (
+      await acceptanceWindow.evaluate(
+        (id) => window.api.projects.listGenerationResults(id),
+        project.id,
+      )
+    ).value.candidates.length,
     0,
   )
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
@@ -744,6 +1022,8 @@ try {
       throw new Error('The acceptance app did not exit after the simulated crash.')
     }),
   ])
+  await liveFixtureDatabase.close()
+  liveFixtureDatabase = undefined
   // Inspect durable Main state after the actual renderer -> IPC Add, without opening another
   // database connection while Electron is alive. No pending intent remains; each captured
   // session, including the unchecked result, has a tombstone before portable Save.
@@ -767,7 +1047,9 @@ try {
     await completedAcceptanceDatabase.close()
   }
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  trackMainErrors(application)
   const recoveryWindow = await application.firstWindow()
+  trackPageErrors(recoveryWindow)
   await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
   const recoveryDialog = recoveryWindow.getByRole('dialog', { name: 'Recovery available' })
@@ -775,7 +1057,10 @@ try {
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
   await recoveryDialog.getByRole('button', { name: 'Recover', exact: true }).click()
   await recoveryWindow.getByRole('tab', { name: projectTitle }).waitFor()
-  const recoveredTab = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
+  const recoveredTab = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
   assert.equal(recoveredTab.ok, true)
   assert.equal(recoveredTab.value.tab.layers.length, 2)
   assert.equal(recoveredTab.value.tab.dirty, true)
@@ -783,18 +1068,24 @@ try {
   await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
   await expect.poll(async () => (await readIgsPackage(packagePath)).project.layers.length).toBe(2)
   const savedAcceptance = (await readIgsPackage(packagePath)).project
+  assert.equal(savedAcceptance.lastActualSeedSnapshot, 73)
   assert.deepEqual(savedAcceptance.primaryBbox, acceptanceSource.primaryBbox)
   assert.deepEqual(
-    savedAcceptance.layers.map((layer) => layer.generationProvenance?.executionResultContext.candidateId),
+    savedAcceptance.layers.map(
+      (layer) => layer.generationProvenance?.executionResultContext.candidateId,
+    ),
     acceptedCandidates.slice(0, 2).map((item) => item.candidateId),
   )
   assert.deepEqual(
-    savedAcceptance.layers.map((layer) => layer.generationProvenance?.generationConfiguration.sampling.actualSeed),
+    savedAcceptance.layers.map(
+      (layer) => layer.generationProvenance?.generationConfiguration.sampling.actualSeed,
+    ),
     [71, 72],
   )
   assert.equal(savedAcceptance.layers.filter((layer) => layer.visible).length, 1)
   assert.equal(
-    savedAcceptance.layers.find((layer) => layer.visible)?.generationProvenance?.executionResultContext.candidateId,
+    savedAcceptance.layers.find((layer) => layer.visible)?.generationProvenance
+      ?.executionResultContext.candidateId,
     acceptedCandidates[1].candidateId,
   )
   await recoveryWindow.getByRole('button', { name: `Close ${projectTitle}` }).click()
@@ -804,8 +1095,12 @@ try {
   const reopened = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
   assert.equal(reopened.ok, true)
   assert.equal(reopened.value.tab.layers.length, 2)
-  console.log('Desktop acceptance smoke passed: selected Add, shadow recovery and portable Save/reopen.')
+  console.log(
+    'Desktop acceptance smoke passed: confirmed early Add, exact sibling cancellation, neighbor preservation, grouped Undo/Redo, shadow recovery and portable Save/reopen.',
+  )
 } finally {
+  console.log(`Native Results page errors: ${JSON.stringify(pageErrors)}`)
   application?.process().kill('SIGKILL')
+  await liveFixtureDatabase?.close()
   rmSync(dataRoot, { force: true, recursive: true })
 }

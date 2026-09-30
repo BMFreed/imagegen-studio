@@ -205,6 +205,8 @@ export interface ProjectGenerationResultsSnapshot {
   /** Local completed seed for the currently open document, independent of candidate retention. */
   lastActualSeed: number | null
   recoveryUnavailable: boolean
+  /** Unfinished jobs in the open document's reviewed completed-result sessions. */
+  unfinishedSiblingJobIds: string[]
 }
 
 export type ProjectCandidateExportResult =
@@ -216,6 +218,7 @@ export interface ProjectApi {
     candidateIds: string[],
     focusedCandidateId: string | null,
     expectedAvailableIds: string[],
+    expectedUnfinishedJobIds?: string[],
   ) => Promise<ApiResult<ProjectTab>>
   addGenerationLora: (
     tabId: string,

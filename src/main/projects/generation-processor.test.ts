@@ -314,6 +314,7 @@ async function withAcceptance(
     gate: new ProjectGenerationOperationGate(),
     journal: new GenerationAcceptanceJournalRepository(fixture.database.db),
     orchestrator: {
+      cancelAcceptanceJobs: async () => assert.fail('Unexpected sibling cancellation'),
       fenceProjectGeneration: async () => undefined,
       releaseProjectGenerationFence: () => undefined,
     },

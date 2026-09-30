@@ -1,7 +1,7 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -23,6 +23,7 @@ import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator, GenerationOrchestratorError } from './generation-orchestrator.js'
 import { GenerationProcessor } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
+import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { ProjectService } from './project-service.js'
@@ -271,6 +272,511 @@ function inferenceTransport(
     ready: { ...qualifiedReady, capabilities: [...qualifiedReady.capabilities] },
   }
 }
+
+function signal() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function currentDocumentId(fixture: Fixture): string {
+  const documentId = fixture.projects.getOpenDocumentId(fixture.tabId)
+  assert.ok(documentId)
+  return documentId
+}
+
+// A concurrent queue owner prepares actual qualified frozen inputs; only the historical document
+// or session identity is varied. This does not substitute the cancellation or SQLite boundary.
+async function enqueueScopedFixture(
+  fixture: Fixture,
+  queue: GenerationQueueRepository,
+  documentId: string,
+  stagingSessionId: string,
+  projectPath?: string,
+) {
+  const prepared = await fixture.projects.prepareNormalTxt2ImgContext(
+    fixture.tabId,
+    fixture.worker,
+    fixture.modelService,
+  )
+  prepared.context.documentId = documentId
+  const indexed = await fixture.projectIndex.getProject(fixture.tabId)
+  assert.ok(indexed)
+  return await withIllustriousTxt2ImgRequest({
+    modelService: fixture.modelService,
+    prepared,
+    ready: qualifiedReady,
+    scratchBasePath: path.join(fixture.root, 'scratch'),
+    use: async (request) =>
+      await queue.enqueueIllustriousTxt2Img({
+        prepared,
+        projectPath: projectPath ?? indexed.canonicalPath,
+        request,
+        stagingSessionId,
+      }),
+  })
+}
+
+test(
+  'acceptance cancellation requires a fence and exact document/session/job ownership',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const transport = inferenceTransport(fixture.outputBytes)
+      const documentId = currentDocumentId(fixture)
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(fixture.tabId, documentId, [], []),
+        { code: 'PROJECT_NOT_FENCED' },
+      )
+      const completed = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      assert.equal((await fixture.orchestrator.runNext(transport)).kind, 'completed')
+      const pending = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const otherSession = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const foreignDocument = await enqueueScopedFixture(
+        fixture,
+        fixture.queue,
+        randomUUID(),
+        pending.stagingSessionId,
+      )
+      const otherPath = path.join(fixture.root, 'Other.igs')
+      await writeFile(otherPath, 'foreign project fixture')
+      const foreignProject = await enqueueScopedFixture(
+        fixture,
+        fixture.queue,
+        documentId,
+        pending.stagingSessionId,
+        otherPath,
+      )
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      const before = await fixture.database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(
+          fixture.tabId,
+          randomUUID(),
+          [pending.stagingSessionId],
+          [pending.id],
+        ),
+        { code: 'PROJECT_DOCUMENT_CHANGED' },
+      )
+      for (const foreign of [otherSession, foreignDocument, foreignProject]) {
+        await assert.rejects(
+          fixture.orchestrator.cancelAcceptanceJobs(
+            fixture.tabId,
+            documentId,
+            [pending.stagingSessionId],
+            [pending.id, foreign.id],
+          ),
+          { code: 'CANCELLATION_UNCERTAIN' },
+        )
+      }
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(
+          fixture.tabId,
+          documentId,
+          [pending.stagingSessionId],
+          [],
+        ),
+        { code: 'CANCELLATION_UNCERTAIN' },
+      )
+      assert.deepEqual(
+        await fixture.database.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .orderBy('id')
+          .execute(),
+        before,
+      )
+      // Cancellation ownership comes from the open document, even if the disk-derived index is stale.
+      await fixture.database.db
+        .updateTable('project_index')
+        .set({ document_id: randomUUID() })
+        .where('local_project_key', '=', fixture.tabId)
+        .execute()
+      await fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        documentId,
+        [pending.stagingSessionId],
+        [pending.id, completed.id],
+      )
+      assert.equal((await fixture.queue.loadVerifiedInput(pending.id)).item.status, 'canceled')
+      for (const foreign of [otherSession, foreignDocument, foreignProject]) {
+        assert.equal((await fixture.queue.loadVerifiedInput(foreign.id)).item.status, 'pending')
+      }
+      assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 1)
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+    })
+  },
+)
+
+test(
+  'acceptance cancellation waits for running worker exit, ignores late done, and releases admission',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      assert.equal(typeof fixture.orchestrator.cancelAcceptanceJobs, 'function')
+      const dispatched = signal()
+      const lateDone = signal()
+      const doneReturned = signal()
+      const closing = signal()
+      const exited = signal()
+      const base = inferenceTransport(fixture.outputBytes, async () => {
+        dispatched.resolve()
+        await lateDone.promise
+      })
+      const transport: GenerationWorkerTransport = {
+        ...base,
+        close: async () => {
+          closing.resolve()
+          await exited.promise
+        },
+        generate: async (request) => {
+          const response = await base.generate(request)
+          doneReturned.resolve()
+          return response
+        },
+      }
+      const running = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const pending = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const unrelated = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const run = fixture.orchestrator.runNext(transport)
+      await dispatched.promise
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      let settled = false
+      const sessions = [running.stagingSessionId, pending.stagingSessionId]
+      const ids = [running.id, pending.id]
+      const cancel = fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        currentDocumentId(fixture),
+        sessions,
+        ids,
+      )
+      // The caller cannot widen the confirmed set by mutating its arrays while exit is awaited.
+      sessions.push(unrelated.stagingSessionId)
+      ids.push(unrelated.id)
+      void cancel.then(() => {
+        settled = true
+      })
+      await closing.promise
+      assert.equal(settled, false)
+      const duplicate = fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        currentDocumentId(fixture),
+        [pending.stagingSessionId, running.stagingSessionId],
+        [pending.id, running.id],
+      )
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(
+          fixture.tabId,
+          currentDocumentId(fixture),
+          [unrelated.stagingSessionId],
+          [unrelated.id],
+        ),
+        { code: 'CANCELLATION_UNCERTAIN' },
+      )
+      await assert.rejects(fixture.orchestrator.cancelProjectJobs(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      assert.equal((await fixture.queue.loadVerifiedInput(running.id)).item.status, 'running')
+      lateDone.resolve()
+      await doneReturned.promise
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+      exited.resolve()
+      await cancel
+      await duplicate
+      assert.deepEqual(await run, { kind: 'canceled', queueItemId: running.id })
+      for (const item of [running, pending]) {
+        assert.equal((await fixture.queue.loadVerifiedInput(item.id)).item.status, 'canceled')
+      }
+      assert.equal((await fixture.queue.loadVerifiedInput(unrelated.id)).item.status, 'pending')
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+      const next = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        inferenceTransport(fixture.outputBytes),
+      )
+      assert.equal(next.status, 'pending')
+    })
+  },
+)
+
+test(
+  'acceptance cancellation allows a confirmed running job to finish naturally during its scope read',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      assert.equal(typeof fixture.orchestrator.cancelAcceptanceJobs, 'function')
+      const dispatched = signal()
+      const done = signal()
+      const listed = signal()
+      const continueRead = signal()
+      let closeCalls = 0
+      const transport = inferenceTransport(fixture.outputBytes, async () => {
+        dispatched.resolve()
+        await done.promise
+      })
+      transport.close = async () => {
+        closeCalls += 1
+      }
+      const queued = await fixture.orchestrator.enqueueOne(fixture.tabId, fixture.worker, transport)
+      const run = fixture.orchestrator.runNext(transport)
+      await dispatched.promise
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      const list = fixture.queue.listUnfinishedByProjectDocument.bind(fixture.queue)
+      let reads = 0
+      fixture.queue.listUnfinishedByProjectDocument = async (...args) => {
+        const snapshot = await list(...args)
+        if (++reads === 1) {
+          listed.resolve()
+          await continueRead.promise
+        }
+        return snapshot
+      }
+      const cancel = fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        currentDocumentId(fixture),
+        [queued.stagingSessionId],
+        [queued.id],
+      )
+      await listed.promise
+      done.resolve()
+      const completed = await run
+      assert.equal(completed.kind, 'completed')
+      assert.equal('queueItemId' in completed && completed.queueItemId, queued.id)
+      continueRead.resolve()
+      await cancel
+      assert.equal(closeCalls, 0)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'completed')
+      assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 1)
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+    })
+  },
+)
+
+test(
+  'acceptance cancellation retains an uncertain worker fence until the same scope retries successfully',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      assert.equal(typeof fixture.orchestrator.cancelAcceptanceJobs, 'function')
+      const dispatched = signal()
+      let attempts = 0
+      const transport: GenerationWorkerTransport = {
+        close: async () => {
+          if (++attempts === 1) {
+            throw new Error('exit unconfirmed')
+          }
+        },
+        generate: async () => {
+          dispatched.resolve()
+          return await new Promise<never>(() => undefined)
+        },
+        ready: { ...qualifiedReady, capabilities: [...qualifiedReady.capabilities] },
+      }
+      const running = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const run = fixture.orchestrator.runNext(transport)
+      const failedRun = assert.rejects(run, { code: 'WORKER_EXIT_UNCONFIRMED' })
+      await dispatched.promise
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      const documentId = currentDocumentId(fixture)
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(
+          fixture.tabId,
+          documentId,
+          [running.stagingSessionId],
+          [running.id],
+        ),
+        /exit unconfirmed/,
+      )
+      await failedRun
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(fixture.tabId, documentId, [], []),
+        { code: 'CANCELLATION_UNCERTAIN' },
+      )
+      assert.throws(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId), {
+        code: 'PROJECT_GENERATION_CLOSING',
+      })
+      assert.equal((await fixture.queue.loadVerifiedInput(running.id)).item.status, 'running')
+      await fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        documentId,
+        [running.stagingSessionId],
+        [running.id],
+      )
+      assert.equal(attempts, 2)
+      assert.equal((await fixture.queue.loadVerifiedInput(running.id)).item.status, 'canceled')
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+      assert.equal(
+        (
+          await fixture.orchestrator.enqueueOne(
+            fixture.tabId,
+            fixture.worker,
+            inferenceTransport(fixture.outputBytes),
+          )
+        ).status,
+        'pending',
+      )
+    })
+  },
+)
+
+test(
+  'acceptance cancellation rechecks newly unconfirmed jobs before its first mutation',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      assert.equal(typeof fixture.orchestrator.cancelAcceptanceJobs, 'function')
+      const concurrent = new GenerationQueueRepository(fixture.database.db, fixture.root)
+      await concurrent.recoverAfterRestart()
+      const pending = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        inferenceTransport(fixture.outputBytes),
+      )
+      const documentId = currentDocumentId(fixture)
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      const list = fixture.queue.listUnfinishedByProjectDocument.bind(fixture.queue)
+      let added: Awaited<ReturnType<typeof enqueueScopedFixture>> | undefined
+      fixture.queue.listUnfinishedByProjectDocument = async (...args) => {
+        const snapshot = await list(...args)
+        if (!added) {
+          added = await enqueueScopedFixture(
+            fixture,
+            concurrent,
+            documentId,
+            pending.stagingSessionId,
+          )
+        }
+        return snapshot
+      }
+      await assert.rejects(
+        fixture.orchestrator.cancelAcceptanceJobs(
+          fixture.tabId,
+          documentId,
+          [pending.stagingSessionId],
+          [pending.id],
+        ),
+        { code: 'CANCELLATION_UNCERTAIN' },
+      )
+      assert.ok(added)
+      assert.equal((await fixture.queue.loadVerifiedInput(pending.id)).item.status, 'pending')
+      assert.equal((await fixture.queue.loadVerifiedInput(added.id)).item.status, 'pending')
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      await fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        documentId,
+        [pending.stagingSessionId],
+        [pending.id, added.id],
+      )
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+    })
+  },
+)
+
+test(
+  'acceptance cancellation refuses newly unconfirmed jobs after awaiting worker exit',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      assert.equal(typeof fixture.orchestrator.cancelAcceptanceJobs, 'function')
+      const concurrent = new GenerationQueueRepository(fixture.database.db, fixture.root)
+      await concurrent.recoverAfterRestart()
+      const dispatched = signal()
+      const closing = signal()
+      const exited = signal()
+      const transport: GenerationWorkerTransport = {
+        close: async () => {
+          closing.resolve()
+          await exited.promise
+        },
+        generate: async () => {
+          dispatched.resolve()
+          return await new Promise<never>(() => undefined)
+        },
+        ready: { ...qualifiedReady, capabilities: [...qualifiedReady.capabilities] },
+      }
+      const running = await fixture.orchestrator.enqueueOne(
+        fixture.tabId,
+        fixture.worker,
+        transport,
+      )
+      const run = fixture.orchestrator.runNext(transport)
+      await dispatched.promise
+      await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+      const documentId = currentDocumentId(fixture)
+      const cancel = fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        documentId,
+        [running.stagingSessionId],
+        [running.id],
+      )
+      const refused = assert.rejects(cancel, { code: 'CANCELLATION_UNCERTAIN' })
+      await closing.promise
+      const added = await enqueueScopedFixture(
+        fixture,
+        concurrent,
+        documentId,
+        running.stagingSessionId,
+      )
+      exited.resolve()
+      await refused
+      assert.deepEqual(await run, { kind: 'canceled', queueItemId: running.id })
+      assert.equal((await fixture.queue.loadVerifiedInput(added.id)).item.status, 'pending')
+      assert.throws(() => fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      await fixture.orchestrator.cancelAcceptanceJobs(
+        fixture.tabId,
+        documentId,
+        [running.stagingSessionId],
+        [running.id, added.id],
+      )
+      fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+    })
+  },
+)
 
 test(
   'open Project generates through real composition, qualified model, durable queue and staging',

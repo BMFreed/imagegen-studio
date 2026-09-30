@@ -944,6 +944,7 @@ test('interrupted Add journal consumes its captured sessions and preserves newer
     )
     let fenced = false
     const orchestrator = {
+      cancelAcceptanceJobs: async () => assert.fail('Unexpected sibling cancellation'),
       fenceProjectGeneration: async () => {
         fenced = true
       },
@@ -960,7 +961,7 @@ test('interrupted Add journal consumes its captured sessions and preserves newer
       gate: new ProjectGenerationOperationGate(),
       journal,
       orchestrator,
-      queue: { listUnfinishedByProject: (id) => queue.listUnfinishedByProject(id) },
+      queue,
       staging,
     })
     await assert.rejects(
@@ -1012,7 +1013,7 @@ test('interrupted Add journal consumes its captured sessions and preserves newer
       gate: new ProjectGenerationOperationGate(),
       journal: restartedJournal,
       orchestrator,
-      queue: { listUnfinishedByProject: (id) => restartedQueue.listUnfinishedByProject(id) },
+      queue: restartedQueue,
       staging: restartedStaging,
     })
     assert.equal(await recovered.reconcile(key), 'cleaned')
@@ -1154,8 +1155,10 @@ test('verified image bytes are copied under staging serialization and a discarde
       stagingSessionId: published.stagingSessionId,
     }
     assert.deepEqual(await staging.readVerifiedCandidatePng(identity), candidate.outputBytes)
-    const resource = new ProjectGenerationResultResource(staging, (projectKey) =>
-      projectKey === published.localProjectKey ? published.documentId : null,
+    const resource = new ProjectGenerationResultResource(
+      staging,
+      (projectKey) => (projectKey === published.localProjectKey ? published.documentId : null),
+      queue,
     )
     const snapshot = await resource.list(published.localProjectKey)
     assert.equal(snapshot.candidates.length, 1)

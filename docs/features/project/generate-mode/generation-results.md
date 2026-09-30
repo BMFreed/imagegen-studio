@@ -336,10 +336,34 @@ lineage preserves pixels and reports recovery required. Ordinary layer
 name, visibility or placement edits preserve accepted lineage.
 See [journal evidence](../../../engineering/phase-2b-acceptance-journal-research.md).
 
-Add still rejects while any job for that Project is unfinished; early-accept
-confirmation/cancellation, Smart Patch variants, derived global history and
-storage quota policy remain open. Project-local Undo/Redo is connected, but
+At the journal checkpoint, Add still rejected unfinished Project jobs. The
+following checkpoint adds confirmed early acceptance for shared-session input.
+Smart Patch variants, derived global history and storage quota policy remain open. Project-local Undo/Redo is connected, but
 ordinary Generate and the complete release inference pipeline are still absent.
+
+## Production confirmed early Raster acceptance checkpoint
+
+The Results snapshot exposes unfinished sibling job IDs from the open document
+and sessions represented by its eligible completed candidates. Add confirms
+both the candidate set and the job set, including a jobs-only confirmation when
+all completed candidates are selected. Cancel leaves jobs, pixels and document
+unchanged; a changed count or identity requires another review.
+
+Main fences admission, preflights selected pixels and projected document bounds,
+cancels only confirmed siblings, and waits for worker exit before the existing
+journal/shadow handoff. A candidate that completes during cancellation remains
+recoverable and forces renewed confirmation before any adoption or discard.
+An uncertain exit retains the fence and pixels until explicit retry/recovery;
+success clears the acceptance fence without marking the open Project as closed.
+Other sessions, Projects and historical documents at the same path are preserved.
+Accepted assets still reach the main `.igs` only on explicit Save.
+
+See [early Add evidence](../../../engineering/phase-2b-early-raster-acceptance.md).
+Tests and native smoke inject shared-session queue preconditions, use actual
+SQLite/processor/IPC/Project storage, and replace the external inference transport.
+Production `enqueueOne` assigns a fresh session to each job: ordinary batch
+Generate still needs one durable group/session ID for its N jobs. This slice does
+not implement that scheduler, renderer Generate, GPU inference or runtime install.
 
 ## Vue Prototype Coverage
 

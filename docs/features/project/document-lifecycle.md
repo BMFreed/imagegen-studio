@@ -233,8 +233,12 @@ assets only on Save. The
 [acceptance journal](../../engineering/phase-2b-acceptance-journal-research.md)
 recovers the captured cleanup after a crash. Native Electron smoke exercises
 Add, shadow recovery and actual `.igs` Save/reopen. Production Generate and
-the full inference pipeline are not connected yet; early Add while jobs remain
-unfinished and Smart Patch variants are also pending.
+the full inference pipeline are not connected yet.
+[Confirmed early Raster Add](../../engineering/phase-2b-early-raster-acceptance.md)
+checks exact candidate/sibling job sets and confirmed exit before journal/shadow
+handoff; `.igs` still changes only on Save. Shared-session queue inputs in this
+checkpoint are fixture preconditions: production batch grouping and Smart Patch
+variants remain pending.
 Electron smoke exercises immediate prompt editing followed by native
 `app.quit()` and the Save choice, then reads the latest prompt from the real
 `.igs` package. The timeout/error branch is an implementation guard, not yet an

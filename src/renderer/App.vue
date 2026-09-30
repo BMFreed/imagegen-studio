@@ -53,6 +53,7 @@ type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string |
 type PendingAcceptance = {
   candidateIds: string[]
   expectedCandidateIds: string[]
+  expectedUnfinishedJobIds: string[]
   focusedCandidateId: string | null
   tabId: string
   uncheckedCandidateIds: string[]
@@ -105,6 +106,20 @@ const reloadRequiredIds = ref<Set<string>>(new Set())
 const globalNotice = ref<string | null>(null)
 const pendingProjectAction = ref<PendingProjectAction | null>(null)
 const pendingAcceptance = ref<PendingAcceptance | null>(null)
+const acceptanceActionLabel = computed(() => {
+  const decision = pendingAcceptance.value
+  if (!decision) {
+    return 'Add'
+  }
+  const actions = [`Add ${decision.candidateIds.length}`]
+  if (decision.expectedUnfinishedJobIds.length) {
+    actions.push(`Cancel ${decision.expectedUnfinishedJobIds.length}`)
+  }
+  if (decision.uncheckedCandidateIds.length) {
+    actions.push(`Discard ${decision.uncheckedCandidateIds.length}`)
+  }
+  return actions.join(', ')
+})
 const acceptanceCommitting = ref(false)
 const acceptanceNotice = ref<{ message: string; type: 'error' | 'warning' } | null>(null)
 const recoveryDecision = ref<RecoveryDecision | null>(null)
@@ -876,7 +891,11 @@ async function saveCandidateImage(tabId: string, candidateId: string) {
 function candidateSetsForAcceptance(
   snapshot: ProjectGenerationResultsSnapshot,
   selection: CandidateSelection,
-): { expectedCandidateIds: string[]; uncheckedCandidateIds: string[] } {
+): {
+  expectedCandidateIds: string[]
+  expectedUnfinishedJobIds: string[]
+  uncheckedCandidateIds: string[]
+} {
   if (snapshot.recoveryUnavailable) {
     throw new Error('Temporary result recovery is unavailable. Repair it before adding results.')
   }
@@ -893,11 +912,12 @@ function candidateSetsForAcceptance(
   }
   return {
     expectedCandidateIds,
+    expectedUnfinishedJobIds: [...snapshot.unfinishedSiblingJobIds],
     uncheckedCandidateIds: expectedCandidateIds.filter((candidateId) => !selected.has(candidateId)),
   }
 }
 
-function sameCandidateIds(left: string[], right: string[]): boolean {
+function sameIds(left: string[], right: string[]): boolean {
   const other = new Set(right)
   return left.length === right.length && left.every((candidateId) => other.has(candidateId))
 }
@@ -911,11 +931,12 @@ async function commitGenerationCandidates(decision: PendingAcceptance) {
       [...decision.candidateIds],
       decision.focusedCandidateId,
       [...decision.expectedCandidateIds],
+      [...decision.expectedUnfinishedJobIds],
     )
     if (!result.ok && result.error.code === 'ACCEPTANCE_SELECTION_STALE') {
       setTabError(
         decision.tabId,
-        'Generation results changed before Add. Review the refreshed results and confirm Add again.',
+        'Generation results or unfinished jobs changed before Add. Review them and confirm Add again.',
       )
       return
     }
@@ -965,18 +986,17 @@ async function acceptGenerationCandidates(tabId: string, selection: CandidateSel
     if (windowClosePending.value || !projectTabs.value.some((tab) => tab.id === tabId)) {
       return
     }
-    const { expectedCandidateIds, uncheckedCandidateIds } = candidateSetsForAcceptance(
-      snapshot,
-      selection,
-    )
+    const { expectedCandidateIds, expectedUnfinishedJobIds, uncheckedCandidateIds } =
+      candidateSetsForAcceptance(snapshot, selection)
     const decision: PendingAcceptance = {
       candidateIds: [...selection.candidateIds],
       expectedCandidateIds,
+      expectedUnfinishedJobIds,
       focusedCandidateId: selection.focusedCandidateId,
       tabId,
       uncheckedCandidateIds,
     }
-    if (uncheckedCandidateIds.length > 0) {
+    if (uncheckedCandidateIds.length > 0 || expectedUnfinishedJobIds.length > 0) {
       pendingAcceptance.value = decision
     } else {
       await commitGenerationCandidates(decision)
@@ -1026,15 +1046,14 @@ async function confirmAcceptance() {
       return
     }
     const current = candidateSetsForAcceptance(snapshot, decision)
-    if (!sameCandidateIds(decision.expectedCandidateIds, current.expectedCandidateIds)) {
-      if (current.uncheckedCandidateIds.length === 0) {
-        await commitGenerationCandidates({ ...decision, ...current })
-        return
-      }
+    if (
+      !sameIds(decision.expectedCandidateIds, current.expectedCandidateIds) ||
+      !sameIds(decision.expectedUnfinishedJobIds, current.expectedUnfinishedJobIds)
+    ) {
       pendingAcceptance.value = { ...decision, ...current }
       acceptanceNotice.value = {
         message:
-          'Results changed while this dialog was open. Review the discard count and confirm again.',
+          'Results or unfinished jobs changed while this dialog was open. Review the counts and confirm again.',
         type: 'warning',
       }
       return
@@ -1865,7 +1884,20 @@ onBeforeUnmount(() => {
             {{ pendingAcceptance.candidateIds.length === 1 ? 'result' : 'results' }} as Raster
             {{ pendingAcceptance.candidateIds.length === 1 ? 'Layer' : 'Layers' }}.
           </p>
-          <NAlert v-if="pendingAcceptance" key="discard-warning" type="warning">
+          <NAlert
+            v-if="pendingAcceptance?.expectedUnfinishedJobIds.length"
+            key="cancel-jobs-warning"
+            type="warning"
+          >
+            {{ pendingAcceptance.expectedUnfinishedJobIds.length }} unfinished generation
+            {{ pendingAcceptance.expectedUnfinishedJobIds.length === 1 ? 'job' : 'jobs' }} will be
+            canceled before Add.
+          </NAlert>
+          <NAlert
+            v-if="pendingAcceptance?.uncheckedCandidateIds.length"
+            key="discard-warning"
+            type="warning"
+          >
             {{ pendingAcceptance.uncheckedCandidateIds.length }} unchecked temporary
             {{ pendingAcceptance.uncheckedCandidateIds.length === 1 ? 'result' : 'results' }} will
             be discarded. To keep one, cancel and select it or save its image first.
@@ -1873,8 +1905,7 @@ onBeforeUnmount(() => {
           <div class="dialog-actions">
             <NButton :disabled="acceptanceCommitting" @click="cancelAcceptance">Cancel</NButton>
             <NButton :loading="acceptanceCommitting" type="primary" @click="confirmAcceptance">
-              Add {{ pendingAcceptance?.candidateIds.length }}, Discard
-              {{ pendingAcceptance?.uncheckedCandidateIds.length }}
+              {{ acceptanceActionLabel }}
             </NButton>
           </div>
         </NCard>

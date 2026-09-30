@@ -14,7 +14,10 @@ export interface GenerationAppDependencies {
   dataRoot: string
   modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
   projectIndex: Pick<ProjectIndexRepository, 'getProject'>
-  projectService: Pick<ProjectService, 'getOpenTabs' | 'prepareNormalTxt2ImgContext'>
+  projectService: Pick<
+    ProjectService,
+    'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalTxt2ImgContext'
+  >
   scratchBasePath: string
 }
 

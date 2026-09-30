@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { isProjectGenerationResultsSnapshot } from './project-generation-results.js'
+import { IGS_SAFETY_CEILINGS } from './project-schema.js'
 
 test('preload result guard requires a valid document-mismatch diagnostic', () => {
   const projectKey = `project-v1-${'a'.repeat(64)}`
@@ -24,6 +25,7 @@ test('preload result guard requires a valid document-mismatch diagnostic', () =>
     ],
     lastActualSeed: 42,
     recoveryUnavailable: false,
+    unfinishedSiblingJobIds: [],
   }
   assert.equal(isProjectGenerationResultsSnapshot(result), true)
   assert.equal(
@@ -64,5 +66,52 @@ test('preload result guard requires a valid document-mismatch diagnostic', () =>
   assert.equal(
     isProjectGenerationResultsSnapshot({ ...result, lastActualSeed: 0x1_00_00_00_00 }),
     false,
+  )
+})
+
+test('preload guard requires a bounded unique UUID list and never reports jobs in degraded recovery', () => {
+  const jobId = randomUUID()
+  const result = {
+    candidates: [],
+    lastActualSeed: null,
+    recoveryUnavailable: false,
+    unfinishedSiblingJobIds: [jobId],
+  }
+  assert.equal(isProjectGenerationResultsSnapshot(result), true)
+  const { unfinishedSiblingJobIds: _missing, ...withoutJobs } = result
+  assert.equal(isProjectGenerationResultsSnapshot(withoutJobs), false)
+  for (const invalid of [
+    null,
+    'jobs',
+    [7],
+    ['not-a-uuid'],
+    [jobId.toUpperCase()],
+    [jobId, jobId],
+  ]) {
+    assert.equal(
+      isProjectGenerationResultsSnapshot({ ...result, unfinishedSiblingJobIds: invalid }),
+      false,
+    )
+  }
+  const maximumJobs = Array.from({ length: IGS_SAFETY_CEILINGS.archiveEntries }, () => randomUUID())
+  assert.equal(
+    isProjectGenerationResultsSnapshot({ ...result, unfinishedSiblingJobIds: maximumJobs }),
+    true,
+  )
+  assert.equal(
+    isProjectGenerationResultsSnapshot({
+      ...result,
+      unfinishedSiblingJobIds: [...maximumJobs, randomUUID()],
+    }),
+    false,
+  )
+  assert.equal(isProjectGenerationResultsSnapshot({ ...result, recoveryUnavailable: true }), false)
+  assert.equal(
+    isProjectGenerationResultsSnapshot({
+      ...result,
+      recoveryUnavailable: true,
+      unfinishedSiblingJobIds: [],
+    }),
+    true,
   )
 })

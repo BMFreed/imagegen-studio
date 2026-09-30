@@ -710,6 +710,42 @@ export class GenerationQueueRepository {
     this.fencedProjects.add(localProjectKey)
   }
 
+  /** Check confirmed IDs without loading or hashing their frozen image inputs. */
+  async listUnfinishedByIds(ids: readonly string[]): Promise<QueuedGenerationItem[]> {
+    if (!Array.isArray(ids) || ids.length > IGS_SAFETY_CEILINGS.archiveEntries) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue item selection is invalid.')
+    }
+    const selected = [...ids]
+    for (const id of selected) {
+      validateQueueId(id)
+    }
+    if (new Set(selected).size !== selected.length) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Queue item IDs must be unique.')
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const items: QueuedGenerationItem[] = []
+      // Stay below even SQLite's legacy 999-variable limit, including the two status values.
+      const chunkSize = 500
+      for (let offset = 0; offset < selected.length; offset += chunkSize) {
+        const rows = await this.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('id', 'in', selected.slice(offset, offset + chunkSize))
+          .where('status', 'in', ['pending', 'running'])
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+          .execute()
+        items.push(...rows.map(toItem))
+      }
+      return items.sort((left, right) => {
+        const leftKey = `${left.createdAt}:${left.id}`
+        const rightKey = `${right.createdAt}:${right.id}`
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+      })
+    })
+  }
+
   /** Snapshot unfinished jobs for one local Project; the caller must recheck each row on cancel. */
   async listUnfinishedByProject(localProjectKey: string): Promise<QueuedGenerationItem[]> {
     if (typeof localProjectKey !== 'string' || !PROJECT_KEY_PATTERN.test(localProjectKey)) {
@@ -724,6 +760,33 @@ export class GenerationQueueRepository {
         .selectFrom('generation_queue_item')
         .selectAll()
         .where('local_project_key', '=', localProjectKey)
+        .where('status', 'in', ['pending', 'running'])
+        .orderBy('created_at', 'asc')
+        .orderBy('id', 'asc')
+        .execute()
+      return rows.map(toItem)
+    })
+  }
+
+  /** Metadata-only impact snapshot: historical documents at the same path remain separate. */
+  async listUnfinishedByProjectDocument(
+    localProjectKey: string,
+    documentId: string,
+  ): Promise<QueuedGenerationItem[]> {
+    validateProjectKey(localProjectKey)
+    if (typeof documentId !== 'string' || !UUID_PATTERN.test(documentId)) {
+      throw new GenerationQueueError(
+        'QUEUE_PROJECT_IDENTITY_CHANGED',
+        'The Project document identity is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const rows = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('local_project_key', '=', localProjectKey)
+        .where('document_id', '=', documentId)
         .where('status', 'in', ['pending', 'running'])
         .orderBy('created_at', 'asc')
         .orderBy('id', 'asc')
@@ -1126,7 +1189,7 @@ export class GenerationQueueRepository {
 }
 
 function validateQueueId(id: string): void {
-  if (!UUID_PATTERN.test(id)) {
+  if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
   }
 }

@@ -178,7 +178,8 @@ async function createFixture(root: string) {
     2,
   )
   let candidates = [first, second]
-  let unfinished = 0
+  let unfinished: { id: string; stagingSessionId: string }[] = []
+  const canceled: string[][] = []
   let fenced = false
   const discarded: string[][] = []
   const gate = new ProjectGenerationOperationGate()
@@ -188,6 +189,17 @@ async function createFixture(root: string) {
     journal,
     now: () => '2026-09-29T10:01:00.000Z',
     orchestrator: {
+      cancelAcceptanceJobs: async (_key, documentId, sessionIds, ids) => {
+        assert.equal(fenced, true)
+        assert.equal(documentId, owner?.document.documentId)
+        assert.ok(
+          ids.every((id) =>
+            unfinished.some((item) => item.id === id && sessionIds.includes(item.stagingSessionId)),
+          ),
+        )
+        canceled.push([...ids])
+        unfinished = unfinished.filter((item) => !ids.includes(item.id))
+      },
       fenceProjectGeneration: async () => {
         fenced = true
       },
@@ -195,7 +207,9 @@ async function createFixture(root: string) {
         fenced = false
       },
     },
-    queue: { listUnfinishedByProject: async () => Array.from({ length: unfinished }) },
+    queue: {
+      listUnfinishedByProjectDocument: async () => [...unfinished],
+    },
     staging: {
       discardSessions: async (_key, ids) => {
         const target = new Set(ids)
@@ -224,6 +238,7 @@ async function createFixture(root: string) {
         )
         .map((item) => item.candidateId)
     },
+    canceled,
     get candidates() {
       return candidates
     },
@@ -261,10 +276,19 @@ async function createFixture(root: string) {
       owner = value
     },
     setUnfinished(value: number) {
+      unfinished = Array.from({ length: value }, () => ({
+        id: randomUUID(),
+        stagingSessionId: first.stagingSessionId,
+      }))
+    },
+    setUnfinishedJobs(value: { id: string; stagingSessionId: string }[]) {
       unfinished = value
     },
     shadow,
     tabId,
+    get unfinishedJobs() {
+      return [...unfinished]
+    },
   }
 }
 
@@ -329,6 +353,167 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
       },
     )
     assert.equal(fixture.owner.document.layers.length, 2)
+  })
+})
+
+// Cancellation transport is controlled here; journal, document/shadow and package bytes are real.
+// The orchestrator suite and native smoke separately exercise actual queue ownership and IPC.
+test('confirmed early Add cancels only reviewed sibling jobs before one durable document edit', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    const newer = { id: randomUUID(), stagingSessionId: randomUUID() }
+    fixture.setUnfinishedJobs([sibling, newer])
+    const before = await readFile(fixture.projectPath)
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    const result = await acceptance.accept(
+      fixture.tabId,
+      [fixture.first.candidateId],
+      null,
+      fixture.availableIds,
+      [sibling.id],
+    )
+    assert.equal(result.kind, 'accepted')
+    assert.deepEqual(fixture.canceled, [[sibling.id]])
+    assert.deepEqual(fixture.unfinishedJobs, [newer])
+    assert.equal(fixture.owner!.document.layers.length, 1)
+    assert.equal(fixture.owner!.dirty, true)
+    assert.deepEqual(await readFile(fixture.projectPath), before)
+    assert.deepEqual(fixture.candidates, [])
+    assert.equal(fixture.fenced, false)
+    assert.equal(
+      await fixture.journal.read(fixture.tabId, fixture.owner!.document.documentId),
+      null,
+    )
+    await fixture.owner!.save()
+    const saved = await readIgsPackage(fixture.projectPath)
+    assert.equal(
+      saved.project.layers[0]?.generationProvenance?.executionResultContext.candidateId,
+      fixture.first.candidateId,
+    )
+    assert.deepEqual(await saved.readMember(saved.project.layers[0].asset.path), fixture.output)
+  })
+})
+
+test('new unconfirmed sibling and invalid selected image refuse early Add before cancellation', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    const extra = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    fixture.setUnfinishedJobs([sibling, extra])
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds, [
+        sibling.id,
+      ]),
+      { code: 'ACCEPTANCE_SELECTION_STALE' },
+    )
+    assert.deepEqual(fixture.canceled, [])
+    assert.deepEqual(fixture.unfinishedJobs, [sibling, extra])
+    fixture.setUnfinishedJobs([sibling])
+    await writeFile(fixture.first.assetPath, Buffer.from('changed selected image'))
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds, [
+        sibling.id,
+      ]),
+      { code: 'PROVENANCE_OUTPUT_CHANGED' },
+    )
+    assert.deepEqual(fixture.canceled, [])
+    assert.equal(fixture.owner!.document.layers.length, 0)
+    assert.equal(fixture.fenced, false)
+    assert.deepEqual(fixture.discarded, [])
+  })
+})
+
+test('a sibling admitted during preflight cannot be canceled without renewed confirmation', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    const extra = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    fixture.setUnfinishedJobs([sibling])
+    const read = fixture.options.staging.readVerifiedCandidatePng
+    fixture.options.staging.readVerifiedCandidatePng = async (request) => {
+      const bytes = await read(request)
+      fixture.setUnfinishedJobs([sibling, extra])
+      return bytes
+    }
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds, [
+        sibling.id,
+      ]),
+      { code: 'ACCEPTANCE_SELECTION_STALE' },
+    )
+    assert.deepEqual(fixture.canceled, [])
+    assert.equal(fixture.owner!.document.layers.length, 0)
+    assert.equal(fixture.fenced, false)
+    assert.deepEqual(fixture.discarded, [])
+  })
+})
+
+test('a completion that wins cancellation remains recoverable and requires renewed discard consent', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    fixture.setUnfinishedJobs([sibling])
+    const reviewed = fixture.availableIds
+    const late = await candidate(
+      fixture.projectPath,
+      fixture.first.documentId,
+      fixture.first.documentRevision,
+      path.join(path.dirname(fixture.first.assetPath), 'late.png'),
+      fixture.output,
+      3,
+    )
+    late.stagingSessionId = fixture.first.stagingSessionId
+    fixture.options.orchestrator.cancelAcceptanceJobs = async () => {
+      fixture.setUnfinishedJobs([])
+      fixture.setCandidates([...fixture.candidates, late])
+    }
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, reviewed, [sibling.id]),
+      { code: 'ACCEPTANCE_SELECTION_STALE' },
+    )
+    assert.deepEqual(
+      fixture.candidates.map((item) => item.candidateId),
+      [...reviewed, late.candidateId],
+    )
+    assert.deepEqual(await readFile(late.assetPath), fixture.output)
+    assert.equal(fixture.owner!.document.layers.length, 0)
+    assert.equal(fixture.fenced, false)
+    assert.deepEqual(fixture.discarded, [])
+  })
+})
+
+test('uncertain cancellation retains pixels and fence until reconciliation proves sibling exit', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = { id: randomUUID(), stagingSessionId: fixture.first.stagingSessionId }
+    fixture.setUnfinishedJobs([sibling])
+    const cancel = fixture.options.orchestrator.cancelAcceptanceJobs
+    let attempts = 0
+    fixture.options.orchestrator.cancelAcceptanceJobs = async (...args) => {
+      attempts++
+      if (attempts === 1) {
+        throw new Error('Worker exit unconfirmed')
+      }
+      await cancel(...args)
+    }
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    const before = await readFile(fixture.projectPath)
+    await assert.rejects(
+      acceptance.accept(fixture.tabId, [fixture.first.candidateId], null, fixture.availableIds, [
+        sibling.id,
+      ]),
+      /Worker exit unconfirmed/,
+    )
+    assert.equal(fixture.fenced, true)
+    assert.equal(acceptance.hasPendingHandoff(fixture.tabId), true)
+    assert.equal(fixture.owner!.document.layers.length, 0)
+    assert.deepEqual(await readFile(fixture.projectPath), before)
+    assert.deepEqual(fixture.discarded, [])
+    assert.equal(await acceptance.reconcile(fixture.tabId), 'none')
+    assert.equal(attempts, 2)
+    assert.equal(fixture.fenced, false)
+    assert.equal(acceptance.hasPendingHandoff(fixture.tabId), false)
+    assert.equal(fixture.candidates.length, 2)
+    assert.deepEqual(fixture.unfinishedJobs, [])
   })
 })
 

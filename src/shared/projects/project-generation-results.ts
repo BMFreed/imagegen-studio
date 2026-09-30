@@ -13,6 +13,12 @@ export function isProjectGenerationResultsSnapshot(
   return (
     isRecord(value) &&
     typeof value.recoveryUnavailable === 'boolean' &&
+    Array.isArray(value.unfinishedSiblingJobIds) &&
+    value.unfinishedSiblingJobIds.length <= IGS_SAFETY_CEILINGS.archiveEntries &&
+    value.unfinishedSiblingJobIds.every(
+      (id: unknown) => typeof id === 'string' && uuidPattern.test(id),
+    ) &&
+    new Set(value.unfinishedSiblingJobIds).size === value.unfinishedSiblingJobIds.length &&
     (value.lastActualSeed === null ||
       (typeof value.lastActualSeed === 'number' &&
         Number.isSafeInteger(value.lastActualSeed) &&
@@ -39,7 +45,10 @@ export function isProjectGenerationResultsSnapshot(
         isBbox(candidate.bbox) &&
         isResultImageUrl(candidate.imageUrl, candidate),
     ) &&
-    (!value.recoveryUnavailable || (value.candidates.length === 0 && value.lastActualSeed === null))
+    (!value.recoveryUnavailable ||
+      (value.candidates.length === 0 &&
+        value.lastActualSeed === null &&
+        value.unfinishedSiblingJobIds.length === 0))
   )
 }
 

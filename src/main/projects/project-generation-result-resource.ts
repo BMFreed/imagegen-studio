@@ -5,6 +5,7 @@ import type {
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
+import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 
 const secret = randomBytes(32)
@@ -17,6 +18,13 @@ export interface GenerationResultImageRequest {
   imageSha256: string
   localProjectKey: string
   stagingSessionId: string
+}
+
+interface GenerationResultQueueReader {
+  listUnfinishedByProjectDocument: (
+    localProjectKey: string,
+    documentId: string,
+  ) => Promise<readonly Pick<QueuedGenerationItem, 'id' | 'localProjectKey' | 'stagingSessionId'>[]>
 }
 
 export class ProjectGenerationResultResourceError extends Error {
@@ -36,15 +44,34 @@ export class ProjectGenerationResultResource {
       'listVerifiedCandidates' | 'readLastActualSeed' | 'readVerifiedCandidatePng'
     > | null,
     private readonly getOpenDocumentId: (localProjectKey: string) => string | null,
+    private readonly queue: GenerationResultQueueReader | null = null,
   ) {}
 
   async list(localProjectKey: string): Promise<ProjectGenerationResultsSnapshot> {
     const originalDocumentId = this.requireOpenDocumentId(localProjectKey)
-    if (!this.staging) {
-      return { candidates: [], lastActualSeed: null, recoveryUnavailable: true }
+    if (!this.staging || !this.queue) {
+      return {
+        candidates: [],
+        lastActualSeed: null,
+        recoveryUnavailable: true,
+        unfinishedSiblingJobIds: [],
+      }
     }
     const candidates = await this.staging.listVerifiedCandidates(localProjectKey)
     const lastActualSeed = await this.staging.readLastActualSeed(
+      localProjectKey,
+      originalDocumentId,
+    )
+    const eligibleSessions = new Set(
+      candidates
+        .filter(
+          (candidate) =>
+            candidate.localProjectKey === localProjectKey &&
+            candidate.documentId === originalDocumentId,
+        )
+        .map((candidate) => candidate.stagingSessionId),
+    )
+    const unfinished = await this.queue.listUnfinishedByProjectDocument(
       localProjectKey,
       originalDocumentId,
     )
@@ -73,6 +100,12 @@ export class ProjectGenerationResultResource {
         })),
       lastActualSeed,
       recoveryUnavailable: false,
+      unfinishedSiblingJobIds: unfinished
+        .filter(
+          (item) =>
+            item.localProjectKey === localProjectKey && eligibleSessions.has(item.stagingSessionId),
+        )
+        .map((item) => item.id),
     }
   }
 

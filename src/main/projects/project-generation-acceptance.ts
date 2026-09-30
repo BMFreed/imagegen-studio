@@ -53,11 +53,20 @@ export interface ProjectGenerationAcceptanceOptions {
   journal: Pick<GenerationAcceptanceJournalRepository, 'abandon' | 'complete' | 'read' | 'record'>
   now?: () => string
   orchestrator: {
+    cancelAcceptanceJobs: (
+      tabId: string,
+      documentId: string,
+      stagingSessionIds: readonly string[],
+      expectedJobIds: readonly string[],
+    ) => Promise<void>
     fenceProjectGeneration: (tabId: string) => Promise<void>
     releaseProjectGenerationFence: (tabId: string) => void
   }
   queue: {
-    listUnfinishedByProject: (tabId: string) => Promise<readonly unknown[]>
+    listUnfinishedByProjectDocument: (
+      tabId: string,
+      documentId: string,
+    ) => Promise<readonly { id: string; stagingSessionId: string }[]>
   }
   staging: Pick<
     GenerationStagingRepository,
@@ -72,6 +81,13 @@ export type ProjectGenerationAcceptanceResult = {
 }
 
 type RasterLayer = IgsProjectDocumentV1['layers'][number]
+
+type PendingCancellation = {
+  documentId: string
+  jobIds: string[]
+  projectPath: string
+  stagingSessionIds: string[]
+}
 
 export class ProjectGenerationAcceptanceError extends Error {
   constructor(
@@ -115,11 +131,12 @@ function acceptedLayers(document: IgsProjectDocumentV1): Map<string, RasterLayer
 
 /**
  * Main-only Raster acceptance. The operation gate must also guard Project close; the temporary
- * generation fence prevents new work while the exact candidate set is handed to the shadow. This
- * first slice rejects unfinished jobs rather than canceling them without confirmation.
+ * generation fence prevents new work while the exact candidate set is handed to the shadow.
+ * Unfinished sibling jobs are canceled only after an exact reviewed job-set confirmation.
  */
 export class ProjectGenerationAcceptance {
   private readonly pending = new Map<string, GenerationAcceptanceHandoff>()
+  private readonly pendingCancellations = new Map<string, PendingCancellation>()
   private readonly unresolved = new Set<string>()
 
   constructor(private readonly options: ProjectGenerationAcceptanceOptions) {}
@@ -129,8 +146,10 @@ export class ProjectGenerationAcceptance {
     candidateIds: readonly string[],
     focusedCandidateId: string | null,
     expectedAvailableIds: readonly string[],
+    expectedUnfinishedJobIds: readonly string[] = [],
   ): Promise<ProjectGenerationAcceptanceResult> {
     validateRequest(tabId, candidateIds, focusedCandidateId, expectedAvailableIds)
+    validateJobIds(expectedUnfinishedJobIds)
     return await this.options.gate.run(tabId, async () => {
       const owner = this.requireDocument(tabId)
       let fenced = false
@@ -138,13 +157,18 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
+        if (this.pendingCancellations.has(tabId)) {
+          retainFence = true
+          await this.finishPendingCancellation(tabId, owner)
+          this.unresolved.delete(tabId)
+          retainFence = false
+        }
         const initial = structuredClone(owner.document)
         this.requireSameDocument(tabId, owner, initial.documentId)
         const selectedKey = candidateKey(candidateIds)
         retainFence = true
         let pending = await this.loadHandoff(tabId, initial.documentId)
         retainFence = pending !== undefined || this.unresolved.has(tabId)
-        await this.requireNoUnfinishedJobs(tabId)
         if (pending) {
           const proof = handoffProof(initial, pending)
           if (pending.projectPath !== owner.filePath || proof === 'changed') {
@@ -174,6 +198,11 @@ export class ProjectGenerationAcceptance {
             candidate.documentId === initial.documentId && candidate.projectPath === owner.filePath,
         )
         const available = new Map(owned.map((candidate) => [candidate.candidateId, candidate]))
+        const sessionIds = pending?.stagingSessionIds ?? [
+          ...new Set(owned.map((candidate) => candidate.stagingSessionId)),
+        ]
+        const unfinished = await this.scopedUnfinishedJobs(tabId, initial.documentId, sessionIds)
+        requireExpectedJobIds(unfinished, expectedUnfinishedJobIds)
         if (
           candidateIds.some((id) =>
             all.some(
@@ -214,6 +243,7 @@ export class ProjectGenerationAcceptance {
             )
           }
           if (pending) {
+            await this.requireNoUnfinishedJobs(tabId, initial.documentId, pending.stagingSessionIds)
             requireExpectedAvailable(owned, expectedAvailableIds)
             retainFence = true
             await this.requireDurable(
@@ -319,7 +349,36 @@ export class ProjectGenerationAcceptance {
         this.requireSameDocument(tabId, owner, initial.documentId)
         const projected = { ...initial, layers: [...layers, ...initial.layers] }
         preflightProjectedDocument(projected)
-        const sessionIds = [...new Set(owned.map((candidate) => candidate.stagingSessionId))]
+        this.requireSameDocument(tabId, owner, initial.documentId)
+        if (owner.document.documentRevision !== initial.documentRevision) {
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_CONFLICT',
+            'The Project changed while Add was being prepared. Review the results again.',
+          )
+        }
+        requireExpectedJobIds(
+          await this.scopedUnfinishedJobs(tabId, initial.documentId, sessionIds),
+          expectedUnfinishedJobIds,
+        )
+        if (unfinished.length > 0) {
+          this.pendingCancellations.set(tabId, {
+            documentId: initial.documentId,
+            jobIds: [...expectedUnfinishedJobIds],
+            projectPath: owner.filePath,
+            stagingSessionIds: [...sessionIds],
+          })
+          retainFence = true
+          await this.finishPendingCancellation(tabId, owner)
+          retainFence = pending !== undefined
+        }
+        // A sibling can finish before its cancel request. Do not silently discard a new result
+        // that was absent from the user's confirmation; queue cancellation itself is irreversible.
+        const afterCancellation = (await this.options.staging.listVerifiedCandidates(tabId)).filter(
+          (candidate) =>
+            candidate.documentId === initial.documentId && candidate.projectPath === owner.filePath,
+        )
+        requireExpectedAvailable(afterCancellation, expectedAvailableIds)
+        this.requireSameDocument(tabId, owner, initial.documentId)
         const handoff: GenerationAcceptanceHandoff = {
           acceptedLayers: structuredClone(layers),
           documentId: initial.documentId,
@@ -382,7 +441,9 @@ export class ProjectGenerationAcceptance {
 
   /** Close must not release an acceptance fence or discard its candidate before reconciliation. */
   hasPendingHandoff(tabId: string): boolean {
-    return this.pending.has(tabId) || this.unresolved.has(tabId)
+    return (
+      this.pending.has(tabId) || this.pendingCancellations.has(tabId) || this.unresolved.has(tabId)
+    )
   }
 
   /**
@@ -403,6 +464,7 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
+        await this.finishPendingCancellation(tabId, owner)
         // If recovery storage cannot be inspected, admission must stay blocked until a later
         // successful reconciliation establishes whether an accepted candidate is still staged.
         retainFence = true
@@ -425,7 +487,7 @@ export class ProjectGenerationAcceptance {
           if (proof !== 'complete') {
             throw handoffRecoveryError()
           }
-          await this.requireNoUnfinishedJobs(tabId)
+          await this.requireNoUnfinishedJobs(tabId, document.documentId, pending.stagingSessionIds)
           await this.requireDurable(
             owner,
             tabId,
@@ -454,7 +516,19 @@ export class ProjectGenerationAcceptance {
           retainFence = false
           return 'none'
         }
-        await this.requireNoUnfinishedJobs(tabId)
+        const acceptedSessionIds = [
+          ...new Set(
+            staged
+              .filter(
+                (candidate) =>
+                  candidate.documentId === document.documentId &&
+                  candidate.projectPath === owner.filePath &&
+                  accepted.has(candidate.candidateId),
+              )
+              .map((candidate) => candidate.stagingSessionId),
+          ),
+        ]
+        await this.requireNoUnfinishedJobs(tabId, document.documentId, acceptedSessionIds)
         await this.requireDurable(
           owner,
           tabId,
@@ -491,6 +565,29 @@ export class ProjectGenerationAcceptance {
         }
       }
     })
+  }
+
+  private async finishPendingCancellation(
+    tabId: string,
+    owner: ProjectGenerationAcceptanceDocument,
+  ): Promise<void> {
+    const pending = this.pendingCancellations.get(tabId)
+    if (!pending) {
+      return
+    }
+    this.requireSameDocument(tabId, owner, pending.documentId)
+    if (owner.filePath !== pending.projectPath) {
+      throw handoffRecoveryError()
+    }
+    await this.options.orchestrator.cancelAcceptanceJobs(
+      tabId,
+      pending.documentId,
+      pending.stagingSessionIds,
+      pending.jobIds,
+    )
+    await this.requireNoUnfinishedJobs(tabId, pending.documentId, pending.stagingSessionIds)
+    this.requireSameDocument(tabId, owner, pending.documentId)
+    this.pendingCancellations.delete(tabId)
   }
 
   private async loadHandoff(
@@ -571,11 +668,15 @@ export class ProjectGenerationAcceptance {
     }
   }
 
-  private async requireNoUnfinishedJobs(tabId: string): Promise<void> {
-    if ((await this.options.queue.listUnfinishedByProject(tabId)).length > 0) {
+  private async requireNoUnfinishedJobs(
+    tabId: string,
+    documentId: string,
+    sessionIds: readonly string[],
+  ): Promise<void> {
+    if ((await this.scopedUnfinishedJobs(tabId, documentId, sessionIds)).length > 0) {
       throw new ProjectGenerationAcceptanceError(
         'ACCEPTANCE_UNFINISHED_JOBS',
-        'Wait for the remaining jobs to finish before adding these results.',
+        'The remaining sibling jobs have not confirmed cancellation. Review the results and retry Add.',
       )
     }
   }
@@ -594,6 +695,17 @@ export class ProjectGenerationAcceptance {
         'The Project document changed during result acceptance.',
       )
     }
+  }
+
+  private async scopedUnfinishedJobs(
+    tabId: string,
+    documentId: string,
+    sessionIds: readonly string[],
+  ) {
+    const sessions = new Set(sessionIds)
+    return (await this.options.queue.listUnfinishedByProjectDocument(tabId, documentId)).filter(
+      (item) => sessions.has(item.stagingSessionId),
+    )
   }
 }
 
@@ -620,6 +732,39 @@ function validateRequest(
     throw new ProjectGenerationAcceptanceError(
       'ACCEPTANCE_INPUT_INVALID',
       'Select between 1 and 64 distinct generation results.',
+    )
+  }
+}
+
+function validateJobIds(ids: readonly string[]): void {
+  if (
+    !Array.isArray(ids) ||
+    ids.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+    ids.some((id) => typeof id !== 'string' || !uuidPattern.test(id)) ||
+    new Set(ids).size !== ids.length
+  ) {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_INPUT_INVALID',
+      'The confirmed generation job set is invalid.',
+    )
+  }
+}
+
+function requireExpectedJobIds(
+  current: readonly { id: string }[],
+  expected: readonly string[],
+): void {
+  if (current.length > 0 && expected.length === 0) {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_UNFINISHED_JOBS',
+      'Adding now will cancel unfinished sibling jobs. Review and confirm their count first.',
+    )
+  }
+  const ids = new Set(current.map((item) => item.id))
+  if (ids.size !== expected.length || expected.some((id) => !ids.has(id))) {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_SELECTION_STALE',
+      'Generation jobs changed. Refresh the results and confirm Add again.',
     )
   }
 }

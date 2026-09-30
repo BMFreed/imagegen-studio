@@ -372,6 +372,7 @@ if (!gotInstanceLock) {
       const generationResults = new ProjectGenerationResultResource(
         recoveredGeneration?.staging ?? null,
         (tabId) => projectService.getOpenDocumentId(tabId),
+        recoveredGeneration?.queue ?? null,
       )
       const candidateImageExporter = new ProjectCandidateImageExporter(
         recoveredGeneration?.staging ?? null,
@@ -1202,8 +1203,9 @@ if (!gotInstanceLock) {
         (args) => {
           const selected = args[1]
           const expected = args[3]
+          const unfinished = args.length === 4 ? [] : args[4]
           return (
-            args.length === 4 &&
+            (args.length === 4 || args.length === 5) &&
             isProjectId(args[0]) &&
             Array.isArray(selected) &&
             selected.length >= 1 &&
@@ -1216,10 +1218,20 @@ if (!gotInstanceLock) {
             expected.length <= IGS_SAFETY_CEILINGS.archiveEntries &&
             expected.every(isCandidateId) &&
             new Set(expected).size === expected.length &&
-            selected.every((id: string) => expected.includes(id))
+            selected.every((id: string) => expected.includes(id)) &&
+            Array.isArray(unfinished) &&
+            unfinished.length <= IGS_SAFETY_CEILINGS.archiveEntries &&
+            unfinished.every(isCandidateId) &&
+            new Set(unfinished).size === unfinished.length
           )
         },
-        async (tabId, candidateIds, focusedCandidateId, expectedAvailableIds) => {
+        async (
+          tabId,
+          candidateIds,
+          focusedCandidateId,
+          expectedAvailableIds,
+          expectedUnfinishedJobIds = [],
+        ) => {
           if (resolvingClose) {
             throw new ProjectGenerationAcceptanceError(
               'ACCEPTANCE_CONFLICT',
@@ -1237,6 +1249,7 @@ if (!gotInstanceLock) {
             candidateIds as string[],
             focusedCandidateId as string | null,
             expectedAvailableIds as string[],
+            expectedUnfinishedJobIds as string[],
           )
           const tab = projectService.getOpenTabs().find((item) => item.id === tabId)
           if (!tab) {

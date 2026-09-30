@@ -33,6 +33,7 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
     },
     projectIndex: { getProject: async () => null },
     projectService: {
+      getOpenDocumentId: () => null,
       getOpenTabs: () => [],
       prepareNormalTxt2ImgContext: async () => {
         throw new Error('No Project should be prepared during bootstrap.')

@@ -55,11 +55,13 @@ test('results list exposes only a bounded view, and signed image URL is scoped t
       },
     },
     (key) => (key === localProjectKey ? openDocumentId : null),
+    { listUnfinishedByProjectDocument: async () => [] },
   )
 
   const snapshot = await resource.list(localProjectKey)
   assert.equal(snapshot.recoveryUnavailable, false)
   assert.equal(snapshot.lastActualSeed, 42)
+  assert.deepEqual(snapshot.unfinishedSiblingJobIds, [])
   assert.equal(snapshot.candidates.length, 1)
   const view = snapshot.candidates[0]
   assert.deepEqual(Object.keys(view).sort(), [
@@ -130,6 +132,86 @@ test('unavailable recovery reports an explicit state without exposing result URL
     candidates: [],
     lastActualSeed: null,
     recoveryUnavailable: true,
+    unfinishedSiblingJobIds: [],
   })
   await assert.rejects(resource.list(otherProjectKey), { code: 'PROJECT_NOT_OPEN' })
+})
+
+test('results expose unfinished siblings only from eligible completed sessions in the current document', async () => {
+  const published = candidate()
+  const orphan = { ...candidate(), documentId: randomUUID() }
+  const runningSibling = randomUUID()
+  const reads: unknown[] = []
+  const resource = new ProjectGenerationResultResource(
+    {
+      listVerifiedCandidates: async () => [published, orphan],
+      readLastActualSeed: async () => 0,
+      readVerifiedCandidatePng: async () => null,
+    },
+    (key) => (key === localProjectKey ? published.documentId : null),
+    {
+      listUnfinishedByProjectDocument: async (key, documentId) => {
+        reads.push([key, documentId])
+        return [
+          { id: runningSibling, localProjectKey, stagingSessionId: published.stagingSessionId },
+          { id: randomUUID(), localProjectKey, stagingSessionId: orphan.stagingSessionId },
+          { id: randomUUID(), localProjectKey, stagingSessionId: randomUUID() },
+          {
+            id: randomUUID(),
+            localProjectKey: otherProjectKey,
+            stagingSessionId: published.stagingSessionId,
+          },
+        ]
+      },
+    },
+  )
+  const snapshot = await resource.list(localProjectKey)
+  assert.deepEqual(reads, [[localProjectKey, published.documentId]])
+  assert.deepEqual(snapshot.unfinishedSiblingJobIds, [runningSibling])
+  assert.equal(snapshot.lastActualSeed, 0)
+  assert.deepEqual(
+    snapshot.candidates.map((view) => view.sourceDocumentMismatch),
+    [false, true],
+  )
+  assert.equal(JSON.stringify(snapshot).includes('/private'), false)
+  assert.equal(JSON.stringify(snapshot).includes('prompts'), false)
+})
+
+test('a document replaced during the queue read cannot expose a stale confirmation snapshot', async () => {
+  const published = candidate()
+  let documentId = published.documentId
+  const resource = new ProjectGenerationResultResource(
+    {
+      listVerifiedCandidates: async () => [published],
+      readLastActualSeed: async () => 42,
+      readVerifiedCandidatePng: async () => null,
+    },
+    () => documentId,
+    {
+      listUnfinishedByProjectDocument: async () => {
+        documentId = randomUUID()
+        return []
+      },
+    },
+  )
+  await assert.rejects(resource.list(localProjectKey), { code: 'PROJECT_NOT_OPEN' })
+})
+
+test('missing queue storage cannot claim an available zero-job acceptance snapshot', async () => {
+  const published = candidate()
+  const resource = new ProjectGenerationResultResource(
+    {
+      listVerifiedCandidates: async () => [published],
+      readLastActualSeed: async () => 42,
+      readVerifiedCandidatePng: async () => null,
+    },
+    () => published.documentId,
+    null,
+  )
+  assert.deepEqual(await resource.list(localProjectKey), {
+    candidates: [],
+    lastActualSeed: null,
+    recoveryUnavailable: true,
+    unfinishedSiblingJobIds: [],
+  })
 })
