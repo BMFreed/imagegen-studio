@@ -2213,6 +2213,12 @@ test('manager pages real SQLite history by newest stable keys without reading fr
     assert.deepEqual(pagedIds, expectedIds)
     assert.equal(new Set(pagedIds).size, items.length)
     const entries = [...first.items, ...second.items]
+    for (const entry of entries) {
+      assert.equal(
+        entry.stagingSessionId,
+        items.find((item) => item.id === entry.id)?.stagingSessionId,
+      )
+    }
     assert.equal(entries.find((entry) => entry.id === corrupt.id)?.details, null)
     assert.equal(entries.find((entry) => entry.id === items[1].id)?.details?.sampling.seed, 0)
     assert.equal(entries.find((entry) => entry.id === items[1].id)?.statusSequence, 0)
@@ -2222,6 +2228,7 @@ test('manager pages real SQLite history by newest stable keys without reading fr
     assert.ok(!JSON.stringify(entries).includes(prepared.context.model.managedPath))
     const reviewed = await queue.getManagerEntry(corrupt.id)
     assert.equal(reviewed.details, null)
+    assert.equal(reviewed.stagingSessionId, corrupt.stagingSessionId)
     assert.equal(reviewed.statusSequence, 1)
     await assert.rejects(queue.deleteTerminal(corrupt.id, 0), { code: 'QUEUE_STATUS_CONFLICT' })
     await queue.deleteTerminal(corrupt.id, reviewed.statusSequence)
@@ -2229,6 +2236,43 @@ test('manager pages real SQLite history by newest stable keys without reading fr
     await assert.rejects(queue.listManagerPage({ createdAt: 'yesterday', id: randomUUID() }), {
       code: 'QUEUE_INPUT_INVALID',
     })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('manager entries retain separate staging sessions for attempts of one document after terminal deletion', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-sessions-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const first = await enqueueFixture(root, queue, prepared, projectPath)
+    const neighbor = await enqueueFixture(root, queue, prepared, projectPath)
+    assert.notEqual(first.stagingSessionId, neighbor.stagingSessionId)
+    assert.equal(first.localProjectKey, neighbor.localProjectKey)
+    const canceled = await queue.cancel(first.id, first.statusSequence)
+    await rm(path.join(root, 'generation-inputs'), { recursive: true })
+    await rm(prepared.context.model.managedPath)
+    const page = await queue.listManagerPage()
+    assert.ok(isGenerationQueuePage(page))
+    for (const item of [first, neighbor]) {
+      const projected = page.items.find((entry) => entry.id === item.id)
+      assert.equal(projected?.stagingSessionId, item.stagingSessionId)
+      assert.equal(projected?.documentId, prepared.context.documentId)
+      assert.equal((await queue.getManagerEntry(item.id)).stagingSessionId, item.stagingSessionId)
+    }
+    await queue.deleteTerminal(first.id, canceled.statusSequence)
+    const afterDelete = await queue.listManagerPage()
+    assert.equal(afterDelete.items.length, 1)
+    assert.equal(afterDelete.items[0].id, neighbor.id)
+    assert.equal(afterDelete.items[0].stagingSessionId, neighbor.stagingSessionId)
+    assert.equal(
+      (await queue.getManagerEntry(neighbor.id)).stagingSessionId,
+      neighbor.stagingSessionId,
+    )
   } finally {
     await database.close()
     await rm(root, { force: true, recursive: true })

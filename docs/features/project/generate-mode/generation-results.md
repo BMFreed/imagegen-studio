@@ -435,6 +435,13 @@ placeholder screenshots, recovery/export/Add checks and semantic mutations. Nati
 inference uses a controlled peer; CUDA/release readiness and browser/main-storage
 performance are not proved by those screenshots or small fixture images.
 
+The subsequent [Queue result navigation checkpoint](../../../engineering/phase-2b-queue-result-preview-research.md)
+adds preview and `View result` for an exact available queue job/session. Its fresh
+one-use request changes only Canvas focus/show/fit and expands the tray. The flat
+multi-session list and reviewed Add scope remain unchanged; same-active-Project
+checkboxes are preserved. Home/other-tab mounting keeps its existing default
+selection. This is not session filtering or navigation to accepted history.
+
 ## Vue Prototype Coverage
 
 The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The floating strip supports focus, checkbox selection, Select all completed/Clear selection in a menu, previous/next, preview visibility, Discard All and context-specific multi-accept labels. Preview navigation scrolls the thumbnail strip to keep the focused candidate in view; it does not change acceptance selection.

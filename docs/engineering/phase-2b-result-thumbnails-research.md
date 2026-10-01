@@ -145,3 +145,9 @@ Existing Results previous/next navigation and cross-session Add are preserved;
 no session-scoped acceptance change follows from this cache. Full CUDA/checkpoint
 loading, release runtime installation and other generation operations are not
 claimed. PP-007/008 and Phase 2B remain incomplete.
+
+Subsequent [Queue result preview/navigation checkpoint](./phase-2b-queue-result-preview-research.md)
+connects the same optional cache to Queue Manager and focuses an exact available
+candidate/session in the unchanged Results list. The open items above belong to
+this historical thumbnail checkpoint; full session filtering and unavailable/
+accepted-result navigation remain separate.

@@ -41,6 +41,7 @@ function entry(): GenerationQueueEntry {
     projectKey: `project-v1-${'a'.repeat(64)}`,
     projectName: 'Portrait',
     publicationPending: false,
+    stagingSessionId: randomUUID(),
     startedAt: null,
     status: 'pending',
     statusSequence: 0,
@@ -111,6 +112,17 @@ test('Queue Manager wire guard rejects paths, malformed refs, duplicate rows, ov
     ['completed', 'canceled', 'failed', 'completed'],
   ]) {
     assert.equal(isGenerationQueueTerminalStatuses(invalid), false)
+  }
+})
+
+test('Queue Manager wire guard requires a valid staging session identity', () => {
+  const row = entry()
+  assert.equal(isGenerationQueuePage(page([row])), true)
+  for (const stagingSessionId of [undefined, null, '', '/private/staging', row.projectKey]) {
+    assert.equal(
+      isGenerationQueuePage({ ...page([row]), items: [{ ...row, stagingSessionId }] }),
+      false,
+    )
   }
 })
 

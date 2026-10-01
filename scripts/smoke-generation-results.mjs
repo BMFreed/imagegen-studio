@@ -141,6 +141,30 @@ const environment = {
 delete environment.ELECTRON_RUN_AS_NODE
 
 const pageErrors = []
+const queueNavigationArtifacts = process.env.IMAGEGEN_SMOKE_QUEUE_RESULTS_ARTIFACTS
+  ? path.resolve(process.env.IMAGEGEN_SMOKE_QUEUE_RESULTS_ARTIFACTS)
+  : null
+if (queueNavigationArtifacts) {
+  mkdirSync(queueNavigationArtifacts, { mode: 0o700, recursive: true })
+}
+const queueNavigationReport = { checks: [], pageErrors, screenshots: [] }
+const testedBuild = Object.fromEntries(
+  [
+    'dist/main/main.cjs',
+    'dist/preload/preload.cjs',
+    'dist/renderer/index.html',
+    ...readdirSync('dist/renderer/assets')
+      .filter((name) => /\.(?:js|css)$/.test(name))
+      .map((name) => `dist/renderer/assets/${name}`),
+  ].map((file) => [file, digest(readFileSync(file))]),
+)
+const testedScript = digest(readFileSync('scripts/smoke-generation-results.mjs'))
+async function queueNavigationScreenshot(window, name) {
+  if (!queueNavigationArtifacts) return
+  const file = path.join(queueNavigationArtifacts, `${name}.png`)
+  await window.screenshot({ animations: 'disabled', path: file })
+  queueNavigationReport.screenshots.push(file)
+}
 function trackPageErrors(window) {
   window.on('pageerror', (error) => pageErrors.push(error.message))
 }
@@ -302,7 +326,36 @@ try {
   const window = await application.firstWindow()
   trackPageErrors(window)
   await window.getByRole('tab', { name: 'Home' }).waitFor()
-  await window.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  // A closed Project cannot supply live signed resources. Queue history can still open that
+  // Project, after which the ordinary recovery/results path verifies the candidate afresh.
+  await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  const closedProjectManager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  await closedProjectManager
+    .locator(`[data-testid="queue-job-row"][data-job-id="${candidate.queueItemId}"]`)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await expect(
+    closedProjectManager.getByRole('button', { name: 'View result', exact: true }),
+  ).toHaveCount(0)
+  await expect(closedProjectManager.locator('[data-testid="queue-job-thumbnail"] img')).toHaveCount(
+    0,
+  )
+  await expect(
+    closedProjectManager.locator('[data-testid="queue-result-thumbnail"] img'),
+  ).toHaveCount(0)
+  await expect(
+    closedProjectManager.getByRole('button', { name: 'Open Project', exact: true }),
+  ).toBeEnabled()
+  await expect(closedProjectManager.locator('[data-testid="queue-result-section"]')).toContainText(
+    'Open this Project to check its local result.',
+  )
+  await queueNavigationScreenshot(window, '01-closed-project-queue')
+  await closedProjectManager.getByRole('button', { name: 'Open Project', exact: true }).click()
+  await expect(closedProjectManager).toHaveCount(0)
+  queueNavigationReport.checks.push({
+    name: 'Closed Project completed job exposes Open Project without View result or private image',
+    queueItemId: candidate.queueItemId,
+  })
   await window.getByRole('tab', { name: projectTitle }).waitFor()
   const snapshot = await window.evaluate(
     (id) => window.api.projects.listGenerationResults(id),
@@ -627,6 +680,138 @@ try {
     acceptedCandidates.map((item) => item.candidateId),
   )
   assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+
+  // Existing genuine candidates span three sessions. Queue navigation must pin the exact job,
+  // session and candidate, and change only focus even when the target is not checked for Add.
+  // Home unmounts Canvas by the existing application contract, so a fresh mount keeps its normal
+  // first-candidate selection default rather than promising selection persistence across mounts.
+  await acceptanceWindow.getByRole('tab', { name: 'Home', exact: true }).click()
+  await acceptanceWindow.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  const homeNavigationManager = acceptanceWindow.getByRole('dialog', {
+    name: 'Queue Manager',
+    exact: true,
+  })
+  const homeTarget = acceptanceSnapshot.value.candidates[1]
+  await homeNavigationManager
+    .locator(`[data-testid="queue-job-row"][data-job-id="${homeTarget.queueItemId}"]`)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await homeNavigationManager.getByRole('button', { name: 'View result', exact: true }).click()
+  await expect(homeNavigationManager).toHaveCount(0)
+  await expect(
+    acceptanceWindow.getByRole('button', { name: 'Preview candidate 2', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(acceptanceWindow.getByLabel('Select candidate 1')).toBeChecked()
+  await expect(acceptanceWindow.getByLabel('Select candidate 2')).not.toBeChecked()
+  await expect(acceptanceWindow.getByLabel('Select candidate 3')).not.toBeChecked()
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  queueNavigationReport.checks.push({
+    candidateId: homeTarget.candidateId,
+    name: 'Home View result mounts exact requested candidate without changing default Add selection',
+    queueItemId: homeTarget.queueItemId,
+    stagingSessionId: homeTarget.stagingSessionId,
+  })
+  const navigationCheckboxes = [1, 2, 3].map((index) =>
+    acceptanceWindow.getByLabel(`Select candidate ${index}`),
+  )
+  await expect(navigationCheckboxes[0]).toBeChecked()
+  await navigationCheckboxes[0].click()
+  await navigationCheckboxes[2].click()
+  async function navigationState() {
+    return {
+      api: await acceptanceWindow.evaluate(
+        async (id) =>
+          await Promise.all([
+            window.api.projects.open(id),
+            window.api.projects.listGenerationResults(id),
+            window.api.projects.getGenerationState(id),
+            window.api.projects.getGenerationQueue(),
+          ]),
+        project.id,
+      ),
+      packageSha256: digest(readFileSync(packagePath)),
+      redoEnabled: await acceptanceWindow
+        .getByRole('button', { name: 'Redo', exact: true })
+        .isEnabled(),
+      selected: await Promise.all(navigationCheckboxes.map((checkbox) => checkbox.isChecked())),
+      undoEnabled: await acceptanceWindow
+        .getByRole('button', { name: 'Undo', exact: true })
+        .isEnabled(),
+    }
+  }
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setContentSize(900, 620)
+  })
+  const beforeQueueNavigation = await navigationState()
+  assert.deepEqual(beforeQueueNavigation.selected, [false, false, true])
+  for (const [step, index] of [1, 0, 1].entries()) {
+    const target = acceptanceSnapshot.value.candidates[index]
+    await acceptanceWindow
+      .getByRole('button', { name: 'Hide candidate preview', exact: true })
+      .click()
+    await acceptanceWindow
+      .getByRole('button', { name: 'Collapse Generation Results', exact: true })
+      .click()
+    await expect(
+      acceptanceWindow.getByRole('button', { name: 'Preview candidate 1', exact: true }),
+    ).toHaveCount(0)
+    await acceptanceWindow.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+    const navigationManager = acceptanceWindow.getByRole('dialog', {
+      name: 'Queue Manager',
+      exact: true,
+    })
+    const navigationRow = navigationManager.locator(
+      `[data-testid="queue-job-row"][data-job-id="${target.queueItemId}"]`,
+    )
+    await navigationRow.getByRole('button', { name: 'Show job details', exact: true }).click()
+    await expect(navigationRow.locator('[data-testid="queue-job-thumbnail"] img')).toHaveCount(0)
+    await expect(
+      navigationManager.locator('[data-testid="queue-result-thumbnail"] img'),
+    ).toHaveCount(0)
+    await expect(
+      navigationManager.getByRole('button', { name: 'View result', exact: true }),
+    ).toBeEnabled()
+    await queueNavigationScreenshot(acceptanceWindow, `02-${step}-session-queue`)
+    await navigationManager.getByRole('button', { name: 'View result', exact: true }).click()
+    await expect(navigationManager).toHaveCount(0)
+    for (const other of [1, 2, 3]) {
+      await expect(
+        acceptanceWindow.getByRole('button', { name: `Preview candidate ${other}`, exact: true }),
+      ).toHaveAttribute('aria-pressed', String(other === index + 1))
+    }
+    await expect(
+      acceptanceWindow.getByRole('button', { name: 'Hide candidate preview', exact: true }),
+    ).toBeVisible()
+    await expect(
+      acceptanceWindow.getByRole('button', { name: 'Collapse Generation Results', exact: true }),
+    ).toBeVisible()
+    await expect.poll(() => renderedBlueBounds(acceptanceWindow)).not.toBeNull()
+    const focusedPreviewBounds = await renderedBlueBounds(acceptanceWindow)
+    const canvasViewport = await acceptanceWindow
+      .getByRole('region', { name: 'Project Canvas' })
+      .boundingBox()
+    assert.ok(focusedPreviewBounds && canvasViewport)
+    assert.ok(focusedPreviewBounds.right <= canvasViewport.width)
+    assert.ok(focusedPreviewBounds.bottom <= canvasViewport.height)
+    assert.deepEqual(await navigationState(), beforeQueueNavigation)
+    await queueNavigationScreenshot(acceptanceWindow, `03-${step}-exact-focused-project`)
+    queueNavigationReport.checks.push({
+      candidateId: target.candidateId,
+      name: 'View result pins exact candidate/session/job, shows hidden/collapsed preview and preserves independent selection',
+      packageSha256: beforeQueueNavigation.packageSha256,
+      queueItemId: target.queueItemId,
+      stagingSessionId: target.stagingSessionId,
+      step,
+    })
+  }
+  await navigationCheckboxes[0].click()
+  await navigationCheckboxes[2].click()
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setContentSize(1380, 900)
+  })
+  console.log(
+    'Native queue navigation smoke passed: closed Project, three exact cross-session/repeated focus actions, independent selection and durable state.',
+  )
 
   // Startup correctly cancels unfinished work from a previous application lifetime. Insert these
   // genuine frozen queue inputs only after recovery has completed; a second WAL connection prepares
@@ -1128,8 +1313,34 @@ try {
   console.log(
     'Desktop acceptance smoke passed: confirmed early Add, exact sibling cancellation, neighbor preservation, grouped Undo/Redo, shadow recovery and portable Save/reopen.',
   )
+  for (const [file, sha256] of Object.entries(testedBuild)) {
+    assert.equal(
+      digest(readFileSync(file)),
+      sha256,
+      `Built artifact changed during Results run: ${file}`,
+    )
+  }
+  assert.equal(digest(readFileSync('scripts/smoke-generation-results.mjs')), testedScript)
+  assert.deepEqual(pageErrors, [])
+  queueNavigationReport.outcome = 'passed'
+} catch (error) {
+  queueNavigationReport.outcome = 'failed'
+  queueNavigationReport.error = { message: error.message, stack: error.stack }
+  if (application) {
+    const failureWindow = await application.firstWindow().catch(() => null)
+    if (failureWindow && !failureWindow.isClosed()) {
+      await queueNavigationScreenshot(failureWindow, 'failure').catch(() => undefined)
+    }
+  }
+  throw error
 } finally {
   console.log(`Native Results page errors: ${JSON.stringify(pageErrors)}`)
+  if (queueNavigationArtifacts) {
+    writeFileSync(
+      path.join(queueNavigationArtifacts, 'native-results-navigation-report.json'),
+      `${JSON.stringify({ ...queueNavigationReport, buildSha256: testedBuild, scriptSha256: testedScript }, null, 2)}\n`,
+    )
+  }
   application?.process().kill('SIGKILL')
   await liveFixtureDatabase?.close()
   rmSync(dataRoot, { force: true, recursive: true })

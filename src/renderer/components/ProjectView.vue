@@ -47,6 +47,7 @@ import {
 import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import type { CandidateExportFeedback } from './candidate-export-feedback.js'
+import type { GenerationResultFocusRequest } from './generation-queue-result.js'
 import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
@@ -79,6 +80,7 @@ const props = defineProps<{
   generationError: string | null
   generationNotice: string | null
   generationProgress: GenerationProgressSnapshot
+  generationResultFocus: GenerationResultFocusRequest | null
   generationResults: ProjectGenerationResultsSnapshot | null
   generationResultsError: string | null
   generationResultsLoading: boolean
@@ -129,6 +131,7 @@ const emit = defineEmits<{
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
   removeLora: [identity: ProjectLoraIdentity]
+  resultFocusHandled: [revision: number]
   save: []
   saveCandidateImage: [candidateId: string]
   sealPromptHistory: [historyGroupId: string]
@@ -1483,15 +1486,19 @@ function applyFitBbox() {
         :canUndo="tab.canUndo"
         :candidateActionsDisabled="busy"
         :disabled="busy || reloadRequired"
+        :documentId="tab.documentId"
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
         :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
         :layers="tab.layers"
+        :projectKey="tab.id"
+        :resultFocus="generationResultFocus"
         :selectedLayerId
         @acceptCandidates="emit('acceptCandidates', $event)"
         @changeBbox="emit('applyBbox', $event)"
         @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
+        @resultFocusHandled="emit('resultFocusHandled', $event)"
         @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectLayer="selectedLayerId = $event"
         @undo="emit('undo')"

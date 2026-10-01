@@ -50,6 +50,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   projectKey: string
   projectName: string
   publicationPending: boolean
+  stagingSessionId: string
   startedAt: string | null
   status: GenerationQueueStatus
 }
@@ -115,6 +116,7 @@ const EntrySchema = v.strictObject({
   projectKey: v.pipe(v.string(), v.regex(/^project-v1-[a-f0-9]{64}$/)),
   projectName: text,
   publicationPending: v.boolean(),
+  stagingSessionId: uuid,
   startedAt: v.nullable(timestamp),
   status: v.picklist(generationQueueStatuses),
   statusSequence: sequence,

@@ -38,10 +38,18 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
 import type { CandidateExportFeedback } from './components/candidate-export-feedback.js'
+import type {
+  GenerationResultFocusRequest,
+  QueueResultReference,
+} from './components/generation-queue-result.js'
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
 import AppChrome from './components/AppChrome.vue'
+import {
+  GenerationQueueResultNavigator,
+  resultFocusCandidate,
+} from './components/generation-queue-result.js'
 import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
@@ -96,6 +104,9 @@ const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const generationQueueOpen = ref(false)
 const generationQueueEpoch = ref(0)
+const queueResultOpeningId = ref<string | null>(null)
+const queueResultNavigationError = ref<string | null>(null)
+const generationResultFocusByTab = ref<Record<string, GenerationResultFocusRequest>>({})
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
 const projectTabs = ref<ProjectTab[]>([])
@@ -422,8 +433,16 @@ function refreshOpenGeneration() {
 }
 
 function openGenerationQueue() {
+  queueResultNavigationError.value = null
   generationQueueOpen.value = true
   refreshOpenGeneration()
+}
+
+function refreshQueueResults() {
+  queueResultNavigationError.value = null
+  for (const tab of projectTabs.value) {
+    void refreshGenerationResults(tab.id)
+  }
 }
 
 async function openQueueProject(projectKey: string) {
@@ -434,6 +453,77 @@ async function openQueueProject(projectKey: string) {
   await openProject(projectKey)
   if (homeError.value) {
     globalNotice.value = homeError.value
+  }
+}
+
+const queueResultNavigator = new GenerationQueueResultNavigator({
+  canNavigate: () =>
+    !rendererDisposed &&
+    generationQueueOpen.value &&
+    pendingProjectAction.value === null &&
+    !windowClosePending.value,
+  getOpenDocumentId: (projectKey) =>
+    reloadRequiredIds.value.has(projectKey)
+      ? null
+      : (projectTabs.value.find((tab) => tab.id === projectKey)?.documentId ?? null),
+  readResults: readGenerationResults,
+})
+
+watch(generationQueueOpen, (open) => {
+  if (!open) {
+    queueResultNavigator.cancel()
+  }
+})
+
+async function openQueueResult(reference: QueueResultReference) {
+  if (queueResultOpeningId.value !== null) {
+    return
+  }
+  queueResultOpeningId.value = reference.queueItemId
+  queueResultNavigationError.value = null
+  try {
+    const result = await queueResultNavigator.open(reference)
+    if (result.kind === 'superseded') {
+      return
+    }
+    if (result.kind === 'unavailable') {
+      queueResultNavigationError.value = result.reason
+      return
+    }
+    const tab = projectTabs.value.find(
+      (item) => item.id === reference.projectKey && item.documentId === reference.openDocumentId,
+    )
+    // A newer background refresh may have revoked a candidate while this read was pending.
+    if (
+      !tab ||
+      !resultFocusCandidate(result.focus, generationResultsByTab.value[tab.id]?.candidates ?? [], {
+        documentId: tab.documentId,
+        projectKey: tab.id,
+      })
+    ) {
+      queueResultNavigationError.value =
+        'The temporary result changed. Refresh the queue before viewing it.'
+      return
+    }
+    generationResultFocusByTab.value = {
+      ...generationResultFocusByTab.value,
+      [tab.id]: result.focus,
+    }
+    focusTab(tab)
+    generationQueueOpen.value = false
+  } catch (cause) {
+    if (!rendererDisposed && generationQueueOpen.value) {
+      queueResultNavigationError.value = errorMessage(cause)
+    }
+  } finally {
+    queueResultOpeningId.value = null
+  }
+}
+
+function clearResultFocus(tabId: string, revision: number) {
+  if (generationResultFocusByTab.value[tabId]?.revision === revision) {
+    const { [tabId]: _handled, ...remaining } = generationResultFocusByTab.value
+    generationResultFocusByTab.value = remaining
   }
 }
 
@@ -773,6 +863,8 @@ function focusTab(tab: ProjectTab) {
 }
 
 function removeTab(tabId: string) {
+  const { [tabId]: _closedFocus, ...remainingFocus } = generationResultFocusByTab.value
+  generationResultFocusByTab.value = remainingFocus
   forgetGenerationUi(tabId, true)
   stopExportFeedbackTimer(tabId)
   draftSync.forget(tabId)
@@ -847,6 +939,11 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   )
   generationResultsByTab.value = Object.fromEntries(
     Object.entries(generationResultsByTab.value).filter(([id]) => openIds.has(id)),
+  )
+  generationResultFocusByTab.value = Object.fromEntries(
+    Object.entries(generationResultFocusByTab.value).filter(([id, request]) =>
+      nextTabs.some((tab) => tab.id === id && tab.documentId === request.openDocumentId),
+    ),
   )
   generationResultsErrors.value = Object.fromEntries(
     Object.entries(generationResultsErrors.value).filter(([id]) => openIds.has(id)),
@@ -1902,6 +1999,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   rendererDisposed = true
+  queueResultNavigator.cancel()
   pendingGeneration.value = null
   generationConfirmationNotice.value = null
   for (const tabId of exportFeedbackTimers.keys()) {
@@ -2040,6 +2138,7 @@ onBeforeUnmount(() => {
           :generationError="generationStateErrors[activeTab.id] ?? null"
           :generationNotice="generationNotices[activeTab.id] ?? null"
           :generationProgress
+          :generationResultFocus="generationResultFocusByTab[activeTab.id] ?? null"
           :generationResults="generationResultsByTab[activeTab.id] ?? null"
           :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
           :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
@@ -2077,6 +2176,7 @@ onBeforeUnmount(() => {
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
           @removeLora="removeGenerationLora(activeTab.id, $event)"
+          @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
           @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
@@ -2097,7 +2197,9 @@ onBeforeUnmount(() => {
 
       <GenerationQueueManager
         v-model:show="generationQueueOpen"
-        :appBusy="pendingProjectAction !== null || windowClosePending"
+        :appBusy="
+          pendingProjectAction !== null || windowClosePending || queueResultOpeningId !== null
+        "
         :generationErrors="generationStateErrors"
         :generationLoading="generationStateLoading"
         :generationProgress
@@ -2105,9 +2207,16 @@ onBeforeUnmount(() => {
         :projectTabs
         :refreshEpoch="generationQueueEpoch"
         :reloadRequiredIds
+        :resultErrors="generationResultsErrors"
+        :resultLoading="generationResultsLoading"
+        :resultNavigationError="queueResultNavigationError"
+        :resultOpeningId="queueResultOpeningId"
+        :resultSnapshots="generationResultsByTab"
         :runtimeUnavailableReason
         @changed="refreshOpenGeneration"
         @openProject="openQueueProject"
+        @openResult="openQueueResult"
+        @refreshResults="refreshQueueResults"
       />
 
       <NModal

@@ -2047,6 +2047,7 @@ function toManagerEntry(
       ) ||
         'Untitled Project'),
     publicationPending,
+    stagingSessionId: item.stagingSessionId,
     startedAt: row.started_at,
     status: item.status,
     statusSequence: item.statusSequence,

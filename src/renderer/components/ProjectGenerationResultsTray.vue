@@ -17,14 +17,18 @@ import {
 import { NButton, NCheckbox, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
-const props = defineProps<{
-  actionsDisabled: boolean
-  candidates: ProjectGenerationResultView[]
-  focusedCandidateId: string | null
-  loading: boolean
-  previewVisible: boolean
-  selectedCandidateIds: string[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    actionsDisabled: boolean
+    candidates: ProjectGenerationResultView[]
+    focusedCandidateId: string | null
+    focusRevision?: number
+    loading: boolean
+    previewVisible: boolean
+    selectedCandidateIds: string[]
+  }>(),
+  { focusRevision: 0 },
+)
 
 const emit = defineEmits<{
   acceptCandidates: []
@@ -105,8 +109,11 @@ watch(tray, (element, _previous, onCleanup) => {
 })
 
 watch(
-  () => props.focusedCandidateId,
-  () => {
+  [() => props.focusedCandidateId, () => props.focusRevision],
+  ([_candidateId, revision], previous) => {
+    if (revision > 0 && revision !== previous?.[1]) {
+      collapsed.value = false
+    }
     requestAnimationFrame(() => {
       const candidate = strip.value?.querySelector<HTMLElement>('.candidate--focused')
       const container = strip.value
@@ -122,6 +129,7 @@ watch(
       }
     })
   },
+  { flush: 'post', immediate: true },
 )
 </script>
 

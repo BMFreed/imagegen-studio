@@ -478,7 +478,8 @@ statuses at execution time, including newly terminal rows, and skips reserved
 publication receipts. Its UI states this and reports the removed count.
 History and terminal cleanup remain available when runtime installation is absent.
 
-Queue Manager preview thumbnails, output navigation for unavailable sessions,
+At this historical Queue Manager action checkpoint, preview thumbnails and
+output navigation were still open. Navigation for unavailable sessions,
 busy-engine admission, full conditioning/Anima and the release installer remain
 open. The native action checks use a controlled qualified peer; they do not prove
 CUDA model loading or a packaged release.
@@ -486,6 +487,38 @@ CUDA model loading or a packaged release.
 [Bounded candidate thumbnails](../engineering/phase-2b-result-thumbnails-research.md)
 now serve the Project Results tray from optional verified worker-made cache.
 They do not yet add a preview column or session navigation to Queue Manager.
+
+## Production result preview/navigation checkpoint
+
+[Exact candidate navigation](../engineering/phase-2b-queue-result-preview-research.md)
+now adds bounded result thumbnails to completed Queue Manager rows/details and
+`View result` for an available candidate. Queue metadata carries its exact
+`stagingSessionId` from SQLite; it still does not read PNG/checkpoint files.
+The renderer joins the job to verified open-Project Results by Project, job,
+session and source-document mismatch. Signed resources keep their existing
+current-candidate/open-Project guards. No preview is inferred from completion
+alone, and accepted/discarded outputs are not replaced with history/layer images.
+
+Missing/corrupt cache shows a placeholder while `View result` remains possible
+for a valid full PNG. Closed Projects show `Open Project` for every status; this
+uses the ordinary explicit open/recovery flow. User Refresh rereads queue pages
+and open Results, including failed cache/read retries, without a lifecycle loop.
+
+Navigation freshly checks the candidate and displayed document before activating
+the Project. Canvas consumes one exact focus revision, shows its full PNG, fits
+its frozen bbox and expands the strip. Same-active-Project checkboxes stay
+independent of focus, including repeated viewing of the same target. From Home
+or another tab, established Project mounting/default selection remains unchanged.
+Results still shows all sessions, and reviewed cross-session Add retains its
+scope. Old-document recovery candidates remain previewable with their existing
+Add restriction and explanatory copy.
+
+Unavailable/replaced/closed/superseded targets refuse navigation with feedback;
+no queue/candidate, document/bbox, seed, provenance, Undo, dirty or `.igs` mutation
+follows from viewing. Native three-session, cached/placeholder/Refresh, minimum
+window and ordinary queue/recovery checks are recorded in the research note.
+Session filtering, automatically continuing navigation after Open Project/recovery
+and accepted history navigation remain separate work.
 
 ## Acceptance Criteria
 

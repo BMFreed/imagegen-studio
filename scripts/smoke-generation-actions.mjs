@@ -68,6 +68,7 @@ const report = {
     'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
     'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
     'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
+    'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -101,8 +102,7 @@ function generations() {
   )
 }
 
-async function screenshot(name) {
-  const file = path.join(artifacts, `${name}.png`)
+async function settleFiniteAnimations() {
   // A visible modal can still be entering. Capture its settled native layout, including Naive's
   // finite scale/fade transitions, without waiting for unrelated infinite loading animations.
   await window.evaluate(async () => {
@@ -116,6 +116,11 @@ async function screenshot(name) {
     await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)))
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   })
+}
+
+async function screenshot(name) {
+  const file = path.join(artifacts, `${name}.png`)
+  await settleFiniteAnimations()
   await window.screenshot({ path: file })
   report.screenshots.push(file)
 }
@@ -140,6 +145,9 @@ async function resizeNativeWindow(width, height) {
 
 async function screenshotManagerAtViewport(width, height, name = '08-native-queue-manager') {
   await resizeNativeWindow(width, height)
+  // Missing-thumbnail state has no image decode to outlast the modal entrance transition.
+  // Measure the settled layout, just as screenshot() does, rather than its temporary scale.
+  await settleFiniteAnimations()
   const bounds = await window.locator('[data-testid="queue-manager"]').boundingBox()
   assert.ok(bounds)
   assert.ok(bounds.x >= 0 && bounds.y >= 0)
@@ -949,6 +957,94 @@ try {
     },
   )
 
+  async function viewCompletedResultFromQueue(hasThumbnail, evidenceName) {
+    const beforeNavigation = await progressDurableState(projectId, packagePath)
+    const undoRedo = {
+      redo: await window.getByRole('button', { name: 'Redo', exact: true }).isEnabled(),
+      undo: await window.getByRole('button', { name: 'Undo', exact: true }).isEnabled(),
+    }
+    await window.getByRole('button', { name: 'Hide candidate preview', exact: true }).click()
+    await window.getByRole('button', { name: 'Collapse Generation Results', exact: true }).click()
+    await expect(
+      window.getByRole('button', { name: 'Preview candidate 1', exact: true }),
+    ).toHaveCount(0)
+    await window.getByRole('tab', { name: 'Home', exact: true }).click()
+    await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+    const resultManager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+    const resultRow = resultManager.locator(
+      `[data-testid="queue-job-row"][data-job-id="${receipt.queue_item_id}"]`,
+    )
+    await resultRow.getByRole('button', { name: 'Show job details', exact: true }).click()
+    const queueRowThumbnail = resultRow.locator('[data-testid="queue-job-thumbnail"]')
+    const queueDetailThumbnail = resultManager.locator('[data-testid="queue-result-thumbnail"]')
+    for (const [thumbnail, placeholderId] of [
+      [queueRowThumbnail, 'queue-job-thumbnail-placeholder'],
+      [queueDetailThumbnail, 'queue-result-thumbnail-placeholder'],
+    ]) {
+      if (hasThumbnail) {
+        await expect(thumbnail.locator('img')).toHaveAttribute('src', candidate.thumbnailUrl)
+        await expect
+          .poll(() =>
+            thumbnail.locator('img').evaluate((image) => ({
+              height: image.naturalHeight,
+              width: image.naturalWidth,
+            })),
+          )
+          .toEqual({ height: 64, width: 96 })
+      } else {
+        await expect(thumbnail.locator('img')).toHaveCount(0)
+        await expect(thumbnail.locator(`[data-testid="${placeholderId}"]`)).toBeVisible()
+      }
+    }
+    const viewResult = resultManager.getByRole('button', { name: 'View result', exact: true })
+    await expect(viewResult).toBeEnabled()
+    await screenshotManagerAtViewport(900, 620, evidenceName)
+    const thumbnailBounds = await queueRowThumbnail.boundingBox()
+    assert.ok(thumbnailBounds)
+    assert.equal(thumbnailBounds.width, 48)
+    assert.equal(thumbnailBounds.height, 48)
+    await viewResult.click()
+    await expect(resultManager).toHaveCount(0)
+    await expect(window.getByRole('tab', { name: projectTitle, exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await expect(
+      window.getByRole('button', { name: 'Preview candidate 1', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      window.getByRole('button', { name: 'Hide candidate preview', exact: true }),
+    ).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Collapse Generation Results', exact: true }),
+    ).toBeVisible()
+    await expect(window.getByLabel('Select candidate 1')).toBeChecked()
+    await expect.poll(resultVisibleOnCanvas).toBe(true)
+    await screenshot(`${evidenceName}-focused-project`)
+    assert.deepEqual(await progressDurableState(projectId, packagePath), beforeNavigation)
+    assert.deepEqual(
+      {
+        redo: await window.getByRole('button', { name: 'Redo', exact: true }).isEnabled(),
+        undo: await window.getByRole('button', { name: 'Undo', exact: true }).isEnabled(),
+      },
+      undoRedo,
+    )
+    await resizeNativeWindow(1380, 900)
+    checked(
+      hasThumbnail
+        ? 'Queue Manager loads bounded row/detail WEBP; View result reopens hidden/collapsed exact candidate without changing Project or selection'
+        : 'Queue Manager placeholder keeps View result available; repeated navigation reopens the same full PNG and preserves selection',
+      {
+        candidateId: candidate.candidateId,
+        packageSha256: beforeNavigation.packageSha256,
+        queueItemId: receipt.queue_item_id,
+        stagingSessionId: candidate.stagingSessionId,
+        thumbnailBounds,
+      },
+    )
+  }
+  await viewCompletedResultFromQueue(true, '04b-queue-cached-result')
+
   const cachePath = path.join(
     appDataRoot,
     'recovery',
@@ -986,10 +1082,37 @@ try {
   delete fullCandidate.thumbnailUrl
   assert.deepEqual(withoutThumbnail, { ...completed, candidates: [fullCandidate] })
   await screenshot('04a-damaged-thumbnail-placeholder')
+  await viewCompletedResultFromQueue(false, '04c-queue-placeholder-result')
+  await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  const repairManager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  const repairRow = repairManager.locator(
+    `[data-testid="queue-job-row"][data-job-id="${receipt.queue_item_id}"]`,
+  )
+  await repairRow.getByRole('button', { name: 'Show job details', exact: true }).click()
+  await expect(repairRow.locator('[data-testid="queue-job-thumbnail"] img')).toHaveCount(0)
+  await expect(repairManager.locator('[data-testid="queue-result-thumbnail"] img')).toHaveCount(0)
   writeFileSync(cachePath, cacheBytes, { mode: 0o600 })
-  await window.getByRole('button', { name: 'Refresh results', exact: true }).click()
+  await repairManager.getByRole('button', { name: 'Refresh', exact: true }).click()
+  for (const restored of [
+    repairRow.locator('[data-testid="queue-job-thumbnail"] img'),
+    repairManager.locator('[data-testid="queue-result-thumbnail"] img'),
+  ]) {
+    await expect(restored).toHaveAttribute('src', candidate.thumbnailUrl)
+    await expect.poll(() => restored.evaluate((image) => image.naturalWidth)).toBe(96)
+  }
+  await screenshotManagerAtViewport(900, 620, '04d-queue-restored-cache')
+  await repairManager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  await expect(repairManager).toHaveCount(0)
+  await resizeNativeWindow(1380, 900)
   await expect(thumbnailImage).toHaveAttribute('src', candidate.thumbnailUrl)
   assert.deepEqual(await progressDurableState(projectId, packagePath), beforeDamagedCache)
+  checked(
+    'One Queue Manager Refresh rereads restored cache and retries the same signed WEBP for row and detail',
+    {
+      candidateId: candidate.candidateId,
+      restoredThumbnailUrl: candidate.thumbnailUrl,
+    },
+  )
   checked(
     'Damaged thumbnail GET is refused; placeholder retains focus, selection, full preview and exact durable state',
     {
@@ -1120,6 +1243,14 @@ try {
     'completed',
   ])
   await expect(manager.getByRole('article')).toHaveCount(3)
+  await managerRow(receipt.queue_item_id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await expect(manager.getByRole('button', { name: 'View result', exact: true })).toHaveCount(0)
+  await expect(manager.locator('[data-testid="queue-result-section"]')).toContainText(
+    'The local candidate is unavailable. It may have been added or discarded.',
+  )
+  checked('Discarded completed history retains its row without exposing View result')
   const sourceItem = initialManagerItems.find(({ id }) => id === state.runningJobId)
   assert.ok(sourceItem)
   assert.equal(sourceItem.status, 'canceled')

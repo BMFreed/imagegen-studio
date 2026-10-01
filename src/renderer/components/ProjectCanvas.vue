@@ -17,6 +17,10 @@ import { NButton, NIcon, NSelect, NTooltip } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
+  type GenerationResultFocusRequest,
+  resultFocusCandidate,
+} from './generation-queue-result.js'
+import {
   type CanvasCamera,
   type CanvasSize,
   fitCamera,
@@ -32,10 +36,13 @@ const props = defineProps<{
   canRedo: boolean
   canUndo: boolean
   disabled: boolean
+  documentId: string
   generationResults: ProjectGenerationResultView[]
   generationResultsLoading: boolean
   historyPending: 'redo' | 'undo' | null
   layers: ProjectRasterLayerView[]
+  projectKey: string
+  resultFocus: GenerationResultFocusRequest | null
   selectedLayerId: string | null
 }>()
 
@@ -44,6 +51,7 @@ const emit = defineEmits<{
   changeBbox: [rect: IgsRectV1]
   redo: []
   refreshGenerationResults: []
+  resultFocusHandled: [revision: number]
   saveCandidateImage: [candidateId: string]
   selectLayer: [layerId: string]
   undo: []
@@ -58,6 +66,7 @@ const viewport = ref<CanvasSize>({ height: 0, width: 0 })
 const failedImageUrls = ref<Set<string>>(new Set())
 const failedCandidateUrls = ref<Set<string>>(new Set())
 const focusedCandidateId = ref<string | null>(null)
+const resultFocusRevision = ref(0)
 const selectedCandidateIds = ref<string[]>([])
 const stagingHeight = ref(0)
 const previewVisible = ref(true)
@@ -781,6 +790,26 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  [() => props.resultFocus, () => props.generationResults],
+  ([request, candidates]) => {
+    if (!request || request.revision <= resultFocusRevision.value) {
+      return
+    }
+    const candidate = resultFocusCandidate(request, candidates, {
+      documentId: props.documentId,
+      projectKey: props.projectKey,
+    })
+    if (!candidate) {
+      return
+    }
+    // Queue navigation changes preview focus only. Acceptance checkboxes stay independent.
+    focusCandidate(candidate.candidateId)
+    resultFocusRevision.value = request.revision
+    emit('resultFocusHandled', request.revision)
+  },
+  { flush: 'post', immediate: true },
+)
 watch(stagingHeight, () => {
   if (fitMode) {
     fitView()
@@ -883,6 +912,7 @@ watch(
         v-if="generationResults.length > 0"
         :actionsDisabled="candidateActionsDisabled"
         :candidates="generationResults"
+        :focusRevision="resultFocusRevision"
         :focusedCandidateId
         :loading="generationResultsLoading"
         :previewVisible

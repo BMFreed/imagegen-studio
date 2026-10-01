@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import type { ApiResult, ProjectGenerationActionState, ProjectTab } from '../../shared/api.js'
+import type {
+  ApiResult,
+  ProjectGenerationActionState,
+  ProjectGenerationResultsSnapshot,
+  ProjectGenerationResultView,
+  ProjectTab,
+} from '../../shared/api.js'
 import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
 import { progressForJob } from '../../shared/projects/generation-progress.js'
 import type {
@@ -12,10 +18,15 @@ import type {
 } from '../../shared/projects/generation-queue-manager.js'
 import { generationQueueStatuses } from '../../shared/projects/generation-queue-manager.js'
 
-import { X as XIcon } from '@vicons/tabler'
+import { Photo, X as XIcon } from '@vicons/tabler'
 import { NAlert, NButton, NCard, NDropdown, NEmpty, NIcon, NModal, NSpin, NTag } from 'naive-ui'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import {
+  queueResultCandidate,
+  queueResultReference,
+  type QueueResultReference,
+} from './generation-queue-result.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 
 const show = defineModel<boolean>('show', { required: true })
@@ -28,9 +39,19 @@ const props = defineProps<{
   projectTabs: ProjectTab[]
   refreshEpoch: number
   reloadRequiredIds: Set<string>
+  resultErrors: Record<string, string | null>
+  resultLoading: Record<string, boolean>
+  resultNavigationError: string | null
+  resultOpeningId: string | null
+  resultSnapshots: Record<string, ProjectGenerationResultsSnapshot>
   runtimeUnavailableReason: string | null
 }>()
-const emit = defineEmits<{ changed: []; openProject: [projectKey: string] }>()
+const emit = defineEmits<{
+  changed: []
+  openProject: [projectKey: string]
+  openResult: [reference: QueueResultReference]
+  refreshResults: []
+}>()
 
 type QueueAction = 'cancel' | 'delete' | 'prune' | 'retry'
 type Confirmation =
@@ -48,12 +69,14 @@ const actionError = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const busy = ref<{ action: QueueAction; id: string | null } | null>(null)
 const confirmation = ref<Confirmation | null>(null)
+const failedThumbnails = ref(new Set<string>())
 let pageRequest = 0
 let actionRequest = 0
 let pageDepth = 1
 let disposed = false
 
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
+const selectedResult = computed(() => (selected.value ? resultCandidate(selected.value) : null))
 const controlsBusy = computed(() => busy.value !== null || props.appBusy)
 const countsTotal = computed(
   () => counts.value && Object.values(counts.value).reduce((a, b) => a + b, 0),
@@ -108,6 +131,65 @@ function statusType(status: GenerationQueueStatus) {
 
 function terminal(item: GenerationQueueEntry): boolean {
   return item.status === 'completed' || item.status === 'failed' || item.status === 'canceled'
+}
+
+function resultCandidate(item: GenerationQueueEntry): ProjectGenerationResultView | null {
+  if (props.reloadRequiredIds.has(item.projectKey)) {
+    return null
+  }
+  const tab = props.projectTabs.find((candidate) => candidate.id === item.projectKey)
+  return queueResultCandidate(item, props.resultSnapshots[item.projectKey], tab?.documentId)
+}
+
+function thumbnailUrl(candidate: ProjectGenerationResultView | null): string | null {
+  const url = candidate?.thumbnailUrl
+  return url && !failedThumbnails.value.has(url) ? url : null
+}
+
+function thumbnailFailed(candidate: ProjectGenerationResultView | null) {
+  if (candidate?.thumbnailUrl) {
+    failedThumbnails.value.add(candidate.thumbnailUrl)
+  }
+}
+
+function resultReason(item: GenerationQueueEntry): string | null {
+  if (item.publicationPending) {
+    return 'The result is awaiting local recovery.'
+  }
+  if (item.status === 'pending' || item.status === 'running') {
+    return 'A result becomes available after generation completes.'
+  }
+  if (item.status !== 'completed') {
+    return 'This job did not produce a completed result.'
+  }
+  if (!props.projectTabs.some((tab) => tab.id === item.projectKey)) {
+    return 'Open this Project to check its local result.'
+  }
+  if (props.reloadRequiredIds.has(item.projectKey)) {
+    return 'Reload this Project before viewing its results.'
+  }
+  if (props.resultLoading[item.projectKey]) {
+    return 'Checking the local result…'
+  }
+  if (props.resultErrors[item.projectKey]) {
+    return props.resultErrors[item.projectKey]!
+  }
+  if (props.resultSnapshots[item.projectKey]?.recoveryUnavailable) {
+    return 'Local recovery is unavailable. Reopen the Project to check its results.'
+  }
+  if (!resultCandidate(item)) {
+    return 'The local candidate is unavailable. It may have been added or discarded.'
+  }
+  return null
+}
+
+function openResult(item: GenerationQueueEntry) {
+  const tab = props.projectTabs.find((candidate) => candidate.id === item.projectKey)
+  const candidate = resultCandidate(item)
+  if (controlsBusy.value || props.resultLoading[item.projectKey] || !tab || !candidate) {
+    return
+  }
+  emit('openResult', queueResultReference(item, candidate, tab.documentId))
 }
 
 function review(item: GenerationQueueEntry): GenerationQueueReview {
@@ -185,6 +267,12 @@ async function refresh() {
       loading.value = false
     }
   }
+}
+
+function refreshFromUser() {
+  // User refresh retries result/cache reads; lifecycle page refresh must not feed back into it.
+  emit('refreshResults')
+  void refresh()
 }
 
 async function loadOlder() {
@@ -420,6 +508,13 @@ watch(
     }
   },
 )
+watch(
+  () => props.resultSnapshots,
+  () => {
+    // A fresh verified snapshot permits one new attempt after an explicit Refresh.
+    failedThumbnails.value = new Set()
+  },
+)
 onBeforeUnmount(() => {
   disposed = true
   pageRequest += 1
@@ -452,7 +547,7 @@ onBeforeUnmount(() => {
             :loading="loading && items.length > 0"
             secondary
             size="small"
-            @click="refresh"
+            @click="refreshFromUser"
           >
             Refresh
           </NButton>
@@ -485,13 +580,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div
-        v-if="readError || (actionError && !confirmation) || notice"
+        v-if="readError || (actionError && !confirmation) || resultNavigationError || notice"
         aria-live="polite"
         class="manager-feedback"
       >
         <NAlert v-if="readError" type="error">{{ readError }}</NAlert>
         <NAlert v-if="actionError && !confirmation" key="n-alert-2" type="error">
           {{ actionError }}
+        </NAlert>
+        <NAlert v-if="resultNavigationError" key="n-alert-3" type="warning">
+          {{ resultNavigationError }}
         </NAlert>
         <p v-if="notice" class="action-notice">{{ notice }}</p>
       </div>
@@ -535,27 +633,51 @@ onBeforeUnmount(() => {
                   aria-label="Show job details"
                   :aria-pressed="selectedId === item.id"
                   class="job-select"
+                  :class="{ 'job-select--with-preview': item.status === 'completed' }"
                   @click="selectedId = item.id"
                 >
-                  <span class="job-heading">
-                    <strong class="project-name">{{ item.projectName }}</strong>
-                    <NTag :bordered="false" size="small" :type="statusType(item.status)">
-                      {{ item.cancelRequested ? 'Canceling' : statusLabels[item.status] }}
-                    </NTag>
+                  <span
+                    v-if="item.status === 'completed'"
+                    aria-hidden="true"
+                    class="job-thumbnail"
+                    data-testid="queue-job-thumbnail"
+                  >
+                    <img
+                      v-if="thumbnailUrl(resultCandidate(item))"
+                      alt=""
+                      decoding="async"
+                      loading="lazy"
+                      :src="thumbnailUrl(resultCandidate(item)) ?? undefined"
+                      @error="thumbnailFailed(resultCandidate(item))"
+                    />
+                    <NIcon
+                      v-else
+                      :component="Photo"
+                      data-testid="queue-job-thumbnail-placeholder"
+                      :size="18"
+                    />
                   </span>
-                  <span class="job-operation">Generate · Project Canvas</span>
-                  <span class="job-summary">
-                    {{
-                      item.details
-                        ? `${item.details.modelName} · Seed ${item.details.sampling.seed}`
-                        : 'Frozen settings unavailable'
-                    }}
+                  <span class="job-copy">
+                    <span class="job-heading">
+                      <strong class="project-name">{{ item.projectName }}</strong>
+                      <NTag :bordered="false" size="small" :type="statusType(item.status)">
+                        {{ item.cancelRequested ? 'Canceling' : statusLabels[item.status] }}
+                      </NTag>
+                    </span>
+                    <span class="job-operation">Generate · Project Canvas</span>
+                    <span class="job-summary">
+                      {{
+                        item.details
+                          ? `${item.details.modelName} · Seed ${item.details.sampling.seed}`
+                          : 'Frozen settings unavailable'
+                      }}
+                    </span>
+                    <span class="job-time">Queued {{ timestamp(item.createdAt) }}</span>
+                    <GenerationProgressIndicator
+                      v-if="progressForJob(generationProgress, item)"
+                      :progress="progressForJob(generationProgress, item)!"
+                    />
                   </span>
-                  <span class="job-time">Queued {{ timestamp(item.createdAt) }}</span>
-                  <GenerationProgressIndicator
-                    v-if="progressForJob(generationProgress, item)"
-                    :progress="progressForJob(generationProgress, item)!"
-                  />
                 </button>
                 <div class="job-actions">
                   <NButton
@@ -660,6 +782,57 @@ onBeforeUnmount(() => {
               v-if="progressForJob(generationProgress, selected)"
               :progress="progressForJob(generationProgress, selected)!"
             />
+            <section class="detail-section" data-testid="queue-result-section">
+              <h3>Result</h3>
+              <div class="result-context">
+                <div
+                  v-if="selected.status === 'completed'"
+                  class="result-thumbnail"
+                  data-testid="queue-result-thumbnail"
+                >
+                  <img
+                    v-if="thumbnailUrl(selectedResult)"
+                    alt="Temporary generation result"
+                    decoding="async"
+                    :src="thumbnailUrl(selectedResult) ?? undefined"
+                    @error="thumbnailFailed(selectedResult)"
+                  />
+                  <NIcon
+                    v-else
+                    aria-label="Thumbnail unavailable"
+                    :component="Photo"
+                    data-testid="queue-result-thumbnail-placeholder"
+                    :size="24"
+                  />
+                </div>
+                <div aria-live="polite" class="result-description">
+                  <p v-if="resultReason(selected)" class="secondary-text">
+                    {{ resultReason(selected) }}
+                  </p>
+                  <template v-else-if="selectedResult">
+                    <p v-if="selectedResult.sourceDocumentMismatch" class="secondary-text">
+                      From an earlier document at this Project path. Preview is available; this
+                      candidate cannot be added.
+                    </p>
+                    <p v-else class="secondary-text">Temporary candidate in Project Results.</p>
+                    <p v-if="!thumbnailUrl(selectedResult)" class="secondary-text">
+                      Thumbnail unavailable. View the full result in Project.
+                    </p>
+                  </template>
+                  <NButton
+                    v-if="selectedResult"
+                    aria-label="View result"
+                    :disabled="controlsBusy || Boolean(resultLoading[selected.projectKey])"
+                    :loading="resultOpeningId === selected.id"
+                    secondary
+                    size="small"
+                    @click="openResult(selected)"
+                  >
+                    View result
+                  </NButton>
+                </div>
+              </div>
+            </section>
             <template v-if="selected.details">
               <section class="detail-section">
                 <h3>Frozen model</h3>
@@ -722,8 +895,9 @@ onBeforeUnmount(() => {
                 Retry creates a new job from these frozen settings, including the original seed.
               </p>
               <p v-if="retryReason(selected)">{{ retryReason(selected) }}</p>
+            </div>
+            <div v-if="!projectTabs.some((tab) => tab.id === selected?.projectKey)">
               <NButton
-                v-if="!projectTabs.some((tab) => tab.id === selected?.projectKey)"
                 :disabled="controlsBusy"
                 secondary
                 size="small"
@@ -912,6 +1086,56 @@ onBeforeUnmount(() => {
   background: transparent;
   font: inherit;
   text-align: left;
+}
+.job-select--with-preview {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.job-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+.job-thumbnail,
+.result-thumbnail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  color: var(--app-text-muted);
+  background: var(--app-elevated);
+}
+.job-thumbnail {
+  width: 48px;
+  height: 48px;
+}
+.result-thumbnail {
+  flex: 0 0 96px;
+  width: 96px;
+  height: 96px;
+}
+.job-thumbnail img,
+.result-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.result-context {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.result-description {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 .job-select:focus-visible {
   outline: 2px solid var(--app-text);
