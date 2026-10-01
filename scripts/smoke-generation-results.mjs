@@ -22,9 +22,14 @@ import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { GenerationQueueRepository } from '../src/main/projects/generation-queue.ts'
 import { GenerationStagingRepository } from '../src/main/projects/generation-staging.ts'
-import { IgsPackageError, readIgsPackage } from '../src/main/projects/igs-package.ts'
+import {
+  IgsPackageError,
+  readIgsPackage,
+  saveIgsPackage,
+} from '../src/main/projects/igs-package.ts'
 import { withIllustriousTxt2ImgRequest } from '../src/main/projects/illustrious-txt2img-job.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
+import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 
 const migrations = path.resolve('src/main/db/migrations')
 const icc = readFileSync('worker-python/src/imagegen_worker/srgb.icc')
@@ -2027,8 +2032,70 @@ try {
   assert.equal(acceptedTab.value.tab.layers.length, 2)
   assert.equal(acceptedTab.value.tab.dirty, true)
   assert.equal(acceptedTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
+  await queueNavigationScreenshot(acceptanceWindow, '15-accepted-results-after-add')
+  assert.equal(Array.isArray(acceptedTab.value.tab.acceptedResults), true)
+  assert.equal(acceptedTab.value.tab.acceptedResults.length, 2)
+  assert.deepEqual(
+    [...acceptedTab.value.tab.acceptedResults.map((result) => result.seed)].sort((a, b) => a - b),
+    [71, 72],
+  )
   const visibleAcceptedLayer = acceptedTab.value.tab.layers.find((layer) => layer.visible)
   assert.ok(visibleAcceptedLayer)
+  const hiddenAcceptedLayer = acceptedTab.value.tab.layers.find((layer) => !layer.visible)
+  assert.ok(hiddenAcceptedLayer)
+  const acceptedDialog = acceptanceWindow.getByRole('dialog', {
+    name: 'Accepted results',
+    exact: true,
+  })
+  async function acceptedState() {
+    return {
+      canvasZoom: await acceptanceWindow.getByLabel('Canvas zoom', { exact: true }).textContent(),
+      api: await acceptanceWindow.evaluate(
+        async (id) =>
+          await Promise.all([
+            window.api.projects.open(id),
+            window.api.projects.listGenerationResults(id),
+            window.api.projects.getGenerationState(id),
+            window.api.projects.getGenerationQueue(),
+          ]),
+        project.id,
+      ),
+      packageSha256: digest(readFileSync(packagePath)),
+    }
+  }
+  const beforeHistorySelection = await acceptedState()
+  await acceptanceWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  await expect(acceptedDialog.getByRole('listitem')).toHaveCount(2)
+  for (const entry of acceptedTab.value.tab.acceptedResults) {
+    const row = acceptedDialog.locator(`[data-layer-id="${entry.layerId}"]`)
+    await expect(row.getByText(`Seed ${entry.seed}`, { exact: true })).toBeVisible()
+    await expect(row.locator('img')).toHaveAttribute('src', entry.imageUrl)
+    await expect
+      .poll(() => row.locator('img').evaluate((img) => img.complete && img.naturalWidth > 0))
+      .toBe(true)
+  }
+  const hiddenHistoryRow = acceptedDialog.locator(`[data-layer-id="${hiddenAcceptedLayer.id}"]`)
+  await expect(hiddenHistoryRow.getByText('Hidden layer', { exact: true })).toBeVisible()
+  await queueNavigationScreenshot(acceptanceWindow, '16-accepted-results-dialog')
+  await hiddenHistoryRow.getByRole('button').focus()
+  await hiddenHistoryRow.getByRole('button').press('Enter')
+  await expect(acceptedDialog).toBeHidden()
+  await expect(
+    acceptanceWindow.locator('.entity-surface--selected .entity-preview img'),
+  ).toHaveAttribute('src', hiddenAcceptedLayer.imageUrl)
+  await expect(acceptanceWindow.locator('.entity-surface--selected')).toBeInViewport({ ratio: 0.8 })
+  assert.deepEqual(await acceptedState(), beforeHistorySelection)
+  await acceptanceWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  await acceptedDialog
+    .locator(`[data-layer-id="${visibleAcceptedLayer.id}"]`)
+    .getByRole('button')
+    .click()
+  await expect(acceptedDialog).toBeHidden()
+  assert.deepEqual(await acceptedState(), beforeHistorySelection)
+  queueNavigationReport.checks.push({
+    name: 'Accepted history shows each actual frozen seed and signed image; keyboard selection of a hidden layer preserves document, bbox, Undo, queue, staging and saved package',
+    layerIds: acceptedTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+  })
   await expect(
     acceptanceWindow.locator('.entity-surface--selected .entity-preview img'),
   ).toHaveAttribute('src', visibleAcceptedLayer.imageUrl)
@@ -2077,6 +2144,17 @@ try {
   )
   assert.equal(afterUndoResults.ok, true)
   assert.equal(afterUndoResults.value.candidates.length, 0)
+  const undoneAcceptedTab = await acceptanceWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(undoneAcceptedTab.ok, true)
+  assert.deepEqual(undoneAcceptedTab.value.tab.acceptedResults, [])
+  await acceptanceWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  await expect(acceptedDialog.getByText('No accepted results yet', { exact: true })).toBeVisible()
+  await expect(acceptedDialog.getByRole('listitem')).toHaveCount(0)
+  await queueNavigationScreenshot(acceptanceWindow, '17-accepted-results-empty-after-undo')
+  await acceptedDialog.getByRole('button', { name: 'Close', exact: true }).click()
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
   await historyToolbar.getByRole('button', { name: 'Redo' }).click()
   await expect
@@ -2090,6 +2168,14 @@ try {
     project.id,
   )
   assert.equal(redoneTab.ok, true)
+  assert.deepEqual(
+    redoneTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+  )
+  assert.deepEqual(
+    redoneTab.value.tab.acceptedResults.map((entry) => entry.seed),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.seed),
+  )
   const redoneVisibleLayer = redoneTab.value.tab.layers.find((layer) => layer.visible)
   assert.ok(redoneVisibleLayer)
   await expect(
@@ -2148,6 +2234,10 @@ try {
     acceptedLayerIds,
   )
   assert.equal(afterClearTab.value.tab.dirty, true)
+  assert.deepEqual(afterClearTab.value.tab.acceptedResults, redoneTab.value.tab.acceptedResults)
+  queueNavigationReport.checks.push({
+    name: 'Grouped Undo removes accepted history, Redo restores its identities and recorded seeds, and clearing Undo history preserves accepted entries',
+  })
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
 
   // Acceptance must reach the recovery shadow before staging cleanup. Crash before Save, recover
@@ -2205,6 +2295,14 @@ try {
   assert.equal(recoveredTab.value.tab.layers.length, 2)
   assert.equal(recoveredTab.value.tab.dirty, true)
   assert.equal(recoveredTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
+  assert.deepEqual(
+    recoveredTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+  )
+  assert.deepEqual(
+    recoveredTab.value.tab.acceptedResults.map((entry) => entry.seed),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.seed),
+  )
   await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
   await expect
     .poll(async () => {
@@ -2248,9 +2346,242 @@ try {
   const reopened = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
   assert.equal(reopened.ok, true)
   assert.equal(reopened.value.tab.layers.length, 2)
+  assert.deepEqual(
+    reopened.value.tab.acceptedResults.map((entry) => entry.layerId),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.layerId),
+  )
+  assert.deepEqual(
+    reopened.value.tab.acceptedResults.map((entry) => entry.seed),
+    acceptedTab.value.tab.acceptedResults.map((entry) => entry.seed),
+  )
+  await recoveryWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  await expect(
+    recoveryWindow
+      .getByRole('dialog', { name: 'Accepted results', exact: true })
+      .getByRole('listitem'),
+  ).toHaveCount(2)
+  await queueNavigationScreenshot(recoveryWindow, '18-accepted-results-saved-reopen')
+  await recoveryWindow
+    .getByRole('dialog', { name: 'Accepted results', exact: true })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
+  queueNavigationReport.checks.push({
+    name: 'Dirty-shadow Recover and explicit Save/reopen reconstruct accepted history from actual provenance independently of staging and Queue history',
+  })
   console.log(
     'Desktop acceptance smoke passed: confirmed early Add, exact sibling cancellation, neighbor preservation, grouped Undo/Redo, shadow recovery and portable Save/reopen.',
   )
+  // A real saved package exercises scroll layout and legal current-pixel changes. History owns
+  // the original generated dimensions; the current layer asset and its signed preview are 16x16.
+  const layoutTitle = 'Accepted history layout smoke'
+  const layoutPath = path.join(path.dirname(packagePath), `${layoutTitle}.igs`)
+  const layoutPng = srgbPng(16, 16, true)
+  const generatedLayer = savedAcceptance.layers[0]
+  const layoutLayers = Array.from({ length: 32 }, (_, index) => {
+    const layerId = randomUUID()
+    return {
+      ...structuredClone(generatedLayer),
+      asset: {
+        bytes: layoutPng.length,
+        height: 16,
+        path: `assets/layers/${layerId}.png`,
+        sha256: digest(layoutPng),
+        width: 16,
+      },
+      generationProvenance: {
+        ...structuredClone(generatedLayer.generationProvenance),
+        executionResultContext: {
+          ...generatedLayer.generationProvenance.executionResultContext,
+          acceptedAt: new Date(Date.UTC(2026, 9, 1, 12, 0, index)).toISOString(),
+          candidateId: randomUUID(),
+          queueItemId: randomUUID(),
+        },
+        generationConfiguration: {
+          ...structuredClone(generatedLayer.generationProvenance.generationConfiguration),
+          model: {
+            ...generatedLayer.generationProvenance.generationConfiguration.model,
+            displayName: `Exact copied checkpoint ${'with a long descriptive name '.repeat(5)}`,
+          },
+          sampling: {
+            ...generatedLayer.generationProvenance.generationConfiguration.sampling,
+            actualSeed: index === 0 ? 0 : 200 + index,
+          },
+        },
+      },
+      id: layerId,
+      name: `Result ${index + 1} ${'with a long layer name '.repeat(8)}`,
+      visible: index % 2 === 0,
+    }
+  })
+  await saveIgsPackage(layoutPath, {
+    assets: Object.fromEntries(
+      layoutLayers.map((layer) => [layer.asset.path, { bytes: layoutPng }]),
+    ),
+    preview: {
+      merged: readFileSync('dist/main/placeholders/empty.png'),
+      rect: savedAcceptance.primaryBbox,
+      status: 'unavailable',
+      thumbnail: readFileSync('dist/main/placeholders/empty.webp'),
+    },
+    project: {
+      ...createEmptyProjectDocumentV1({ title: layoutTitle }),
+      generationDraft: savedAcceptance.generationDraft,
+      layers: layoutLayers,
+    },
+  })
+  const layoutPackageHash = digest(readFileSync(layoutPath))
+  await recoveryWindow.getByRole('tab', { name: 'Home', exact: true }).click()
+  await recoveryWindow.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+  await recoveryWindow.getByRole('button', { name: `Open ${layoutTitle}`, exact: true }).click()
+  // Wait for UI Open/reconciliation to finish before issuing another real projects:open.
+  await expect(recoveryWindow.getByRole('tab', { name: layoutTitle, exact: true })).toBeVisible()
+  const layoutProjects = await recoveryWindow.evaluate(() => window.api.projects.list())
+  assert.equal(layoutProjects.ok, true)
+  const layoutProject = layoutProjects.value.find((entry) => entry.title === layoutTitle)
+  assert.ok(layoutProject)
+  const layoutBefore = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    layoutProject.id,
+  )
+  assert.equal(layoutBefore.ok, true)
+  assert.equal(layoutBefore.value.tab.storageWarning, undefined)
+  assert.equal(layoutBefore.value.tab.acceptedResults.length, 32)
+  const layoutModal = recoveryWindow.getByRole('dialog', { name: 'Accepted results', exact: true })
+  const initialGeometry = await application.evaluate(({ BrowserWindow }) => ({
+    bounds: BrowserWindow.getAllWindows()[0].getBounds(),
+    contentSize: BrowserWindow.getAllWindows()[0].getContentSize(),
+  }))
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(1380, 900),
+  )
+  await recoveryWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  await expect(layoutModal.getByRole('listitem')).toHaveCount(32)
+  await queueNavigationScreenshot(recoveryWindow, '19-accepted-results-long-normal')
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(900, 620),
+  )
+  await queueNavigationScreenshot(recoveryWindow, '20-accepted-results-long-compact')
+  const oldestLayer = layoutLayers[0]
+  const oldestHistoryRow = layoutModal.locator(`[data-layer-id="${oldestLayer.id}"]`)
+  await oldestHistoryRow.getByRole('button').scrollIntoViewIfNeeded()
+  await expect(oldestHistoryRow.getByText('Seed 0', { exact: true })).toBeVisible()
+  await expect(oldestHistoryRow.getByText('Generated size: 64 × 64', { exact: true })).toBeVisible()
+  await expect
+    .poll(() =>
+      oldestHistoryRow.locator('img').evaluate((img) => img.complete && img.naturalWidth === 16),
+    )
+    .toBe(true)
+  await expect(layoutModal.getByRole('button', { name: 'Close', exact: true })).toBeVisible()
+  await queueNavigationScreenshot(recoveryWindow, '21-accepted-results-long-bottom-seed-zero')
+  await oldestHistoryRow.getByRole('button').focus()
+  await oldestHistoryRow.getByRole('button').press('Space')
+  await expect(layoutModal).toBeHidden()
+  const oldestLayerView = layoutBefore.value.tab.layers.find((layer) => layer.id === oldestLayer.id)
+  assert.ok(oldestLayerView)
+  await expect(
+    recoveryWindow.locator('.entity-surface--selected .entity-preview img'),
+  ).toHaveAttribute('src', oldestLayerView.imageUrl)
+  await expect(recoveryWindow.locator('.entity-surface--selected')).toBeInViewport({ ratio: 0.8 })
+  // The newest history entry belongs to a hidden layer at the bottom of the Layers stack.
+  // Navigation must reveal that selected row without revealing its pixels on Canvas.
+  const distantHiddenLayer = layoutLayers[31]
+  await recoveryWindow.getByRole('button', { name: 'Accepted results', exact: true }).click()
+  const distantHistoryRow = layoutModal.locator(`[data-layer-id="${distantHiddenLayer.id}"]`)
+  await expect(distantHistoryRow.getByText('Hidden layer', { exact: true })).toBeVisible()
+  await distantHistoryRow.getByRole('button').click()
+  await expect(layoutModal).toBeHidden()
+  const distantLayerView = layoutBefore.value.tab.layers.find(
+    (layer) => layer.id === distantHiddenLayer.id,
+  )
+  assert.ok(distantLayerView)
+  await expect(
+    recoveryWindow.locator('.entity-surface--selected .entity-preview img'),
+  ).toHaveAttribute('src', distantLayerView.imageUrl)
+  await expect(recoveryWindow.locator('.entity-surface--selected')).toBeInViewport({ ratio: 0.8 })
+  await queueNavigationScreenshot(recoveryWindow, '22-accepted-result-hidden-layer-revealed')
+  const layoutAfter = await recoveryWindow.evaluate(
+    (id) => window.api.projects.open(id),
+    layoutProject.id,
+  )
+  assert.deepEqual(layoutAfter, layoutBefore)
+  assert.equal(digest(readFileSync(layoutPath)), layoutPackageHash)
+  await application.evaluate(({ BrowserWindow }, geometry) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setBounds(geometry.bounds)
+    window.setContentSize(...geometry.contentSize)
+  }, initialGeometry)
+  queueNavigationReport.checks.push({
+    name: 'A real saved 32-result Project supports normal/compact scrolling, long names, seed zero and keyboard selection; current 16x16 assets preserve original generated size 64x64',
+  })
+
+  // Supply malformed main responses through real IPC; the subject is the built preload validator.
+  // No Project/storage owner is replaced or modified, and this is the final API scenario.
+  const rawOpenResponse = layoutAfter
+  const malformedResponses = [
+    [
+      'missing history',
+      (() => {
+        const response = structuredClone(rawOpenResponse)
+        delete response.value.tab.acceptedResults
+        return response
+      })(),
+    ],
+    [
+      'duplicate accepted identity',
+      (() => {
+        const response = structuredClone(rawOpenResponse)
+        response.value.tab.acceptedResults.push(response.value.tab.acceptedResults[0])
+        return response
+      })(),
+    ],
+    [
+      'foreign owning layer',
+      (() => {
+        const response = structuredClone(rawOpenResponse)
+        response.value.tab.acceptedResults[0].layerId = randomUUID()
+        return response
+      })(),
+    ],
+    [
+      'wrong signed owning image',
+      (() => {
+        const response = structuredClone(rawOpenResponse)
+        response.value.tab.acceptedResults[0].imageUrl =
+          response.value.tab.acceptedResults[1].imageUrl
+        return response
+      })(),
+    ],
+    [
+      'invalid actual seed',
+      (() => {
+        const response = structuredClone(rawOpenResponse)
+        response.value.tab.acceptedResults[0].seed = -1
+        return response
+      })(),
+    ],
+  ]
+  for (const [name, response] of [
+    ...malformedResponses,
+    ['valid original output dimensions', rawOpenResponse],
+  ]) {
+    await application.evaluate(({ ipcMain }, payload) => {
+      ipcMain.removeHandler('projects:open')
+      ipcMain.handle('projects:open', async () => payload)
+    }, response)
+    const observed = await recoveryWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      layoutProject.id,
+    )
+    if (response === rawOpenResponse) {
+      assert.deepEqual(observed, rawOpenResponse)
+    } else {
+      assert.equal(observed.ok, false, name)
+      assert.equal(observed.error.code, 'IPC_INVALID_RESPONSE', name)
+    }
+  }
+  queueNavigationReport.checks.push({
+    name: 'Actual preload rejects missing/duplicate/foreign accepted identity, wrong signed image and invalid seed; legal original output versus current asset dimensions remain accepted',
+  })
   for (const [file, sha256] of Object.entries(testedBuild)) {
     assert.equal(
       digest(readFileSync(file)),

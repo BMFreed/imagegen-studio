@@ -63,6 +63,7 @@ import {
   selectableVersion,
 } from './project-model-picker.js'
 import { projectPromptLoraSources } from './project-prompt-context.js'
+import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
@@ -724,14 +725,76 @@ function restoreInvalidFixedSeed() {
 }
 
 const selectedLayerId = ref<string | null>(null)
+const layersPanel = ref<InstanceType<typeof ProjectLayerStack> | null>(null)
+const acceptedResultsOpen = ref(false)
+const acceptedResultsContext = ref<{ documentId: string; projectId: string } | null>(null)
+const acceptedResultRevealLayerId = ref<string | null>(null)
 watch(
-  () => [props.tab.id, props.tab.layers] as const,
-  ([tabId, layers], previous) => {
-    if (previous && previous[0] !== tabId) {
+  () => [props.tab.id, props.tab.documentId] as const,
+  () => {
+    acceptedResultsOpen.value = false
+    acceptedResultsContext.value = null
+    acceptedResultRevealLayerId.value = null
+  },
+)
+
+function openAcceptedResults() {
+  if (props.busy || props.reloadRequired) {
+    return
+  }
+  acceptedResultsContext.value = { documentId: props.tab.documentId, projectId: props.tab.id }
+  acceptedResultRevealLayerId.value = null
+  acceptedResultsOpen.value = true
+}
+
+function selectAcceptedResultLayer(layerId: string) {
+  const context = acceptedResultsContext.value
+  if (
+    !acceptedResultsOpen.value ||
+    !context ||
+    context.projectId !== props.tab.id ||
+    context.documentId !== props.tab.documentId ||
+    props.busy ||
+    props.reloadRequired ||
+    !props.tab.acceptedResults.some((result) => result.layerId === layerId) ||
+    !props.tab.layers.some((layer) => layer.id === layerId)
+  ) {
+    return
+  }
+  selectedLayerId.value = layerId
+  acceptedResultRevealLayerId.value = layerId
+  acceptedResultsOpen.value = false
+}
+
+function revealAcceptedResultLayer() {
+  const context = acceptedResultsContext.value
+  const layerId = acceptedResultRevealLayerId.value
+  acceptedResultRevealLayerId.value = null
+  if (!context || !layerId) {
+    return
+  }
+  // Modal focus restoration finishes before revealing a row in the Layers viewport.
+  void nextTick(() => {
+    if (
+      !acceptedResultsOpen.value &&
+      context.projectId === props.tab.id &&
+      context.documentId === props.tab.documentId &&
+      selectedLayerId.value === layerId &&
+      props.tab.acceptedResults.some((result) => result.layerId === layerId) &&
+      props.tab.layers.some((layer) => layer.id === layerId)
+    ) {
+      layersPanel.value?.revealLayer(layerId)
+    }
+  })
+}
+watch(
+  () => [props.tab.id, props.tab.documentId, props.tab.layers] as const,
+  ([tabId, documentId, layers], previous) => {
+    if (previous && (previous[0] !== tabId || previous[1] !== documentId)) {
       selectedLayerId.value = null
       return
     }
-    const previousLayers = previous?.[1] ?? []
+    const previousLayers = previous?.[2] ?? []
     const previousIds = new Set(previousLayers.map((layer) => layer.id))
     const added = layers.filter((layer) => !previousIds.has(layer.id))
     if (previous && added.length > 0 && layers.length === previousLayers.length + added.length) {
@@ -1523,6 +1586,7 @@ function applyFitBbox() {
 
       <DnDProvider :autoScrollViewport="false">
         <ProjectLayerStack
+          ref="layersPanel"
           v-model:selectedLayerId="selectedLayerId"
           :disabled="busy || reloadRequired"
           :importing="pending === 'import-image'"
@@ -1530,9 +1594,30 @@ function applyFitBbox() {
           @importImage="emit('importImage')"
           @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
           @update="(layerId, change) => emit('updateLayer', layerId, change)"
-        />
+        >
+          <template v-slot:header-actions>
+            <NButton
+              aria-label="Accepted results"
+              :disabled="busy || reloadRequired"
+              quaternary
+              size="tiny"
+              @click="openAcceptedResults"
+            >
+              Accepted results
+            </NButton>
+          </template>
+        </ProjectLayerStack>
       </DnDProvider>
     </div>
+    <ProjectAcceptedResults
+      :key="`${tab.id}:${tab.documentId}`"
+      v-model:show="acceptedResultsOpen"
+      :disabled="busy || reloadRequired"
+      :layers="tab.layers"
+      :results="tab.acceptedResults"
+      @closed="revealAcceptedResultLayer"
+      @selectLayer="selectAcceptedResultLayer"
+    />
     <DynamicPromptPreview
       v-model:settings="dynamicSettings"
       v-model:show="dynamicPreviewOpen"

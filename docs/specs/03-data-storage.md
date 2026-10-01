@@ -323,6 +323,14 @@ SQLite rows are derived from accepted results in `.igs`; removing or rebuilding
 an index row cannot silently delete or hide the source result. Queue Manager's
 independent terminal-job pruning is not accepted-result history deletion.
 
+[Production Project-local history](../engineering/phase-2b-project-accepted-results-research.md)
+now projects current generated Raster Layer provenance into the open tab and
+rebuilds the read-only list after Undo/Redo, shadow Recover and `.igs` reopen.
+The history identity is the owning layer ID. Original output dimensions/seed
+remain recorded generation values even when the current asset dimensions differ.
+This projection introduces no new stored catalog; the derived global SQLite
+index and explicit Save synchronization described above are still unimplemented.
+
 ### Temporary generation staging
 
 Queue completion writes candidate assets to application-managed recovery storage,

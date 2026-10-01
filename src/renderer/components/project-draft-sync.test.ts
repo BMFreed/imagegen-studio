@@ -9,6 +9,7 @@ import { ProjectDraftSync } from './project-draft-sync.js'
 function projectTab(): ProjectTab {
   const document = createEmptyProjectDocumentV1({ title: 'Draft test' })
   return {
+    acceptedResults: [],
     autosaveError: null,
     canRedo: false,
     canUndo: false,

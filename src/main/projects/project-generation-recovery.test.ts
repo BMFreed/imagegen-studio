@@ -420,6 +420,7 @@ test('Save-before-crash clean shadow still requires temporary recovery and Recov
 test('saved pending acceptance reconciles after staging-only Recover without duplicating or resurrecting accepted results', async () => {
   const f = await fixture()
   let restarted: ProjectService | undefined
+  let dirtyRestart: ProjectService | undefined
   try {
     await f.shadow.discard(f.aPath)
     const { orchestrator, recovery } = f.owner()
@@ -441,7 +442,40 @@ test('saved pending acceptance reconciles after staging-only Recover without dup
       /controlled interruption/,
     )
     assert.ok(await journal.read(f.a.id, f.acceptedDocument.documentId))
-    await f.service.save(f.a.id)
+    const afterAdd = f.service.getOpenTabs().find((item) => item.id === f.a.id)!
+    assert.equal(afterAdd.acceptedResults.length, 2)
+    const generatedLayer = f.service
+      .getOpenDocumentForAcceptance(f.a.id)!
+      .document.layers.find(
+        (layer) => layer.generationProvenance?.executionResultContext.candidateId === f.currentA.id,
+      )!
+    assert.equal(
+      afterAdd.acceptedResults.find((result) => result.layerId === generatedLayer.id)!.seed,
+      0,
+    )
+    assert.equal((await f.service.undo(f.a.id)).acceptedResults.length, 1)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    const redone = await f.service.redo(f.a.id)
+    assert.deepEqual(
+      redone.acceptedResults.map((result) => result.layerId),
+      afterAdd.acceptedResults.map((result) => result.layerId),
+    )
+    await f.service.flushAutosave(f.a.id)
+    // A fresh process owner reconstructs history from the genuine accepted dirty shadow.
+    dirtyRestart = f.newService()
+    assert.equal((await f.owner(dirtyRestart).recovery.open(f.a.id)).kind, 'recovery-required')
+    const recoveredDirty = await f.owner(dirtyRestart).recovery.resolve(f.a.id, 'recover')
+    assert.equal(recoveredDirty.dirty, true)
+    assert.deepEqual(
+      recoveredDirty.acceptedResults.map((result) => result.layerId),
+      redone.acceptedResults.map((result) => result.layerId),
+    )
+    assert.equal(
+      recoveredDirty.acceptedResults.find((result) => result.layerId === generatedLayer.id)!.seed,
+      0,
+    )
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+    await dirtyRestart.save(f.a.id)
     assert.equal((await f.inspectShadow()).status, 'clean')
     const savedBytes = await readFile(f.aPath)
     const savedLayers = (await readIgsPackage(f.aPath)).project.layers
@@ -454,6 +488,10 @@ test('saved pending acceptance reconciles after staging-only Recover without dup
     const tab = await openedOwner.recovery.resolve(f.a.id, 'recover')
     assert.equal(tab.dirty, false)
     assert.equal(tab.canUndo, false)
+    assert.deepEqual(
+      tab.acceptedResults.map((result) => result.layerId),
+      redone.acceptedResults.map((result) => result.layerId),
+    )
     const resumed = new ProjectGenerationAcceptance({
       documents: { getOpenDocument: (id) => restarted!.getOpenDocumentForAcceptance(id) },
       gate: f.gate,
@@ -474,6 +512,8 @@ test('saved pending acceptance reconciles after staging-only Recover without dup
     )
     assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
     assert.deepEqual(await readFile(f.aPath), savedBytes)
+    assert.equal(await f.queue.pruneTerminal(['completed']), 3)
+    assert.equal(restarted.getOpenTabs()[0].acceptedResults.length, 2)
     // A repeated reconciliation has no new document or cleanup effect.
     assert.equal(
       await reconcileOpenedProjectGeneration(f.a.id, true, openedOwner.orchestrator, resumed),
@@ -482,6 +522,7 @@ test('saved pending acceptance reconciles after staging-only Recover without dup
     assert.deepEqual(await readFile(f.aPath), savedBytes)
   } finally {
     await restarted?.close(f.a.id).catch(() => undefined)
+    await dirtyRestart?.close(f.a.id).catch(() => undefined)
     await f.service.close(f.a.id).catch(() => undefined)
     await f.dispose()
   }

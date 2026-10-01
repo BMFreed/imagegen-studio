@@ -76,6 +76,23 @@ function commitOpacity() {
 
 const panelScroll = ref<HTMLElement | null>(null)
 const list = ref<HTMLElement | null>(null)
+function revealLayer(layerId: string) {
+  const container = panelScroll.value
+  const row = list.value?.querySelector<HTMLElement>(`[data-layer-id="${CSS.escape(layerId)}"]`)
+  if (!container || !row || !props.layers.some((layer) => layer.id === layerId)) {
+    return
+  }
+  const containerBounds = container.getBoundingClientRect()
+  const rowBounds = row.getBoundingClientRect()
+  const visibleTop = containerBounds.top + container.clientTop
+  const visibleBottom = visibleTop + container.clientHeight
+  if (rowBounds.top < visibleTop) {
+    container.scrollTop += rowBounds.top - visibleTop
+  } else if (rowBounds.bottom > visibleBottom) {
+    container.scrollTop += rowBounds.bottom - visibleBottom
+  }
+}
+defineExpose({ revealLayer })
 const provider = useDnDProvider()
 provider.keyboard.keys.forDrag = []
 provider.keyboard.keys.forDrop = []
@@ -149,22 +166,25 @@ makeDroppable(
     </div>
     <div class="layer-header">
       <h2>Layers ({{ layers.length }})</h2>
-      <NTooltip trigger="hover">
-        <template v-slot:trigger>
-          <NButton
-            aria-label="Import image as Raster Layer"
-            circle
-            :disabled
-            :loading="importing"
-            quaternary
-            size="small"
-            @click="emit('importImage')"
-          >
-            <template v-slot:icon><NIcon :component="Plus" /></template>
-          </NButton>
-        </template>
-        Import image as Raster Layer
-      </NTooltip>
+      <div class="layer-header-actions">
+        <slot name="header-actions" />
+        <NTooltip trigger="hover">
+          <template v-slot:trigger>
+            <NButton
+              aria-label="Import image as Raster Layer"
+              circle
+              :disabled
+              :loading="importing"
+              quaternary
+              size="small"
+              @click="emit('importImage')"
+            >
+              <template v-slot:icon><NIcon :component="Plus" /></template>
+            </NButton>
+          </template>
+          Import image as Raster Layer
+        </NTooltip>
+      </div>
     </div>
     <div ref="list" class="layer-list">
       <NEmpty
@@ -182,6 +202,7 @@ makeDroppable(
       <ProjectSortableRasterLayerRow
         v-for="(layer, index) of layers"
         :key="layer.id"
+        :data-layer-id="layer.id"
         :disabled
         :index
         :layer
@@ -251,6 +272,12 @@ makeDroppable(
   margin: 0;
   font-size: var(--app-font-size);
   font-weight: 600;
+}
+
+.layer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .layer-list {

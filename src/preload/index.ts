@@ -6,6 +6,7 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  ProjectAcceptedResultView,
   ProjectCandidateExportResult,
   ProjectCloseImpact,
   ProjectImportFinishResult,
@@ -22,6 +23,7 @@ import type {
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import { isGenerationQueuePage } from '../shared/projects/generation-queue-manager.js'
+import { isProjectAcceptedResultView } from '../shared/projects/project-accepted-results.js'
 import {
   isProjectDocumentId,
   isProjectGenerateResult,
@@ -271,9 +273,34 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isProjectRect(value.primaryBbox) &&
     Array.isArray(value.layers) &&
     value.layers.every(isProjectRasterLayerView) &&
+    isProjectAcceptedResults(value.acceptedResults, value.layers) &&
     typeof value.dirty === 'boolean' &&
     (value.autosaveError === null || typeof value.autosaveError === 'string') &&
     (value.storageWarning === undefined || typeof value.storageWarning === 'string')
+  )
+}
+
+/** Each accepted identity must still be owned by the same layer and signed image resource. */
+function isProjectAcceptedResults(
+  value: unknown,
+  layers: readonly ProjectRasterLayerView[],
+): value is ProjectAcceptedResultView[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > layers.length ||
+    !value.every(isProjectAcceptedResultView)
+  ) {
+    return false
+  }
+  const owned = new Map(layers.map((layer) => [layer.id, layer]))
+  return (
+    new Set(value.map((result) => result.layerId)).size === value.length &&
+    value.every((result) => {
+      const layer = owned.get(result.layerId)
+      return (
+        layer !== undefined && layer.name === result.layerName && layer.imageUrl === result.imageUrl
+      )
+    })
   )
 }
 

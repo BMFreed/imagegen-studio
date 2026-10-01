@@ -790,6 +790,22 @@ generation fixtures; это не proof полного GPU pipeline/release runti
 Pending-only sessions, accepted history, Smart Patch acceptance, полный pipeline
 и release runtime остаются открытыми; Phase 2B ещё не завершена.
 
+**Production Project-local accepted-history checkpoint (01.10.2026):**
+[Project-local accepted-result history](../engineering/phase-2b-project-accepted-results-research.md)
+строится из current Raster Layer provenance, а не Queue/staging/Undo. Layers
+toolbar открывает read-only `Accepted results`: copied exact checkpoint/version/
+SHA, actual seed включая `0`, original generated size, acceptedAt и current signed
+layer preview. Hidden layer отмечен явно; выбор записи выделяет и показывает
+её строку в Layers, не меняя visibility/camera/bbox/document/seed. Context
+проверяется по Project/document и текущему layer membership. Add создаёт записи,
+Undo убирает их, Redo возвращает; Clear Undo history сохраняет accepted results.
+Shadow Recover и Save/reopen реконструируют список из реальных owned records;
+Queue prune не удаляет их. Preload отвергает malformed/duplicate/foreign identity
+и несогласованный signed image, сохраняя валидный случай current asset size,
+отличающийся от original output. Global derived SQLite index, cross-project
+history navigation, pending-only sessions, Smart Patch acceptance, полный pipeline
+и release runtime остаются открытыми; Phase 2B ещё не завершена.
+
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат
 остаётся вне `.igs` до явного Add; принятие можно отменить и повторить как

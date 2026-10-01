@@ -224,8 +224,9 @@ Queue Manager owns job lifecycle and remains prunable operational history. It is
 Only accepted layers/variants receive immutable generation provenance and
 history entries. Add makes one entry per accepted result visible in the open
 Project history projection; after a crash, document-shadow recovery rebuilds
-that projection. Explicit Save persists those results in `.igs` and updates the
-durable derived SQLite history index. Discarded candidates receive neither.
+that projection. Explicit Save persists those results in `.igs`. Synchronizing
+the durable derived SQLite history index is planned separately and is not yet
+implemented. Discarded candidates receive neither provenance nor history entries.
 
 An accepted candidate's frozen context and raster asset must be handed off to
 the Project working state/recovery shadow before its staging record is removed.
@@ -491,6 +492,22 @@ storage with absent/clean document shadow produces a Home diagnostic and an
 Open/Import warning while preserving ordinary saved-document operations and
 unknown files; pending document-shadow decisions retain precedence. Pending-only sessions,
 accepted history and full pipeline/release runtime remain open.
+
+## Production Project-local accepted-result history
+
+[Project-local accepted-result history](../../../engineering/phase-2b-project-accepted-results-research.md)
+shows one entry for each current generated Raster Layer after Add, grouped
+Undo/Redo, shadow Recover and portable Save/reopen. The Layers toolbar action
+`Accepted results` opens the bounded list; selecting a result selects and reveals
+the owning layer row, including hidden layers, without accepting anything else
+or changing visibility/settings. Actual seed, copied exact checkpoint metadata
+and original output size come from immutable provenance. Previews use the same
+current signed layer resource as the stack; preview failure yields a placeholder.
+
+Imported raster images without provenance and temporary candidates are excluded.
+The list reflects current document ownership, independently of Queue rows and
+the Undo stack. The durable global SQLite index, cross-project accepted-result
+navigation, Smart Patch acceptance and full pipeline/release runtime remain open.
 
 ## Vue Prototype Coverage
 

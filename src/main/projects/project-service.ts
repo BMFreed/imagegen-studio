@@ -35,6 +35,7 @@ import type { ProjectTemporaryRecoveryInspection } from './project-temporary-rec
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
+import { projectAcceptedResults } from './project-accepted-results.js'
 import {
   ProjectAutosaveCoordinator,
   ProjectAutosaveError,
@@ -1567,6 +1568,7 @@ function parseCreateInput(input: unknown): { primaryBbox: IgsRectV1; title: stri
 function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {
   const document = coordinator.document
   return {
+    acceptedResults: projectAcceptedResults(id, document),
     autosaveError: coordinator.lastAutosaveError?.message ?? null,
     canRedo: coordinator.canRedo,
     canUndo: coordinator.canUndo,

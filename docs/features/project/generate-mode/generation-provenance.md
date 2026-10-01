@@ -178,7 +178,8 @@ If current owned inputs differ from the active variant provenance, the Smart Pat
 
 Global generation history is a derived view of accepted project results. The
 open Project shows an in-memory history projection immediately after Add; its
-durable SQLite index is rebuilt from saved `.igs` results after explicit Save.
+planned durable SQLite index will be rebuilt from saved `.igs` results after
+explicit Save; that global index is not yet implemented.
 Crash recovery can reconstruct the unsaved projection from the document shadow.
 
 - one accepted candidate → one accepted result → one history entry;
@@ -214,8 +215,31 @@ stores optional `sampling.seedBehavior` (`per-iteration` or `per-prompt`) from
 the frozen main context; legacy absence remains unspecified. Concrete prompts
 and the actual completed seed belong to the accepted result, while authored
 dynamic templates remain in the live draft. These integration checks replace
-external inference; history projection, comparison and result-to-preset remain
-unimplemented in production.
+external inference; comparison and result-to-preset remain unimplemented in
+production. The subsequent Project-local history checkpoint below connects the
+read-only accepted-result projection; the global durable index remains separate.
+
+## Production Project-local accepted results
+
+[Project-local accepted-result history](../../../engineering/phase-2b-project-accepted-results-research.md)
+projects current Raster Layers with provenance into `ProjectTab.acceptedResults`.
+The Layers toolbar opens `Accepted results`: a read-only list showing the layer
+preview, copied checkpoint/version/SHA, actual seed, original generated dimensions
+and acceptance time. Hidden layers remain listed with a textual label. The list
+uses current layer identity/name/image, while generation values remain frozen;
+current asset dimensions can differ from the original recorded output.
+
+Selecting an entry selects and reveals its owning row in the Layers viewport,
+without changing visibility, camera, bbox, dirty state, Undo, seed or persistence.
+Opening context is Project/document scoped and revalidated at selection. Undo
+removes accepted entries, Redo restores them, and clearing Undo history keeps
+accepted results. Recover and Save/reopen reconstruct the list from the owned
+provenance; Queue pruning and remaining staging do not define membership.
+
+This checkpoint supports generated Raster Layers only and adds no global
+SQLite history index or cross-project browser. Full settings comparison,
+result-to-preset and Smart Patch variants remain separate roadmap work. It is
+not a catalog of every past generation or of layers removed from current state.
 
 ## Vue Prototype Coverage
 

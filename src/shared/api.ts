@@ -123,6 +123,7 @@ export interface ProjectSummary {
 }
 
 export interface ProjectTab {
+  acceptedResults: ProjectAcceptedResultView[]
   autosaveError: string | null
   canRedo: boolean
   canUndo: boolean
@@ -135,6 +136,20 @@ export interface ProjectTab {
   primaryBbox: IgsRectV1
   storageWarning?: string
   title: string
+}
+
+/** Read-only Project-local projection of current accepted generated Raster Layers. */
+export interface ProjectAcceptedResultView {
+  acceptedAt: string
+  height: number
+  imageUrl: string
+  layerId: string
+  layerName: string
+  modelFileSha256: string
+  modelName: string
+  modelVersionName: string
+  seed: number
+  width: number
 }
 
 export interface ProjectRasterLayerView {

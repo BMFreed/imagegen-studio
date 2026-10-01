@@ -3,6 +3,7 @@ import {
   isProjectGenerationModelSelection,
 } from '../../shared/api.js'
 import type { ProjectGenerationDraftChange } from '../../shared/api.js'
+import { isProjectAcceptedResultView } from '../../shared/projects/project-accepted-results.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -2135,13 +2136,22 @@ test('Raster Layer commands persist top-first order and properties through shado
 
 test('editing an accepted Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
-    const output = await acceptedOutputPngFixture()
+    const originalOutput = await acceptedOutputPngFixture()
+    const output = await acceptedOutputPngFixture(16, 16)
     const externalPath = path.join(dataRoot, 'Generated source.igs')
-    const document = createEmptyProjectDocumentV1({ title: 'Generated source' })
+    const empty = createEmptyProjectDocumentV1({ title: 'Generated source' })
+    const document = {
+      ...empty,
+      generationDraft: {
+        ...empty.generationDraft,
+        seed: { policy: 'fixed' as const, value: 913 },
+      },
+    }
     const layerId = randomUUID()
     const assetPath = `assets/layers/${layerId}.png`
     const bbox = { height: 8, width: 8, x: 13, y: -17 }
-    const provenance = acceptedRasterProvenanceFixture(document, output, bbox)
+    const provenance = acceptedRasterProvenanceFixture(document, originalOutput, bbox)
+    provenance.generationConfiguration.sampling.actualSeed = 0
     const placeholders = await readProjectPlaceholders(placeholdersDir, 'unavailable')
     await saveIgsPackage(externalPath, {
       assets: { [assetPath]: { bytes: output } },
@@ -2152,10 +2162,10 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
           {
             asset: {
               bytes: output.length,
-              height: 8,
+              height: 16,
               path: assetPath,
               sha256: createHash('sha256').update(output).digest('hex'),
-              width: 8,
+              width: 16,
             },
             blendMode: 'normal',
             generationProvenance: provenance,
@@ -2182,6 +2192,24 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
       return
     }
     const tabId = imported.result.tab.id
+    const expectedHistory = [
+      {
+        acceptedAt: provenance.executionResultContext.acceptedAt,
+        height: 8,
+        imageUrl: imported.result.tab.layers[0].imageUrl,
+        layerId,
+        layerName: 'Accepted image',
+        modelFileSha256: provenance.generationConfiguration.model.fileSha256,
+        modelName: provenance.generationConfiguration.model.displayName,
+        modelVersionName: provenance.generationConfiguration.model.versionName,
+        seed: 0,
+        width: 8,
+      },
+    ]
+    assert.deepEqual(imported.result.tab.acceptedResults, expectedHistory)
+    assert.ok(imported.result.tab.acceptedResults.every(isProjectAcceptedResultView))
+    assert.equal(imported.result.tab.layers[0].width, 16)
+    assert.equal(imported.result.tab.layers[0].height, 16)
     const [indexed] = await repository.listProjects()
     assert.ok(indexed)
     const savedBeforeEdit = await readIgsPackage(indexed.canonicalPath)
@@ -2192,6 +2220,9 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
       opacity: 0.4,
     })
     assert.equal(changed.dirty, true)
+    assert.deepEqual(changed.acceptedResults, [
+      { ...expectedHistory[0], imageUrl: changed.layers[0].imageUrl },
+    ])
     await service.flushAutosave(tabId)
     const recovery = await shadow.inspect({
       projectPath: indexed.canonicalPath,
@@ -2212,6 +2243,11 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
     await service.close(tabId)
     const reopened = await service.open(tabId)
     assert.equal(reopened.kind, 'opened')
+    if (reopened.kind === 'opened') {
+      assert.deepEqual(reopened.tab.acceptedResults, [
+        { ...expectedHistory[0], imageUrl: reopened.tab.layers[0].imageUrl },
+      ])
+    }
     assert.deepEqual(
       (await readIgsPackage(indexed.canonicalPath)).project.layers[0].generationProvenance,
       provenance,
