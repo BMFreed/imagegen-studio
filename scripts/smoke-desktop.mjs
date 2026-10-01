@@ -2330,8 +2330,45 @@ try {
   console.log(
     'Desktop smoke passed: damaged runtime storage still opens Home and exposes repair state.',
   )
+  const unavailableSummaries = await damagedWindow.evaluate(() => window.api.projects.list())
+  assert.equal(unavailableSummaries.ok, true, JSON.stringify(unavailableSummaries))
+  const unavailableRaster = unavailableSummaries.value.find(
+    (project) => project.id === rasterProject.id,
+  )
+  assert.equal(unavailableRaster?.health, 'ready')
+  assert.equal(unavailableRaster?.recoveryStatus, 'unavailable')
+  assert.ok(unavailableRaster.recoveryReason?.length > 0)
+  assert.ok(unavailableRaster.recoveryReason.length <= 512)
+  const unavailableRow = damagedWindow.locator('.project-row').filter({ hasText: rasterTitle })
+  await expect(unavailableRow.getByText('Recovery unavailable', { exact: true })).toBeVisible()
+  await expect(unavailableRow.getByText(unavailableRaster.recoveryReason)).toBeVisible()
+  if (process.env.IMAGEGEN_SMOKE_UNAVAILABLE_HOME_SCREENSHOT) {
+    await damagedWindow.screenshot({
+      path: process.env.IMAGEGEN_SMOKE_UNAVAILABLE_HOME_SCREENSHOT,
+    })
+  }
+  const savedBeforeUnavailableOpen = readFileSync(rasterPackagePath)
   await damagedWindow.getByRole('button', { name: `Open ${rasterTitle}` }).click()
   await damagedWindow.getByRole('tab', { name: rasterTitle }).waitFor()
+  await expect(damagedWindow.getByRole('dialog', { name: 'Recovery available' })).toHaveCount(0)
+  await expect(damagedWindow.locator('.global-notice')).toContainText(
+    unavailableRaster.recoveryReason,
+  )
+  assert.deepEqual(readFileSync(rasterPackagePath), savedBeforeUnavailableOpen)
+  await damagedWindow
+    .getByRole('textbox', { name: 'Positive prompt' })
+    .fill('saved while temporary recovery needs repair')
+  await damagedWindow.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect
+    .poll(
+      async () =>
+        (await readIgsPackage(rasterPackagePath)).project.generationDraft.positivePrompt.text,
+    )
+    .toBe('saved while temporary recovery needs repair')
+  assert.deepEqual(readdirSync(outside), [])
+  console.log(
+    'Desktop smoke passed: unavailable recovery crosses typed preload, warns on Home/Open and preserves explicit Save without deleting unknown files.',
+  )
   const unavailableImpact = await damagedWindow.evaluate(
     (id) => window.api.projects.getCloseImpact(id),
     rasterProject.id,
@@ -2356,6 +2393,45 @@ try {
   await damagedWindow.getByRole('button', { name: `Close ${rasterTitle}` }).click()
   await unavailableCloseDialog.getByRole('button', { name: 'Close and Keep Recovery' }).click()
   await expect(damagedWindow.getByRole('tab', { name: rasterTitle })).toHaveCount(0)
+  for (const imported of [
+    { file: rasterPackagePath, title: rasterTitle, transfer: false },
+    { file: portableFile, title: portableTitle, transfer: true },
+  ]) {
+    const previousNotice = damagedWindow.locator('.global-notice')
+    if (await previousNotice.count()) {
+      await previousNotice.getByRole('button', { name: 'close', exact: true }).click()
+    }
+    await expect(previousNotice).toHaveCount(0)
+    const originalBytes = readFileSync(imported.file)
+    await application.evaluate(({ dialog }, selectedPath) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+    }, imported.file)
+    await damagedWindow.getByRole('button', { name: 'Import Project' }).click()
+    const importDialog = damagedWindow.getByRole('dialog', { name: 'Import Project' })
+    if (imported.transfer) {
+      await importDialog.getByText('Keep the original and copy it here').click()
+      await importDialog.getByRole('button', { name: 'Copy and Open' }).click()
+    }
+    await expect(importDialog).toHaveCount(0)
+    await expect(damagedWindow.getByRole('tab', { name: imported.title })).toBeVisible()
+    await expect(damagedWindow.getByRole('dialog', { name: 'Recovery available' })).toHaveCount(0)
+    await expect(damagedWindow.locator('.global-notice')).toContainText(
+      unavailableRaster.recoveryReason,
+    )
+    if (imported.transfer && process.env.IMAGEGEN_SMOKE_UNAVAILABLE_IMPORT_SCREENSHOT) {
+      await damagedWindow.screenshot({
+        path: process.env.IMAGEGEN_SMOKE_UNAVAILABLE_IMPORT_SCREENSHOT,
+      })
+    }
+    assert.deepEqual(readFileSync(imported.file), originalBytes)
+    assert.deepEqual(readdirSync(outside), [])
+    await damagedWindow.getByRole('button', { name: `Close ${imported.title}` }).click()
+    await unavailableCloseDialog.getByRole('button', { name: 'Close and Keep Recovery' }).click()
+    await expect(damagedWindow.getByRole('tab', { name: imported.title })).toHaveCount(0)
+  }
+  console.log(
+    'Desktop smoke passed: managed and copied Import each expose a fresh unavailable-recovery warning while preserving source packages and unknown storage.',
+  )
   const zeroTabCloseWarning = await application.evaluate(async ({ BrowserWindow, dialog }) => {
     return await new Promise((resolve, reject) => {
       const timeout = setTimeout(

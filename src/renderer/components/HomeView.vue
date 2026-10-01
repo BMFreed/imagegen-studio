@@ -56,7 +56,7 @@ function canRebuildPreview(project: ProjectSummary): boolean {
   return (
     project.health === 'ready' &&
     project.previewStatus === 'unavailable' &&
-    project.recoveryStatus === 'none'
+    (project.recoveryStatus === 'none' || project.recoveryStatus === 'unavailable')
   )
 }
 
@@ -106,7 +106,8 @@ function healthLabel(project: ProjectSummary): string | null {
 
 function recoveryLabel(project: ProjectSummary): string | null {
   switch (project.recoveryStatus) {
-    case 'invalid': {
+    case 'invalid':
+    case 'unavailable': {
       return 'Recovery unavailable'
     }
     case 'recoverable': {

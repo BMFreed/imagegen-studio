@@ -470,6 +470,18 @@ try {
   const window = await application.firstWindow()
   await trackPageErrors(window)
   await window.getByRole('tab', { name: 'Home' }).waitFor()
+  const stageOnlyHomeRow = window
+    .getByRole('listitem')
+    .filter({ has: window.getByRole('button', { name: `Open ${projectTitle}`, exact: true }) })
+  await expect(stageOnlyHomeRow.getByText('Recovery available', { exact: true })).toBeVisible()
+  await expect(window.getByRole('tab', { name: projectTitle, exact: true })).toHaveCount(0)
+  const stageOnlyHome = await window.evaluate(() => window.api.projects.list())
+  assert.equal(stageOnlyHome.ok, true)
+  assert.equal(
+    stageOnlyHome.value.find((item) => item.id === project.id).recoveryStatus,
+    'recoverable',
+  )
+  await queueNavigationScreenshot(window, '00-staging-only-home-recovery')
   // A closed Project cannot supply live signed resources. Queue history can still open that
   // Project, after which the ordinary recovery/results path verifies the candidate afresh.
   await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
@@ -496,8 +508,49 @@ try {
   await queueNavigationScreenshot(window, '01-closed-project-queue')
   await closedProjectManager.getByRole('button', { name: 'Open Project', exact: true }).click()
   await expect(closedProjectManager).toHaveCount(0)
+  const stageOnlyQueueRecovery = window.getByRole('dialog', { name: 'Recovery available' })
+  await expect(stageOnlyQueueRecovery).toBeVisible()
+  await expect(window.getByRole('tab', { name: projectTitle, exact: true })).toHaveCount(0)
+  await expect(stageOnlyQueueRecovery.getByText(/temporary results for review/)).toBeVisible()
+  const stageOnlyOpenDecision = await window.evaluate(
+    (id) => window.api.projects.open(id),
+    project.id,
+  )
+  assert.equal(stageOnlyOpenDecision.ok, true)
+  assert.equal(stageOnlyOpenDecision.value.kind, 'recovery-required')
+  assert.equal(stageOnlyOpenDecision.value.recoveryStatus, 'recoverable')
+  assert.deepEqual(readFileSync(packagePath), originalBytes)
+  assert.deepEqual(readFileSync(candidate.assetPath), output)
+  const originalRecoveryWindowGeometry = await application.evaluate(({ BrowserWindow }) => {
+    const nativeWindow = BrowserWindow.getAllWindows()[0]
+    return { bounds: nativeWindow.getBounds(), contentSize: nativeWindow.getContentSize() }
+  })
+  await queueNavigationScreenshot(window, '01-staging-only-recovery-normal')
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(900, 620),
+  )
+  await queueNavigationScreenshot(window, '01-staging-only-recovery-compact')
+  await application.evaluate(
+    ({ BrowserWindow }, [width, height]) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(width, height),
+    originalRecoveryWindowGeometry.contentSize,
+  )
+  await expect
+    .poll(async () => await window.evaluate(() => [window.innerWidth, window.innerHeight]))
+    .toEqual(originalRecoveryWindowGeometry.contentSize)
+  const restoredRecoveryWindowGeometry = await application.evaluate(({ BrowserWindow }) => {
+    const nativeWindow = BrowserWindow.getAllWindows()[0]
+    return { bounds: nativeWindow.getBounds(), contentSize: nativeWindow.getContentSize() }
+  })
+  assert.deepEqual(restoredRecoveryWindowGeometry, originalRecoveryWindowGeometry)
+  queueNavigationReport.recoveryWindowGeometry = {
+    original: originalRecoveryWindowGeometry,
+    restored: restoredRecoveryWindowGeometry,
+  }
+  await queueNavigationScreenshot(window, '01-staging-only-recovery-restored')
+  await stageOnlyQueueRecovery.getByRole('button', { name: 'Recover', exact: true }).click()
   queueNavigationReport.checks.push({
-    name: 'Closed Project exposes no private image; Open Project continues to the exact verified result',
+    name: 'Stage-only Home recovery gates closed Queue Open; explicit Recover continues to the exact verified result',
     queueItemId: candidate.queueItemId,
   })
   await window.getByRole('tab', { name: projectTitle }).waitFor()
@@ -509,6 +562,12 @@ try {
   assert.equal(snapshot.value.recoveryUnavailable, false)
   assert.equal(snapshot.value.candidates.length, 1)
   assert.equal(snapshot.value.lastActualSeed, 42)
+  const cleanStageOnlyTab = await window.evaluate((id) => window.api.projects.open(id), project.id)
+  assert.equal(cleanStageOnlyTab.ok, true)
+  assert.equal(cleanStageOnlyTab.value.kind, 'opened')
+  assert.equal(cleanStageOnlyTab.value.tab.dirty, false)
+  assert.equal(cleanStageOnlyTab.value.tab.canUndo, false)
+  assert.equal(cleanStageOnlyTab.value.tab.layers.length, 0)
   const recovered = snapshot.value.candidates[0]
   assert.equal(recovered.candidateId, candidate.candidateId)
   assert.deepEqual(recovered.bbox, bbox)
@@ -838,18 +897,283 @@ try {
   let acceptanceWindow = await application.firstWindow()
   await trackPageErrors(acceptanceWindow)
   await acceptanceWindow.getByRole('tab', { name: 'Home' }).waitFor()
-  await acceptanceWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
-  await acceptanceWindow.getByRole('tab', { name: projectTitle }).waitFor()
-  let acceptanceSnapshot = await acceptanceWindow.evaluate(
-    (id) => window.api.projects.listGenerationResults(id),
-    project.id,
-  )
-  assert.equal(acceptanceSnapshot.ok, true)
-  assert.deepEqual(
-    acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
-    acceptedCandidates.map((item) => item.candidateId),
-  )
-  assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+  let acceptanceSnapshot
+  const stageOnlyDatabase = openAppDatabase(appDataRoot, migrations)
+  try {
+    const queueRowsBefore = await stageOnlyDatabase.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    assert.ok(queueRowsBefore.every((row) => !['pending', 'running'].includes(row.status)))
+    const seedRowsBefore = await stageOnlyDatabase.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .orderBy('local_project_key')
+      .execute()
+    const candidateFilesBefore = acceptedCandidates.flatMap((item) => [
+      { bytes: readFileSync(item.assetPath), path: item.assetPath },
+      {
+        bytes: readFileSync(path.join(path.dirname(path.dirname(item.assetPath)), 'manifest.json')),
+        path: path.join(path.dirname(path.dirname(item.assetPath)), 'manifest.json'),
+      },
+    ])
+    const cleanShadowPath = path.join(appDataRoot, 'autosave', project.id, 'manifest.json')
+    const cleanShadowBefore = existsSync(cleanShadowPath) ? readFileSync(cleanShadowPath) : null
+    if (cleanShadowBefore) assert.equal(JSON.parse(cleanShadowBefore).state, 'clean')
+    queueNavigationReport.stageOnlyStorageBefore = {
+      savedPackageSha256: digest(packageBeforeAcceptance),
+      cleanShadowSha256: cleanShadowBefore === null ? null : digest(cleanShadowBefore),
+      candidateFiles: candidateFilesBefore.map((file) => ({
+        path: file.path,
+        sha256: digest(file.bytes),
+      })),
+      queueRows: queueRowsBefore,
+      seedRows: seedRowsBefore,
+    }
+
+    // With no unsaved document changes, Cancel must still preserve the independent staging
+    // recovery and consume Queue's exact target. A later Home Open asks again from fresh state.
+    await openClosedQueueResult(acceptanceWindow, acceptedCandidates[1])
+    const stageOnlyDialog = acceptanceWindow.getByRole('dialog', { name: 'Recovery available' })
+    await expect(stageOnlyDialog).toBeVisible()
+    await expect(
+      acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }),
+    ).toHaveCount(0)
+    await queueNavigationScreenshot(acceptanceWindow, '02-staging-only-cancel-intent')
+    await stageOnlyDialog.getByRole('button', { exact: true, name: 'Cancel' }).click()
+    await expect(stageOnlyDialog).toHaveCount(0)
+    await expect(
+      acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }),
+    ).toHaveCount(0)
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    for (const file of candidateFilesBefore) assert.deepEqual(readFileSync(file.path), file.bytes)
+    assert.deepEqual(
+      existsSync(cleanShadowPath) ? readFileSync(cleanShadowPath) : null,
+      cleanShadowBefore,
+    )
+    assert.deepEqual(
+      await stageOnlyDatabase.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute(),
+      queueRowsBefore,
+    )
+    assert.deepEqual(
+      await stageOnlyDatabase.db
+        .selectFrom('generation_seed_cursor')
+        .selectAll()
+        .orderBy('local_project_key')
+        .execute(),
+      seedRowsBefore,
+    )
+    await acceptanceWindow
+      .getByRole('button', { name: `Open ${projectTitle}`, exact: true })
+      .click()
+    await expect(stageOnlyDialog).toBeVisible()
+    await expect(
+      acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }),
+    ).toHaveCount(0)
+    await stageOnlyDialog.getByRole('button', { exact: true, name: 'Recover' }).click()
+    await acceptanceWindow.getByRole('tab', { name: projectTitle, exact: true }).waitFor()
+    const recoveredClean = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      project.id,
+    )
+    assert.equal(recoveredClean.ok, true)
+    assert.equal(recoveredClean.value.kind, 'opened')
+    assert.equal(recoveredClean.value.tab.dirty, false)
+    assert.equal(recoveredClean.value.tab.canUndo, false)
+    assert.equal(recoveredClean.value.tab.layers.length, 0)
+    assert.deepEqual(recoveredClean.value.tab.primaryBbox, acceptanceSource.primaryBbox)
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(3)
+    await expect(
+      candidateCard(acceptanceWindow, acceptedCandidates[0]).locator('.candidate-button'),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+      'All results',
+    )
+    acceptanceSnapshot = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.equal(acceptanceSnapshot.ok, true)
+    assert.deepEqual(
+      acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
+      acceptedCandidates.map((item) => item.candidateId),
+    )
+    assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+    assert.equal(acceptanceSnapshot.value.lastActualSeed, 73)
+    for (const file of candidateFilesBefore) assert.deepEqual(readFileSync(file.path), file.bytes)
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    await queueNavigationScreenshot(acceptanceWindow, '02-staging-only-home-recover-clean')
+    queueNavigationReport.checks.push({
+      name: 'Stage-only Cancel leaves the Project closed and preserves storage; later Home Recover opens saved clean with All focus and no stale Queue intent',
+      canceledQueueItemId: acceptedCandidates[1].queueItemId,
+      candidateIds: acceptedCandidates.map((item) => item.candidateId),
+    })
+
+    acceptanceWindow = await crashAndRestartResultsApplication()
+    await openClosedQueueResult(acceptanceWindow, acceptedCandidates[1])
+    const exactStageOnlyDialog = acceptanceWindow.getByRole('dialog', {
+      name: 'Recovery available',
+    })
+    await expect(exactStageOnlyDialog).toBeVisible()
+    await expect(
+      acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }),
+    ).toHaveCount(0)
+    await exactStageOnlyDialog.getByRole('button', { exact: true, name: 'Recover' }).click()
+    await acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }).waitFor()
+    await expect(
+      candidateCard(acceptanceWindow, acceptedCandidates[1]).locator('.candidate-button'),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(1)
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+      'Session 2',
+    )
+    const exactCleanTab = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      project.id,
+    )
+    assert.equal(exactCleanTab.ok, true)
+    assert.equal(exactCleanTab.value.tab.dirty, false)
+    assert.equal(exactCleanTab.value.tab.canUndo, false)
+    assert.equal(exactCleanTab.value.tab.layers.length, 0)
+    const exactStageResults = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.deepEqual(
+      durableResultsSnapshot(exactStageResults),
+      durableResultsSnapshot(acceptanceSnapshot),
+    )
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    await queueNavigationScreenshot(acceptanceWindow, '03-staging-only-queue-recover-exact')
+    queueNavigationReport.checks.push({
+      name: 'Stage-only Queue Open resumes its exact session and candidate only after explicit Recover; document remains saved clean',
+      queueItemId: acceptedCandidates[1].queueItemId,
+      candidateId: acceptedCandidates[1].candidateId,
+    })
+
+    // The destructive choice must cover every temporary session even without a dirty shadow.
+    acceptanceWindow = await crashAndRestartResultsApplication()
+    await openClosedQueueResult(acceptanceWindow, acceptedCandidates[2])
+    const discardStageOnlyDialog = acceptanceWindow.getByRole('dialog', {
+      name: 'Recovery available',
+    })
+    await expect(discardStageOnlyDialog).toBeVisible()
+    await discardStageOnlyDialog
+      .getByRole('button', { exact: true, name: 'Discard Recovery and Open Saved' })
+      .click()
+    await acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }).waitFor()
+    await expect(
+      acceptanceWindow.getByRole('region', { exact: true, name: 'Generation Results' }),
+    ).toHaveCount(0)
+    await expect(
+      acceptanceWindow.getByRole('toolbar', { exact: true, name: 'Temporary generation results' }),
+    ).toHaveCount(0)
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(0)
+    const stageDiscardTab = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      project.id,
+    )
+    assert.equal(stageDiscardTab.ok, true)
+    assert.equal(stageDiscardTab.value.tab.dirty, false)
+    assert.equal(stageDiscardTab.value.tab.canUndo, false)
+    assert.equal(stageDiscardTab.value.tab.layers.length, 0)
+    assert.deepEqual(stageDiscardTab.value.tab.primaryBbox, acceptanceSource.primaryBbox)
+    const stageDiscardResults = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.equal(stageDiscardResults.ok, true)
+    assert.deepEqual(stageDiscardResults.value.candidates, [])
+    assert.equal(stageDiscardResults.value.lastActualSeed, 73)
+    const tombstones = await stageOnlyDatabase.db
+      .selectFrom('generation_staging_discarded_session')
+      .select(['local_project_key', 'staging_session_id'])
+      .execute()
+    assert.ok(
+      acceptedCandidates.every((item) =>
+        tombstones.some(
+          (row) =>
+            row.local_project_key === item.localProjectKey &&
+            row.staging_session_id === item.stagingSessionId,
+        ),
+      ),
+    )
+    assert.equal(
+      tombstones.some(
+        (row) =>
+          row.local_project_key === recoveryNeighbor.localProjectKey &&
+          row.staging_session_id === recoveryNeighbor.stagingSessionId,
+      ),
+      false,
+    )
+    await expect
+      .poll(() => acceptedCandidates.every((item) => !existsSync(item.assetPath)))
+      .toBe(true)
+    assert.deepEqual(
+      await stageOnlyDatabase.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute(),
+      queueRowsBefore,
+    )
+    assert.deepEqual(
+      await stageOnlyDatabase.db
+        .selectFrom('generation_seed_cursor')
+        .selectAll()
+        .orderBy('local_project_key')
+        .execute(),
+      seedRowsBefore,
+    )
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    assert.deepEqual(readFileSync(recoveryNeighborPackagePath), packageBeforeAcceptance)
+    assert.deepEqual(readFileSync(recoveryNeighbor.assetPath), output)
+    const queue = new GenerationQueueRepository(stageOnlyDatabase.db, appDataRoot)
+    await queue.recoverAfterRestart()
+    const staging = new GenerationStagingRepository(stageOnlyDatabase.db, appDataRoot)
+    await staging.recoverAfterRestart()
+    assert.equal((await staging.listVerifiedCandidates(recoveryNeighbor.localProjectKey)).length, 1)
+    await queueNavigationScreenshot(acceptanceWindow, '03-staging-only-discard-saved-no-results')
+    queueNavigationReport.checks.push({
+      name: 'Stage-only Discard tombstones and removes every Project temporary session without Queue autofocus; saved package, seed, queue rows and neighbor remain unchanged',
+      discardedCandidateIds: acceptedCandidates.map((item) => item.candidateId),
+      preservedNeighborCandidateId: recoveryNeighbor.candidateId,
+    })
+
+    // New production publication supplies distinct candidates for the retained dirty-shadow
+    // controls below. Tombstoned identities are never revived after the destructive decision.
+    acceptedCandidates.splice(
+      0,
+      acceptedCandidates.length,
+      ...(await publishRecoveryCandidates({ queue, staging })),
+    )
+    await acceptanceWindow.getByRole('button', { exact: true, name: 'Open Queue Manager' }).click()
+    const refreshStageOnlyQueue = acceptanceWindow.getByRole('dialog', {
+      exact: true,
+      name: 'Queue Manager',
+    })
+    await refreshStageOnlyQueue
+      .getByRole('button', { exact: true, name: 'Close Queue Manager' })
+      .click()
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(3)
+    acceptanceSnapshot = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.equal(acceptanceSnapshot.ok, true)
+    assert.deepEqual(
+      acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
+      acceptedCandidates.map((item) => item.candidateId),
+    )
+    assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+  } finally {
+    await stageOnlyDatabase.close()
+  }
 
   // Recovery is an ordinary document decision before the one-use result intent resumes. Build a
   // real dirty shadow through Canvas, then crash without accepting or saving any candidate.

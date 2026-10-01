@@ -117,7 +117,7 @@ export interface ProjectSummary {
   id: string
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
   recoveryReason?: string
-  recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale'
+  recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale' | 'unavailable'
   thumbnailUrl: string | null
   title: string
 }

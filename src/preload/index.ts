@@ -429,7 +429,9 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
       ['empty', 'rendered', 'unavailable'].includes(String(value.previewStatus))) &&
     (value.thumbnailUrl === null || isProjectThumbnailUrl(value.thumbnailUrl)) &&
     (value.bbox === null || isProjectDimensions(value.bbox)) &&
-    ['invalid', 'none', 'recoverable', 'stale'].includes(String(value.recoveryStatus)) &&
+    ['invalid', 'none', 'recoverable', 'stale', 'unavailable'].includes(
+      String(value.recoveryStatus),
+    ) &&
     (value.recoveryReason === undefined || typeof value.recoveryReason === 'string')
   )
 }

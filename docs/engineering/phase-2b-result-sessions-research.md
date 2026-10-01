@@ -239,3 +239,8 @@ build/script/helper identities and observed boundaries are in
 `native-actions/native-report.json`. Both use the shared physical-input guard.
 Actual viewport screenshots were inspected; controlled inference/runtime pixels
 remain explicit substitutions rather than release/GPU proof.
+
+Later checkpoint (01.10.2026): [staging-only recovery decisions](./phase-2b-staging-only-recovery-research.md)
+closes the specifically retained Home/Open decision gap above. The historical
+counts and evidence in this record describe the earlier result-session revision;
+the later record supplies fresh production-boundary tests and native evidence.

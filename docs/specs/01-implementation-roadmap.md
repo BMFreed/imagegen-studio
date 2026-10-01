@@ -768,8 +768,27 @@ fallback, auto Recover/Add/Retry или durable preference. `.igs`, seed, accept
 Project, queue/staging и provenance не меняются от filter/navigation.
 Pending-only staging sessions, accepted history, full pipeline и release runtime
 остаются открытыми; Phase 2B ещё не завершена. Home RecoveryAvailable для
-staging-only recovery без dirty shadow ещё не подключён: valid completed
-Results пока восстанавливаются при ordinary Open без отдельного решения.
+staging-only recovery без dirty shadow на этом checkpoint ещё не был подключён;
+следующий checkpoint ниже закрывает этот пробел.
+
+**Production staging-only recovery checkpoint (01.10.2026):**
+[Staging-only recovery decisions](../engineering/phase-2b-staging-only-recovery-research.md)
+использует verified staging candidates независимо от prunable Queue history и
+dirty document shadow. Закрытый ready Project с completed Results получает
+Home badge и Recover/Discard/Cancel до создания вкладки. Recover без dirty shadow
+открывает saved `.igs` clean, без Undo/acceptance; точная Queue continuation
+применяется только после решения и fresh проверки candidate. Discard использует
+прежние confirmed cancellation и durable all-session tombstones перед удалением
+shadow; Cancel оставляет Project закрытым. Managed Import проходит тот же gate.
+Resolve проверяет актуальные candidates/open tabs. При absent/clean shadow
+unavailable staging получает отдельную Home диагностику; saved Open/Import/Save/
+rebuild остаются доступны с warning, неизвестные файлы не удаляются. Pending
+document recovery сохраняет свой статус и decision прежде всего, с diagnostic;
+valid dirty Recover остаётся доступным. Existing invalid/stale shadow precedence
+сохранён. Native checks используют real Electron/IPC/SQLite/files и controlled
+generation fixtures; это не proof полного GPU pipeline/release runtime.
+Pending-only sessions, accepted history, Smart Patch acceptance, полный pipeline
+и release runtime остаются открытыми; Phase 2B ещё не завершена.
 
 **Выходная проверка (PP-005/007/008):** на Linux/NVIDIA worker выполняет
 Illustrious `txt2img` из реально установленного exact checkpoint. Результат

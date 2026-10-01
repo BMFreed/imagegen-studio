@@ -267,6 +267,18 @@ Less common actions live in the card/row context menu. In the current prototype 
 
 Crash recovery is intentionally not a permanent preview-panel action. The current prototype resolves it through the project-opening decision dialog. Home cards may show a subtle `Recovery available` marker for a validated unfinished recovery candidate, but normal autosave activity is not shown on Home.
 
+The [production staging-only checkpoint](../engineering/phase-2b-staging-only-recovery-research.md)
+also marks a closed ready Project with verified completed temporary results,
+independently of document shadow and prunable Queue history. Open requires
+Recover/Discard/Cancel before creating a tab. A clean staging-only Recover keeps
+saved state clean; Cancel leaves the Project closed. With absent/clean document
+shadow, an uninspectable staging store shows `Recovery unavailable` with a
+diagnostic and permits saved Open/Import/Save/rebuild with warnings while keeping
+unknown recovery files. Pending document recovery retains its existing status
+and decision first; valid dirty Recover remains available with a warning.
+Already-open Projects suppress recovery badges. These production checks are
+separate from the prototype's in-memory recovery scenario.
+
 ## Project Opening Behavior
 
 Opening projects follows browser-like tab semantics.

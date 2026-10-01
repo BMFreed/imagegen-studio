@@ -481,10 +481,16 @@ are preserved. Unsaved document changes, including previously accepted layers
 present only in recovery, are discarded. Validation, confirmed cancellation or
 tombstone failure refuses before shadow deletion; deferred physical cleanup is
 reported and retried on restart. Prototype still models one session;
-production multi-session/recovery evidence is recorded separately. Home does not
-yet expose RecoveryAvailable for staging-only recovery without dirty shadow;
-ordinary Open still restores valid completed Results. Pending-only
-sessions, accepted history and full pipeline/release runtime remain open.
+production multi-session/recovery evidence is recorded separately. The subsequent
+[staging-only recovery checkpoint](../../../engineering/phase-2b-staging-only-recovery-research.md)
+requires an explicit Recover/Discard/Cancel decision before opening a closed ready
+Project with verified completed candidates and no dirty shadow. Recover opens
+saved state clean and restores Results for review; Queue continuation proceeds
+only after Recover, using its existing fresh exact-candidate checks. Unavailable
+storage with absent/clean document shadow produces a Home diagnostic and an
+Open/Import warning while preserving ordinary saved-document operations and
+unknown files; pending document-shadow decisions retain precedence. Pending-only sessions,
+accepted history and full pipeline/release runtime remain open.
 
 ## Vue Prototype Coverage
 

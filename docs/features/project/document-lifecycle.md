@@ -158,10 +158,22 @@ Production checkpoint: [Result sessions and recovery discard](../../engineering/
 connects the existing Discard decision to durable all-session staging tombstones
 before shadow deletion, with scoped confirmed cancellation and deferred-file
 cleanup reporting. Recover keeps candidates; Discard cancels pending Queue result
-navigation. Home currently detects shadow recovery only: staging-only recovery
-without dirty shadow opens normally and restores valid completed Results, but
-does not yet offer the promised RecoveryAvailable decision. This remains a
-production UI gap, not a change to the contract above.
+navigation. The subsequent [staging-only recovery checkpoint](../../engineering/phase-2b-staging-only-recovery-research.md)
+also detects verified completed candidates when the document shadow is absent
+or clean. Home marks a closed ready Project as `Recovery available`; Open and
+managed Import require the same explicit decision before creating a tab.
+Staging-only Recover opens the saved document clean, without Undo or acceptance.
+The decision reads current storage again and refuses stale or already-open
+requests. Existing invalid/stale document-shadow precedence is preserved.
+
+With absent/clean document shadow, an unavailable staging store is reported as
+`Recovery unavailable`, not as absent recovery. Ordinary saved Open, Import,
+Save and preview rebuild remain usable with a diagnostic; unknown local files
+are retained. A pending document shadow retains its existing recovery status
+and decision first, with an appended temporary-store diagnostic. Valid dirty
+Recover remains available; destructive Discard refuses without a usable staging
+owner. This does not add an automatic repair or salvage policy for invalid
+document recovery.
 
 Pending/running jobs from the previous application lifetime become canceled
 on startup; they do not resume. Their incomplete outputs are not recovered.

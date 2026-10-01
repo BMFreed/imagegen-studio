@@ -1249,6 +1249,9 @@ async function selectImport() {
     if (selection.kind === 'opened') {
       if (selection.result.kind === 'opened') {
         focusTab(selection.result.tab)
+        if (selection.result.tab.storageWarning) {
+          globalNotice.value = selection.result.tab.storageWarning
+        }
       } else {
         recoveryDecision.value = selection.result
         recoveryError.value = null
@@ -1293,8 +1296,14 @@ async function finishImport() {
       projectApi().finishImport(transfer.importId, importChoice.value),
     )
     importDialogVisible.value = false
-    if (finished.warning) {
-      globalNotice.value = finished.warning
+    const warning = [
+      finished.warning,
+      finished.result.kind === 'opened' ? finished.result.tab.storageWarning : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ')
+    if (warning) {
+      globalNotice.value = warning
     }
     if (finished.result.kind === 'opened') {
       focusTab(finished.result.tab)
@@ -2440,7 +2449,8 @@ onBeforeUnmount(() => {
             unchanged.
           </p>
           <p v-else class="dialog-secondary">
-            Recover opens unsaved changes for review. The saved .igs file changes only after Save.
+            Recover restores available project changes and temporary results for review. The saved
+            .igs file changes only after Save.
           </p>
           <p class="dialog-secondary">
             Discard Recovery removes this project's unsaved changes and all temporary generation

@@ -11,6 +11,7 @@ import type {
   ProjectGenerationDraftChange,
   ProjectGenerationModelSelection,
   ProjectLoraIdentity,
+  ProjectOpenResult,
   ProjectRasterLayerChange,
   ProjectTab,
   RuntimeStatus,
@@ -109,6 +110,11 @@ import {
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
+import {
+  inspectTemporaryRecovery,
+  type ProjectTemporaryRecoveryInspection,
+  unavailableTemporaryRecovery,
+} from './projects/project-temporary-recovery.js'
 import { RasterImportError } from './projects/raster-import.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
@@ -224,8 +230,19 @@ if (!gotInstanceLock) {
       const projectRepository = new ProjectIndexRepository(database.db)
       let readGenerationSeed:
         ((projectKey: string, documentId: string) => Promise<number | null>) | null = null
-      const projectService = new ProjectService({
+      let readTemporaryRecovery:
+        ((projectKey: string) => Promise<ProjectTemporaryRecoveryInspection>) | null = null
+      let openImportedProject: ((projectId: string) => Promise<ProjectOpenResult>) | null = null
+      const projectService: ProjectService = new ProjectService({
         dataRoot: paths.dataRoot,
+        inspectTemporaryRecovery: async (projectKey) =>
+          readTemporaryRecovery
+            ? await readTemporaryRecovery(projectKey)
+            : unavailableTemporaryRecovery(),
+        openImportedProject: async (projectId) =>
+          openImportedProject
+            ? await openImportedProject(projectId)
+            : await projectService.open(projectId),
         readLastActualSeed: async (projectKey, documentId) =>
           readGenerationSeed ? await readGenerationSeed(projectKey, documentId) : null,
         repository: projectRepository,
@@ -358,6 +375,8 @@ if (!gotInstanceLock) {
         ownedGenerationContext.availability.kind === 'storage-recovered'
           ? ownedGenerationContext.requireRecoveredServices()
           : null
+      readTemporaryRecovery = (projectKey) =>
+        inspectTemporaryRecovery(recoveredGeneration?.staging ?? null, projectKey)
       readGenerationSeed = recoveredGeneration
         ? (projectKey, documentId) =>
             recoveredGeneration.staging.readLastActualSeed(projectKey, documentId)
@@ -425,6 +444,7 @@ if (!gotInstanceLock) {
         recoveredGeneration,
         projectGenerationGate,
       )
+      openImportedProject = (projectId) => projectGenerationRecovery.open(projectId)
       const reconcileOpenedProject = async (
         tabId: string,
         wasOpen: boolean,
@@ -1028,7 +1048,9 @@ if (!gotInstanceLock) {
             previouslyOpen.has(imported.result.tab.id),
           )
           if (warning) {
-            imported.result.tab.storageWarning = warning
+            imported.result.tab.storageWarning = [imported.result.tab.storageWarning, warning]
+              .filter(Boolean)
+              .join(' ')
           }
         }
         return imported
@@ -1049,7 +1071,9 @@ if (!gotInstanceLock) {
               previouslyOpen.has(imported.result.tab.id),
             )
             if (warning) {
-              imported.result.tab.storageWarning = warning
+              imported.result.tab.storageWarning = [imported.result.tab.storageWarning, warning]
+                .filter(Boolean)
+                .join(' ')
             }
           }
           return imported
@@ -1097,7 +1121,9 @@ if (!gotInstanceLock) {
         if (result.kind === 'opened') {
           const warning = await reconcileOpenedProject(result.tab.id, wasOpen)
           if (warning) {
-            result.tab.storageWarning = warning
+            result.tab.storageWarning = [result.tab.storageWarning, warning]
+              .filter(Boolean)
+              .join(' ')
           }
         }
         return result

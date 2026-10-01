@@ -31,6 +31,7 @@ import type { buildFrozenGenerationTarget } from './project-generation-target.js
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
+import type { ProjectTemporaryRecoveryInspection } from './project-temporary-recovery.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
@@ -66,6 +67,7 @@ import {
   ProjectSession,
   type ProjectSessionRoots,
 } from './project-session.js'
+import { unavailableTemporaryRecovery } from './project-temporary-recovery.js'
 import { importRasterLayer } from './raster-import.js'
 
 export type {
@@ -94,6 +96,12 @@ export interface ProjectServiceOptions {
   /** Primarily a test seam for deterministic autosave and simulated process restart. */
   autosaveOptions?: ProjectAutosaveOptions
   dataRoot: string
+  /** Main's recovered staging owner; absent in document-only consumers and tests. */
+  inspectTemporaryRecovery?: (
+    localProjectKey: string,
+  ) => Promise<ProjectTemporaryRecoveryInspection>
+  /** Import enters the same main-owned operation gate as an ordinary Home Open. */
+  openImportedProject?: (projectId: string) => Promise<ProjectOpenResult>
   /** The document-scoped operational seed; unavailable recovery never blocks Project Save. */
   readLastActualSeed?: (localProjectKey: string, documentId: string) => Promise<number | null>
   /** Test seam for a post-commit source removal failure; production uses fs.unlink. */
@@ -340,7 +348,7 @@ export class ProjectService {
     }
     let result: ProjectOpenResult
     try {
-      result = await this.open(localProjectRecoveryKey(destinationPath))
+      result = await this.openImportedProject(localProjectRecoveryKey(destinationPath))
     } catch {
       throw new ProjectServiceError(
         'PROJECT_IMPORTED_NOT_OPENED',
@@ -785,13 +793,25 @@ export class ProjectService {
       record.canonicalPath,
       this.options.shadow,
     )
-    if (inspection.status === 'absent' || inspection.status === 'clean') {
+    const temporary = await this.inspectTemporaryRecovery(projectId)
+    // In-process consumers can open a tab while asynchronous recovery verification runs.
+    // Revalidate before any destructive hook; ordinary main Open also shares the owner gate.
+    if (this.openTabs.has(projectId)) {
       throw new ProjectServiceError(
-        'PROJECT_RECOVERY_UNAVAILABLE',
-        'There is no pending Project recovery to resolve.',
+        'PROJECT_ALREADY_OPEN',
+        'Close the current Project tab before resolving recovery.',
       )
     }
-    if (decision === 'recover' && inspection.status !== 'recoverable') {
+    const pendingShadow = inspection.status !== 'absent' && inspection.status !== 'clean'
+    if (!pendingShadow && !hasTemporaryRecovery(temporary)) {
+      throw new ProjectServiceError(
+        'PROJECT_RECOVERY_UNAVAILABLE',
+        temporary.kind === 'unavailable'
+          ? temporary.reason
+          : 'There is no pending Project recovery to resolve.',
+      )
+    }
+    if (decision === 'recover' && pendingShadow && inspection.status !== 'recoverable') {
       throw new ProjectServiceError(
         'PROJECT_RECOVERY_UNAVAILABLE',
         'The saved Project can be opened after discarding this invalid recovery state.',
@@ -803,7 +823,7 @@ export class ProjectService {
       await beforeDiscardRecovery?.()
     }
     const coordinator =
-      decision === 'recover'
+      decision === 'recover' && inspection.status === 'recoverable'
         ? await ProjectAutosaveCoordinator.recover(
             record.canonicalPath,
             this.options.roots,
@@ -813,18 +833,32 @@ export class ProjectService {
               expectedCanonicalPath: record.canonicalPath,
             },
           )
-        : await ProjectAutosaveCoordinator.discardRecovery(
-            record.canonicalPath,
-            this.options.roots,
-            this.options.shadow,
-            {
-              ...this.options.autosaveOptions,
-              expectedCanonicalPath: record.canonicalPath,
-            },
-          )
+        : decision === 'discard'
+          ? await ProjectAutosaveCoordinator.discardRecovery(
+              record.canonicalPath,
+              this.options.roots,
+              this.options.shadow,
+              {
+                ...this.options.autosaveOptions,
+                expectedCanonicalPath: record.canonicalPath,
+              },
+            )
+          : await ProjectAutosaveCoordinator.open(
+              record.canonicalPath,
+              this.options.roots,
+              this.options.shadow,
+              {
+                ...this.options.autosaveOptions,
+                expectedCanonicalPath: record.canonicalPath,
+              },
+            )
     this.openTabs.set(projectId, coordinator)
     await this.markOpenedBestEffort(record.canonicalPath)
-    return toTab(projectId, coordinator)
+    const tab = toTab(projectId, coordinator)
+    if (temporary.kind === 'unavailable') {
+      tab.storageWarning = temporary.reason
+    }
+    return tab
   }
 
   async save(
@@ -864,7 +898,7 @@ export class ProjectService {
       await this.options.repository.indexSaved(selected.sourcePath, workspace.id)
       return {
         kind: 'opened',
-        result: await this.open(localProjectRecoveryKey(selected.sourcePath)),
+        result: await this.openImportedProject(localProjectRecoveryKey(selected.sourcePath)),
       }
     }
     const importId = randomUUID()
@@ -1146,6 +1180,22 @@ export class ProjectService {
     )
   }
 
+  private async inspectTemporaryRecovery(
+    projectId: string,
+  ): Promise<ProjectTemporaryRecoveryInspection> {
+    if (!this.options.inspectTemporaryRecovery) {
+      return { completedCandidateCount: 0, kind: 'available' }
+    }
+    try {
+      const inspection = await this.options.inspectTemporaryRecovery(projectId)
+      return inspection.kind === 'unavailable'
+        ? { ...inspection, reason: inspection.reason.slice(0, 512) }
+        : inspection
+    } catch (error) {
+      return unavailableTemporaryRecovery(error)
+    }
+  }
+
   private loraIndex(document: IgsProjectDocumentV1, identity: ProjectLoraIdentity): number {
     const matches = document.generationDraft.loras.flatMap((lora, index) =>
       lora.resource.localModelId === identity.resourceId &&
@@ -1170,18 +1220,34 @@ export class ProjectService {
     }
   }
 
+  private async openImportedProject(projectId: string): Promise<ProjectOpenResult> {
+    return await (this.options.openImportedProject?.(projectId) ?? this.open(projectId))
+  }
+
   private async openOne(projectId: string): Promise<ProjectOpenResult> {
     const record = await this.requireReadyRecord(projectId)
     const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
       record.canonicalPath,
       this.options.shadow,
     )
+    const temporary = await this.inspectTemporaryRecovery(projectId)
     if (inspection.status !== 'absent' && inspection.status !== 'clean') {
       return {
         kind: 'recovery-required',
         projectId,
-        reason: describeRecovery(inspection),
+        reason:
+          temporary.kind === 'unavailable'
+            ? `${describeRecovery(inspection)} ${temporary.reason}`.slice(0, 512)
+            : describeRecovery(inspection),
         recoveryStatus: inspection.status,
+      }
+    }
+    if (hasTemporaryRecovery(temporary)) {
+      return {
+        kind: 'recovery-required',
+        projectId,
+        reason: describeTemporaryRecovery(temporary.completedCandidateCount),
+        recoveryStatus: 'recoverable',
       }
     }
     const coordinator = await ProjectAutosaveCoordinator.open(
@@ -1195,7 +1261,11 @@ export class ProjectService {
     )
     this.openTabs.set(projectId, coordinator)
     await this.markOpenedBestEffort(record.canonicalPath)
-    return { kind: 'opened', tab: toTab(projectId, coordinator) }
+    const tab = toTab(projectId, coordinator)
+    if (temporary.kind === 'unavailable') {
+      tab.storageWarning = temporary.reason
+    }
+    return { kind: 'opened', tab }
   }
 
   private async rebuildOne(
@@ -1221,6 +1291,12 @@ export class ProjectService {
         throw new ProjectServiceError(
           'PROJECT_RECOVERY_REQUIRED',
           'Resolve the Project recovery state before rebuilding its preview.',
+        )
+      }
+      if (hasTemporaryRecovery(await this.inspectTemporaryRecovery(projectId))) {
+        throw new ProjectServiceError(
+          'PROJECT_RECOVERY_REQUIRED',
+          'Resolve the temporary generation recovery before rebuilding its preview.',
         )
       }
     }
@@ -1392,13 +1468,28 @@ export class ProjectService {
           record.canonicalPath,
           this.options.shadow,
         )
+        const temporary = await this.inspectTemporaryRecovery(record.localProjectKey)
         if (inspection.status !== 'absent' && inspection.status !== 'clean') {
           recoveryStatus = inspection.status
           recoveryReason = describeRecovery(inspection)
+          if (temporary.kind === 'unavailable') {
+            recoveryReason = `${recoveryReason} ${temporary.reason}`.slice(0, 512)
+          }
+        } else if (hasTemporaryRecovery(temporary)) {
+          recoveryStatus = 'recoverable'
+          recoveryReason = describeTemporaryRecovery(temporary.completedCandidateCount)
+        } else if (temporary.kind === 'unavailable') {
+          recoveryStatus = 'unavailable'
+          recoveryReason = temporary.reason
         }
       } catch {
         recoveryStatus = 'invalid'
         recoveryReason = 'The local recovery state could not be inspected.'
+      }
+      // The advisory Home read may overlap an ordinary Open while awaiting file verification.
+      if (this.openTabs.has(record.localProjectKey)) {
+        recoveryStatus = 'none'
+        recoveryReason = undefined
       }
     }
     return {
@@ -1534,6 +1625,16 @@ function describeRecovery(inspection: ProjectShadowInspection): string {
     return `Local recovery cannot be validated (${inspection.reason}). Open the saved revision only after discarding recovery.`
   }
   return 'There is no pending Project recovery.'
+}
+
+function hasTemporaryRecovery(
+  inspection: ProjectTemporaryRecoveryInspection,
+): inspection is Extract<ProjectTemporaryRecoveryInspection, { kind: 'available' }> {
+  return inspection.kind === 'available' && inspection.completedCandidateCount > 0
+}
+
+function describeTemporaryRecovery(completedCandidateCount: number): string {
+  return `${completedCandidateCount} completed temporary generation result${completedCandidateCount === 1 ? ' is' : 's are'} available for recovery. Recover opens the saved .igs as clean and restores these temporary results without accepting them.`
 }
 
 function sourceChanged(): ProjectServiceError {

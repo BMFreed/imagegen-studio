@@ -9,8 +9,10 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
+import type { ProjectServiceOptions } from './project-service.js'
 
 import { openAppDatabase } from '../db/database.js'
+import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { GenerationProcessor } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
@@ -21,15 +23,21 @@ import {
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import {
   ProjectGenerationRecovery,
   reconcileOpenedProjectGeneration,
 } from './project-generation-recovery.js'
+import { ProjectGenerationResultResource } from './project-generation-result-resource.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import {
+  inspectTemporaryRecovery as inspectTemporaryRecoveryStore,
+  type ProjectTemporaryRecoveryInspection,
+} from './project-temporary-recovery.js'
 import {
   acceptedOutputPngFixture,
   acceptedRasterProvenanceFixture,
@@ -45,6 +53,28 @@ const ready = {
 }
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
+function signal() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+async function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), 3000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function fixture(hooks: GenerationStagingTestHooks = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-recovery-'))
   const database = openAppDatabase(root, migrations)
@@ -56,10 +86,18 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
   const staging = new GenerationStagingRepository(database.db, root, hooks)
   await queue.recoverAfterRestart()
   await staging.recoverAfterRestart()
-  const newService = () =>
+  const newService = (
+    inspectTemporaryRecovery: (
+      projectKey: string,
+    ) => Promise<ProjectTemporaryRecoveryInspection> = (key) =>
+      inspectTemporaryRecoveryStore(staging, key),
+    openImportedProject?: ProjectServiceOptions['openImportedProject'],
+  ) =>
     new ProjectService({
       autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
       dataRoot: root,
+      inspectTemporaryRecovery,
+      openImportedProject,
       readLastActualSeed: (key, documentId) => staging.readLastActualSeed(key, documentId),
       repository,
       roots,
@@ -79,6 +117,7 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
   const acceptedDocument: IgsProjectDocumentV1 = {
     ...base,
     documentRevision: randomUUID(),
+    lastActualSeedSnapshot: 0,
     layers: [
       {
         asset: {
@@ -248,6 +287,7 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
     inspectShadow,
     models,
     neighbor,
+    newService,
     oldA,
     owner,
     queue,
@@ -260,6 +300,559 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
     staging,
   }
 }
+
+// Boundary: actual saved .igs + recovered staging -> Home/Open/explicit recovery owner.
+// Invariant: completed temporary results require a decision without becoming document edits.
+// Controls: missing/clean shadow, open tab, neighboring Project and accepted saved assets.
+// Mutations: bypass temporary presence in Open; mark a staging-only Recover dirty; skip tombstones.
+test('Home and ordinary Open require a decision for valid staging without a document shadow', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const documents = f.newService((key) => inspectTemporaryRecoveryStore(f.staging, key))
+    const summary = (await documents.list()).find((item) => item.id === f.a.id)
+    assert.equal(summary?.recoveryStatus, 'recoverable')
+    const result = await f.owner(documents).recovery.open(f.a.id)
+    assert.equal(result.kind, 'recovery-required')
+    assert.equal(documents.getOpenTabs().length, 0)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('staging-only Recover opens the saved document cleanly, retains candidates and creates no Undo', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const documents = f.newService((key) => inspectTemporaryRecoveryStore(f.staging, key))
+    const { recovery } = f.owner(documents)
+    const tab = await recovery.resolve(f.a.id, 'recover')
+    assert.equal(tab.dirty, false)
+    assert.equal(tab.canUndo, false)
+    assert.equal(tab.documentId, f.acceptedDocument.documentId)
+    assert.deepEqual(tab.primaryBbox, f.acceptedDocument.primaryBbox)
+    assert.deepEqual(
+      tab.layers.map((layer) => layer.id),
+      f.acceptedDocument.layers.map((layer) => layer.id),
+    )
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.equal(
+      (await documents.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'none',
+    )
+    const reopened = await recovery.open(f.a.id)
+    assert.equal(reopened.kind, 'opened')
+    assert.equal(documents.getOpenTabs().length, 1)
+    await assert.rejects(recovery.resolve(f.a.id, 'recover'), { code: 'PROJECT_ALREADY_OPEN' })
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+    await documents.close(f.a.id)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('staging-only Discard removes all source-document sessions and preserves saved accepted layers', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const documents = f.newService((key) => inspectTemporaryRecoveryStore(f.staging, key))
+    const queueBefore = await f.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    const tab = await f.owner(documents).recovery.resolve(f.a.id, 'discard')
+    assert.equal(tab.dirty, false)
+    assert.deepEqual(
+      tab.layers.map((layer) => layer.id),
+      f.acceptedDocument.layers.map((layer) => layer.id),
+    )
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.a.id), [])
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.equal(await f.staging.readLastActualSeed(f.a.id, tab.documentId), 0)
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
+      queueBefore,
+    )
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+    assert.deepEqual(await readFile(f.bPath), f.savedB)
+    await documents.close(f.a.id)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('Save-before-crash clean shadow still requires temporary recovery and Recover preserves the saved revision', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const tab = await f.owner().recovery.resolve(f.a.id, 'recover')
+    await f.service.setPrimaryBbox(f.a.id, { ...tab.primaryBbox, x: 7 })
+    await f.service.save(f.a.id)
+    assert.equal((await f.inspectShadow()).status, 'clean')
+    const saved = await readFile(f.aPath)
+    const savedDocument = (await readIgsPackage(f.aPath)).project
+    // A new process owns a fresh lease registry. Do not gracefully close the crashed owner:
+    // graceful close clears this clean marker, unlike termination after the durable Save.
+    const restarted = f.newService()
+    const { recovery } = f.owner(restarted)
+    assert.equal(
+      (await restarted.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'recoverable',
+    )
+    assert.equal((await recovery.open(f.a.id)).kind, 'recovery-required')
+    const recovered = await recovery.resolve(f.a.id, 'recover')
+    assert.equal(recovered.dirty, false)
+    assert.equal(recovered.canUndo, false)
+    assert.deepEqual(recovered.primaryBbox, savedDocument.primaryBbox)
+    assert.equal(recovered.lastActualSeedSnapshot, 0)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.deepEqual(await readFile(f.aPath), saved)
+    await restarted.close(f.a.id)
+    await f.service.close(f.a.id)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('saved pending acceptance reconciles after staging-only Recover without duplicating or resurrecting accepted results', async () => {
+  const f = await fixture()
+  let restarted: ProjectService | undefined
+  try {
+    await f.shadow.discard(f.aPath)
+    const { orchestrator, recovery } = f.owner()
+    await recovery.resolve(f.a.id, 'recover')
+    const journal = new GenerationAcceptanceJournalRepository(f.database.db)
+    const interrupted = new ProjectGenerationAcceptance({
+      afterDurableShadow: async () => {
+        throw new Error('controlled interruption after actual accepted shadow commit')
+      },
+      documents: { getOpenDocument: (id) => f.service.getOpenDocumentForAcceptance(id) },
+      gate: f.gate,
+      journal,
+      orchestrator,
+      queue: f.queue,
+      staging: f.staging,
+    })
+    await assert.rejects(
+      interrupted.accept(f.a.id, [f.currentA.id], null, [f.currentA.id]),
+      /controlled interruption/,
+    )
+    assert.ok(await journal.read(f.a.id, f.acceptedDocument.documentId))
+    await f.service.save(f.a.id)
+    assert.equal((await f.inspectShadow()).status, 'clean')
+    const savedBytes = await readFile(f.aPath)
+    const savedLayers = (await readIgsPackage(f.aPath)).project.layers
+    assert.equal(savedLayers.length, 2)
+
+    // Simulate a fresh process owner; the actual journal/shadow/package remain on disk.
+    restarted = f.newService()
+    const openedOwner = f.owner(restarted)
+    assert.equal((await openedOwner.recovery.open(f.a.id)).kind, 'recovery-required')
+    const tab = await openedOwner.recovery.resolve(f.a.id, 'recover')
+    assert.equal(tab.dirty, false)
+    assert.equal(tab.canUndo, false)
+    const resumed = new ProjectGenerationAcceptance({
+      documents: { getOpenDocument: (id) => restarted!.getOpenDocumentForAcceptance(id) },
+      gate: f.gate,
+      journal,
+      orchestrator: openedOwner.orchestrator,
+      queue: f.queue,
+      staging: f.staging,
+    })
+    assert.equal(
+      await reconcileOpenedProjectGeneration(f.a.id, false, openedOwner.orchestrator, resumed),
+      null,
+    )
+    assert.equal(await journal.read(f.a.id, tab.documentId), null)
+    assert.deepEqual(restarted.getOpenDocumentForAcceptance(f.a.id)!.document.layers, savedLayers)
+    assert.deepEqual(
+      (await f.staging.listVerifiedCandidates(f.a.id)).map((candidate) => candidate.candidateId),
+      [f.oldA.id],
+    )
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.deepEqual(await readFile(f.aPath), savedBytes)
+    // A repeated reconciliation has no new document or cleanup effect.
+    assert.equal(
+      await reconcileOpenedProjectGeneration(f.a.id, true, openedOwner.orchestrator, resumed),
+      null,
+    )
+    assert.deepEqual(await readFile(f.aPath), savedBytes)
+  } finally {
+    await restarted?.close(f.a.id).catch(() => undefined)
+    await f.service.close(f.a.id).catch(() => undefined)
+    await f.dispose()
+  }
+})
+
+test('recovery presence survives queue prune and broken thumbnail, while corrupt PNGs and tombstones are excluded', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const candidates = await f.staging.listVerifiedCandidates(f.a.id)
+    const old = candidates.find((candidate) => candidate.candidateId === f.oldA.id)!
+    const current = candidates.find((candidate) => candidate.candidateId === f.currentA.id)!
+    const currentBytes = await readFile(current.assetPath)
+    const cache = path.join(path.dirname(path.dirname(current.assetPath)), 'thumbnail-cache')
+    await mkdir(cache, { mode: 0o700 })
+    await writeFile(path.join(cache, `${current.candidateId}.json`), '{broken JSON', {
+      mode: 0o600,
+    })
+    await writeFile(path.join(cache, `${current.candidateId}.webp`), 'invalid optional thumbnail', {
+      mode: 0o600,
+    })
+    assert.equal(await f.queue.pruneTerminal(['completed']), 3)
+    assert.deepEqual(await inspectTemporaryRecoveryStore(f.staging, f.a.id), {
+      completedCandidateCount: 2,
+      kind: 'available',
+    })
+    const documents = f.newService()
+    assert.equal(
+      (await documents.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'recoverable',
+    )
+    await writeFile(old.assetPath, 'corrupt authoritative PNG', { mode: 0o600 })
+    assert.deepEqual(await inspectTemporaryRecoveryStore(f.staging, f.a.id), {
+      completedCandidateCount: 1,
+      kind: 'available',
+    })
+    await writeFile(current.assetPath, 'corrupt authoritative PNG', { mode: 0o600 })
+    assert.deepEqual(await inspectTemporaryRecoveryStore(f.staging, f.a.id), {
+      completedCandidateCount: 0,
+      kind: 'available',
+    })
+    assert.equal(
+      (await documents.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'none',
+    )
+    assert.equal((await documents.open(f.a.id)).kind, 'opened')
+    await documents.close(f.a.id)
+    await writeFile(current.assetPath, currentBytes, { mode: 0o600 })
+    await f.staging.discardSessions(f.a.id, [current.stagingSessionId])
+    assert.deepEqual(await inspectTemporaryRecoveryStore(f.staging, f.a.id), {
+      completedCandidateCount: 0,
+      kind: 'available',
+    })
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('old-document-only recovery opens the current saved document and retains an orphan with Add disabled', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const current = (await f.staging.listVerifiedCandidates(f.a.id)).find(
+      (candidate) => candidate.candidateId === f.currentA.id,
+    )!
+    await f.staging.discardSessions(f.a.id, [current.stagingSessionId])
+    assert.equal(
+      (await f.service.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'recoverable',
+    )
+    const tab = await f.owner().recovery.resolve(f.a.id, 'recover')
+    const results = new ProjectGenerationResultResource(
+      f.staging,
+      (key) => f.service.getOpenDocumentId(key),
+      f.queue,
+    )
+    const snapshot = await results.list(f.a.id)
+    assert.equal(tab.documentId, f.acceptedDocument.documentId)
+    assert.equal(tab.dirty, false)
+    assert.equal(snapshot.candidates.length, 1)
+    assert.equal(snapshot.candidates[0].candidateId, f.oldA.id)
+    assert.equal(snapshot.candidates[0].sourceDocumentMismatch, true)
+    assert.equal(snapshot.lastActualSeed, 0)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+    await f.service.close(f.a.id)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('unavailable temporary storage is explicit on Home but saved Open and Save stay usable without deleting results', async () => {
+  const f = await fixture()
+  let projectRoot: string | undefined
+  try {
+    await f.shadow.discard(f.aPath)
+    assert.equal((await f.owner().recovery.open(f.a.id)).kind, 'recovery-required')
+    const candidate = (await f.staging.listVerifiedCandidates(f.a.id))[0]
+    projectRoot = path.dirname(path.dirname(path.dirname(candidate.assetPath)))
+    await rename(projectRoot, `${projectRoot}.retained`)
+    await symlink(`${projectRoot}.retained`, projectRoot)
+    const summary = (await f.service.list()).find((item) => item.id === f.a.id)!
+    assert.equal(summary.recoveryStatus, 'unavailable')
+    assert.match(summary.recoveryReason!, /cannot be inspected.*kept/)
+    assert.ok(summary.recoveryReason!.length <= 512)
+    await assert.rejects(
+      f.owner().recovery.resolve(f.a.id, 'discard'),
+      (error: unknown) => error instanceof Error && error.message === summary.recoveryReason,
+    )
+    const opened = await f.owner().recovery.open(f.a.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('The saved Project was not reviewable.')
+    }
+    assert.equal(opened.tab.storageWarning, summary.recoveryReason)
+    await f.service.setPrimaryBbox(f.a.id, { ...opened.tab.primaryBbox, x: 5 })
+    assert.equal((await f.service.save(f.a.id)).committed, true)
+    assert.equal((await readIgsPackage(f.aPath)).project.primaryBbox.x, 5)
+    await f.service.close(f.a.id)
+    await rm(projectRoot)
+    await rename(`${projectRoot}.retained`, projectRoot)
+    projectRoot = undefined
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+  } finally {
+    if (projectRoot) {
+      await rm(projectRoot)
+      await rename(`${projectRoot}.retained`, projectRoot)
+    }
+    await f.dispose()
+  }
+})
+
+test('dirty document Recover remains reviewable when the temporary storage owner is unavailable', async () => {
+  const f = await fixture()
+  try {
+    const documents = f.newService((key) => inspectTemporaryRecoveryStore(null, key))
+    const owner = new ProjectGenerationRecovery(documents, null, f.gate)
+    const summary = (await documents.list()).find((item) => item.id === f.a.id)!
+    assert.equal(summary.recoveryStatus, 'recoverable')
+    assert.match(summary.recoveryReason!, /Unsaved.*cannot be inspected/)
+    await assert.rejects(owner.resolve(f.a.id, 'discard'), {
+      code: 'PROJECT_GENERATION_RECOVERY_UNAVAILABLE',
+    })
+    const recovered = await owner.resolve(f.a.id, 'recover')
+    assert.equal(recovered.dirty, true)
+    assert.equal(recovered.primaryBbox.x, 99)
+    assert.match(recovered.storageWarning!, /cannot be inspected.*kept/)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+    await documents.discardAndClose(f.a.id)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('invalid and stale document shadows take precedence; missing or corrupt saved files cannot authorize discard', async () => {
+  const f = await fixture()
+  try {
+    const manifestPath = path.join(f.root, 'autosave', f.a.id, 'manifest.json')
+    const manifest = await readFile(manifestPath)
+    await writeFile(manifestPath, '{invalid JSON', { mode: 0o600 })
+    assert.equal(
+      (await f.service.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'invalid',
+    )
+    const invalid = await f.owner().recovery.open(f.a.id)
+    assert.equal(invalid.kind, 'recovery-required')
+    if (invalid.kind === 'recovery-required') {
+      assert.equal(invalid.recoveryStatus, 'invalid')
+    }
+    await assert.rejects(f.owner().recovery.resolve(f.a.id, 'recover'), {
+      code: 'PROJECT_RECOVERY_UNAVAILABLE',
+    })
+    await writeFile(manifestPath, manifest, { mode: 0o600 })
+    const parsed = JSON.parse(manifest.toString()) as { documentId: string }
+    parsed.documentId = randomUUID()
+    await writeFile(manifestPath, JSON.stringify(parsed), { mode: 0o600 })
+    assert.equal(
+      (await f.service.list()).find((item) => item.id === f.a.id)?.recoveryStatus,
+      'stale',
+    )
+    await assert.rejects(f.owner().recovery.resolve(f.a.id, 'recover'), {
+      code: 'PROJECT_RECOVERY_UNAVAILABLE',
+    })
+    await rename(f.aPath, `${f.aPath}.retained`)
+    assert.equal((await f.service.list()).find((item) => item.id === f.a.id)?.health, 'missing')
+    await assert.rejects(f.owner().recovery.resolve(f.a.id, 'discard'), {
+      code: 'PROJECT_NOT_READY',
+    })
+    await writeFile(f.aPath, 'not an IGS package')
+    assert.equal((await f.service.list()).find((item) => item.id === f.a.id)?.health, 'corrupt')
+    await assert.rejects(f.owner().recovery.resolve(f.a.id, 'discard'), {
+      code: 'PROJECT_NOT_READY',
+    })
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.deepEqual(await readFile(manifestPath), Buffer.from(JSON.stringify(parsed)))
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_staging_discarded_session').selectAll().execute(),
+      [],
+    )
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('managed import Open and closed preview rebuild respect the fresh temporary recovery decision', async () => {
+  const f = await fixture()
+  try {
+    await f.shadow.discard(f.aPath)
+    const imported = await f.service.selectImport(f.aPath)
+    assert.equal(imported.kind, 'opened')
+    if (imported.kind === 'opened') {
+      assert.equal(imported.result.kind, 'recovery-required')
+    }
+    assert.equal(f.service.getOpenTabs().length, 0)
+    let composed = false
+    await assert.rejects(
+      f.service.rebuildPreview(f.a.id, {
+        composePreview: async () => {
+          composed = true
+          throw new Error('A pending decision must be checked before invoking the worker.')
+        },
+      }),
+      { code: 'PROJECT_RECOVERY_REQUIRED' },
+    )
+    assert.equal(composed, false)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('recovery revalidates a tab opened during asynchronous storage inspection before deleting anything', async () => {
+  const f = await fixture()
+  const inspected = signal()
+  const resume = signal()
+  let documents: ProjectService | undefined
+  let discarding: Promise<unknown> | undefined
+  try {
+    await f.shadow.discard(f.aPath)
+    let holdFirstInspection = true
+    documents = f.newService(async (key) => {
+      const state = await inspectTemporaryRecoveryStore(f.staging, key)
+      if (holdFirstInspection) {
+        holdFirstInspection = false
+        inspected.resolve()
+        await resume.promise
+      }
+      return state
+    })
+    let discarded = false
+    discarding = documents.resolveRecovery(f.a.id, 'discard', async () => {
+      discarded = true
+      await f.staging.discardProject(f.a.id)
+    })
+    const refused = assert.rejects(discarding, { code: 'PROJECT_ALREADY_OPEN' })
+    await bounded(inspected.promise, 'recovery inspection paused')
+    const opened = await documents.resolveRecovery(f.a.id, 'recover')
+    assert.equal(opened.dirty, false)
+    resume.resolve()
+    await bounded(refused, 'stale discard refused')
+    assert.equal(discarded, false)
+    assert.equal(documents.getOpenTabs().length, 1)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+  } finally {
+    resume.resolve()
+    await bounded(Promise.allSettled(discarding ? [discarding] : []), 'stale operation exits')
+    await documents?.close(f.a.id).catch(() => undefined)
+    await f.dispose()
+  }
+})
+
+test('external copy finishes its managed Open through the same main recovery owner', async () => {
+  const f = await fixture()
+  let documents: ProjectService | undefined
+  try {
+    const sourcePath = path.join(f.root, 'external-source.igs')
+    await writeFile(sourcePath, f.savedA, { mode: 0o600 })
+    const routedKeys: string[] = []
+    let recovery: ProjectGenerationRecovery
+    documents = f.newService(
+      (key) => inspectTemporaryRecoveryStore(f.staging, key),
+      (key) => {
+        routedKeys.push(key)
+        return recovery.open(key)
+      },
+    )
+    recovery = f.owner(documents).recovery
+    const selected = await documents.selectImport(sourcePath)
+    assert.equal(selected.kind, 'transfer-required')
+    if (selected.kind !== 'transfer-required') {
+      throw new Error('Expected a real transfer selection')
+    }
+    const copied = await documents.finishImport(selected.importId, 'copy')
+    assert.equal(copied.result.kind, 'opened')
+    if (copied.result.kind === 'opened') {
+      assert.notEqual(copied.result.tab.id, f.a.id)
+      assert.equal(copied.result.tab.documentId, f.acceptedDocument.documentId)
+      assert.equal(copied.result.tab.dirty, false)
+      assert.deepEqual(routedKeys, [copied.result.tab.id])
+      await documents.close(copied.result.tab.id)
+    }
+    assert.deepEqual(await readFile(sourcePath), f.savedA)
+    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('managed import waits for the actual recovery owner to finish durable Project discard', async () => {
+  const tombstoned = signal()
+  const finishDiscard = signal()
+  const importRequested = signal()
+  const f = await fixture({
+    afterDiscardTombstone: async () => {
+      tombstoned.resolve()
+      await finishDiscard.promise
+    },
+  })
+  let documents: ProjectService | undefined
+  let discarded: Promise<unknown> | undefined
+  let imported: Promise<unknown> | undefined
+  try {
+    await f.shadow.discard(f.aPath)
+    let recovery: ProjectGenerationRecovery
+    documents = f.newService(
+      (key) => inspectTemporaryRecoveryStore(f.staging, key),
+      (key) => {
+        importRequested.resolve()
+        return recovery.open(key)
+      },
+    )
+    recovery = f.owner(documents).recovery
+    discarded = recovery.resolve(f.a.id, 'discard')
+    await bounded(tombstoned.promise, 'durable discard reached')
+    const selection = documents.selectImport(f.aPath)
+    imported = selection
+    await bounded(importRequested.promise, 'managed import reached the shared owner gate')
+    assert.equal(documents.getOpenTabs().length, 0)
+    assert.equal(
+      (await f.database.db.selectFrom('generation_staging_discarded_session').selectAll().execute())
+        .length,
+      2,
+    )
+    finishDiscard.resolve()
+    await bounded(discarded, 'recovery discard finished')
+    const opened = await bounded(selection, 'managed import finished after discard')
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind === 'opened') {
+      assert.equal(opened.result.kind, 'opened')
+      if (opened.result.kind === 'opened') {
+        assert.equal(opened.result.tab.dirty, false)
+        assert.equal(opened.result.tab.documentId, f.acceptedDocument.documentId)
+      }
+    }
+    assert.equal(documents.getOpenTabs().length, 1)
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.a.id), [])
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.deepEqual(await readFile(f.aPath), f.savedA)
+  } finally {
+    finishDiscard.resolve()
+    await bounded(Promise.allSettled([discarded, imported].filter(Boolean)), 'held operations exit')
+    await documents?.close(f.a.id).catch(() => undefined)
+    await f.dispose()
+  }
+})
 
 // Boundary: actual main IPC owner -> ProjectService -> gate/orchestrator/queue/staging -> shadow/IGS.
 // Invariant: confirmed Discard hides every Project session before erasing its dirty shadow/opening saved.
@@ -319,14 +912,28 @@ test('Recover keeps dirty document and every temporary session; unavailable stag
   }
 })
 
-test('A missing recovery decision never discards otherwise valid Project staging', async () => {
+test('A stale staging-only decision refuses after the last candidate vanishes and preserves neighboring recovery', async () => {
   const f = await fixture()
   try {
     await f.shadow.discard(f.aPath)
+    assert.equal((await f.owner().recovery.open(f.a.id)).kind, 'recovery-required')
+    await f.staging.discardProject(f.a.id)
+    const before = await f.database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .execute()
     await assert.rejects(f.owner().recovery.resolve(f.a.id, 'discard'), {
       code: 'PROJECT_RECOVERY_UNAVAILABLE',
     })
-    assert.equal((await f.staging.listVerifiedCandidates(f.a.id)).length, 2)
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.a.id), [])
+    assert.equal((await f.staging.listVerifiedCandidates(f.b.id)).length, 1)
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_staging_discarded_session').selectAll().execute(),
+      before,
+    )
+    const result = await f.owner().recovery.open(f.a.id)
+    assert.equal(result.kind, 'opened')
+    await f.service.close(f.a.id)
     assert.deepEqual(await readFile(f.aPath), f.savedA)
   } finally {
     await f.dispose()
