@@ -616,7 +616,7 @@ async function generateProject(tabId: string, iterations: number) {
     draftValidity.value[tabId] === false ||
     runtimeUnavailableReason.value !== null ||
     state?.documentId !== tab.documentId ||
-    state.phase !== 'idle' ||
+    (state.phase !== 'idle' && state.phase !== 'processing') ||
     !Number.isSafeInteger(iterations) ||
     iterations < 1 ||
     iterations > 100

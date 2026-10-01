@@ -63,6 +63,7 @@ type Fixture = {
   dispatch: GenerationDispatchCoordinator
   documentId: string
   packagePath: string
+  processor: GenerationProcessor
   projects: ProjectService
   queue: GenerationQueueRepository
   root: string
@@ -79,8 +80,13 @@ class ControlledRuntime {
   beforeGenerate: (() => Promise<void>) | null = null
   closedCount = 0
   closeFailures = 0
+  composedTargets: Parameters<ProjectWorkerClient['composeTarget']>[0][] = []
   generated: IllustriousTxt2ImgRequestV1[] = []
   leaseCount = 0
+  preparationClosedCount = 0
+  preparationCloseFailures = 0
+  preparationCount = 0
+  preparationHeld = false
   private activeReady: InferenceWorkerReady | null = null
   private held = false
 
@@ -90,7 +96,7 @@ class ControlledRuntime {
   ) {}
 
   async retryUnconfirmedGenerationExit(): Promise<boolean> {
-    return !this.held
+    return !this.held && !this.preparationHeld
   }
 
   async withGenerationAdmission<T>(
@@ -110,6 +116,42 @@ class ControlledRuntime {
       await this.beforeAdmission?.()
       return await use(structuredClone(worker.ready))
     })
+  }
+
+  async withGenerationPreparation<T>(
+    scratchBasePath: string,
+    use: (preparation: {
+      inferenceReady: InferenceWorkerReady
+      targetWorker: Pick<ProjectWorkerClient, 'composeTarget'>
+    }) => Promise<T>,
+  ): Promise<T | null> {
+    if (!this.available) {
+      return null
+    }
+    if (!this.activeReady) {
+      return await this.withGenerationWorker(scratchBasePath, async (worker) =>
+        use({ inferenceReady: structuredClone(worker.ready), targetWorker: worker }),
+      )
+    }
+    assert.equal(this.preparationHeld, false, 'only one CPU preparation may be active')
+    this.preparationHeld = true
+    this.preparationCount += 1
+    const inferenceReady = structuredClone(this.activeReady)
+    try {
+      return await use({
+        inferenceReady,
+        targetWorker: { composeTarget: (input) => this.composeTarget(input) },
+      })
+    } finally {
+      if (this.preparationCloseFailures > 0) {
+        this.preparationCloseFailures -= 1
+        throw Object.assign(new Error('controlled unconfirmed CPU preparation exit'), {
+          code: 'WORKER_EXIT_UNCONFIRMED',
+        })
+      }
+      this.preparationHeld = false
+      this.preparationClosedCount += 1
+    }
   }
 
   async withGenerationWorker<T>(
@@ -138,23 +180,7 @@ class ControlledRuntime {
           this.activeReady = null
         }
       },
-      composeTarget: async (input) => {
-        await this.beforeCompose?.()
-        await writeFile(input.targetPngPath, this.target, { flag: 'wx', mode: 0o600 })
-        return {
-          composite: {
-            byteSize: this.target.length,
-            colorSpace: 'srgb',
-            height: 64,
-            iccSha256: IGS_SRGB_ICC_SHA256,
-            path: input.targetPngPath,
-            sha256: sha256(this.target),
-            width: 64,
-          },
-          mode: 'txt2img',
-          rect: { ...input.bbox },
-        }
-      },
+      composeTarget: (input) => this.composeTarget(input),
       generate: async (request) => {
         this.generated.push(request)
         await this.beforeGenerate?.()
@@ -182,6 +208,25 @@ class ControlledRuntime {
       await worker.close()
       this.held = false
       this.activeReady = null
+    }
+  }
+
+  private async composeTarget(input: Parameters<ProjectWorkerClient['composeTarget']>[0]) {
+    this.composedTargets.push(structuredClone(input))
+    await this.beforeCompose?.()
+    await writeFile(input.targetPngPath, this.target, { flag: 'wx', mode: 0o600 })
+    return {
+      composite: {
+        byteSize: this.target.length,
+        colorSpace: 'srgb' as const,
+        height: 64,
+        iccSha256: IGS_SRGB_ICC_SHA256,
+        path: input.targetPngPath,
+        sha256: sha256(this.target),
+        width: 64,
+      },
+      mode: 'txt2img' as const,
+      rect: { ...input.bbox },
     }
   }
 }
@@ -366,6 +411,7 @@ async function withFixture(
       dispatch,
       documentId,
       packagePath,
+      processor,
       projects,
       queue,
       root,
@@ -408,6 +454,635 @@ async function waitForState(
     void inspect()
   })
 }
+
+async function createSiblingProject(fixture: Fixture) {
+  const source = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!.document
+  const sibling = await fixture.projects.create({ height: 64, title: 'Sibling Project', width: 64 })
+  const owner = fixture.projects.getOpenDocumentForAcceptance(sibling.id)!
+  await owner.applyDocument({
+    ...owner.document,
+    generationDraft: structuredClone(source.generationDraft),
+  })
+  await fixture.projects.save(sibling.id)
+  return { documentId: owner.document.documentId, packagePath: owner.filePath, tabId: sibling.id }
+}
+
+async function holdCurrentGeneration(fixture: Fixture) {
+  const entered = signal()
+  const release = signal()
+  fixture.runtime.beforeGenerate = async () => {
+    if (fixture.runtime.generated.length === 1) {
+      entered.resolve()
+      await release.promise
+    }
+  }
+  const result = await fixture.controller.generate(fixture.tabId, {
+    documentId: fixture.documentId,
+    iterations: 1,
+  })
+  assert.equal(result.kind, 'queued')
+  if (result.kind !== 'queued') {
+    throw new Error('The initial batch was not queued.')
+  }
+  await entered.promise
+  return { release, result }
+}
+
+test('busy Generate publishes a sibling frozen Project before the held inference finishes', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = await createSiblingProject(fixture)
+    await fixture.projects.setPrimaryBbox(sibling.tabId, { height: 64, width: 64, x: 123, y: -456 })
+    await fixture.projects.updateGenerationDraft(sibling.tabId, {
+      kind: 'positive-prompt',
+      text: 'captured sibling prompt',
+    })
+    await fixture.projects.updateGenerationDraft(sibling.tabId, {
+      kind: 'negative-prompt',
+      text: '',
+    })
+    await fixture.projects.updateGenerationDraft(sibling.tabId, {
+      kind: 'seed',
+      policy: 'fixed',
+      value: 0,
+    })
+    const { release: releaseWorker } = await holdCurrentGeneration(fixture)
+    const entered = signal()
+    const releaseComposition = signal()
+    fixture.runtime.beforeCompose = async () => {
+      entered.resolve()
+      await releaseComposition.promise
+    }
+    try {
+      const leases = fixture.runtime.leaseCount
+      const original = await fixture.controller.getQueue()
+      const saved = await readFile(fixture.packagePath)
+      const pending = fixture.controller.generate(sibling.tabId, { ...sibling, iterations: 1 })
+      await entered.promise
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.equal(
+        fixture.runtime.leaseCount,
+        leases,
+        'CPU preparation does not reserve another GPU child',
+      )
+      assert.equal(fixture.runtime.preparationCount, 1)
+      await assert.rejects(
+        fixture.controller.generate(sibling.tabId, { ...sibling, iterations: 1 }),
+        { code: 'GENERATION_BUSY' },
+      )
+      await fixture.projects.updateGenerationDraft(sibling.tabId, {
+        kind: 'positive-prompt',
+        text: 'later edited sibling',
+      })
+      await fixture.projects.updateGenerationDraft(sibling.tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: 99,
+      })
+      await fixture.projects.setPrimaryBbox(sibling.tabId, {
+        height: 64,
+        width: 64,
+        x: -987,
+        y: 654,
+      })
+      await fixture.projects.save(sibling.tabId)
+      releaseComposition.resolve()
+      const queued = await pending
+      assert.equal(queued.kind, 'queued')
+      if (queued.kind !== 'queued') {
+        return
+      }
+      assert.equal(queued.jobIds.length, 1)
+      const frozen = await fixture.queue.loadVerifiedInput(queued.jobIds[0])
+      assert.equal(frozen.item.status, 'pending')
+      assert.equal(frozen.payload.context.documentId, sibling.documentId)
+      assert.equal(frozen.payload.context.prompts.positive, 'captured sibling prompt')
+      assert.equal(frozen.payload.context.sampling.seed, 0)
+      assert.deepEqual(frozen.payload.context.bbox, { height: 64, width: 64, x: 123, y: -456 })
+      assert.deepEqual(await readFile(frozen.targetPath), await png(false))
+      const after = await fixture.controller.getQueue()
+      assert.equal(after.counts.running, 1)
+      assert.equal(after.counts.pending, original.counts.pending + 1)
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.equal(fixture.runtime.preparationClosedCount, 1)
+      assert.equal(fixture.runtime.preparationHeld, false)
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+      assert.equal(
+        await fixture.staging.readLastActualSeed(sibling.tabId, sibling.documentId),
+        null,
+      )
+      releaseWorker.resolve()
+      await waitForState(
+        fixture.controller,
+        sibling.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      assert.equal(fixture.runtime.generated.length, 5)
+      assert.equal(fixture.runtime.generated.at(-1)!.job.sampling.seed, 0)
+      assert.equal(
+        fixture.runtime.generated.at(-1)!.job.prompts.positive,
+        'captured sibling prompt',
+      )
+      assert.equal((await fixture.staging.listVerifiedCandidates(sibling.tabId)).length, 1)
+    } finally {
+      releaseComposition.resolve()
+      releaseWorker.resolve()
+    }
+  })
+})
+
+test('busy same-Project Generate keeps unreviewed work and publishes replacement before canceling it', async () => {
+  await withFixture(async (fixture) => {
+    const { release, result: first } = await holdCurrentGeneration(fixture)
+    try {
+      const leases = fixture.runtime.leaseCount
+      const saved = await readFile(fixture.packagePath)
+      const review = await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      assert.equal(review.kind, 'confirmation-required')
+      if (review.kind !== 'confirmation-required') {
+        return
+      }
+      assert.deepEqual(review.candidateIds, [])
+      assert.deepEqual(review.unfinishedJobIds, [...first.jobIds].sort())
+      assert.equal(fixture.runtime.preparationCount, 0)
+      assert.equal(fixture.runtime.leaseCount, leases)
+      assert.equal(fixture.runtime.generated.length, 1)
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: 'new replacement',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'negative-prompt',
+        text: '',
+      })
+      const cancel = fixture.processor.cancelAndWait.bind(fixture.processor)
+      let reviewedOldCancellation = false
+      fixture.processor.cancelAndWait = async (id) => {
+        if (first.jobIds.includes(id)) {
+          const page = await fixture.controller.getQueue()
+          const replacement = page.items.filter((item) => !first.jobIds.includes(item.id))
+          assert.equal(
+            replacement.length,
+            1,
+            'replacement is durable before destructive cancellation',
+          )
+          assert.equal(replacement[0].status, 'pending')
+          reviewedOldCancellation = true
+        }
+        return await cancel(id)
+      }
+      const replacement = await fixture.controller.generate(fixture.tabId, {
+        confirmation: {
+          candidateIds: review.candidateIds,
+          unfinishedJobIds: review.unfinishedJobIds,
+        },
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      assert.equal(replacement.kind, 'queued')
+      assert.equal(reviewedOldCancellation, true)
+      release.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      const page = await fixture.controller.getQueue()
+      assert.ok(
+        page.items
+          .filter((item) => first.jobIds.includes(item.id))
+          .every((item) => item.status === 'canceled'),
+      )
+      assert.equal(page.counts.completed, 1)
+      assert.equal(fixture.runtime.preparationCount, 1)
+      assert.equal(fixture.runtime.preparationClosedCount, 1)
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('completion during busy Generate composition requires a fresh exact replacement confirmation', async () => {
+  await withFixture(async (fixture) => {
+    const { release: releaseWorker, result: first } = await holdCurrentGeneration(fixture)
+    const entered = signal()
+    const releaseComposition = signal()
+    try {
+      const review = await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      assert.equal(review.kind, 'confirmation-required')
+      if (review.kind !== 'confirmation-required') {
+        return
+      }
+      fixture.runtime.beforeCompose = async () => {
+        entered.resolve()
+        await releaseComposition.promise
+      }
+      const pending = fixture.controller.generate(fixture.tabId, {
+        confirmation: {
+          candidateIds: review.candidateIds,
+          unfinishedJobIds: review.unfinishedJobIds,
+        },
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      releaseWorker.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (state) =>
+          state.phase === 'preparing' && state.runningJobId === null && state.jobs.length === 3,
+      )
+      const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+      assert.equal(candidates.length, 1)
+      releaseComposition.resolve()
+      const nextReview = await pending
+      assert.equal(nextReview.kind, 'confirmation-required')
+      if (nextReview.kind !== 'confirmation-required') {
+        return
+      }
+      assert.deepEqual(nextReview.candidateIds, [candidates[0].candidateId])
+      assert.deepEqual(nextReview.unfinishedJobIds, first.jobIds.slice(1).sort())
+      const page = await fixture.controller.getQueue()
+      assert.equal(page.items.length, 4, 'changed review prevents publication of any replacement')
+      assert.equal(page.counts.canceled, 0)
+      assert.ok(
+        (await fixture.staging.listVerifiedCandidates(fixture.tabId)).some(
+          (item) => item.candidateId === candidates[0].candidateId,
+        ),
+      )
+    } finally {
+      releaseComposition.resolve()
+      releaseWorker.resolve()
+    }
+  })
+})
+
+test('busy Generate preparation refusals retain old work, candidate bytes and the actual seed', async (t) => {
+  for (const failure of ['runtime', 'checkpoint', 'capacity', 'composition'] as const) {
+    await t.test(failure, async () => {
+      await withFixture(async (fixture) => {
+        const { release, review: failed } = await holdRunningSibling(fixture)
+        const source = await fixture.queue.loadVerifiedInput(failed.id)
+        const checkpoint = await readFile(source.payload.context.model.managedPath)
+        try {
+          const page = await fixture.controller.getQueue()
+          const saved = await readFile(fixture.packagePath)
+          const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+          const candidateBytes = await Promise.all(
+            candidates.map((item) => readFile(item.assetPath)),
+          )
+          const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+          const reviewed = await fixture.controller.generate(fixture.tabId, {
+            documentId: fixture.documentId,
+            iterations: 1,
+          })
+          assert.equal(reviewed.kind, 'confirmation-required')
+          if (reviewed.kind !== 'confirmation-required') {
+            return
+          }
+          switch (failure) {
+            case 'capacity': {
+              fixture.staging.preflightBatchCapacity = async () => {
+                throw Object.assign(new Error('controlled generation capacity refusal'), {
+                  code: 'STAGING_CAPACITY_EXCEEDED',
+                })
+              }
+
+              break
+            }
+            case 'checkpoint': {
+              await writeFile(
+                source.payload.context.model.managedPath,
+                'corrupted busy Generate checkpoint',
+              )
+
+              break
+            }
+            case 'runtime': {
+              fixture.runtime.available = false
+
+              break
+            }
+            default: {
+              fixture.runtime.beforeCompose = async () => {
+                throw Object.assign(new Error('controlled CPU composition refusal'), {
+                  code: 'WORKER_REQUEST_FAILED',
+                })
+              }
+            }
+          }
+          const leases = fixture.runtime.leaseCount
+          await assert.rejects(
+            fixture.controller.generate(fixture.tabId, {
+              confirmation: {
+                candidateIds: reviewed.candidateIds,
+                unfinishedJobIds: reviewed.unfinishedJobIds,
+              },
+              documentId: fixture.documentId,
+              iterations: 1,
+            }),
+            {
+              code:
+                failure === 'runtime'
+                  ? 'GENERATION_RUNTIME_UNAVAILABLE'
+                  : failure === 'checkpoint'
+                    ? 'MODEL_FILE_CORRUPT'
+                    : failure === 'capacity'
+                      ? 'STAGING_CAPACITY_EXCEEDED'
+                      : 'WORKER_REQUEST_FAILED',
+            },
+          )
+          assert.deepEqual(await fixture.controller.getQueue(), page)
+          assert.equal(fixture.runtime.leaseCount, leases)
+          assert.equal(fixture.runtime.generated.length, 2)
+          assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), candidates)
+          assert.deepEqual(
+            await Promise.all(candidates.map((item) => readFile(item.assetPath))),
+            candidateBytes,
+          )
+          assert.deepEqual(await readFile(fixture.packagePath), saved)
+          assert.equal(
+            await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+            cursor,
+          )
+          assert.equal((await fixture.controller.getState(fixture.tabId)).phase, 'processing')
+        } finally {
+          fixture.runtime.available = true
+          await writeFile(source.payload.context.model.managedPath, checkpoint)
+          release.resolve()
+        }
+        await waitForState(
+          fixture.controller,
+          fixture.tabId,
+          (state) => state.phase === 'idle' && state.jobs.length === 0,
+        )
+        assert.equal(fixture.runtime.generated.length, 4, 'refused Generate never joins dispatch')
+      })
+    })
+  }
+})
+
+test('busy Generate rechecks a document replaced at the same local Project path', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = await createSiblingProject(fixture)
+    const { release: releaseWorker } = await holdCurrentGeneration(fixture)
+    const entered = signal()
+    const releaseComposition = signal()
+    fixture.runtime.beforeCompose = async () => {
+      entered.resolve()
+      await releaseComposition.promise
+    }
+    try {
+      const page = await fixture.controller.getQueue()
+      const pending = fixture.controller.generate(sibling.tabId, {
+        documentId: sibling.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      await fixture.projects.close(sibling.tabId)
+      const other = await fixture.projects.create({
+        height: 64,
+        title: 'Replacement identity',
+        width: 64,
+      })
+      await fixture.projects.save(other.id)
+      const replacementPath = fixture.projects.getOpenDocumentForAcceptance(other.id)!.filePath
+      await copyFile(replacementPath, sibling.packagePath)
+      assert.equal((await fixture.projects.open(sibling.tabId)).kind, 'opened')
+      assert.notEqual(fixture.projects.getOpenDocumentId(sibling.tabId), sibling.documentId)
+      releaseComposition.resolve()
+      await assert.rejects(pending, { code: 'GENERATION_DOCUMENT_CHANGED' })
+      assert.deepEqual(await fixture.controller.getQueue(), page)
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.equal(fixture.runtime.preparationClosedCount, 1)
+    } finally {
+      releaseComposition.resolve()
+      releaseWorker.resolve()
+    }
+  })
+})
+
+test('a concurrent worker-exit fence survives busy Generate composition and a later refusal', async (t) => {
+  for (const refusal of ['blocked-recheck', 'late-composition'] as const) {
+    await t.test(refusal, async () => {
+      await withFixture(async (fixture) => {
+        const sibling = await createSiblingProject(fixture)
+        const { release: releaseWorker } = await holdCurrentGeneration(fixture)
+        const entered = signal()
+        const releaseComposition = signal()
+        fixture.runtime.beforeCompose = async () => {
+          entered.resolve()
+          await releaseComposition.promise
+          if (refusal === 'late-composition') {
+            throw Object.assign(new Error('controlled later CPU refusal'), {
+              code: 'WORKER_REQUEST_FAILED',
+            })
+          }
+        }
+        try {
+          const page = await fixture.controller.getQueue()
+          const running = page.items.find((item) => item.status === 'running')!
+          const pending = fixture.controller.generate(sibling.tabId, {
+            documentId: sibling.documentId,
+            iterations: 1,
+          })
+          await entered.promise
+          fixture.runtime.closeFailures = 2
+          await assert.rejects(
+            fixture.controller.cancelJob({
+              id: running.id,
+              statusSequence: running.statusSequence,
+            }),
+            { code: 'WORKER_EXIT_UNCONFIRMED' },
+          )
+          assert.equal((await fixture.controller.getState(sibling.tabId)).phase, 'blocked')
+          releaseComposition.resolve()
+          await assert.rejects(pending, {
+            code: refusal === 'blocked-recheck' ? 'GENERATION_BLOCKED' : 'WORKER_REQUEST_FAILED',
+          })
+          const state = await fixture.controller.getState(sibling.tabId)
+          assert.equal(state.phase, 'blocked')
+          assert.equal(
+            state.error?.code,
+            'WORKER_EXIT_UNCONFIRMED',
+            'late refusal cannot clear the existing recovery fence',
+          )
+          assert.equal((await fixture.controller.getQueue()).items.length, page.items.length)
+          assert.equal(fixture.runtime.generated.length, 1)
+          const requested = (await fixture.controller.getQueue()).items.find(
+            (item) => item.id === running.id,
+          )!
+          await fixture.controller.cancelJob({
+            id: requested.id,
+            statusSequence: requested.statusSequence,
+          })
+        } finally {
+          releaseComposition.resolve()
+          releaseWorker.resolve()
+        }
+      })
+    })
+  }
+})
+
+test('shutdown during busy Generate preparation refuses publication before canceling active inference', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = await createSiblingProject(fixture)
+    const { release: releaseWorker } = await holdCurrentGeneration(fixture)
+    const entered = signal()
+    const releaseComposition = signal()
+    fixture.runtime.beforeCompose = async () => {
+      entered.resolve()
+      await releaseComposition.promise
+    }
+    try {
+      const page = await fixture.controller.getQueue()
+      const pending = fixture.controller.generate(sibling.tabId, {
+        documentId: sibling.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      const stopping = fixture.controller.shutdown()
+      releaseComposition.resolve()
+      await assert.rejects(pending, { code: 'GENERATION_CLOSED' })
+      await stopping
+      const after = await fixture.queue.listManagerPage()
+      assert.equal(after.items.length, page.items.length)
+      assert.equal(after.counts.running, 0)
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.equal(fixture.runtime.preparationHeld, false)
+      assert.equal(fixture.runtime.preparationClosedCount, 1)
+    } finally {
+      releaseComposition.resolve()
+      releaseWorker.resolve()
+    }
+  })
+})
+
+test('confirmed Project close waits its busy Generate gate and cancels the new pending batch only', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = await createSiblingProject(fixture)
+    const { release: releaseWorker, result: first } = await holdCurrentGeneration(fixture)
+    const entered = signal()
+    const releaseComposition = signal()
+    fixture.runtime.beforeCompose = async () => {
+      entered.resolve()
+      await releaseComposition.promise
+    }
+    try {
+      const saved = await readFile(sibling.packagePath)
+      const pending = fixture.controller.generate(sibling.tabId, {
+        documentId: sibling.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      const closing = fixture.closeOwner.close(sibling.tabId, {
+        confirmCloseImpact: true,
+        discardDocument: false,
+      })
+      assert.equal(fixture.projects.getOpenDocumentId(sibling.tabId), sibling.documentId)
+      releaseComposition.resolve()
+      const queued = await pending
+      assert.equal(queued.kind, 'queued')
+      await closing
+      assert.equal(fixture.projects.getOpenDocumentId(sibling.tabId), null)
+      assert.deepEqual(await fixture.queue.listUnfinishedByProject(sibling.tabId), [])
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(sibling.tabId), [])
+      const page = await fixture.controller.getQueue()
+      assert.ok(
+        page.items
+          .filter((item) => !first.jobIds.includes(item.id))
+          .every((item) => item.status === 'canceled'),
+      )
+      assert.equal(page.items.find((item) => item.id === first.jobIds[0])!.status, 'running')
+      assert.equal(
+        fixture.runtime.generated.length,
+        1,
+        'closing sibling leaves the original inference alive',
+      )
+      assert.deepEqual(await readFile(sibling.packagePath), saved)
+    } finally {
+      releaseComposition.resolve()
+      releaseWorker.resolve()
+    }
+  })
+})
+
+test('CPU preparation exit failure after durable publication keeps pending work fenced from dispatch', async () => {
+  await withFixture(async (fixture) => {
+    const sibling = await createSiblingProject(fixture)
+    const { release, result: first } = await holdCurrentGeneration(fixture)
+    try {
+      const page = await fixture.controller.getQueue()
+      const saved = await readFile(sibling.packagePath)
+      fixture.runtime.preparationCloseFailures = 1
+      await assert.rejects(
+        fixture.controller.generate(sibling.tabId, {
+          documentId: sibling.documentId,
+          iterations: 1,
+        }),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+      assert.equal(fixture.runtime.preparationHeld, true, 'unconfirmed CPU exit retains its owner')
+      const state = await fixture.controller.getState(sibling.tabId)
+      assert.equal(state.phase, 'blocked')
+      assert.equal(state.error?.code, 'WORKER_EXIT_UNCONFIRMED')
+      const after = await fixture.controller.getQueue()
+      const pending = after.items.filter((item) => !first.jobIds.includes(item.id))
+      assert.equal(pending.length, 4, 'all admitted outputs remain durable pending metadata')
+      assert.ok(pending.every((item) => item.status === 'pending'))
+      assert.equal(after.counts.running, page.counts.running)
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.deepEqual(await readFile(sibling.packagePath), saved)
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(sibling.tabId), [])
+      assert.equal(
+        await fixture.staging.readLastActualSeed(sibling.tabId, sibling.documentId),
+        null,
+      )
+      release.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (current) =>
+          current.phase === 'blocked' && current.runningJobId === null && current.jobs.length === 3,
+      )
+      await assert.rejects(fixture.controller.shutdown(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+      fixture.runtime.preparationHeld = false
+      await fixture.controller.shutdown()
+      assert.equal(
+        fixture.runtime.generated.length,
+        1,
+        'settled running neighbor cannot dispatch the fenced batch',
+      )
+      const restarted = new GenerationQueueRepository(fixture.database.db, fixture.root)
+      await restarted.recoverAfterRestart()
+      const recovered = await restarted.listManagerPage()
+      assert.ok(
+        recovered.items
+          .filter((item) => pending.some((entry) => entry.id === item.id))
+          .every((item) => item.status === 'canceled'),
+      )
+      assert.equal(
+        (await fixture.staging.listVerifiedCandidates(fixture.tabId)).length,
+        1,
+        'the valid neighbor completion remains recoverable',
+      )
+      assert.deepEqual(await readFile(sibling.packagePath), saved)
+    } finally {
+      // The controlled runtime exposes an exit signal instead of owning a real subprocess.
+      // RuntimeManager's subprocess tests verify that only observed exit releases this owner.
+      fixture.runtime.preparationHeld = false
+      release.resolve()
+    }
+  })
+})
 
 test('Generate freezes expanded pairs, drains real queue to staging, and does not write .igs', async () => {
   await withFixture(async (fixture) => {
@@ -934,13 +1609,12 @@ test('Retry admits its real frozen queue copy while a sibling worker is running 
         await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
         cursor,
       )
-      await assert.rejects(
-        fixture.controller.generate(fixture.tabId, {
-          documentId: fixture.documentId,
-          iterations: 1,
-        }),
-        { code: 'GENERATION_BUSY' },
-      )
+      const generationReview = await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      assert.equal(generationReview.kind, 'confirmation-required')
+      assert.equal(fixture.runtime.preparationCount, 0, 'unconfirmed replacement starts no CPU job')
       await assert.rejects(fixture.controller.retryJob(review), {
         code: 'GENERATION_INVALID_REQUEST',
       })

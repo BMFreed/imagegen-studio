@@ -362,6 +362,7 @@ if (!gotInstanceLock) {
       const generationLease = generationRuntime ?? {
         retryUnconfirmedGenerationExit: async () => true,
         withGenerationAdmission: async () => null,
+        withGenerationPreparation: async () => null,
         withGenerationWorker: async () => null,
       }
       const generationDispatch = recoveredGeneration

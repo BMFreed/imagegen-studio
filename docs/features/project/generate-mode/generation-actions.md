@@ -166,14 +166,45 @@ Completed outputs remain in staging until Add; Generate does not dirty the Proje
 or save `.igs`. Raw invalid/uncommitted bbox size blocks Generate until Enter;
 this guard and the transient count do not block Save or enter Undo/recovery.
 
-This first slice supports the existing narrow Illustrious txt2img worker and
-requires a qualified app-owned runtime. While admission or inference is busy,
+This first historical slice supports the existing narrow Illustrious txt2img worker and
+requires a qualified app-owned runtime. At that checkpoint, while admission or inference was busy,
 another Generate is explicitly unavailable; editing, Save, current Cancel and
 early Add remain available during inference. LoRA/embeddings/advanced conditioning,
 Anima, img2img/outpaint/inpaint, Smart Patch, progress, terminal Queue Manager
 history/retry/prune and release runtime install/repair remain open. Visible
 unsupported inputs are rejected rather than ignored. UI/mock tests do not prove
 installed CUDA inference or completion of Phase 2B.
+
+## Production busy Generate checkpoint
+
+[New Generate during inference](../../../engineering/phase-2b-busy-generate-research.md)
+permits another Generate while a qualified job is processing. Main retains the
+admitted Project/document, draft, bbox and visible raster sources before awaiting
+preparation. One CPU derivatives child from the same installed runtime composes
+and verifies that target with CUDA hidden; the current inference child lends only
+a copied ready message. No second CUDA worker or system Python is used. Idle
+Generate keeps the existing qualified inference composition path.
+
+Generate in another Project adds a frozen pending batch without canceling the
+current job. In the same Project, existing candidates and unfinished jobs still
+require exact Keep / Discard and generate confirmation. A completion during
+preparation requires renewed confirmation. New publication precedes old-job
+cancellation and staging discard. The serial drain waits for admission and
+confirmed CPU/GPU exit before claiming the next job; dispatch freshly qualifies
+its own inference worker. Unconfirmed exit fences generation and retains its
+process owner, including startup failures, until an explicit retry confirms exit.
+
+One admission and at most one CPU target-preparation child are allowed. Existing
+Save/import workers keep their own lifecycle. Qualification,
+stale runtime/config/executable, missing target capability, concurrent admission,
+closed/replaced document and shutdown refuse safely. Application shutdown cancels
+preparation without waiting for its ordinary request deadline; per-Project close
+uses the existing operation gate. Generate leaves dirty/Undo,
+accepted layers, actual seed and `.igs` unchanged; future jobs use the frozen
+payload even after edits. Save preview fallback remains a placeholder if its
+worker is unavailable. Evidence uses actual Electron/SQLite/files and controlled
+worker peers; full CUDA pipelines, Anima, conditioning and release runtime remain
+separate work.
 
 ## Acceptance Criteria
 

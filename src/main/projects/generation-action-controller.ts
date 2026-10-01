@@ -19,7 +19,6 @@ import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { GenerationProcessor } from './generation-processor.js'
 import type { GenerationQueueRepository, QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
-import type { GenerationWorkerClient } from './generation-worker-client.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
@@ -54,9 +53,12 @@ interface GenerationActionRuntime {
     scratchBasePath: string,
     use: (ready: InferenceWorkerReady) => Promise<T>,
   ) => Promise<T | null>
-  withGenerationWorker: <T>(
+  withGenerationPreparation: <T>(
     scratchBasePath: string,
-    use: (worker: Pick<GenerationWorkerClient, 'composeTarget' | 'ready'>) => Promise<T>,
+    use: (preparation: {
+      inferenceReady: InferenceWorkerReady
+      targetWorker: Pick<ProjectWorkerClient, 'composeTarget'>
+    }) => Promise<T>,
   ) => Promise<T | null>
 }
 
@@ -215,10 +217,10 @@ export class ProjectGenerationActionController {
         'Generation recovery needs attention before another batch can start.',
       )
     }
-    if (this.admission || this.drain) {
+    if (this.admission) {
       throw new ProjectGenerationActionError(
         'GENERATION_BUSY',
-        'Finish the current generation before starting another batch.',
+        'Finish preparing the current generation before starting another batch.',
       )
     }
     if (
@@ -360,6 +362,16 @@ export class ProjectGenerationActionController {
     return this.shutdownPromise
   }
 
+  private assertAdmissionOpen(): void {
+    this.assertOpen()
+    if (this.blocked) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BLOCKED',
+        'Generation recovery needs attention before another job can start.',
+      )
+    }
+  }
+
   private assertDocument(tabId: string, documentId: string): void {
     if (this.options.projects.getOpenDocumentId(tabId) !== documentId) {
       throw documentChanged()
@@ -369,16 +381,6 @@ export class ProjectGenerationActionController {
   private assertOpen(): void {
     if (this.closed) {
       throw new ProjectGenerationActionError('GENERATION_CLOSED', 'Generation is shutting down.')
-    }
-  }
-
-  private assertRetryAdmissionOpen(): void {
-    this.assertOpen()
-    if (this.blocked) {
-      throw new ProjectGenerationActionError(
-        'GENERATION_BLOCKED',
-        'Generation recovery needs attention before another job can start.',
-      )
     }
   }
 
@@ -396,36 +398,38 @@ export class ProjectGenerationActionController {
     tabId: string,
     request: ProjectGenerateOptions,
   ): Promise<ProjectGenerateResult> {
-    this.assertOpen()
+    this.assertAdmissionOpen()
     this.assertDocument(tabId, request.documentId)
     return await this.options.projects.withCapturedNormalGenerationInput(tabId, async (capture) => {
-      this.assertOpen()
+      this.assertAdmissionOpen()
       if (capture.document.documentId !== request.documentId) {
         throw documentChanged()
       }
       const initial = await this.readImpact(tabId, request.documentId)
+      this.assertAdmissionOpen()
       if (!confirmationMatches(initial, request.confirmation)) {
         return toConfirmationResult(initial)
       }
       const dynamic = getEffectiveDynamicPromptSettings(
         capture.document.generationDraft.dynamicPrompt,
       )
-      const admitted = await this.options.runtime.withGenerationWorker(
+      const admitted = await this.options.runtime.withGenerationPreparation(
         this.options.scratchBasePath,
-        async (worker) => {
-          this.assertOpen()
-          const target = await capture.composeTarget(worker)
-          this.assertOpen()
+        async ({ inferenceReady, targetWorker }) => {
+          this.assertAdmissionOpen()
+          const target = await capture.composeTarget(targetWorker)
+          this.assertAdmissionOpen()
           const lastActualSeed = await this.options.staging.readLastActualSeed(
             tabId,
             request.documentId,
           )
+          this.assertAdmissionOpen()
           const prepared = await prepareNormalTxt2Img({
             lastActualSeed,
             modelService: this.options.models,
             target,
           })
-          this.assertOpen()
+          this.assertAdmissionOpen()
           this.assertDocument(tabId, request.documentId)
           const admitted = await this.options.orchestrator.enqueuePreparedBatch(
             tabId,
@@ -435,10 +439,11 @@ export class ProjectGenerationActionController {
               maxPrompts: dynamic.maxPrompts,
               seedBehavior: dynamic.seedBehavior,
             },
-            worker,
+            { ready: inferenceReady },
             async () => {
-              this.assertOpen()
+              this.assertAdmissionOpen()
               const current = await this.readImpact(tabId, request.documentId)
+              this.assertAdmissionOpen()
               if (!confirmationMatches(current, request.confirmation)) {
                 throw new ConfirmationChanged(current)
               }
@@ -448,12 +453,13 @@ export class ProjectGenerationActionController {
           // still held by admission; a failure below cancels only these newly admitted job IDs.
           let oldCleanupStarted = false
           try {
-            this.assertOpen()
+            this.assertAdmissionOpen()
             const current = await this.readImpact(
               tabId,
               request.documentId,
               admitted.items.map((item) => item.id),
             )
+            this.assertAdmissionOpen()
             if (!confirmationMatches(current, request.confirmation)) {
               throw new ConfirmationChanged(current)
             }
@@ -468,7 +474,7 @@ export class ProjectGenerationActionController {
                   )
                 }
               }
-              this.assertOpen()
+              this.assertAdmissionOpen()
               await this.options.staging.discardSessions(tabId, current.sessions)
               this.emitChanged()
             }
@@ -500,7 +506,7 @@ export class ProjectGenerationActionController {
           'The image runtime could not reserve a qualified generation worker.',
         )
       }
-      this.assertOpen()
+      this.assertAdmissionOpen()
       return {
         batchId: admitted.items[0].batchId,
         documentId: request.documentId,
@@ -564,10 +570,10 @@ export class ProjectGenerationActionController {
     const tabId = source.projectKey
     const documentId = source.documentId
     this.admittingTabId = tabId
-    this.assertRetryAdmissionOpen()
+    this.assertAdmissionOpen()
     this.assertDocument(tabId, documentId)
     await this.options.gate.run(tabId, async () => {
-      this.assertRetryAdmissionOpen()
+      this.assertAdmissionOpen()
       this.assertDocument(tabId, documentId)
       const frozen = await this.options.queue.loadVerifiedRetryInput(review.id)
       if (
@@ -587,7 +593,7 @@ export class ProjectGenerationActionController {
       const admitted = await this.options.runtime.withGenerationAdmission(
         this.options.scratchBasePath,
         async (ready) => {
-          this.assertRetryAdmissionOpen()
+          this.assertAdmissionOpen()
           this.assertDocument(tabId, documentId)
           await withIllustriousTxt2ImgRequest({
             modelService: this.options.models,
@@ -595,13 +601,13 @@ export class ProjectGenerationActionController {
             ready,
             scratchBasePath: this.options.scratchBasePath,
             use: async () => {
-              this.assertRetryAdmissionOpen()
+              this.assertAdmissionOpen()
               this.assertDocument(tabId, documentId)
               const queued = await this.options.queue.retryTerminal(
                 review.id,
                 review.statusSequence,
                 async (input) => {
-                  this.assertRetryAdmissionOpen()
+                  this.assertAdmissionOpen()
                   this.assertDocument(tabId, documentId)
                   await this.options.staging.preflightBatchCapacity({
                     entries: [
@@ -614,12 +620,12 @@ export class ProjectGenerationActionController {
                     projectPath: input.source.projectPath,
                     stagingSessionId: input.stagingSessionId,
                   })
-                  this.assertRetryAdmissionOpen()
+                  this.assertAdmissionOpen()
                   this.assertDocument(tabId, documentId)
                 },
               )
               try {
-                this.assertRetryAdmissionOpen()
+                this.assertAdmissionOpen()
                 this.assertDocument(tabId, documentId)
               } catch (error) {
                 // A late identity/shutdown refusal cannot leave this newly published retry live.
@@ -661,7 +667,7 @@ export class ProjectGenerationActionController {
         if (this.closed) {
           return
         }
-        // A Retry may validate/copy frozen inputs while the current worker is running. Wait
+        // Admission may prepare/copy frozen inputs while the current worker is running. Wait
         // only after runNext has settled and released that worker, before another claim. An
         // admission never waits for this loop, so shutdown cannot create a mutual wait.
         if (this.admission) {
@@ -692,7 +698,7 @@ export class ProjectGenerationActionController {
           this.drain = null
         }
         // Publication can finish after runNext observed an empty queue but before this owner
-        // detaches. Its successful wake must not leave the newly durable retry stranded.
+        // detaches. Its successful wake must not leave newly durable work stranded.
         if (!failed && this.drainRequested && !this.closed && !this.blocked) {
           this.startDrain()
         }

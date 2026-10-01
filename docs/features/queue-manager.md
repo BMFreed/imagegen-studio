@@ -538,8 +538,9 @@ wakes the serial drain even when it just observed an empty queue.
 
 Retry preserves existing candidate sessions, actual seed, accepted Project,
 dirty/Undo and `.igs`. The UI keeps Retry available during processing and shows
-an actionable refusal if admission cannot qualify. Busy Generate remains
-explicitly unavailable because its new target still requires worker composition.
+an actionable refusal if admission cannot qualify. Subsequent
+[busy Generate](../engineering/phase-2b-busy-generate-research.md) adds separate
+CPU target preparation while preserving the same serial inference dispatch.
 Native evidence uses controlled inference, not production CUDA/release readiness.
 
 ## Acceptance Criteria

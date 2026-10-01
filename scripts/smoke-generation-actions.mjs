@@ -47,6 +47,7 @@ mkdirSync(appDataRoot, { mode: 0o700, recursive: true })
 const peerRequests = path.join(fixtureRoot, 'peer-requests.jsonl')
 const peerLaunches = path.join(fixtureRoot, 'peer-launches.jsonl')
 const peerProgress = path.join(fixtureRoot, 'peer-progress.jsonl')
+const peerExits = path.join(fixtureRoot, 'peer-exits.jsonl')
 const projectTitle = 'Native Generate actions'
 const checkpointName = 'Native structural checkpoint fixture'
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -67,6 +68,7 @@ const report = {
     'Actual target PNG/ICC/hash verification, queue SQLite, staging publication and resource delivery.',
     'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
     'Actual Retry admission during a held generation: only frozen inputs and queue metadata are copied, with no extra child, target composition or change to the running request/progress.',
+    'Actual new Generate admission while another inference is held: one CPU-only derivatives child from the same app-owned runtime composes the frozen target and confirms exit; the active CUDA lease remains owned by its original job.',
     'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
     'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
     'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
@@ -101,6 +103,14 @@ function generations() {
   return lines(peerRequests).filter(
     (entry) => entry.request.type === 'generate-illustrious-txt2img',
   )
+}
+
+function inferenceLaunches() {
+  return lines(peerLaunches).filter(({ role }) => role === 'inference')
+}
+
+function derivativeLaunches() {
+  return lines(peerLaunches).filter(({ role }) => role === 'derivatives')
 }
 
 async function settleFiniteAnimations() {
@@ -482,10 +492,17 @@ const profile = Buffer.from(${JSON.stringify(profile.toString('base64'))}, 'base
 const thumbnail96 = Buffer.from(${JSON.stringify(thumbnail.toString('base64'))}, 'base64')
 const thumbnail104 = Buffer.from(${JSON.stringify(widerThumbnail.toString('base64'))}, 'base64')
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
+const exitLog = ${JSON.stringify(peerExits)}
+const args = process.argv.slice(2)
+const role = args.join(' ') === '-I -m imagegen_worker.inference_main' ? 'inference'
+  : args.join(' ') === '-I -m imagegen_worker' ? 'derivatives' : null
+if (!role) process.exit(21)
 if (process.env.IGS_SDXL_CONFIG_DIR !== expectedConfig || process.env.HF_HOME !== expectedCache) process.exit(22)
 if (['HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE', 'HF_DATASETS_OFFLINE'].some(key => process.env[key] !== '1')) process.exit(23)
-fs.appendFileSync(launchLog, JSON.stringify({pid:process.pid, args:process.argv.slice(2), offline:true}) + '\n')
+if (role === 'derivatives' && process.env.CUDA_VISIBLE_DEVICES !== '') process.exit(29)
+fs.appendFileSync(launchLog, JSON.stringify({pid:process.pid, args, role, executable:process.argv[1],
+  cudaVisibleDevices:process.env.CUDA_VISIBLE_DEVICES ?? null, offline:true}) + '\n')
+process.on('exit', code => fs.appendFileSync(exitLog, JSON.stringify({pid:process.pid,role,code})+'\n'))
 function chunk(type, data) {
   const header = Buffer.alloc(8); header.writeUInt32BE(data.length); header.write(type,4,'ascii')
   const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type),data])))
@@ -501,23 +518,36 @@ function png(width,height,opaque) {
 }
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
-process.stdout.write(JSON.stringify({type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',
-  workerVersion:'0.4.0',runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails']})+'\n')
+process.stdout.write(JSON.stringify(role === 'inference'
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.4.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails']}
+  : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
+    runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
 let buffer=''
 process.stdin.on('data',data=>{
   buffer+=data
   while(buffer.includes('\n')) {
     const end=buffer.indexOf('\n'); const request=JSON.parse(buffer.slice(0,end)); buffer=buffer.slice(end+1)
-    fs.appendFileSync(requestLog,JSON.stringify({pid:process.pid,request})+'\n')
+    fs.appendFileSync(requestLog,JSON.stringify({pid:process.pid,role,request})+'\n')
     if(request.type==='compose-target') {
       if(request.layers.length) process.exit(25)
-      const bytes=png(request.bbox.width,request.bbox.height,false)
-      fs.writeFileSync(request.output.targetPngPath,bytes,{flag:'wx',mode:0o600})
-      process.stdout.write(JSON.stringify({type:'target-done',protocolVersion:'1',requestId:request.requestId,
-        mode:'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',
-        width:request.bbox.width,height:request.bbox.height,sha256:hash(bytes)}})+'\n')
+      const respond=()=>{
+        const bytes=png(request.bbox.width,request.bbox.height,false)
+        fs.writeFileSync(request.output.targetPngPath,bytes,{flag:'wx',mode:0o600})
+        process.stdout.write(JSON.stringify({type:'target-done',protocolVersion:'1',requestId:request.requestId,
+          mode:'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',
+          width:request.bbox.width,height:request.bbox.height,sha256:hash(bytes)}})+'\n')
+      }
+      if(role==='derivatives' && fs.existsSync(path.join(fixtureRoot,'hold-cpu-compose'))) {
+        const timer=setInterval(()=>{
+          if(!fs.existsSync(path.join(fixtureRoot,'release-compose-'+request.requestId))) return
+          clearInterval(timer)
+          respond()
+        },10)
+      } else respond()
     } else if(request.type==='generate-illustrious-txt2img') {
+      if (role !== 'inference') process.exit(30)
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
       const emitProgress = (progress, source, prefix='') => {
@@ -547,6 +577,10 @@ process.stdin.on('data',data=>{
           emitProgress({step:1,totalSteps:2},'after-terminal',terminalLine)
         } else process.stdout.write(terminalLine)
       },10)
+    } else if(request.type==='self-test' && role==='derivatives') {
+      process.stdout.write(JSON.stringify({type:'self-test-result',protocolVersion:'1',
+        requestId:request.requestId,runtimeProfile:'derivatives-only',
+        checks:{pillowVersion:'12.2.0',imageCodecs:['PNG','WEBP'],colorConversion:'srgb'}})+'\n')
     } else process.exit(24)
   }
 })
@@ -565,6 +599,60 @@ function release(entry) {
     path.join(fixtureRoot, `release-${entry.request.requestId}`),
     'release fixture inference',
   )
+}
+
+/** New fixtures are created, configured and saved through the production UI, not main setters. */
+async function createConfiguredProject(title, prompt, seed, generationWidth, checkpointVersionId) {
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'New Project', exact: true }).first().click()
+  const dialog = window.getByRole('dialog', { name: 'New Project', exact: true })
+  await dialog.locator('input[aria-label="Project name"]').fill(title)
+  await dialog.locator('input[aria-label="Project width"]').fill('64')
+  await dialog.locator('input[aria-label="Project height"]').fill('64')
+  await dialog.getByRole('button', { name: 'Create Project', exact: true }).click()
+  await window.getByRole('tab', { name: title, exact: true }).waitFor()
+  const project = (await api('list')).find((candidate) => candidate.title === title)
+  assert.ok(project)
+  const region = window.getByRole('region', { name: 'Project ' + title, exact: true })
+  await region.locator('[aria-label="Generation model"]').click()
+  await window.getByText(checkpointName, { exact: true }).last().click()
+  await expect
+    .poll(async () => (await tab(project.id)).generationDraft.model?.localVersionId)
+    .toBe(checkpointVersionId)
+  await window.locator('[aria-label="Sampler"]').click()
+  await window.getByText('Euler a', { exact: true }).last().click()
+  await window.locator('[aria-label="Scheduler"]').click()
+  await window.getByText('Normal', { exact: true }).last().click()
+  await window.locator('input[aria-label="Steps"]').fill('2')
+  await window.locator('input[aria-label="CFG scale"]').fill('5')
+  const iterations = window.locator('input[aria-label="Images per click"]')
+  await iterations.fill('1')
+  await iterations.press('Enter')
+  await expect(iterations).toHaveValue('1')
+  await window.getByRole('switch', { name: 'Random seed switch' }).click()
+  await window.locator('input[aria-label="Generation seed"]').fill(String(seed))
+  await region.getByRole('textbox', { name: 'Positive prompt', exact: true }).fill(prompt)
+  const width = window.locator('input[aria-label="Generation area width"]')
+  await width.fill(String(generationWidth))
+  await width.press('Enter')
+  await expect.poll(async () => (await tab(project.id)).primaryBbox.width).toBe(generationWidth)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(project.id)).dirty).toBe(false)
+  const document = await tab(project.id)
+  assert.equal(document.generationDraft.positivePrompt.text, prompt)
+  assert.equal(document.generationDraft.seed.value, seed)
+  assert.equal(document.generationDraft.sampling.steps, 2)
+  const directory = path.join(appDataRoot, 'workspaces', 'Uncategorized')
+  let packagePath = null
+  for (const name of readdirSync(directory).filter((entry) => entry.endsWith('.igs'))) {
+    const candidatePath = path.join(directory, name)
+    if ((await readIgsPackage(candidatePath)).project.documentId === document.documentId) {
+      packagePath = candidatePath
+      break
+    }
+  }
+  assert.ok(packagePath)
+  return { document, id: project.id, packagePath, region, title }
 }
 
 try {
@@ -1660,7 +1748,282 @@ try {
       retainedActualSeed: preservedResults.lastActualSeed,
     },
   )
+
+  // Appending isolates the new admission cases from all earlier queue-history counts. The
+  // controlled inference stays held until an actual UI cancellation/replacement or release.
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  await expect(manager).toHaveCount(0)
+  const busyA = await createConfiguredProject(
+    'Busy Generate A',
+    'running A frozen prompt',
+    17,
+    96,
+    installed.versionId,
+  )
+  const generationCountBeforeBusyA = generations().length
+  await window.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect
+    .poll(() => generations().length, { timeout: 20_000 })
+    .toBe(generationCountBeforeBusyA + 1)
+  const activeA = generations().at(-1)
+  const activeARow = (await rows(busyA.id)).find(({ status }) => status === 'running')
+  assert.ok(activeA && activeARow)
+  sendProgress(activeA, 1)
+  let activeAProgress = await waitForProgress(activeA, activeARow, 1)
+  const savedABytes = readFileSync(busyA.packagePath)
+  const savedA = await tab(busyA.id)
+  const inferenceBeforeB = inferenceLaunches()
+  const derivativeCountBeforeB = derivativeLaunches().length
+  const requestsBeforeB = lines(peerRequests)
+  const aRowsBeforeB = await rows(busyA.id)
+  const aResultsBeforeB = await api('listGenerationResults', busyA.id)
+
+  const busyB = await createConfiguredProject(
+    'Busy Generate B',
+    'B queued frozen prompt',
+    23,
+    104,
+    installed.versionId,
+  )
+  assert.deepEqual(inferenceLaunches(), inferenceBeforeB)
+  assert.equal(derivativeLaunches().length, derivativeCountBeforeB)
+  const savedBBytes = readFileSync(busyB.packagePath)
+  const busyBGenerate = window.getByRole('button', { name: /^(?:loading )?Generate$/ })
+  await expect(busyBGenerate).toBeEnabled()
+  writeFileSync(path.join(fixtureRoot, 'hold-cpu-compose'), 'hold CPU target before publication')
+  await busyBGenerate.click()
+  await expect
+    .poll(
+      () =>
+        lines(peerRequests).filter(
+          ({ role, request }) => role === 'derivatives' && request.type === 'compose-target',
+        ).length,
+    )
+    .toBe(1)
+  const heldBComposition = lines(peerRequests).find(
+    ({ role, request }) => role === 'derivatives' && request.type === 'compose-target',
+  )
+  assert.ok(heldBComposition)
+  await expect(busyBGenerate).toBeDisabled()
+  assert.equal((await api('getGenerationState', busyB.id)).phase, 'preparing')
+  assert.equal((await rows(busyB.id)).length, 0)
+  assert.deepEqual(inferenceLaunches(), inferenceBeforeB)
+  assert.doesNotThrow(() => process.kill(heldBComposition.pid, 0))
+  assert.doesNotThrow(() => process.kill(activeA.pid, 0))
+  sendProgress(activeA, 2)
+  const progressDuringBPreparation = await waitForProgress(activeA, activeARow, 2)
+  assert.ok(progressDuringBPreparation.revision > activeAProgress.revision)
+  activeAProgress = progressDuringBPreparation
+  await screenshot('10b-native-busy-generate-B-preparing')
+  checked(
+    'Held CPU target keeps B visibly preparing without a premature queue row while independent A inference progress continues',
+    { activeJobId: activeARow.id, activeProgress: activeAProgress, cpuPid: heldBComposition.pid },
+  )
+  writeFileSync(
+    path.join(fixtureRoot, 'release-compose-' + heldBComposition.request.requestId),
+    'release the reviewed CPU target',
+  )
+  rmSync(path.join(fixtureRoot, 'hold-cpu-compose'))
+  await expect.poll(async () => (await rows(busyB.id)).length).toBe(1)
+  await expect(busyBGenerate).toBeEnabled()
+  const pendingB = (await rows(busyB.id))[0]
+  assert.equal(pendingB.status, 'pending')
+  assert.equal(pendingB.started_at, null)
+  assert.equal(pendingB.finished_at, null)
+  assert.equal(pendingB.status_sequence, 0)
+  assert.equal(pendingB.document_id, busyB.document.documentId)
+  const frozenB = JSON.parse(pendingB.frozen_payload_json)
+  assert.equal(frozenB.context.prompts.positive, 'B queued frozen prompt')
+  assert.equal(frozenB.context.sampling.seed, 23)
+  assert.deepEqual(frozenB.context.bbox, busyB.document.primaryBbox)
+  assert.equal(frozenB.context.model.reference.localVersionId, installed.versionId)
+  const bInputDirectory = path.join(appDataRoot, 'generation-inputs', pendingB.id)
+  const bInputManifest = readFileSync(path.join(bInputDirectory, 'manifest.json'))
+  const bTargetBytes = readFileSync(path.join(bInputDirectory, 'target.png'))
+  assert.equal(digest(bTargetBytes), frozenB.context.target.sha256)
+  assert.equal(JSON.parse(bInputManifest).queueItemId, pendingB.id)
+  assert.deepEqual(inferenceLaunches(), inferenceBeforeB)
+  assert.equal(generations().length, generationCountBeforeBusyA + 1)
+  const bDerivative = derivativeLaunches().slice(derivativeCountBeforeB)
+  assert.equal(bDerivative.length, 1)
+  assert.deepEqual(bDerivative[0].args, ['-I', '-m', 'imagegen_worker'])
+  assert.equal(bDerivative[0].executable, inferenceBeforeB.at(-1).executable)
+  assert.equal(bDerivative[0].cudaVisibleDevices, '')
+  assert.equal(bDerivative[0].offline, true)
+  assert.throws(() => process.kill(bDerivative[0].pid, 0), { code: 'ESRCH' })
+  assert.ok(lines(peerExits).some(({ pid, code }) => pid === bDerivative[0].pid && code === 0))
+  assert.doesNotThrow(() => process.kill(activeA.pid, 0))
+  const requestsDuringB = lines(peerRequests).slice(requestsBeforeB.length)
+  assert.equal(requestsDuringB.length, 1)
+  assert.equal(requestsDuringB[0].role, 'derivatives')
+  assert.equal(requestsDuringB[0].request.type, 'compose-target')
+  assert.deepEqual(requestsDuringB[0].request.bbox, busyB.document.primaryBbox)
+  assert.deepEqual(await rows(busyA.id), aRowsBeforeB)
+  assert.deepEqual(await tab(busyA.id), savedA)
+  assert.deepEqual(await api('listGenerationResults', busyA.id), aResultsBeforeB)
+  assert.deepEqual(await api('getGenerationProgress'), activeAProgress)
+  assert.deepEqual(readFileSync(busyA.packagePath), savedABytes)
+  assert.deepEqual(readFileSync(busyB.packagePath), savedBBytes)
+  await window.getByRole('button', { name: /^Generation queue/ }).click()
+  await expect(
+    window.getByRole('complementary', { name: 'Project generation queue' }),
+  ).toContainText('Pending')
+  await screenshot('11-native-busy-generate-B-pending')
+  await window.getByRole('button', { name: 'Close project queue', exact: true }).click()
+  checked(
+    'UI Generate for B admits a durable frozen pending job through one confirmed-exit CPU child while A inference and progress remain intact',
+    {
+      activeJobId: activeARow.id,
+      activePid: activeA.pid,
+      activeProgress: activeAProgress,
+      admittedJobId: pendingB.id,
+      cpuChild: bDerivative[0],
+      frozenPayloadSha256: digest(Buffer.from(pendingB.frozen_payload_json)),
+      targetSha256: digest(bTargetBytes),
+    },
+  )
+
+  await busyB.region
+    .getByRole('textbox', { name: 'Positive prompt', exact: true })
+    .fill('B edited after busy admission')
+  const bWidth = window.locator('input[aria-label="Generation area width"]')
+  await bWidth.fill('96')
+  await bWidth.press('Enter')
+  await expect
+    .poll(async () => (await tab(busyB.id)).generationDraft.positivePrompt.text)
+    .toBe('B edited after busy admission')
+  await expect.poll(async () => (await tab(busyB.id)).primaryBbox.width).toBe(96)
+  assert.equal((await rows(busyB.id))[0].frozen_payload_json, pendingB.frozen_payload_json)
+  assert.deepEqual(readFileSync(path.join(bInputDirectory, 'manifest.json')), bInputManifest)
+  assert.deepEqual(readFileSync(path.join(bInputDirectory, 'target.png')), bTargetBytes)
+  await openManager.click()
+  await expect(manager).toBeVisible()
+  await expect(managerRow(pendingB.id)).toHaveAttribute('data-status', 'pending')
+  await expect(managerRow(activeARow.id)).toHaveAttribute('data-status', 'running')
+  await managerRow(pendingB.id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await expect(details).toContainText('B queued frozen prompt')
+  await expect(details).toContainText('104 × 64')
+  await screenshotManagerAtViewport(900, 620, '12-native-busy-generate-B-frozen')
+  await resizeNativeWindow(1380, 900)
+  const childLaunchesBeforeCancelB = lines(peerLaunches)
+  const requestsBeforeCancelB = lines(peerRequests)
+  await managerRow(pendingB.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect.poll(async () => (await rows(busyB.id))[0].status).toBe('canceled')
+  await expect(managerRow(pendingB.id)).toHaveAttribute('data-status', 'canceled')
+  assert.deepEqual(lines(peerLaunches), childLaunchesBeforeCancelB)
+  assert.deepEqual(lines(peerRequests), requestsBeforeCancelB)
+  assert.deepEqual(await rows(busyA.id), aRowsBeforeB)
+  assert.deepEqual(await api('getGenerationProgress'), activeAProgress)
+  assert.doesNotThrow(() => process.kill(activeA.pid, 0))
+  assert.deepEqual(readFileSync(busyB.packagePath), savedBBytes)
+  checked(
+    'Post-admission UI edits cannot change B frozen input; canceling its pending job leaves A worker, document and progress intact',
+    { activeJobId: activeARow.id, canceledJobId: pendingB.id, cpuPid: bDerivative[0].pid },
+  )
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  await expect(manager).toHaveCount(0)
+  await window.getByRole('tab', { name: busyA.title, exact: true }).click()
+  const aGenerate = window.getByRole('button', { name: 'Generate', exact: true })
+  await expect(aGenerate).toBeEnabled()
+  const busyReplacementDialog = window.getByRole('dialog', {
+    name: 'Replace temporary generation results',
+    exact: true,
+  })
+  const beforeBusyReviewRequests = lines(peerRequests)
+  const beforeBusyReviewLaunches = lines(peerLaunches)
+  for (const keep of ['Escape', 'Keep results']) {
+    await aGenerate.click()
+    await busyReplacementDialog.waitFor()
+    await expect(busyReplacementDialog).toContainText(
+      '1 unfinished generation job will be canceled.',
+    )
+    if (keep === 'Escape') {
+      await screenshot('13-native-busy-generate-A-confirmation')
+      await window.keyboard.press('Escape')
+    } else {
+      await busyReplacementDialog.getByRole('button', { name: 'Keep results', exact: true }).click()
+    }
+    await expect(busyReplacementDialog).toHaveCount(0)
+    assert.deepEqual(await rows(busyA.id), aRowsBeforeB)
+    assert.deepEqual(lines(peerRequests), beforeBusyReviewRequests)
+    assert.deepEqual(lines(peerLaunches), beforeBusyReviewLaunches)
+    assert.deepEqual(await api('getGenerationProgress'), activeAProgress)
+    assert.doesNotThrow(() => process.kill(activeA.pid, 0))
+    assert.deepEqual(readFileSync(busyA.packagePath), savedABytes)
+  }
+  checked(
+    'Generate on running A presents exact unfinished-job confirmation; Escape and Keep preserve the active job without composing another target',
+    { activeJobId: activeARow.id, activePid: activeA.pid },
+  )
+
+  await busyA.region
+    .getByRole('textbox', { name: 'Positive prompt', exact: true })
+    .fill('A replacement frozen prompt')
+  const aWidth = window.locator('input[aria-label="Generation area width"]')
+  await aWidth.fill('104')
+  await aWidth.press('Enter')
+  await expect.poll(async () => (await tab(busyA.id)).primaryBbox.width).toBe(104)
+  const derivativeCountBeforeAReplacement = derivativeLaunches().length
+  await aGenerate.click()
+  await busyReplacementDialog.waitFor()
+  await busyReplacementDialog
+    .getByRole('button', { name: 'Discard and Generate', exact: true })
+    .click()
+  await expect(busyReplacementDialog).toHaveCount(0)
+  await expect
+    .poll(() => generations().length, { timeout: 20_000 })
+    .toBe(generationCountBeforeBusyA + 2)
+  const replacementA = generations().at(-1)
+  assert.ok(replacementA)
+  assert.notEqual(replacementA.pid, activeA.pid)
+  assert.throws(() => process.kill(activeA.pid, 0), { code: 'ESRCH' })
+  const replacedARows = await rows(busyA.id)
+  assert.equal(replacedARows.find(({ id }) => id === activeARow.id).status, 'canceled')
+  const replacementARow = replacedARows.find(({ status }) => status === 'running')
+  assert.ok(replacementARow)
+  assert.notEqual(replacementARow.id, activeARow.id)
+  assert.notEqual(replacementARow.batch_id, activeARow.batch_id)
+  assert.notEqual(replacementARow.staging_session_id, activeARow.staging_session_id)
+  assert.equal(replacementA.request.job.prompts.positive, 'A replacement frozen prompt')
+  assert.equal(replacementA.request.job.bbox.width, 104)
+  assert.equal(replacementA.request.job.sampling.seed, 17)
+  assert.equal((await rows(busyB.id))[0].status, 'canceled')
+  const replacementCpu = derivativeLaunches().slice(derivativeCountBeforeAReplacement)
+  assert.equal(replacementCpu.length, 1)
+  assert.equal(replacementCpu[0].cudaVisibleDevices, '')
+  assert.throws(() => process.kill(replacementCpu[0].pid, 0), { code: 'ESRCH' })
+  assert.equal((await api('getGenerationProgress')).current, null)
+  assert.deepEqual(readFileSync(busyA.packagePath), savedABytes)
+  await screenshot('14-native-busy-generate-A-replacement-running')
+  release(replacementA)
+  await expect
+    .poll(async () => (await api('listGenerationResults', busyA.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(1)
+  await expect.poll(async () => (await api('getGenerationState', busyA.id)).phase).toBe('idle')
+  const completedReplacement = await api('listGenerationResults', busyA.id)
+  assert.equal(completedReplacement.candidates[0].queueItemId, replacementARow.id)
+  assert.equal(completedReplacement.lastActualSeed, 17)
+  assert.equal((await tab(busyA.id)).layers.length, 0)
+  assert.deepEqual(readFileSync(busyA.packagePath), savedABytes)
+  assert.deepEqual(readFileSync(busyB.packagePath), savedBBytes)
+  checked(
+    'Confirmed busy Generate replaces only reviewed A work and runs the new frozen attempt after old inference exit, without saving or accepting any candidate',
+    {
+      oldJobId: activeARow.id,
+      oldPid: activeA.pid,
+      replacementCpuPid: replacementCpu[0].pid,
+      replacementJobId: replacementARow.id,
+      replacementPid: replacementA.pid,
+      resultCandidateId: completedReplacement.candidates[0].candidateId,
+    },
+  )
+
   report.finalRows = await rows(projectId)
+  report.busyGenerateFinalRows = { a: await rows(busyA.id), b: await rows(busyB.id) }
   for (const entry of lines(peerLaunches)) {
     assert.throws(() => process.kill(entry.pid, 0), { code: 'ESRCH' })
   }
@@ -1686,6 +2049,7 @@ try {
   report.peerRequests = lines(peerRequests)
   report.peerLaunches = lines(peerLaunches)
   report.peerProgress = lines(peerProgress)
+  report.peerExits = lines(peerExits)
   writeFileSync(path.join(artifacts, 'native-main-stderr.log'), mainStderr)
   writeFileSync(path.join(artifacts, 'native-report.json'), `${JSON.stringify(report, null, 2)}\n`)
   application?.process().kill('SIGKILL')

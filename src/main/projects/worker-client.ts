@@ -46,6 +46,8 @@ export interface ProjectWorkerLocation {
 export interface ProjectWorkerOptions {
   environment?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
+  shutdownWaitMs?: number
+  signal?: AbortSignal
   startupTimeoutMs?: number
 }
 
@@ -204,6 +206,9 @@ export class ProjectWorkerError extends Error {
 }
 
 export class ProjectWorkerClient {
+  private static startupTail: Promise<void> = Promise.resolve()
+  private static readonly unconfirmedStartChildren = new Set<ProjectWorkerClient>()
+
   get ready(): WorkerReady {
     if (!this.readyMessage) {
       throw new ProjectWorkerError('CLOSED', 'The image worker is not ready.')
@@ -211,7 +216,11 @@ export class ProjectWorkerClient {
     return this.readyMessage
   }
 
+  private abortListener: (() => void) | null = null
+
+  private readonly abortSignal: AbortSignal | undefined
   private active: PendingRequest | null = null
+
   private busy = false
   private closed = false
   private closePromise: Promise<void> | null = null
@@ -221,13 +230,13 @@ export class ProjectWorkerClient {
   private forcedTermination = false
   private readyMessage: WorkerReady | null = null
   private readonly requestTimeoutMs: number
+  private readonly shutdownWaitMs: number
   private readonly stagingBasePath: string
   private readonly startupPromise: Promise<WorkerReady>
   private startupReject!: (error: ProjectWorkerError) => void
   private startupResolve!: (ready: WorkerReady) => void
   private startupTimer: ReturnType<typeof setTimeout> | null = null
   private stdoutBytes = Buffer.alloc(0)
-
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     stagingBasePath: string,
@@ -235,6 +244,8 @@ export class ProjectWorkerClient {
   ) {
     this.stagingBasePath = stagingBasePath
     this.requestTimeoutMs = deadline(options.requestTimeoutMs, 120_000, 'requestTimeoutMs')
+    this.shutdownWaitMs = deadline(options.shutdownWaitMs, SHUTDOWN_WAIT_MS, 'shutdownWaitMs')
+    this.abortSignal = options.signal
     const startupTimeoutMs = deadline(options.startupTimeoutMs, 15_000, 'startupTimeoutMs')
     this.startupPromise = new Promise<WorkerReady>((resolve, reject) => {
       this.startupResolve = resolve
@@ -263,6 +274,36 @@ export class ProjectWorkerClient {
     })
     // A failed spawn can emit `error` without `exit`; `close` follows either path.
     this.child.on('close', () => this.observeExit())
+    if (this.abortSignal) {
+      this.abortListener = () => {
+        // The start/final-close owner observes any failure; cancellation must never create an
+        // unhandled rejection or wait for the ordinary request deadline.
+        void this.close().catch(() => undefined)
+      }
+      this.abortSignal.addEventListener('abort', this.abortListener, { once: true })
+      if (this.abortSignal.aborted) {
+        this.abortListener()
+      }
+    }
+  }
+  static hasUnconfirmedStartExit(): boolean {
+    return ProjectWorkerClient.unconfirmedStartChildren.size > 0
+  }
+  static async retryUnconfirmedStartExit(): Promise<boolean> {
+    const preceding = ProjectWorkerClient.startupTail
+    let release!: () => void
+    ProjectWorkerClient.startupTail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await preceding
+    try {
+      await ProjectWorkerClient.confirmFailedStartExitsUnlocked()
+      return true
+    } catch {
+      return false
+    } finally {
+      release()
+    }
   }
 
   static async start(
@@ -271,26 +312,58 @@ export class ProjectWorkerClient {
   ): Promise<ProjectWorkerClient> {
     deadline(options.requestTimeoutMs, 120_000, 'requestTimeoutMs')
     deadline(options.startupTimeoutMs, 15_000, 'startupTimeoutMs')
-    const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
-    const stagingBasePath = await canonicalDirectory(location.stagingBasePath, 'Staging base')
-    const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
-    const child = spawn(executable, ['-I', '-m', 'imagegen_worker'], {
-      cwd: runtimeRoot,
-      env: options.environment ?? { LANG: 'C.UTF-8' },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
+    deadline(options.shutdownWaitMs, SHUTDOWN_WAIT_MS, 'shutdownWaitMs')
+    const preceding = ProjectWorkerClient.startupTail
+    let release!: () => void
+    ProjectWorkerClient.startupTail = new Promise<void>((resolve) => {
+      release = resolve
     })
-    const client = new ProjectWorkerClient(child, stagingBasePath, options)
+    await preceding
     try {
-      const ready = await client.startupPromise
-      if (client.closed) {
-        throw new ProjectWorkerError('PROTOCOL_ERROR', 'The image worker stopped during startup.')
+      await ProjectWorkerClient.confirmFailedStartExitsUnlocked()
+      if (options.signal?.aborted) {
+        throw new ProjectWorkerError('CLOSED', 'The image worker startup was canceled.')
       }
-      client.readyMessage = ready
-      return client
-    } catch (error) {
+      const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
+      const stagingBasePath = await canonicalDirectory(location.stagingBasePath, 'Staging base')
+      const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
+      if (options.signal?.aborted) {
+        throw new ProjectWorkerError('CLOSED', 'The image worker startup was canceled.')
+      }
+      const child = spawn(executable, ['-I', '-m', 'imagegen_worker'], {
+        cwd: runtimeRoot,
+        env: options.environment ?? { LANG: 'C.UTF-8' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+      const client = new ProjectWorkerClient(child, stagingBasePath, options)
+      try {
+        const ready = await client.startupPromise
+        if (client.closed) {
+          throw new ProjectWorkerError('PROTOCOL_ERROR', 'The image worker stopped during startup.')
+        }
+        client.readyMessage = ready
+        return client
+      } catch (error) {
+        try {
+          await client.close()
+        } catch (closeError) {
+          if (!client.exitObserved) {
+            ProjectWorkerClient.unconfirmedStartChildren.add(client)
+          }
+          throw closeError
+        }
+        throw error
+      }
+    } finally {
+      release()
+    }
+  }
+
+  private static async confirmFailedStartExitsUnlocked(): Promise<void> {
+    for (const client of ProjectWorkerClient.unconfirmedStartChildren) {
       await client.close()
-      throw error
+      ProjectWorkerClient.unconfirmedStartChildren.delete(client)
     }
   }
 
@@ -500,12 +573,12 @@ export class ProjectWorkerClient {
     }
     this.child.stdin.end()
     if (!this.exitObserved && !this.forcedTermination) {
-      await this.waitForExit(SHUTDOWN_WAIT_MS)
+      await this.waitForExit(this.shutdownWaitMs)
     }
     if (!this.exitObserved) {
       this.forcedTermination = true
       this.child.kill('SIGKILL')
-      if (!(await this.waitForExit(SHUTDOWN_WAIT_MS))) {
+      if (!(await this.waitForExit(this.shutdownWaitMs))) {
         throw new ProjectWorkerError(
           'WORKER_EXIT_UNCONFIRMED',
           'The image worker did not exit after termination was requested.',
@@ -556,6 +629,11 @@ export class ProjectWorkerClient {
   }
 
   private observeExit(): void {
+    if (this.abortListener) {
+      this.abortSignal?.removeEventListener('abort', this.abortListener)
+      this.abortListener = null
+    }
+
     if (!this.exitObserved) {
       this.exitObserved = true
       this.exitResolve()

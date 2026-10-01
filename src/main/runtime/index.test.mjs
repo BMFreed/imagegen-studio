@@ -4,8 +4,10 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, test } from 'node:test'
+import { crc32, deflateSync } from 'node:zlib'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
+import { ProjectWorkerClient } from '../projects/worker-client.js'
 import { GenerationAppShutdown } from '../projects/generation-app-shutdown.js'
 import { openAppDatabase } from '../db/database.js'
 
@@ -48,6 +50,52 @@ const runtimeId = path.basename(path.dirname(path.dirname(process.argv[1])))
 const root = process.cwd()
 const environment = path.join(root, 'environments', runtimeId)
 const config = path.join(environment, 'resources', 'sdxl-config')
+if (process.argv.slice(2).join(' ') === '-I -m imagegen_worker') {
+  const crypto = require('node:crypto')
+  const mode = fs.existsSync(path.join(environment, 'cpu-mode'))
+    ? fs.readFileSync(path.join(environment, 'cpu-mode'), 'utf8') : 'ready'
+  if (process.env.CUDA_VISIBLE_DEVICES !== '' || process.env.IGS_SDXL_CONFIG_DIR !== config ||
+      process.env.HF_HUB_OFFLINE !== '1' || process.env.HF_HOME !== path.join(path.dirname(root), 'cache')) process.exit(25)
+  fs.appendFileSync(path.join(root, 'cpu-launches'), runtimeId + '\n')
+  process.on('exit', () => fs.appendFileSync(path.join(root, 'cpu-exits'), runtimeId + '\n'))
+  if (mode !== 'startup-hang' && mode !== 'request-hang') process.on('SIGTERM', () => process.exit(0))
+  if (mode === 'bad-version-keepalive' || mode === 'request-hang' || mode === 'startup-hang') setInterval(() => {}, 1000)
+  const announce = () => {
+    if (mode === 'startup-hang') return
+    if (mode === 'replace-pointer') fs.writeFileSync(path.join(root, 'current-runtime.json'), '{}')
+    if (mode === 'replace-config') fs.writeFileSync(path.join(config, 'model_index.json'), 'changed')
+    if (mode === 'replace-executable') fs.appendFileSync(process.argv[1], '\n')
+    process.stdout.write(JSON.stringify({
+      type:'ready', protocolVersion:'1', pythonVersion:'3.12.13', workerVersion: mode.startsWith('bad-version') ? '9.9.9' : '0.1.0',
+      runtimeProfile: 'derivatives-only', capabilities: ['image-derivatives', 'import-normalization', 'self-test',
+        ...(mode === 'missing-target' ? [] : ['target-composition'])]
+    }) + '\n')
+  }
+  if (mode === 'startup-gate') {
+    const timer = setInterval(() => {
+      if (fs.existsSync(path.join(root, 'cpu-release-start'))) { clearInterval(timer); announce() }
+    }, 5)
+  } else announce()
+  process.stdin.setEncoding('utf8')
+  let incoming = ''
+  process.stdin.on('data', chunk => {
+    incoming += chunk
+    while (incoming.includes('\n')) {
+      const index = incoming.indexOf('\n')
+      const request = JSON.parse(incoming.slice(0, index)); incoming = incoming.slice(index + 1)
+      fs.appendFileSync(path.join(root, 'cpu-requests'), request.type + '\n')
+      if (request.type !== 'compose-target') process.exit(26)
+      if (mode === 'request-hang') continue
+      const bytes = fs.readFileSync(path.join(root, 'cpu-target.png'))
+      fs.writeFileSync(request.output.targetPngPath, bytes)
+      process.stdout.write(JSON.stringify({
+        type:'target-done', protocolVersion:'1', requestId:request.requestId,
+        rect:request.bbox, mode:'txt2img', composite:{ byteSize:bytes.length, width:2,height:2,
+          sha256:crypto.createHash('sha256').update(bytes).digest('hex'), colorSpace:'srgb' }
+      }) + '\n')
+    }
+  })
+} else {
 fs.appendFileSync(path.join(root, 'launches'), runtimeId + '\n')
 if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
 if (process.env.IGS_SDXL_CONFIG_DIR !== config || process.env.HF_HOME !== path.join(path.dirname(root), 'cache')) process.exit(22)
@@ -69,6 +117,7 @@ if (mode === 'wrong-version-keepalive') setInterval(() => {}, 1000)
 process.stdout.write(JSON.stringify(ready) + '\n')
 process.stdin.on('data', data => fs.appendFileSync(path.join(root, 'requests'), data))
 process.stdin.resume()
+}
 `
   await fs.writeFile(executable, child)
   await fs.chmod(executable, 0o700)
@@ -803,6 +852,12 @@ test('metadata admission refuses a qualifying lease immediately and later admits
     } finally {
       clearTimeout(timeout)
     }
+    assert.equal(
+      await manager.withGenerationPreparation(scratch, async () =>
+        assert.fail('qualifying peer cannot prepare'),
+      ),
+      null,
+    )
     assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
   } finally {
     resumeQualification()
@@ -831,6 +886,12 @@ test('metadata admission refuses a closed running child and shutdown without rep
             null,
           )
           assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+          assert.equal(
+            await manager.withGenerationPreparation(scratch, async () =>
+              assert.fail('unavailable peer cannot prepare'),
+            ),
+            null,
+          )
           if (refusal === 'shutdown') {
             assert.equal(worker.ready.workerVersion, '0.2.0')
             assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
@@ -945,4 +1006,429 @@ test('runtime leases qualified 0.4.0 thumbnail peer and refuses missing capabili
     null,
   )
   assert.equal((await refusing.getStatus()).value.kind, 'needs-repair')
+})
+
+async function installCpuTarget(roots) {
+  // A pinned transparent RGBA image is protocol test data, not a second composition implementation.
+  const chunk = (tag, payload) => {
+    const name = Buffer.from(tag)
+    const size = Buffer.alloc(4)
+    size.writeUInt32BE(payload.length)
+    const checksum = Buffer.alloc(4)
+    checksum.writeUInt32BE(crc32(Buffer.concat([name, payload])))
+    return Buffer.concat([size, name, payload, checksum])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(2, 0)
+  header.writeUInt32BE(2, 4)
+  header[8] = 8
+  header[9] = 6
+  const profile = await fs.readFile('worker-python/src/imagegen_worker/srgb.icc')
+  await fs.writeFile(
+    path.join(roots.runtimeDir, 'cpu-target.png'),
+    Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk('IHDR', header),
+      chunk('iCCP', Buffer.concat([Buffer.from('sRGB\0\0'), deflateSync(profile)])),
+      chunk('IDAT', deflateSync(Buffer.alloc(18))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]),
+  )
+}
+
+async function composeCpuTarget(targetWorker, scratch) {
+  const stagingRoot = await fs.mkdtemp(path.join(scratch, 'target-'))
+  return await targetWorker.composeTarget({
+    bbox: { x: -7, y: 11, width: 2, height: 2 },
+    layers: [],
+    stagingRoot,
+    targetPngPath: path.join(stagingRoot, 'target.png'),
+  })
+}
+
+async function waitForLines(file, count) {
+  const deadline = Date.now() + 3000
+  while ((await lines(file)).length < count) {
+    if (Date.now() > deadline) throw new Error('Subprocess did not reach the expected boundary.')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+test('new-generation preparation uses one CUDA-hidden target child while the actual GPU owner remains live', async () => {
+  // Boundary: actual RuntimeManager, two real JSONL children and verified target composition.
+  // Invariant: one CPU lease, no second GPU or inference request; copied metadata and confirmed exit.
+  // Neighbor: idle preparation below. Mutation: share GPU transport or release the CPU lease early.
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await installCpuTarget(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await manager.withGenerationWorker(scratch, async (gpu) => {
+    const snapshot = structuredClone(gpu.ready)
+    const preparation = manager.withGenerationPreparation(
+      scratch,
+      async ({ inferenceReady, targetWorker }) => {
+        assert.notEqual(inferenceReady, gpu.ready)
+        assert.notEqual(inferenceReady.capabilities, gpu.ready.capabilities)
+        inferenceReady.capabilities.push('caller-local')
+        inferenceReady.workerVersion = 'caller-local'
+        assert.deepEqual(Object.keys(targetWorker), ['composeTarget'])
+        assert.equal((await manager.getStatus()).value.kind, 'ready')
+        assert.equal((await composeCpuTarget(targetWorker, scratch)).mode, 'txt2img')
+        assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+        return 'target-prepared'
+      },
+    )
+    assert.equal(await manager.withGenerationPreparation(scratch, async () => 'second CPU'), null)
+    assert.equal(await manager.withGenerationAdmission(scratch, async () => 'metadata'), null)
+    assert.equal(await preparation, 'target-prepared')
+    assert.deepEqual(gpu.ready, snapshot)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-requests')), ['compose-target'])
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    const original = new Error('preparation callback failed')
+    await assert.rejects(
+      manager.withGenerationPreparation(scratch, async () => {
+        throw original
+      }),
+      (error) => error === original,
+    )
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 2)
+  })
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+})
+
+test('idle new-generation preparation delegates the normal GPU lease and refuses unavailable hosts', async () => {
+  const { roots, manager } = await fixture()
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  assert.equal(
+    await manager.withGenerationPreparation(scratch, async () => 'missing runtime'),
+    null,
+  )
+  await installFakeInferenceRuntime(roots)
+  assert.equal(
+    await manager.withGenerationPreparation(scratch, async ({ inferenceReady, targetWorker }) => {
+      assert.equal(targetWorker instanceof GenerationWorkerClient, true)
+      const original = targetWorker.ready
+      assert.notEqual(inferenceReady, original)
+      inferenceReady.capabilities.push('local')
+      assert.equal(original.capabilities.includes('local'), false)
+      return 'idle-qualified'
+    }),
+    'idle-qualified',
+  )
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-launches')), [])
+  const unsupported = new RuntimeManager(roots, { platform: 'darwin', arch: 'x64' })
+  assert.equal(
+    await unsupported.withGenerationPreparation(scratch, async () => 'unsupported'),
+    null,
+  )
+})
+
+test('GPU completion during CPU startup retains captured qualification and never permits a competing GPU probe', async () => {
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  await installCpuTarget(roots)
+  await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const entered = deferred(),
+    finish = deferred()
+  const generation = manager.withGenerationWorker(scratch, async () => {
+    entered.resolve()
+    await finish.promise
+    return 'gpu-finished'
+  })
+  await entered.promise
+  const preparation = manager.withGenerationPreparation(
+    scratch,
+    async ({ inferenceReady, targetWorker }) => {
+      assert.equal(inferenceReady.workerVersion, '0.2.0')
+      return (await composeCpuTarget(targetWorker, scratch)).mode
+    },
+  )
+  try {
+    await waitForLines(path.join(roots.runtimeDir, 'cpu-launches'), 1)
+    finish.resolve()
+    assert.equal(await generation, 'gpu-finished')
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'competing GPU'), null)
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+    assert.equal(await preparation, 'txt2img')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+  } finally {
+    finish.resolve()
+    await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+    await Promise.allSettled([generation, preparation])
+  }
+})
+
+test('busy preparation validates pointer, configuration and executable both before and after CPU startup', async (t) => {
+  for (const boundary of ['before', 'after']) {
+    for (const source of ['pointer', 'config', 'executable']) {
+      await t.test(`${boundary} ${source}`, async () => {
+        const { roots, manager } = await fixture()
+        const installed = await installFakeInferenceRuntime(roots)
+        const scratch = path.join(roots.appDataDir, 'scratch')
+        await fs.mkdir(scratch)
+        await manager.withGenerationWorker(scratch, async () => {
+          if (boundary === 'before') {
+            if (source === 'pointer') await fs.writeFile(roots.pointerFile, '{}')
+            if (source === 'config')
+              await fs.writeFile(path.join(installed.config, 'model_index.json'), 'changed')
+            if (source === 'executable') await fs.appendFile(installed.executable, '\n')
+          } else
+            await fs.writeFile(path.join(installed.environment, 'cpu-mode'), `replace-${source}`)
+          assert.equal(
+            await manager.withGenerationPreparation(scratch, async () =>
+              assert.fail('Changed runtime must not reach the caller'),
+            ),
+            null,
+          )
+          assert.equal(
+            (await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length,
+            boundary === 'before' ? 0 : 1,
+          )
+          assert.equal(
+            (await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length,
+            boundary === 'before' ? 0 : 1,
+          )
+          assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        })
+      })
+    }
+  }
+})
+
+test('a finite derivatives qualification and target capability are required for busy preparation', async (t) => {
+  for (const mode of ['missing-target', 'bad-version']) {
+    await t.test(mode, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      await fs.writeFile(path.join(installed.environment, 'cpu-mode'), mode)
+      await manager.withGenerationWorker(scratch, async () => {
+        const preparation = manager.withGenerationPreparation(scratch, async () =>
+          assert.fail('Unqualified CPU worker cannot prepare a target'),
+        )
+        if (mode === 'bad-version')
+          await assert.rejects(preparation, { code: 'WORKER_VERSION_MISMATCH' })
+        else assert.equal(await preparation, null)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+      })
+    })
+  }
+})
+
+test('shutdown promptly stops both CPU startup and an active composition without waiting for request deadlines', async (t) => {
+  for (const mode of ['startup-hang', 'request-hang']) {
+    await t.test(mode, { timeout: 10000 }, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      await installCpuTarget(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      await fs.writeFile(path.join(installed.environment, 'cpu-mode'), mode)
+      const start = ProjectWorkerClient.start
+      ProjectWorkerClient.start = async (location, options) =>
+        start.call(ProjectWorkerClient, location, { ...options, shutdownWaitMs: 25 })
+      try {
+        await manager.withGenerationWorker(scratch, async (gpu) => {
+          const preparation = manager.withGenerationPreparation(scratch, async ({ targetWorker }) =>
+            composeCpuTarget(targetWorker, scratch),
+          )
+          const refused = assert.rejects(preparation, { code: 'CLOSED' })
+          await waitForLines(
+            path.join(roots.runtimeDir, mode === 'startup-hang' ? 'cpu-launches' : 'cpu-requests'),
+            1,
+          )
+          const since = Date.now()
+          manager.preventNewGenerationWork()
+          await refused
+          assert.equal(Date.now() - since < 2000, true)
+          assert.equal(
+            (await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length,
+            0,
+            'SIGKILL does not run the fake peer exit handler',
+          )
+          assert.equal(await manager.withGenerationPreparation(scratch, async () => 'late'), null)
+          await gpu.close()
+        })
+        assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+      } finally {
+        ProjectWorkerClient.start = start
+      }
+    })
+  }
+})
+
+test('unconfirmed CPU close retains its owner and excludes every preparation and GPU qualification until retry', async () => {
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'request-hang')
+  const start = ProjectWorkerClient.start
+  const actualKill = ChildProcess.prototype.kill
+  const blocked = new Set()
+  ChildProcess.prototype.kill = function (signal) {
+    if (this.spawnargs.includes('imagegen_worker')) {
+      blocked.add(this)
+      return true
+    }
+    return actualKill.call(this, signal)
+  }
+  ProjectWorkerClient.start = async (location, options) =>
+    start.call(ProjectWorkerClient, location, { ...options, shutdownWaitMs: 25 })
+  try {
+    await manager.withGenerationWorker(scratch, async () => {
+      await assert.rejects(
+        manager.withGenerationPreparation(scratch, async () => 'prepared'),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+      assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+      assert.equal(await manager.withGenerationPreparation(scratch, async () => 'second CPU'), null)
+      assert.equal(await manager.withGenerationAdmission(scratch, async () => 'metadata'), null)
+    })
+    assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe GPU'), null)
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+    ChildProcess.prototype.kill = actualKill
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    const [child] = blocked
+    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+  } finally {
+    ChildProcess.prototype.kill = actualKill
+    ProjectWorkerClient.start = start
+    for (const child of blocked)
+      if (child.exitCode === null && child.signalCode === null) actualKill.call(child, 'SIGKILL')
+    await manager.retryUnconfirmedGenerationExit()
+  }
+})
+
+test('failed CPU startup remains owned and blocks new subprocesses until its physical exit is confirmed', async () => {
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'bad-version-keepalive')
+  const start = ProjectWorkerClient.start
+  const actualKill = ChildProcess.prototype.kill
+  const blocked = new Set()
+  ChildProcess.prototype.kill = function (signal) {
+    if (this.spawnargs.includes('imagegen_worker')) {
+      blocked.add(this)
+      return true
+    }
+    return actualKill.call(this, signal)
+  }
+  ProjectWorkerClient.start = async (location, options) =>
+    start.call(ProjectWorkerClient, location, { ...options, shutdownWaitMs: 25 })
+  try {
+    await manager.withGenerationWorker(scratch, async () => {
+      await assert.rejects(
+        manager.withGenerationPreparation(scratch, async () => 'not-qualified'),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+      assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), true)
+      await assert.rejects(
+        ProjectWorkerClient.start({
+          pythonExecutable: installed.executable,
+          runtimeRoot: roots.runtimeDir,
+          stagingBasePath: scratch,
+        }),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+    })
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+    assert.equal(await manager.withGenerationPreparation(scratch, async () => 'unsafe'), null)
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+    ChildProcess.prototype.kill = actualKill
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), false)
+    const [child] = blocked
+    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+  } finally {
+    ChildProcess.prototype.kill = actualKill
+    ProjectWorkerClient.start = start
+    for (const child of blocked)
+      if (child.exitCode === null && child.signalCode === null) actualKill.call(child, 'SIGKILL')
+    await manager.retryUnconfirmedGenerationExit()
+  }
+})
+
+test('CPU preparation cannot lend ready status after its GPU owner has an unconfirmed exit', async () => {
+  // Boundary: live GPU+CPU ownership. Mutation: let the CPU status branch hide the GPU exit fence.
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await installCpuTarget(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const gpuEntered = deferred(),
+    gpuFinish = deferred(),
+    cpuEntered = deferred(),
+    cpuFinish = deferred()
+  let blocked = true
+  let gpu
+  const generation = manager.withGenerationWorker(scratch, async (worker) => {
+    gpu = worker
+    const close = worker.close.bind(worker)
+    worker.close = async () => {
+      if (blocked) throw new Error('GPU exit remains unconfirmed')
+      await close()
+    }
+    gpuEntered.resolve()
+    await gpuFinish.promise
+  })
+  const generationFailure = assert.rejects(generation, /GPU exit remains unconfirmed/)
+  let preparation
+  try {
+    await gpuEntered.promise
+    preparation = manager.withGenerationPreparation(scratch, async ({ targetWorker }) => {
+      await composeCpuTarget(targetWorker, scratch)
+      cpuEntered.resolve()
+      await cpuFinish.promise
+      return 'captured-before-GPU-exit-failure'
+    })
+    await cpuEntered.promise
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    gpuFinish.resolve()
+    await generationFailure
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'another GPU'), null)
+    assert.equal(await manager.withGenerationPreparation(scratch, async () => 'another CPU'), null)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    cpuFinish.resolve()
+    assert.equal(await preparation, 'captured-before-GPU-exit-failure')
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    blocked = false
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+  } finally {
+    blocked = false
+    gpuFinish.resolve()
+    cpuFinish.resolve()
+    await Promise.allSettled([generation, generationFailure, preparation].filter(Boolean))
+    await manager.retryUnconfirmedGenerationExit()
+    await gpu?.close()
+  }
 })

@@ -889,8 +889,8 @@ const generationBlockingReason = computed(() => {
   if (props.generationState.phase === 'closed') {
     return 'Generation has stopped for this app session. Save your work and restart the app.'
   }
-  if (props.generationState.phase === 'preparing' || props.generationState.phase === 'processing') {
-    return 'Wait for the current generation to finish. You can keep editing this Project.'
+  if (props.generationState.phase === 'preparing') {
+    return 'Wait for the current batch to finish preparing.'
   }
   return null
 })

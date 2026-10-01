@@ -10,6 +10,7 @@ import type { GenerationWorkerLocation } from '../projects/generation-worker-cli
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
+import { ProjectWorkerClient } from '../projects/worker-client.js'
 
 const POINTER_SCHEMA_VERSION = 1
 const MAX_POINTER_BYTES = 16 * 1024
@@ -40,6 +41,11 @@ export interface QualifiedGenerationWorker {
   environment: NodeJS.ProcessEnv
   location: GenerationWorkerLocation
   runtimeId: string
+}
+
+export interface GenerationPreparation {
+  inferenceReady: InferenceWorkerReady
+  targetWorker: Pick<ProjectWorkerClient, 'composeTarget'>
 }
 
 interface ActiveRuntimePointer {
@@ -75,6 +81,15 @@ interface GenerationLease {
   runtimeId: string | null
 }
 
+interface PreparationLease {
+  client: ProjectWorkerClient | null
+  controller: AbortController
+  key: string | null
+  phase: 'running' | 'starting' | 'unconfirmed-exit'
+  runtimeId: string | null
+  startupSettled: Promise<void>
+}
+
 type StartQualificationClient = (
   location: GenerationWorkerLocation,
   environment: NodeJS.ProcessEnv,
@@ -89,6 +104,7 @@ export class RuntimeManager {
   private generationWorkPrevented = false
   private readonly host: RuntimeHost
   private readonly listeners = new Set<(status: RuntimeStatus) => void>()
+  private preparationLease: PreparationLease | null = null
   private previousStatus: RuntimeStatus | null = null
   private qualificationTail: Promise<void> = Promise.resolve()
   private readonly roots: RuntimeRoots
@@ -140,19 +156,20 @@ export class RuntimeManager {
 
       if (pointer.kind === 'missing') {
         this.cachedQualification = null
-        status = this.generationLease
-          ? {
-              detail:
-                'The active runtime metadata is missing; probing is blocked during generation.',
-              kind: 'needs-repair',
-              profile: 'linux-nvidia',
-            }
-          : {
-              detail:
-                'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
-              kind: 'not-installed',
-              profile: 'linux-nvidia',
-            }
+        status =
+          this.generationLease || this.preparationLease
+            ? {
+                detail:
+                  'The active runtime metadata is missing; probing is blocked during generation.',
+                kind: 'needs-repair',
+                profile: 'linux-nvidia',
+              }
+            : {
+                detail:
+                  'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
+                kind: 'not-installed',
+                profile: 'linux-nvidia',
+              }
       } else if (pointer.kind === 'invalid') {
         this.cachedQualification = null
         status = {
@@ -168,9 +185,17 @@ export class RuntimeManager {
         // A generation may have acquired its lease while pointer/config inspection awaited I/O.
         // Never start a second CUDA child merely to answer an advisory status request.
         const lease = this.generationLease
-        const ready = lease
-          ? this.leaseIsAdvisoryReady(lease, prepared)
-          : prepared !== null && (await this.qualify(prepared, true))
+        const preparation = this.preparationLease
+        const ready = preparation
+          ? preparation.phase === 'running' &&
+            !this.hasUnconfirmedGenerationExit() &&
+            prepared?.key === preparation.key &&
+            prepared.worker.runtimeId === preparation.runtimeId
+          : ProjectWorkerClient.hasUnconfirmedStartExit()
+            ? false
+            : lease
+              ? this.leaseIsAdvisoryReady(lease, prepared)
+              : prepared !== null && (await this.qualify(prepared, true))
         if (this.generationWorkPrevented) {
           return this.shuttingDownStatus()
         }
@@ -187,11 +212,15 @@ export class RuntimeManager {
               runtimeId: pointer.value.runtimeId,
             }
           : {
-              detail: lease
-                ? lease.phase === 'unconfirmed-exit'
-                  ? 'The generation worker has not confirmed exit; runtime probing is blocked.'
-                  : 'The image runtime is starting; a separate status probe is deferred.'
-                : 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
+              detail: preparation
+                ? preparation.phase === 'unconfirmed-exit'
+                  ? 'The preparation worker has not confirmed exit; runtime probing is blocked.'
+                  : 'Target preparation is in progress; a separate status probe is deferred.'
+                : lease
+                  ? lease.phase === 'unconfirmed-exit'
+                    ? 'The generation worker has not confirmed exit; runtime probing is blocked.'
+                    : 'The image runtime is starting; a separate status probe is deferred.'
+                  : 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
               kind: 'needs-repair',
               profile: 'linux-nvidia',
               runtimeId: pointer.value.runtimeId,
@@ -236,6 +265,7 @@ export class RuntimeManager {
   preventNewGenerationWork(): void {
     this.generationWorkPrevented = true
     this.cachedQualification = null
+    this.preparationLease?.controller.abort()
   }
 
   async repair(): Promise<ApiResult<RuntimeStatus>> {
@@ -261,7 +291,9 @@ export class RuntimeManager {
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
       this.host.arch !== 'x64' ||
-      this.generationLease
+      this.generationLease ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
     ) {
       return null
     }
@@ -275,13 +307,23 @@ export class RuntimeManager {
         return null
       }
       const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
-      if (this.generationWorkPrevented || this.generationLease) {
+      if (
+        this.generationWorkPrevented ||
+        this.generationLease ||
+        this.preparationLease ||
+        ProjectWorkerClient.hasUnconfirmedStartExit()
+      ) {
         return null
       }
       // A dispatch qualification supersedes any earlier advisory status result.
       this.cachedQualification = null
       if (prepared && (await this.qualify(prepared, false))) {
-        return this.generationWorkPrevented || this.generationLease ? null : prepared.worker
+        return this.generationWorkPrevented ||
+          this.generationLease ||
+          this.preparationLease ||
+          ProjectWorkerClient.hasUnconfirmedStartExit()
+          ? null
+          : prepared.worker
       }
       this.cachedQualification = null
       return null
@@ -293,6 +335,28 @@ export class RuntimeManager {
 
   /** Confirm exit of a failed generation, qualification or startup child without starting another. */
   async retryUnconfirmedGenerationExit(): Promise<boolean> {
+    const preparation = this.preparationLease
+    if (preparation) {
+      if (!this.generationWorkPrevented && preparation.phase !== 'unconfirmed-exit') {
+        return false
+      }
+      preparation.controller.abort()
+      await preparation.startupSettled
+      try {
+        await preparation.client?.close()
+        if (!(await ProjectWorkerClient.retryUnconfirmedStartExit())) {
+          return false
+        }
+        if (this.preparationLease === preparation) {
+          this.preparationLease = null
+        }
+      } catch {
+        preparation.phase = 'unconfirmed-exit'
+        return false
+      }
+    } else if (!(await ProjectWorkerClient.retryUnconfirmedStartExit())) {
+      return false
+    }
     const lease = this.generationLease
     if (lease && (lease.phase !== 'unconfirmed-exit' || !lease.client)) {
       return false
@@ -343,7 +407,9 @@ export class RuntimeManager {
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
-      this.host.arch !== 'x64'
+      this.host.arch !== 'x64' ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
     ) {
       return null
     }
@@ -371,6 +437,121 @@ export class RuntimeManager {
   }
 
   /**
+   * Freeze a new target while inference owns CUDA. The auxiliary child is the same installed
+   * image-derivatives worker with CUDA hidden, and never receives an inference command. Its
+   * transport and exit are owned here; the running GPU lends only a copied ready snapshot.
+   */
+  async withGenerationPreparation<T>(
+    scratchBasePath: string,
+    use: (preparation: GenerationPreparation) => Promise<T>,
+  ): Promise<T | null> {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64' ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
+    ) {
+      return null
+    }
+    const generation = this.generationLease
+    if (!generation) {
+      return await this.withGenerationWorker(scratchBasePath, async (worker) =>
+        use({ inferenceReady: copyInferenceReady(worker.ready), targetWorker: worker }),
+      )
+    }
+    if (generation.phase !== 'running' || !generation.client || !generation.key) {
+      return null
+    }
+    let ready: InferenceWorkerReady
+    try {
+      if (!isQualifiedInferenceWorkerReady(generation.client.ready)) {
+        return null
+      }
+      ready = copyInferenceReady(generation.client.ready)
+    } catch {
+      return null
+    }
+    let settleStart!: () => void
+    const preparation: PreparationLease = {
+      client: null,
+      controller: new AbortController(),
+      key: generation.key,
+      phase: 'starting',
+      runtimeId: generation.runtimeId,
+      startupSettled: new Promise<void>((resolve) => {
+        settleStart = resolve
+      }),
+    }
+    // Reserve before any asynchronous metadata inspection. This also excludes a new GPU launch
+    // if the original generation naturally finishes during preparation.
+    this.preparationLease = preparation
+    try {
+      const pointer = await readPointer(this.roots)
+      if (this.generationWorkPrevented || pointer.kind !== 'valid') {
+        return null
+      }
+      const prepared = await this.prepareQualification(pointer.value, scratchBasePath)
+      if (
+        this.generationWorkPrevented ||
+        this.hasUnconfirmedGenerationExit() ||
+        prepared?.key !== preparation.key
+      ) {
+        return null
+      }
+      // Do not queue this CPU work behind withGpuSlot: the running generation owns that slot.
+      const client = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: prepared.worker.location.pythonExecutable,
+          runtimeRoot: prepared.worker.location.runtimeRoot,
+          stagingBasePath: scratchBasePath,
+        },
+        {
+          environment: { ...prepared.worker.environment, CUDA_VISIBLE_DEVICES: '' },
+          signal: preparation.controller.signal,
+        },
+      )
+      preparation.client = client
+      preparation.phase = 'running'
+      settleStart()
+      try {
+        const currentPointer = await readPointer(this.roots)
+        const current =
+          currentPointer.kind === 'valid'
+            ? await this.prepareQualification(currentPointer.value, scratchBasePath)
+            : null
+        if (
+          this.generationWorkPrevented ||
+          this.hasUnconfirmedGenerationExit() ||
+          current?.key !== prepared.key ||
+          !client.ready.capabilities.includes('target-composition')
+        ) {
+          return null
+        }
+        return await use({
+          inferenceReady: ready,
+          targetWorker: { composeTarget: (input) => client.composeTarget(input) },
+        })
+      } finally {
+        try {
+          await client.close()
+        } catch (error) {
+          preparation.phase = 'unconfirmed-exit'
+          throw error
+        }
+      }
+    } finally {
+      settleStart()
+      if (ProjectWorkerClient.hasUnconfirmedStartExit()) {
+        preparation.phase = 'unconfirmed-exit'
+      }
+      if (preparation.phase !== 'unconfirmed-exit' && this.preparationLease === preparation) {
+        this.preparationLease = null
+      }
+    }
+  }
+
+  /**
    * Own one CUDA generation child from live qualification through the caller's last operation and
    * confirmed child exit. The callback may cancel via worker.close(); final close is idempotent. A
    * second caller receives null instead of queueing another GPU worker behind a long job.
@@ -383,7 +564,9 @@ export class RuntimeManager {
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
       this.host.arch !== 'x64' ||
-      this.generationLease
+      this.generationLease ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
     ) {
       return null
     }
@@ -466,6 +649,10 @@ export class RuntimeManager {
     }
   }
 
+  private hasUnconfirmedGenerationExit(): boolean {
+    return this.generationLease?.phase === 'unconfirmed-exit'
+  }
+
   private leaseIsAdvisoryReady(
     lease: GenerationLease,
     prepared: PreparedQualification | null,
@@ -546,7 +733,11 @@ export class RuntimeManager {
   }
 
   private async qualify(prepared: PreparedQualification, useCache: boolean): Promise<boolean> {
-    if (this.generationWorkPrevented) {
+    if (
+      this.generationWorkPrevented ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
+    ) {
       return false
     }
     if (useCache) {
@@ -583,7 +774,10 @@ export class RuntimeManager {
 
   private async qualifyLive(prepared: PreparedQualification): Promise<boolean> {
     return await this.withGpuSlot(async () =>
-      this.generationWorkPrevented || this.generationLease
+      this.generationWorkPrevented ||
+      this.generationLease ||
+      this.preparationLease ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
         ? false
         : await this.qualifyLiveUnlocked(prepared),
     )
@@ -591,7 +785,12 @@ export class RuntimeManager {
 
   private async qualifyLiveUnlocked(prepared: PreparedQualification): Promise<boolean> {
     try {
-      if (this.generationWorkPrevented || !(await this.confirmPreviousExit())) {
+      if (
+        this.generationWorkPrevented ||
+        this.preparationLease ||
+        ProjectWorkerClient.hasUnconfirmedStartExit() ||
+        !(await this.confirmPreviousExit())
+      ) {
         return false
       }
       if (this.generationWorkPrevented) {
