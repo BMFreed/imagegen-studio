@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 
 import type { GenerationWorkerLocation } from '../projects/generation-worker-client.js'
+import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 
@@ -327,6 +328,46 @@ export class RuntimeManager {
       })
     }
     return await retry
+  }
+
+  /**
+   * Admit metadata-only preparation using a qualified active child's fresh ready message. This
+   * never shares its transport or takes ownership of its lease; busy inference must keep its
+   * existing child until the owning generation callback finishes. Idle admission uses the normal
+   * live qualification and confirmed-exit path.
+   */
+  async withGenerationAdmission<T>(
+    scratchBasePath: string,
+    use: (ready: InferenceWorkerReady) => Promise<T>,
+  ): Promise<T | null> {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64'
+    ) {
+      return null
+    }
+    const lease = this.generationLease
+    if (!lease) {
+      return await this.withGenerationWorker(scratchBasePath, async (worker) =>
+        use(copyInferenceReady(worker.ready)),
+      )
+    }
+    if (lease.phase !== 'running' || !lease.client) {
+      return null
+    }
+    let ready: InferenceWorkerReady
+    try {
+      const current = lease.client.ready
+      if (!isQualifiedInferenceWorkerReady(current)) {
+        return null
+      }
+      ready = copyInferenceReady(current)
+    } catch {
+      // A closed child cannot lend readiness, even while its original callback still owns a lease.
+      return null
+    }
+    return await use(ready)
   }
 
   /**
@@ -673,6 +714,15 @@ export async function createRuntimeRoots(appDataDirectory: string): Promise<Runt
     runtimeDir,
     uvCacheDir,
     workerLogsDir,
+  }
+}
+
+function copyInferenceReady(ready: InferenceWorkerReady): InferenceWorkerReady {
+  return {
+    capabilities: [...ready.capabilities],
+    protocolVersion: ready.protocolVersion,
+    runtimeProfile: ready.runtimeProfile,
+    workerVersion: ready.workerVersion,
   }
 }
 

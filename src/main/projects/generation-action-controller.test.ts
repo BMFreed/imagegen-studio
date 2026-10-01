@@ -14,7 +14,10 @@ import type { AppDatabase } from '../db/database.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationQueueTestHooks } from './generation-queue.js'
 import type { GenerationWorkerClient } from './generation-worker-client.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type {
+  IllustriousTxt2ImgRequestV1,
+  InferenceWorkerReady,
+} from './illustrious-txt2img-job.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { openAppDatabase } from '../db/database.js'
@@ -57,6 +60,7 @@ type Fixture = {
   closeOwner: ProjectGenerationClose
   controller: ProjectGenerationActionController
   database: AppDatabase
+  dispatch: GenerationDispatchCoordinator
   documentId: string
   packagePath: string
   projects: ProjectService
@@ -68,13 +72,16 @@ type Fixture = {
 }
 
 class ControlledRuntime {
+  admissionCount = 0
   available = true
+  beforeAdmission: (() => Promise<void>) | null = null
   beforeCompose: (() => Promise<void>) | null = null
   beforeGenerate: (() => Promise<void>) | null = null
   closedCount = 0
   closeFailures = 0
   generated: IllustriousTxt2ImgRequestV1[] = []
   leaseCount = 0
+  private activeReady: InferenceWorkerReady | null = null
   private held = false
 
   constructor(
@@ -84,6 +91,25 @@ class ControlledRuntime {
 
   async retryUnconfirmedGenerationExit(): Promise<boolean> {
     return !this.held
+  }
+
+  async withGenerationAdmission<T>(
+    scratchBasePath: string,
+    use: (ready: InferenceWorkerReady) => Promise<T>,
+  ): Promise<T | null> {
+    this.admissionCount += 1
+    if (!this.available) {
+      return null
+    }
+    if (this.activeReady) {
+      const ready = structuredClone(this.activeReady)
+      await this.beforeAdmission?.()
+      return await use(ready)
+    }
+    return await this.withGenerationWorker(scratchBasePath, async (worker) => {
+      await this.beforeAdmission?.()
+      return await use(structuredClone(worker.ready))
+    })
   }
 
   async withGenerationWorker<T>(
@@ -109,6 +135,7 @@ class ControlledRuntime {
           closed = true
           this.closedCount += 1
           this.held = false
+          this.activeReady = null
         }
       },
       composeTarget: async (input) => {
@@ -148,11 +175,13 @@ class ControlledRuntime {
         workerVersion: '0.2.0',
       },
     }
+    this.activeReady = structuredClone(worker.ready)
     try {
       return await use(worker)
     } finally {
       await worker.close()
       this.held = false
+      this.activeReady = null
     }
   }
 }
@@ -334,6 +363,7 @@ async function withFixture(
       closeOwner,
       controller,
       database,
+      dispatch,
       documentId,
       packagePath,
       projects,
@@ -833,6 +863,410 @@ async function makeFailedSource(fixture: Fixture) {
   fixture.runtime.beforeGenerate = null
   return { id: source.id, statusSequence: source.statusSequence }
 }
+
+async function holdRunningSibling(fixture: Fixture) {
+  const entered = signal()
+  const release = signal()
+  fixture.runtime.beforeGenerate = async () => {
+    if (fixture.runtime.generated.length === 1) {
+      throw new Error('controlled first-job failure')
+    }
+    if (fixture.runtime.generated.length === 2) {
+      entered.resolve()
+      await release.promise
+    }
+  }
+  const generated = await fixture.controller.generate(fixture.tabId, {
+    documentId: fixture.documentId,
+    iterations: 1,
+  })
+  assert.equal(generated.kind, 'queued')
+  await entered.promise
+  const page = await fixture.controller.getQueue()
+  const source = page.items.find((item) => item.status === 'failed')!
+  assert.ok(source)
+  assert.equal(page.counts.running, 1)
+  assert.equal(page.counts.pending, 2)
+  return { release, review: { id: source.id, statusSequence: source.statusSequence } }
+}
+
+test('Retry admits its real frozen queue copy while a sibling worker is running without a second lease', async () => {
+  await withFixture(async (fixture) => {
+    const { release, review } = await holdRunningSibling(fixture)
+    try {
+      const source = await fixture.queue.loadVerifiedInput(review.id)
+      const originalRows = (await fixture.controller.getQueue()).items.map((item) => item.id)
+      const saved = await readFile(fixture.packagePath)
+      const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+      const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+      const leases = fixture.runtime.leaseCount
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: 'edited while the neighbor worker is running',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'seed',
+        policy: 'fixed',
+        value: 99,
+      })
+      const document = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)
+      await fixture.controller.retryJob(review)
+      const page = await fixture.controller.getQueue()
+      const retry = page.items.find((item) => !originalRows.includes(item.id))!
+      assert.ok(retry)
+      assert.equal(retry.status, 'pending', 'Retry is durable before the held worker finishes')
+      assert.equal(page.counts.running, 1)
+      assert.equal(page.counts.pending, 3)
+      assert.equal(fixture.runtime.generated.length, 2, 'the current worker alone owns inference')
+      assert.equal(fixture.runtime.leaseCount, leases, 'metadata admission starts no CUDA child')
+      const copied = await fixture.queue.loadVerifiedInput(retry.id)
+      assert.deepEqual(copied.payload, source.payload)
+      assert.deepEqual(await readFile(copied.targetPath), await readFile(source.targetPath))
+      assert.notEqual(retry.stagingSessionId, source.item.stagingSessionId)
+      assert.equal(
+        page.items.find((item) => item.id === review.id)!.statusSequence,
+        review.statusSequence + 1,
+      )
+      assert.deepEqual(fixture.projects.getOpenDocumentForAcceptance(fixture.tabId), document)
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), candidates)
+      assert.deepEqual(
+        await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+        cursor,
+      )
+      await assert.rejects(
+        fixture.controller.generate(fixture.tabId, {
+          documentId: fixture.documentId,
+          iterations: 1,
+        }),
+        { code: 'GENERATION_BUSY' },
+      )
+      await assert.rejects(fixture.controller.retryJob(review), {
+        code: 'GENERATION_INVALID_REQUEST',
+      })
+      release.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      assert.equal(fixture.runtime.generated.length, 5)
+      const last = fixture.runtime.generated.at(-1)!
+      assert.equal(last.job.prompts.positive, 'red lantern')
+      assert.equal(last.job.sampling.seed, 42)
+      assert.deepEqual(last.job.bbox, { height: 64, width: 64, x: 0, y: 0 })
+      assert.equal((await fixture.controller.getQueue()).counts.completed, 4)
+      assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 4)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('a successful Retry publication after actual dispatch observed idle wakes the finishing drain', async () => {
+  await withFixture(async (fixture) => {
+    const entered = signal()
+    const release = signal()
+    const runNext = fixture.dispatch.runNext.bind(fixture.dispatch)
+    let heldIdle = false
+    fixture.dispatch.runNext = async () => {
+      const result = await runNext()
+      if (result.kind === 'idle' && !heldIdle) {
+        heldIdle = true
+        entered.resolve()
+        await release.promise
+      }
+      return result
+    }
+    fixture.runtime.beforeGenerate = async () => {
+      if (fixture.runtime.generated.length === 1) {
+        throw new Error('controlled first-job failure')
+      }
+    }
+    try {
+      await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      assert.equal((await fixture.controller.getState(fixture.tabId)).phase, 'processing')
+      const source = (await fixture.controller.getQueue()).items.find(
+        (item) => item.status === 'failed',
+      )!
+      await fixture.controller.retryJob({ id: source.id, statusSequence: source.statusSequence })
+      assert.equal((await fixture.controller.getQueue()).counts.pending, 1)
+      assert.equal(fixture.runtime.generated.length, 4)
+      release.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      assert.equal(fixture.runtime.generated.length, 5)
+      assert.equal((await fixture.controller.getQueue()).counts.completed, 4)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('busy Retry capacity refusal preserves the source and worker while the existing drain continues', async () => {
+  await withFixture(async (fixture) => {
+    const { release, review } = await holdRunningSibling(fixture)
+    try {
+      const before = await fixture.controller.getQueue()
+      const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+      const leases = fixture.runtime.leaseCount
+      fixture.staging.preflightBatchCapacity = async () => {
+        throw Object.assign(new Error('controlled busy capacity refusal'), {
+          code: 'STAGING_CAPACITY_EXCEEDED',
+        })
+      }
+      await assert.rejects(fixture.controller.retryJob(review), {
+        code: 'STAGING_CAPACITY_EXCEEDED',
+      })
+      assert.deepEqual(await fixture.controller.getQueue(), before)
+      assert.equal(fixture.runtime.leaseCount, leases)
+      assert.equal(fixture.runtime.generated.length, 2)
+      assert.deepEqual(
+        await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+        cursor,
+      )
+      release.resolve()
+      await waitForState(
+        fixture.controller,
+        fixture.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      assert.equal(fixture.runtime.generated.length, 4, 'refused Retry cannot enter the drain')
+      assert.equal((await fixture.controller.getQueue()).counts.completed, 3)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('busy Retry runtime and checkpoint refusals preserve the reviewed source and existing drain', async (t) => {
+  for (const failure of ['runtime', 'checkpoint'] as const) {
+    await t.test(failure, async () => {
+      await withFixture(async (fixture) => {
+        const { release, review } = await holdRunningSibling(fixture)
+        const source = await fixture.queue.loadVerifiedInput(review.id)
+        const checkpoint = await readFile(source.payload.context.model.managedPath)
+        try {
+          const before = await fixture.controller.getQueue()
+          const leases = fixture.runtime.leaseCount
+          const saved = await readFile(fixture.packagePath)
+          const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+          if (failure === 'runtime') {
+            fixture.runtime.available = false
+            await assert.rejects(fixture.controller.retryJob(review), {
+              code: 'GENERATION_RUNTIME_UNAVAILABLE',
+            })
+          } else {
+            await writeFile(source.payload.context.model.managedPath, 'corrupted busy weights')
+            await assert.rejects(fixture.controller.retryJob(review))
+          }
+          assert.deepEqual(await fixture.controller.getQueue(), before)
+          assert.equal(fixture.runtime.leaseCount, leases)
+          assert.equal(fixture.runtime.generated.length, 2)
+          assert.deepEqual(await readFile(fixture.packagePath), saved)
+          assert.deepEqual(
+            await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+            cursor,
+          )
+        } finally {
+          fixture.runtime.available = true
+          await writeFile(source.payload.context.model.managedPath, checkpoint)
+          release.resolve()
+        }
+        await waitForState(
+          fixture.controller,
+          fixture.tabId,
+          (state) => state.phase === 'idle' && state.jobs.length === 0,
+        )
+        assert.equal(fixture.runtime.generated.length, 4)
+      })
+    })
+  }
+})
+
+test('a concurrent worker-exit fence survives busy Retry recheck and later nonblocking refusal', async (t) => {
+  for (const refusal of ['blocked-recheck', 'late-capacity'] as const) {
+    await t.test(refusal, async () => {
+      await withFixture(async (fixture) => {
+        const { release: releaseWorker, review } = await holdRunningSibling(fixture)
+        const entered = signal()
+        const releaseAdmission = signal()
+        fixture.runtime.beforeAdmission = async () => {
+          entered.resolve()
+          await releaseAdmission.promise
+          if (refusal === 'late-capacity') {
+            throw Object.assign(new Error('controlled late nonblocking refusal'), {
+              code: 'STAGING_CAPACITY_EXCEEDED',
+            })
+          }
+        }
+        try {
+          const page = await fixture.controller.getQueue()
+          const running = page.items.find((item) => item.status === 'running')!
+          const saved = await readFile(fixture.packagePath)
+          const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+          const retry = fixture.controller.retryJob(review)
+          await entered.promise
+          fixture.runtime.closeFailures = 2
+          await assert.rejects(
+            fixture.controller.cancelJob({
+              id: running.id,
+              statusSequence: running.statusSequence,
+            }),
+            { code: 'WORKER_EXIT_UNCONFIRMED' },
+          )
+          assert.equal((await fixture.controller.getState(fixture.tabId)).phase, 'blocked')
+          releaseAdmission.resolve()
+          await assert.rejects(retry, {
+            code:
+              refusal === 'blocked-recheck' ? 'GENERATION_BLOCKED' : 'STAGING_CAPACITY_EXCEEDED',
+          })
+          const state = await fixture.controller.getState(fixture.tabId)
+          assert.equal(state.phase, 'blocked', 'a later refusal cannot release a recovery fence')
+          assert.equal(state.error?.code, 'WORKER_EXIT_UNCONFIRMED')
+          const after = await fixture.controller.getQueue()
+          assert.equal(after.items.length, page.items.length, 'the Retry cannot publish')
+          assert.equal(
+            after.items.find((item) => item.id === review.id)!.statusSequence,
+            review.statusSequence,
+          )
+          assert.equal(fixture.runtime.generated.length, 2, 'the drain cannot claim another job')
+          assert.deepEqual(await readFile(fixture.packagePath), saved)
+          assert.deepEqual(
+            await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+            cursor,
+          )
+          const requested = after.items.find((item) => item.id === running.id)!
+          await fixture.controller.cancelJob({
+            id: requested.id,
+            statusSequence: requested.statusSequence,
+          })
+          assert.equal((await fixture.controller.getState(fixture.tabId)).phase, 'blocked')
+        } finally {
+          releaseAdmission.resolve()
+          releaseWorker.resolve()
+        }
+      })
+    })
+  }
+})
+
+test('shutdown during busy Retry copy waits admission, refuses publication and cancels the active worker', async () => {
+  const entered = signal()
+  const releaseCopy = signal()
+  await withFixture(
+    async (fixture) => {
+      const { release: releaseWorker, review } = await holdRunningSibling(fixture)
+      try {
+        const before = await fixture.controller.getQueue()
+        const rows = await fixture.database.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .orderBy('id', 'asc')
+          .execute()
+        const saved = await readFile(fixture.packagePath)
+        const cursor = await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId)
+        const leases = fixture.runtime.leaseCount
+        const retry = fixture.controller.retryJob(review)
+        await entered.promise
+        const admissions = fixture.runtime.admissionCount
+        await assert.rejects(fixture.controller.retryJob(review), { code: 'GENERATION_BUSY' })
+        assert.equal(
+          fixture.runtime.admissionCount,
+          admissions,
+          'a concurrent second Retry refuses before metadata admission',
+        )
+        assert.equal(fixture.runtime.leaseCount, leases)
+        assert.deepEqual(
+          await fixture.database.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .orderBy('id', 'asc')
+            .execute(),
+          rows,
+          'neither held Retry nor the refused click may consume its source before publication',
+        )
+        const stopping = fixture.controller.shutdown()
+        assert.equal(fixture.runtime.generated.length, 2)
+        releaseCopy.resolve()
+        await assert.rejects(retry, { code: 'QUEUE_PROJECT_CLOSING' })
+        await stopping
+        const page = await fixture.controller
+          .getQueue()
+          .catch(() => fixture.queue.listManagerPage())
+        assert.equal(page.items.length, before.items.length)
+        assert.equal(
+          page.items.find((item) => item.id === review.id)!.statusSequence,
+          review.statusSequence,
+        )
+        assert.equal(page.counts.running, 0)
+        assert.equal(fixture.runtime.generated.length, 2, 'no next job starts during shutdown')
+        assert.deepEqual(await readFile(fixture.packagePath), saved)
+        assert.deepEqual(
+          await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+          cursor,
+        )
+      } finally {
+        releaseCopy.resolve()
+        releaseWorker.resolve()
+      }
+    },
+    {
+      afterRetryInputPublish: async () => {
+        entered.resolve()
+        await releaseCopy.promise
+      },
+    },
+  )
+})
+
+test('confirmed close waits busy Retry admission and cancels the running worker plus its new pending copy', async () => {
+  const entered = signal()
+  const releaseCopy = signal()
+  await withFixture(
+    async (fixture) => {
+      const { release: releaseWorker, review } = await holdRunningSibling(fixture)
+      try {
+        const saved = await readFile(fixture.packagePath)
+        const retry = fixture.controller.retryJob(review)
+        await entered.promise
+        const closing = fixture.closeOwner.close(fixture.tabId, {
+          confirmCloseImpact: true,
+          discardDocument: false,
+        })
+        assert.equal(fixture.projects.getOpenDocumentId(fixture.tabId), fixture.documentId)
+        releaseCopy.resolve()
+        await retry
+        await closing
+        assert.equal(fixture.projects.getOpenDocumentId(fixture.tabId), null)
+        assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+        assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+        assert.equal(fixture.runtime.generated.length, 2)
+        const page = await fixture.queue.listManagerPage()
+        assert.equal(page.items.length, 5)
+        assert.equal(page.counts.failed, 1)
+        assert.equal(page.counts.canceled, 4)
+        assert.deepEqual(await readFile(fixture.packagePath), saved)
+      } finally {
+        releaseCopy.resolve()
+        releaseWorker.resolve()
+      }
+    },
+    {
+      afterRetryInputPublish: async () => {
+        entered.resolve()
+        await releaseCopy.promise
+      },
+    },
+  )
+})
 
 test('Queue Manager Retry uses frozen operation and preserves old candidates and saved document', async () => {
   await withFixture(async (fixture) => {

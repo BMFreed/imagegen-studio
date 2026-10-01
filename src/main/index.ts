@@ -361,6 +361,7 @@ if (!gotInstanceLock) {
       // Recovered operational history is usable even if runtime storage cannot initialize.
       const generationLease = generationRuntime ?? {
         retryUnconfirmedGenerationExit: async () => true,
+        withGenerationAdmission: async () => null,
         withGenerationWorker: async () => null,
       }
       const generationDispatch = recoveredGeneration

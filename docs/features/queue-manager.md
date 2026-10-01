@@ -464,8 +464,8 @@ provenance. Missing/corrupt frozen details do not hide terminal cleanup.
 
 Pending Cancel uses the reviewed status sequence and refuses a concurrent claim;
 running Cancel waits confirmed worker exit, with Retry cancel available when that
-exit remains unconfirmed. Retry requires the original Project/document to be
-open and the engine idle. It requalifies the exact checkpoint and worker, copies
+exit remains unconfirmed. At this historical checkpoint, Retry required the original Project/document to be
+open and the engine idle. It requalified the exact checkpoint and worker, copied
 bounded verified frozen target bytes, runs staging preflight before publication,
 and creates a separate fresh attempt/session without discarding older results.
 Project close uses the same admission gate. Lost commit acknowledgement resolves
@@ -519,6 +519,28 @@ follows from viewing. Native three-session, cached/placeholder/Refresh, minimum
 window and ordinary queue/recovery checks are recorded in the research note.
 Session filtering, automatically continuing navigation after Open Project/recovery
 and accepted history navigation remain separate work.
+
+## Production busy Retry checkpoint
+
+[Frozen Retry during inference](../engineering/phase-2b-busy-retry-research.md)
+permits Retry while another job is processing or pending. The original
+Project/document, failed/canceled source revision, frozen verified PNG, current
+exact checkpoint/prediction type and staging capacity still qualify before
+atomic source CAS/new-row publication. Current draft edits do not change Retry.
+
+Admission reads a copied qualified ready message from the live worker without
+sending it commands, reserving a second worker or altering its progress/exit
+owner. If idle, it uses the existing fresh qualified lease. Qualifying,
+unconfirmed exit, closed child, shutdown, recovery blocks and concurrent admission
+refuse safely. The queued retry receives its own freshly qualified worker at
+dispatch, after the previous worker's confirmed exit. Successful publication
+wakes the serial drain even when it just observed an empty queue.
+
+Retry preserves existing candidate sessions, actual seed, accepted Project,
+dirty/Undo and `.igs`. The UI keeps Retry available during processing and shows
+an actionable refusal if admission cannot qualify. Busy Generate remains
+explicitly unavailable because its new target still requires worker composition.
+Native evidence uses controlled inference, not production CUDA/release readiness.
 
 ## Acceptance Criteria
 

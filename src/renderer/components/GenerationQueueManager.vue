@@ -347,8 +347,14 @@ function retryReason(item: GenerationQueueEntry): string | null {
   if (state.phase === 'blocked') {
     return state.error?.message ?? 'Generation recovery must finish before retrying.'
   }
-  if (state.phase !== 'idle' || !counts.value || counts.value.pending + counts.value.running > 0) {
-    return 'Wait for the generation engine and its queued jobs to finish.'
+  if (state.phase === 'closed') {
+    return 'Generation has stopped for this app session. Restart the app before retrying.'
+  }
+  if (state.phase !== 'idle' && state.phase !== 'processing') {
+    return 'Wait for the current queue request to finish.'
+  }
+  if (!counts.value) {
+    return 'Wait for the queue to finish updating.'
   }
   return null
 }

@@ -66,6 +66,7 @@ const report = {
     'Actual managed model hash and SDXL anchor-header qualification; zero-weight miniature fixture.',
     'Actual target PNG/ICC/hash verification, queue SQLite, staging publication and resource delivery.',
     'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
+    'Actual Retry admission during a held generation: only frozen inputs and queue metadata are copied, with no extra child, target composition or change to the running request/progress.',
     'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
     'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
     'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
@@ -1375,6 +1376,146 @@ try {
     await screenshotManagerAtViewport(width, height)
   }
   await resizeNativeWindow(1380, 900)
+
+  // The held generation still owns the actual RuntimeManager child. Retry must publish its
+  // independent frozen pending attempt before that child exits, without using a second worker
+  // to compose or qualify the runtime. The failed row above is a precondition; this action is
+  // deliberately driven through the real Queue Manager rather than direct fixture insertion.
+  const beforeBusyRetryRows = await rows(projectId)
+  const busyRetryReview = { id: failedFixture.id, statusSequence: failedFixture.status_sequence }
+  const beforeBusyRetryRequests = lines(peerRequests)
+  const beforeBusyRetryLaunches = lines(peerLaunches)
+  const beforeBusyRetrySeedCursor = await liveDatabase.db
+    .selectFrom('generation_seed_cursor')
+    .selectAll()
+    .where('local_project_key', '=', projectId)
+    .execute()
+  assert.equal((await api('getGenerationState', projectId)).runningJobId, retriedRow.id)
+  assert.deepEqual(await api('getGenerationProgress'), retryFinalProgress)
+  process.kill(retriedRequest.pid, 0)
+  const busyRetryButton = managerRow(failedFixture.id).getByRole('button', {
+    name: 'Retry job',
+    exact: true,
+  })
+  await expect(busyRetryButton).toBeEnabled()
+  await screenshotManagerAtViewport(900, 620, '08a-native-busy-retry-enabled')
+  await busyRetryButton.click()
+  await expect.poll(async () => (await rows(projectId)).length).toBe(7)
+  const afterBusyRetryRows = await rows(projectId)
+  const busyRetryRow = afterBusyRetryRows.find(
+    ({ id }) => !beforeBusyRetryRows.some((oldRow) => oldRow.id === id),
+  )
+  assert.ok(busyRetryRow)
+  assert.equal(busyRetryRow.status, 'pending')
+  assert.equal(busyRetryRow.status_sequence, 0)
+  assert.equal(busyRetryRow.started_at, null)
+  assert.equal(busyRetryRow.finished_at, null)
+  assert.equal(busyRetryRow.document_id, failedFixture.document_id)
+  assert.equal(busyRetryRow.local_project_key, failedFixture.local_project_key)
+  assert.notEqual(busyRetryRow.id, failedFixture.id)
+  assert.notEqual(busyRetryRow.batch_id, failedFixture.batch_id)
+  assert.notEqual(busyRetryRow.staging_session_id, failedFixture.staging_session_id)
+  assert.equal(busyRetryRow.frozen_payload_json, failedFixture.frozen_payload_json)
+  const busyRetrySource = afterBusyRetryRows.find(({ id }) => id === failedFixture.id)
+  assert.equal(busyRetrySource.status, 'failed')
+  assert.equal(busyRetrySource.status_sequence, failedFixture.status_sequence + 1)
+  assert.deepEqual(
+    afterBusyRetryRows.find(({ id }) => id === retriedRow.id),
+    beforeBusyRetryRows.find(({ id }) => id === retriedRow.id),
+  )
+  const busyRetryInputs = path.join(appDataRoot, 'generation-inputs', busyRetryRow.id)
+  const failedFixtureInputs = path.join(appDataRoot, 'generation-inputs', failedFixture.id)
+  const busyRetryManifest = JSON.parse(
+    readFileSync(path.join(busyRetryInputs, 'manifest.json'), 'utf8'),
+  )
+  const failedFixtureManifest = JSON.parse(
+    readFileSync(path.join(failedFixtureInputs, 'manifest.json'), 'utf8'),
+  )
+  assert.deepEqual(busyRetryManifest, { ...failedFixtureManifest, queueItemId: busyRetryRow.id })
+  assert.equal(
+    digest(readFileSync(path.join(busyRetryInputs, 'target.png'))),
+    digest(readFileSync(path.join(failedFixtureInputs, 'target.png'))),
+  )
+  await expect(managerRow(busyRetryRow.id)).toHaveAttribute('data-status', 'pending')
+  await expect(
+    managerRow(busyRetryRow.id).getByRole('button', { name: 'Cancel job', exact: true }),
+  ).toBeEnabled()
+  await managerRow(busyRetryRow.id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  await expect(details).toContainText('native admission snapshot')
+  await expect(details).toContainText('42')
+  await screenshotManagerAtViewport(900, 620, '08b-native-busy-retry-pending')
+  assert.deepEqual(lines(peerRequests), beforeBusyRetryRequests)
+  assert.deepEqual(lines(peerLaunches), beforeBusyRetryLaunches)
+  assert.equal(generations().length, 4)
+  process.kill(retriedRequest.pid, 0)
+  assert.equal((await api('getGenerationState', projectId)).runningJobId, retriedRow.id)
+  assert.deepEqual(await api('getGenerationProgress'), retryFinalProgress)
+  await expect(retriedProgress).toContainText('Denoising step 2 of 2')
+  await assertQueueActionsPreserveProject()
+  assert.deepEqual(
+    await liveDatabase.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .where('local_project_key', '=', projectId)
+      .execute(),
+    beforeBusyRetrySeedCursor,
+  )
+  checked(
+    'UI Retry during held worker generation publishes a frozen pending attempt without another child, composition or running-progress change',
+    {
+      activeJobId: retriedRow.id,
+      activePid: retriedRequest.pid,
+      activeRequestId: retriedRequest.request.requestId,
+      admittedJobId: busyRetryRow.id,
+      frozenPayloadSha256: digest(Buffer.from(busyRetryRow.frozen_payload_json)),
+      generationRequests: generations().length,
+      sourceId: failedFixture.id,
+      sourceStatusSequence: busyRetrySource.status_sequence,
+      unchangedProgress: retryFinalProgress,
+    },
+  )
+
+  const staleBusyRetry = await apiResult('retryGenerationJob', busyRetryReview)
+  assert.equal(staleBusyRetry.ok, false)
+  assert.equal(staleBusyRetry.error.code, 'GENERATION_INVALID_REQUEST')
+  assert.deepEqual(await rows(projectId), afterBusyRetryRows)
+  assert.deepEqual(lines(peerRequests), beforeBusyRetryRequests)
+  assert.deepEqual(lines(peerLaunches), beforeBusyRetryLaunches)
+  assert.deepEqual(await api('getGenerationProgress'), retryFinalProgress)
+  await assertQueueActionsPreserveProject()
+  checked(
+    'A duplicate reviewed busy Retry is refused without consuming another row or source revision',
+    {
+      admittedJobId: busyRetryRow.id,
+      errorCode: staleBusyRetry.error.code,
+      reviewed: busyRetryReview,
+      sourceStatusSequence: busyRetrySource.status_sequence,
+    },
+  )
+
+  await managerRow(busyRetryRow.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect
+    .poll(async () => (await rows(projectId)).find(({ id }) => id === busyRetryRow.id).status)
+    .toBe('canceled')
+  await expect(managerRow(busyRetryRow.id)).toHaveAttribute('data-status', 'canceled')
+  assert.deepEqual(lines(peerRequests), beforeBusyRetryRequests)
+  assert.deepEqual(lines(peerLaunches), beforeBusyRetryLaunches)
+  process.kill(retriedRequest.pid, 0)
+  assert.equal((await api('getGenerationState', projectId)).runningJobId, retriedRow.id)
+  assert.deepEqual(await api('getGenerationProgress'), retryFinalProgress)
+  await assertQueueActionsPreserveProject()
+  checked(
+    'UI Cancel of the busy-admitted pending Retry leaves the active worker and Project intact',
+    {
+      activeJobId: retriedRow.id,
+      activePid: retriedRequest.pid,
+      canceledPendingJobId: busyRetryRow.id,
+      generationRequests: generations().length,
+    },
+  )
+  await resizeNativeWindow(1380, 900)
   await managerRow(pendingFixture.id)
     .getByRole('button', { name: 'Cancel job', exact: true })
     .click()
@@ -1450,7 +1591,7 @@ try {
   await deleteConfirmation.getByRole('button', { name: 'Delete job', exact: true }).click()
   await expect(deleteConfirmation).toHaveCount(0)
   await expect(managerRow(candidateReceipt.queue_item_id)).toHaveCount(0)
-  await expect.poll(async () => (await rows(projectId)).length).toBe(5)
+  await expect.poll(async () => (await rows(projectId)).length).toBe(6)
   assert.equal(
     existsSync(path.join(appDataRoot, 'generation-inputs', candidateReceipt.queue_item_id)),
     false,

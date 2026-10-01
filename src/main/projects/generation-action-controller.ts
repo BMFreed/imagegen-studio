@@ -24,7 +24,11 @@ import type { ProjectGenerationOperationGate } from './project-generation-operat
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
-import { IllustriousJobError, withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import {
+  IllustriousJobError,
+  type InferenceWorkerReady,
+  withIllustriousTxt2ImgRequest,
+} from './illustrious-txt2img-job.js'
 import {
   GenerationPreparationError,
   prepareNormalTxt2Img,
@@ -46,6 +50,10 @@ interface CapturedProjectService {
 }
 
 interface GenerationActionRuntime {
+  withGenerationAdmission: <T>(
+    scratchBasePath: string,
+    use: (ready: InferenceWorkerReady) => Promise<T>,
+  ) => Promise<T | null>
   withGenerationWorker: <T>(
     scratchBasePath: string,
     use: (worker: Pick<GenerationWorkerClient, 'composeTarget' | 'ready'>) => Promise<T>,
@@ -130,6 +138,7 @@ export class ProjectGenerationActionController {
   private blocked = false
   private closed = false
   private drain: Promise<void> | null = null
+  private drainRequested = false
   private error: { code: string; message: string } | null = null
   private readonly listeners = new Set<() => void>()
   private shutdownPromise: Promise<void> | null = null
@@ -307,10 +316,10 @@ export class ProjectGenerationActionController {
         'Generation recovery needs attention before another job can start.',
       )
     }
-    if (this.admission || this.drain) {
+    if (this.admission) {
       throw new ProjectGenerationActionError(
         'GENERATION_BUSY',
-        'Finish the current generation before retrying a job.',
+        'Finish preparing the current generation before retrying a job.',
       )
     }
     const operation = this.retryUnlocked(review)
@@ -360,6 +369,16 @@ export class ProjectGenerationActionController {
   private assertOpen(): void {
     if (this.closed) {
       throw new ProjectGenerationActionError('GENERATION_CLOSED', 'Generation is shutting down.')
+    }
+  }
+
+  private assertRetryAdmissionOpen(): void {
+    this.assertOpen()
+    if (this.blocked) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BLOCKED',
+        'Generation recovery needs attention before another job can start.',
+      )
     }
   }
 
@@ -521,8 +540,14 @@ export class ProjectGenerationActionController {
   }
 
   private rememberError(error: unknown): void {
-    this.error = toProjectGenerationActionApiError(error)
-    this.blocked = BLOCKING_CODES.has(this.error.code)
+    const next = toProjectGenerationActionApiError(error)
+    const blocks = BLOCKING_CODES.has(next.code)
+    // A concurrent admission refusal cannot clear a recovery/worker-exit fence owned by the
+    // app. Retain its actionable cause until restart, as with sequential blocking failures.
+    if (!this.blocked || blocks) {
+      this.error = next
+    }
+    this.blocked ||= blocks
     this.emitChanged()
   }
 
@@ -539,10 +564,10 @@ export class ProjectGenerationActionController {
     const tabId = source.projectKey
     const documentId = source.documentId
     this.admittingTabId = tabId
-    this.assertOpen()
+    this.assertRetryAdmissionOpen()
     this.assertDocument(tabId, documentId)
     await this.options.gate.run(tabId, async () => {
-      this.assertOpen()
+      this.assertRetryAdmissionOpen()
       this.assertDocument(tabId, documentId)
       const frozen = await this.options.queue.loadVerifiedRetryInput(review.id)
       if (
@@ -559,24 +584,24 @@ export class ProjectGenerationActionController {
         context: frozen.payload.context,
         targetPngBytes: frozen.targetPngBytes,
       }
-      const admitted = await this.options.runtime.withGenerationWorker(
+      const admitted = await this.options.runtime.withGenerationAdmission(
         this.options.scratchBasePath,
-        async (worker) => {
-          this.assertOpen()
+        async (ready) => {
+          this.assertRetryAdmissionOpen()
           this.assertDocument(tabId, documentId)
           await withIllustriousTxt2ImgRequest({
             modelService: this.options.models,
             prepared,
-            ready: worker.ready,
+            ready,
             scratchBasePath: this.options.scratchBasePath,
             use: async () => {
-              this.assertOpen()
+              this.assertRetryAdmissionOpen()
               this.assertDocument(tabId, documentId)
               const queued = await this.options.queue.retryTerminal(
                 review.id,
                 review.statusSequence,
                 async (input) => {
-                  this.assertOpen()
+                  this.assertRetryAdmissionOpen()
                   this.assertDocument(tabId, documentId)
                   await this.options.staging.preflightBatchCapacity({
                     entries: [
@@ -589,12 +614,12 @@ export class ProjectGenerationActionController {
                     projectPath: input.source.projectPath,
                     stagingSessionId: input.stagingSessionId,
                   })
-                  this.assertOpen()
+                  this.assertRetryAdmissionOpen()
                   this.assertDocument(tabId, documentId)
                 },
               )
               try {
-                this.assertOpen()
+                this.assertRetryAdmissionOpen()
                 this.assertDocument(tabId, documentId)
               } catch (error) {
                 // A late identity/shutdown refusal cannot leave this newly published retry live.
@@ -623,14 +648,30 @@ export class ProjectGenerationActionController {
   }
 
   private startDrain(): void {
-    if (this.closed || this.drain) {
+    if (this.closed || this.blocked) {
       return
     }
+    this.drainRequested = true
+    if (this.drain) {
+      return
+    }
+    let failed = false
     const operation = (async () => {
       for (;;) {
         if (this.closed) {
           return
         }
+        // A Retry may validate/copy frozen inputs while the current worker is running. Wait
+        // only after runNext has settled and released that worker, before another claim. An
+        // admission never waits for this loop, so shutdown cannot create a mutual wait.
+        if (this.admission) {
+          await this.admission.catch(() => undefined)
+          continue
+        }
+        if (this.blocked) {
+          return
+        }
+        this.drainRequested = false
         const result = await this.options.dispatch.runNext()
         this.emitChanged()
         if (result.kind === 'idle') {
@@ -641,10 +682,19 @@ export class ProjectGenerationActionController {
     this.drain = operation
     this.emitChanged()
     void operation
-      .catch((error: unknown) => this.rememberError(error))
+      .catch((error: unknown) => {
+        failed = true
+        this.drainRequested = false
+        this.rememberError(error)
+      })
       .finally(() => {
         if (this.drain === operation) {
           this.drain = null
+        }
+        // Publication can finish after runNext observed an empty queue but before this owner
+        // detaches. Its successful wake must not leave the newly durable retry stranded.
+        if (!failed && this.drainRequested && !this.closed && !this.blocked) {
+          this.startDrain()
         }
         this.emitChanged()
       })

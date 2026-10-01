@@ -67,6 +67,7 @@ process.on('SIGTERM', () => {
 process.on('exit', () => fs.appendFileSync(path.join(root, 'exits'), runtimeId + '\n'))
 if (mode === 'wrong-version-keepalive') setInterval(() => {}, 1000)
 process.stdout.write(JSON.stringify(ready) + '\n')
+process.stdin.on('data', data => fs.appendFileSync(path.join(root, 'requests'), data))
 process.stdin.resume()
 `
   await fs.writeFile(executable, child)
@@ -686,6 +687,197 @@ test('a generation lease preserves callback failure and accepts an already cance
   assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 4)
 })
 
+test('metadata-only admission reuses each qualified active peer without borrowing its lease or transport', async (t) => {
+  // Boundary: real RuntimeManager and JSONL child; only the Python/CUDA implementation is replaced.
+  // Invariant: admission copies ready metadata while the original worker stays owned and open.
+  // Neighbor: idle admission qualifies normally. Mutation: reuse worker.ready by reference or close it.
+  for (const [mode, version, capabilities] of [
+    ['ready', '0.2.0', ['illustrious-txt2img']],
+    ['progress-ready', '0.3.0', ['illustrious-txt2img', 'denoising-progress']],
+    [
+      'thumbnail-ready',
+      '0.4.0',
+      ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'],
+    ],
+  ]) {
+    await t.test(version, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      await fs.writeFile(path.join(installed.environment, 'mode'), mode)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      const originalFailure = new Error('metadata capture failed')
+      const result = await manager.withGenerationWorker(scratch, async (worker) => {
+        const actualReady = worker.ready
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+        assert.equal(
+          await manager.withGenerationAdmission(scratch, async (ready) => {
+            assert.deepEqual(ready, {
+              capabilities,
+              protocolVersion: '1',
+              runtimeProfile: 'linux-nvidia',
+              workerVersion: version,
+            })
+            assert.notEqual(ready, actualReady)
+            assert.notEqual(ready.capabilities, actualReady.capabilities)
+            ready.capabilities.push('caller-local')
+            ready.workerVersion = 'caller-local'
+            return 'admitted'
+          }),
+          'admitted',
+        )
+        assert.equal(worker.ready, actualReady)
+        assert.deepEqual(worker.ready.capabilities, capabilities)
+        assert.equal(worker.ready.workerVersion, version)
+        await assert.rejects(
+          manager.withGenerationAdmission(scratch, async () => {
+            throw originalFailure
+          }),
+          (error) => error === originalFailure,
+        )
+        assert.equal(worker.ready, actualReady)
+        assert.equal(
+          await manager.withGenerationWorker(scratch, async () => 'second GPU child'),
+          null,
+        )
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+        return 'original-owner-completed'
+      })
+      assert.equal(result, 'original-owner-completed')
+      assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+      assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
+    })
+  }
+})
+
+test('metadata admission refuses a qualifying lease immediately and later admits its running child', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  let enteredQualification
+  const entered = new Promise((resolve) => {
+    enteredQualification = resolve
+  })
+  let resumeQualification
+  const gate = new Promise((resolve) => {
+    resumeQualification = resolve
+  })
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const child = await GenerationWorkerClient.start(location, { environment })
+      enteredQualification()
+      await gate
+      return child
+    },
+  )
+  const generation = manager.withGenerationWorker(scratch, async () => {
+    assert.equal(
+      await manager.withGenerationAdmission(scratch, async (ready) => ready.workerVersion),
+      '0.2.0',
+    )
+    return 'completed'
+  })
+  try {
+    await entered
+    let timeout
+    try {
+      assert.equal(
+        await Promise.race([
+          manager.withGenerationAdmission(scratch, async () =>
+            assert.fail('qualifying child cannot lend ready metadata'),
+          ),
+          new Promise((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('admission waited for qualification')),
+              1000,
+            )
+          }),
+        ]),
+        null,
+      )
+    } finally {
+      clearTimeout(timeout)
+    }
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+  } finally {
+    resumeQualification()
+  }
+  assert.equal(await generation, 'completed')
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+})
+
+test('metadata admission refuses a closed running child and shutdown without replacing the active owner', async (t) => {
+  for (const refusal of ['closed', 'shutdown']) {
+    await t.test(refusal, async () => {
+      const { roots, manager } = await fixture()
+      await installFakeInferenceRuntime(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      assert.equal(
+        await manager.withGenerationWorker(scratch, async (worker) => {
+          assert.equal(await manager.withGenerationAdmission(scratch, async () => 'ready'), 'ready')
+          if (refusal === 'closed') await worker.close()
+          else manager.preventNewGenerationWork()
+          assert.equal(
+            await manager.withGenerationAdmission(scratch, async () =>
+              assert.fail('unavailable running child cannot admit metadata'),
+            ),
+            null,
+          )
+          assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+          if (refusal === 'shutdown') {
+            assert.equal(worker.ready.workerVersion, '0.2.0')
+            assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+          }
+          return 'owner-completed'
+        }),
+        'owner-completed',
+      )
+      assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+      assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
+    })
+  }
+})
+
+test('idle metadata admission uses live qualification and refuses unsupported or unqualified workers', async () => {
+  const { roots, manager } = await fixture()
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  assert.equal(
+    await manager.withGenerationAdmission(scratch, async () => assert.fail('missing runtime')),
+    null,
+  )
+  const installed = await installFakeInferenceRuntime(roots)
+  const unsupported = new RuntimeManager(roots, { platform: 'darwin', arch: 'x64' })
+  assert.equal(
+    await unsupported.withGenerationAdmission(scratch, async () => assert.fail('unsupported host')),
+    null,
+  )
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
+  assert.deepEqual(await manager.withGenerationAdmission(scratch, async (ready) => ready), {
+    capabilities: ['illustrious-txt2img'],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.2.0',
+  })
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'wrong-version')
+  assert.equal(
+    await manager.withGenerationAdmission(scratch, async () => assert.fail('unqualified worker')),
+    null,
+  )
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 3)
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
+})
+
 test('unconfirmed generation exit retains its lease and blocks every new CUDA process until retry', async () => {
   const { roots, manager } = await fixture()
   await installFakeInferenceRuntime(roots)
@@ -709,6 +901,10 @@ test('unconfirmed generation exit retains its lease and blocks every new CUDA pr
     assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
     assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
     assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+    assert.equal(
+      await manager.withGenerationAdmission(scratch, async () => 'unsafe metadata'),
+      null,
+    )
     assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
     assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
       'worker-2-linux-nvidia',
