@@ -320,6 +320,20 @@ try {
   assert.equal('assetPath' in recovered || 'frozenPayloadJson' in recovered, false)
   await expect(window.getByRole('region', { name: 'Project Canvas' })).toBeVisible()
   await expect(window.getByRole('toolbar', { name: 'Temporary generation results' })).toBeVisible()
+  // A recovered result from the supported legacy peer has no thumbnail cache. The strip must
+  // keep the candidate selectable without downloading its full PNG as a thumbnail fallback.
+  const legacyCandidateButton = window.getByRole('button', {
+    name: 'Preview candidate 1',
+    exact: true,
+  })
+  assert.equal('thumbnailUrl' in recovered, false)
+  await expect(legacyCandidateButton.locator('img')).toHaveCount(0)
+  await expect(legacyCandidateButton.locator('.candidate-placeholder')).toBeVisible()
+  await expect(legacyCandidateButton).toHaveAttribute(
+    'title',
+    'Thumbnail unavailable. Select to preview the full image.',
+  )
+  await expect(window.getByLabel('Select candidate 1')).toBeEnabled()
   await expect(window.getByRole('button', { name: 'Reuse last seed' })).toBeEnabled()
   const resource = await window.evaluate(async (url) => {
     const response = await fetch(url)

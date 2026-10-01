@@ -478,10 +478,14 @@ statuses at execution time, including newly terminal rows, and skips reserved
 publication receipts. Its UI states this and reports the removed count.
 History and terminal cleanup remain available when runtime installation is absent.
 
-Preview thumbnails, output navigation for unavailable sessions,
+Queue Manager preview thumbnails, output navigation for unavailable sessions,
 busy-engine admission, full conditioning/Anima and the release installer remain
 open. The native action checks use a controlled qualified peer; they do not prove
 CUDA model loading or a packaged release.
+
+[Bounded candidate thumbnails](../engineering/phase-2b-result-thumbnails-research.md)
+now serve the Project Results tray from optional verified worker-made cache.
+They do not yet add a preview column or session navigation to Queue Manager.
 
 ## Acceptance Criteria
 

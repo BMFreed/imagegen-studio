@@ -115,3 +115,59 @@ test('preload guard requires a bounded unique UUID list and never reports jobs i
     true,
   )
 })
+
+test('preload accepts optional thumbnail URLs only for the same source PNG, Project and candidate', () => {
+  const projectKey = `project-v1-${'a'.repeat(64)}`
+  const sessionId = randomUUID()
+  const candidateId = randomUUID()
+  const imageSha256 = 'b'.repeat(64)
+  const thumbnailSha256 = 'd'.repeat(64)
+  const imageUrl = `igs-staging://asset/${projectKey}/${sessionId}/${candidateId}/${imageSha256}/${'c'.repeat(64)}.png`
+  const thumbnailUrl = `igs-staging://thumbnail/${projectKey}/${sessionId}/${candidateId}/${imageSha256}/${thumbnailSha256}/${'e'.repeat(64)}.webp`
+  const candidate = {
+    actualSeed: 42,
+    bbox: { height: 384, width: 768, x: -24, y: 48 },
+    candidateId,
+    completedAt: '2026-10-01T12:00:00.000Z',
+    completionOrder: 1,
+    imageUrl,
+    queueItemId: candidateId,
+    sourceDocumentMismatch: false,
+    stagingSessionId: sessionId,
+  }
+  const snapshot = {
+    candidates: [candidate],
+    lastActualSeed: 42,
+    recoveryUnavailable: false,
+    unfinishedSiblingJobIds: [],
+  }
+  assert.equal(isProjectGenerationResultsSnapshot(snapshot), true)
+  assert.equal(
+    isProjectGenerationResultsSnapshot({
+      ...snapshot,
+      candidates: [{ ...candidate, thumbnailUrl }],
+    }),
+    true,
+  )
+  for (const invalid of [
+    null,
+    7,
+    'file:///private/thumb.webp',
+    thumbnailUrl.replace(projectKey, `project-v1-${'f'.repeat(64)}`),
+    thumbnailUrl.replace(sessionId, randomUUID()),
+    thumbnailUrl.replace(candidateId, randomUUID()),
+    thumbnailUrl.replace(imageSha256, 'f'.repeat(64)),
+    thumbnailUrl.replace('thumbnail/', 'asset/'),
+    `${thumbnailUrl}?path=private`,
+    `${thumbnailUrl}#fragment`,
+    thumbnailUrl.replace('.webp', '.png'),
+  ]) {
+    assert.equal(
+      isProjectGenerationResultsSnapshot({
+        ...snapshot,
+        candidates: [{ ...candidate, thumbnailUrl: invalid }],
+      }),
+      false,
+    )
+  }
+})

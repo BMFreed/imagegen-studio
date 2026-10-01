@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { GENERATION_THUMBNAIL_MAX_BYTES } from '../../shared/projects/generation-thumbnail.js'
 import { IGS_GENERATION_PNG_MAX_BYTES } from '../../shared/projects/project-schema.js'
 
 import { sql } from 'kysely'
@@ -35,9 +36,13 @@ import {
 import { readIgsPackage, validateSrgbPngStream } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectCandidateImageExporter } from './project-candidate-image-export.js'
 import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
-import { ProjectGenerationResultResource } from './project-generation-result-resource.js'
+import {
+  parseGenerationResultThumbnailUrl,
+  ProjectGenerationResultResource,
+} from './project-generation-result-resource.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
@@ -74,6 +79,7 @@ async function srgbPng(
   invalidFilter = false,
   bitDepth: 16 | 8 = 8,
   channels: 3 | 4 = 4,
+  color: readonly [number, number, number] = [37, 94, 181],
 ): Promise<Buffer> {
   const profile = await readFile(iccPath)
   assert.equal(sha256(profile), IGS_SRGB_ICC_SHA256)
@@ -93,16 +99,16 @@ async function srgbPng(
       for (let col = 0; col < width; col += 1) {
         const offset = row * rowBytes + 1 + col * channels * bytesPerChannel
         if (bitDepth === 8) {
-          scanlines[offset] = 37
-          scanlines[offset + 1] = 94
-          scanlines[offset + 2] = 181
+          scanlines[offset] = color[0]
+          scanlines[offset + 1] = color[1]
+          scanlines[offset + 2] = color[2]
           if (channels === 4) {
             scanlines[offset + 3] = 255
           }
         } else {
-          scanlines.writeUInt16BE(37 * 257, offset)
-          scanlines.writeUInt16BE(94 * 257, offset + 2)
-          scanlines.writeUInt16BE(181 * 257, offset + 4)
+          scanlines.writeUInt16BE(color[0] * 257, offset)
+          scanlines.writeUInt16BE(color[1] * 257, offset + 2)
+          scanlines.writeUInt16BE(color[2] * 257, offset + 4)
           if (channels === 4) {
             scanlines.writeUInt16BE(65_535, offset + 6)
           }
@@ -122,6 +128,7 @@ async function srgbPng(
 async function fixture(
   root: string,
   basename = 'Project.igs',
+  dimensions = bbox,
 ): Promise<{
   outputBytes: Buffer
   prepared: PreparedNormalTxt2Img
@@ -132,18 +139,18 @@ async function fixture(
     path.join(root, basename),
     'Candidate fixture',
     { placeholdersDir: placeholders, scratchDir: path.join(root, 'scratch') },
-    bbox,
+    dimensions,
   )
   const document = project.document
-  const targetBytes = await srgbPng(bbox.width, bbox.height, false)
+  const targetBytes = await srgbPng(dimensions.width, dimensions.height, false)
   const modelBytes = Buffer.from('exact model bytes for staging fixture')
   const checkpointPath = path.join(root, 'checkpoint.safetensors')
   await writeFile(checkpointPath, modelBytes)
   return {
-    outputBytes: await srgbPng(bbox.width, bbox.height, true),
+    outputBytes: await srgbPng(dimensions.width, dimensions.height, true),
     prepared: {
       context: {
-        bbox,
+        bbox: dimensions,
         documentId: document.documentId,
         documentRevision: document.documentRevision,
         kind: 'normal-txt2img-preparation',
@@ -178,10 +185,10 @@ async function fixture(
           byteSize: targetBytes.length,
           colorSpace: 'srgb',
           format: 'png',
-          height: bbox.height,
+          height: dimensions.height,
           iccSha256: IGS_SRGB_ICC_SHA256,
           sha256: sha256(targetBytes),
-          width: bbox.width,
+          width: dimensions.width,
         },
       },
       targetPngBytes: targetBytes,
@@ -240,6 +247,8 @@ async function publishOne(
   staging: GenerationStagingRepository,
   candidate: Awaited<ReturnType<typeof fixture>>,
   actualSeed: number,
+  thumbnailBytes?: Buffer,
+  transformThumbnail?: (thumbnail: Record<string, unknown>) => unknown,
 ): Promise<VerifiedGenerationCandidate> {
   let published: VerifiedGenerationCandidate | null = null
   await enqueueAndClaim(
@@ -249,12 +258,25 @@ async function publishOne(
     candidate.projectPath,
     async (request, claim) => {
       await writeFile(request.job.output.pngPath, candidate.outputBytes)
+      const thumbnail = thumbnailBytes
+        ? {
+            byteSize: thumbnailBytes.length,
+            height: 128,
+            outputPath: `${request.job.output.pngPath}.thumb.webp`,
+            sha256: sha256(thumbnailBytes),
+            width: 256,
+          }
+        : undefined
+      if (thumbnailBytes) {
+        await writeFile(`${request.job.output.pngPath}.thumb.webp`, thumbnailBytes, { mode: 0o600 })
+      }
       published = await staging.publishIllustriousTxt2Img({
         actualSeed,
         expectedProvisionalRoot: request.job.output.stagingRoot,
         expectedStatusSequence: claim.item.statusSequence,
         provisionalOutputPath: request.job.output.pngPath,
         queueItemId: claim.item.id,
+        thumbnail: thumbnail && transformThumbnail ? transformThumbnail(thumbnail) : thumbnail,
       })
     },
   )
@@ -1710,6 +1732,267 @@ test('migration trusts only a legacy cursor with matching completed receipt and 
       await upgraded.close()
     }
   } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+// Boundary: real queue → staging publication → signed resource → filesystem verification.
+// Invariant: a worker thumbnail is optional presentation cache and cannot replace PNG authority.
+// Neighbor: absent/invalid derivatives keep the same durable candidate/seed/portable .igs.
+// Mutation: serve the cache without checking current source identity/tombstone visibility.
+test('worker thumbnail cache is bounded, signed, rebuildable and survives operational history pruning', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-thumbnail-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const source = await fixture(root, 'Large Project.igs', { ...bbox, height: 384, width: 768 })
+    const originalIgs = await readFile(source.projectPath)
+    const webp = await readFile(
+      path.resolve('src/main/projects/test-fixtures/candidate-thumbnail-256x128.webp'),
+    )
+    const published = await publishOne(root, queue, staging, source, 17, webp)
+    assert.deepEqual(published.thumbnail, {
+      byteSize: webp.length,
+      height: 128,
+      sha256: sha256(webp),
+      width: 256,
+    })
+    assert.deepEqual(published.image, {
+      byteSize: source.outputBytes.length,
+      height: 384,
+      iccSha256: IGS_SRGB_ICC_SHA256,
+      sha256: sha256(source.outputBytes),
+      width: 768,
+    })
+    const sessionPath = path.dirname(path.dirname(published.assetPath))
+    const manifestBytes = await readFile(path.join(sessionPath, 'manifest.json'))
+    const manifest = JSON.parse(manifestBytes.toString('utf8'))
+    assert.equal(Object.hasOwn(manifest, 'thumbnail'), false)
+    assert.equal(Object.hasOwn(manifest.candidates[0], 'thumbnail'), false)
+    assert.equal(manifestBytes.toString('utf8').includes('.thumb.webp'), false)
+    const receipt = await database.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .where('candidate_id', '=', published.candidateId)
+      .executeTakeFirstOrThrow()
+    assert.equal(receipt.image_sha256, published.image.sha256)
+    assert.equal(receipt.image_byte_size, source.outputBytes.length)
+    let openDocument: string | null = published.documentId
+    const resource = new ProjectGenerationResultResource(staging, () => openDocument, queue)
+    const snapshot = await resource.list(published.localProjectKey)
+    const view = snapshot.candidates[0]
+    assert.ok(view.thumbnailUrl)
+    assert.equal(view.thumbnailUrl.includes(root), false)
+    assert.deepEqual(parseGenerationResultThumbnailUrl(view.thumbnailUrl), {
+      candidateId: published.candidateId,
+      imageSha256: published.image.sha256,
+      localProjectKey: published.localProjectKey,
+      stagingSessionId: published.stagingSessionId,
+      thumbnailSha256: sha256(webp),
+    })
+    assert.deepEqual(await resource.readThumbnail(view.thumbnailUrl), webp)
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+    assert.equal(source.outputBytes.readUInt32BE(16), 768)
+    assert.equal(source.outputBytes.readUInt32BE(20), 384)
+    const exportPath = path.join(root, 'exported-full-result.png')
+    const exporter = new ProjectCandidateImageExporter(
+      staging,
+      () => openDocument,
+      async () => ({
+        canceled: false,
+        filePath: exportPath,
+      }),
+    )
+    assert.deepEqual(await exporter.save(published.localProjectKey, published.candidateId), {
+      fileName: 'exported-full-result.png',
+      kind: 'saved',
+    })
+    assert.deepEqual(await readFile(exportPath), source.outputBytes)
+    for (const forged of [
+      view.thumbnailUrl.replace(published.image.sha256, 'f'.repeat(64)),
+      view.thumbnailUrl.replace(sha256(webp), 'f'.repeat(64)),
+      view.thumbnailUrl.replace(published.candidateId, randomUUID()),
+      view.thumbnailUrl.replace('thumbnail/', 'asset/'),
+      `${view.thumbnailUrl}?path=${root}`,
+      `${view.thumbnailUrl}#hash`,
+      view.thumbnailUrl.replace('igs-staging:', 'file:'),
+    ]) {
+      assert.equal(parseGenerationResultThumbnailUrl(forged), null)
+      assert.equal(await resource.readThumbnail(forged), null)
+    }
+    openDocument = null
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    openDocument = published.documentId
+    await queue.pruneTerminal(['completed'])
+    assert.deepEqual(await resource.readThumbnail(view.thumbnailUrl), webp)
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+    assert.equal(
+      await staging.readLastActualSeed(published.localProjectKey, published.documentId),
+      17,
+    )
+    assert.deepEqual(await readFile(source.projectPath), originalIgs)
+    await queue.recoverAfterRestart()
+    const restarted = new GenerationStagingRepository(database.db, root)
+    assert.deepEqual(await restarted.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    const restored = await restarted.listVerifiedCandidates(published.localProjectKey)
+    assert.equal(restored.length, 1)
+    assert.deepEqual(restored[0].thumbnail, published.thumbnail)
+    const cacheRoot = path.join(sessionPath, 'thumbnail-cache')
+    await rm(cacheRoot, { recursive: true })
+    assert.equal(
+      (await restarted.listVerifiedCandidates(published.localProjectKey))[0].thumbnail,
+      undefined,
+    )
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('invalid optional worker thumbnails cannot reject a valid completed PNG candidate', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-thumbnail-refusal-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const source = await fixture(root, 'Large Project.igs', { ...bbox, height: 384, width: 768 })
+    const webp = await readFile(
+      path.resolve('src/main/projects/test-fixtures/candidate-thumbnail-256x128.webp'),
+    )
+    const variants: readonly [Buffer, (metadata: Record<string, unknown>) => unknown][] = [
+      [webp, () => null],
+      [webp, (metadata) => ({ ...metadata, outputPath: path.join(root, 'unowned.webp') })],
+      [webp, (metadata) => ({ ...metadata, sha256: 'f'.repeat(64) })],
+      [webp, (metadata) => ({ ...metadata, height: 127 })],
+      [webp, (metadata) => ({ ...metadata, width: 257 })],
+      [webp, (metadata) => ({ ...metadata, byteSize: 0 })],
+      [webp, (metadata) => ({ ...metadata, byteSize: GENERATION_THUMBNAIL_MAX_BYTES + 1 })],
+      [webp, (metadata) => ({ ...metadata, byteSize: webp.length - 1 })],
+      [
+        Buffer.alloc(GENERATION_THUMBNAIL_MAX_BYTES + 1),
+        (metadata) => ({ ...metadata, byteSize: webp.length }),
+      ],
+      [source.outputBytes, (metadata) => metadata],
+      [webp.subarray(0, 24), (metadata) => metadata],
+    ]
+    for (const [bytes, transform] of variants) {
+      const published = await publishOne(root, queue, staging, source, 0, bytes, transform)
+      assert.equal(published.thumbnail, undefined)
+      assert.equal((await queue.getManagerEntry(published.queueItemId))?.status, 'completed')
+      assert.deepEqual(
+        await staging.readVerifiedCandidatePng({
+          candidateId: published.candidateId,
+          imageSha256: published.image.sha256,
+          localProjectKey: published.localProjectKey,
+          stagingSessionId: published.stagingSessionId,
+        }),
+        source.outputBytes,
+      )
+    }
+    assert.equal(
+      (await staging.listVerifiedCandidates(localProjectRecoveryKey(source.projectPath))).length,
+      variants.length,
+    )
+    assert.equal(
+      await staging.readLastActualSeed(
+        localProjectRecoveryKey(source.projectPath),
+        source.prepared.context.documentId,
+      ),
+      0,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('fresh thumbnail GET refuses changed cache, symlinks and a durably discarded candidate', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-staging-thumbnail-fresh-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root, {
+      beforeSessionCleanup: async () => {
+        throw new Error('retain thumbnail bytes after durable tombstone')
+      },
+    })
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const source = await fixture(root, 'Large Project.igs', { ...bbox, height: 384, width: 768 })
+    const webp = await readFile(
+      path.resolve('src/main/projects/test-fixtures/candidate-thumbnail-256x128.webp'),
+    )
+    const published = await publishOne(root, queue, staging, source, 42, webp)
+    const resource = new ProjectGenerationResultResource(staging, () => published.documentId, queue)
+    const view = (await resource.list(published.localProjectKey)).candidates[0]
+    assert.ok(view.thumbnailUrl)
+    const cacheRoot = path.join(path.dirname(path.dirname(published.assetPath)), 'thumbnail-cache')
+    const metadataPath = path.join(cacheRoot, `${published.candidateId}.json`)
+    const thumbnailPath = path.join(cacheRoot, `${published.candidateId}.webp`)
+    const originalMetadata = await readFile(metadataPath)
+    const metadata = JSON.parse(originalMetadata.toString('utf8'))
+    await writeFile(
+      metadataPath,
+      JSON.stringify({ ...metadata, sourceImageSha256: 'f'.repeat(64) }),
+    )
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    assert.equal(
+      (await resource.list(published.localProjectKey)).candidates[0].thumbnailUrl,
+      undefined,
+    )
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+    await writeFile(metadataPath, originalMetadata)
+    await writeFile(thumbnailPath, Buffer.from('corrupt cached image'))
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+    await rm(thumbnailPath)
+    const unowned = path.join(root, 'unowned.webp')
+    await writeFile(unowned, webp, { mode: 0o600 })
+    await symlink(unowned, thumbnailPath)
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    await rm(thumbnailPath)
+    await writeFile(thumbnailPath, webp, { mode: 0o600 })
+    assert.deepEqual(await resource.readThumbnail(view.thumbnailUrl), webp)
+    // Keep the valid cache and its original source binding intact, but replace the real PNG
+    // with another valid sRGB image of the same dimensions. Cache existence cannot authorize
+    // bytes after the candidate's authoritative source changed at its existing path.
+    const replacementPng = await srgbPng(768, 384, true, false, 8, 4, [181, 94, 37])
+    assert.notEqual(sha256(replacementPng), published.image.sha256)
+    await validateSrgbPngStream(
+      (async function* () {
+        yield replacementPng
+      })(),
+      'replacement.png',
+      IGS_GENERATION_PNG_MAX_BYTES,
+      2048,
+    )
+    await writeFile(published.assetPath, replacementPng)
+    assert.deepEqual(await readFile(thumbnailPath), webp)
+    assert.deepEqual(await readFile(metadataPath), originalMetadata)
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    assert.equal(await resource.readImage(view.imageUrl), null)
+    await writeFile(published.assetPath, source.outputBytes)
+    assert.deepEqual(await resource.readThumbnail(view.thumbnailUrl), webp)
+    assert.deepEqual(await resource.readImage(view.imageUrl), source.outputBytes)
+    const discarded = await staging.discardProject(published.localProjectKey)
+    assert.deepEqual(discarded, { cleanupDeferred: true, discardedSessionCount: 1 })
+    assert.deepEqual(await readFile(thumbnailPath), webp)
+    assert.equal(await resource.readThumbnail(view.thumbnailUrl), null)
+    assert.equal(await resource.readImage(view.imageUrl), null)
+    assert.equal((await resource.list(published.localProjectKey)).candidates.length, 0)
+    assert.equal(
+      await staging.readLastActualSeed(published.localProjectKey, published.documentId),
+      42,
+    )
+  } finally {
+    await database.close()
     await rm(root, { force: true, recursive: true })
   }
 })

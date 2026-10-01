@@ -12,12 +12,18 @@ const secret = randomBytes(32)
 const projectKeyPattern = /^project-v1-[a-f0-9]{64}$/
 const resourcePath =
   /^\/(project-v1-[a-f0-9]{64})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{64})\/([a-f0-9]{64})\.png$/
+const thumbnailResourcePath =
+  /^\/(project-v1-[a-f0-9]{64})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{64})\/([a-f0-9]{64})\/([a-f0-9]{64})\.webp$/
 
 export interface GenerationResultImageRequest {
   candidateId: string
   imageSha256: string
   localProjectKey: string
   stagingSessionId: string
+}
+
+export interface GenerationResultThumbnailRequest extends GenerationResultImageRequest {
+  thumbnailSha256: string
 }
 
 interface GenerationResultQueueReader {
@@ -41,7 +47,10 @@ export class ProjectGenerationResultResource {
   constructor(
     private readonly staging: Pick<
       GenerationStagingRepository,
-      'listVerifiedCandidates' | 'readLastActualSeed' | 'readVerifiedCandidatePng'
+      | 'listVerifiedCandidates'
+      | 'readLastActualSeed'
+      | 'readVerifiedCandidatePng'
+      | 'readVerifiedCandidateThumbnail'
     > | null,
     private readonly getOpenDocumentId: (localProjectKey: string) => string | null,
     private readonly queue: GenerationResultQueueReader | null = null,
@@ -97,6 +106,17 @@ export class ProjectGenerationResultResource {
           queueItemId: candidate.queueItemId,
           sourceDocumentMismatch: candidate.documentId !== openDocumentId,
           stagingSessionId: candidate.stagingSessionId,
+          ...(candidate.thumbnail
+            ? {
+                thumbnailUrl: thumbnailUrl({
+                  candidateId: candidate.candidateId,
+                  imageSha256: candidate.image.sha256,
+                  localProjectKey,
+                  stagingSessionId: candidate.stagingSessionId,
+                  thumbnailSha256: candidate.thumbnail.sha256,
+                }),
+              }
+            : {}),
         })),
       lastActualSeed,
       recoveryUnavailable: false,
@@ -119,6 +139,19 @@ export class ProjectGenerationResultResource {
       return null
     }
     const bytes = await this.staging.readVerifiedCandidatePng(request)
+    return this.getOpenDocumentId(request.localProjectKey) === openDocumentId ? bytes : null
+  }
+
+  async readThumbnail(input: string): Promise<Buffer | null> {
+    const request = parseGenerationResultThumbnailUrl(input)
+    if (!request || !this.staging) {
+      return null
+    }
+    const openDocumentId = this.getOpenDocumentId(request.localProjectKey)
+    if (!openDocumentId) {
+      return null
+    }
+    const bytes = await this.staging.readVerifiedCandidateThumbnail(request)
     return this.getOpenDocumentId(request.localProjectKey) === openDocumentId ? bytes : null
   }
 
@@ -167,6 +200,49 @@ export function parseGenerationResultImageUrl(input: string): GenerationResultIm
   return request
 }
 
+export function parseGenerationResultThumbnailUrl(
+  input: string,
+): GenerationResultThumbnailRequest | null {
+  let parsed: URL
+  try {
+    parsed = new URL(input)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== 'igs-staging:' ||
+    parsed.hostname !== 'thumbnail' ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    return null
+  }
+  const match = thumbnailResourcePath.exec(parsed.pathname)
+  if (!match) {
+    return null
+  }
+  const [, localProjectKey, stagingSessionId, candidateId, imageSha256, thumbnailSha256, mac] =
+    match
+  if (
+    !localProjectKey ||
+    !stagingSessionId ||
+    !candidateId ||
+    !imageSha256 ||
+    !thumbnailSha256 ||
+    !mac
+  ) {
+    return null
+  }
+  const request = { candidateId, imageSha256, localProjectKey, stagingSessionId, thumbnailSha256 }
+  if (!timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(thumbnailSignature(request), 'hex'))) {
+    return null
+  }
+  return request
+}
+
 /** An opaque process-lifetime URL. The renderer receives no staging or Project file paths. */
 function imageUrl(request: GenerationResultImageRequest): string {
   const mac = signature(request)
@@ -177,6 +253,18 @@ function signature(request: GenerationResultImageRequest): string {
   return createHmac('sha256', secret)
     .update(
       `${request.localProjectKey}\0${request.stagingSessionId}\0${request.candidateId}\0${request.imageSha256}`,
+    )
+    .digest('hex')
+}
+
+function thumbnailUrl(request: GenerationResultThumbnailRequest): string {
+  return `igs-staging://thumbnail/${request.localProjectKey}/${request.stagingSessionId}/${request.candidateId}/${request.imageSha256}/${request.thumbnailSha256}/${thumbnailSignature(request)}.webp`
+}
+
+function thumbnailSignature(request: GenerationResultThumbnailRequest): string {
+  return createHmac('sha256', secret)
+    .update(
+      `thumbnail\0${request.localProjectKey}\0${request.stagingSessionId}\0${request.candidateId}\0${request.imageSha256}\0${request.thumbnailSha256}`,
     )
     .digest('hex')
 }

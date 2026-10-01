@@ -399,8 +399,41 @@ Project draft, while provenance contains concrete prompts. Legacy records keep
 seed behavior unspecified. Persistent-storage capacity is measured separately
 from GPU throughput. [Persisted dynamic options and preview](../../../engineering/phase-2b-dynamic-preview-research.md)
 now expose one-iteration concrete pairs and cap32 errors without starting jobs
-or creating candidates. Renderer Generate, full GPU/release runtime and
-Smart Patch remain open.
+or creating candidates. At that historical checkpoint Renderer Generate was
+still open; [production Generate](../../../engineering/phase-2b-generate-actions-research.md)
+now connects frozen batch admission and serial dispatch. Full GPU/release runtime
+and Smart Patch remain open.
+
+## Production bounded result thumbnail checkpoint
+
+[Worker-made candidate cache](../../../engineering/phase-2b-result-thumbnails-research.md)
+creates a best-effort sRGB WEBP alongside the full PNG in the same inference child.
+Exact worker0.4.0 requires both `denoising-progress` and `candidate-thumbnails`;
+qualified older peers remain supported without thumbnails. Main verifies the
+fixed sidecar path, actual dimensions (maximum side 256px, no upscale), maximum
+256 KiB, pinned ICC and SHA before publishing a separate per-session cache.
+Candidate manifest/receipt and required full PNG remain authoritative and unchanged.
+
+Results cards use optional signed `thumbnailUrl` with source-PNG and cache hashes.
+Every GET requires the still-open Project, current verified candidate and cache;
+wrong identities, changed source PNG, discard and close revoke access. Missing,
+invalid or failed cache shows a placeholder in the same selectable card. It does
+not cause a full-PNG thumbnail fallback; focusing the card still shows the verified
+full PNG on Canvas and export still uses that PNG. Refresh can retry a repaired
+cache, but no automatic cache rebuild operation is implemented in this slice.
+
+Queue pruning/restart preserve valid candidate cache; session discard/teardown
+revokes access and includes cache in existing best-effort cleanup. A filesystem
+failure can defer physical removal after the durable tombstone. Cache changes do
+not change cursor, provenance, document, Undo, dirty,
+Save or `.igs`. Results still aggregate sessions, and previous/next focus and
+cross-session reviewed Add retain their existing scope. Queue Manager previews
+and output/session navigation remain separate work.
+
+The research checkpoint records full application/Python suites, native cached and
+placeholder screenshots, recovery/export/Add checks and semantic mutations. Native
+inference uses a controlled peer; CUDA/release readiness and browser/main-storage
+performance are not proved by those screenshots or small fixture images.
 
 ## Vue Prototype Coverage
 

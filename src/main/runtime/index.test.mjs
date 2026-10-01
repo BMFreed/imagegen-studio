@@ -58,8 +58,8 @@ const mode = fs.readFileSync(path.join(environment, 'mode'), 'utf8')
 if (mode === 'no-ready') process.exit(78)
 const ready = {
   type: 'ready', protocolVersion: '1', pythonVersion: '3.12.13',
-  workerVersion: mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
-  runtimeProfile: 'linux-nvidia', capabilities: mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  workerVersion: mode.startsWith('thumbnail-') ? '0.4.0' : mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
+  runtimeProfile: 'linux-nvidia', capabilities: mode === 'thumbnail-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 process.on('SIGTERM', () => {
   process.exit(0)
@@ -723,4 +723,30 @@ test('unconfirmed generation exit retains its lease and blocks every new CUDA pr
     await manager.retryUnconfirmedGenerationExit().catch(() => undefined)
     await client?.close().catch(() => undefined)
   }
+})
+
+test('runtime leases qualified 0.4.0 thumbnail peer and refuses missing capability before work', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'thumbnail-ready')
+  const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+  assert.equal(
+    await manager.withGenerationWorker(scratch, async (worker) => {
+      assert.equal(worker.ready.workerVersion, '0.4.0')
+      assert.equal((await manager.getStatus()).value.kind, 'ready')
+      return worker.ready.workerVersion
+    }),
+    '0.4.0',
+  )
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'thumbnail-missing-capability')
+  const refusing = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+  assert.equal(
+    await refusing.withGenerationWorker(scratch, async () =>
+      assert.fail('missing capability cannot claim the worker'),
+    ),
+    null,
+  )
+  assert.equal((await refusing.getStatus()).value.kind, 'needs-repair')
 })

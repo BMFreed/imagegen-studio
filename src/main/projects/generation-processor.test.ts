@@ -1245,3 +1245,76 @@ test('cancellation clears progress before confirmed exit and old callbacks canno
     assert.equal(fixture.processor.getProgressSnapshot().current, null)
   })
 })
+
+// Boundary: real processor → SQLite completion → staging cache. The peer is only inference.
+// Invariant: only the explicitly qualified 0.4 peer can nominate an optional derivative.
+// Neighbor: absent/malformed thumbnail keeps the same valid PNG completion; legacy extras ignored.
+// Mutation: drop the capability check and accept derivative nominations from an older peer.
+test('processor forwards candidate thumbnails only from the qualified finite worker capability', async () => {
+  await withFixture(async (fixture) => {
+    const thumbnailBytes = await readFile(
+      path.resolve('src/main/projects/test-fixtures/candidate-thumbnail-64x64.webp'),
+    )
+    const currentReady: InferenceWorkerReady = {
+      ...qualifiedReady,
+      capabilities: ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'],
+      workerVersion: '0.4.0',
+    }
+    const progressOnlyReady: InferenceWorkerReady = {
+      ...qualifiedReady,
+      capabilities: ['illustrious-txt2img', 'denoising-progress'],
+      workerVersion: '0.3.0',
+    }
+    for (const [workerReady, mode] of [
+      [qualifiedReady, 'valid'],
+      [progressOnlyReady, 'valid'],
+      [currentReady, 'valid'],
+      [currentReady, 'malformed'],
+      [currentReady, 'absent'],
+    ] as const) {
+      const id = await enqueue(fixture)
+      const result = await fixture.processor.runOne(
+        transport(async (request) => {
+          const done = await writeDone(request, fixture.outputBytes)
+          if (mode === 'absent') {
+            return done
+          }
+          const outputPath = `${request.job.output.pngPath}.thumb.webp`
+          await writeFile(outputPath, thumbnailBytes, { mode: 0o600 })
+          return {
+            ...done,
+            thumbnail:
+              mode === 'malformed'
+                ? { outputPath, sha256: 'f'.repeat(64) }
+                : {
+                    byteSize: thumbnailBytes.length,
+                    height: 64,
+                    outputPath,
+                    sha256: sha256(thumbnailBytes),
+                    width: 64,
+                  },
+          }
+        }, workerReady),
+      )
+      assert.equal(result.kind, 'completed')
+      assert.equal(result.queueItemId, id)
+      if (result.kind !== 'completed') {
+        assert.fail('the valid PNG must complete independently of its optional cache')
+      }
+      assert.equal(
+        Boolean(result.candidate.thumbnail),
+        workerReady.workerVersion === '0.4.0' && mode === 'valid',
+      )
+      assert.deepEqual(await readFile(result.candidate.assetPath), fixture.outputBytes)
+      assert.equal((await fixture.queue.getManagerEntry(id))?.status, 'completed')
+      assert.equal(
+        await fixture.staging.readLastActualSeed(
+          result.candidate.localProjectKey,
+          result.candidate.documentId,
+        ),
+        42,
+      )
+    }
+    assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+  })
+})

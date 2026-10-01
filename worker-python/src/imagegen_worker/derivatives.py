@@ -158,7 +158,11 @@ def _decode_png(source_bytes: bytes) -> Image.Image:
 
 
 def write_temporary_image(
-    image: Image.Image, destination: Path, image_format: Literal["PNG", "WEBP"]
+    image: Image.Image,
+    destination: Path,
+    image_format: Literal["PNG", "WEBP"],
+    *,
+    webp_quality: int | None = None,
 ) -> Path:
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
@@ -167,9 +171,22 @@ def write_temporary_image(
     try:
         with os.fdopen(descriptor, "wb") as stream:
             if image_format == "WEBP":
-                image.save(
-                    stream, format="WEBP", lossless=True, exact=True, icc_profile=SRGB_ICC_PROFILE
-                )
+                if webp_quality is None:
+                    image.save(
+                        stream,
+                        format="WEBP",
+                        lossless=True,
+                        exact=True,
+                        icc_profile=SRGB_ICC_PROFILE,
+                    )
+                else:
+                    image.save(
+                        stream,
+                        format="WEBP",
+                        quality=webp_quality,
+                        exact=True,
+                        icc_profile=SRGB_ICC_PROFILE,
+                    )
             else:
                 image.save(stream, format="PNG", icc_profile=SRGB_ICC_PROFILE)
             stream.flush()

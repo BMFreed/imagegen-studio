@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 from PIL import Image
 
-from imagegen_worker import inference, inference_config, inference_main
+from imagegen_worker import candidate_thumbnail, inference, inference_config, inference_main
 from imagegen_worker.compositor import ComposeTargetRequest, compose_target
 from imagegen_worker.derivatives import SRGB_ICC_PROFILE, DerivativeError
 from imagegen_worker.inference import (
@@ -615,14 +615,18 @@ def test_progress_sink_failure_does_not_leave_attention_hook_attached() -> None:
     assert pipeline.unet.remove_count == 1
 
 
+@pytest.mark.parametrize(
+    "thumbnail_failure", [None, "encode", "file-fsync", "directory-fsync", "link", "bound"]
+)
 def test_generation_connects_real_pipeline_progress_before_provisional_png_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, thumbnail_failure: str | None
 ) -> None:
     command = _command(tmp_path)
 
     class GenerationPipeline(_ProgressPipeline):
         def __init__(self) -> None:
             super().__init__(total=3, equal_lengths=True)
+            self.image = Image.new("RGBA", (command.width, command.height), (20, 60, 140, 40))
 
         def set_progress_bar_config(self, *, disable: bool) -> None:
             assert disable
@@ -634,9 +638,50 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         def __call__(self, **kwargs: object) -> object:
             super().__call__(**kwargs)
             assert not command.output_path.exists()
-            return SimpleNamespace(images=[Image.new("RGB", (command.width, command.height))])
+            return SimpleNamespace(images=[self.image])
 
     pipeline = GenerationPipeline()
+    original_pixels = pipeline.image.tobytes()
+
+    if thumbnail_failure == "encode":
+        save = Image.Image.save
+
+        def fail_webp(
+            image: Image.Image, fp: Any, format: str | None = None, **kwargs: Any
+        ) -> None:
+            if format == "WEBP":
+                assert command.output_path.exists()
+                raise OSError("Private cache path is unavailable.")
+            save(image, fp, format=format, **kwargs)
+
+        monkeypatch.setattr(Image.Image, "save", fail_webp)
+    elif thumbnail_failure in {"file-fsync", "directory-fsync"}:
+        fsync = os.fsync
+        calls = 0
+
+        def fail_thumbnail_sync(descriptor: int) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == (3 if thumbnail_failure == "file-fsync" else 4):
+                assert command.output_path.exists()
+                raise OSError("Private cache sync failed.")
+            fsync(descriptor)
+
+        monkeypatch.setattr(os, "fsync", fail_thumbnail_sync)
+    elif thumbnail_failure == "link":
+        link = os.link
+
+        def fail_thumbnail_link(
+            source: os.PathLike[str], destination: os.PathLike[str], *, follow_symlinks: bool
+        ) -> None:
+            if str(destination).endswith(".thumb.webp"):
+                assert command.output_path.exists()
+                raise OSError("Private cache publication failed.")
+            link(source, destination, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(os, "link", fail_thumbnail_link)
+    elif thumbnail_failure == "bound":
+        monkeypatch.setattr(candidate_thumbnail, "MAX_CANDIDATE_THUMBNAIL_BYTES", 1)
 
     def manual_seed(_seed: int) -> object:
         return object()
@@ -683,6 +728,23 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         command, config_dir=tmp_path, runtime=runtime, on_progress=observe
     )
     assert events == [(1, 3), (2, 3), (3, 3)]
+    thumbnail_path = Path(str(command.output_path) + ".thumb.webp")
+    if thumbnail_failure is None:
+        thumbnail = cast(dict[str, object], result.pop("thumbnail"))
+        assert thumbnail == {
+            "outputPath": str(thumbnail_path),
+            "sha256": _sha256(thumbnail_path.read_bytes()),
+            "byteSize": thumbnail_path.stat().st_size,
+            "width": command.width,
+            "height": command.height,
+        }
+        with Image.open(thumbnail_path) as cached:
+            assert cached.mode == "RGB"
+            assert cached.size == (command.width, command.height)
+            assert cached.info["icc_profile"] == SRGB_ICC_PROFILE
+    else:
+        assert "thumbnail" not in result
+        assert not thumbnail_path.exists()
     assert result == {
         "type": "generation-done",
         "protocolVersion": "1",
@@ -691,7 +753,12 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         "seed": command.seed,
     }
     assert command.output_path.exists()
+    assert pipeline.image.mode == "RGBA"
+    assert pipeline.image.tobytes() == original_pixels
+    assert not list(command.staging_root.glob("*.tmp"))
     with Image.open(command.output_path) as output:
+        assert output.mode == "RGB"
+        assert output.getpixel((0, 0)) == (20, 60, 140)
         assert output.size == (command.width, command.height)
         assert output.info["icc_profile"] == SRGB_ICC_PROFILE
 
@@ -745,12 +812,17 @@ def test_inference_main_flushes_correlated_progress_to_original_stdout_during_re
         _run_mask_pipeline(
             _ProgressPipeline(total=3), _conditioned_lengths(154, 77), 5, on_progress=observe
         )
+        output_image = Image.new("RGB", (parsed.width, parsed.height), (20, 60, 140))
+        output_image.save(parsed.output_path, icc_profile=SRGB_ICC_PROFILE)
+        thumbnail = candidate_thumbnail.create_candidate_thumbnail(output_image, parsed.output_path)
+        assert thumbnail is not None
         return {
             "type": "generation-done",
             "protocolVersion": "1",
             "requestId": parsed.request_id,
             "outputPath": str(parsed.output_path),
             "seed": parsed.seed,
+            "thumbnail": thumbnail,
         }
 
     monkeypatch.setattr(inference_main, "_qualify", lambda: (tmp_path, runtime))
@@ -774,6 +846,14 @@ def test_inference_main_flushes_correlated_progress_to_original_stdout_during_re
         (3, 3),
     ]
     assert messages[-1]["requestId"] == command.request_id
+    thumbnail_path = Path(str(command.output_path) + ".thumb.webp")
+    assert messages[-1]["thumbnail"] == {
+        "outputPath": str(thumbnail_path),
+        "sha256": _sha256(thumbnail_path.read_bytes()),
+        "byteSize": thumbnail_path.stat().st_size,
+        "width": command.width,
+        "height": command.height,
+    }
     assert stderr.getvalue() == "Library diagnostic must stay off the protocol pipe.\n"
 
 
@@ -970,10 +1050,11 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.3.0"
+    assert inference_ready_message()["workerVersion"] == "0.4.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
         "target-composition",
         "denoising-progress",
+        "candidate-thumbnails",
     ]

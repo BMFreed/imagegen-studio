@@ -67,6 +67,7 @@ const report = {
     'Actual target PNG/ICC/hash verification, queue SQLite, staging publication and resource delivery.',
     'Actual Queue Manager list/retry/cancel/delete/prune through renderer, typed preload and main; failed/pending display preconditions are seeded with independent valid frozen input files.',
     'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
+    'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -438,6 +439,24 @@ async function installControlledRuntime() {
   writeFileSync(path.join(config, 'model_index.json'), '{"fixture":"controlled inference peer"}')
   const profile = readFileSync('worker-python/src/imagegen_worker/srgb.icc')
   assert.equal(digest(profile), IGS_SRGB_ICC_SHA256)
+  // Precomputed with Pillow 12.2.0: lossless 96 × 64 RGB (37, 94, 181), pinned worker ICC.
+  // These supplied peer pixels are a fixture, not renderer-side thumbnail generation.
+  const thumbnail = Buffer.from(
+    'UklGRooCAABXRUJQVlA4WAoAAAAgAAAAXwAAPwAASUNDUEwCAAAAAAJMbGNtcwRAAABtbnRyUkdCIFhZWiAH6gAJABkAEgA3ADthY3NwQVBQTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9tYAAQAAAADTLWxjbXMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtkZXNjAAABCAAAADZjcHJ0AAABQAAAAEx3dHB0AAABjAAAABRjaGFkAAABoAAAACxyWFlaAAABzAAAABRiWFlaAAAB4AAAABRnWFlaAAAB9AAAABRyVFJDAAACCAAAACBnVFJDAAACCAAAACBiVFJDAAACCAAAACBjaHJtAAACKAAAACRtbHVjAAAAAAAAAAEAAAAMZW5VUwAAABoAAAAcAHMAUgBHAEIAIABiAHUAaQBsAHQALQBpAG4AAG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAMAAAABwATgBvACAAYwBvAHAAeQByAGkAZwBoAHQALAAgAHUAcwBlACAAZgByAGUAZQBsAHlYWVogAAAAAAAA9tYAAQAAAADTLXNmMzIAAAAAAAEMQgAABd7///MlAAAHkwAA/ZD///uh///9ogAAA9wAAMBuWFlaIAAAAAAAAG+gAAA49QAAA5BYWVogAAAAAAAAJJ8AAA+EAAC2w1hZWiAAAAAAAABilwAAt4cAABjZcGFyYQAAAAAAAwAAAAJmZgAA8qcAAA1ZAAAT0AAACltjaHJtAAAAAAADAAAAAKPXAABUewAATM0AAJmaAAAmZgAAD1xWUDhMFwAAAC9fwA8AB1CvlrS2/wEgIfyfL0X0P/UHAA==',
+    'base64',
+  )
+  assert.equal(
+    digest(thumbnail),
+    'eb8d91356840de4706359bcbed436e0c632281ca2bb9a25aaa211f650a98185d',
+  )
+  const widerThumbnail = Buffer.from(
+    'UklGRooCAABXRUJQVlA4WAoAAAAgAAAAZwAAPwAASUNDUEwCAAAAAAJMbGNtcwRAAABtbnRyUkdCIFhZWiAH6gAJABkAEgA3ADthY3NwQVBQTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9tYAAQAAAADTLWxjbXMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtkZXNjAAABCAAAADZjcHJ0AAABQAAAAEx3dHB0AAABjAAAABRjaGFkAAABoAAAACxyWFlaAAABzAAAABRiWFlaAAAB4AAAABRnWFlaAAAB9AAAABRyVFJDAAACCAAAACBnVFJDAAACCAAAACBiVFJDAAACCAAAACBjaHJtAAACKAAAACRtbHVjAAAAAAAAAAEAAAAMZW5VUwAAABoAAAAcAHMAUgBHAEIAIABiAHUAaQBsAHQALQBpAG4AAG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAMAAAABwATgBvACAAYwBvAHAAeQByAGkAZwBoAHQALAAgAHUAcwBlACAAZgByAGUAZQBsAHlYWVogAAAAAAAA9tYAAQAAAADTLXNmMzIAAAAAAAEMQgAABd7///MlAAAHkwAA/ZD///uh///9ogAAA9wAAMBuWFlaIAAAAAAAAG+gAAA49QAAA5BYWVogAAAAAAAAJJ8AAA+EAAC2w1hZWiAAAAAAAABilwAAt4cAABjZcGFyYQAAAAAAAwAAAAJmZgAA8qcAAA1ZAAAT0AAACltjaHJtAAAAAAADAAAAAKPXAABUewAATM0AAJmaAAAmZgAAD1xWUDhMFwAAAC9nwA8AB1CvlrS2/wEgIfy/r0T0P/UBAA==',
+    'base64',
+  )
+  assert.equal(
+    digest(widerThumbnail),
+    '63b9088f54f54162f37ad74e26b81b25a5856f1fd5f051b55b566e7644568057',
+  )
   // This executable is an external peer fixture. It does not implement or replace any main code.
   const script = String.raw`#!${process.execPath}
 const fs = require('node:fs')
@@ -451,6 +470,8 @@ const fixtureRoot = ${JSON.stringify(fixtureRoot)}
 const expectedConfig = ${JSON.stringify(config)}
 const expectedCache = ${JSON.stringify(roots.cacheDir)}
 const profile = Buffer.from(${JSON.stringify(profile.toString('base64'))}, 'base64')
+const thumbnail96 = Buffer.from(${JSON.stringify(thumbnail.toString('base64'))}, 'base64')
+const thumbnail104 = Buffer.from(${JSON.stringify(widerThumbnail.toString('base64'))}, 'base64')
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
 if (process.env.IGS_SDXL_CONFIG_DIR !== expectedConfig || process.env.HF_HOME !== expectedCache) process.exit(22)
@@ -472,7 +493,7 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify({type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',
-  workerVersion:'0.3.0',runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress']})+'\n')
+  workerVersion:'0.4.0',runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails']})+'\n')
 process.stdin.setEncoding('utf8')
 let buffer=''
 process.stdin.on('data',data=>{
@@ -506,8 +527,13 @@ process.stdin.on('data',data=>{
         clearInterval(timer)
         const bytes=png(request.job.bbox.width,request.job.bbox.height,true)
         fs.writeFileSync(request.job.output.pngPath,bytes,{flag:'wx',mode:0o600})
+        if(request.job.bbox.height!==64 || ![96,104].includes(request.job.bbox.width)) process.exit(28)
+        const thumbnail=request.job.bbox.width===104 ? thumbnail104 : thumbnail96
+        const thumbnailPath=request.job.output.pngPath+'.thumb.webp'
+        fs.writeFileSync(thumbnailPath,thumbnail,{flag:'wx',mode:0o600})
         const terminalLine=JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:request.requestId,
-          outputPath:request.job.output.pngPath,seed:request.job.sampling.seed})+'\n'
+          outputPath:request.job.output.pngPath,seed:request.job.sampling.seed,
+          thumbnail:{outputPath:thumbnailPath,byteSize:thumbnail.length,sha256:hash(thumbnail),width:request.job.bbox.width,height:64}})+'\n'
         if(fs.existsSync(path.join(fixtureRoot,'late-progress-'+request.requestId))) {
           emitProgress({step:1,totalSteps:2},'after-terminal',terminalLine)
         } else process.stdout.write(terminalLine)
@@ -891,6 +917,88 @@ try {
   await window.getByRole('button', { name: 'Close project queue', exact: true }).click()
   await expect.poll(resultVisibleOnCanvas).toBe(true)
   await screenshot('04-completed-staging-result')
+  assert.match(candidate.thumbnailUrl, /^igs-staging:\/\/thumbnail\//)
+  assert.notEqual(candidate.thumbnailUrl, candidate.imageUrl)
+  const thumbnailButton = window.getByRole('button', { name: 'Preview candidate 1', exact: true })
+  const thumbnailImage = thumbnailButton.locator('img')
+  await expect(thumbnailImage).toHaveAttribute('src', candidate.thumbnailUrl)
+  await expect
+    .poll(() =>
+      thumbnailImage.evaluate((image) => ({
+        height: image.naturalHeight,
+        width: image.naturalWidth,
+      })),
+    )
+    .toEqual({ height: 64, width: 96 })
+  const thumbnailResource = await window.evaluate(async (url) => {
+    const response = await fetch(url)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    return {
+      bytes: bytes.length,
+      contentType: response.headers.get('content-type'),
+      status: response.status,
+    }
+  }, candidate.thumbnailUrl)
+  assert.deepEqual(thumbnailResource, { bytes: 658, contentType: 'image/webp', status: 200 })
+  checked(
+    'Completed result strip loads a distinct signed WEBP while the full PNG remains available',
+    {
+      fullImage: resource,
+      thumbnail: thumbnailResource,
+      thumbnailDimensions: { height: 64, width: 96 },
+    },
+  )
+
+  const cachePath = path.join(
+    appDataRoot,
+    'recovery',
+    'generation-staging',
+    projectId,
+    candidate.stagingSessionId,
+    'thumbnail-cache',
+    `${candidate.candidateId}.webp`,
+  )
+  const cacheBytes = readFileSync(cachePath)
+  const beforeDamagedCache = await progressDurableState(projectId, packagePath)
+  writeFileSync(cachePath, 'damaged optional derivative', { mode: 0o600 })
+  const damagedResource = await window.evaluate(
+    async (url) => (await fetch(url, { cache: 'no-store' })).status,
+    candidate.thumbnailUrl,
+  )
+  assert.equal(damagedResource, 404)
+  await window.getByRole('button', { name: 'Refresh results', exact: true }).click()
+  await expect(thumbnailImage).toHaveCount(0)
+  await expect(thumbnailButton.locator('.candidate-placeholder')).toBeVisible()
+  await expect(thumbnailButton).toHaveAttribute(
+    'title',
+    'Thumbnail unavailable. Select to preview the full image.',
+  )
+  await expect(thumbnailButton).toHaveAttribute('aria-pressed', 'true')
+  await expect(window.getByLabel('Select candidate 1')).toBeChecked()
+  await thumbnailButton.click()
+  await expect.poll(resultVisibleOnCanvas).toBe(true)
+  assert.equal(
+    await window.evaluate(async (url) => (await fetch(url)).status, candidate.imageUrl),
+    200,
+  )
+  const withoutThumbnail = await api('listGenerationResults', projectId)
+  const fullCandidate = { ...candidate }
+  delete fullCandidate.thumbnailUrl
+  assert.deepEqual(withoutThumbnail, { ...completed, candidates: [fullCandidate] })
+  await screenshot('04a-damaged-thumbnail-placeholder')
+  writeFileSync(cachePath, cacheBytes, { mode: 0o600 })
+  await window.getByRole('button', { name: 'Refresh results', exact: true }).click()
+  await expect(thumbnailImage).toHaveAttribute('src', candidate.thumbnailUrl)
+  assert.deepEqual(await progressDurableState(projectId, packagePath), beforeDamagedCache)
+  checked(
+    'Damaged thumbnail GET is refused; placeholder retains focus, selection, full preview and exact durable state',
+    {
+      candidateId: candidate.candidateId,
+      damagedResourceStatus: damagedResource,
+      fullImageStatus: 200,
+      packageSha256: beforeDamagedCache.packageSha256,
+    },
+  )
   checked(
     'UI Cancel confirms actual child exit; frozen sibling drains to verified staging without adding layers',
     {

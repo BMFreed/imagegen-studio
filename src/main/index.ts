@@ -455,13 +455,16 @@ if (!gotInstanceLock) {
           return new Response('Method not allowed.', { headers: responseHeaders, status: 405 })
         }
         try {
-          const bytes = await generationResults.readImage(request.url)
+          const isThumbnail = new URL(request.url).hostname === 'thumbnail'
+          const bytes = isThumbnail
+            ? await generationResults.readThumbnail(request.url)
+            : await generationResults.readImage(request.url)
           return bytes
             ? new Response(new Uint8Array(bytes), {
                 headers: {
                   ...responseHeaders,
                   'Content-Length': String(bytes.length),
-                  'Content-Type': 'image/png',
+                  'Content-Type': isThumbnail ? 'image/webp' : 'image/png',
                 },
               })
             : new Response('Generation result not found.', {

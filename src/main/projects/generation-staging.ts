@@ -1,5 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
+  GENERATION_THUMBNAIL_MAX_BYTES,
+  GENERATION_THUMBNAIL_MAX_SIDE,
+} from '../../shared/projects/generation-thumbnail.js'
+import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
@@ -18,7 +22,7 @@ import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/
 
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
-import { validateSrgbPngStream } from './igs-package.js'
+import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
 const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
@@ -27,10 +31,26 @@ const MAX_MANIFEST_BYTES = GENERATION_STAGING_LIMITS.manifestBytes
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const PROJECT_KEY_PATTERN = /^project-v1-[a-f0-9]{64}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const MAX_THUMBNAIL_METADATA_BYTES = 4096
 
 const UuidSchema = v.pipe(v.string(), v.uuid())
 const Sha256Schema = v.pipe(v.string(), v.regex(SHA256_PATTERN))
 const SafeUIntSchema = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
+const ThumbnailMetadataSchema = v.strictObject({
+  byteSize: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(GENERATION_THUMBNAIL_MAX_BYTES)),
+  height: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(GENERATION_THUMBNAIL_MAX_SIDE)),
+  sha256: Sha256Schema,
+  width: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(GENERATION_THUMBNAIL_MAX_SIDE)),
+})
+const WorkerThumbnailSchema = v.strictObject({
+  ...ThumbnailMetadataSchema.entries,
+  outputPath: v.pipe(v.string(), v.nonEmpty()),
+})
+const ThumbnailCacheMetadataSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  sourceImageSha256: Sha256Schema,
+  thumbnail: ThumbnailMetadataSchema,
+})
 const Uint32Schema = v.pipe(SafeUIntSchema, v.maxValue(0xff_ff_ff_ff))
 const BboxSchema = v.pipe(
   v.strictObject({
@@ -186,6 +206,8 @@ export interface VerifiedGenerationCandidate {
   projectPath: string
   queueItemId: string
   stagingSessionId: string
+  /** Rebuildable presentation cache; never part of the authoritative manifest or receipt. */
+  thumbnail?: v.InferOutput<typeof ThumbnailMetadataSchema>
 }
 export interface GenerationStagingTestHooks {
   /** Crash window after a discard tombstone commits, before its candidate files are removed. */
@@ -571,6 +593,7 @@ export class GenerationStagingRepository {
     expectedStatusSequence: number
     provisionalOutputPath: string
     queueItemId: string
+    thumbnail?: unknown
   }): Promise<VerifiedGenerationCandidate> {
     assertUuid(input.queueItemId)
     if (!isUint32(input.actualSeed) || !isSafeUInt(input.expectedStatusSequence)) {
@@ -649,7 +672,14 @@ export class GenerationStagingRepository {
       const sessionPath = await this.publishFiles(entry, outputBytes)
       await this.testHooks.afterManifestPublish?.()
       await this.commitCompletion(entry, 'live')
-      return toVerifiedCandidate(entry, sessionPath)
+      // A derivative failure cannot turn a durable, validated PNG completion into a failed job.
+      // This stays under the session gate, so discard cannot race publication and leave a cache.
+      await this.publishThumbnailCache(entry, sessionPath, outputPath, input.thumbnail).catch(
+        () => undefined,
+      )
+      const candidate = toVerifiedCandidate(entry, sessionPath)
+      const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
+      return cache ? { ...candidate, thumbnail: cache.metadata } : candidate
     })
   }
 
@@ -702,6 +732,39 @@ export class GenerationStagingRepository {
         sha256(bytes) === candidate.image.sha256
         ? bytes
         : null
+    })
+  }
+
+  /** A fresh cache read remains subordinate to the currently visible authoritative candidate. */
+  async readVerifiedCandidateThumbnail(input: {
+    candidateId: string
+    imageSha256: string
+    localProjectKey: string
+    stagingSessionId: string
+    thumbnailSha256: string
+  }): Promise<Buffer | null> {
+    if (
+      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
+      !UUID_PATTERN.test(input.candidateId) ||
+      !UUID_PATTERN.test(input.stagingSessionId) ||
+      !SHA256_PATTERN.test(input.imageSha256) ||
+      !SHA256_PATTERN.test(input.thumbnailSha256)
+    ) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Candidate identity is invalid.')
+    }
+    return await this.serialize(async () => {
+      const candidate = (await this.listVerifiedCandidatesUnlocked(input.localProjectKey)).find(
+        (entry) =>
+          entry.candidateId === input.candidateId &&
+          entry.stagingSessionId === input.stagingSessionId &&
+          entry.image.sha256 === input.imageSha256,
+      )
+      if (!candidate || candidate.thumbnail?.sha256 !== input.thumbnailSha256) {
+        return null
+      }
+      const sessionPath = path.dirname(path.dirname(candidate.assetPath))
+      const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
+      return cache?.metadata.sha256 === input.thumbnailSha256 ? cache.bytes : null
     })
   }
 
@@ -1050,6 +1113,45 @@ export class GenerationStagingRepository {
     return sessionRoot
   }
 
+  private async publishThumbnailCache(
+    entry: CandidateEntry,
+    sessionPath: string,
+    provisionalOutputPath: string,
+    thumbnail: unknown,
+  ): Promise<void> {
+    const parsed = v.safeParse(WorkerThumbnailSchema, thumbnail)
+    if (!parsed.success || parsed.output.outputPath !== `${provisionalOutputPath}.thumb.webp`) {
+      return
+    }
+    const { outputPath, ...metadata } = parsed.output
+    const bytes = await readStableFile(outputPath, GENERATION_THUMBNAIL_MAX_BYTES)
+    await validateThumbnailBytes(bytes, metadata, entry.image)
+    const cacheRoot = path.join(sessionPath, 'thumbnail-cache')
+    await ensurePrivateDirectory(cacheRoot)
+    const temporaryImagePath = path.join(cacheRoot, `${entry.candidateId}-${randomUUID()}.webp`)
+    const temporaryMetadataPath = path.join(cacheRoot, `${entry.candidateId}-${randomUUID()}.json`)
+    try {
+      await writeDurableFile(temporaryImagePath, bytes)
+      await writeDurableFile(
+        temporaryMetadataPath,
+        Buffer.from(
+          JSON.stringify({
+            schemaVersion: 1,
+            sourceImageSha256: entry.image.sha256,
+            thumbnail: metadata,
+          }),
+          'utf8',
+        ),
+      )
+      await rename(temporaryImagePath, path.join(cacheRoot, `${entry.candidateId}.webp`))
+      await rename(temporaryMetadataPath, path.join(cacheRoot, `${entry.candidateId}.json`))
+      await syncDirectory(cacheRoot)
+    } finally {
+      await rm(temporaryImagePath, { force: true }).catch(() => undefined)
+      await rm(temporaryMetadataPath, { force: true }).catch(() => undefined)
+    }
+  }
+
   private async queueRow(id: string) {
     return await this.db
       .selectFrom('generation_queue_item')
@@ -1094,6 +1196,34 @@ export class GenerationStagingRepository {
       validateEntry(entry)
     }
     return parsed.output
+  }
+
+  private async readThumbnailCache(
+    candidate: Pick<VerifiedGenerationCandidate, 'candidateId' | 'image'>,
+    sessionPath: string,
+  ): Promise<{
+    bytes: Buffer
+    metadata: v.InferOutput<typeof ThumbnailMetadataSchema>
+  } | null> {
+    const cacheRoot = path.join(sessionPath, 'thumbnail-cache')
+    await checkPrivateDirectory(cacheRoot, false)
+    const metadataBytes = await readStableFile(
+      path.join(cacheRoot, `${candidate.candidateId}.json`),
+      MAX_THUMBNAIL_METADATA_BYTES,
+    )
+    const parsed = v.safeParse(
+      ThumbnailCacheMetadataSchema,
+      JSON.parse(metadataBytes.toString('utf8')),
+    )
+    if (!parsed.success || parsed.output.sourceImageSha256 !== candidate.image.sha256) {
+      return null
+    }
+    const bytes = await readStableFile(
+      path.join(cacheRoot, `${candidate.candidateId}.webp`),
+      GENERATION_THUMBNAIL_MAX_BYTES,
+    )
+    await validateThumbnailBytes(bytes, parsed.output.thumbnail, candidate.image)
+    return { bytes, metadata: parsed.output.thumbnail }
   }
 
   private async receiptFor(candidateId: string) {
@@ -1327,7 +1457,9 @@ export class GenerationStagingRepository {
     ) {
       throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The candidate output changed.')
     }
-    return toVerifiedCandidate(entry, sessionPath)
+    const candidate = toVerifiedCandidate(entry, sessionPath)
+    const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
+    return cache ? { ...candidate, thumbnail: cache.metadata } : candidate
   }
 }
 
@@ -1590,7 +1722,17 @@ async function readStableFile(filePath: string, maxBytes: number): Promise<Buffe
     ) {
       throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The candidate file is unsafe.')
     }
-    const bytes = await handle.readFile()
+    // The extra byte detects growth without letting readFile allocate past the checked ceiling.
+    const buffer = Buffer.alloc(Number(before.size) + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length)
+      if (bytesRead === 0) {
+        break
+      }
+      length += bytesRead
+    }
+    const bytes = buffer.subarray(0, length)
     const after = await handle.stat({ bigint: true })
     const atPath = await lstat(filePath, { bigint: true })
     if (
@@ -1609,6 +1751,41 @@ async function readStableFile(filePath: string, maxBytes: number): Promise<Buffe
     return bytes
   } finally {
     await handle.close()
+  }
+}
+
+async function validateThumbnailBytes(
+  bytes: Buffer,
+  metadata: v.InferOutput<typeof ThumbnailMetadataSchema>,
+  source: { height: number; width: number },
+): Promise<void> {
+  const actual = await validateSrgbWebpStream(
+    (async function* () {
+      yield bytes
+    })(),
+    'candidate-thumbnail.webp',
+    GENERATION_THUMBNAIL_MAX_BYTES,
+    GENERATION_THUMBNAIL_MAX_SIDE,
+  )
+  if (
+    bytes.length !== metadata.byteSize ||
+    sha256(bytes) !== metadata.sha256 ||
+    actual.width !== metadata.width ||
+    actual.height !== metadata.height ||
+    actual.width > source.width ||
+    actual.height > source.height ||
+    Math.abs(
+      actual.width -
+        source.width *
+          Math.min(1, GENERATION_THUMBNAIL_MAX_SIDE / Math.max(source.width, source.height)),
+    ) > 1 ||
+    Math.abs(
+      actual.height -
+        source.height *
+          Math.min(1, GENERATION_THUMBNAIL_MAX_SIDE / Math.max(source.width, source.height)),
+    ) > 1
+  ) {
+    throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The candidate thumbnail changed.')
   }
 }
 

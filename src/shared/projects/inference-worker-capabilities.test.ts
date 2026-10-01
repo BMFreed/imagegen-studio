@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
 } from './inference-worker-capabilities.js'
 
@@ -39,7 +40,7 @@ test('qualification matrix rejects unrecognized versions, profiles, protocols an
     null,
     [],
     { ...legacyReady, workerVersion: '0.1.0' },
-    { ...legacyReady, workerVersion: '0.4.0' },
+    { ...legacyReady, workerVersion: '0.5.0' },
     { ...legacyReady, workerVersion: '0.3.1' },
     { ...legacyReady, protocolVersion: '2' },
     { ...legacyReady, runtimeProfile: 'cpu' },
@@ -49,5 +50,26 @@ test('qualification matrix rejects unrecognized versions, profiles, protocols an
   ]) {
     assert.equal(isQualifiedInferenceWorkerReady(invalid), false)
     assert.equal(supportsInferenceDenoisingProgress(invalid), false)
+  }
+})
+
+test('thumbnail qualification requires exact 0.4.0 and both progress and thumbnail capabilities', () => {
+  const current = {
+    ...legacyReady,
+    capabilities: ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'],
+    workerVersion: '0.4.0',
+  }
+  assert.ok(isQualifiedInferenceWorkerReady(current))
+  assert.ok(supportsInferenceDenoisingProgress(current))
+  assert.ok(supportsInferenceCandidateThumbnails(current))
+  assert.equal(supportsInferenceCandidateThumbnails(legacyReady), false)
+  assert.equal(supportsInferenceCandidateThumbnails({ ...current, workerVersion: '0.3.0' }), false)
+  for (const capabilities of [
+    ['illustrious-txt2img', 'denoising-progress'],
+    ['illustrious-txt2img', 'candidate-thumbnails'],
+    ['denoising-progress', 'candidate-thumbnails'],
+  ]) {
+    assert.equal(isQualifiedInferenceWorkerReady({ ...current, capabilities }), false)
+    assert.equal(supportsInferenceCandidateThumbnails({ ...current, capabilities }), false)
   }
 })

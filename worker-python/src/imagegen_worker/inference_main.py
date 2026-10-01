@@ -18,6 +18,7 @@ from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
+    INFERENCE_THUMBNAIL_CAPABILITY,
     INFERENCE_WORKER_VERSION,
     MLRuntime,
     generate_illustrious_txt2img,
@@ -49,7 +50,12 @@ def inference_ready_message() -> dict[str, object]:
         "workerVersion": INFERENCE_WORKER_VERSION,
         "pythonVersion": platform.python_version(),
         "runtimeProfile": INFERENCE_RUNTIME_PROFILE,
-        "capabilities": [INFERENCE_CAPABILITY, "target-composition", INFERENCE_PROGRESS_CAPABILITY],
+        "capabilities": [
+            INFERENCE_CAPABILITY,
+            "target-composition",
+            INFERENCE_PROGRESS_CAPABILITY,
+            INFERENCE_THUMBNAIL_CAPABILITY,
+        ],
     }
 
 

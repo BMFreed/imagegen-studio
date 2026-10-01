@@ -53,6 +53,7 @@ test('results list exposes only a bounded view, and signed image URL is scoped t
         reads.push(request)
         return image
       },
+      readVerifiedCandidateThumbnail: async () => null,
     },
     (key) => (key === localProjectKey ? openDocumentId : null),
     { listUnfinishedByProjectDocument: async () => [] },
@@ -147,6 +148,7 @@ test('results expose unfinished siblings only from eligible completed sessions i
       listVerifiedCandidates: async () => [published, orphan],
       readLastActualSeed: async () => 0,
       readVerifiedCandidatePng: async () => null,
+      readVerifiedCandidateThumbnail: async () => null,
     },
     (key) => (key === localProjectKey ? published.documentId : null),
     {
@@ -185,6 +187,7 @@ test('a document replaced during the queue read cannot expose a stale confirmati
       listVerifiedCandidates: async () => [published],
       readLastActualSeed: async () => 42,
       readVerifiedCandidatePng: async () => null,
+      readVerifiedCandidateThumbnail: async () => null,
     },
     () => documentId,
     {
@@ -204,6 +207,7 @@ test('missing queue storage cannot claim an available zero-job acceptance snapsh
       listVerifiedCandidates: async () => [published],
       readLastActualSeed: async () => 42,
       readVerifiedCandidatePng: async () => null,
+      readVerifiedCandidateThumbnail: async () => null,
     },
     () => published.documentId,
     null,

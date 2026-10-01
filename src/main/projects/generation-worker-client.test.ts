@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.4.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -84,6 +84,10 @@ else {
       const response = {
         type:'generation-done', protocolVersion:'1', requestId:request.requestId,
         outputPath:request.job.output.pngPath, seed:0xffffffff
+      }
+      if (mode === 'thumbnail-done') response.thumbnail = {
+        outputPath: request.job.output.pngPath + '.thumb.webp', sha256: 'a'.repeat(64),
+        byteSize: 128, width: 64, height: 64
       }
       if (mode.startsWith('progress-') || mode === 'legacy-progress') {
         const send = (step, totalSteps = 3, extras = {}) => process.stdout.write(JSON.stringify({
@@ -215,6 +219,7 @@ test('unqualified, silent, malformed, and unsolicited startup fail before a clie
       'bad-protocol',
       'bad-version',
       'future-version',
+      'thumbnail-missing-capability',
       'bad-profile',
       'no-capability',
       'new-missing-progress',
@@ -585,6 +590,28 @@ test('an unconfirmed startup child blocks concurrent and later starts until its 
           }
         }
       }
+    }
+  })
+})
+
+test('thumbnail-capable 0.4.0 peer qualifies through the actual subprocess boundary', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, options('thumbnail-done'))
+    try {
+      assert.equal(client.ready.workerVersion, '0.4.0')
+      assert.ok(client.ready.capabilities.includes('candidate-thumbnails'))
+      const request = await requestFor(fixture)
+      const result = await client.generate(request)
+      assert.equal((result as { requestId: string }).requestId, request.requestId)
+      assert.deepEqual((result as { thumbnail: unknown }).thumbnail, {
+        byteSize: 128,
+        height: 64,
+        outputPath: `${request.job.output.pngPath}.thumb.webp`,
+        sha256: 'a'.repeat(64),
+        width: 64,
+      })
+    } finally {
+      await client.close()
     }
   })
 })

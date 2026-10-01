@@ -232,6 +232,8 @@ export interface ProjectGenerationResultView {
   queueItemId: string
   sourceDocumentMismatch: boolean
   stagingSessionId: string
+  /** Optional verified, rebuildable worker derivative; full PNG remains the image source. */
+  thumbnailUrl?: string
 }
 
 export interface ProjectGenerationResultsSnapshot {

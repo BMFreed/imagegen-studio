@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from PIL import Image, UnidentifiedImageError
 
+from imagegen_worker.candidate_thumbnail import create_candidate_thumbnail
 from imagegen_worker.derivatives import (
     SRGB_ICC_PROFILE,
     DerivativeError,
@@ -34,10 +35,11 @@ from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
 from imagegen_worker.protocol import MAX_GENERATION_STEPS, GenerateIllustriousTxt2ImgCommand
 
-INFERENCE_WORKER_VERSION = "0.3.0"
+INFERENCE_WORKER_VERSION = "0.4.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
+INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
 
 DenoisingProgressSink = Callable[[int, int], None]
 
@@ -642,7 +644,7 @@ def generate_illustrious_txt2img(
     runtime: MLRuntime,
     on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
-    """Execute one exact SDXL job and publish only its provisional PNG."""
+    """Execute one exact SDXL job and publish its provisional PNG and optional cache."""
     if command.prediction_type == "sample":
         raise DerivativeError(
             "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
@@ -685,7 +687,8 @@ def generate_illustrious_txt2img(
         raise DerivativeError(
             "GENERATION_WORKER_FAILED", "Inference did not return the expected image."
         )
-    temporary = write_temporary_image(image.convert("RGB"), command.output_path, "PNG")
+    output_image = image.convert("RGB")
+    temporary = write_temporary_image(output_image, command.output_path, "PNG")
     published = False
     try:
         os.link(temporary, command.output_path, follow_symlinks=False)
@@ -705,10 +708,14 @@ def generate_illustrious_txt2img(
         ) from error
     finally:
         temporary.unlink(missing_ok=True)
-    return {
+    done: dict[str, object] = {
         "type": "generation-done",
         "protocolVersion": "1",
         "requestId": command.request_id,
         "outputPath": str(command.output_path),
         "seed": command.seed,
     }
+    thumbnail = create_candidate_thumbnail(output_image, command.output_path)
+    if thumbnail is not None:
+        done["thumbnail"] = thumbnail
+    return done

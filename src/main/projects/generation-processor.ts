@@ -5,6 +5,7 @@ import type {
 import { isGenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -422,7 +423,7 @@ export class GenerationProcessor {
           await active.cancelPromise
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
-        const actualSeed = requireCorrelatedDone(outcome.response, request)
+        const { actualSeed, thumbnail } = requireCorrelatedDone(outcome.response, request)
         publishing = true
         const candidate = await this.staging.publishIllustriousTxt2Img({
           actualSeed,
@@ -430,6 +431,7 @@ export class GenerationProcessor {
           expectedStatusSequence: claimed.item.statusSequence,
           provisionalOutputPath: outputPath,
           queueItemId: claimed.item.id,
+          ...(supportsInferenceCandidateThumbnails(transport.ready) ? { thumbnail } : {}),
         })
         return { candidate, kind: 'completed', queueItemId: claimed.item.id }
       } catch {
@@ -547,7 +549,10 @@ function requireInferenceReady(ready: InferenceWorkerReady): void {
   }
 }
 
-function requireCorrelatedDone(response: unknown, request: IllustriousTxt2ImgRequestV1): number {
+function requireCorrelatedDone(
+  response: unknown,
+  request: IllustriousTxt2ImgRequestV1,
+): { actualSeed: number; thumbnail: unknown } {
   if (typeof response !== 'object' || response === null) {
     throw new Error('The generation worker response is invalid.')
   }
@@ -563,7 +568,7 @@ function requireCorrelatedDone(response: unknown, request: IllustriousTxt2ImgReq
   ) {
     throw new Error('The generation worker response does not match this request.')
   }
-  return done.seed as number
+  return { actualSeed: done.seed as number, thumbnail: done.thumbnail }
 }
 
 async function createProvisionalRoot(scratchBasePath: string): Promise<string> {

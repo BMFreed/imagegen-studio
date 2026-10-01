@@ -11,6 +11,7 @@ import {
   Eye,
   EyeOff,
   ListCheck,
+  Photo,
   Refresh,
 } from '@vicons/tabler'
 import { NButton, NCheckbox, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
@@ -40,6 +41,7 @@ const emit = defineEmits<{
 const collapsed = ref(false)
 const tray = ref<HTMLElement | null>(null)
 const strip = ref<HTMLElement | null>(null)
+const failedThumbnails = ref(new Set<string>())
 const candidateActions = [{ key: 'save-image', label: 'Save Candidate Image' }]
 const selectionActions = [
   { key: 'all', label: 'Select all completed' },
@@ -56,6 +58,25 @@ const focusedIndex = computed(() =>
 )
 const hasSourceDocumentMismatch = computed(() =>
   props.candidates.some((candidate) => candidate.sourceDocumentMismatch),
+)
+
+function thumbnailUrl(candidate: ProjectGenerationResultView) {
+  const url = candidate.thumbnailUrl
+  return url && !failedThumbnails.value.has(url) ? url : null
+}
+
+function thumbnailFailed(candidate: ProjectGenerationResultView) {
+  if (candidate.thumbnailUrl) {
+    failedThumbnails.value.add(candidate.thumbnailUrl)
+  }
+}
+
+watch(
+  () => props.candidates,
+  () => {
+    // A fresh verified snapshot also lets an explicit Refresh retry a previously failed resource.
+    failedThumbnails.value = new Set()
+  },
 )
 
 function focusStep(delta: number) {
@@ -123,10 +144,25 @@ watch(
           :aria-label="`Preview candidate ${index + 1}`"
           :aria-pressed="candidate.candidateId === focusedCandidateId"
           class="candidate-button"
+          :title="
+            thumbnailUrl(candidate)
+              ? undefined
+              : 'Thumbnail unavailable. Select to preview the full image.'
+          "
           type="button"
           @click="emit('focus', candidate.candidateId)"
         >
-          <img alt="" :src="candidate.imageUrl" />
+          <img
+            v-if="thumbnailUrl(candidate)"
+            alt=""
+            decoding="async"
+            loading="lazy"
+            :src="thumbnailUrl(candidate) ?? undefined"
+            @error="thumbnailFailed(candidate)"
+          />
+          <span v-else aria-hidden="true" class="candidate-placeholder">
+            <NIcon :component="Photo" :size="24" />
+          </span>
           <NTag
             v-if="candidate.sourceDocumentMismatch"
             class="candidate-mismatch"
@@ -359,6 +395,15 @@ watch(
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.candidate-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding-bottom: 12px;
+  color: var(--app-text-muted);
 }
 
 .candidate-footer {

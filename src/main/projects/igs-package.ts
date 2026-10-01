@@ -630,13 +630,13 @@ export async function validateSrgbWebpStream(
   label: string,
   maxBytes: number,
   maxDimension: number,
-): Promise<void> {
+): Promise<{ height: number; width: number }> {
   if (!label.endsWith('.webp')) {
     throw new IgsPackageError('INVALID_IMAGE', 'Expected a WebP image.')
   }
   const limits = resolveLimits({ memberBytes: maxBytes, rasterDimension: maxDimension })
   const scanned = await scanStream(chunks, label, maxBytes, false, limits)
-  imageDimensions(label, scanned.header, limits)
+  return imageDimensions(label, scanned.header, limits)
 }
 
 export async function readIgsPackage(

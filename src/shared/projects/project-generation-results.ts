@@ -5,6 +5,8 @@ import { IGS_SAFETY_CEILINGS } from './project-schema.js'
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 const resultPathPattern =
   /^\/(project-v1-[a-f0-9]{64})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/[a-f0-9]{64}\/[a-f0-9]{64}\.png$/
+const thumbnailPathPattern =
+  /^\/(project-v1-[a-f0-9]{64})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/([a-f0-9]{64})\/[a-f0-9]{64}\/[a-f0-9]{64}\.webp$/
 
 /** Preload's typed boundary rejects malformed candidate metadata before reaching the renderer. */
 export function isProjectGenerationResultsSnapshot(
@@ -43,7 +45,9 @@ export function isProjectGenerationResultsSnapshot(
         candidate.actualSeed <= 0xff_ff_ff_ff &&
         typeof candidate.sourceDocumentMismatch === 'boolean' &&
         isBbox(candidate.bbox) &&
-        isResultImageUrl(candidate.imageUrl, candidate),
+        isResultImageUrl(candidate.imageUrl, candidate) &&
+        (candidate.thumbnailUrl === undefined ||
+          isResultThumbnailUrl(candidate.thumbnailUrl, candidate)),
     ) &&
     (!value.recoveryUnavailable ||
       (value.candidates.length === 0 &&
@@ -101,4 +105,30 @@ function isBbox(value: unknown): boolean {
     height >= 1 &&
     height <= IGS_SAFETY_CEILINGS.rasterDimension
   )
+}
+
+function isResultThumbnailUrl(value: unknown, candidate: Record<string, unknown>): boolean {
+  if (typeof value !== 'string' || typeof candidate.imageUrl !== 'string') {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    const image = new URL(candidate.imageUrl)
+    const match = thumbnailPathPattern.exec(url.pathname)
+    return (
+      url.protocol === 'igs-staging:' &&
+      url.hostname === 'thumbnail' &&
+      url.username === '' &&
+      url.password === '' &&
+      url.port === '' &&
+      url.hash === '' &&
+      url.search === '' &&
+      match !== null &&
+      match[2] === candidate.stagingSessionId &&
+      match[3] === candidate.candidateId &&
+      image.pathname.startsWith(`/${match[1]}/${match[2]}/${match[3]}/${match[4]}/`)
+    )
+  } catch {
+    return false
+  }
 }

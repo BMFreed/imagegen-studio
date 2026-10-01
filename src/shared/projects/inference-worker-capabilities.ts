@@ -3,7 +3,7 @@ export interface QualifiedInferenceWorkerReady {
   capabilities: readonly string[]
   protocolVersion: '1'
   runtimeProfile: 'linux-nvidia'
-  workerVersion: '0.2.0' | '0.3.0'
+  workerVersion: '0.2.0' | '0.3.0' | '0.4.0'
 }
 
 export function isQualifiedInferenceWorkerReady(
@@ -20,11 +20,19 @@ export function isQualifiedInferenceWorkerReady(
     ready.capabilities.every((capability) => typeof capability === 'string') &&
     ready.capabilities.includes('illustrious-txt2img') &&
     (ready.workerVersion === '0.2.0' ||
-      (ready.workerVersion === '0.3.0' && ready.capabilities.includes('denoising-progress')))
+      (ready.workerVersion === '0.3.0' && ready.capabilities.includes('denoising-progress')) ||
+      (ready.workerVersion === '0.4.0' &&
+        ready.capabilities.includes('denoising-progress') &&
+        ready.capabilities.includes('candidate-thumbnails')))
   )
 }
 
 /** Legacy 0.2.0 remains usable but may not send progress, even if it advertises extra strings. */
 export function supportsInferenceDenoisingProgress(value: unknown): boolean {
-  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.3.0'
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion !== '0.2.0'
+}
+
+/** Only explicitly qualified peers may nominate a best-effort thumbnail sidecar. */
+export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.4.0'
 }

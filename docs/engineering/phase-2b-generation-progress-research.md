@@ -138,3 +138,9 @@ with a controlled peer. A new end-to-end full-checkpoint CUDA inference run and
 packaged runtime installation are not claimed. Loading/conditioning/decode progress,
 preview images, ETA, queue result thumbnails/session navigation, admission while
 busy, other Invoke conditioning/Anima/operations remain separate roadmap slices.
+
+Subsequent [bounded result thumbnail checkpoint](./phase-2b-result-thumbnails-research.md)
+adds exact worker0.4.0 with both `denoising-progress` and `candidate-thumbnails`;
+the 0.2/0.3 compatibility and progress gates above remain intact. Project Results
+now use bounded cache, while Queue Manager previews and output/session navigation
+remain open. Historical evidence above belongs to this progress checkpoint.
