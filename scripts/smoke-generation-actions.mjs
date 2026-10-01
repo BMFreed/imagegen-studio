@@ -34,6 +34,7 @@ import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualif
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 import { createRuntimeRoots } from '../src/main/runtime/index.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
+import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 const artifacts = path.resolve(
   process.env.IMAGEGEN_GENERATE_ACTIONS_ARTIFACTS ??
@@ -193,6 +194,7 @@ async function resultVisibleOnCanvas() {
 
 async function launch() {
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   application.process().stderr.on('data', (chunk) => {
     mainStderr += chunk.toString()
   })
@@ -673,6 +675,11 @@ try {
     ].map((file) => [file, digest(readFileSync(file))]),
   )
   report.scriptSha256 = digest(readFileSync('scripts/smoke-generation-actions.mjs'))
+  report.windowIsolation = {
+    helperSha256: digest(readFileSync('scripts/native-smoke-window.mjs')),
+    physicalKeyboardBlocked: true,
+    playwrightKeyboardUnchanged: true,
+  }
   const installed = await seedCheckpoint()
   await launch()
   const unavailable = await window.evaluate(() => window.api.runtime.getStatus())

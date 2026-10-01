@@ -14,8 +14,16 @@ import {
   Photo,
   Refresh,
 } from '@vicons/tabler'
-import { NButton, NCheckbox, NDropdown, NIcon, NTag, NTooltip } from 'naive-ui'
-import { computed, ref, watch } from 'vue'
+import { NButton, NCheckbox, NDropdown, NIcon, NSelect, NTag, NTooltip } from 'naive-ui'
+import { computed, ref, useId, watch } from 'vue'
+
+import {
+  generationResultSessions,
+  resultSessionCandidates,
+  resultSessionSelection,
+} from './generation-result-sessions.js'
+
+const sessionId = defineModel<string | null>('sessionId', { required: true })
 
 const props = withDefaults(
   defineProps<{
@@ -46,19 +54,41 @@ const collapsed = ref(false)
 const tray = ref<HTMLElement | null>(null)
 const strip = ref<HTMLElement | null>(null)
 const failedThumbnails = ref(new Set<string>())
+const sessionMenuId = useId()
+const sessionMenuOpen = ref(false)
 const candidateActions = [{ key: 'save-image', label: 'Save Candidate Image' }]
 const selectionActions = [
-  { key: 'all', label: 'Select all completed' },
-  { key: 'none', label: 'Clear selection' },
+  { key: 'all', label: 'Select all completed across all sessions' },
+  { key: 'none', label: 'Clear selection across all sessions' },
 ]
-const selectedCount = computed(() => props.selectedCandidateIds.length)
+const sessions = computed(() => generationResultSessions(props.candidates))
+const sessionOptions = computed(() => [
+  { label: 'All results', value: 'all' },
+  ...sessions.value.map((session, index) => ({
+    label: `Session ${index + 1} · ${session.candidateCount}`,
+    value: session.id,
+  })),
+])
+const sessionValue = computed({
+  get: () => sessionId.value ?? 'all',
+  set: (value: string | null) => {
+    sessionId.value = value === 'all' ? null : value
+  },
+})
+const visibleCandidates = computed(() => resultSessionCandidates(props.candidates, sessionId.value))
+const selection = computed(() =>
+  resultSessionSelection(props.candidates, props.selectedCandidateIds, sessionId.value),
+)
+const selectedCount = computed(() => selection.value.total)
 const addLabel = computed(() =>
   selectedCount.value === 0
     ? 'Add as Layers'
     : `Add ${selectedCount.value} as ${selectedCount.value === 1 ? 'Layer' : 'Layers'}`,
 )
 const focusedIndex = computed(() =>
-  props.candidates.findIndex((candidate) => candidate.candidateId === props.focusedCandidateId),
+  visibleCandidates.value.findIndex(
+    (candidate) => candidate.candidateId === props.focusedCandidateId,
+  ),
 )
 const hasSourceDocumentMismatch = computed(() =>
   props.candidates.some((candidate) => candidate.sourceDocumentMismatch),
@@ -84,11 +114,14 @@ watch(
 )
 
 function focusStep(delta: number) {
-  if (props.candidates.length < 2) {
+  if (visibleCandidates.value.length < 2) {
     return
   }
   const index = Math.max(focusedIndex.value, 0)
-  const next = props.candidates[(index + delta + props.candidates.length) % props.candidates.length]
+  const next =
+    visibleCandidates.value[
+      (index + delta + visibleCandidates.value.length) % visibleCandidates.value.length
+    ]
   if (next) {
     emit('focus', next.candidateId)
   }
@@ -143,10 +176,12 @@ watch(
   >
     <div v-if="!collapsed" ref="strip" class="candidate-strip">
       <article
-        v-for="(candidate, index) of candidates"
+        v-for="(candidate, index) of visibleCandidates"
         :key="candidate.candidateId"
         class="candidate"
         :class="{ 'candidate--focused': candidate.candidateId === focusedCandidateId }"
+        :data-candidate-id="candidate.candidateId"
+        :data-session-id="candidate.stagingSessionId"
       >
         <button
           :aria-label="`Preview candidate ${index + 1}`"
@@ -232,20 +267,42 @@ watch(
       >
         Temp results
       </span>
+      <NSelect
+        v-if="sessions.length > 1"
+        v-model:value="sessionValue"
+        aria-label="Result session"
+        class="session-filter"
+        :consistentMenuWidth="false"
+        filterable
+        :inputProps="{
+          'aria-controls': sessionMenuOpen ? sessionMenuId : undefined,
+          'aria-expanded': sessionMenuOpen,
+          'aria-label': 'Result session search',
+          role: 'combobox',
+        }"
+        :menuProps="{ 'aria-label': 'Result sessions', id: sessionMenuId, role: 'listbox' }"
+        :nodeProps="
+          (option) => ({ role: 'option', 'aria-selected': option.value === sessionValue })
+        "
+        :options="sessionOptions"
+        placement="top-start"
+        size="small"
+        @update:show="sessionMenuOpen = $event"
+      />
       <div class="results-navigation">
         <NButton
           aria-label="Previous result preview"
-          :disabled="candidates.length < 2"
+          :disabled="visibleCandidates.length < 2"
           quaternary
           size="small"
           @click="focusStep(-1)"
         >
           <NIcon :component="ChevronLeft" />
         </NButton>
-        <span class="results-count">{{ focusedIndex + 1 }} / {{ candidates.length }}</span>
+        <span class="results-count">{{ focusedIndex + 1 }} / {{ visibleCandidates.length }}</span>
         <NButton
           aria-label="Next result preview"
-          :disabled="candidates.length < 2"
+          :disabled="visibleCandidates.length < 2"
           quaternary
           size="small"
           @click="focusStep(1)"
@@ -266,7 +323,7 @@ watch(
             </NButton>
           </span>
         </template>
-        Add checked results to Project. Previewing an image does not select it.
+        Add checked results across all sessions to Project. Previewing an image does not select it.
       </NTooltip>
       <NTooltip>
         <template v-slot:trigger>
@@ -318,6 +375,9 @@ watch(
         <NIcon :component="collapsed ? ChevronUp : ChevronDown" />
       </NButton>
     </div>
+    <p v-if="selection.hidden > 0" class="hidden-selection" role="status">
+      {{ selection.hidden }} selected in other sessions. Add includes these results.
+    </p>
     <p v-if="hasSourceDocumentMismatch" class="source-warning" role="status">
       <NTag size="small" type="warning">Different document</NTag>
       <span>
@@ -471,6 +531,23 @@ watch(
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+}
+
+.session-filter {
+  flex: 0 1 142px;
+  width: 142px;
+  min-width: 110px;
+}
+
+.hidden-selection {
+  max-width: 100%;
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: var(--app-radius);
+  color: var(--app-text-muted);
+  background: var(--app-elevated);
+  font-size: var(--app-font-size-meta);
+  text-align: center;
 }
 
 .results-count {

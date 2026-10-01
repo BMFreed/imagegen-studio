@@ -19,12 +19,16 @@ export interface GenerationResultFocusRequest extends QueueResultReference {
   revision: number
 }
 
+/** Closed Projects do not expose a verified candidate ID until ordinary Open/recovery. */
+export type QueueResultOpenReference = Omit<QueueResultReference, 'candidateId' | 'openDocumentId'>
+
 type NavigationOutcome =
   | { focus: GenerationResultFocusRequest; kind: 'focused' }
   | { kind: 'superseded' }
   | { kind: 'unavailable'; reason: string }
 
 interface NavigationDependencies {
+  canContinueProjectOpen: () => boolean
   canNavigate: () => boolean
   getOpenDocumentId: (projectKey: string) => string | null
   readResults: (projectKey: string) => Promise<ProjectGenerationResultsSnapshot>
@@ -32,18 +36,120 @@ interface NavigationDependencies {
 
 /** Real async owner used by App; late reads cannot navigate after close/replacement. */
 export class GenerationQueueResultNavigator {
+  private pendingProjectOpen: {
+    reference: QueueResultOpenReference
+    revision: number
+    started: boolean
+  } | null = null
   private revision = 0
+  private viewToken = 0
 
   constructor(private readonly dependencies: NavigationDependencies) {}
 
+  beginProjectOpen(reference: QueueResultOpenReference): void {
+    this.cancel()
+    this.pendingProjectOpen = {
+      reference: { ...reference },
+      revision: ++this.revision,
+      started: false,
+    }
+  }
+
   cancel(): void {
-    this.revision += 1
+    this.cancelView()
+    this.cancelProjectOpen()
+  }
+
+  cancelProjectOpen(): void {
+    this.pendingProjectOpen = null
+  }
+
+  cancelView(): void {
+    this.viewToken += 1
+  }
+
+  async continueProjectOpen(): Promise<NavigationOutcome> {
+    const intent = this.pendingProjectOpen
+    if (!intent || intent.started) {
+      return { kind: 'superseded' }
+    }
+    intent.started = true
+    const current = () =>
+      this.pendingProjectOpen === intent && this.dependencies.canContinueProjectOpen()
+    try {
+      const openDocumentId = this.dependencies.getOpenDocumentId(intent.reference.projectKey)
+      if (!current() || !openDocumentId) {
+        return { kind: 'superseded' }
+      }
+      const sameDocument = () =>
+        this.dependencies.getOpenDocumentId(intent.reference.projectKey) === openDocumentId
+      let snapshot: ProjectGenerationResultsSnapshot
+      try {
+        snapshot = await this.dependencies.readResults(intent.reference.projectKey)
+      } catch (cause) {
+        if (!current() || !sameDocument()) {
+          return { kind: 'superseded' }
+        }
+        throw cause
+      }
+      if (!current()) {
+        return { kind: 'superseded' }
+      }
+      if (!sameDocument()) {
+        return {
+          kind: 'unavailable',
+          reason: 'The open Project changed while the result was being checked. Refresh the queue.',
+        }
+      }
+      const candidates =
+        isProjectGenerationResultsSnapshot(snapshot) && !snapshot.recoveryUnavailable
+          ? snapshot.candidates.filter(
+              (candidate) =>
+                candidate.queueItemId === intent.reference.queueItemId &&
+                candidate.stagingSessionId === intent.reference.stagingSessionId &&
+                candidate.sourceDocumentMismatch ===
+                  (intent.reference.sourceDocumentId !== openDocumentId) &&
+                belongsToProject(candidate, intent.reference.projectKey),
+            )
+          : []
+      const candidate = candidates.length === 1 ? candidates[0] : null
+      if (!candidate) {
+        return {
+          kind: 'unavailable',
+          reason:
+            'The temporary result is no longer available. The Project is open; refresh the queue.',
+        }
+      }
+      return {
+        focus: {
+          ...intent.reference,
+          candidateId: candidate.candidateId,
+          openDocumentId,
+          revision: intent.revision,
+        },
+        kind: 'focused',
+      }
+    } finally {
+      if (this.pendingProjectOpen === intent) {
+        this.pendingProjectOpen = null
+      }
+    }
+  }
+
+  getPendingProjectOpen(): QueueResultOpenReference | null {
+    return this.pendingProjectOpen ? { ...this.pendingProjectOpen.reference } : null
+  }
+
+  hasPendingProjectOpen(): boolean {
+    return this.pendingProjectOpen !== null
   }
 
   async open(reference: QueueResultReference): Promise<NavigationOutcome> {
+    this.cancel()
+    const token = this.viewToken
     const revision = ++this.revision
     const reviewed = { ...reference }
-    const current = () => revision === this.revision && this.dependencies.canNavigate()
+    const current = () => token === this.viewToken && this.dependencies.canNavigate()
     const sameDocument = () =>
       this.dependencies.getOpenDocumentId(reviewed.projectKey) === reviewed.openDocumentId
     if (!current() || !sameDocument()) {
@@ -84,6 +190,20 @@ export class GenerationQueueResultNavigator {
       }
     }
     return { focus: { ...reviewed, revision }, kind: 'focused' }
+  }
+}
+
+export function queueResultOpenReference(
+  item: GenerationQueueEntry,
+): QueueResultOpenReference | null {
+  if (item.status !== 'completed' || item.publicationPending) {
+    return null
+  }
+  return {
+    projectKey: item.projectKey,
+    queueItemId: item.id,
+    sourceDocumentId: item.documentId,
+    stagingSessionId: item.stagingSessionId,
   }
 }
 

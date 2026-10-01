@@ -154,6 +154,15 @@ After an unexpected shutdown:
   staging recovery for that Project, then opens main `.igs`;
 - `Cancel` changes neither state.
 
+Production checkpoint: [Result sessions and recovery discard](../../engineering/phase-2b-result-sessions-research.md)
+connects the existing Discard decision to durable all-session staging tombstones
+before shadow deletion, with scoped confirmed cancellation and deferred-file
+cleanup reporting. Recover keeps candidates; Discard cancels pending Queue result
+navigation. Home currently detects shadow recovery only: staging-only recovery
+without dirty shadow opens normally and restores valid completed Results, but
+does not yet offer the promised RecoveryAvailable decision. This remains a
+production UI gap, not a change to the contract above.
+
 Pending/running jobs from the previous application lifetime become canceled
 on startup; they do not resume. Their incomplete outputs are not recovered.
 Valid completed candidates remain recoverable independently of queue-history

@@ -440,7 +440,51 @@ adds preview and `View result` for an exact available queue job/session. Its fre
 one-use request changes only Canvas focus/show/fit and expands the tray. The flat
 multi-session list and reviewed Add scope remain unchanged; same-active-Project
 checkboxes are preserved. Home/other-tab mounting keeps its existing default
-selection. This is not session filtering or navigation to accepted history.
+selection. At that checkpoint, session filtering and accepted history navigation
+were not included.
+
+## Production result sessions and Open/recovery continuation
+
+[Result sessions](../../../engineering/phase-2b-result-sessions-research.md)
+adds `All results` / `Session N` to the existing compact toolbar when more than
+one verified session exists. Session membership and stable order come from
+recovered candidates, independently of prunable Queue rows. The filter changes
+only the thumbnail strip and previous/next preview. It chooses a visible focus
+when needed and falls back to All if the chosen session disappears. Loading alone
+does not reset filter or checkbox selection. The filter is transient Canvas UI,
+not saved Project state or a recovery preference.
+
+Checkbox selection remains global. `Add N` includes checked results in other
+sessions; the tray explicitly shows their count and explains that they are
+included. Select all/Clear selection menus name their all-session scope. The
+existing Add confirmation still includes every eligible unchecked candidate and
+unfinished sibling job across the Project; main acceptance/journal/cleanup are
+unchanged. Hiding a candidate never approves its discard or changes selection.
+
+Queue focus reveals the exact target session and keeps selection independent.
+For a closed completed Queue item, `Open Project` captures a one-use job/session/
+source-document intent. Ordinary Open and explicit Recover remain
+the user's decisions. After the chosen document opens, a fresh verified Results
+read finds exactly that candidate and applies the same show/fit/expand request.
+Discard Recovery deletes this Project's document shadow and all temporary
+generations before opening saved state, and cancels result navigation.
+Cancel/dismiss, failed open/read, manual navigation, close/reload, superseding
+requests and disposal revoke continuation. Missing/ambiguous/replaced output
+gives feedback; no neighboring result is substituted. Old-document candidates
+remain preview/export-only under the existing Add restriction.
+
+Filter/focus/continuation do not change the document, bbox, actual seed, dirty,
+Undo, queue/staging, immutable provenance or `.igs`. Explicit Discard Recovery
+uses durable staging tombstones before deleting shadow; Recover retains results.
+The saved file and its accepted assets, queue history, seed and other Projects
+are preserved. Unsaved document changes, including previously accepted layers
+present only in recovery, are discarded. Validation, confirmed cancellation or
+tombstone failure refuses before shadow deletion; deferred physical cleanup is
+reported and retried on restart. Prototype still models one session;
+production multi-session/recovery evidence is recorded separately. Home does not
+yet expose RecoveryAvailable for staging-only recovery without dirty shadow;
+ordinary Open still restores valid completed Results. Pending-only
+sessions, accepted history and full pipeline/release runtime remain open.
 
 ## Vue Prototype Coverage
 

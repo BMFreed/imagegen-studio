@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
+import { fork } from 'node:child_process'
 import {
   chmodSync,
   cpSync,
@@ -17,6 +18,12 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+import type {
+  DatabaseOwnerRequest,
+  DatabaseOwnerResponse,
+} from './fixtures/database-process-owner.js'
 
 import { openAppDatabase } from './database.js'
 
@@ -70,7 +77,7 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
   }
 })
 
-test('existing shared app data root, database directory and file become private on reopen', async () => {
+test('shared directories become private; unsafe SQLite permissions preserve bytes until explicit repair', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-private-'))
   try {
     const first = openAppDatabase(root, sourceMigrations)
@@ -79,14 +86,22 @@ test('existing shared app data root, database directory and file become private 
       .values({ key: 'secret', value: 'frozen prompt' })
       .execute()
     await first.close()
+    const before = readFileSync(first.filePath)
     const directory = path.join(root, 'database')
     chmodSync(root, 0o775)
     chmodSync(directory, 0o775)
     chmodSync(first.filePath, 0o644)
 
-    const reopened = openAppDatabase(root, sourceMigrations)
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database permissions: app\.sqlite.*Close the app.*0600/,
+    )
     assert.equal(statSync(root).mode & 0o777, 0o700)
     assert.equal(statSync(directory).mode & 0o777, 0o700)
+    assert.equal(statSync(first.filePath).mode & 0o777, 0o644)
+    assert.deepEqual(readFileSync(first.filePath), before)
+    chmodSync(first.filePath, 0o600)
+    const reopened = openAppDatabase(root, sourceMigrations)
     assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
     assert.equal(
       (
@@ -100,6 +115,228 @@ test('existing shared app data root, database directory and file become private 
     )
     await reopened.close()
   } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+type OwnerReply = Exclude<DatabaseOwnerResponse, { ready: true }>
+type OwnerCommand =
+  | Omit<Extract<DatabaseOwnerRequest, { operation: 'write' }>, 'id'>
+  | { operation: 'close' | 'keys' }
+
+/** A separate process owns the actual bootstrap and acknowledged SQLite reads/writes. */
+async function startDatabaseOwner(root: string) {
+  const child = fork(
+    fileURLToPath(new URL('./fixtures/database-process-owner.ts', import.meta.url)),
+    [root, sourceMigrations],
+    {
+      execArgv: ['--import', import.meta.resolve('tsx')],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    },
+  )
+  let stderr = ''
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString()
+  })
+  let resolveReady: () => void = () => undefined
+  let rejectReady: (error: Error) => void = () => undefined
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+  const pending = new Map<
+    number,
+    { reject: (error: Error) => void; resolve: (reply: OwnerReply) => void }
+  >()
+  child.on('message', (message: DatabaseOwnerResponse) => {
+    if ('ready' in message) {
+      resolveReady()
+      return
+    }
+    const request = pending.get(message.id)
+    pending.delete(message.id)
+    request?.resolve(message)
+  })
+  child.on('error', (error) => {
+    rejectReady(error)
+    for (const request of pending.values()) {
+      request.reject(error)
+    }
+    pending.clear()
+  })
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', (code, signal) => {
+      const error = new Error(
+        `Database owner exited (${String(code)}, ${String(signal)}): ${stderr}`,
+      )
+      rejectReady(error)
+      for (const request of pending.values()) {
+        request.reject(error)
+      }
+      pending.clear()
+      resolve()
+    })
+  })
+  // A broken child/IPC protocol must fail this harness and clean up, not hang the whole suite.
+  // This is a test-operation ceiling, not a SQLite busy timeout or product recovery policy.
+  async function bounded<T>(operation: Promise<T>, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            child.kill('SIGKILL')
+            reject(new Error(`Database owner timed out while ${label}: ${stderr}`))
+          }, 10_000)
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  let requestId = 0
+  function request(command: OwnerCommand): Promise<OwnerReply> {
+    const response = new Promise<OwnerReply>((resolve, reject) => {
+      const id = ++requestId
+      pending.set(id, { reject, resolve })
+      child.send({ ...command, id } satisfies DatabaseOwnerRequest, (error) => {
+        if (error) {
+          pending.delete(id)
+          reject(error)
+        }
+      })
+    })
+    return bounded(response, `acknowledging ${command.operation}`)
+  }
+  try {
+    await bounded(ready, 'becoming ready')
+  } catch (error) {
+    child.kill('SIGKILL')
+    await bounded(exited, 'exiting after startup failure')
+    throw error
+  }
+  return {
+    dispose: async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          assert.equal((await request({ operation: 'close' })).ok, true)
+        } catch (error) {
+          child.kill('SIGKILL')
+          await bounded(exited, 'exiting after shutdown failure')
+          throw error
+        }
+      }
+      await bounded(exited, 'exiting after acknowledged close')
+    },
+    request,
+  }
+}
+
+test('a live database owner sees external committed writes across secondary close and reopen', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-lock-visibility-'))
+  let secondary: ReturnType<typeof openAppDatabase> | undefined
+  let owner: Awaited<ReturnType<typeof startDatabaseOwner>> | undefined
+  try {
+    secondary = openAppDatabase(root, sourceMigrations)
+    await secondary.db
+      .insertInto('app_metadata')
+      .values({ key: 'lock-visibility-baseline', value: 'private durable probe' })
+      .execute()
+    await secondary.close()
+    secondary = undefined
+    owner = await startDatabaseOwner(root)
+    const filePath = path.join(root, 'database', 'app.sqlite')
+    const initialWal = statSync(`${filePath}-wal`).ino
+    const initialShm = statSync(`${filePath}-shm`).ino
+    secondary = openAppDatabase(root, sourceMigrations)
+    await secondary.db
+      .insertInto('app_metadata')
+      .values({ key: 'lock-visibility-first', value: 'private durable probe' })
+      .execute()
+    assert.deepEqual(await owner.request({ operation: 'keys' }), {
+      id: 1,
+      keys: ['lock-visibility-baseline', 'lock-visibility-first'],
+      ok: true,
+    })
+    await secondary.close()
+    secondary = undefined
+    const sidecarsAfterClose = {
+      shm: statSync(`${filePath}-shm`, { throwIfNoEntry: false })?.ino,
+      wal: statSync(`${filePath}-wal`, { throwIfNoEntry: false })?.ino,
+    }
+    secondary = openAppDatabase(root, sourceMigrations)
+    await secondary.db
+      .insertInto('app_metadata')
+      .values({ key: 'lock-visibility-second', value: 'private durable probe' })
+      .execute()
+    assert.deepEqual(await owner.request({ operation: 'keys' }), {
+      id: 2,
+      keys: ['lock-visibility-baseline', 'lock-visibility-first', 'lock-visibility-second'],
+      ok: true,
+    })
+    // Metadata explains retained visibility; the committed data assertion above is the invariant.
+    assert.deepEqual(sidecarsAfterClose, { shm: initialShm, wal: initialWal })
+    await owner.dispose()
+    owner = undefined
+    await secondary.close()
+    secondary = undefined
+    const reopened = openAppDatabase(root, sourceMigrations)
+    try {
+      const keys = await reopened.db
+        .selectFrom('app_metadata')
+        .select('key')
+        .orderBy('key')
+        .execute()
+      assert.deepEqual(
+        keys.map((row) => row.key),
+        ['lock-visibility-baseline', 'lock-visibility-first', 'lock-visibility-second'],
+      )
+    } finally {
+      await reopened.close()
+    }
+  } finally {
+    await owner?.dispose()
+    await secondary?.close()
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('an unsafe overlapping bootstrap cannot unlock an existing same-process writer', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-active-lock-'))
+  const owner = openAppDatabase(root, sourceMigrations)
+  let witness: Awaited<ReturnType<typeof startDatabaseOwner>> | undefined
+  let transactionOpen = false
+  try {
+    witness = await startDatabaseOwner(root)
+    await sql`BEGIN IMMEDIATE`.execute(owner.db)
+    transactionOpen = true
+    chmodSync(`${owner.filePath}-shm`, 0o644)
+    assert.throws(
+      () => openAppDatabase(root, sourceMigrations),
+      /Invalid application database permissions: app\.sqlite-shm/,
+    )
+    chmodSync(`${owner.filePath}-shm`, 0o600)
+    const blocked = await witness.request({ key: 'lock-visibility-blocked', operation: 'write' })
+    assert.equal(blocked.ok, false)
+    assert.equal(!blocked.ok && blocked.code, 'SQLITE_BUSY')
+    await sql`ROLLBACK`.execute(owner.db)
+    transactionOpen = false
+    assert.equal(
+      (await witness.request({ key: 'lock-visibility-after-unlock', operation: 'write' })).ok,
+      true,
+    )
+    const keys = await owner.db.selectFrom('app_metadata').select('key').orderBy('key').execute()
+    assert.deepEqual(
+      keys.map((row) => row.key),
+      ['lock-visibility-after-unlock'],
+    )
+  } finally {
+    if (transactionOpen) {
+      await sql`ROLLBACK`.execute(owner.db)
+    }
+    await witness?.dispose()
+    await owner.close()
     rmSync(root, { force: true, recursive: true })
   }
 })

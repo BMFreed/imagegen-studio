@@ -31,6 +31,7 @@ import {
 import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
 import { checkDynamicPromptPreview } from './desktop-dynamic-prompt-checks.mjs'
+import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -281,6 +282,7 @@ let tabCloseJobDatabase
 try {
   const queuedBeforeStart = await seedUnfinishedQueueItem()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   const window = await application.firstWindow()
   await window.locator('body').waitFor()
   if (process.env.IMAGEGEN_SMOKE_SCREENSHOT) {
@@ -1020,6 +1022,7 @@ try {
   assert.ok(readFileSync(packagePath).equals(savedPackage), 'Crash must not change the saved .igs')
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   const recoveryWindow = await application.firstWindow()
   await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
@@ -2317,6 +2320,7 @@ try {
   symlinkSync(outside, generationStagingDir)
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   const damagedWindow = await application.firstWindow()
   await damagedWindow.getByRole('tab', { name: 'Home' }).waitFor()
   const damagedStatus = await damagedWindow.evaluate(() => window.api.runtime.getStatus())

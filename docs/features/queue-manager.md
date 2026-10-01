@@ -517,8 +517,18 @@ Unavailable/replaced/closed/superseded targets refuse navigation with feedback;
 no queue/candidate, document/bbox, seed, provenance, Undo, dirty or `.igs` mutation
 follows from viewing. Native three-session, cached/placeholder/Refresh, minimum
 window and ordinary queue/recovery checks are recorded in the research note.
-Session filtering, automatically continuing navigation after Open Project/recovery
-and accepted history navigation remain separate work.
+At this checkpoint, session filtering and continuation after Open/recovery were
+still separate. The subsequent
+[Result sessions checkpoint](../engineering/phase-2b-result-sessions-research.md)
+preserves the completed item's exact metadata across ordinary `Open Project` and
+explicit Recover. Discard Recovery instead removes document shadow and every
+temporary generation of that Project before opening saved state, and cancels
+the navigation intent. It freshly verifies the resulting recovered document
+and candidate before focusing its session. Recovery Cancel, context/close changes,
+failure and superseding requests revoke the one-use intent. Missing output gives
+feedback without choosing a neighbor. Noncompleted or unpublished items still use
+ordinary Open only. Presentation filtering leaves global Add/cleanup and selection
+scope unchanged. Accepted history remains separate work.
 
 ## Production busy Retry checkpoint
 

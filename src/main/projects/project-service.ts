@@ -761,7 +761,11 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
-  async resolveRecovery(projectId: string, decision: 'discard' | 'recover'): Promise<ProjectTab> {
+  async resolveRecovery(
+    projectId: string,
+    decision: 'discard' | 'recover',
+    beforeDiscardRecovery?: () => Promise<void>,
+  ): Promise<ProjectTab> {
     assertProjectId(projectId)
     const rebuilding = this.rebuilding.get(projectId)
     if (rebuilding) {
@@ -792,6 +796,11 @@ export class ProjectService {
         'PROJECT_RECOVERY_UNAVAILABLE',
         'The saved Project can be opened after discarding this invalid recovery state.',
       )
+    }
+    // The app-level recovery owner must durably discard temporary generation sessions before
+    // removing this document shadow. Invalid/already-open requests never reach that boundary.
+    if (decision === 'discard') {
+      await beforeDiscardRecovery?.()
     }
     const coordinator =
       decision === 'recover'

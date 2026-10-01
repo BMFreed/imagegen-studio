@@ -5,8 +5,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -14,6 +16,8 @@ import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { crc32, deflateSync } from 'node:zlib'
 import { _electron as electron, expect } from '@playwright/test'
+
+import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { GenerationQueueRepository } from '../src/main/projects/generation-queue.ts'
@@ -33,6 +37,34 @@ const ready = {
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function fixtureDatabaseDescriptors(pid) {
+  const databasePath = path.join(appDataRoot, 'database', 'app.sqlite')
+  const identity = (file) => {
+    try {
+      const entry = statSync(file)
+      return { device: entry.dev, inode: entry.ino, byteSize: entry.size }
+    } catch (cause) {
+      if (cause.code === 'ENOENT') return null
+      throw cause
+    }
+  }
+  return {
+    files: Object.fromEntries(
+      ['', '-wal', '-shm'].map((suffix) => [suffix || 'database', identity(databasePath + suffix)]),
+    ),
+    mainDescriptors: readdirSync(`/proc/${pid}/fd`).flatMap((fd) => {
+      const fdPath = `/proc/${pid}/fd/${fd}`
+      try {
+        const target = readlinkSync(fdPath)
+        return target.startsWith(databasePath) ? [{ fd, target, ...identity(fdPath) }] : []
+      } catch (cause) {
+        if (cause.code === 'ENOENT') return []
+        throw cause
+      }
+    }),
+  }
 }
 
 function pngChunk(name, bytes) {
@@ -129,6 +161,105 @@ async function clickSaveCandidateImage(window) {
   await expect(menuItem).toBeHidden()
 }
 
+function candidateCard(window, candidate) {
+  return window.locator(`.candidate[data-candidate-id="${candidate.candidateId}"]`)
+}
+
+function durableResultsSnapshot(snapshot) {
+  assert.equal(snapshot.ok, true)
+  return {
+    ...snapshot.value,
+    candidates: snapshot.value.candidates.map(
+      ({ imageUrl, thumbnailUrl: _thumbnailUrl, ...candidate }) => ({
+        ...candidate,
+        sourcePngSha256: new URL(imageUrl).pathname.split('/')[4],
+      }),
+    ),
+  }
+}
+
+async function chooseResultSession(window, label) {
+  await window.getByLabel('Result session', { exact: true }).click()
+  await window.getByRole('option', { exact: true, name: label }).click()
+  await expect(window.getByRole('listbox', { exact: true, name: 'Result sessions' })).toBeHidden()
+}
+
+async function crashAndRestartResultsApplication() {
+  const previousProcess = application.process()
+  const exited = new Promise((resolve) => previousProcess.once('exit', resolve))
+  assert.equal(previousProcess.kill('SIGKILL'), true)
+  await Promise.race([
+    exited,
+    delay(10_000).then(() => {
+      throw new Error('The Results app did not exit during the navigation recovery fixture.')
+    }),
+  ])
+  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
+  trackMainErrors(application)
+  const window = await application.firstWindow()
+  await trackPageErrors(window)
+  await window.getByRole('tab', { exact: true, name: 'Home' }).waitFor()
+  return window
+}
+
+let closedQueueOpenAttempt = 0
+async function captureNativeInput(window) {
+  if (!queueNavigationArtifacts) return
+  await window.evaluate(() => {
+    window.igsSmokeInputEvents = []
+    window.igsSmokeInputListener ??= (event) => {
+      const target = event.target instanceof Element ? event.target : null
+      window.igsSmokeInputEvents.push({
+        type: event.type,
+        key: event.key,
+        trusted: event.isTrusted,
+        x: event.clientX,
+        y: event.clientY,
+        target: target?.getAttribute('aria-label') ?? target?.textContent?.slice(0, 120),
+      })
+      if (window.igsSmokeInputEvents.length > 500) window.igsSmokeInputEvents.shift()
+    }
+    for (const type of ['keydown', 'keyup', 'pointerdown', 'click'])
+      window.addEventListener(type, window.igsSmokeInputListener, true)
+  })
+}
+async function openClosedQueueResult(window, candidate) {
+  const tracePath = queueNavigationArtifacts
+    ? path.join(queueNavigationArtifacts, `closed-queue-open-${++closedQueueOpenAttempt}.zip`)
+    : null
+  if (tracePath) await window.context().tracing.start({ screenshots: true, snapshots: true })
+  await captureNativeInput(window)
+  try {
+    await window.getByRole('button', { exact: true, name: 'Open Queue Manager' }).click()
+    const manager = window.getByRole('dialog', { exact: true, name: 'Queue Manager' })
+    await expect(
+      manager.getByRole('region', { exact: true, name: 'Generation jobs' }),
+    ).toHaveAttribute('aria-busy', 'false')
+    const target = manager
+      .locator(`[data-testid="queue-job-row"][data-job-id="${candidate.queueItemId}"]`)
+      .getByRole('button', { exact: true, name: 'Show job details' })
+    await target.click()
+    await expect(target).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      manager.getByRole('region', { exact: true, name: 'Generation jobs' }),
+    ).toHaveAttribute('aria-busy', 'false')
+    await expect(manager.getByRole('button', { exact: true, name: 'View result' })).toHaveCount(0)
+    await expect(manager.locator('[data-testid="queue-result-thumbnail"] img')).toHaveCount(0)
+    await manager.getByRole('button', { exact: true, name: 'Open Project' }).click()
+    await expect(manager).toHaveCount(0)
+  } finally {
+    if (tracePath) {
+      const inputs = await window.evaluate(() => window.igsSmokeInputEvents)
+      writeFileSync(
+        tracePath.replace(/\.zip$/, '-input-events.json'),
+        `${JSON.stringify(inputs, null, 2)}\n`,
+      )
+      await window.context().tracing.stop({ path: tracePath })
+    }
+  }
+}
+
 const dataRoot = mkdtempSync(path.join(os.tmpdir(), 'igs-results-smoke-'))
 const appDataRoot = path.join(dataRoot, 'data', 'imagegen-studio')
 const environment = {
@@ -148,6 +279,14 @@ if (queueNavigationArtifacts) {
   mkdirSync(queueNavigationArtifacts, { mode: 0o700, recursive: true })
 }
 const queueNavigationReport = { checks: [], pageErrors, screenshots: [] }
+queueNavigationReport.testBoundary = {
+  desktopInput:
+    'Actual BrowserWindow remains visible for compositor screenshots. Physical OS keyboard input is prevented through before-input-event; scripted CDP keyboard input bypasses this callback on the tested runtime.',
+  renderer:
+    'Actual built Electron DOM, CDP keyboard handlers and Konva Canvas; screenshots use this renderer.',
+  persistence:
+    'Actual main/preload/IPC, .igs, autosave, SQLite queue and staging. Controlled fixture PNG publication replaces inference pixels; native file pickers are controlled.',
+}
 const testedBuild = Object.fromEntries(
   [
     'dist/main/main.cjs',
@@ -159,14 +298,17 @@ const testedBuild = Object.fromEntries(
   ].map((file) => [file, digest(readFileSync(file))]),
 )
 const testedScript = digest(readFileSync('scripts/smoke-generation-results.mjs'))
+const testedWindowIsolationHelper = digest(readFileSync('scripts/native-smoke-window.mjs'))
 async function queueNavigationScreenshot(window, name) {
   if (!queueNavigationArtifacts) return
   const file = path.join(queueNavigationArtifacts, `${name}.png`)
   await window.screenshot({ animations: 'disabled', path: file })
   queueNavigationReport.screenshots.push(file)
 }
-function trackPageErrors(window) {
+async function trackPageErrors(window) {
   window.on('pageerror', (error) => pageErrors.push(error.message))
+  await window.waitForURL('**/index.html')
+  await captureNativeInput(window)
 }
 function trackMainErrors(application) {
   application.process().stderr?.on('data', (chunk) => process.stderr.write(chunk))
@@ -176,9 +318,10 @@ let application
 let liveFixtureDatabase
 try {
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   trackMainErrors(application)
   const initialWindow = await application.firstWindow()
-  trackPageErrors(initialWindow)
+  await trackPageErrors(initialWindow)
   await initialWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await initialWindow.getByRole('button', { name: 'New Project' }).first().click()
   const createDialog = initialWindow.getByRole('dialog', { name: 'New Project' })
@@ -322,9 +465,10 @@ try {
   console.log('Results smoke fixture: published verified candidate through queue and staging.')
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   trackMainErrors(application)
   const window = await application.firstWindow()
-  trackPageErrors(window)
+  await trackPageErrors(window)
   await window.getByRole('tab', { name: 'Home' }).waitFor()
   // A closed Project cannot supply live signed resources. Queue history can still open that
   // Project, after which the ordinary recovery/results path verifies the candidate afresh.
@@ -353,7 +497,7 @@ try {
   await closedProjectManager.getByRole('button', { name: 'Open Project', exact: true }).click()
   await expect(closedProjectManager).toHaveCount(0)
   queueNavigationReport.checks.push({
-    name: 'Closed Project completed job exposes Open Project without View result or private image',
+    name: 'Closed Project exposes no private image; Open Project continues to the exact verified result',
     queueItemId: candidate.queueItemId,
   })
   await window.getByRole('tab', { name: projectTitle }).waitFor()
@@ -373,6 +517,12 @@ try {
   assert.equal('assetPath' in recovered || 'frozenPayloadJson' in recovered, false)
   await expect(window.getByRole('region', { name: 'Project Canvas' })).toBeVisible()
   await expect(window.getByRole('toolbar', { name: 'Temporary generation results' })).toBeVisible()
+  await expect(candidateCard(window, recovered).locator('.candidate-button')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect(window.getByLabel('Result session', { exact: true })).toHaveCount(0)
+  assert.deepEqual(readFileSync(packagePath), originalBytes)
   // A recovered result from the supported legacy peer has no thumbnail cache. The strip must
   // keep the candidate selectable without downloading its full PNG as a thumbnail fallback.
   const legacyCandidateButton = window.getByRole('button', {
@@ -607,13 +757,14 @@ try {
   const acceptanceSource = (await readIgsPackage(packagePath)).project
   assert.equal(acceptanceSource.layers.length, 0)
   const acceptedCandidates = []
-  const acceptanceDatabase = openAppDatabase(appDataRoot, migrations)
-  try {
-    const queue = new GenerationQueueRepository(acceptanceDatabase.db, appDataRoot)
-    const staging = new GenerationStagingRepository(acceptanceDatabase.db, appDataRoot)
-    await queue.recoverAfterRestart()
-    await staging.recoverAfterRestart()
-    for (const seed of [71, 72, 73]) {
+  async function publishRecoveryCandidates({
+    queue,
+    staging,
+    projectPath = packagePath,
+    seeds = [71, 72, 73],
+  }) {
+    const published = []
+    for (const seed of seeds) {
       const candidatePrepared = {
         ...prepared,
         context: {
@@ -637,14 +788,14 @@ try {
         use: async (request) => {
           const queued = await queue.enqueueIllustriousTxt2Img({
             prepared: candidatePrepared,
-            projectPath: packagePath,
+            projectPath,
             request,
             stagingSessionId: randomUUID(),
           })
           const claim = await queue.claimNextPending()
           assert.equal(claim?.item.id, queued.id)
           writeFileSync(request.job.output.pngPath, output)
-          acceptedCandidates.push(
+          published.push(
             await staging.publishIllustriousTxt2Img({
               actualSeed: seed,
               expectedProvisionalRoot: request.job.output.stagingRoot,
@@ -656,6 +807,24 @@ try {
         },
       })
     }
+    return published
+  }
+  const recoveryNeighborPackagePath = path.join(dataRoot, 'recovery-neighbor.igs')
+  writeFileSync(recoveryNeighborPackagePath, packageBeforeAcceptance)
+  let recoveryNeighbor
+  const acceptanceDatabase = openAppDatabase(appDataRoot, migrations)
+  try {
+    const queue = new GenerationQueueRepository(acceptanceDatabase.db, appDataRoot)
+    const staging = new GenerationStagingRepository(acceptanceDatabase.db, appDataRoot)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    acceptedCandidates.push(...(await publishRecoveryCandidates({ queue, staging })))
+    ;[recoveryNeighbor] = await publishRecoveryCandidates({
+      queue,
+      staging,
+      projectPath: recoveryNeighborPackagePath,
+      seeds: [91],
+    })
   } finally {
     await acceptanceDatabase.close()
   }
@@ -664,13 +833,14 @@ try {
   assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
 
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   trackMainErrors(application)
-  const acceptanceWindow = await application.firstWindow()
-  trackPageErrors(acceptanceWindow)
+  let acceptanceWindow = await application.firstWindow()
+  await trackPageErrors(acceptanceWindow)
   await acceptanceWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await acceptanceWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
   await acceptanceWindow.getByRole('tab', { name: projectTitle }).waitFor()
-  const acceptanceSnapshot = await acceptanceWindow.evaluate(
+  let acceptanceSnapshot = await acceptanceWindow.evaluate(
     (id) => window.api.projects.listGenerationResults(id),
     project.id,
   )
@@ -680,6 +850,370 @@ try {
     acceptedCandidates.map((item) => item.candidateId),
   )
   assert.deepEqual(acceptanceSnapshot.value.unfinishedSiblingJobIds, [])
+
+  // Recovery is an ordinary document decision before the one-use result intent resumes. Build a
+  // real dirty shadow through Canvas, then crash without accepting or saving any candidate.
+  const shadowBbox = { ...acceptanceSource.primaryBbox, x: acceptanceSource.primaryBbox.x + 1 }
+  const acceptanceCanvas = acceptanceWindow.getByRole('region', {
+    exact: true,
+    name: 'Project Canvas',
+  })
+  await acceptanceCanvas.getByRole('button', { exact: true, name: 'Bounding Box tool' }).click()
+  await acceptanceCanvas.locator('.canvas-area').focus()
+  await acceptanceCanvas.locator('.canvas-area').press('ArrowRight')
+  await expect
+    .poll(async () => {
+      const opened = await acceptanceWindow.evaluate(
+        (id) => window.api.projects.open(id),
+        project.id,
+      )
+      return opened.ok && opened.value.kind === 'opened' ? opened.value.tab.primaryBbox : null
+    })
+    .toEqual(shadowBbox)
+  await expect(
+    acceptanceWindow
+      .getByRole('region', { name: `Project ${projectTitle}` })
+      .getByText('Unsaved changes', {
+        exact: true,
+      }),
+  ).toBeVisible()
+  // Dirty renderer state precedes the debounced autosave. Establish a real committed recovery
+  // precondition before SIGKILL rather than assuming the visible edit is already on disk.
+  const navigationShadowManifest = path.join(appDataRoot, 'autosave', project.id, 'manifest.json')
+  await expect
+    .poll(() => {
+      try {
+        const manifest = JSON.parse(readFileSync(navigationShadowManifest, 'utf8'))
+        if (manifest.state !== 'dirty' || typeof manifest.snapshotId !== 'string') return null
+        const shadow = JSON.parse(
+          readFileSync(
+            path.join(
+              path.dirname(navigationShadowManifest),
+              'snapshots',
+              manifest.snapshotId,
+              'project.json',
+            ),
+            'utf8',
+          ),
+        )
+        return shadow.documentRevision === manifest.documentRevision ? shadow.primaryBbox : null
+      } catch (cause) {
+        if (cause.code === 'ENOENT') return null
+        throw cause
+      }
+    })
+    .toEqual(shadowBbox)
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  acceptanceWindow = await crashAndRestartResultsApplication()
+  await openClosedQueueResult(acceptanceWindow, acceptedCandidates[1])
+  const canceledRecovery = acceptanceWindow.getByRole('dialog', { name: 'Recovery available' })
+  await expect(canceledRecovery).toBeVisible()
+  await queueNavigationScreenshot(acceptanceWindow, '04-recovery-cancel-intent')
+  await canceledRecovery.getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(canceledRecovery).toHaveCount(0)
+  await expect(acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle })).toHaveCount(
+    0,
+  )
+  // Opening independently after Cancel must not resurrect the target Session 2 intent.
+  await acceptanceWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
+  await canceledRecovery.getByRole('button', { exact: true, name: 'Recover' }).click()
+  await acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }).waitFor()
+  await expect(acceptanceWindow.locator('.candidate')).toHaveCount(3)
+  await expect(
+    candidateCard(acceptanceWindow, acceptedCandidates[0]).locator('.candidate-button'),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+    'All results',
+  )
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  queueNavigationReport.checks.push({
+    name: 'Cancel recovery consumes closed-Project result intent; ordinary later Recover keeps default All focus',
+    queueItemId: acceptedCandidates[1].queueItemId,
+  })
+
+  {
+    const decision = 'Recover'
+    const index = 1
+    acceptanceWindow = await crashAndRestartResultsApplication()
+    await openClosedQueueResult(acceptanceWindow, acceptedCandidates[index])
+    const dialog = acceptanceWindow.getByRole('dialog', { name: 'Recovery available' })
+    await expect(dialog).toBeVisible()
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    await dialog.getByRole('button', { exact: true, name: decision }).click()
+    await acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }).waitFor()
+    const target = acceptedCandidates[index]
+    await expect(
+      candidateCard(acceptanceWindow, target).locator('.candidate-button'),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(1)
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+      `Session ${index + 1}`,
+    )
+    const recoveredOpen = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      project.id,
+    )
+    assert.equal(recoveredOpen.ok, true)
+    assert.deepEqual(recoveredOpen.value.tab.primaryBbox, shadowBbox)
+    assert.equal(recoveredOpen.value.tab.dirty, true)
+    const results = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.deepEqual(durableResultsSnapshot(results), durableResultsSnapshot(acceptanceSnapshot))
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    assert.ok(acceptedCandidates.every((item) => readFileSync(item.assetPath).equals(output)))
+    await queueNavigationScreenshot(acceptanceWindow, `05-recovery-${index}-exact-result`)
+    queueNavigationReport.checks.push({
+      candidateId: target.candidateId,
+      decision,
+      name: 'Queue Open continues through the explicit recovery decision to the exact session and candidate',
+      queueItemId: target.queueItemId,
+      stagingSessionId: target.stagingSessionId,
+    })
+  }
+
+  // Discard is destructive for this Project's whole local recovery, including every temporary
+  // session. It must consume the queue navigation intent instead of restoring its result focus.
+  acceptanceWindow = await crashAndRestartResultsApplication()
+  await openClosedQueueResult(acceptanceWindow, acceptedCandidates[2])
+  const discardRecoveryDialog = acceptanceWindow.getByRole('dialog', { name: 'Recovery available' })
+  await expect(discardRecoveryDialog).toBeVisible()
+  const discardDatabase = openAppDatabase(appDataRoot, migrations)
+  try {
+    const queueRowsBefore = await discardDatabase.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    assert.ok(queueRowsBefore.every((row) => !['pending', 'running'].includes(row.status)))
+    const seedRowsBefore = await discardDatabase.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .orderBy('local_project_key')
+      .execute()
+    await discardRecoveryDialog
+      .getByRole('button', { exact: true, name: 'Discard Recovery and Open Saved' })
+      .click()
+    await acceptanceWindow.getByRole('tab', { exact: true, name: projectTitle }).waitFor()
+    await expect(
+      acceptanceWindow.getByRole('region', { exact: true, name: 'Generation Results' }),
+    ).toHaveCount(0)
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(0)
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toHaveCount(0)
+    const discardedOpen = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.open(id),
+      project.id,
+    )
+    assert.equal(discardedOpen.ok, true)
+    assert.equal(discardedOpen.value.tab.dirty, false)
+    assert.deepEqual(discardedOpen.value.tab.primaryBbox, acceptanceSource.primaryBbox)
+    assert.equal(existsSync(navigationShadowManifest), false)
+    const discardedResults = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.equal(discardedResults.ok, true)
+    assert.deepEqual(discardedResults.value.candidates, [])
+    assert.equal(discardedResults.value.lastActualSeed, 73)
+    const tombstones = await discardDatabase.db
+      .selectFrom('generation_staging_discarded_session')
+      .select(['local_project_key', 'staging_session_id'])
+      .execute()
+    assert.ok(
+      acceptedCandidates.every((item) =>
+        tombstones.some(
+          (row) =>
+            row.local_project_key === item.localProjectKey &&
+            row.staging_session_id === item.stagingSessionId,
+        ),
+      ),
+    )
+    assert.equal(
+      tombstones.some(
+        (row) =>
+          row.local_project_key === recoveryNeighbor.localProjectKey &&
+          row.staging_session_id === recoveryNeighbor.stagingSessionId,
+      ),
+      false,
+    )
+    await expect
+      .poll(() => acceptedCandidates.every((item) => !existsSync(item.assetPath)))
+      .toBe(true)
+    assert.deepEqual(
+      await discardDatabase.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute(),
+      queueRowsBefore,
+    )
+    assert.deepEqual(
+      await discardDatabase.db
+        .selectFrom('generation_seed_cursor')
+        .selectAll()
+        .orderBy('local_project_key')
+        .execute(),
+      seedRowsBefore,
+    )
+    assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+    assert.deepEqual(readFileSync(recoveryNeighborPackagePath), packageBeforeAcceptance)
+    assert.deepEqual(readFileSync(recoveryNeighbor.assetPath), output)
+    const staging = new GenerationStagingRepository(discardDatabase.db, appDataRoot)
+    await staging.recoverAfterRestart()
+    assert.equal((await staging.listVerifiedCandidates(recoveryNeighbor.localProjectKey)).length, 1)
+    await queueNavigationScreenshot(acceptanceWindow, '05-recovery-discard-saved-no-results')
+    queueNavigationReport.checks.push({
+      name: 'Discard Recovery removes this Project shadow and all temporary sessions; no result intent resumes; saved package, seed, queue history and neighbor remain unchanged',
+      discardedCandidateIds: acceptedCandidates.map((item) => item.candidateId),
+      preservedNeighborCandidateId: recoveryNeighbor.candidateId,
+    })
+    // Fresh real queue/staging publication prepares independent filter/Add regressions after the
+    // destructive decision. It never revives the tombstoned old identities or their focus intent.
+    const queue = new GenerationQueueRepository(discardDatabase.db, appDataRoot)
+    await queue.recoverAfterRestart()
+    acceptedCandidates.splice(
+      0,
+      acceptedCandidates.length,
+      ...(await publishRecoveryCandidates({ queue, staging })),
+    )
+    await acceptanceWindow.getByRole('button', { exact: true, name: 'Open Queue Manager' }).click()
+    const refreshedQueue = acceptanceWindow.getByRole('dialog', {
+      exact: true,
+      name: 'Queue Manager',
+    })
+    await refreshedQueue.getByRole('button', { exact: true, name: 'Close Queue Manager' }).click()
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(3)
+    acceptanceSnapshot = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    assert.equal(acceptanceSnapshot.ok, true)
+    assert.deepEqual(
+      acceptanceSnapshot.value.candidates.map((item) => item.candidateId),
+      acceptedCandidates.map((item) => item.candidateId),
+    )
+    await expect(
+      candidateCard(acceptanceWindow, acceptedCandidates[0]).locator('.candidate-button'),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+      'All results',
+    )
+  } finally {
+    const beforeClose = queueNavigationArtifacts
+      ? fixtureDatabaseDescriptors(application.process().pid)
+      : null
+    await discardDatabase.close()
+    if (queueNavigationArtifacts) {
+      writeFileSync(
+        path.join(queueNavigationArtifacts, 'fixture-wal-lifetime.json'),
+        `${JSON.stringify({ beforeClose, afterClose: fixtureDatabaseDescriptors(application.process().pid) }, null, 2)}\n`,
+      )
+    }
+  }
+
+  await chooseResultSession(acceptanceWindow, 'All results')
+  const filterState = await acceptanceWindow.evaluate(
+    async (id) =>
+      await Promise.all([
+        window.api.projects.open(id),
+        window.api.projects.listGenerationResults(id),
+        window.api.projects.getGenerationState(id),
+        window.api.projects.getGenerationQueue(),
+      ]),
+    project.id,
+  )
+  await chooseResultSession(acceptanceWindow, 'Session 2 · 1')
+  await expect(acceptanceWindow.locator('.candidate')).toHaveCount(1)
+  await expect(
+    candidateCard(acceptanceWindow, acceptedCandidates[1]).locator('.candidate-button'),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    candidateCard(acceptanceWindow, acceptedCandidates[1]).getByRole('checkbox'),
+  ).not.toBeChecked()
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Add 1 as Layer' }),
+  ).toBeEnabled()
+  await expect(
+    acceptanceWindow.getByText('1 selected in other sessions. Add includes these results.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Previous result preview' }),
+  ).toBeDisabled()
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Next result preview' }),
+  ).toBeDisabled()
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(900, 620),
+  )
+  await queueNavigationScreenshot(acceptanceWindow, '06-filter-compact-hidden-selection')
+  await acceptanceWindow
+    .getByRole('button', { exact: true, name: 'Result selection actions' })
+    .click()
+  await acceptanceWindow
+    .getByRole('menuitem', { exact: true, name: 'Select all completed across all sessions' })
+    .click()
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Add 3 as Layers' }),
+  ).toBeEnabled()
+  await expect(
+    acceptanceWindow.getByText('2 selected in other sessions. Add includes these results.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await acceptanceWindow
+    .getByRole('button', { exact: true, name: 'Result selection actions' })
+    .click()
+  await acceptanceWindow
+    .getByRole('menuitem', { exact: true, name: 'Clear selection across all sessions' })
+    .click()
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Add as Layers' }),
+  ).toBeDisabled()
+  await chooseResultSession(acceptanceWindow, 'All results')
+  await expect(acceptanceWindow.locator('.candidate')).toHaveCount(3)
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Next result preview' }),
+  ).toBeEnabled()
+  await acceptanceWindow.getByRole('button', { exact: true, name: 'Next result preview' }).click()
+  await expect(
+    candidateCard(acceptanceWindow, acceptedCandidates[2]).locator('.candidate-button'),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    acceptanceWindow.getByRole('button', { exact: true, name: 'Add as Layers' }),
+  ).toBeDisabled()
+  await acceptanceWindow.getByLabel('Result session', { exact: true }).click()
+  await acceptanceWindow
+    .getByRole('combobox', { exact: true, name: 'Result session search' })
+    .press('ArrowDown')
+  await acceptanceWindow
+    .getByRole('combobox', { exact: true, name: 'Result session search' })
+    .press('Enter')
+  await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+    'Session 1',
+  )
+  await expect(candidateCard(acceptanceWindow, acceptedCandidates[0])).toBeVisible()
+  assert.deepEqual(
+    await acceptanceWindow.evaluate(
+      async (id) =>
+        await Promise.all([
+          window.api.projects.open(id),
+          window.api.projects.listGenerationResults(id),
+          window.api.projects.getGenerationState(id),
+          window.api.projects.getGenerationQueue(),
+        ]),
+      project.id,
+    ),
+    filterState,
+  )
+  assert.deepEqual(readFileSync(packagePath), packageBeforeAcceptance)
+  await queueNavigationScreenshot(acceptanceWindow, '07-filter-keyboard-session')
+  queueNavigationReport.checks.push({
+    name: 'Session filter and keyboard navigation preserve durable state; global Select all/Clear and hidden checked count remain explicit',
+    sessionIds: acceptedCandidates.map((item) => item.stagingSessionId),
+  })
 
   // Existing genuine candidates span three sessions. Queue navigation must pin the exact job,
   // session and candidate, and change only focus even when the target is not checked for Add.
@@ -699,8 +1233,15 @@ try {
   await homeNavigationManager.getByRole('button', { name: 'View result', exact: true }).click()
   await expect(homeNavigationManager).toHaveCount(0)
   await expect(
-    acceptanceWindow.getByRole('button', { name: 'Preview candidate 2', exact: true }),
+    candidateCard(acceptanceWindow, homeTarget).locator('.candidate-button'),
   ).toHaveAttribute('aria-pressed', 'true')
+  await expect(acceptanceWindow.locator('.candidate')).toHaveCount(1)
+  await expect(
+    acceptanceWindow.getByText('1 selected in other sessions. Add includes these results.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await chooseResultSession(acceptanceWindow, 'All results')
   await expect(acceptanceWindow.getByLabel('Select candidate 1')).toBeChecked()
   await expect(acceptanceWindow.getByLabel('Select candidate 2')).not.toBeChecked()
   await expect(acceptanceWindow.getByLabel('Select candidate 3')).not.toBeChecked()
@@ -733,7 +1274,6 @@ try {
       redoEnabled: await acceptanceWindow
         .getByRole('button', { name: 'Redo', exact: true })
         .isEnabled(),
-      selected: await Promise.all(navigationCheckboxes.map((checkbox) => checkbox.isChecked())),
       undoEnabled: await acceptanceWindow
         .getByRole('button', { name: 'Undo', exact: true })
         .isEnabled(),
@@ -743,7 +1283,10 @@ try {
     BrowserWindow.getAllWindows()[0].setContentSize(900, 620)
   })
   const beforeQueueNavigation = await navigationState()
-  assert.deepEqual(beforeQueueNavigation.selected, [false, false, true])
+  assert.deepEqual(
+    await Promise.all(navigationCheckboxes.map((checkbox) => checkbox.isChecked())),
+    [false, false, true],
+  )
   for (const [step, index] of [1, 0, 1].entries()) {
     const target = acceptanceSnapshot.value.candidates[index]
     await acceptanceWindow
@@ -774,11 +1317,21 @@ try {
     await queueNavigationScreenshot(acceptanceWindow, `02-${step}-session-queue`)
     await navigationManager.getByRole('button', { name: 'View result', exact: true }).click()
     await expect(navigationManager).toHaveCount(0)
-    for (const other of [1, 2, 3]) {
-      await expect(
-        acceptanceWindow.getByRole('button', { name: `Preview candidate ${other}`, exact: true }),
-      ).toHaveAttribute('aria-pressed', String(other === index + 1))
-    }
+    await expect(
+      candidateCard(acceptanceWindow, target).locator('.candidate-button'),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(acceptanceWindow.locator('.candidate')).toHaveCount(1)
+    await expect(acceptanceWindow.getByLabel('Result session', { exact: true })).toContainText(
+      `Session ${index + 1}`,
+    )
+    await expect(
+      acceptanceWindow.getByRole('button', { exact: true, name: 'Add 1 as Layer' }),
+    ).toBeEnabled()
+    await expect(
+      acceptanceWindow.getByText('1 selected in other sessions. Add includes these results.', {
+        exact: true,
+      }),
+    ).toBeVisible()
     await expect(
       acceptanceWindow.getByRole('button', { name: 'Hide candidate preview', exact: true }),
     ).toBeVisible()
@@ -795,6 +1348,16 @@ try {
     assert.ok(focusedPreviewBounds.bottom <= canvasViewport.height)
     assert.deepEqual(await navigationState(), beforeQueueNavigation)
     await queueNavigationScreenshot(acceptanceWindow, `03-${step}-exact-focused-project`)
+    await chooseResultSession(acceptanceWindow, 'All results')
+    assert.deepEqual(
+      await Promise.all(navigationCheckboxes.map((checkbox) => checkbox.isChecked())),
+      [false, false, true],
+    )
+    for (const other of [1, 2, 3]) {
+      await expect(
+        acceptanceWindow.getByRole('button', { name: `Preview candidate ${other}`, exact: true }),
+      ).toHaveAttribute('aria-pressed', String(other === index + 1))
+    }
     queueNavigationReport.checks.push({
       candidateId: target.candidateId,
       name: 'View result pins exact candidate/session/job, shows hidden/collapsed preview and preserves independent selection',
@@ -807,8 +1370,11 @@ try {
   await navigationCheckboxes[0].click()
   await navigationCheckboxes[2].click()
   await application.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setContentSize(1380, 900)
+    BrowserWindow.getAllWindows()[0].setContentSize(1440, 900)
   })
+  await chooseResultSession(acceptanceWindow, 'Session 2 · 1')
+  await queueNavigationScreenshot(acceptanceWindow, '08-filter-normal-hidden-selection')
+  await chooseResultSession(acceptanceWindow, 'All results')
   console.log(
     'Native queue navigation smoke passed: closed Project, three exact cross-session/repeated focus actions, independent selection and durable state.',
   )
@@ -898,6 +1464,53 @@ try {
     (id) => window.api.projects.listGenerationResults(id),
     project.id,
   )
+  if (queueNavigationArtifacts) {
+    const nativeQueue = await acceptanceWindow.evaluate(() =>
+      window.api.projects.getGenerationQueue(null),
+    )
+    const repeatSnapshot = await acceptanceWindow.evaluate(
+      (id) => window.api.projects.listGenerationResults(id),
+      project.id,
+    )
+    const opened = await acceptanceWindow.evaluate((id) => window.api.projects.open(id), project.id)
+    const rows = await liveFixtureDatabase.db
+      .selectFrom('generation_queue_item')
+      .select([
+        'id',
+        'local_project_key',
+        'document_id',
+        'staging_session_id',
+        'status',
+        'error_code',
+        'status_sequence',
+      ])
+      .orderBy('id')
+      .execute()
+    writeFileSync(
+      path.join(queueNavigationArtifacts, 'early-add-precondition.json'),
+      `${JSON.stringify(
+        {
+          expectedDocumentId: acceptanceSource.documentId,
+          expectedProjectKey: project.id,
+          expectedCandidateSessions: acceptedCandidates.map((item) => ({
+            candidateId: item.candidateId,
+            documentId: item.documentId,
+            projectKey: item.localProjectKey,
+            sessionId: item.stagingSessionId,
+          })),
+          expectedSiblingJobIds: unfinishedJobs.map((job) => job.id),
+          opened,
+          pendingSnapshot,
+          repeatSnapshot,
+          nativeQueue,
+          databaseDescriptors: fixtureDatabaseDescriptors(application.process().pid),
+          queueRows: rows,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+  }
   assert.equal(pendingSnapshot.ok, true, JSON.stringify(pendingSnapshot))
   assert.deepEqual(
     [...pendingSnapshot.value.unfinishedSiblingJobIds].sort(),
@@ -1249,9 +1862,10 @@ try {
     await completedAcceptanceDatabase.close()
   }
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  await isolateNativeSmokeWindow(application)
   trackMainErrors(application)
   const recoveryWindow = await application.firstWindow()
-  trackPageErrors(recoveryWindow)
+  await trackPageErrors(recoveryWindow)
   await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
   await recoveryWindow.getByRole('button', { name: `Open ${projectTitle}` }).click()
   const recoveryDialog = recoveryWindow.getByRole('dialog', { name: 'Recovery available' })
@@ -1321,6 +1935,7 @@ try {
     )
   }
   assert.equal(digest(readFileSync('scripts/smoke-generation-results.mjs')), testedScript)
+  assert.equal(digest(readFileSync('scripts/native-smoke-window.mjs')), testedWindowIsolationHelper)
   assert.deepEqual(pageErrors, [])
   queueNavigationReport.outcome = 'passed'
 } catch (error) {
@@ -1330,6 +1945,15 @@ try {
     const failureWindow = await application.firstWindow().catch(() => null)
     if (failureWindow && !failureWindow.isClosed()) {
       await queueNavigationScreenshot(failureWindow, 'failure').catch(() => undefined)
+      if (queueNavigationArtifacts) {
+        const inputs = await failureWindow
+          .evaluate(() => window.igsSmokeInputEvents)
+          .catch(() => null)
+        writeFileSync(
+          path.join(queueNavigationArtifacts, 'failure-input-events.json'),
+          `${JSON.stringify(inputs, null, 2)}\n`,
+        )
+      }
     }
   }
   throw error
@@ -1338,7 +1962,7 @@ try {
   if (queueNavigationArtifacts) {
     writeFileSync(
       path.join(queueNavigationArtifacts, 'native-results-navigation-report.json'),
-      `${JSON.stringify({ ...queueNavigationReport, buildSha256: testedBuild, scriptSha256: testedScript }, null, 2)}\n`,
+      `${JSON.stringify({ ...queueNavigationReport, buildSha256: testedBuild, scriptSha256: testedScript, windowIsolationHelperSha256: testedWindowIsolationHelper }, null, 2)}\n`,
     )
   }
   application?.process().kill('SIGKILL')

@@ -40,6 +40,7 @@ import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import type { CandidateExportFeedback } from './components/candidate-export-feedback.js'
 import type {
   GenerationResultFocusRequest,
+  QueueResultOpenReference,
   QueueResultReference,
 } from './components/generation-queue-result.js'
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
@@ -433,6 +434,7 @@ function refreshOpenGeneration() {
 }
 
 function openGenerationQueue() {
+  queueResultNavigator.cancelProjectOpen()
   queueResultNavigationError.value = null
   generationQueueOpen.value = true
   refreshOpenGeneration()
@@ -445,18 +447,40 @@ function refreshQueueResults() {
   }
 }
 
-async function openQueueProject(projectKey: string) {
-  if (pendingProjectAction.value !== null || windowClosePending.value) {
+async function openQueueProject(projectKey: string, reference?: QueueResultOpenReference | null) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    queueResultOpeningId.value !== null
+  ) {
     return
   }
+  queueResultNavigator.cancel()
+  if (reference && reference.projectKey === projectKey) {
+    queueResultNavigator.beginProjectOpen(reference)
+    queueResultOpeningId.value = reference.queueItemId
+  }
   generationQueueOpen.value = false
-  await openProject(projectKey)
-  if (homeError.value) {
-    globalNotice.value = homeError.value
+  try {
+    await openProject(projectKey, Boolean(reference))
+    if (homeError.value) {
+      queueResultNavigator.cancelProjectOpen()
+      globalNotice.value = homeError.value
+    } else if (!recoveryDecision.value) {
+      await continueQueueResultOpen(projectKey)
+    }
+  } finally {
+    queueResultOpeningId.value = null
   }
 }
 
 const queueResultNavigator = new GenerationQueueResultNavigator({
+  canContinueProjectOpen: () =>
+    !rendererDisposed &&
+    pendingProjectAction.value === null &&
+    recoveryDecision.value === null &&
+    closingTabId.value === null &&
+    !windowClosePending.value,
   canNavigate: () =>
     !rendererDisposed &&
     generationQueueOpen.value &&
@@ -471,9 +495,59 @@ const queueResultNavigator = new GenerationQueueResultNavigator({
 
 watch(generationQueueOpen, (open) => {
   if (!open) {
-    queueResultNavigator.cancel()
+    queueResultNavigator.cancelView()
   }
 })
+
+function applyQueueResultFocus(focus: GenerationResultFocusRequest): boolean {
+  const tab = projectTabs.value.find(
+    (item) => item.id === focus.projectKey && item.documentId === focus.openDocumentId,
+  )
+  if (
+    !tab ||
+    !resultFocusCandidate(focus, generationResultsByTab.value[tab.id]?.candidates ?? [], {
+      documentId: tab.documentId,
+      projectKey: tab.id,
+    })
+  ) {
+    return false
+  }
+  generationResultFocusByTab.value = {
+    ...generationResultFocusByTab.value,
+    [tab.id]: focus,
+  }
+  focusTab(tab)
+  return true
+}
+
+async function continueQueueResultOpen(projectKey: string) {
+  const intent = queueResultNavigator.getPendingProjectOpen()
+  if (!intent || intent.projectKey !== projectKey || recoveryDecision.value) {
+    return
+  }
+  queueResultOpeningId.value = intent.queueItemId
+  try {
+    const result = await queueResultNavigator.continueProjectOpen()
+    if (result.kind === 'superseded') {
+      return
+    }
+    if (result.kind === 'unavailable' || !applyQueueResultFocus(result.focus)) {
+      const message =
+        result.kind === 'unavailable'
+          ? result.reason
+          : 'The temporary result changed. The Project is open; refresh the queue.'
+      queueResultNavigationError.value = message
+      globalNotice.value = message
+    }
+  } catch (cause) {
+    if (!rendererDisposed && !windowClosePending.value) {
+      queueResultNavigationError.value = errorMessage(cause)
+      globalNotice.value = queueResultNavigationError.value
+    }
+  } finally {
+    queueResultOpeningId.value = null
+  }
+}
 
 async function openQueueResult(reference: QueueResultReference) {
   if (queueResultOpeningId.value !== null) {
@@ -490,26 +564,12 @@ async function openQueueResult(reference: QueueResultReference) {
       queueResultNavigationError.value = result.reason
       return
     }
-    const tab = projectTabs.value.find(
-      (item) => item.id === reference.projectKey && item.documentId === reference.openDocumentId,
-    )
     // A newer background refresh may have revoked a candidate while this read was pending.
-    if (
-      !tab ||
-      !resultFocusCandidate(result.focus, generationResultsByTab.value[tab.id]?.candidates ?? [], {
-        documentId: tab.documentId,
-        projectKey: tab.id,
-      })
-    ) {
+    if (!applyQueueResultFocus(result.focus)) {
       queueResultNavigationError.value =
         'The temporary result changed. Refresh the queue before viewing it.'
       return
     }
-    generationResultFocusByTab.value = {
-      ...generationResultFocusByTab.value,
-      [tab.id]: result.focus,
-    }
-    focusTab(tab)
     generationQueueOpen.value = false
   } catch (cause) {
     if (!rendererDisposed && generationQueueOpen.value) {
@@ -856,13 +916,19 @@ function replaceTab(tab: ProjectTab) {
   }
 }
 
-function focusTab(tab: ProjectTab) {
+function focusTab(tab: ProjectTab, preserveResultOpen = false) {
+  if (!preserveResultOpen) {
+    queueResultNavigator.cancelProjectOpen()
+  }
   replaceTab(tab)
   activeDocument.value = tab.id
   tabErrors.value = { ...tabErrors.value, [tab.id]: null }
 }
 
 function removeTab(tabId: string) {
+  if (queueResultNavigator.getPendingProjectOpen()?.projectKey === tabId) {
+    queueResultNavigator.cancelProjectOpen()
+  }
   const { [tabId]: _closedFocus, ...remainingFocus } = generationResultFocusByTab.value
   generationResultFocusByTab.value = remainingFocus
   forgetGenerationUi(tabId, true)
@@ -900,6 +966,9 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   for (const tab of projectTabs.value) {
     const next = nextTabs.find((candidate) => candidate.id === tab.id)
     if (!next || next.documentId !== tab.documentId) {
+      if (queueResultNavigator.getPendingProjectOpen()?.projectKey === tab.id) {
+        queueResultNavigator.cancelProjectOpen()
+      }
       forgetGenerationUi(tab.id, !next)
       stopExportFeedbackTimer(tab.id)
       draftSync.forget(tab.id)
@@ -966,6 +1035,7 @@ function closeHome() {
 }
 
 async function activateDocument(documentId: string): Promise<boolean> {
+  queueResultNavigator.cancelProjectOpen()
   if (activeDocument.value === documentId) {
     return true
   }
@@ -1041,6 +1111,7 @@ async function refreshProjects() {
 }
 
 function beginNewProject() {
+  queueResultNavigator.cancelProjectOpen()
   newProjectName.value = ''
   newProjectSize.value = { height: 1024, width: 1024 }
   newProjectAspect.value = { id: 'free', locked: false, value: 1 }
@@ -1075,13 +1146,17 @@ async function createProject() {
   }
 }
 
-async function openProject(projectId: string) {
+async function openProject(projectId: string, preserveResultOpen = false) {
+  if (!preserveResultOpen) {
+    queueResultNavigator.cancelProjectOpen()
+  }
   if (pendingProjectAction.value !== null) {
     return
   }
+  homeError.value = null
   const existing = projectTabs.value.find((tab) => tab.id === projectId)
   if (existing) {
-    focusTab(existing)
+    focusTab(existing, preserveResultOpen)
     return
   }
   pendingProjectAction.value = { kind: 'open', projectId }
@@ -1092,10 +1167,16 @@ async function openProject(projectId: string) {
       recoveryDecision.value = result
       recoveryError.value = null
     } else {
-      focusTab(result.tab)
+      focusTab(result.tab, preserveResultOpen)
+      if (result.tab.storageWarning) {
+        globalNotice.value = result.tab.storageWarning
+      }
       await refreshProjects()
     }
   } catch (cause) {
+    if (preserveResultOpen) {
+      queueResultNavigator.cancelProjectOpen()
+    }
     homeError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
@@ -1235,6 +1316,7 @@ function cancelRecovery() {
   if (pendingProjectAction.value?.kind === 'recover') {
     return
   }
+  queueResultNavigator.cancelProjectOpen()
   recoveryDecision.value = null
   recoveryError.value = null
 }
@@ -1247,6 +1329,10 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
   if (decision === 'recover' && pendingRecovery.recoveryStatus !== 'recoverable') {
     return
   }
+  if (decision === 'discard') {
+    // This explicit recovery decision discards temporary results as well as the document shadow.
+    queueResultNavigator.cancelProjectOpen()
+  }
   pendingProjectAction.value = { kind: 'recover' }
   recoveryError.value = null
   try {
@@ -1254,12 +1340,22 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
       projectApi().resolveRecovery(pendingRecovery.projectId, decision),
     )
     recoveryDecision.value = null
-    focusTab(tab)
+    focusTab(
+      tab,
+      queueResultNavigator.getPendingProjectOpen()?.projectKey === pendingRecovery.projectId,
+    )
+    if (tab.storageWarning) {
+      globalNotice.value = tab.storageWarning
+    }
     await refreshProjects()
   } catch (cause) {
+    queueResultNavigator.cancelProjectOpen()
     recoveryError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
+  }
+  if (!recoveryDecision.value) {
+    await continueQueueResultOpen(pendingRecovery.projectId)
   }
 }
 
@@ -1745,6 +1841,7 @@ async function saveProject(tabId: string, closeAfter = false) {
 }
 
 async function requestClose(tabId: string) {
+  queueResultNavigator.cancelProjectOpen()
   if (pendingProjectAction.value !== null || windowClosePending.value) {
     return
   }
@@ -1959,6 +2056,7 @@ onMounted(() => {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async () => {
         windowClosePending.value = true
+        queueResultNavigator.cancel()
         if (pendingAcceptance.value && !acceptanceCommitting.value) {
           cancelAcceptance()
         }
@@ -2343,6 +2441,10 @@ onBeforeUnmount(() => {
           </p>
           <p v-else class="dialog-secondary">
             Recover opens unsaved changes for review. The saved .igs file changes only after Save.
+          </p>
+          <p class="dialog-secondary">
+            Discard Recovery removes this project's unsaved changes and all temporary generation
+            results, then opens the saved .igs file.
           </p>
           <div class="dialog-actions">
             <NButton :disabled="pendingProjectAction !== null" @click="cancelRecovery">

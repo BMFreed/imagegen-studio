@@ -20,6 +20,7 @@ import {
   type GenerationResultFocusRequest,
   resultFocusCandidate,
 } from './generation-queue-result.js'
+import { reconcileResultSession, resultSessionFocus } from './generation-result-sessions.js'
 import {
   type CanvasCamera,
   type CanvasSize,
@@ -67,6 +68,7 @@ const failedImageUrls = ref<Set<string>>(new Set())
 const failedCandidateUrls = ref<Set<string>>(new Set())
 const focusedCandidateId = ref<string | null>(null)
 const resultFocusRevision = ref(0)
+const resultSessionId = ref<string | null>(null)
 const selectedCandidateIds = ref<string[]>([])
 const stagingHeight = ref(0)
 const previewVisible = ref(true)
@@ -763,8 +765,12 @@ watch(
 )
 watch(() => props.selectedLayerId, renderRasters)
 watch(
-  () => props.generationResults,
-  (candidates) => {
+  [() => props.generationResults, () => props.generationResultsLoading],
+  ([candidates, loading]) => {
+    if (loading && candidates.length === 0) {
+      return
+    }
+    resultSessionId.value = reconcileResultSession(candidates, resultSessionId.value)
     const ids = new Set(candidates.map((candidate) => candidate.candidateId))
     const eligible = candidates.filter((candidate) => !candidate.sourceDocumentMismatch)
     const selected = new Set(selectedCandidateIds.value)
@@ -778,7 +784,11 @@ watch(
       selectionInitialized = true
     }
     if (!focusedCandidateId.value || !ids.has(focusedCandidateId.value)) {
-      focusedCandidateId.value = (eligible[0] ?? candidates[0])?.candidateId ?? null
+      focusedCandidateId.value = resultSessionFocus(
+        candidates,
+        resultSessionId.value,
+        focusedCandidateId.value,
+      )
     }
     releaseStaleCandidateImages()
     renderCandidatePreview()
@@ -790,6 +800,16 @@ watch(
   },
   { immediate: true },
 )
+watch(resultSessionId, (sessionId) => {
+  const candidateId = resultSessionFocus(
+    props.generationResults,
+    sessionId,
+    focusedCandidateId.value,
+  )
+  if (candidateId !== null && candidateId !== focusedCandidateId.value) {
+    focusCandidate(candidateId)
+  }
+})
 watch(
   [() => props.resultFocus, () => props.generationResults],
   ([request, candidates]) => {
@@ -804,6 +824,7 @@ watch(
       return
     }
     // Queue navigation changes preview focus only. Acceptance checkboxes stay independent.
+    resultSessionId.value = candidate.stagingSessionId
     focusCandidate(candidate.candidateId)
     resultFocusRevision.value = request.revision
     emit('resultFocusHandled', request.revision)
@@ -910,6 +931,7 @@ watch(
       </div>
       <ProjectGenerationResultsTray
         v-if="generationResults.length > 0"
+        v-model:sessionId="resultSessionId"
         :actionsDisabled="candidateActionsDisabled"
         :candidates="generationResults"
         :focusRevision="resultFocusRevision"

@@ -11,6 +11,7 @@ import { test } from 'node:test'
 import {
   GenerationQueueResultNavigator,
   queueResultCandidate,
+  queueResultOpenReference,
   queueResultReference,
   resultFocusCandidate,
 } from './generation-queue-result.js'
@@ -168,6 +169,7 @@ test('Real async navigation rechecks the open document after its fresh Results r
   let calls = 0
   let read = held<ProjectGenerationResultsSnapshot>()
   const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
     canNavigate: () => true,
     getOpenDocumentId: () => documentId,
     readResults: async (projectKey) => {
@@ -199,6 +201,7 @@ test('Discard, wrong session, malformed data and recovery failure during navigat
   const { item, reference, snapshot } = fixture()
   let fresh = snapshot
   const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
     canNavigate: () => true,
     getOpenDocumentId: () => item.documentId,
     readResults: async () => fresh,
@@ -219,6 +222,7 @@ test('Repeated target gets a new focus revision; closed dialog and superseded re
   let available = true
   let read = held<ProjectGenerationResultsSnapshot>()
   const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
     canNavigate: () => available,
     getOpenDocumentId: () => item.documentId,
     readResults: async () => read.promise,
@@ -259,6 +263,7 @@ test('Repeated target gets a new focus revision; closed dialog and superseded re
 test('Read failure is observable and closed Project refuses before reading', async () => {
   const { reference } = fixture()
   const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
     canNavigate: () => true,
     getOpenDocumentId: () => reference.openDocumentId,
     readResults: async () => {
@@ -267,6 +272,7 @@ test('Read failure is observable and closed Project refuses before reading', asy
   })
   await assert.rejects(navigator.open(reference), /Recovery read failed/)
   const closed = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
     canNavigate: () => true,
     getOpenDocumentId: () => null,
     readResults: async () => {
@@ -274,4 +280,255 @@ test('Read failure is observable and closed Project refuses before reading', asy
     },
   })
   assert.equal((await closed.open(reference)).kind, 'unavailable')
+})
+
+// Boundary: the same one-use owner wired to App's ordinary Open/recovery callbacks.
+// Invariant: fresh exact staging identity, independent of queue retention, yields one preview.
+// Controls: another session/Project, canceled recovery, document replacement and late reads.
+// Mutations: drop session identity, let dialog cancellation retain intent, reuse a consumed intent.
+test('Closed Project intents carry only completed job identity and fresh Open resolves the exact result once', async () => {
+  const { candidate, item, snapshot } = fixture()
+  const original = structuredClone({ item, snapshot })
+  const reference = queueResultOpenReference(item)!
+  assert.deepEqual(Object.keys(reference).sort(), [
+    'projectKey',
+    'queueItemId',
+    'sourceDocumentId',
+    'stagingSessionId',
+  ])
+  for (const status of ['pending', 'running', 'failed', 'canceled'] as const) {
+    assert.equal(queueResultOpenReference({ ...item, status }), null)
+  }
+  assert.equal(queueResultOpenReference({ ...item, publicationPending: true }), null)
+  let documentId: string | null = null
+  let reads = 0
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
+    canNavigate: () => false,
+    getOpenDocumentId: () => documentId,
+    readResults: async (projectKey) => {
+      reads++
+      assert.equal(projectKey, item.projectKey)
+      return snapshot
+    },
+  })
+  navigator.beginProjectOpen(reference)
+  reference.queueItemId = randomUUID()
+  navigator.cancelView() // Ordinary Open closes Queue; this is not recovery Cancel.
+  assert.equal(reads, 0, 'capturing Open does not open resources or decide recovery')
+  assert.equal(navigator.getPendingProjectOpen()?.queueItemId, item.id)
+  documentId = item.documentId // Ordinary Open or the explicitly chosen recovery has acknowledged.
+  const result = await navigator.continueProjectOpen()
+  assert.equal(result.kind, 'focused')
+  if (result.kind === 'focused') {
+    assert.equal(result.focus.candidateId, candidate.candidateId)
+    assert.equal(result.focus.stagingSessionId, item.stagingSessionId)
+    assert.equal(result.focus.openDocumentId, documentId)
+  }
+  assert.equal(reads, 1)
+  assert.equal(navigator.hasPendingProjectOpen(), false)
+  assert.equal((await navigator.continueProjectOpen()).kind, 'superseded')
+  assert.equal(reads, 1, 'one-use continuation cannot replay after another UI action')
+  assert.deepEqual(
+    { item, snapshot },
+    original,
+    'navigation cannot mutate the source or recovery list',
+  )
+})
+
+test('Open continuation rejects missing, neighboring, ambiguous and unavailable results instead of choosing another candidate', async () => {
+  const { candidate, item, snapshot } = fixture()
+  let fresh = snapshot
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
+    canNavigate: () => true,
+    getOpenDocumentId: () => item.documentId,
+    readResults: async () => fresh,
+  })
+  const differentCandidate = randomUUID()
+  const differentSession = randomUUID()
+  const controls: ProjectGenerationResultsSnapshot[] = [
+    { ...snapshot, candidates: [] },
+    { ...snapshot, candidates: [{ ...candidate, queueItemId: randomUUID() }] },
+    {
+      ...snapshot,
+      candidates: [
+        {
+          ...candidate,
+          imageUrl: candidate.imageUrl.replace(item.stagingSessionId, differentSession),
+          stagingSessionId: differentSession,
+        },
+      ],
+    },
+    {
+      ...snapshot,
+      candidates: [
+        {
+          ...candidate,
+          imageUrl: candidate.imageUrl.replace(item.projectKey, `project-v1-${'d'.repeat(64)}`),
+        },
+      ],
+    },
+    { ...snapshot, candidates: [{ ...candidate, sourceDocumentMismatch: true }] },
+    {
+      ...snapshot,
+      candidates: [
+        candidate,
+        {
+          ...candidate,
+          candidateId: differentCandidate,
+          imageUrl: candidate.imageUrl.replace(candidate.candidateId, differentCandidate),
+        },
+      ],
+    },
+    { ...snapshot, candidates: [], lastActualSeed: null, recoveryUnavailable: true },
+  ]
+  for (const control of controls) {
+    fresh = control
+    navigator.beginProjectOpen(queueResultOpenReference(item)!)
+    assert.equal((await navigator.continueProjectOpen()).kind, 'unavailable')
+    assert.equal(navigator.hasPendingProjectOpen(), false)
+  }
+  fresh = snapshot
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  assert.equal(
+    (await navigator.continueProjectOpen()).kind,
+    'focused',
+    'valid control remains navigable',
+  )
+})
+
+test('Opening a replacement source document preserves preview-only mismatch and does not retarget the job', async () => {
+  const { candidate, item, snapshot } = fixture()
+  const documentId = randomUUID()
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
+    canNavigate: () => true,
+    getOpenDocumentId: () => documentId,
+    readResults: async () => ({
+      ...snapshot,
+      candidates: [{ ...candidate, sourceDocumentMismatch: true }],
+    }),
+  })
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  const result = await navigator.continueProjectOpen()
+  assert.equal(result.kind, 'focused')
+  if (result.kind === 'focused') {
+    assert.equal(result.focus.sourceDocumentId, item.documentId)
+    assert.equal(result.focus.openDocumentId, documentId)
+    assert.equal(
+      resultFocusCandidate(result.focus, [{ ...candidate, sourceDocumentMismatch: true }], {
+        documentId,
+        projectKey: item.projectKey,
+      })?.candidateId,
+      candidate.candidateId,
+    )
+  }
+})
+
+test('Recovery Cancel and late document/context changes revoke continuation through the real navigation owner', async () => {
+  const { item, snapshot } = fixture()
+  let documentId: string | null = item.documentId
+  let allowed = true
+  let read = held<ProjectGenerationResultsSnapshot>()
+  let reads = 0
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => allowed,
+    canNavigate: () => true,
+    getOpenDocumentId: () => documentId,
+    readResults: async () => {
+      reads++
+      return read.promise
+    },
+  })
+  read.resolve(snapshot)
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  navigator.cancelProjectOpen()
+  assert.equal((await navigator.continueProjectOpen()).kind, 'superseded')
+  assert.equal(reads, 0, 'Cancel before Open finishes cannot read or navigate later')
+  for (const change of ['cancel', 'document', 'close', 'context', 'dispose'] as const) {
+    documentId = item.documentId
+    allowed = true
+    read = held<ProjectGenerationResultsSnapshot>()
+    navigator.beginProjectOpen(queueResultOpenReference(item)!)
+    const pending = navigator.continueProjectOpen()
+    assert.equal((await navigator.continueProjectOpen()).kind, 'superseded', 'no concurrent replay')
+    if (change === 'cancel') {
+      navigator.cancelProjectOpen()
+    }
+    if (change === 'document') {
+      documentId = randomUUID()
+    }
+    if (change === 'close') {
+      documentId = null
+    }
+    if (change === 'context') {
+      allowed = false
+    }
+    if (change === 'dispose') {
+      navigator.cancel()
+    }
+    read.resolve(snapshot)
+    assert.equal(
+      (await pending).kind,
+      change === 'document' || change === 'close' ? 'unavailable' : 'superseded',
+    )
+    assert.equal(navigator.hasPendingProjectOpen(), false)
+  }
+})
+
+test('New Open and direct View supersede each other while focus revisions remain monotonic', async () => {
+  const { item, reference, snapshot } = fixture()
+  let read = held<ProjectGenerationResultsSnapshot>()
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
+    canNavigate: () => true,
+    getOpenDocumentId: () => item.documentId,
+    readResults: async () => read.promise,
+  })
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  const first = navigator.continueProjectOpen()
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  const second = navigator.continueProjectOpen()
+  read.resolve(snapshot)
+  assert.equal((await first).kind, 'superseded')
+  const opened = await second
+  assert.equal(opened.kind, 'focused')
+  read = held<ProjectGenerationResultsSnapshot>()
+  const view = navigator.open(reference)
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  read.resolve(snapshot)
+  assert.equal((await view).kind, 'superseded')
+  read = held<ProjectGenerationResultsSnapshot>()
+  const continuation = navigator.continueProjectOpen()
+  const direct = navigator.open(reference)
+  read.resolve(snapshot)
+  assert.equal((await continuation).kind, 'superseded')
+  const viewed = await direct
+  assert.equal(viewed.kind, 'focused')
+  if (opened.kind === 'focused' && viewed.kind === 'focused') {
+    assert.ok(viewed.focus.revision > opened.focus.revision)
+  }
+})
+
+test('Open read errors are observable once and canceled late errors are suppressed', async () => {
+  const { item } = fixture()
+  let read = held<ProjectGenerationResultsSnapshot>()
+  const navigator = new GenerationQueueResultNavigator({
+    canContinueProjectOpen: () => true,
+    canNavigate: () => true,
+    getOpenDocumentId: () => item.documentId,
+    readResults: async () => read.promise,
+  })
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  const failed = navigator.continueProjectOpen()
+  read.reject(new Error('Current recovery read failed'))
+  await assert.rejects(failed, /Current recovery read failed/)
+  assert.equal(navigator.hasPendingProjectOpen(), false)
+  read = held<ProjectGenerationResultsSnapshot>()
+  navigator.beginProjectOpen(queueResultOpenReference(item)!)
+  const canceled = navigator.continueProjectOpen()
+  navigator.cancelProjectOpen()
+  read.reject(new Error('Stale recovery read failed'))
+  assert.equal((await canceled).kind, 'superseded')
 })

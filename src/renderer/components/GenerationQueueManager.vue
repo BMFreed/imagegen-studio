@@ -19,11 +19,24 @@ import type {
 import { generationQueueStatuses } from '../../shared/projects/generation-queue-manager.js'
 
 import { Photo, X as XIcon } from '@vicons/tabler'
-import { NAlert, NButton, NCard, NDropdown, NEmpty, NIcon, NModal, NSpin, NTag } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NDropdown,
+  NEmpty,
+  NIcon,
+  NModal,
+  NSpin,
+  NTag,
+  NTooltip,
+} from 'naive-ui'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   queueResultCandidate,
+  queueResultOpenReference,
+  type QueueResultOpenReference,
   queueResultReference,
   type QueueResultReference,
 } from './generation-queue-result.js'
@@ -48,7 +61,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   changed: []
-  openProject: [projectKey: string]
+  openProject: [projectKey: string, result?: QueueResultOpenReference]
   openResult: [reference: QueueResultReference]
   refreshResults: []
 }>()
@@ -190,6 +203,10 @@ function openResult(item: GenerationQueueEntry) {
     return
   }
   emit('openResult', queueResultReference(item, candidate, tab.documentId))
+}
+
+function openProject(item: GenerationQueueEntry) {
+  emit('openProject', item.projectKey, queueResultOpenReference(item) ?? undefined)
 }
 
 function review(item: GenerationQueueEntry): GenerationQueueReview {
@@ -903,14 +920,23 @@ onBeforeUnmount(() => {
               <p v-if="retryReason(selected)">{{ retryReason(selected) }}</p>
             </div>
             <div v-if="!projectTabs.some((tab) => tab.id === selected?.projectKey)">
-              <NButton
-                :disabled="controlsBusy"
-                secondary
-                size="small"
-                @click="emit('openProject', selected.projectKey)"
-              >
-                Open Project
-              </NButton>
+              <NTooltip>
+                <template v-slot:trigger>
+                  <NButton
+                    :disabled="controlsBusy"
+                    secondary
+                    size="small"
+                    @click="openProject(selected)"
+                  >
+                    Open Project
+                  </NButton>
+                </template>
+                {{
+                  queueResultOpenReference(selected)
+                    ? 'Open Project, review recovery if needed, then view this temporary result if it is still available.'
+                    : 'Open this Project.'
+                }}
+              </NTooltip>
             </div>
           </div>
         </section>

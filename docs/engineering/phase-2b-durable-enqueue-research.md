@@ -1,7 +1,7 @@
 # Phase 2B: durable input for the first generation queue item
 
 > **Historical checkpoint, superseded on 2026-09-28.** The `predictionType:
-> null` admission limit below describes the state at `c59fe30`. Current
+null` admission limit below describes the state at `c59fe30`. Current
 > [model-library contract](../contracts/managed-model-library.md) and
 > `ModelService` allow a verified Illustrious checkpoint without a manifest
 > allowlist: an exact-file override, known manifest value, or labeled `epsilon`
@@ -78,15 +78,21 @@ refuses symlink/hard-link substitution rather than following it. The
 generation-input directory and its files are private separately. This does
 not claim encrypted-at-rest data.
 
+Subsequent [SQLite lock-safety checkpoint](./sqlite-lock-safety-research.md)
+supersedes the raw-descriptor file checks and automatic repair of existing shared
+SQLite permissions above: metadata-only checks preserve live SQLite locks;
+new files are private, while altered existing file permissions refuse with
+explicit repair instructions. Directory normalization remains unchanged.
+
 ## Parameter register and verification
 
-| Parameter / external bound | Source and consequence |
-| --- | --- |
-| Target ≤ 2,048 px per side, 4 million pixels, 32 MiB PNG | Existing `compose-target` and request guards; defensive, not measured GPU capacity. Enqueue must not relax them. |
-| Request line ≤ 64 KiB, prompt ≤ 16 KiB each, Steps 1–200, CFG 1–30 | Existing first request contract; provisional limits, explicit refusal before publication. |
-| Frozen SQLite payload ≤ 128 KiB; input manifest ≤ 4 KiB | New defensive queue bounds; payload includes frozen Project context in addition to the worker request. Oversize/corrupt data is rejected, not truncated. |
-| Model checkpoint size, free disk and filesystem durability | External/unknown at enqueue; target plus manifest need space. Write/sync/rename failures must leave no queue row that appears executable. |
-| Queue history retention and durable input lifetime | Not yet defined as an automatic size/time policy. This checkpoint retains inputs for canceled jobs and does not implement terminal pruning. |
+| Parameter / external bound                                         | Source and consequence                                                                                                                                   |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target ≤ 2,048 px per side, 4 million pixels, 32 MiB PNG           | Existing `compose-target` and request guards; defensive, not measured GPU capacity. Enqueue must not relax them.                                         |
+| Request line ≤ 64 KiB, prompt ≤ 16 KiB each, Steps 1–200, CFG 1–30 | Existing first request contract; provisional limits, explicit refusal before publication.                                                                |
+| Frozen SQLite payload ≤ 128 KiB; input manifest ≤ 4 KiB            | New defensive queue bounds; payload includes frozen Project context in addition to the worker request. Oversize/corrupt data is rejected, not truncated. |
+| Model checkpoint size, free disk and filesystem durability         | External/unknown at enqueue; target plus manifest need space. Write/sync/rename failures must leave no queue row that appears executable.                |
+| Queue history retention and durable input lifetime                 | Not yet defined as an automatic size/time policy. This checkpoint retains inputs for canceled jobs and does not implement terminal pruning.              |
 
 The meaningful test boundary is real SQLite plus filesystem across close/reopen,
 including unchanged frozen bytes after caller mutation, missing/corrupt files,

@@ -86,6 +86,11 @@ import { ProjectGenerationOperationGate } from './projects/project-generation-op
 import { GenerationPreparationError } from './projects/project-generation-preparation.js'
 import { ProjectGenerationProvenanceError } from './projects/project-generation-provenance.js'
 import {
+  ProjectGenerationRecovery,
+  ProjectGenerationRecoveryError,
+  reconcileOpenedProjectGeneration,
+} from './projects/project-generation-recovery.js'
+import {
   ProjectGenerationResultResource,
   ProjectGenerationResultResourceError,
 } from './projects/project-generation-result-resource.js'
@@ -415,23 +420,21 @@ if (!gotInstanceLock) {
         projectGenerationGate,
         (tabId) => generationAcceptance?.hasPendingHandoff(tabId) ?? false,
       )
+      const projectGenerationRecovery = new ProjectGenerationRecovery(
+        projectService,
+        recoveredGeneration,
+        projectGenerationGate,
+      )
       const reconcileOpenedProject = async (
         tabId: string,
         wasOpen: boolean,
-      ): Promise<string | null> => {
-        if (!wasOpen) {
-          recoveredGeneration?.orchestrator.reopenProjectGeneration(tabId)
-        }
-        try {
-          await generationAcceptance?.reconcile(tabId)
-          return null
-        } catch (error) {
-          // A Project is still usable when local candidate cleanup needs another attempt.
-          // Keep the generation fence from reconciliation and surface the repairable condition.
-          console.error('Accepted result recovery needs attention', error)
-          return `Accepted result cleanup needs attention. Reopen or retry Add after checking the Results panel. ${error instanceof Error ? error.message : ''}`.trim()
-        }
-      }
+      ): Promise<string | null> =>
+        await reconcileOpenedProjectGeneration(
+          tabId,
+          wasOpen,
+          recoveredGeneration?.orchestrator ?? null,
+          generationAcceptance,
+        )
       const generationResults = new ProjectGenerationResultResource(
         recoveredGeneration?.staging ?? null,
         (tabId) => projectService.getOpenDocumentId(tabId),
@@ -883,6 +886,7 @@ if (!gotInstanceLock) {
               error instanceof ProjectServiceError ||
               error instanceof ProjectCandidateImageExportError ||
               error instanceof ProjectGenerationCloseError ||
+              error instanceof ProjectGenerationRecoveryError ||
               error instanceof ProjectGenerationAcceptanceError ||
               error instanceof ProjectGenerationProvenanceError ||
               error instanceof ProjectGenerationResultResourceError ||
@@ -1089,7 +1093,7 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.open, oneProjectId, async (projectId) => {
         const wasOpen = projectService.getOpenTabs().some((tab) => tab.id === projectId)
-        const result = await projectService.open(projectId as string)
+        const result = await projectGenerationRecovery.open(projectId as string)
         if (result.kind === 'opened') {
           const warning = await reconcileOpenedProject(result.tab.id, wasOpen)
           if (warning) {
@@ -1105,13 +1109,13 @@ if (!gotInstanceLock) {
           isProjectId(args[0]) &&
           (args[1] === 'recover' || args[1] === 'discard'),
         async (projectId, decision) => {
-          const tab = await projectService.resolveRecovery(
+          const tab = await projectGenerationRecovery.resolve(
             projectId as string,
             decision as 'discard' | 'recover',
           )
           const warning = await reconcileOpenedProject(tab.id, false)
           if (warning) {
-            tab.storageWarning = warning
+            tab.storageWarning = [tab.storageWarning, warning].filter(Boolean).join(' ')
           }
           return tab
         },

@@ -1,3 +1,5 @@
+import type { Stats } from 'node:fs'
+
 import Database from 'better-sqlite3'
 import { Kysely, SqliteDialect } from 'kysely'
 import { createHash } from 'node:crypto'
@@ -27,20 +29,24 @@ export function openAppDatabase(dataRoot: string, migrationsDir: string): AppDat
   const databaseDir = path.join(canonicalOwnedDataRoot(dataRoot), 'database')
   ensurePrivateDatabaseDirectory(databaseDir)
   const filePath = path.join(databaseDir, 'app.sqlite')
-  ensurePrivateSqliteFiles(filePath)
-  const sqlite = new Database(filePath)
+  const existing = inspectPrivateSqliteFiles(filePath)
+  if (!existing.has('')) {
+    createPrivateSqliteFile(filePath)
+  }
+  const identities = inspectPrivateSqliteFiles(filePath)
+  const sqlite = new Database(filePath, { fileMustExist: true })
 
   try {
-    // SQLite may have just created the main file; lock down its mode before migrations write data.
-    ensurePrivateSqliteFiles(filePath)
+    inspectPrivateSqliteFiles(filePath, identities)
     sqlite.pragma('journal_mode = WAL')
     // Candidate manifests reach disk before queue completion and the seed cursor. Do not let a
     // different SQLite build's default weaken the durability of that second commit boundary.
     sqlite.pragma('synchronous = FULL')
     sqlite.pragma('foreign_keys = ON')
     applySqlMigrations(sqlite, migrationsDir)
-    // WAL/SHM files may be created during migration. Their containing directory is private too.
-    ensurePrivateSqliteFiles(filePath)
+    // SQLite creates WAL/SHM with the private main file's mode. Metadata checks must not open
+    // and close these files: POSIX close can release the live driver's process-wide locks.
+    inspectPrivateSqliteFiles(filePath, identities)
   } catch (error) {
     sqlite.close()
     throw error
@@ -120,40 +126,71 @@ function ensurePrivateDatabaseDirectory(databaseDir: string): void {
   }
 }
 
-function ensurePrivateSqliteFiles(filePath: string): void {
+/** Never open/close an existing SQLite inode, including before opening another connection. */
+function inspectPrivateSqliteFiles(
+  filePath: string,
+  identities?: ReadonlyMap<string, Stats>,
+): Map<string, Stats> {
+  const inspected = new Map<string, Stats>()
   for (const suffix of ['', '-wal', '-shm']) {
     const current = `${filePath}${suffix}`
-    let descriptor: number
+    let entry: Stats
     try {
-      descriptor = openSync(
-        current,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      )
+      entry = lstatSync(current)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (suffix === '' && identities?.has(suffix)) {
+          throw new Error(`Invalid application database file: ${path.basename(current)}`)
+        }
         continue
       }
       throw new Error(`Invalid application database file: ${path.basename(current)}`)
     }
-    try {
-      const entry = fstatSync(descriptor)
-      const atPath = lstatSync(current)
-      if (
-        !entry.isFile() ||
-        atPath.isSymbolicLink() ||
-        entry.dev !== atPath.dev ||
-        entry.ino !== atPath.ino ||
-        entry.nlink !== 1 ||
-        (process.getuid?.() !== undefined && entry.uid !== process.getuid())
-      ) {
-        throw new Error(`Invalid application database file: ${path.basename(current)}`)
-      }
-      if ((entry.mode & 0o077) !== 0) {
-        fchmodSync(descriptor, 0o600)
-      }
-    } finally {
-      closeSync(descriptor)
+    // WAL/SHM can be reconciled by SQLite during a cold open; the main file cannot change.
+    const before = suffix === '' ? identities?.get(suffix) : undefined
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      entry.nlink !== 1 ||
+      (process.getuid?.() !== undefined && entry.uid !== process.getuid()) ||
+      (before && (entry.dev !== before.dev || entry.ino !== before.ino))
+    ) {
+      throw new Error(`Invalid application database file: ${path.basename(current)}`)
     }
+    if ((entry.mode & 0o777) !== 0o600) {
+      throw new Error(
+        `Invalid application database permissions: ${path.basename(current)}. Close the app and repair this owned regular file to mode 0600 before reopening.`,
+      )
+    }
+    inspected.set(suffix, entry)
+  }
+  return inspected
+}
+
+/** The sole raw file descriptor belongs to a newly created inode and closes before SQLite. */
+function createPrivateSqliteFile(filePath: string): void {
+  let descriptor: number
+  try {
+    descriptor = openSync(
+      filePath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return
+    }
+    throw error
+  }
+  try {
+    fchmodSync(descriptor, 0o600)
+    const created = fstatSync(descriptor)
+    const atPath = lstatSync(filePath)
+    if (!atPath.isFile() || created.dev !== atPath.dev || created.ino !== atPath.ino) {
+      throw new Error('Invalid application database file: app.sqlite')
+    }
+  } finally {
+    closeSync(descriptor)
   }
 }
 
