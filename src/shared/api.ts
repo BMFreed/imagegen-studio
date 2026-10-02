@@ -1,3 +1,8 @@
+import type {
+  AcceptedResultHistoryCursor,
+  AcceptedResultHistoryPage,
+  AcceptedResultHistoryReference,
+} from './projects/accepted-result-history.js'
 import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import type { GenerationProgressSnapshot } from './projects/generation-progress.js'
 import type {
@@ -58,6 +63,7 @@ export const ipcChannels = {
     generate: 'projects:generate',
     generationChanged: 'projects:generation-changed',
     generationProgress: 'projects:generation-progress',
+    getAcceptedResultHistory: 'projects:get-accepted-result-history',
     getCloseImpact: 'projects:get-close-impact',
     getGenerationProgress: 'projects:get-generation-progress',
     getGenerationQueue: 'projects:get-generation-queue',
@@ -76,6 +82,7 @@ export const ipcChannels = {
     removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
     retryGenerationJob: 'projects:retry-generation-job',
+    reviewAcceptedResult: 'projects:review-accepted-result',
     save: 'projects:save',
     saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
     sealPromptHistory: 'projects:seal-prompt-history',
@@ -299,6 +306,9 @@ export interface ProjectApi {
     tabId: string,
     options: ProjectGenerateOptions,
   ) => Promise<ApiResult<ProjectGenerateResult>>
+  getAcceptedResultHistory: (
+    cursor?: AcceptedResultHistoryCursor | null,
+  ) => Promise<ApiResult<AcceptedResultHistoryPage>>
   getCloseImpact: (tabId: string) => Promise<ApiResult<ProjectCloseImpact>>
   getGenerationProgress: () => Promise<ApiResult<GenerationProgressSnapshot>>
   getGenerationQueue: (
@@ -335,6 +345,7 @@ export interface ProjectApi {
     decision: 'discard' | 'recover',
   ) => Promise<ApiResult<ProjectTab>>
   retryGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
+  reviewAcceptedResult: (reference: AcceptedResultHistoryReference) => Promise<ApiResult<boolean>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   saveGenerationCandidateImage: (
     tabId: string,

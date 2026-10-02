@@ -1,3 +1,9 @@
+import {
+  ACCEPTED_RESULT_HISTORY_PAGE_SIZE,
+  type AcceptedResultHistoryCursor,
+  isAcceptedResultHistoryCursor,
+} from '../../shared/projects/accepted-result-history.js'
+import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import { IgsSchemaError } from '../../shared/projects/project-schema.js'
 
 import type { Kysely } from 'kysely'
@@ -64,9 +70,19 @@ export interface ProjectSavedAcceptedResultRecord {
   projectTitle: string
 }
 
+export interface ProjectSavedAcceptedResultsPage {
+  items: ProjectSavedAcceptedResultRecord[]
+  nextCursor: AcceptedResultHistoryCursor | null
+  totalCount: number
+}
+
 export class ProjectIndexError extends Error {
   constructor(
-    readonly code: 'INDEX_FILE_CHANGED' | 'INDEX_OUTSIDE_WORKSPACE' | 'WORKSPACE_UNAVAILABLE',
+    readonly code:
+      | 'INDEX_CURSOR_INVALID'
+      | 'INDEX_FILE_CHANGED'
+      | 'INDEX_OUTSIDE_WORKSPACE'
+      | 'WORKSPACE_UNAVAILABLE',
     message: string,
   ) {
     super(message)
@@ -129,6 +145,25 @@ export class ProjectIndexRepository {
     return row ? indexRecord(row) : null
   }
 
+  async getSavedAcceptedResult(
+    localProjectKey: string,
+    layerId: string,
+  ): Promise<ProjectSavedAcceptedResultRecord | null> {
+    if (
+      typeof localProjectKey !== 'string' ||
+      !/^project-v1-[a-f0-9]{64}$/.test(localProjectKey) ||
+      !isProjectDocumentId(layerId)
+    ) {
+      return null
+    }
+    return (
+      (await savedResultQuery(this.db)
+        .where('result.local_project_key', '=', localProjectKey)
+        .where('result.layer_id', '=', layerId)
+        .executeTakeFirst()) ?? null
+    )
+  }
+
   async indexSaved(filePath: string, workspaceId: string): Promise<ProjectIndexRecord> {
     const canonicalPath = await canonicalProjectPath(filePath)
     return await withProjectPathLock(
@@ -153,44 +188,66 @@ export class ProjectIndexRepository {
     if (typeof localProjectKey !== 'string' || !/^project-v1-[a-f0-9]{64}$/.test(localProjectKey)) {
       return []
     }
-    return await this.db
-      .selectFrom('project_accepted_result_index as result')
-      .innerJoin('project_index as project', (join) =>
-        join
-          .onRef('project.local_project_key', '=', 'result.local_project_key')
-          .onRef('project.document_id', '=', 'result.document_id')
-          .onRef('project.document_revision', '=', 'result.document_revision'),
-      )
-      .select([
-        'result.accepted_at as acceptedAt',
-        'result.actual_seed as actualSeed',
-        'result.asset_bytes as assetBytes',
-        'result.asset_height as assetHeight',
-        'result.asset_path as assetPath',
-        'result.asset_sha256 as assetSha256',
-        'result.asset_width as assetWidth',
-        'project.canonical_path as canonicalPath',
-        'result.document_id as documentId',
-        'result.document_revision as documentRevision',
-        'project.file_fingerprint as fileFingerprint',
-        'result.layer_id as layerId',
-        'result.layer_name as layerName',
-        'result.local_project_key as localProjectKey',
-        'result.model_file_sha256 as modelFileSha256',
-        'result.model_name as modelName',
-        'result.model_version_name as modelVersionName',
-        'result.output_height as outputHeight',
-        'result.output_width as outputWidth',
-        'project.display_name as projectTitle',
-      ])
+    return await savedResultQuery(this.db)
       .where('result.local_project_key', '=', localProjectKey)
-      .where('project.file_health', '=', 'ready')
-      .where('project.trashed_at', 'is', null)
-      .where('project.file_fingerprint', 'is not', null)
       .orderBy('result.accepted_at', 'desc')
       .orderBy('result.layer_id')
-      .$narrowType<{ fileFingerprint: string }>()
       .execute()
+  }
+
+  /** A bounded global metadata page; source revalidation belongs to Refresh/preview/Open. */
+  async listSavedAcceptedResultsPage(
+    cursor?: AcceptedResultHistoryCursor | null,
+  ): Promise<ProjectSavedAcceptedResultsPage> {
+    if (cursor !== undefined && cursor !== null && !isAcceptedResultHistoryCursor(cursor)) {
+      throw new ProjectIndexError(
+        'INDEX_CURSOR_INVALID',
+        'The accepted-result page cursor is invalid.',
+      )
+    }
+    const reviewedCursor = cursor ? { ...cursor } : null
+    return await this.db.transaction().execute(async (transaction) => {
+      const count = await savedResultQuery(transaction)
+        .clearSelect()
+        .select(transaction.fn.countAll<number>().as('totalCount'))
+        .executeTakeFirstOrThrow()
+      let query = savedResultQuery(transaction)
+        .orderBy('result.accepted_at', 'desc')
+        .orderBy('result.local_project_key')
+        .orderBy('result.layer_id')
+        .limit(ACCEPTED_RESULT_HISTORY_PAGE_SIZE + 1)
+      if (reviewedCursor) {
+        query = query.where((eb) =>
+          eb.or([
+            eb('result.accepted_at', '<', reviewedCursor.acceptedAt),
+            eb.and([
+              eb('result.accepted_at', '=', reviewedCursor.acceptedAt),
+              eb('result.local_project_key', '>', reviewedCursor.projectKey),
+            ]),
+            eb.and([
+              eb('result.accepted_at', '=', reviewedCursor.acceptedAt),
+              eb('result.local_project_key', '=', reviewedCursor.projectKey),
+              eb('result.layer_id', '>', reviewedCursor.layerId),
+            ]),
+          ]),
+        )
+      }
+      const rows = await query.execute()
+      const items = rows.slice(0, ACCEPTED_RESULT_HISTORY_PAGE_SIZE)
+      const last = items.at(-1)
+      return {
+        items,
+        nextCursor:
+          rows.length > ACCEPTED_RESULT_HISTORY_PAGE_SIZE && last
+            ? {
+                acceptedAt: last.acceptedAt,
+                layerId: last.layerId,
+                projectKey: last.localProjectKey,
+              }
+            : null,
+        totalCount: Number(count.totalCount),
+      }
+    })
   }
 
   async markOpened(canonicalPath: string): Promise<void> {
@@ -494,6 +551,44 @@ export class ProjectIndexRepository {
       )
       .execute()
   }
+}
+
+/** Shared eligibility for Project reads, global counts/pages and saved-result capability lookup. */
+function savedResultQuery(db: Kysely<DB>) {
+  return db
+    .selectFrom('project_accepted_result_index as result')
+    .innerJoin('project_index as project', (join) =>
+      join
+        .onRef('project.local_project_key', '=', 'result.local_project_key')
+        .onRef('project.document_id', '=', 'result.document_id')
+        .onRef('project.document_revision', '=', 'result.document_revision'),
+    )
+    .select([
+      'result.accepted_at as acceptedAt',
+      'result.actual_seed as actualSeed',
+      'result.asset_bytes as assetBytes',
+      'result.asset_height as assetHeight',
+      'result.asset_path as assetPath',
+      'result.asset_sha256 as assetSha256',
+      'result.asset_width as assetWidth',
+      'project.canonical_path as canonicalPath',
+      'result.document_id as documentId',
+      'result.document_revision as documentRevision',
+      'project.file_fingerprint as fileFingerprint',
+      'result.layer_id as layerId',
+      'result.layer_name as layerName',
+      'result.local_project_key as localProjectKey',
+      'result.model_file_sha256 as modelFileSha256',
+      'result.model_name as modelName',
+      'result.model_version_name as modelVersionName',
+      'result.output_height as outputHeight',
+      'result.output_width as outputWidth',
+      'project.display_name as projectTitle',
+    ])
+    .where('project.file_health', '=', 'ready')
+    .where('project.trashed_at', 'is', null)
+    .where('project.file_fingerprint', 'is not', null)
+    .$narrowType<{ fileFingerprint: string }>()
 }
 
 function indexRecord(row: DB['project_index']): ProjectIndexRecord {

@@ -11,6 +11,12 @@ import type {
   ProjectTab,
 } from '../../shared/api.js'
 import { isProjectGenerationDraftChange, isProjectRasterLayerChange } from '../../shared/api.js'
+import {
+  type AcceptedResultHistoryCursor,
+  type AcceptedResultHistoryPage,
+  type AcceptedResultHistoryReference,
+  isAcceptedResultHistoryReference,
+} from '../../shared/projects/accepted-result-history.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import {
   createEmptyProjectDocumentV1,
@@ -34,6 +40,11 @@ import type { ProjectShadowInspection } from './project-shadow.js'
 import type { ProjectTemporaryRecoveryInspection } from './project-temporary-recovery.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import {
+  acceptedHistoryImageUrl,
+  canPreviewSavedAcceptedResult,
+  reviewSavedAcceptedResult,
+} from './accepted-history-resource.js'
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import { projectAcceptedResults } from './project-accepted-results.js'
 import {
@@ -396,6 +407,41 @@ export class ProjectService {
 
   async flushAutosave(tabId: string): Promise<void> {
     await this.requireTab(tabId).flush()
+  }
+
+  /** Saved catalog only; callers explicitly Refresh through the existing workspace scan. */
+  async getAcceptedResultHistory(
+    cursor: AcceptedResultHistoryCursor | null = null,
+  ): Promise<AcceptedResultHistoryPage> {
+    const page = await this.options.repository.listSavedAcceptedResultsPage(cursor)
+    return {
+      items: page.items.map((record) => {
+        const reference: AcceptedResultHistoryReference = {
+          assetSha256: record.assetSha256,
+          documentId: record.documentId,
+          documentRevision: record.documentRevision,
+          layerId: record.layerId,
+          projectKey: record.localProjectKey,
+        }
+        return {
+          ...reference,
+          acceptedAt: record.acceptedAt,
+          height: record.outputHeight,
+          imageUrl: canPreviewSavedAcceptedResult(record)
+            ? acceptedHistoryImageUrl(reference)
+            : null,
+          layerName: record.layerName,
+          modelFileSha256: record.modelFileSha256,
+          modelName: record.modelName,
+          modelVersionName: record.modelVersionName,
+          projectName: record.projectTitle,
+          seed: record.actualSeed,
+          width: record.outputWidth,
+        }
+      }),
+      nextCursor: page.nextCursor,
+      totalCount: page.totalCount,
+    }
   }
 
   /** Resolve a process-issued image capability only against a currently open document revision. */
@@ -860,6 +906,18 @@ export class ProjectService {
       tab.storageWarning = temporary.reason
     }
     return tab
+  }
+
+  /** A preflight capability check; ordinary Open/recovery still owns document creation. */
+  async reviewAcceptedResult(reference: AcceptedResultHistoryReference): Promise<boolean> {
+    if (!isAcceptedResultHistoryReference(reference)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The saved result reference is invalid.',
+      )
+    }
+    const reviewed = { ...reference }
+    return (await reviewSavedAcceptedResult(reviewed, this.options.repository)) !== null
   }
 
   async save(

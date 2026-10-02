@@ -34,7 +34,7 @@ export function isSrgbCompatiblePngColorChunk(type: string, payload: Uint8Array)
       return view.getUint32(0, false) === 45_455
     }
     case 'sRGB': {
-      return payload[0] <= 3
+      return view.getUint8(0) <= 3
     }
     default: {
       return false

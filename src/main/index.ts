@@ -16,6 +16,12 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import {
+  type AcceptedResultHistoryCursor,
+  type AcceptedResultHistoryReference,
+  isAcceptedResultHistoryCursor,
+  isAcceptedResultHistoryReference,
+} from '../shared/projects/accepted-result-history.js'
 import { GenerationBatchPlanError } from '../shared/projects/generation-batch-plan.js'
 import {
   isGenerationQueueCursor,
@@ -50,6 +56,10 @@ import { ModelDownloader, ModelDownloadError } from './models/model-downloader.j
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
+import {
+  parseAcceptedHistoryImageUrl,
+  readSavedAcceptedResultImage,
+} from './projects/accepted-history-resource.js'
 import { developmentImageWorkerLocation } from './projects/development-image-worker.js'
 import {
   GenerationAcceptanceJournalError,
@@ -125,6 +135,10 @@ mkdirSync(paths.dataRoot, { recursive: true })
 app.setName('ImageGen Studio')
 app.setPath('userData', paths.dataRoot)
 protocol.registerSchemesAsPrivileged([
+  {
+    privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
+    scheme: 'igs-history',
+  },
   {
     privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
     scheme: 'igs-layer',
@@ -280,6 +294,20 @@ if (!gotInstanceLock) {
       }
       const layerScratchRoot = path.join(paths.dataRoot, 'scratch', 'layer-responses')
       await mkdir(layerScratchRoot, { recursive: true })
+      protocol.handle('igs-history', async (request) => {
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { status: 405 })
+        }
+        const resource = parseAcceptedHistoryImageUrl(request.url)
+        if (!resource) {
+          return new Response('Saved result not found.', { status: 404 })
+        }
+        try {
+          return await readSavedAcceptedResultImage(resource, projectRepository, layerScratchRoot)
+        } catch {
+          return new Response('Saved result unavailable.', { status: 503 })
+        }
+      })
       protocol.handle('igs-layer', async (request) => {
         if (request.method !== 'GET') {
           return new Response('Method not allowed.', { status: 405 })
@@ -965,6 +993,18 @@ if (!gotInstanceLock) {
       }
 
       registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(
+        ipcChannels.projects.getAcceptedResultHistory,
+        (args) => args.length === 1 && (args[0] === null || isAcceptedResultHistoryCursor(args[0])),
+        (cursor) =>
+          projectService.getAcceptedResultHistory(cursor as AcceptedResultHistoryCursor | null),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.reviewAcceptedResult,
+        (args) => args.length === 1 && isAcceptedResultHistoryReference(args[0]),
+        (reference) =>
+          projectService.reviewAcceptedResult(reference as AcceptedResultHistoryReference),
+      )
       registerProjectHandler(
         ipcChannels.projects.getGenerationQueue,
         (args) => args.length === 1 && (args[0] === null || isGenerationQueueCursor(args[0])),

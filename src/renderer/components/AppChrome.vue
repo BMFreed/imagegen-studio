@@ -12,6 +12,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  acceptedResults: []
   home: []
   queue: []
   redo: []
@@ -43,6 +44,15 @@ function selectEditAction(key: number | string) {
         Edit
       </NButton>
     </NDropdown>
+    <NButton
+      aria-label="Open saved accepted results"
+      class="chrome-menu history-button"
+      quaternary
+      size="small"
+      @click="$emit('acceptedResults')"
+    >
+      Accepted results
+    </NButton>
     <NButton
       aria-label="Open Queue Manager"
       class="chrome-menu queue-button"
@@ -89,7 +99,7 @@ function selectEditAction(key: number | string) {
   -webkit-app-region: no-drag;
 }
 
-.queue-button {
+.history-button {
   margin-left: auto;
 }
 </style>

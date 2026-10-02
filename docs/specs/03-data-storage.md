@@ -349,7 +349,18 @@ Unsaved Add, editing, Undo/Redo and shadow Recover do not update these durable r
 `.igs` commits before index synchronization: if indexing fails, Save reports its
 existing committed-file warning, the whole previous DB snapshot remains intact,
 and Refresh repairs the projection. Index rebuilding never deletes source files.
-Global browser/navigation, public IPC and Smart Patch indexing remain pending.
+The [app-level saved-result browser](../engineering/phase-2b-accepted-history-browser-research.md)
+adds strict bounded read-only IPC and keyset pages of 50 with count/page in the
+same SQLite snapshot. Metadata pages do not read pixels or depend on a worker.
+Public DTOs contain copied summary values and exact Project/document/layer/asset
+identity; filesystem paths, fingerprints and full provenance stay in Main.
+Closed saved-layer previews use a process-lifetime signed `igs-history` resource,
+verified against the current index, canonical workspace and saved package.
+It cannot substitute dirty, staged or merged Project pixels. Preview budget is
+32 MiB and at most 2048 per side for the current asset, independently of original
+output dimensions; unavailable/oversized previews retain valid navigation.
+The first browser makes no derivatives in Main. Smart Patch indexing, filters and
+worker-produced per-result thumbnail/cache optimization remain pending.
 
 ### Temporary generation staging
 

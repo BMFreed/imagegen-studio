@@ -1,3 +1,7 @@
+import {
+  ACCEPTED_RESULT_HISTORY_PAGE_SIZE,
+  type AcceptedResultHistoryCursor,
+} from '../../shared/projects/accepted-result-history.js'
 import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import Database from 'better-sqlite3'
@@ -161,6 +165,259 @@ test('saved result index copies generation metadata and keeps current assets sep
     )
     assert.deepEqual(await index.listSavedAcceptedResults('invalid-project'), [])
     assert.deepEqual(await index.listSavedAcceptedResults(`project-v1-${'f'.repeat(64)}`), [])
+  })
+})
+
+test('global saved-result paging exposes the saved catalog through the real index owner', async () => {
+  await withSavedResultProject(async ({ index, session }) => {
+    const page = await index.listSavedAcceptedResultsPage()
+    assert.equal(page.totalCount, 2)
+    assert.equal(page.items.length, 2)
+    assert.equal(page.nextCursor, null)
+    assert.deepEqual(page.items, await index.listSavedAcceptedResults(session.localRecoveryKey))
+    assert.deepEqual(
+      await index.getSavedAcceptedResult(session.localRecoveryKey, session.document.layers[0].id),
+      page.items[1],
+    )
+    assert.equal(
+      await index.getSavedAcceptedResult(session.localRecoveryKey, session.document.layers[2].id),
+      null,
+    )
+    assert.equal(await index.getSavedAcceptedResult('bad-project', randomUUID()), null)
+    assert.equal(await index.getSavedAcceptedResult(session.localRecoveryKey, 'bad-layer'), null)
+    assert.equal(await index.getSavedAcceptedResult(session.localRecoveryKey, randomUUID()), null)
+  })
+})
+
+test('global catalog pages preserve copies, tied timestamps and strict continuation over three SQLite pages', async () => {
+  await withSavedResultProject(async ({ database, directory, index, session, workspace }) => {
+    const baseLayer = session.document.layers[0]
+    const layers = Array.from({ length: 57 }, (_, position) => ({
+      ...baseLayer,
+      id: randomUUID(),
+      name: `Accepted pagination ${position}`,
+    }))
+    session.applyDocument({ ...session.document, layers })
+    await session.save()
+    await index.indexSaved(session.filePath, workspace.id)
+    const copiedPath = path.join(workspace.directoryPath, 'Copied catalog project.igs')
+    await copyFile(session.filePath, copiedPath)
+    await index.indexSaved(copiedPath, workspace.id)
+    const copiedKey = localProjectRecoveryKey(copiedPath)
+    const expected = [
+      ...(await index.listSavedAcceptedResults(session.localRecoveryKey)),
+      ...(await index.listSavedAcceptedResults(copiedKey)),
+    ].sort(
+      (left, right) =>
+        right.acceptedAt.localeCompare(left.acceptedAt) ||
+        left.localProjectKey.localeCompare(right.localProjectKey) ||
+        left.layerId.localeCompare(right.layerId),
+    )
+    const first = await index.listSavedAcceptedResultsPage()
+    assert.equal(first.totalCount, 114)
+    assert.equal(first.items.length, ACCEPTED_RESULT_HISTORY_PAGE_SIZE)
+    assert.ok(first.nextCursor)
+    const mutableCursor = { ...first.nextCursor }
+    const nextPagePromise = index.listSavedAcceptedResultsPage(mutableCursor)
+    mutableCursor.acceptedAt = '2000-01-01T00:00:00.000Z'
+    mutableCursor.projectKey = `project-v1-${'f'.repeat(64)}`
+    mutableCursor.layerId = randomUUID()
+    const second = await nextPagePromise
+    assert.equal(second.totalCount, 114)
+    assert.equal(second.items.length, ACCEPTED_RESULT_HISTORY_PAGE_SIZE)
+    assert.ok(second.nextCursor)
+    const secondary = openAppDatabase(directory, migrations)
+    try {
+      const third = await new ProjectIndexRepository(secondary.db).listSavedAcceptedResultsPage(
+        second.nextCursor,
+      )
+      assert.equal(third.totalCount, 114)
+      assert.equal(third.items.length, 14)
+      assert.equal(third.nextCursor, null)
+      const actual = [...first.items, ...second.items, ...third.items]
+      assert.deepEqual(actual, expected)
+      assert.equal(new Set(actual.map((row) => `${row.localProjectKey}:${row.layerId}`)).size, 114)
+      assert.equal(new Set(actual.map((row) => row.documentId)).size, 1)
+      assert.equal(new Set(actual.map((row) => row.localProjectKey)).size, 2)
+    } finally {
+      await secondary.close()
+    }
+    // The global-order migration must not change either copy's portable source or ownership.
+    assert.deepEqual(await readFile(copiedPath), await readFile(session.filePath))
+    assert.equal(
+      (await database.db.selectFrom('project_accepted_result_index').selectAll().execute()).length,
+      114,
+    )
+  })
+})
+
+test('catalog keyset survives a deleted anchor and excludes newer inserts until a fresh first page', async () => {
+  await withSavedResultProject(async ({ index, session, workspace }) => {
+    const baseLayer = session.document.layers[0]
+    const layers = Array.from({ length: 61 }, (_, position) => ({
+      ...baseLayer,
+      id: randomUUID(),
+      name: `Accepted cursor ${position}`,
+    }))
+    session.applyDocument({ ...session.document, layers })
+    await session.save()
+    await index.indexSaved(session.filePath, workspace.id)
+    const first = await index.listSavedAcceptedResultsPage()
+    assert.ok(first.nextCursor)
+    const expectedRemainder = (
+      await index.listSavedAcceptedResults(session.localRecoveryKey)
+    ).slice(50)
+    const newLayer = {
+      ...baseLayer,
+      generationProvenance: {
+        ...baseLayer.generationProvenance!,
+        executionResultContext: {
+          ...baseLayer.generationProvenance!.executionResultContext,
+          acceptedAt: '2026-10-02T15:00:00.000Z',
+        },
+      },
+      id: randomUUID(),
+      name: 'Newer accepted result',
+    }
+    session.applyDocument({
+      ...session.document,
+      layers: [...layers.filter((layer) => layer.id !== first.nextCursor!.layerId), newLayer],
+    })
+    await session.save()
+    await index.indexSaved(session.filePath, workspace.id)
+    assert.equal(
+      await index.getSavedAcceptedResult(session.localRecoveryKey, first.nextCursor.layerId),
+      null,
+    )
+    const continued = await index.listSavedAcceptedResultsPage(first.nextCursor)
+    assert.equal(continued.totalCount, 61)
+    assert.equal(continued.nextCursor, null)
+    assert.deepEqual(
+      continued.items.map((row) => row.layerId),
+      expectedRemainder.map((row) => row.layerId),
+    )
+    assert.equal(
+      continued.items.some((row) => row.layerId === newLayer.id),
+      false,
+    )
+    const refreshed = await index.listSavedAcceptedResultsPage()
+    assert.equal(refreshed.items[0].layerId, newLayer.id)
+    assert.equal(refreshed.totalCount, 61)
+  })
+})
+
+test('catalog count and items share one SQLite snapshot across an independent writer', async () => {
+  await withSavedResultProject(async ({ database, index, session }) => {
+    const expected = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    const writer = new Database(database.filePath, { fileMustExist: true })
+    let changedAfterCount = false
+    const racedIndex = new ProjectIndexRepository(
+      database.db.withPlugin({
+        transformQuery: ({ node }) => node,
+        async transformResult({ result }) {
+          if (!changedAfterCount && result.rows.length === 1 && 'totalCount' in result.rows[0]) {
+            changedAfterCount = true
+            writer
+              .prepare('UPDATE project_index SET trashed_at = ? WHERE local_project_key = ?')
+              .run('2026-10-02T16:00:00.000Z', session.localRecoveryKey)
+          }
+          return result
+        },
+      }),
+    )
+    try {
+      const page = await racedIndex.listSavedAcceptedResultsPage()
+      assert.equal(changedAfterCount, true)
+      assert.equal(page.totalCount, 2)
+      assert.deepEqual(page.items, expected)
+      assert.equal(page.nextCursor, null)
+      assert.deepEqual(await racedIndex.listSavedAcceptedResultsPage(), {
+        items: [],
+        nextCursor: null,
+        totalCount: 0,
+      })
+      assert.equal(
+        await racedIndex.getSavedAcceptedResult(session.localRecoveryKey, expected[0].layerId),
+        null,
+      )
+    } finally {
+      writer.close()
+    }
+  })
+})
+
+test('global catalog and exact lookup reject invalid cursors and filter every parent eligibility boundary', async () => {
+  await withSavedResultProject(async ({ database, index, session, workspace }) => {
+    const expected = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    const validCursor = {
+      acceptedAt: expected[0].acceptedAt,
+      layerId: expected[0].layerId,
+      projectKey: expected[0].localProjectKey,
+    }
+    for (const bad of [
+      {},
+      { ...validCursor, acceptedAt: 'today' },
+      { ...validCursor, layerId: 'bad-id' },
+      { ...validCursor, canonicalPath: session.filePath },
+    ]) {
+      await assert.rejects(index.listSavedAcceptedResultsPage(bad as AcceptedResultHistoryCursor), {
+        code: 'INDEX_CURSOR_INVALID',
+      })
+    }
+    assert.equal((await index.listSavedAcceptedResultsPage(null)).totalCount, 2)
+    for (const values of [
+      { file_health: 'corrupt' as const },
+      { file_health: 'missing' as const },
+      { file_health: 'unsupported_schema' as const },
+      { trashed_at: '2026-10-02T16:00:00.000Z' },
+      { document_id: randomUUID() },
+      { document_revision: randomUUID() },
+      { file_fingerprint: null },
+    ]) {
+      await database.db
+        .updateTable('project_index')
+        .set(values)
+        .where('local_project_key', '=', session.localRecoveryKey)
+        .execute()
+      assert.deepEqual(await index.listSavedAcceptedResultsPage(), {
+        items: [],
+        nextCursor: null,
+        totalCount: 0,
+      })
+      assert.equal(
+        await index.getSavedAcceptedResult(session.localRecoveryKey, expected[0].layerId),
+        null,
+      )
+      await database.db
+        .updateTable('project_index')
+        .set({ trashed_at: null })
+        .where('local_project_key', '=', session.localRecoveryKey)
+        .execute()
+      await index.indexSaved(session.filePath, workspace.id)
+      assert.deepEqual((await index.listSavedAcceptedResultsPage()).items, expected)
+    }
+  })
+})
+
+test('catalog metadata reads the verified index snapshot without opening closed saved Project files', async () => {
+  await withSavedResultProject(async ({ index, session, workspace }) => {
+    const expected = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    await rm(session.filePath)
+    assert.deepEqual((await index.listSavedAcceptedResultsPage()).items, expected)
+    assert.deepEqual(
+      await index.getSavedAcceptedResult(session.localRecoveryKey, expected[0].layerId),
+      expected[0],
+    )
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResultsPage(), {
+      items: [],
+      nextCursor: null,
+      totalCount: 0,
+    })
+    assert.equal(
+      await index.getSavedAcceptedResult(session.localRecoveryKey, expected[0].layerId),
+      null,
+    )
   })
 })
 

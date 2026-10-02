@@ -15,16 +15,25 @@ import IconButton from './IconButton.vue'
 
 const props = withDefaults(
   defineProps<{
+    acceptedResultsAvailable?: boolean
     canRedo?: boolean
     canSave?: boolean
     canUndo?: boolean
     projectActive?: boolean
     queueBadge?: number
   }>(),
-  { canRedo: false, canSave: false, canUndo: false, projectActive: false, queueBadge: 0 },
+  {
+    acceptedResultsAvailable: false,
+    canRedo: false,
+    canSave: false,
+    canUndo: false,
+    projectActive: false,
+    queueBadge: 0,
+  },
 )
 
 const emit = defineEmits<{
+  acceptedResults: []
   applyPreset: []
   closeProject: []
   home: []
@@ -122,6 +131,15 @@ function handleMenuSelect(key: string) {
       </nav>
     </div>
     <div class="menu-right">
+      <NButton
+        v-if="acceptedResultsAvailable"
+        aria-label="Open saved accepted results"
+        quaternary
+        size="small"
+        @click="$emit('acceptedResults')"
+      >
+        Accepted results
+      </NButton>
       <IconButton
         :badge="{ value: queueBadge || undefined, dot: true }"
         :icon="ListDetailsIcon"

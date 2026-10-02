@@ -51,6 +51,10 @@ import type { GenerationResultFocusRequest } from './generation-queue-result.js'
 import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
+import {
+  type AcceptedHistoryFocusRequest,
+  acceptedHistoryLayerAvailable,
+} from './accepted-history-navigation.js'
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 import PlainPromptEditor from './PlainPromptEditor.vue'
@@ -72,6 +76,7 @@ import ProjectQueuePanel from './ProjectQueuePanel.vue'
 import ResolutionControl from './ResolutionControl.vue'
 
 const props = defineProps<{
+  acceptedHistoryFocus: AcceptedHistoryFocusRequest | null
   busy: boolean
   draftPending: boolean
   error: string | null
@@ -116,6 +121,7 @@ const currentProgress = computed(() => {
 
 const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
+  acceptedHistoryFocusHandled: [requestId: number]
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   cancelGeneration: []
@@ -729,6 +735,27 @@ const layersPanel = ref<InstanceType<typeof ProjectLayerStack> | null>(null)
 const acceptedResultsOpen = ref(false)
 const acceptedResultsContext = ref<{ documentId: string; projectId: string } | null>(null)
 const acceptedResultRevealLayerId = ref<string | null>(null)
+watch(
+  () => [props.acceptedHistoryFocus, props.busy, props.reloadRequired] as const,
+  async ([request, busy, reloadRequired]) => {
+    if (!request || busy || reloadRequired || !acceptedHistoryLayerAvailable(props.tab, request)) {
+      return
+    }
+    selectedLayerId.value = request.layerId
+    await nextTick()
+    if (
+      props.acceptedHistoryFocus?.requestId !== request.requestId ||
+      props.busy ||
+      props.reloadRequired ||
+      !acceptedHistoryLayerAvailable(props.tab, request)
+    ) {
+      return
+    }
+    layersPanel.value?.revealLayer(request.layerId)
+    emit('acceptedHistoryFocusHandled', request.requestId)
+  },
+  { immediate: true },
+)
 watch(
   () => [props.tab.id, props.tab.documentId] as const,
   () => {

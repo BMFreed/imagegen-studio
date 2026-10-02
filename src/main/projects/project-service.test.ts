@@ -3,6 +3,7 @@ import {
   isProjectGenerationModelSelection,
 } from '../../shared/api.js'
 import type { ProjectGenerationDraftChange } from '../../shared/api.js'
+import { isAcceptedResultHistoryPage } from '../../shared/projects/accepted-result-history.js'
 import { isProjectAcceptedResultView } from '../../shared/projects/project-accepted-results.js'
 import {
   createEmptyProjectDocumentV1,
@@ -28,6 +29,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { acceptedHistoryLayerAvailable } from '../../renderer/components/accepted-history-navigation.js'
 import { ProjectDraftSync } from '../../renderer/components/project-draft-sync.js'
 import { type AppDatabase, openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
@@ -2221,12 +2223,51 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
     assert.equal(durableBeforeEdit[0].actualSeed, 0)
     assert.deepEqual([durableBeforeEdit[0].outputWidth, durableBeforeEdit[0].outputHeight], [8, 8])
     assert.deepEqual([durableBeforeEdit[0].assetWidth, durableBeforeEdit[0].assetHeight], [16, 16])
+    const globalBeforeEdit = await service.getAcceptedResultHistory()
+    assert.ok(isAcceptedResultHistoryPage(globalBeforeEdit))
+    assert.equal(globalBeforeEdit.totalCount, 1)
+    assert.equal(globalBeforeEdit.nextCursor, null)
+    const reference = globalBeforeEdit.items[0]
+    assert.equal(reference.projectKey, tabId)
+    assert.equal(reference.seed, 0)
+    assert.equal(reference.imageUrl?.startsWith('igs-history://result/'), true)
+    assert.deepEqual([reference.width, reference.height], [8, 8])
+    for (const forbidden of [
+      'canonicalPath',
+      'assetPath',
+      'fileFingerprint',
+      'generationProvenance',
+      'assetBytes',
+    ]) {
+      assert.equal(forbidden in reference, false)
+    }
+    const exactReference = {
+      assetSha256: reference.assetSha256,
+      documentId: reference.documentId,
+      documentRevision: reference.documentRevision,
+      layerId: reference.layerId,
+      projectKey: reference.projectKey,
+    }
+    assert.equal(await service.reviewAcceptedResult(exactReference), true)
+    assert.equal(acceptedHistoryLayerAvailable(imported.result.tab, exactReference), true)
+    assert.equal(
+      await service.reviewAcceptedResult({ ...exactReference, assetSha256: '0'.repeat(64) }),
+      false,
+    )
+    await assert.rejects(service.reviewAcceptedResult(reference), /invalid/)
 
     const changed = await service.updateRasterLayer(tabId, layerId, {
       kind: 'opacity',
       opacity: 0.4,
     })
     assert.equal(changed.dirty, true)
+    assert.deepEqual(await service.getAcceptedResultHistory(), globalBeforeEdit)
+    assert.equal(await service.reviewAcceptedResult(exactReference), true)
+    assert.equal(
+      acceptedHistoryLayerAvailable(changed, exactReference),
+      true,
+      'dirty revision with unchanged accepted pixels remains navigable',
+    )
     assert.deepEqual(changed.acceptedResults, [
       { ...expectedHistory[0], imageUrl: changed.layers[0].imageUrl },
     ])
@@ -2254,6 +2295,11 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
     assert.deepEqual(await repository.getProject(tabId), indexed)
     assert.deepEqual(await repository.listSavedAcceptedResults(tabId), durableBeforeEdit)
     const committedBeforeRefresh = await readIgsPackage(indexed.canonicalPath)
+    assert.equal(
+      await service.reviewAcceptedResult(exactReference),
+      false,
+      'stale indexed source is refused after committed Save',
+    )
     assert.equal(committedBeforeRefresh.project.layers[0].opacity, 0.4)
     await sql`DROP TRIGGER reject_service_saved_result`.execute(database.db)
     await service.list()
@@ -2268,6 +2314,9 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
       committedBeforeRefresh.project.documentRevision,
     )
     assert.notEqual(repairedFromRefresh[0].fileFingerprint, durableBeforeEdit[0].fileFingerprint)
+    const refreshedPage = await service.getAcceptedResultHistory()
+    assert.ok(isAcceptedResultHistoryPage(refreshedPage))
+    assert.notEqual(refreshedPage.items[0].documentRevision, exactReference.documentRevision)
     assert.equal(repairedFromRefresh[0].assetSha256, savedBeforeEdit.project.layers[0].asset.sha256)
 
     assert.equal((await service.save(tabId)).committed, true)

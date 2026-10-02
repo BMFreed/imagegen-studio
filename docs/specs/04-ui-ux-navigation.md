@@ -192,7 +192,9 @@ Boards/gallery не показываются как постоянная бок�
 - compact queue/download activity buttons в верхнем app chrome;
 - центральная рабочая область;
 - правая панель параметров для выбранного объекта внутри Project;
-- accepted-result history/provenance entry points там, где они нужны работе с открытым `.igs`.
+- `Accepted results` в app chrome открывает отдельную общую модалку из Home и Project;
+- Project Layers toolbar сохраняет отдельный current-document список принятых результатов;
+- provenance/settings comparison остаётся contextual действием слоя.
 
 Activity buttons в app chrome разделены по ownership:
 

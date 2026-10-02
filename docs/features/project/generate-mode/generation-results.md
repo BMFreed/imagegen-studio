@@ -506,8 +506,39 @@ current signed layer resource as the stack; preview failure yields a placeholder
 
 Imported raster images without provenance and temporary candidates are excluded.
 The list reflects current document ownership, independently of Queue rows and
-the Undo stack. The durable global SQLite index, cross-project accepted-result
-navigation, Smart Patch acceptance and full pipeline/release runtime remain open.
+the Undo stack. The saved global SQLite index and cross-project browser are connected separately
+below. Smart Patch acceptance and full pipeline/release runtime remain open.
+
+## App-level saved accepted-result history
+
+The app chrome `Accepted results` action opens one separate modal from both Home
+and Project. It lists saved generated Raster results across ready, non-trashed
+indexed Projects, newest first, with per-result preview, layer and Project names,
+copied model/version, actual seed and original generated size. Copies at different
+local paths remain separate even when document and layer IDs are shared.
+
+This global list reflects explicit Save. Accepting a result before Save updates
+only the current Project list and recovery shadow. Imported/manual images without
+provenance and temporary candidates are excluded. Refresh rescans saved Projects
+and starts the first page. Newer/Older pages contain at most 50 results; there is
+no retention cap and no search/filter in this first slice. Missing or oversized
+preview displays `Preview unavailable` without removing the row or blocking Open.
+
+Selecting a row verifies its exact saved source and uses ordinary Project Open,
+focusing an existing tab or requesting Recover/Discard/Cancel when required.
+After Open or Recover it selects and reveals the owning layer, including hidden
+layers, without changing visibility, camera, bbox, settings, seed, dirty state or
+Undo. Discard and Cancel cancel the pending selection. An already-open dirty tab
+keeps its changes: if its accepted layer is absent or its pixels differ, a visible
+notice explains that the saved result is unavailable in the current Project.
+The app never overwrites unsaved work to satisfy history navigation. A stale saved
+source is refused with a Refresh message; closing the modal or changing context
+cancels a pending request.
+
+The [production browser evidence](../../../engineering/phase-2b-accepted-history-browser-research.md)
+separates real `.igs`/SQLite/Electron from the shared-component mock scenario
+`?prototype=accepted-results`. Comparison, result-derived presets, Smart Patch
+history and worker-produced per-result thumbnail optimization remain open.
 
 ## Vue Prototype Coverage
 

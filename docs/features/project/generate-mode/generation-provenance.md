@@ -185,8 +185,8 @@ covers generated Raster Layers with path/layer identity and atomic Home/history
 replacement; an internal query excludes unhealthy/trashed or foreign-lineage
 sources. Unsaved changes do not enter it, and an index failure after committed
 Save keeps the previous DB snapshot and reports a warning until rescan repairs it.
-App-level history browser/navigation, public IPC and Smart Patch indexing are
-still pending.
+App-level saved Raster history browser/navigation and bounded read-only IPC are
+connected by the [browser checkpoint](../../../engineering/phase-2b-accepted-history-browser-research.md). Smart Patch indexing remains pending.
 Crash recovery can reconstruct the unsaved projection from the document shadow.
 
 - one accepted candidate → one accepted result → one history entry;

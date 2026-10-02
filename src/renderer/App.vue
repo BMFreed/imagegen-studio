@@ -16,6 +16,10 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import type {
+  AcceptedResultHistoryCursor,
+  AcceptedResultHistoryReference,
+} from '../shared/projects/accepted-result-history.js'
 import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
@@ -46,6 +50,11 @@ import type {
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
+import {
+  type AcceptedHistoryFocusRequest,
+  acceptedHistoryLayerAvailable,
+} from './components/accepted-history-navigation.js'
+import AcceptedResultsBrowser from './components/AcceptedResultsBrowser.vue'
 import AppChrome from './components/AppChrome.vue'
 import {
   GenerationQueueResultNavigator,
@@ -434,6 +443,7 @@ function refreshOpenGeneration() {
 }
 
 function openGenerationQueue() {
+  cancelAcceptedHistoryNavigation()
   queueResultNavigator.cancelProjectOpen()
   queueResultNavigationError.value = null
   generationQueueOpen.value = true
@@ -447,7 +457,151 @@ function refreshQueueResults() {
   }
 }
 
+const savedAcceptedResultsOpen = ref(false)
+const acceptedHistoryError = ref<string | null>(null)
+const acceptedHistoryOpening = ref(false)
+const acceptedHistoryFocus = ref<AcceptedHistoryFocusRequest | null>(null)
+let acceptedHistoryRequest = 0
+let pendingAcceptedHistory: {
+  reference: AcceptedResultHistoryReference
+  requestId: number
+} | null = null
+let closingAcceptedHistoryForNavigation = false
+let acceptedHistoryModalSettled = true
+
+function cancelAcceptedHistoryNavigation() {
+  acceptedHistoryRequest += 1
+  pendingAcceptedHistory = null
+  acceptedHistoryFocus.value = null
+  closingAcceptedHistoryForNavigation = false
+}
+
+function openSavedAcceptedResults() {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  queueResultNavigator.cancel()
+  cancelAcceptedHistoryNavigation()
+  acceptedHistoryError.value = null
+  acceptedHistoryModalSettled = false
+  savedAcceptedResultsOpen.value = true
+}
+
+async function readAcceptedHistoryPage(
+  cursor: AcceptedResultHistoryCursor | null,
+  refresh: boolean,
+) {
+  if (refresh) {
+    projects.value = await apiValue(() => projectApi().list())
+  }
+  return await apiValue(() => projectApi().getAcceptedResultHistory(cursor))
+}
+
+watch(savedAcceptedResultsOpen, (open) => {
+  if (!open && !closingAcceptedHistoryForNavigation) {
+    cancelAcceptedHistoryNavigation()
+  }
+  closingAcceptedHistoryForNavigation = false
+})
+watch(windowClosePending, (closing) => {
+  if (closing) {
+    cancelAcceptedHistoryNavigation()
+  }
+})
+
+async function continueAcceptedHistoryOpen(projectKey: string) {
+  const intent = pendingAcceptedHistory
+  if (
+    !intent ||
+    intent.reference.projectKey !== projectKey ||
+    intent.requestId !== acceptedHistoryRequest ||
+    rendererDisposed ||
+    pendingProjectAction.value ||
+    recoveryDecision.value ||
+    windowClosePending.value ||
+    !acceptedHistoryModalSettled
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((item) => item.id === projectKey)
+  pendingAcceptedHistory = null
+  if (
+    !tab ||
+    reloadRequiredIds.value.has(projectKey) ||
+    !acceptedHistoryLayerAvailable(tab, intent.reference)
+  ) {
+    globalNotice.value =
+      'This saved result is not available in the current project. Your unsaved changes were preserved.'
+    return
+  }
+  acceptedHistoryFocus.value = { ...intent.reference, requestId: intent.requestId }
+}
+
+function acceptedHistoryClosed() {
+  acceptedHistoryModalSettled = true
+  const key = pendingAcceptedHistory?.reference.projectKey
+  if (key) {
+    void continueAcceptedHistoryOpen(key)
+  }
+}
+
+async function openSavedAcceptedResult(reference: AcceptedResultHistoryReference) {
+  if (pendingProjectAction.value || windowClosePending.value || acceptedHistoryOpening.value) {
+    return
+  }
+  cancelAcceptedHistoryNavigation()
+  const requestId = acceptedHistoryRequest
+  pendingAcceptedHistory = { reference: { ...reference }, requestId }
+  acceptedHistoryError.value = null
+  acceptedHistoryOpening.value = true
+  try {
+    const available = await apiValue(() => projectApi().reviewAcceptedResult({ ...reference }))
+    if (
+      requestId !== acceptedHistoryRequest ||
+      rendererDisposed ||
+      !savedAcceptedResultsOpen.value ||
+      windowClosePending.value
+    ) {
+      return
+    }
+    if (!available) {
+      acceptedHistoryError.value =
+        'This saved result changed or is unavailable. Refresh accepted results.'
+      pendingAcceptedHistory = null
+      return
+    }
+    const previous = activeTab.value
+    if (previous && previous.id !== reference.projectKey) {
+      await flushProjectDraft(previous.id)
+    }
+    if (requestId !== acceptedHistoryRequest || !savedAcceptedResultsOpen.value) {
+      return
+    }
+    closingAcceptedHistoryForNavigation = true
+    savedAcceptedResultsOpen.value = false
+    await openProject(reference.projectKey, true, () => requestId === acceptedHistoryRequest)
+    if (requestId !== acceptedHistoryRequest || rendererDisposed || windowClosePending.value) {
+      return
+    }
+    if (homeError.value) {
+      cancelAcceptedHistoryNavigation()
+      globalNotice.value = homeError.value
+    } else if (!recoveryDecision.value) {
+      await continueAcceptedHistoryOpen(reference.projectKey)
+    }
+  } catch (cause) {
+    if (requestId === acceptedHistoryRequest) {
+      cancelAcceptedHistoryNavigation()
+      acceptedHistoryError.value = errorMessage(cause)
+      globalNotice.value = acceptedHistoryError.value
+    }
+  } finally {
+    acceptedHistoryOpening.value = false
+  }
+}
+
 async function openQueueProject(projectKey: string, reference?: QueueResultOpenReference | null) {
+  cancelAcceptedHistoryNavigation()
   if (
     pendingProjectAction.value !== null ||
     windowClosePending.value ||
@@ -918,6 +1072,7 @@ function replaceTab(tab: ProjectTab) {
 
 function focusTab(tab: ProjectTab, preserveResultOpen = false) {
   if (!preserveResultOpen) {
+    cancelAcceptedHistoryNavigation()
     queueResultNavigator.cancelProjectOpen()
   }
   replaceTab(tab)
@@ -926,6 +1081,12 @@ function focusTab(tab: ProjectTab, preserveResultOpen = false) {
 }
 
 function removeTab(tabId: string) {
+  if (
+    pendingAcceptedHistory?.reference.projectKey === tabId ||
+    acceptedHistoryFocus.value?.projectKey === tabId
+  ) {
+    cancelAcceptedHistoryNavigation()
+  }
   if (queueResultNavigator.getPendingProjectOpen()?.projectKey === tabId) {
     queueResultNavigator.cancelProjectOpen()
   }
@@ -1028,6 +1189,7 @@ function openHome() {
 }
 
 function closeHome() {
+  cancelAcceptedHistoryNavigation()
   homeOpen.value = false
   if (activeDocument.value === 'home') {
     activeDocument.value = projectTabs.value.at(-1)?.id ?? null
@@ -1035,12 +1197,26 @@ function closeHome() {
 }
 
 async function activateDocument(documentId: string): Promise<boolean> {
+  const switchingDuringHistoryOpen =
+    acceptedHistoryOpening.value && pendingProjectAction.value?.kind === 'open'
+  cancelAcceptedHistoryNavigation()
   queueResultNavigator.cancelProjectOpen()
   if (activeDocument.value === documentId) {
     return true
   }
-  if (pendingProjectAction.value !== null || windowClosePending.value) {
+  if (
+    (pendingProjectAction.value !== null && !switchingDuringHistoryOpen) ||
+    windowClosePending.value
+  ) {
     return false
+  }
+  if (switchingDuringHistoryOpen) {
+    // History navigation already flushed the departing draft before Main Open began.
+    activeDocument.value = documentId
+    if (documentId === 'home') {
+      void refreshProjects()
+    }
+    return true
   }
   const previous = activeTab.value
   if (previous) {
@@ -1146,8 +1322,13 @@ async function createProject() {
   }
 }
 
-async function openProject(projectId: string, preserveResultOpen = false) {
+async function openProject(
+  projectId: string,
+  preserveResultOpen = false,
+  isCurrent?: () => boolean,
+) {
   if (!preserveResultOpen) {
+    cancelAcceptedHistoryNavigation()
     queueResultNavigator.cancelProjectOpen()
   }
   if (pendingProjectAction.value !== null) {
@@ -1163,6 +1344,13 @@ async function openProject(projectId: string, preserveResultOpen = false) {
   homeError.value = null
   try {
     const result = await apiValue(() => projectApi().open(projectId))
+    if (isCurrent && !isCurrent()) {
+      // Main may already own this tab; retain it in the strip without stealing the new context.
+      if (result.kind === 'opened' && !rendererDisposed && !windowClosePending.value) {
+        replaceTab(result.tab)
+      }
+      return
+    }
     if (result.kind === 'recovery-required') {
       recoveryDecision.value = result
       recoveryError.value = null
@@ -1174,6 +1362,9 @@ async function openProject(projectId: string, preserveResultOpen = false) {
       await refreshProjects()
     }
   } catch (cause) {
+    if (isCurrent && !isCurrent()) {
+      return
+    }
     if (preserveResultOpen) {
       queueResultNavigator.cancelProjectOpen()
     }
@@ -1326,6 +1517,7 @@ function cancelRecovery() {
     return
   }
   queueResultNavigator.cancelProjectOpen()
+  cancelAcceptedHistoryNavigation()
   recoveryDecision.value = null
   recoveryError.value = null
 }
@@ -1339,6 +1531,7 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
     return
   }
   if (decision === 'discard') {
+    cancelAcceptedHistoryNavigation()
     // This explicit recovery decision discards temporary results as well as the document shadow.
     queueResultNavigator.cancelProjectOpen()
   }
@@ -1351,7 +1544,8 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
     recoveryDecision.value = null
     focusTab(
       tab,
-      queueResultNavigator.getPendingProjectOpen()?.projectKey === pendingRecovery.projectId,
+      queueResultNavigator.getPendingProjectOpen()?.projectKey === pendingRecovery.projectId ||
+        pendingAcceptedHistory?.reference.projectKey === pendingRecovery.projectId,
     )
     if (tab.storageWarning) {
       globalNotice.value = tab.storageWarning
@@ -1359,12 +1553,14 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
     await refreshProjects()
   } catch (cause) {
     queueResultNavigator.cancelProjectOpen()
+    cancelAcceptedHistoryNavigation()
     recoveryError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
   }
   if (!recoveryDecision.value) {
     await continueQueueResultOpen(pendingRecovery.projectId)
+    await continueAcceptedHistoryOpen(pendingRecovery.projectId)
   }
 }
 
@@ -2106,6 +2302,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   rendererDisposed = true
+  cancelAcceptedHistoryNavigation()
   queueResultNavigator.cancel()
   pendingGeneration.value = null
   generationConfirmationNotice.value = null
@@ -2140,6 +2337,7 @@ onBeforeUnmount(() => {
         "
         :homeOpen
         :projectActive="Boolean(activeTab)"
+        @acceptedResults="openSavedAcceptedResults"
         @home="openHome"
         @queue="openGenerationQueue"
         @redo="runActiveProjectHistoryAction('redo')"
@@ -2236,6 +2434,9 @@ onBeforeUnmount(() => {
           v-else-if="activeTab"
           :key="activeTab.id"
           v-model:imagesPerClick="activeImagesPerClick"
+          :acceptedHistoryFocus="
+            acceptedHistoryFocus?.projectKey === activeTab.id ? acceptedHistoryFocus : null
+          "
           :busy="pendingProjectAction !== null || windowClosePending"
           :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
           :error="tabErrors[activeTab.id] ?? null"
@@ -2267,6 +2468,9 @@ onBeforeUnmount(() => {
           :saveNotice="saveNotices[activeTab.id] ?? null"
           :tab="activeTab"
           @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
+          @acceptedHistoryFocusHandled="
+            acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
+          "
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
@@ -2301,6 +2505,15 @@ onBeforeUnmount(() => {
       </main>
 
       <ModelManager v-model:show="modelManagerOpen" :focus="modelManagerFocus" />
+
+      <AcceptedResultsBrowser
+        v-model:show="savedAcceptedResultsOpen"
+        :busy="acceptedHistoryOpening || pendingProjectAction !== null || windowClosePending"
+        :navigationError="acceptedHistoryError"
+        :readPage="readAcceptedHistoryPage"
+        @closed="acceptedHistoryClosed"
+        @openResult="openSavedAcceptedResult"
+      />
 
       <GenerationQueueManager
         v-model:show="generationQueueOpen"

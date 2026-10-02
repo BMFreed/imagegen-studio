@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import type {
+  AcceptedResultHistoryCursor,
+  AcceptedResultHistoryPage,
+  AcceptedResultHistoryReference,
+} from '../../../src/shared/projects/accepted-result-history.js'
+
 import {
   darkTheme,
   NButton,
@@ -10,16 +16,18 @@ import {
   NModal,
   NText,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import type { DocumentTabModel } from './components/app-shell.types'
 import type { HomeProjectRecord, HomeScenarioId } from './prototypes/home/home.types'
 import type { PresetCreateIntent } from './prototypes/presets/presets.types'
 import type { ProjectScenarioId, ProjectSession } from './prototypes/project/project.types'
 
+import AcceptedResultsBrowser from '../../../src/renderer/components/AcceptedResultsBrowser.vue'
 import AppChrome from './components/AppChrome.vue'
 import DocumentTabs from './components/DocumentTabs.vue'
 import ProjectContextMock from './components/ProjectContextMock.vue'
+import { readAcceptedResultsMockPage } from './prototypes/accepted-results/accepted-results.mock'
 import HomePrototype from './prototypes/home/HomePrototype.vue'
 import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue'
 import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue'
@@ -42,9 +50,16 @@ import { appLayerCssVariables } from './theme/app-layers'
 import { imageGenNaiveTheme } from './theme/naive-theme'
 
 type PrototypeId =
-  'apply-preset' | 'home' | 'model-manager' | 'preset-manager' | 'project' | 'save-preset'
+  | 'accepted-results'
+  | 'apply-preset'
+  | 'home'
+  | 'model-manager'
+  | 'preset-manager'
+  | 'project'
+  | 'save-preset'
 
 const prototypeIds = new Set<PrototypeId>([
+  'accepted-results',
   'apply-preset',
   'home',
   'model-manager',
@@ -84,7 +99,10 @@ const usesProjectContext = computed(
   () => activePrototype.value === 'apply-preset' || activePrototype.value === 'save-preset',
 )
 const usesDocumentSessions = computed(
-  () => activePrototype.value === 'home' || activePrototype.value === 'project',
+  () =>
+    activePrototype.value === 'accepted-results' ||
+    activePrototype.value === 'home' ||
+    activePrototype.value === 'project',
 )
 
 const workspaceColors: Record<string, string> = {
@@ -130,7 +148,35 @@ const staticDocumentTabs: DocumentTabModel[] = [
     workspaceColor: workspaceColors['character-studies'],
   },
 ]
-const activeDocumentId = ref(activePrototype.value === 'home' ? 'home' : 'sample-project-b')
+const activeDocumentId = ref(
+  activePrototype.value === 'home' || activePrototype.value === 'accepted-results'
+    ? 'home'
+    : 'sample-project-b',
+)
+const showSavedAcceptedResults = ref(false)
+const selectedSavedAcceptedResult = ref<AcceptedResultHistoryReference | null>(null)
+onMounted(() => {
+  if (activePrototype.value === 'accepted-results') {
+    showSavedAcceptedResults.value = true
+  }
+})
+
+function openMockSavedAcceptedResult(reference: AcceptedResultHistoryReference) {
+  selectedSavedAcceptedResult.value = { ...reference }
+  showSavedAcceptedResults.value = false
+}
+async function readAcceptedResultsScenarioPage(
+  cursor: AcceptedResultHistoryCursor | null,
+  refresh: boolean,
+): Promise<AcceptedResultHistoryPage> {
+  if (requestedScenario === 'empty') {
+    return { items: [], nextCursor: null, totalCount: 0 }
+  }
+  if (requestedScenario === 'error') {
+    throw new Error('Saved accepted results could not be read. Try refreshing.')
+  }
+  return readAcceptedResultsMockPage(cursor, refresh)
+}
 const showHomeModelManager = ref(false)
 const showHomePresetManager = ref(false)
 const showStandaloneModelManager = ref(true)
@@ -399,11 +445,13 @@ function syncProjectTab(project: HomeProjectRecord) {
       <NMessageProvider>
         <div class="app-shell" :style="appLayerCssVariables">
           <AppChrome
+            :acceptedResultsAvailable="usesDocumentSessions"
             :canRedo="(activeProjectSession?.history.future.length ?? 0) > 0"
             :canSave="activeProjectSession?.dirty ?? false"
             :canUndo="(activeProjectSession?.history.past.length ?? 0) > 0"
             :projectActive="Boolean(activeProjectSession)"
             :queueBadge="activeQueueCount"
+            @acceptedResults="showSavedAcceptedResults = true"
             @applyPreset="activeProjectSession && (activeProjectSession.ui.applyPresetOpen = true)"
             @closeProject="activeDocumentId && requestCloseDocument(activeDocumentId)"
             @home="requestHome"
@@ -450,6 +498,21 @@ function syncProjectTab(project: HomeProjectRecord) {
                     <NButton type="primary" @click="requestHome">Open Home</NButton>
                   </template>
                 </NEmpty>
+                <div
+                  v-if="usesDocumentSessions && selectedSavedAcceptedResult"
+                  aria-live="polite"
+                  class="accepted-results-mock-navigation"
+                  :data-document-id="selectedSavedAcceptedResult.documentId"
+                  :data-document-revision="selectedSavedAcceptedResult.documentRevision"
+                  :data-layer-id="selectedSavedAcceptedResult.layerId"
+                  :data-project-key="selectedSavedAcceptedResult.projectKey"
+                  data-testid="accepted-results-mock-navigation"
+                  role="status"
+                >
+                  Mock navigation requested for saved Project
+                  {{ selectedSavedAcceptedResult.projectKey.slice(0, 18) }}… / layer
+                  {{ selectedSavedAcceptedResult.layerId }}
+                </div>
               </template>
               <ProjectContextMock v-else-if="usesProjectContext" />
               <section v-else aria-hidden="true" class="home-context">
@@ -469,6 +532,14 @@ function syncProjectTab(project: HomeProjectRecord) {
             <ModelManagerPrototype
               v-if="activePrototype === 'model-manager' && showStandaloneModelManager"
               @close="showStandaloneModelManager = false"
+            />
+            <AcceptedResultsBrowser
+              v-if="usesDocumentSessions"
+              v-model:show="showSavedAcceptedResults"
+              :busy="false"
+              :navigationError="null"
+              :readPage="readAcceptedResultsScenarioPage"
+              @openResult="openMockSavedAcceptedResult"
             />
             <PresetManagerPrototype
               v-if="activePrototype === 'home' && showHomePresetManager"
@@ -586,6 +657,18 @@ function syncProjectTab(project: HomeProjectRecord) {
 
 .prototype-stage > :deep(.n-empty) {
   margin-top: 140px;
+}
+
+.accepted-results-mock-navigation {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  max-width: min(450px, calc(100% - 40px));
+  padding: 8px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--app-elevated);
+  color: var(--app-text);
 }
 
 .close-project-card {

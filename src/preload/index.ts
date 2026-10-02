@@ -20,6 +20,7 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { isAcceptedResultHistoryPage } from '../shared/projects/accepted-result-history.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import { isGenerationQueuePage } from '../shared/projects/generation-queue-manager.js'
@@ -654,6 +655,12 @@ const api: StudioApi = {
       ),
     generate: (tabId, options) =>
       invokeProject(ipcChannels.projects.generate, [tabId, options], isProjectGenerateResult),
+    getAcceptedResultHistory: (cursor = null) =>
+      invokeProject(
+        ipcChannels.projects.getAcceptedResultHistory,
+        [cursor],
+        isAcceptedResultHistoryPage,
+      ),
     getCloseImpact: (tabId) =>
       invokeProject(ipcChannels.projects.getCloseImpact, [tabId], isProjectCloseImpact),
     getGenerationProgress: () =>
@@ -759,6 +766,12 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     retryGenerationJob: (review) =>
       invokeProject(ipcChannels.projects.retryGenerationJob, [review], isVoid),
+    reviewAcceptedResult: (reference) =>
+      invokeProject(
+        ipcChannels.projects.reviewAcceptedResult,
+        [reference],
+        (value): value is boolean => typeof value === 'boolean',
+      ),
     save: (tabId) => invokeProject(ipcChannels.projects.save, [tabId], isProjectSaveResult),
     saveGenerationCandidateImage: (tabId, candidateId) =>
       invokeProject(
