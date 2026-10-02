@@ -276,10 +276,14 @@ mode row says `Unavailable`. Main rejects edits, Undo ABA and close/reopen durin
 the read; renderer tokens discard superseded or dismissed responses.
 
 The current `illustrious-txt2img` provenance v1 records model, prompts, seed,
-sampling and original generation size. Historical LoRA, VAE, CFG Rescale, Clip
-Skip and VAE precision are absent and explicitly `Unavailable`, even when the
-current draft has default values. No schema migration or fabricated legacy
-settings is introduced. Full pipeline provenance, Smart Patch comparison and
+sampling and original generation size. The subsequent
+[CFG Rescale checkpoint](../../../engineering/phase-2c-cfg-rescale-research.md)
+adds optional top-level `generationConfiguration.cfgRescale`: new preparations
+record the frozen effective value, including neutral zero. Comparison uses the
+current Illustrious draft's effective zero when unset. Historical absence of
+CFG Rescale remains `Unavailable`; it is never migrated to zero. Historical
+LoRA, VAE, Clip Skip and VAE precision likewise remain explicitly `Unavailable`.
+Full pipeline provenance, Smart Patch comparison and
 result-to-preset remain separate roadmap work. This checkpoint does not complete
 PP-005 or prove release runtime/inference readiness.
 

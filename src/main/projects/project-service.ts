@@ -1127,6 +1127,18 @@ export class ProjectService {
     const draft = document.generationDraft
     let nextDraft = draft
     switch (change.kind) {
+      case 'cfg-rescale': {
+        if (draft.cfgRescale === (change.value ?? undefined)) {
+          return toTab(tabId, coordinator)
+        }
+        nextDraft = { ...draft }
+        if (change.value === null) {
+          delete nextDraft.cfgRescale
+        } else {
+          nextDraft.cfgRescale = change.value
+        }
+        break
+      }
       case 'dynamic-prompt': {
         const before = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
         if (

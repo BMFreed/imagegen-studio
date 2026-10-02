@@ -116,6 +116,8 @@ export function compareRasterGenerationSettings(
           : 'Not set'
   const value = (input: number | string | null | undefined) =>
     input == null ? 'Not set' : String(input)
+  const currentCfgRescale =
+    draft.model?.baseModelFamily === 'illustrious' ? (draft.cfgRescale ?? 0) : undefined
   return [
     promptSection('prompt', 'Prompt', baseline.positivePrompt, draft.positivePrompt, current),
     promptSection(
@@ -236,7 +238,20 @@ export function compareRasterGenerationSettings(
     {
       key: 'cfgRescale',
       label: 'CFG Rescale',
-      rows: [unrecordedRow('cfgRescale.value', 'CFG Rescale', value(draft.cfgRescale))],
+      rows: [
+        row(
+          'cfgRescale.value',
+          'CFG Rescale',
+          baseline.cfgRescale,
+          currentCfgRescale,
+          baseline.cfgRescale === undefined ? UNRECORDED : String(baseline.cfgRescale),
+          currentCfgRescale === undefined
+            ? draft.model?.baseModelFamily === 'anima'
+              ? 'Unsupported for Anima'
+              : 'Unavailable for the current model'
+            : String(currentCfgRescale),
+        ),
+      ],
     },
     {
       key: 'denoisingStrength',

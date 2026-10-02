@@ -186,6 +186,7 @@ const ProvenancePromptSchema = v.strictObject({
 })
 
 const RasterGenerationConfigurationV1Schema = v.strictObject({
+  cfgRescale: v.optional(v.pipe(FiniteNumberSchema, v.minValue(0), v.maxValue(0.99))),
   mode: v.literal('txt2img'),
   model: IllustriousCheckpointRefSchema,
   negativePrompt: ProvenancePromptSchema,

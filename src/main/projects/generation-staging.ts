@@ -118,6 +118,7 @@ const FrozenPayloadSchema = v.strictObject({
     }),
     prompts: PromptsSchema,
     sampling: v.strictObject({
+      cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       invokeScheduler: SchedulerSchema,
       requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
@@ -142,6 +143,7 @@ const FrozenPayloadSchema = v.strictObject({
     }),
     prompts: PromptsSchema,
     sampling: v.strictObject({
+      cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       scheduler: SchedulerSchema,
       seed: Uint32Schema,
@@ -1501,6 +1503,7 @@ function parseFrozenPayload(json: string): FrozenPayload {
     context.model.managedPath !== workerJob.checkpoint.path ||
     context.model.reference.fileSha256 !== workerJob.checkpoint.sha256 ||
     context.model.reference.predictionType !== workerJob.checkpoint.predictionType ||
+    (context.sampling.cfgRescale ?? 0) !== (workerJob.sampling.cfgRescale ?? 0) ||
     context.sampling.cfgScale !== workerJob.sampling.cfgScale ||
     context.sampling.invokeScheduler !== workerJob.sampling.scheduler ||
     context.sampling.seed !== workerJob.sampling.seed ||

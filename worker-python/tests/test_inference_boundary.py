@@ -621,7 +621,7 @@ def test_progress_sink_failure_does_not_leave_attention_hook_attached() -> None:
 def test_generation_connects_real_pipeline_progress_before_provisional_png_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, thumbnail_failure: str | None
 ) -> None:
-    command = _command(tmp_path)
+    command = replace(_command(tmp_path), cfg_rescale=0.7)
 
     class GenerationPipeline(_ProgressPipeline):
         def __init__(self) -> None:
@@ -638,6 +638,7 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         def __call__(self, **kwargs: object) -> object:
             super().__call__(**kwargs)
             assert not command.output_path.exists()
+            assert kwargs["guidance_rescale"] == command.cfg_rescale == 0.7
             return SimpleNamespace(images=[self.image])
 
     pipeline = GenerationPipeline()
@@ -1050,11 +1051,12 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.4.0"
+    assert inference_ready_message()["workerVersion"] == "0.5.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
         "target-composition",
         "denoising-progress",
         "candidate-thumbnails",
+        "illustrious-cfg-rescale",
     ]

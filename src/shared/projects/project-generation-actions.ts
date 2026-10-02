@@ -14,6 +14,8 @@ export interface ProjectGenerationQueueJob {
 }
 
 export interface ProjectGenerationActionState {
+  /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
+  cfgRescaleSupported: boolean
   documentId: string
   error: { code: string; message: string } | null
   jobs: ProjectGenerationQueueJob[]
@@ -81,7 +83,15 @@ export function isProjectGenerationActionState(
 ): value is ProjectGenerationActionState {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ['documentId', 'error', 'jobs', 'phase', 'runningJobId']) ||
+    !exactKeys(value, [
+      'cfgRescaleSupported',
+      'documentId',
+      'error',
+      'jobs',
+      'phase',
+      'runningJobId',
+    ]) ||
+    typeof value['cfgRescaleSupported'] !== 'boolean' ||
     !isProjectDocumentId(value['documentId']) ||
     !phases.has(value['phase'] as ProjectGenerationActionState['phase']) ||
     (value['error'] !== null && !isSafeError(value['error'])) ||

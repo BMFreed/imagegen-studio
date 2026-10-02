@@ -1,5 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
-import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceCFGRescale,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -33,6 +36,7 @@ export interface IllustriousTxt2ImgRequestV1 {
     output: { pngPath: string; stagingRoot: string }
     prompts: { negative: string; positive: string }
     sampling: {
+      cfgRescale?: number
       cfgScale: number
       scheduler: IllustriousSchedulerKey
       seed: number
@@ -101,6 +105,12 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
       'The active worker has not qualified Illustrious txt2img inference.',
     )
   }
+  if ((context.sampling.cfgRescale ?? 0) !== 0 && !supportsInferenceCFGRescale(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious CFG Rescale.',
+    )
+  }
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
   )
@@ -139,6 +149,9 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
         output: { pngPath: outputPath, stagingRoot: stage },
         prompts: { ...context.prompts },
         sampling: {
+          ...(supportsInferenceCFGRescale(input.ready) && context.sampling.cfgRescale !== undefined
+            ? { cfgRescale: context.sampling.cfgRescale }
+            : {}),
           cfgScale: context.sampling.cfgScale,
           scheduler: qualified.scheduler,
           seed: context.sampling.seed,
@@ -254,6 +267,10 @@ function validatePrepared(
     !Number.isFinite(sampling.cfgScale) ||
     sampling.cfgScale < 1 ||
     sampling.cfgScale > MAX_CFG_SCALE ||
+    (sampling.cfgRescale !== undefined &&
+      (!Number.isFinite(sampling.cfgRescale) ||
+        sampling.cfgRescale < 0 ||
+        sampling.cfgRescale > 0.99)) ||
     !Number.isInteger(sampling.seed) ||
     sampling.seed < 0 ||
     sampling.seed > 0xff_ff_ff_ff

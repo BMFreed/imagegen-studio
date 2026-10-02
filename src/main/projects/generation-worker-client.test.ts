@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -73,6 +73,7 @@ else {
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
       if (request.type !== 'generate-illustrious-txt2img') process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
+      if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
       if (mode === 'crash') process.exit(7)
       if (mode === 'invalid-json') { process.stdout.write('{oops\n'); continue }
@@ -176,6 +177,59 @@ async function requestFor(fixture: Fixture): Promise<IllustriousTxt2ImgRequestV1
     type: 'generate-illustrious-txt2img',
   }
 }
+
+test('actual JSONL dispatch preserves rescale for 0.5.0, strips neutral zero for old peers and refuses nonneutral before sending', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'payload.json')
+    const current = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'rescale-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      for (const cfgRescale of [0, 0.3, 0.99]) {
+        const request = await requestFor(fixture)
+        request.job.sampling.cfgRescale = cfgRescale
+        await current.generate(request)
+        assert.equal(JSON.parse(await readFile(marker, 'utf8')).job.sampling.cfgRescale, cfgRescale)
+      }
+    } finally {
+      await current.close()
+    }
+    const legacy = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      const neutral = await requestFor(fixture)
+      neutral.job.sampling.cfgRescale = 0
+      await legacy.generate(neutral)
+      assert.equal(
+        Object.hasOwn(JSON.parse(await readFile(marker, 'utf8')).job.sampling, 'cfgRescale'),
+        false,
+      )
+      assert.equal(
+        neutral.job.sampling.cfgRescale,
+        0,
+        'wire adaptation does not alter caller or durable input',
+      )
+      await rm(marker)
+      for (const cfgRescale of [0.3, -0.1, 1, NaN]) {
+        const request = await requestFor(fixture)
+        request.job.sampling.cfgRescale = cfgRescale
+        await assert.rejects(legacy.generate(request), {
+          code: cfgRescale === 0.3 ? 'WORKER_VERSION_MISMATCH' : 'INVALID_REQUEST',
+        })
+        assert.equal(existsSync(marker), false, 'no unsupported command reached the child')
+      }
+    } finally {
+      await legacy.close()
+    }
+    await assert.rejects(
+      GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: 'rescale-missing-capability' },
+      }),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
+  })
+})
 
 function options(mode: string, more: Record<string, string> = {}) {
   return {

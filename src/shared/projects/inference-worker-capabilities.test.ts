@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCandidateThumbnails,
+  supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
 } from './inference-worker-capabilities.js'
 
@@ -40,7 +41,7 @@ test('qualification matrix rejects unrecognized versions, profiles, protocols an
     null,
     [],
     { ...legacyReady, workerVersion: '0.1.0' },
-    { ...legacyReady, workerVersion: '0.5.0' },
+    { ...legacyReady, workerVersion: '0.6.0' },
     { ...legacyReady, workerVersion: '0.3.1' },
     { ...legacyReady, protocolVersion: '2' },
     { ...legacyReady, runtimeProfile: 'cpu' },
@@ -50,6 +51,31 @@ test('qualification matrix rejects unrecognized versions, profiles, protocols an
   ]) {
     assert.equal(isQualifiedInferenceWorkerReady(invalid), false)
     assert.equal(supportsInferenceDenoisingProgress(invalid), false)
+  }
+})
+
+test('rescale qualification requires exact 0.5.0 and every supported pipeline capability', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+  ]
+  const current = { ...legacyReady, capabilities, workerVersion: '0.5.0' }
+  assert.ok(isQualifiedInferenceWorkerReady(current))
+  assert.ok(supportsInferenceCFGRescale(current))
+  assert.ok(supportsInferenceDenoisingProgress(current))
+  assert.ok(supportsInferenceCandidateThumbnails(current))
+  for (const removed of capabilities) {
+    const incomplete: unknown = {
+      ...current,
+      capabilities: capabilities.filter((value) => value !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false)
+    assert.equal(supportsInferenceCFGRescale(incomplete), false)
+  }
+  for (const workerVersion of ['0.2.0', '0.3.0', '0.4.0', '0.6.0']) {
+    assert.equal(supportsInferenceCFGRescale({ ...current, workerVersion }), false)
   }
 })
 

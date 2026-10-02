@@ -31,7 +31,7 @@ import { _electron as electron, expect } from '@playwright/test'
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualification.ts'
-import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
 import { createRuntimeRoots } from '../src/main/runtime/index.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
@@ -521,8 +521,8 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify(role === 'inference'
-  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.4.0',
-    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails']}
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.5.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
     runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
@@ -765,6 +765,13 @@ try {
   assert.equal(ready.value.kind, 'ready')
   await expect(generate).toBeEnabled({ timeout: 20_000 })
   liveDatabase = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  await window.getByText('Advanced Options', { exact: true }).click()
+  const rescaleInput = window.locator('input[aria-label="CFG Rescale"]')
+  await expect(rescaleInput).toBeEnabled()
+  await rescaleInput.fill('0.7')
+  await rescaleInput.press('Enter')
+  await expect.poll(async () => (await tab(projectId)).generationDraft.cfgRescale).toBe(0.7)
+  await screenshot('01a-native-cfg-rescale-control')
   const width = window.locator('input[aria-label="Generation area width"]')
   await width.fill('0')
   await expect(generate).toBeDisabled()
@@ -867,6 +874,8 @@ try {
   assert.equal(state.documentId, created.documentId)
   assert.equal(first.request.job.prompts.positive, 'native admission snapshot')
   assert.equal(first.request.job.bbox.width, 96)
+  assert.equal(first.request.job.sampling.cfgRescale, 0.7)
+  assert.equal((await readIgsPackage(packagePath)).project.generationDraft.cfgRescale, 0.7)
   const initialRows = await rows(projectId)
   assert.equal(new Set(initialRows.map((row) => row.batch_id)).size, 1)
   assert.equal(new Set(initialRows.map((row) => row.staging_session_id)).size, 1)
@@ -949,6 +958,9 @@ try {
   await projectRegion
     .getByRole('textbox', { name: 'Positive prompt', exact: true })
     .fill('edited after admission')
+  await rescaleInput.fill('0.2')
+  await rescaleInput.press('Enter')
+  await expect.poll(async () => (await tab(projectId)).generationDraft.cfgRescale).toBe(0.2)
   await width.fill('104')
   await width.press('Enter')
   await expect.poll(async () => (await tab(projectId)).primaryBbox.width).toBe(104)
@@ -1383,6 +1395,8 @@ try {
   assert.equal(retriedRequest.request.job.prompts.positive, first.request.job.prompts.positive)
   assert.deepEqual(retriedRequest.request.job.prompts, first.request.job.prompts)
   assert.deepEqual(retriedRequest.request.job.sampling, first.request.job.sampling)
+  assert.equal(retriedRequest.request.job.sampling.cfgRescale, 0.7)
+  assert.equal(beforeManagerTab.generationDraft.cfgRescale, 0.2)
   assert.deepEqual(retriedRequest.request.job.bbox, first.request.job.bbox)
   assert.equal(retriedRequest.request.job.target.sha256, first.request.job.target.sha256)
   const retryRows = await rows(projectId)
@@ -2031,6 +2045,146 @@ try {
 
   report.finalRows = await rows(projectId)
   report.busyGenerateFinalRows = { a: await rows(busyA.id), b: await rows(busyB.id) }
+  const cfgProject = await createConfiguredProject(
+    'CFG Rescale acceptance',
+    'frozen CFG Rescale acceptance',
+    42,
+    96,
+    installed.versionId,
+  )
+  await window.getByText('Advanced Options', { exact: true }).click()
+  const cfgControl = window.locator('input[aria-label="CFG Rescale"]')
+  await cfgControl.fill('0.7')
+  await cfgControl.press('Enter')
+  await expect.poll(async () => (await tab(cfgProject.id)).generationDraft.cfgRescale).toBe(0.7)
+  const previousRequestCount = generations().length
+  await window.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(previousRequestCount + 1)
+  const cfgRequest = generations().at(-1)
+  assert.equal(cfgRequest.request.job.sampling.cfgRescale, 0.7)
+  await cfgControl.fill('0.2')
+  await cfgControl.press('Enter')
+  await expect.poll(async () => (await tab(cfgProject.id)).generationDraft.cfgRescale).toBe(0.2)
+  release(cfgRequest)
+  await expect
+    .poll(async () => (await api('listGenerationResults', cfgProject.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(1)
+  await expect.poll(async () => (await api('getGenerationState', cfgProject.id)).phase).toBe('idle')
+  await window.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).layers.length).toBe(1)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).dirty).toBe(false)
+  const cfgSaved = (await readIgsPackage(cfgProject.packagePath)).project
+  assert.equal(cfgSaved.generationDraft.cfgRescale, 0.2)
+  assert.equal(cfgSaved.layers[0].generationProvenance.generationConfiguration.cfgRescale, 0.7)
+  await window.getByRole('button', { name: 'Close CFG Rescale acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
+  assert.equal((await tab(cfgProject.id)).generationDraft.cfgRescale, 0.2)
+  await window
+    .getByRole('button', { name: `Layer actions for ${cfgSaved.layers[0].name}`, exact: true })
+    .click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+  const cfgRow = comparison.locator('[data-setting="cfgRescale.value"]')
+  await expect(cfgRow).toContainText('Changed')
+  await expect(cfgRow).toContainText('0.7')
+  await expect(cfgRow).toContainText('0.2')
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await screenshot(`21-cfg-rescale-comparison-${width}x${height}`)
+    const bounds = await comparison.boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0)
+    assert.ok(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
+  }
+  await window.keyboard.press('Escape')
+  checked(
+    'CFG Rescale control freezes worker input and accepted provenance through Add, Save, reopen and comparison',
+    {
+      projectId: cfgProject.id,
+      documentId: cfgSaved.documentId,
+      frozen: 0.7,
+      current: 0.2,
+      requestId: cfgRequest.request.requestId,
+      layerId: cfgSaved.layers[0].id,
+    },
+  )
+  // Prepare a valid legacy v1 file directly; opening/resetting it is the behavior under test.
+  await window.getByRole('button', { name: 'Close CFG Rescale acceptance', exact: true }).click()
+  const legacyPackage = await readIgsPackage(cfgProject.packagePath)
+  const legacyDocument = structuredClone(legacyPackage.project)
+  legacyDocument.generationDraft.cfgRescale = 1
+  const legacyAssets = {}
+  for (const layer of legacyDocument.layers) {
+    legacyAssets[layer.asset.path] = { bytes: await legacyPackage.readMember(layer.asset.path) }
+  }
+  await saveIgsPackage(cfgProject.packagePath, {
+    assets: legacyAssets,
+    project: legacyDocument,
+    preview: {
+      merged: await legacyPackage.readMember('preview/merged.png'),
+      thumbnail: await legacyPackage.readMember('preview/thumbnail.webp'),
+      rect: legacyPackage.manifest.preview.rect,
+      status: legacyPackage.manifest.preview.status,
+    },
+  })
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
+  assert.equal((await tab(cfgProject.id)).generationDraft.cfgRescale, 1)
+  await window.getByText('Advanced Options', { exact: true }).click()
+  await expect(window.locator('input[aria-label="CFG Rescale"]')).toHaveValue('1')
+  await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+  await expect(window.getByRole('alert')).toContainText(
+    'This saved value is outside the currently supported range',
+  )
+  await screenshot('22-legacy-cfg-rescale-open')
+  await window
+    .getByRole('textbox', { name: 'Positive prompt', exact: true })
+    .fill('legacy portable draft remains saveable')
+  await expect
+    .poll(async () => (await tab(cfgProject.id)).generationDraft.positivePrompt.text)
+    .toBe('legacy portable draft remains saveable')
+  await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeEnabled()
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).dirty).toBe(false)
+  assert.equal((await readIgsPackage(cfgProject.packagePath)).project.generationDraft.cfgRescale, 1)
+  await window.getByRole('button', { name: 'Reset CFG Rescale', exact: true }).click()
+  await expect
+    .poll(async () => (await tab(cfgProject.id)).generationDraft.cfgRescale)
+    .toBeUndefined()
+  const resetDraft = await tab(cfgProject.id)
+  await window.locator('input[aria-label="CFG Rescale"]').fill('oops')
+  await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeDisabled()
+  await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+  assert.deepEqual(await tab(cfgProject.id), resetDraft)
+  await window.getByRole('button', { name: 'Reset CFG Rescale', exact: true }).click()
+  await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeEnabled()
+  assert.equal((await readIgsPackage(cfgProject.packagePath)).project.generationDraft.cfgRescale, 1)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).dirty).toBe(false)
+  assert.equal(
+    (await readIgsPackage(cfgProject.packagePath)).project.generationDraft.cfgRescale,
+    undefined,
+  )
+  assert.equal(
+    (await readIgsPackage(cfgProject.packagePath)).project.layers[0].generationProvenance
+      .generationConfiguration.cfgRescale,
+    0.7,
+  )
+  checked(
+    'Legacy draft CFG Rescale 1 opens through Main/preload, refuses Generate and resets through ordinary UI without changing accepted provenance',
+  )
   for (const entry of lines(peerLaunches)) {
     assert.throws(() => process.kill(entry.pid, 0), { code: 'ESRCH' })
   }

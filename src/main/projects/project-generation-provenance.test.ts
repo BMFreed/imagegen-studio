@@ -343,3 +343,40 @@ test('accepted provenance retains planned seed behavior while legacy results rem
     assert.equal(provenance.generationConfiguration.sampling.seedBehavior, behavior)
   }
 })
+
+test('accepted CFG Rescale is projected from frozen inputs including zero without inventing legacy values', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (candidate: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-09-29T12:01:00.000Z',
+      candidate,
+      imagePngBytes,
+    })
+  assert.equal(Object.hasOwn(map(candidate).generationConfiguration, 'cfgRescale'), false)
+  for (const cfgRescale of [0, 0.3, 0.99]) {
+    const recorded = structuredClone(candidate)
+    replacePayload(recorded, (payload) => {
+      const frozen = payload as {
+        context: { sampling: Record<string, unknown> }
+        workerJob: { sampling: Record<string, unknown> }
+      }
+      frozen.context.sampling.cfgRescale = cfgRescale
+      frozen.workerJob.sampling.cfgRescale = cfgRescale
+    })
+    const provenance = map(recorded)
+    assert.equal(Object.hasOwn(provenance.generationConfiguration, 'cfgRescale'), true)
+    assert.equal(provenance.generationConfiguration.cfgRescale, cfgRescale)
+    const mismatch = structuredClone(recorded)
+    replacePayload(mismatch, (payload) => {
+      const workerJob = payload.workerJob as { sampling: { cfgRescale?: number } }
+      workerJob.sampling.cfgRescale = cfgRescale === 0.3 ? 0.4 : 0.3
+    })
+    assert.throws(() => map(mismatch), { code: 'PROVENANCE_INPUT_INVALID' })
+  }
+  const neutralLegacyTransport = structuredClone(candidate)
+  replacePayload(neutralLegacyTransport, (payload) => {
+    const context = payload.context as { sampling: { cfgRescale?: number } }
+    context.sampling.cfgRescale = 0
+  })
+  assert.equal(map(neutralLegacyTransport).generationConfiguration.cfgRescale, 0)
+})

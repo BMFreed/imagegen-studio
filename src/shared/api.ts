@@ -194,6 +194,7 @@ export interface ProjectLoraIdentity {
 export type ProjectGenerationDraftChange =
   | (ProjectLoraIdentity & { kind: 'lora-enabled'; value: boolean })
   | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
+  | { kind: 'cfg-rescale'; value: number | null }
   | { kind: 'dynamic-prompt'; value: GenerationDynamicPromptSettings }
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
@@ -550,6 +551,18 @@ export function isProjectGenerationDraftChange(
       typeof value['text'] === 'string' &&
       value['text'].length <= IGS_SAFETY_CEILINGS.textBytes &&
       new TextEncoder().encode(value['text']).length <= IGS_SAFETY_CEILINGS.textBytes
+    )
+  }
+  if (value['kind'] === 'cfg-rescale') {
+    return (
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('value') &&
+      (value['value'] === null ||
+        (typeof value['value'] === 'number' &&
+          Number.isFinite(value['value']) &&
+          value['value'] >= 0 &&
+          value['value'] <= 0.99))
     )
   }
   if (value['kind'] === 'sampling-steps' || value['kind'] === 'sampling-cfg-scale') {

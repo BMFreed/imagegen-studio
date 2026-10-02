@@ -36,6 +36,7 @@ test('generation document identity accepts the portable .igs UUID domain without
 
 function pendingState(): ProjectGenerationActionState {
   return {
+    cfgRescaleSupported: false,
     documentId,
     error: null,
     jobs: [
@@ -107,6 +108,19 @@ test('queue wire refuses oversized concrete prompt bytes and undeclared progress
       ...pendingState(),
       jobs: [pendingState().jobs[0], pendingState().jobs[0]],
     }),
+    false,
+  )
+})
+
+test('action state accepts only an explicit boolean rescale capability without exposing the ready payload', () => {
+  for (const cfgRescaleSupported of [false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), cfgRescaleSupported }), true)
+  }
+  for (const cfgRescaleSupported of [undefined, null, 0, 'true']) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), cfgRescaleSupported }), false)
+  }
+  assert.equal(
+    isProjectGenerationActionState({ ...pendingState(), ready: { runtimeRoot: '/private' } }),
     false,
   )
 })

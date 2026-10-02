@@ -24,6 +24,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
     positive: string
   }
   sampling: {
+    /** Historical preparations omit this field; new jobs freeze the effective value, including 0. */
+    cfgRescale?: number
     cfgScale: number
     invokeScheduler: IllustriousSchedulerKey | null
     requestedSeedPolicy: SeedPolicy
@@ -70,6 +72,7 @@ export function validateNormalTxt2ImgDraft(
   operationalSeed?: number | null,
   savedSnapshot?: number | null,
 ): {
+  cfgRescale: number
   cfgScale: number
   invokeScheduler: IllustriousSchedulerKey | null
   model: ExactCheckpoint
@@ -97,15 +100,17 @@ export function validateNormalTxt2ImgDraft(
       'Embedding references are not supported by this preparation.',
     )
   }
-  if (
-    draft.vae ||
-    draft.cfgRescale !== undefined ||
-    draft.clipSkip !== undefined ||
-    draft.vaePrecision !== undefined
-  ) {
+  if (draft.vae || draft.clipSkip !== undefined || draft.vaePrecision !== undefined) {
     throw new GenerationPreparationError(
       'GENERATION_ADVANCED_UNSUPPORTED',
       'Advanced generation options are not supported by this preparation.',
+    )
+  }
+  const cfgRescale = draft.cfgRescale ?? 0
+  if (!Number.isFinite(cfgRescale) || cfgRescale < 0 || cfgRescale > 0.99) {
+    throw new GenerationPreparationError(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'Illustrious CFG Rescale must be between 0 and 0.99.',
     )
   }
   const { sampling } = draft
@@ -149,6 +154,7 @@ export function validateNormalTxt2ImgDraft(
     )
   }
   return {
+    cfgRescale,
     cfgScale: sampling.cfgScale,
     invokeScheduler: schedulerSelection.kind === 'supported' ? schedulerSelection.key : null,
     model,
@@ -180,7 +186,7 @@ export async function prepareNormalTxt2Img(input: {
   const composite = { ...target.composite, bytes: Buffer.from(target.composite.bytes) }
   const { documentId, documentRevision } = target
   const savedSnapshot = target.lastActualSeedSnapshot
-  const { cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(
+  const { cfgRescale, cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(
     draft,
     input.lastActualSeed,
     savedSnapshot,
@@ -227,6 +233,7 @@ export async function prepareNormalTxt2Img(input: {
         positive: draft.positivePrompt.text,
       },
       sampling: {
+        cfgRescale,
         cfgScale,
         invokeScheduler,
         requestedSeedPolicy: draft.seed.policy,

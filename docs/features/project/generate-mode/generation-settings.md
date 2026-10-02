@@ -115,9 +115,9 @@ is available; structural qualification and Anima inference are still open.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
-insertion is implemented. No production denoising-strength control, VAE,
-advanced options or Smart Patch-owned
-draft controls are connected yet.
+insertion is implemented. Production denoising-strength, external VAE,
+VAE precision, clip skip and Smart Patch-owned draft controls remain open.
+CFG Rescale is connected by the later checkpoint below.
 The chosen Seed policy is a request for a future job, not a completed seed.
 Main now reads the document-scoped operational last-actual-seed cursor before
 internal Prepare/enqueue, falling back to the saved `.igs` snapshot when no
@@ -135,6 +135,28 @@ policy for batch scheduling and provenance. It shows the last completed seed of
 this Project, and editing that number changes the policy to Fixed. Reuse cannot
 be newly selected without a completed seed; an already selected Reuse policy
 can still be turned off when the cursor is unavailable.
+
+## Production CFG Rescale checkpoint
+
+[CFG Rescale evidence](../../../engineering/phase-2c-cfg-rescale-research.md)
+connects the existing optional draft field to a production control inside
+`Generation > Advanced Options`, typed IPC, recovery shadow, explicit Save and
+reopen. The supported operational range is 0–0.99. An absent Illustrious draft
+value means effective zero without dirtying the document merely by viewing it.
+Existing v1 drafts containing `1` remain loadable, but this pipeline rejects
+them until edited or reset.
+
+Nonneutral values require qualified worker 0.5.0 with
+`illustrious-cfg-rescale`; unsupported/unavailable runtimes disable the numeric
+control with a reason. Reset remains available for an editable draft. Main
+independently checks capability before enqueue and again at dispatch. Neutral
+zero can use older qualified workers through their previous wire schema.
+
+Prepare freezes the effective value, the worker applies it through the pinned
+Diffusers SDXL adapter, and Add records it in immutable provenance. Later draft
+edits and Retry cannot change that record. Old results with no recorded value
+stay unknown in comparison. This checkpoint supports Illustrious txt2img only;
+Anima, other modes and the remaining advanced controls are still open.
 
 ## Vue Prototype Coverage
 

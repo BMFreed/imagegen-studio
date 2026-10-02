@@ -423,6 +423,39 @@ test('accepted seed behavior is optional for legacy provenance and restricted to
   )
 })
 
+test('accepted CFG Rescale records actual neutral zero while historical absence stays unknown at the portable boundary', () => {
+  const legacy = rasterGenerationProvenance()
+  const parsed = parseRasterGenerationProvenanceV1(legacy)
+  assert.equal(Object.hasOwn(parsed.generationConfiguration, 'cfgRescale'), false)
+  for (const cfgRescale of [0, 0.3, 0.99]) {
+    const recorded = structuredClone(legacy)
+    recorded.generationConfiguration.cfgRescale = cfgRescale
+    assert.equal(
+      parseRasterGenerationProvenanceV1(recorded).generationConfiguration.cfgRescale,
+      cfgRescale,
+    )
+    const document = emptyDocument()
+    document.generationDraft.cfgRescale = cfgRescale
+    assert.equal(parseProjectDocumentV1(document).generationDraft.cfgRescale, cfgRescale)
+  }
+  for (const cfgRescale of [-0.1, 1, Infinity, NaN, null, '0.3']) {
+    const invalid = structuredClone(legacy)
+    Object.assign(invalid.generationConfiguration, { cfgRescale })
+    assert.throws(
+      () => parseRasterGenerationProvenanceV1(invalid),
+      assertSchemaCode('INVALID_PROJECT'),
+    )
+    const document = emptyDocument()
+    Object.assign(document.generationDraft, { cfgRescale })
+    if (cfgRescale === 1) {
+      // Earlier v1 packages allowed 1. Opening their draft must not prevent resetting the value.
+      assert.equal(parseProjectDocumentV1(document).generationDraft.cfgRescale, 1)
+    } else {
+      assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
+    }
+  }
+})
+
 test('dynamic draft settings have explicit new-document defaults while legacy absence stays absent', () => {
   const document = emptyDocument()
   assert.deepEqual(document.generationDraft.dynamicPrompt, {

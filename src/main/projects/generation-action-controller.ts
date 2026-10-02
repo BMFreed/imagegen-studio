@@ -6,6 +6,7 @@ import type {
   GenerationQueueReview,
   GenerationQueueTerminalStatus,
 } from '../../shared/projects/generation-queue-manager.js'
+import { supportsInferenceCFGRescale } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
@@ -49,6 +50,8 @@ interface CapturedProjectService {
 }
 
 interface GenerationActionRuntime {
+  getStatus: () => Promise<unknown>
+  readQualifiedInferenceReady: () => Promise<InferenceWorkerReady | null>
   withGenerationAdmission: <T>(
     scratchBasePath: string,
     use: (ready: InferenceWorkerReady) => Promise<T>,
@@ -279,8 +282,20 @@ export class ProjectGenerationActionController {
       tabId,
       documentId,
     )
+    let ready: InferenceWorkerReady | null = null
+    if (!this.blocked && !this.closed) {
+      try {
+        // Reuse the ordinary status qualifier/cache. While inference is active it inspects its
+        // existing lease, and cannot start a competing CUDA process for this advisory UI state.
+        await this.options.runtime.getStatus()
+        ready = await this.options.runtime.readQualifiedInferenceReady()
+      } catch {
+        // Optional controls fail closed while durable queue metadata remains inspectable.
+      }
+    }
     this.assertDocument(tabId, documentId)
     return {
+      cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
       error: this.error,
       jobs,
@@ -417,6 +432,15 @@ export class ProjectGenerationActionController {
         this.options.scratchBasePath,
         async ({ inferenceReady, targetWorker }) => {
           this.assertAdmissionOpen()
+          if (
+            (capture.document.generationDraft.cfgRescale ?? 0) !== 0 &&
+            !supportsInferenceCFGRescale(inferenceReady)
+          ) {
+            throw new IllustriousJobError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker has not qualified Illustrious CFG Rescale.',
+            )
+          }
           const target = await capture.composeTarget(targetWorker)
           this.assertAdmissionOpen()
           const lastActualSeed = await this.options.staging.readLastActualSeed(

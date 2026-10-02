@@ -412,6 +412,8 @@ if (!gotInstanceLock) {
       const projectGenerationGate = new ProjectGenerationOperationGate()
       // Recovered operational history is usable even if runtime storage cannot initialize.
       const generationLease = generationRuntime ?? {
+        getStatus: async () => null,
+        readQualifiedInferenceReady: async () => null,
         retryUnconfirmedGenerationExit: async () => true,
         withGenerationAdmission: async () => null,
         withGenerationPreparation: async () => null,

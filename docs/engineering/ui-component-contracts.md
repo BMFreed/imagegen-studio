@@ -103,6 +103,19 @@ Vue-прототипа, а не готовность production UI.
   `value` находится вне label. Клик по подписи фокусирует поле, не меняя его
   значение; несколько экземпляров получают разные id.
 
+## Production Advanced Options
+
+`ProjectGenerationAdvancedOptions` — production-адаптер текущего Generation
+card: `defineModel<number | null>` хранит optional CFG Rescale; `null` означает
+unset, `0` — явное значение. `modelFamily`, `runtimeSupported`,
+`runtimeUnavailableReason` и `editingDisabled` управляют доступностью числового
+поля. Отдельный Reset остаётся доступен при разрешённом редактировании даже
+без runtime capability. Public `NInput` сохраняет сырой invalid text без
+clamping; `validity` сообщает именно о неотправленном ошибочном вводе.
+Загруженный portable-valid legacy `1` не блокирует Save, но отдельное
+operational правило Project блокирует Generate с объяснением. Отображение
+unset как `0` не вызывает setter/dirty. [Evidence](./phase-2c-cfg-rescale-research.md).
+
 ## Как собирать новый экран
 
 1. Найдите существующего потребителя нужного компонента и проверьте его props,

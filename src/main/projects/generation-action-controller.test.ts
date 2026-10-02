@@ -87,6 +87,12 @@ class ControlledRuntime {
   preparationCloseFailures = 0
   preparationCount = 0
   preparationHeld = false
+  ready: InferenceWorkerReady = {
+    capabilities: ['illustrious-txt2img', 'target-composition'],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.2.0',
+  }
   private activeReady: InferenceWorkerReady | null = null
   private held = false
 
@@ -94,6 +100,14 @@ class ControlledRuntime {
     private readonly target: Buffer,
     private readonly output: Buffer,
   ) {}
+
+  async getStatus(): Promise<null> {
+    return null
+  }
+
+  async readQualifiedInferenceReady(): Promise<InferenceWorkerReady | null> {
+    return this.available ? structuredClone(this.activeReady ?? this.ready) : null
+  }
 
   async retryUnconfirmedGenerationExit(): Promise<boolean> {
     return !this.held && !this.preparationHeld
@@ -193,13 +207,7 @@ class ControlledRuntime {
           type: 'generation-done',
         }
       },
-      ready: {
-        capabilities: ['illustrious-txt2img', 'target-composition'],
-        protocolVersion: '1',
-        pythonVersion: '3.12.0',
-        runtimeProfile: 'linux-nvidia',
-        workerVersion: '0.2.0',
-      },
+      ready: { ...structuredClone(this.ready), pythonVersion: '3.12.0' },
     }
     this.activeReady = structuredClone(worker.ready)
     try {
@@ -587,6 +595,113 @@ test('busy Generate publishes a sibling frozen Project before the held inference
       releaseComposition.resolve()
       releaseWorker.resolve()
     }
+  })
+})
+
+const rescaleReady: InferenceWorkerReady = {
+  capabilities: [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+  ],
+  protocolVersion: '1',
+  runtimeProfile: 'linux-nvidia',
+  workerVersion: '0.5.0',
+}
+
+test('Generate gates CFG Rescale before composition and freezes the supported value through concurrent draft edits and completion', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, queue, runtime, staging, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    assert.equal((await controller.getState(tabId)).cfgRescaleSupported, false)
+    await projects.updateGenerationDraft(tabId, { kind: 'cfg-rescale', value: 0.3 })
+    const saved = await readFile(fixture.packagePath)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 1 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    assert.deepEqual(await staging.listVerifiedCandidates(tabId), [])
+    runtime.ready = structuredClone(rescaleReady)
+    assert.equal(
+      (await controller.getState(tabId)).cfgRescaleSupported,
+      true,
+      'available before first Generate',
+    )
+    const entered = signal()
+    const release = signal()
+    runtime.beforeCompose = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    try {
+      const pending = controller.generate(tabId, { documentId, iterations: 1 })
+      await entered.promise
+      await projects.updateGenerationDraft(tabId, { kind: 'cfg-rescale', value: 0.9 })
+      release.resolve()
+      const queued = await pending
+      assert.equal(queued.kind, 'queued')
+      if (queued.kind !== 'queued') {
+        throw new Error('expected durable batch')
+      }
+      await waitForState(controller, tabId, (state) => state.phase === 'idle')
+      const frozen = await queue.loadVerifiedInput(queued.jobIds[0])
+      assert.equal(frozen.item.status, 'completed')
+      assert.equal(frozen.payload.context.sampling.cfgRescale, 0.3)
+      assert.equal(frozen.payload.workerJob.sampling.cfgRescale, 0.3)
+      assert.equal(runtime.generated[0].job.sampling.cfgRescale, 0.3)
+      const candidates = await staging.listVerifiedCandidates(tabId)
+      assert.equal(candidates.length, 1)
+      assert.equal(JSON.parse(candidates[0].frozenPayloadJson).context.sampling.cfgRescale, 0.3)
+      assert.equal(
+        projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.cfgRescale,
+        0.9,
+      )
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('Retry gates the current worker before publication and uses the prior frozen rescale instead of a later draft', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, runtime, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    runtime.ready = structuredClone(rescaleReady)
+    await projects.updateGenerationDraft(tabId, { kind: 'cfg-rescale', value: 0.3 })
+    runtime.beforeGenerate = async () => {
+      throw new Error('controlled initial inference failure')
+    }
+    const initial = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(initial.kind, 'queued')
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    await projects.updateGenerationDraft(tabId, { kind: 'cfg-rescale', value: 0.9 })
+    runtime.beforeGenerate = null
+    runtime.ready = {
+      ...rescaleReady,
+      capabilities: ['illustrious-txt2img'],
+      workerVersion: '0.2.0',
+    }
+    await assert.rejects(controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    const unchanged = await controller.getQueue()
+    assert.equal(unchanged.items.length, 1)
+    assert.equal(unchanged.items[0].statusSequence, source.statusSequence)
+    assert.equal(runtime.generated.length, 1)
+    runtime.ready = structuredClone(rescaleReady)
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.equal(runtime.generated[1].job.sampling.cfgRescale, 0.3)
+    assert.equal(
+      (await controller.getQueue()).items.filter((item) => item.status === 'completed').length,
+      1,
+    )
   })
 })
 

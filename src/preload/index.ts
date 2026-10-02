@@ -345,7 +345,10 @@ function isGenerationDraft(value: unknown): value is IgsProjectDocumentV1['gener
     isNullableString(sampling.sampler) &&
     isNullableString(sampling.scheduler) &&
     (value.cfgRescale === undefined ||
-      (typeof value.cfgRescale === 'number' && Number.isFinite(value.cfgRescale))) &&
+      (typeof value.cfgRescale === 'number' &&
+        Number.isFinite(value.cfgRescale) &&
+        value.cfgRescale >= 0 &&
+        value.cfgRescale <= 1)) &&
     (value.clipSkip === undefined ||
       (typeof value.clipSkip === 'number' && Number.isSafeInteger(value.clipSkip))) &&
     (value.vaePrecision === undefined ||

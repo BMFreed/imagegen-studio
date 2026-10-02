@@ -103,6 +103,7 @@ const FrozenContextSchema = v.strictObject({
   model: v.strictObject({ managedPath: NonemptySchema, reference: ExactCheckpointSchema }),
   prompts: PromptsSchema,
   sampling: v.strictObject({
+    cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
     cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
     invokeScheduler: SchedulerKeySchema,
     requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
@@ -132,6 +133,7 @@ const WorkerJobSchema = v.strictObject({
   }),
   prompts: PromptsSchema,
   sampling: v.strictObject({
+    cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
     cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
     scheduler: SchedulerKeySchema,
     seed: Uint32Schema,
@@ -1821,6 +1823,7 @@ function validateSnapshot(
     request.job.checkpoint.path !== context.model.managedPath ||
     request.job.checkpoint.sha256 !== context.model.reference.fileSha256 ||
     request.job.checkpoint.predictionType !== context.model.reference.predictionType ||
+    (request.job.sampling.cfgRescale ?? 0) !== (context.sampling.cfgRescale ?? 0) ||
     request.job.sampling.cfgScale !== context.sampling.cfgScale ||
     request.job.sampling.scheduler !== context.sampling.invokeScheduler ||
     request.job.sampling.seed !== context.sampling.seed ||
@@ -1872,6 +1875,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousTxt2ImgV1): boolean 
     workerJob.checkpoint.predictionType === context.model.reference.predictionType &&
     isDeepStrictEqual(workerJob.bbox, context.bbox) &&
     isDeepStrictEqual(workerJob.prompts, context.prompts) &&
+    (workerJob.sampling.cfgRescale ?? 0) === (context.sampling.cfgRescale ?? 0) &&
     workerJob.sampling.cfgScale === context.sampling.cfgScale &&
     workerJob.sampling.seed === context.sampling.seed &&
     workerJob.sampling.steps === context.sampling.steps &&

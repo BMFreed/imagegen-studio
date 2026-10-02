@@ -35,9 +35,10 @@ from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
 from imagegen_worker.protocol import MAX_GENERATION_STEPS, GenerateIllustriousTxt2ImgCommand
 
-INFERENCE_WORKER_VERSION = "0.4.0"
+INFERENCE_WORKER_VERSION = "0.5.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
+INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
 
@@ -492,6 +493,7 @@ def run_sdxl_pipeline(
     generator: Any,
     torch: Any,
     on_progress: DenoisingProgressSink | None = None,
+    cfg_rescale: float = 0.0,
 ) -> Any:
     """Mask only the final positive/negative padding through a scoped UNet hook.
 
@@ -566,6 +568,7 @@ def run_sdxl_pipeline(
             num_inference_steps=steps,
             num_images_per_prompt=1,
             guidance_scale=cfg_scale,
+            guidance_rescale=cfg_rescale,
             generator=generator,
             callback_on_step_end=report_step if on_progress is not None else None,
             callback_on_step_end_tensor_inputs=[],
@@ -678,6 +681,7 @@ def generate_illustrious_txt2img(
         height=command.height,
         steps=command.steps,
         cfg_scale=command.cfg_scale,
+        cfg_rescale=command.cfg_rescale,
         generator=generator,
         torch=torch,
         on_progress=on_progress,

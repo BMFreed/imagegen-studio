@@ -159,6 +159,7 @@ async function inQualifiedLease<T>(
   root: string,
   prepared: PreparedNormalTxt2Img,
   use: (request: IllustriousTxt2ImgRequestV1) => Promise<T>,
+  workerReady = ready,
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
@@ -169,7 +170,7 @@ async function inQualifiedLease<T>(
       }),
     },
     prepared,
-    ready,
+    ready: workerReady,
     scratchBasePath: path.join(root, 'scratch'),
     use,
   })
@@ -1897,6 +1898,83 @@ test('retry consumes one terminal revision and creates a fresh frozen attempt ac
   } finally {
     await first.close()
     await second.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('CFG Rescale is frozen through SQLite publication, restart and retry; mismatches refuse admission and durable reads', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-cfg-rescale-queue-'))
+  let database = openAppDatabase(root, migrations)
+  try {
+    let queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    prepared.context.sampling.cfgRescale = 0.3
+    const qualified = {
+      ...ready,
+      capabilities: [
+        'illustrious-txt2img',
+        'denoising-progress',
+        'candidate-thumbnails',
+        'illustrious-cfg-rescale',
+      ],
+      workerVersion: '0.5.0',
+    }
+    const queued = await inQualifiedLease(
+      root,
+      prepared,
+      async (request) => {
+        const mismatch = structuredClone(request)
+        mismatch.job.sampling.cfgRescale = 0.4
+        await assert.rejects(
+          queue.enqueueIllustriousTxt2Img({
+            prepared,
+            projectPath,
+            request: mismatch,
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'QUEUE_INPUT_INVALID' },
+        )
+        assert.equal((await queue.listManagerPage()).items.length, 0)
+        return await queue.enqueueIllustriousTxt2Img({
+          prepared,
+          projectPath,
+          request,
+          stagingSessionId: randomUUID(),
+        })
+      },
+      qualified,
+    )
+    prepared.context.sampling.cfgRescale = 0.9
+    const original = await queue.loadVerifiedInput(queued.id)
+    assert.equal(original.payload.context.sampling.cfgRescale, 0.3)
+    assert.equal(original.payload.workerJob.sampling.cfgRescale, 0.3)
+    await database.close()
+    database = openAppDatabase(root, migrations)
+    queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const terminal = await queue.loadVerifiedInput(queued.id)
+    assert.equal(terminal.item.status, 'canceled')
+    const retried = await queue.retryTerminal(queued.id, terminal.item.statusSequence)
+    const frozen = await queue.loadVerifiedInput(retried.id)
+    assert.deepEqual(frozen.payload, original.payload)
+    assert.equal(frozen.payload.context.sampling.cfgRescale, 0.3)
+    const corrupted = structuredClone(frozen.payload)
+    corrupted.workerJob.sampling.cfgRescale = 0.4
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: JSON.stringify(corrupted) })
+      .where('id', '=', retried.id)
+      .execute()
+    await assert.rejects(queue.loadVerifiedInput(retried.id), { code: 'QUEUE_INPUT_INVALID' })
+    const legacy = await fixture(root)
+    legacy.prepared.context.sampling.cfgRescale = 0
+    const neutral = await enqueueFixture(root, queue, legacy.prepared, legacy.projectPath)
+    const savedNeutral = await queue.loadVerifiedInput(neutral.id)
+    assert.equal(savedNeutral.payload.context.sampling.cfgRescale, 0)
+    assert.equal(Object.hasOwn(savedNeutral.payload.workerJob.sampling, 'cfgRescale'), false)
+  } finally {
+    await database.close()
     await rm(root, { force: true, recursive: true })
   }
 })

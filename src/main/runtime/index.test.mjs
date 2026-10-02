@@ -106,8 +106,8 @@ const mode = fs.readFileSync(path.join(environment, 'mode'), 'utf8')
 if (mode === 'no-ready') process.exit(78)
 const ready = {
   type: 'ready', protocolVersion: '1', pythonVersion: '3.12.13',
-  workerVersion: mode.startsWith('thumbnail-') ? '0.4.0' : mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
-  runtimeProfile: 'linux-nvidia', capabilities: mode === 'thumbnail-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  workerVersion: mode.startsWith('rescale-') ? '0.5.0' : mode.startsWith('thumbnail-') ? '0.4.0' : mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
+  runtimeProfile: 'linux-nvidia', capabilities: mode === 'rescale-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 process.on('SIGTERM', () => {
   process.exit(0)
@@ -187,6 +187,54 @@ test('runtime qualification and active advisory readiness share the 0.3.0 progre
     null,
   )
   assert.equal((await refusing.getStatus()).value.kind, 'needs-repair')
+})
+
+test('CFG Rescale readiness is a copied verified handshake, expires or fails closed, and never probes a live CUDA lease', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'rescale-ready')
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+  assert.equal(await manager.readQualifiedInferenceReady(), null)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 0)
+  assert.equal((await manager.getStatus()).value.kind, 'ready')
+  const initial = await manager.readQualifiedInferenceReady()
+  assert.equal(initial.workerVersion, '0.5.0')
+  assert.ok(initial.capabilities.includes('illustrious-cfg-rescale'))
+  initial.capabilities.splice(0)
+  assert.ok(
+    (await manager.readQualifiedInferenceReady()).capabilities.includes('illustrious-cfg-rescale'),
+  )
+  const before = (await lines(path.join(roots.runtimeDir, 'launches'))).length
+  await manager.withGenerationWorker(scratch, async () => {
+    const active = (await lines(path.join(roots.runtimeDir, 'launches'))).length
+    assert.equal(active, before + 2, 'one qualification and one leased child')
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.equal((await manager.readQualifiedInferenceReady()).workerVersion, '0.5.0')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, active)
+  })
+  const nativeNow = Date.now
+  try {
+    Date.now = () => nativeNow() + 61_000
+    assert.equal(await manager.readQualifiedInferenceReady(), null)
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.equal((await manager.readQualifiedInferenceReady()).workerVersion, '0.5.0')
+    Date.now = () => nativeNow() + 122_000
+    await fs.writeFile(path.join(installed.environment, 'mode'), 'rescale-missing-capability')
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    // Restore time while the preceding cache would still be valid, proving failure revoked it.
+    Date.now = nativeNow
+    assert.equal(await manager.readQualifiedInferenceReady(), null)
+  } finally {
+    Date.now = nativeNow
+  }
+  await installFakeInferenceRuntime(roots, 'replacement-linux-nvidia')
+  assert.equal(await manager.readQualifiedInferenceReady(), null)
+  assert.equal((await manager.getStatus()).value.kind, 'ready')
+  assert.equal((await manager.readQualifiedInferenceReady()).workerVersion, '0.2.0')
+  manager.preventNewGenerationWork()
+  assert.equal(await manager.readQualifiedInferenceReady(), null)
 })
 
 test('rejects an app-owned root redirected through a symlink', async () => {

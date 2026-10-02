@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from imagegen_worker.compositor import MAX_WORLD_COORDINATE
 from imagegen_worker.derivatives import PINNED_SRGB_ICC_SHA256
 from imagegen_worker.protocol import (
@@ -195,6 +197,34 @@ def test_sampling_operational_boundaries_are_accepted(tmp_path: Path) -> None:
         set_nested(request, ("job", "sampling", "steps"), steps)
         set_nested(request, ("job", "sampling", "cfgScale"), cfg_scale)
         assert process_request(request)["code"] == "INFERENCE_UNAVAILABLE"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cfg_rescale_is_optional_and_preserves_explicit_operational_values(tmp_path: Path) -> None:
+    legacy = parse_request(generation_request(tmp_path))
+    assert isinstance(legacy, GenerateIllustriousTxt2ImgCommand)
+    assert legacy.cfg_rescale == 0
+    for value in (0, 0.3, 0.99):
+        request = generation_request(tmp_path)
+        set_nested(request, ("job", "sampling", "cfgRescale"), value)
+        command = parse_request(request)
+        assert isinstance(command, GenerateIllustriousTxt2ImgCommand)
+        assert command.cfg_rescale == value
+        assert process_request(request)["code"] == "INFERENCE_UNAVAILABLE"
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, False, None, "0.7", -0.001, 1, 0.991, float("nan"), float("inf"), float("-inf")],
+)
+def test_cfg_rescale_rejects_invalid_values_without_io(tmp_path: Path, value: object) -> None:
+    request = generation_request(tmp_path)
+    set_nested(request, ("job", "sampling", "cfgRescale"), value)
+    response = process_request(request)
+    assert response["code"] == "INVALID_REQUEST"
+    assert response["requestId"] == "generation-1"
+    assert "CFG rescale" in str(response["message"])
     assert list(tmp_path.iterdir()) == []
 
 

@@ -40,6 +40,7 @@ MAX_MESSAGE_BYTES = 64 * 1024
 MAX_GENERATION_PROMPT_BYTES = 16_384
 MAX_GENERATION_TARGET_BYTES = 32 * 1024 * 1024
 MAX_GENERATION_STEPS = 200
+MAX_GENERATION_CFG_RESCALE = 0.99
 MAX_GENERATION_CFG_SCALE = 30
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
@@ -97,6 +98,7 @@ class GenerateIllustriousTxt2ImgCommand:
     scheduler: Literal["dpmpp_2m_k", "dpmpp_2m", "euler_a", "dpmpp_sde_k", "dpmpp_sde"]
     staging_root: Path
     output_path: Path
+    cfg_rescale: float = 0.0
 
 
 def ready_message() -> dict[str, object]:
@@ -126,14 +128,21 @@ def error_message(request_id: str | None, code: str, message: str) -> dict[str, 
     }
 
 
-def _object(value: object, label: str, expected_keys: set[str]) -> dict[str, object]:
+def _object(
+    value: object,
+    label: str,
+    expected_keys: set[str],
+    *,
+    optional_keys: set[str] | None = None,
+) -> dict[str, object]:
     if not isinstance(value, dict):
         raise DerivativeError("INVALID_REQUEST", f"{label} must be an object.")
     untyped_fields = cast(dict[object, object], value)
     if not all(isinstance(key, str) for key in untyped_fields):
         raise DerivativeError("INVALID_REQUEST", f"{label} must be an object.")
     result = cast(dict[str, object], untyped_fields)
-    if set(result) != expected_keys:
+    keys = set(result)
+    if not expected_keys <= keys <= expected_keys | (optional_keys or set()):
         raise DerivativeError("INVALID_REQUEST", f"{label} has missing or unsupported fields.")
     return result
 
@@ -262,13 +271,21 @@ def _generate_illustrious_txt2img(
     if any(size > MAX_GENERATION_PROMPT_BYTES for size in prompt_sizes):
         raise DerivativeError("INVALID_REQUEST", "Generation prompt exceeds the provisional limit.")
 
-    sampling = _object(job["sampling"], "Sampling", {"steps", "cfgScale", "seed", "scheduler"})
+    sampling = _object(
+        job["sampling"],
+        "Sampling",
+        {"steps", "cfgScale", "seed", "scheduler"},
+        optional_keys={"cfgRescale"},
+    )
     steps = _positive_integer(sampling["steps"], "Sampling steps")
     if steps > MAX_GENERATION_STEPS:
         raise DerivativeError("INVALID_REQUEST", "Sampling steps exceed the provisional limit.")
     cfg_scale = _number(sampling["cfgScale"], "CFG scale")
     if cfg_scale < 1 or cfg_scale > MAX_GENERATION_CFG_SCALE:
         raise DerivativeError("INVALID_REQUEST", "CFG scale is outside the supported range.")
+    cfg_rescale = _number(sampling.get("cfgRescale", 0.0), "CFG rescale")
+    if not 0 <= cfg_rescale <= MAX_GENERATION_CFG_RESCALE:
+        raise DerivativeError("INVALID_REQUEST", "CFG rescale is outside the supported range.")
     seed = sampling["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
         raise DerivativeError("INVALID_REQUEST", "Seed must be an unsigned 32-bit integer.")
@@ -307,6 +324,7 @@ def _generate_illustrious_txt2img(
         negative_prompt=prompts["negative"],
         steps=steps,
         cfg_scale=cfg_scale,
+        cfg_rescale=cfg_rescale,
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

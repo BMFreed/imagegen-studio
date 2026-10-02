@@ -70,6 +70,7 @@ interface CachedQualification {
 
 interface QualificationClient {
   close: () => Promise<void>
+  readonly ready?: InferenceWorkerReady
 }
 
 interface GenerationLease {
@@ -103,6 +104,11 @@ export class RuntimeManager {
   private generationLease: GenerationLease | null = null
   private generationWorkPrevented = false
   private readonly host: RuntimeHost
+  private lastQualifiedReady: {
+    expiresAt: number
+    key: string
+    ready: InferenceWorkerReady
+  } | null = null
   private readonly listeners = new Set<(status: RuntimeStatus) => void>()
   private preparationLease: PreparationLease | null = null
   private previousStatus: RuntimeStatus | null = null
@@ -266,6 +272,60 @@ export class RuntimeManager {
     this.generationWorkPrevented = true
     this.cachedQualification = null
     this.preparationLease?.controller.abort()
+  }
+
+  /** Read advisory capabilities without starting a CUDA child or borrowing its transport. */
+  async readQualifiedInferenceReady(): Promise<InferenceWorkerReady | null> {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64' ||
+      this.unconfirmedClient ||
+      this.hasUnconfirmedGenerationExit() ||
+      GenerationWorkerClient.hasUnconfirmedStartExit() ||
+      ProjectWorkerClient.hasUnconfirmedStartExit()
+    ) {
+      return null
+    }
+    try {
+      const pointer = await readPointer(this.roots)
+      if (pointer.kind !== 'valid') {
+        return null
+      }
+      const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
+      if (
+        !prepared ||
+        this.generationWorkPrevented ||
+        this.unconfirmedClient ||
+        this.hasUnconfirmedGenerationExit() ||
+        GenerationWorkerClient.hasUnconfirmedStartExit() ||
+        ProjectWorkerClient.hasUnconfirmedStartExit()
+      ) {
+        return null
+      }
+      const lease = this.generationLease
+      if (lease) {
+        if (
+          lease.phase !== 'running' ||
+          lease.key !== prepared.key ||
+          !lease.client ||
+          !isQualifiedInferenceWorkerReady(lease.client.ready)
+        ) {
+          return null
+        }
+        return copyInferenceReady(lease.client.ready)
+      }
+      const preparation = this.preparationLease
+      if (preparation && (preparation.phase !== 'running' || preparation.key !== prepared.key)) {
+        return null
+      }
+      const cached = this.lastQualifiedReady
+      return cached && cached.key === prepared.key && cached.expiresAt > Date.now()
+        ? copyInferenceReady(cached.ready)
+        : null
+    } catch {
+      return null
+    }
   }
 
   async repair(): Promise<ApiResult<RuntimeStatus>> {
@@ -618,6 +678,11 @@ export class RuntimeManager {
           if (this.generationWorkPrevented || current?.key !== prepared.key) {
             return null
           }
+          this.lastQualifiedReady = {
+            expiresAt: Date.now() + QUALIFICATION_CACHE_MS,
+            key: prepared.key,
+            ready: copyInferenceReady(client.ready),
+          }
           return await use(client, prepared.worker)
         } finally {
           try {
@@ -784,6 +849,8 @@ export class RuntimeManager {
   }
 
   private async qualifyLiveUnlocked(prepared: PreparedQualification): Promise<boolean> {
+    // A new self-test supersedes the previous snapshot even when this exact environment fails.
+    this.lastQualifiedReady = null
     try {
       if (
         this.generationWorkPrevented ||
@@ -808,6 +875,9 @@ export class RuntimeManager {
         return false
       }
       const client = await this.startClient(prepared.worker.location, prepared.worker.environment)
+      const ready = isQualifiedInferenceWorkerReady(client.ready)
+        ? copyInferenceReady(client.ready)
+        : null
       try {
         // A ready line alone is insufficient: the child must stop before qualification is published.
         await client.close()
@@ -828,7 +898,15 @@ export class RuntimeManager {
         pointer.value,
         prepared.worker.location.scratchBasePath,
       )
-      return !this.generationWorkPrevented && current?.key === prepared.key
+      const qualified = !this.generationWorkPrevented && current?.key === prepared.key
+      if (qualified && ready) {
+        this.lastQualifiedReady = {
+          expiresAt: Date.now() + QUALIFICATION_CACHE_MS,
+          key: prepared.key,
+          ready,
+        }
+      }
+      return qualified
     } catch {
       return false
     }

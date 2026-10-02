@@ -192,6 +192,17 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'cfg-rescale') {
+    if (draft.cfgRescale === (change.value ?? undefined)) {
+      return false
+    }
+    if (change.value === null) {
+      delete draft.cfgRescale
+    } else {
+      draft.cfgRescale = change.value
+    }
+    return true
+  }
   if (change.kind === 'dynamic-prompt') {
     const before = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
     if (

@@ -5,6 +5,7 @@ import {
 } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -109,6 +110,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   private active: PendingGeneration | null = null
+
   private busy = false
   private closed = false
   private closePromise: Promise<void> | null = null
@@ -128,7 +130,6 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private startupResolve!: (ready: GenerationWorkerReady) => void
   private startupTimer: ReturnType<typeof setTimeout> | null = null
   private stdoutBytes = Buffer.alloc(0)
-
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     scratchBasePath: string,
@@ -167,6 +168,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     })
     // Failed spawn may emit only `error` followed by `close`.
     child.on('close', () => this.observeExit())
+  }
+
+  static hasUnconfirmedStartExit(): boolean {
+    return this.unconfirmedStartChildren.size > 0
   }
 
   /** Retry exit confirmation for failed starts without admitting another child. */
@@ -323,14 +328,32 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     try {
       // Snapshot before any asynchronous path validation: the caller may still own mutable state.
       let frozen: IllustriousTxt2ImgRequestV1
-      let line: Buffer
       try {
         frozen = structuredClone(request)
+      } catch {
+        throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
+      }
+      if (!validRequestShape(frozen)) {
+        throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
+      }
+      if (!supportsInferenceCFGRescale(this.readyMessage)) {
+        if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified Illustrious CFG Rescale.',
+          )
+        }
+        // Old Python parsers reject unknown fields. Adapt only the disposable wire copy; the
+        // durable preparation still distinguishes recorded neutral 0 from historical absence.
+        delete frozen.job.sampling.cfgRescale
+      }
+      let line: Buffer
+      try {
         line = Buffer.from(`${JSON.stringify(frozen)}\n`, 'utf8')
       } catch {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
       }
-      if (line.length > MAX_PROTOCOL_LINE_BYTES || !validRequestShape(frozen)) {
+      if (line.length > MAX_PROTOCOL_LINE_BYTES) {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
       }
       await this.validateRequestPaths(frozen)
@@ -654,7 +677,11 @@ function validRequestShape(request: IllustriousTxt2ImgRequestV1): boolean {
     typeof request.job?.target?.path === 'string' &&
     Number.isSafeInteger(request.job?.sampling?.steps) &&
     request.job.sampling.steps >= 1 &&
-    request.job.sampling.steps <= MAX_DENOISING_STEPS / 2
+    request.job.sampling.steps <= MAX_DENOISING_STEPS / 2 &&
+    (request.job.sampling.cfgRescale === undefined ||
+      (Number.isFinite(request.job.sampling.cfgRescale) &&
+        request.job.sampling.cfgRescale >= 0 &&
+        request.job.sampling.cfgRescale <= 0.99))
   )
 }
 

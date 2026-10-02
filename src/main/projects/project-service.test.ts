@@ -53,6 +53,133 @@ import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+
+test('CFG Rescale draft zero, upper bound and unset survive real shadow recovery and explicit Save', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const created = await service.create({ height: 64, title: 'CFG Rescale storage', width: 64 })
+    const filePath = (await repository.listProjects())[0].canonicalPath
+    const zero = await service.updateGenerationDraft(created.id, { kind: 'cfg-rescale', value: 0 })
+    assert.equal(zero.generationDraft.cfgRescale, 0)
+    assert.equal(zero.dirty, true)
+    await service.save(created.id)
+    assert.equal((await readIgsPackage(filePath)).project.generationDraft.cfgRescale, 0)
+    const savedZero = await readFile(filePath)
+    await service.updateGenerationDraft(created.id, { kind: 'cfg-rescale', value: 0.99 })
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(filePath), savedZero)
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.equal(recovered.generationDraft.cfgRescale, 0.99)
+    await restarted.save(created.id)
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved CFG Rescale Project did not reopen')
+    }
+    assert.equal(reopened.tab.generationDraft.cfgRescale, 0.99)
+    const cleared = await restarted.updateGenerationDraft(created.id, {
+      kind: 'cfg-rescale',
+      value: null,
+    })
+    assert.equal('cfgRescale' in cleared.generationDraft, false)
+    assert.equal((await restarted.undo(created.id)).generationDraft.cfgRescale, 0.99)
+    assert.equal('cfgRescale' in (await restarted.redo(created.id)).generationDraft, false)
+    await restarted.save(created.id)
+    assert.equal('cfgRescale' in (await readIgsPackage(filePath)).project.generationDraft, false)
+    await restarted.close(created.id)
+  })
+})
+
+test('CFG Rescale typed IPC refuses invalid values without changing real document, history or saved bytes', async () => {
+  await withService(async ({ repository, service }) => {
+    const created = await service.create({ height: 64, title: 'CFG Rescale guard', width: 64 })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const before = await readFile(savedPath)
+    const neighbor = await service.create({ height: 64, title: 'Neighbor', width: 64 })
+    for (const value of [-0.01, 0.990_01, 1, NaN, Infinity, '0', undefined]) {
+      const invalid = { kind: 'cfg-rescale', value }
+      assert.equal(isProjectGenerationDraftChange(invalid), false)
+      await assert.rejects(service.updateGenerationDraft(created.id, invalid as never), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    assert.equal(
+      isProjectGenerationDraftChange({ foreign: true, kind: 'cfg-rescale', value: 0 }),
+      false,
+    )
+    assert.equal(isProjectGenerationDraftChange({ kind: 'cfg-rescale', value: null }), true)
+    assert.equal(isProjectGenerationDraftChange({ kind: 'cfg-rescale', value: 0.99 }), true)
+    const current = service.getOpenTabs().find((tab) => tab.id === created.id)!
+    assert.equal(current.dirty, false)
+    assert.equal(current.canUndo, false)
+    assert.equal('cfgRescale' in current.generationDraft, false)
+    assert.equal(service.getOpenTabs().find((tab) => tab.id === neighbor.id)?.dirty, false)
+    assert.deepEqual(await readFile(savedPath), before)
+    const noOp = await service.updateGenerationDraft(created.id, {
+      kind: 'cfg-rescale',
+      value: null,
+    })
+    assert.equal(noOp.dirty, false)
+    assert.equal(noOp.canUndo, false)
+  })
+})
+
+test('CFG Rescale optimistic draft serializes through the real service before Save, including explicit zero and unset', async () => {
+  await withService(async ({ repository, service }) => {
+    let acknowledged = await service.create({ height: 64, title: 'CFG Rescale sync', width: 64 })
+    const neighbor = await service.create({ height: 64, title: 'Neighbor', width: 64 })
+    const filePath = (await repository.listProjects()).find(
+      (record) => record.localProjectKey === acknowledged.id,
+    )!.canonicalPath
+    const overlays: (typeof acknowledged.generationDraft | null)[] = []
+    const sent: ProjectGenerationDraftChange[] = []
+    let releaseFirst: (() => void) | undefined
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const sync = new ProjectDraftSync({
+      onAcknowledged: (tab) => {
+        acknowledged = tab
+      },
+      onError: () => assert.fail('Unexpected draft error'),
+      onOverlay: (_id, draft) => overlays.push(draft),
+      send: async (id, change) => {
+        sent.push(change)
+        if (sent.length === 1) {
+          await first
+        }
+        return service.updateGenerationDraft(id, change)
+      },
+    })
+    sync.change(acknowledged, { kind: 'cfg-rescale', value: 0.7 })
+    sync.change(acknowledged, { kind: 'cfg-rescale', value: 0 })
+    assert.equal(overlays.at(-1)?.cfgRescale, 0)
+    const flush = sync.flush(acknowledged.id)
+    releaseFirst?.()
+    await flush
+    await service.save(acknowledged.id)
+    assert.equal((await readIgsPackage(filePath)).project.generationDraft.cfgRescale, 0)
+    sync.change(acknowledged, { kind: 'cfg-rescale', value: null })
+    assert.equal('cfgRescale' in overlays.at(-1)!, false)
+    await sync.flush(acknowledged.id)
+    await service.save(acknowledged.id)
+    assert.equal('cfgRescale' in (await readIgsPackage(filePath)).project.generationDraft, false)
+    assert.deepEqual(sent, [
+      { kind: 'cfg-rescale', value: 0.7 },
+      { kind: 'cfg-rescale', value: 0 },
+      { kind: 'cfg-rescale', value: null },
+    ])
+    assert.equal(service.getOpenTabs().find((tab) => tab.id === neighbor.id)?.dirty, false)
+  })
+})
 const devPython = path.resolve('worker-python/.venv/bin/python')
 const rasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',

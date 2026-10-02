@@ -16,6 +16,7 @@ from imagegen_worker.compositor import compose_target
 from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
+    INFERENCE_CFG_RESCALE_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
     INFERENCE_THUMBNAIL_CAPABILITY,
@@ -55,6 +56,7 @@ def inference_ready_message() -> dict[str, object]:
             "target-composition",
             INFERENCE_PROGRESS_CAPABILITY,
             INFERENCE_THUMBNAIL_CAPABILITY,
+            INFERENCE_CFG_RESCALE_CAPABILITY,
         ],
     }
 

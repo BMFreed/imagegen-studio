@@ -356,6 +356,7 @@ test(
           positive: 'blue lantern',
         })
         assert.deepEqual(prepared.context.sampling, {
+          cfgRescale: 0,
           cfgScale: 7.5,
           invokeScheduler: null,
           requestedSeedPolicy: 'fixed',
@@ -417,6 +418,7 @@ test(
         )
 
         const source = await service.prepareNormalGenerationInput(tabId, worker)
+        source.generationDraft.cfgRescale = 0.3
         const originalTargetBytes = Buffer.from(source.composite.bytes)
         const originalBbox = { ...source.bbox }
         const originalPrompt = source.generationDraft.positivePrompt.text
@@ -430,6 +432,7 @@ test(
               source.composite.width = 999
               source.generationDraft.positivePrompt.text = 'late mutation during verification'
               source.generationDraft.sampling.steps = 123
+              source.generationDraft.cfgRescale = 0.9
               source.bbox.x = 999
               return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
             },
@@ -443,6 +446,7 @@ test(
         assert.deepEqual(copied.context.bbox, originalBbox)
         assert.equal(copied.context.prompts.positive, originalPrompt)
         assert.equal(copied.context.sampling.steps, originalSteps)
+        assert.equal(copied.context.sampling.cfgRescale, 0.3)
       },
     )
   },
@@ -578,7 +582,7 @@ test(
         },
         {
           code: 'GENERATION_ADVANCED_UNSUPPORTED',
-          draft: { cfgRescale: 0.3 },
+          draft: { vaePrecision: 'FP32' },
           name: 'advanced-option',
         },
         {
@@ -716,6 +720,7 @@ test(
         () => 0,
       )
       assert.deepEqual(randomPrepared.context.sampling, {
+        cfgRescale: 0,
         cfgScale: 7.5,
         invokeScheduler: null,
         requestedSeedPolicy: 'random',
@@ -782,6 +787,52 @@ test(
         runtimeProfile: 'linux-nvidia',
         workerVersion: '0.2.0',
       }
+      assert.equal(prepared.context.sampling.cfgRescale, 0)
+      for (const cfgRescale of [0.3, 0.99]) {
+        const nonneutral = structuredClone(prepared)
+        nonneutral.context.sampling.cfgRescale = cfgRescale
+        let verified = false
+        await assert.rejects(
+          withIllustriousTxt2ImgRequest({
+            modelService: {
+              resolveVerifiedGenerationCheckpointForPlan: async () => {
+                verified = true
+                throw new Error('must reject unsupported worker before verification')
+              },
+            },
+            prepared: nonneutral,
+            ready,
+            scratchBasePath,
+            use: async () => {
+              called = true
+            },
+          }),
+          { code: 'INFERENCE_UNAVAILABLE' },
+        )
+        assert.equal(verified, false)
+        assert.equal(called, false)
+        assert.equal(existsSync(scratchBasePath), false)
+        await withIllustriousTxt2ImgRequest({
+          modelService,
+          prepared: nonneutral,
+          ready: {
+            ...ready,
+            capabilities: [
+              'illustrious-txt2img',
+              'denoising-progress',
+              'candidate-thumbnails',
+              'illustrious-cfg-rescale',
+            ],
+            workerVersion: '0.5.0',
+          },
+          scratchBasePath,
+          use: async (request) => {
+            assert.equal(request.job.sampling.cfgRescale, cfgRescale)
+          },
+        })
+        await rm(scratchBasePath, { force: true, recursive: true })
+      }
+      await rm(scratchBasePath, { force: true, recursive: true })
       await assert.rejects(
         withIllustriousTxt2ImgRequest({
           modelService,
@@ -821,6 +872,12 @@ test(
         code: string
         mutate: (context: typeof prepared.context) => void
       }[] = [
+        ...[-0.1, 1, Infinity, NaN].map((cfgRescale) => ({
+          code: 'GENERATION_PARAMETER_UNSUPPORTED',
+          mutate: (context: typeof prepared.context) => {
+            context.sampling.cfgRescale = cfgRescale
+          },
+        })),
         {
           code: 'GENERATION_SAMPLING_REQUIRED',
           mutate: (context) => {

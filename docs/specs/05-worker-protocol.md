@@ -356,6 +356,25 @@ type WorkerMessage =
 
 Перед активацией нового environment runtime manager также запускает worker self-test без пользовательской модели. Он должен проверить imports/native extensions, выбранный device/runtime profile, минимальную tensor operation и тот же versioned handshake. Lifecycle установки, app-managed CPython и rollback описаны в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
 
+## Qualified Illustrious CFG Rescale checkpoint
+
+The narrow implemented txt2img request has optional
+`job.sampling.cfgRescale` (finite 0–0.99). New preparations freeze an effective
+number, including zero; legacy omitted transport means neutral zero for Python.
+Qualified inference worker 0.5.0 must advertise `illustrious-cfg-rescale` along
+with txt2img, denoising progress and candidate thumbnails. Existing 0.2/0.3/0.4
+workers retain their previous neutral request schema. Main strips only neutral
+zero from the disposable wire copy for those peers; it rejects nonneutral input
+before admission and rechecks the actual worker before dispatch. Durable inputs
+are not rewritten by this adaptation.
+
+The worker passes the frozen value as `guidance_rescale` to the pinned
+Diffusers SDXL adapter for Illustrious. Queue/candidate context and worker
+payload must agree on effective value. Add stores the new frozen number in
+portable provenance; legacy context absence remains unrecorded. This does not
+add img2img, Anima or the rest of Advanced Options. See
+[executed evidence and limits](../engineering/phase-2c-cfg-rescale-research.md).
+
 ## Queue item lifecycle
 
 ```ts

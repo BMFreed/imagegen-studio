@@ -59,6 +59,10 @@ import {
   type AcceptedHistoryFocusRequest,
   acceptedHistoryLayerAvailable,
 } from './accepted-history-navigation.js'
+import {
+  cfgRescaleGenerationCapabilityReason,
+  cfgRescaleGenerationRangeReason,
+} from './cfg-rescale-control.js'
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 import GenerationSettingsComparison from './GenerationSettingsComparison.vue'
@@ -74,6 +78,7 @@ import {
 import { projectPromptLoraSources } from './project-prompt-context.js'
 import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
+import ProjectGenerationAdvancedOptions from './ProjectGenerationAdvancedOptions.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
@@ -539,9 +544,11 @@ const samplingCfgScaleInvalid = computed(
   () => parseCfgScale(samplingCfgScaleText.value).kind === 'invalid',
 )
 const lorasValid = ref(true)
+const advancedOptionsValid = ref(true)
 const draftInvalid = computed(
   () =>
     !lorasValid.value ||
+    !advancedOptionsValid.value ||
     fixedSeedInvalid.value ||
     samplingStepsInvalid.value ||
     samplingCfgScaleInvalid.value,
@@ -1068,6 +1075,10 @@ const generationBlockingReason = computed(() => {
   if (draftInvalid.value) {
     return 'Correct invalid generation settings before generating.'
   }
+  const rescaleReason = cfgRescaleGenerationRangeReason(props.generationDraft.cfgRescale)
+  if (rescaleReason) {
+    return rescaleReason
+  }
   if (!selectedModel.value || modelStatus.value !== 'ready') {
     return 'Choose an installed model before generating.'
   }
@@ -1089,7 +1100,10 @@ const generationBlockingReason = computed(() => {
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
   }
-  return null
+  return cfgRescaleGenerationCapabilityReason(
+    props.generationDraft.cfgRescale,
+    props.generationState.cfgRescaleSupported,
+  )
 })
 
 function generate() {
@@ -1628,6 +1642,15 @@ function applyFitBbox() {
             <p v-else-if="generationDraft.seed.policy === 'reuse'" class="seed-diagnostic">
               Last completed seed: {{ lastActualSeed }}
             </p>
+            <ProjectGenerationAdvancedOptions
+              :editingDisabled="busy || reloadRequired"
+              :modelFamily="selectedModel?.baseModelFamily ?? null"
+              :modelValue="generationDraft.cfgRescale ?? null"
+              :runtimeSupported="generationState?.cfgRescaleSupported ?? null"
+              :runtimeUnavailableReason
+              @update:modelValue="emit('updateDraft', { kind: 'cfg-rescale', value: $event })"
+              @validity="advancedOptionsValid = $event"
+            />
           </section>
           <section
             aria-label="Generation area"

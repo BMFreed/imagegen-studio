@@ -123,6 +123,9 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         queueItemId: candidate.queueItemId,
       },
       generationConfiguration: {
+        ...(context.sampling.cfgRescale !== undefined
+          ? { cfgRescale: context.sampling.cfgRescale }
+          : {}),
         mode: 'txt2img',
         model: { ...context.model.reference },
         negativePrompt: { embeddingRefs: [], text: context.prompts.negative },

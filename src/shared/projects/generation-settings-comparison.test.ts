@@ -24,6 +24,29 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
 const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
 
+test('recorded CFG Rescale compares actual values and Illustrious default zero without rewriting legacy absence', () => {
+  const source = fixture()
+  assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
+  source.data.generationConfiguration!.cfgRescale = 0
+  assert.equal('cfgRescale' in source.current.generationDraft, false)
+  assert.equal(result(source, 'cfgRescale.value').status, 'Same')
+  assert.equal(result(source, 'cfgRescale.value').before, '0')
+  assert.equal(result(source, 'cfgRescale.value').after, '0')
+  assert.equal('cfgRescale' in source.current.generationDraft, false)
+  source.current.generationDraft.cfgRescale = 0.7
+  assert.equal(result(source, 'cfgRescale.value').status, 'Changed')
+  source.data.generationConfiguration!.cfgRescale = 0.7
+  assert.equal(result(source, 'cfgRescale.value').status, 'Same')
+  source.current.generationDraft.model!.baseModelFamily = 'anima'
+  assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
+  assert.match(result(source, 'cfgRescale.value').after, /Anima/)
+  delete source.data.generationConfiguration!.cfgRescale
+  source.current.generationDraft.model!.baseModelFamily = 'illustrious'
+  source.current.generationDraft.cfgRescale = 0
+  assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
+  assert.equal('cfgRescale' in source.data.generationConfiguration!, false)
+})
+
 function generationConfiguration(): IgsRasterGenerationProvenanceV1['generationConfiguration'] {
   const config: IgsRasterGenerationProvenanceV1['generationConfiguration'] = {
     mode: 'txt2img',
