@@ -8,6 +8,7 @@ It is not a top-level application tab and not a separate Invoke-like `Generate` 
 
 - [Project document lifecycle](../document-lifecycle.md)
 - [Prompt editor](./prompt-editor.md)
+- [Anima prompt weighting](./prompt-weighting.md)
 - [Prompt diagnostics](./prompt-diagnostics.md)
 - [Unified prompt autocomplete](./tag-autocomplete.md)
 - [Dynamic prompting](./dynamic-prompting.md)
@@ -165,14 +166,14 @@ The central canvas is a deterministic DOM/CSS simulation rather than a Konva or 
 
 Current left-panel coverage is intentionally narrower than the full product scope:
 
-| Area       | Current Vue behavior                                                                                                                                                                                                                         |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Preset     | One-shot chooser opens the shared editable Apply modal; manage and save-current actions open the existing manager flows; no preset identity remains in Project.                                                                              |
-| Size       | Aspect catalog, CSS preview, ratio lock, width/height, swap and deterministic fit-to-visible-layers behavior; currently mutates a finite canvas frame instead of the required primary generation bbox.                                       |
-| Prompts    | Shared CodeMirror 6 plain-text editor, native selection/bulk editing, phrase attention, local autocomplete, embedding refs, contextual active-LoRA highlights, copy/clear and dynamic preview.                                               |
-| LoRAs      | Add, enable/disable, weight and remove. Stack changes never rewrite prompt text or open an orphan dialog.                                                                                                                                    |
+| Area       | Current Vue behavior                                                                                                                                                                                                                                                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Preset     | One-shot chooser opens the shared editable Apply modal; manage and save-current actions open the existing manager flows; no preset identity remains in Project.                                                                                                                                                                                     |
+| Size       | Aspect catalog, CSS preview, ratio lock, width/height, swap and deterministic fit-to-visible-layers behavior; currently mutates a finite canvas frame instead of the required primary generation bbox.                                                                                                                                              |
+| Prompts    | Shared CodeMirror 6 plain-text editor, native selection/bulk editing, phrase attention, local autocomplete, embedding refs, contextual active-LoRA highlights, copy/clear and dynamic preview.                                                                                                                                                      |
+| LoRAs      | Add, enable/disable, weight and remove. Stack changes never rewrite prompt text or open an orphan dialog.                                                                                                                                                                                                                                           |
 | Generation | Mock model and exact version selection, sampler, scheduler, steps, CFG, context-disabled denoising, seed policies, and payload-bound VAE, VAE Precision and CFG Rescale. The production Project separately uses installed exact-version references and saves an explicit Illustrious sampler/scheduler pair; clip skip and inference remain absent. |
-| Queue      | Integer images-per-click from 1 through 100, sequential in-memory jobs, active badge, cancel-current and a compact project queue panel.                                                                                                      |
+| Queue      | Integer images-per-click from 1 through 100, sequential in-memory jobs, active badge, cancel-current and a compact project queue panel.                                                                                                                                                                                                             |
 
 Current right-panel coverage is also explicit: Raster and Smart Patch share a flat sortable stack; Regional Guidance is separate; selection, visibility, lock, duplicate, delete, pointer reorder and overflow move actions work for compositing layers. Raster opacity/blend, regional display opacity, regional prompts/negative source and reference add/remove update session state through Project history. Opacity changes the mock region overlay; Raster compositing and full Smart Patch precision forms still require production implementation.
 

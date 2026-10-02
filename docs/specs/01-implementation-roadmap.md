@@ -833,6 +833,14 @@ LoRA для обеих семейств.
   закреплёнными Qwen3/VAE не доказывает их структурную совместимость; если
   проверка не пройдена, Generate объясняет причину и блокируется.
   Illustrious SDXL `predictionType` к Anima не применяется.
+- Реализовать [Anima prompt weighting](../features/project/generate-mode/prompt-weighting.md)
+  в первом Anima pipeline независимо от merge InvokeAI PR #9506. Typed TS
+  compiler понимает parentheses/colon и текущие attention suffixes редактора;
+  Python получает cleaned text и weighted spans, кодирует Qwen3 без markup и
+  один раз tokenizes весь cleaned prompt bundled T5 tokenizer через
+  `offset_mapping`. Token weights доходят до LLM Adapter/denoising для positive
+  и global negative prompt. Не tokenize weighted fragments отдельно, не терять
+  weights и не переписывать authored Project/preset/provenance text.
 - Валидировать exact model/component/LoRA refs и семейные capabilities до
   enqueue; unsupported input блокируется с понятным сообщением, без silent
   fallback. Frozen job сохраняет все фактически использованные operational
@@ -856,8 +864,12 @@ combination отвергаются до worker. Seed `Reuse` и accepted provena
 Apply/Recall. Реальные jobs проверяют применимые `cfgRescale`, `vaePrecision`,
 `predictionType=v_prediction`, `clipSkip`, embeddings и batch expansion с
 фактическим seed scheduling; cursor `Reuse` переживает crash/reopen и не
-подменяется случайным seed. Это завершает первый вертикальный срез, но не
-весь MVP.
+подменяется случайным seed. Anima weighting проходит actual editor → typed
+compiler → real T5 tokenizer → conditioning/LLM Adapter → denoising: weight `1`
+эквивалентен plain text при том же seed, non-neutral attention влияет на
+conditioning/output. Проверить nested explicit weights, saved editor suffixes,
+Unicode offsets и isolated semantic mutations по supporting contract.
+Это завершает первый вертикальный срез, но не весь MVP.
 
 ## Фаза 3. Presets
 
@@ -921,6 +933,9 @@ Result` переносит фактический expanded prompt и portable ge
 - Regional Guidance Layer with owned region/mask and inline prompt/negative
   controls for both families; regional reference images only for
   Illustrious/SDXL, no inverse-mask auto-negative.
+- Anima regional text использует тот же [weighting compiler](../features/project/generate-mode/prompt-weighting.md)
+  и проверенный путь token weights из фазы 2C; отдельный parser с иной attention
+  semantics не вводится. Spatial gate regional negative text остаётся отдельным.
 
 **Выходная проверка:** реальный Canvas выполняет `inpaint`/`outpaint` для обоих
 семейств без silent fallback; Smart Patch сохраняет mask/bbox/variants,

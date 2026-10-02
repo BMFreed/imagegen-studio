@@ -12,6 +12,13 @@ The surface supports normal caret movement, character selection, Shift+click, Sh
 
 Attention actions operate on the current non-empty selection. With a collapsed selection they operate on the top-level phrase under the caret and are disabled for an empty phrase. `Ctrl/Cmd+Up` increases attention and `Ctrl/Cmd+Down` decreases it. The existing suffix, outer-parentheses, and numeric-step semantics remain, including neutral transitions that remove helper parentheses without accumulating new layers.
 
+These actions author plain text; they do not prove model-side attention support.
+The first Anima pipeline must implement the
+[weighting contract](./prompt-weighting.md), including current editor-produced
+`word+`, `(two words)-` and `(word)1.1` forms and previously saved prompts.
+Compilation leaves authored Project/preset text intact; Anima inference is
+still pending.
+
 ## Editor runtime
 
 The minimal runtime uses `EditorState`, `EditorView`, `keymap`, `defaultKeymap`, `Decoration`, `hoverTooltip`, `autocompletion`, completion sections, `EditorView.lineWrapping`, content attributes, themes, and compartments for read-only/resource/autocomplete reconfiguration. `history` and `historyKeymap` are enabled only for local editors in Preset Manager, Apply Preset, and New Project. Project uses external document history.

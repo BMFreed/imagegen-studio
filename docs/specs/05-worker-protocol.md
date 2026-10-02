@@ -307,6 +307,17 @@ type WorkerMessage =
   фиктивный SDXL prediction mode.
 - Для SDXL/Illustrious-like `.safetensors` checkpoint'ов worker следует InvokeAI-пути: грузит файл через Diffusers single-file loading, держит исходный checkpoint неизменным и кэширует уже загруженные модели/components в RAM/VRAM. Скрытая постоянная конвертация в diffusers-директорию запрещена.
 - Для Anima worker использует отдельные model loader, Qwen3 text encoder, VAE, LoRA и denoising path. Он проверяет exact installed identities обязательных компонентов перед началом job; ImageGen Studio не выдаёт SDXL single-file загрузчик за универсальный путь для Anima.
+- [Anima prompt weighting](../features/project/generate-mode/prompt-weighting.md)
+  обязательно при первом Anima pipeline (фаза 2C). Typed TS compiler до enqueue
+  создаёт cleaned text и weighted character spans с Unicode code-point offsets;
+  frozen request сохраняет их versioned interpretation. Python валидирует
+  spans, кодирует cleaned text в Qwen3 и tokenizes весь cleaned text один раз
+  bundled T5 tokenizer с `offset_mapping`. Он передаёт per-token weights через
+  conditioning/LLM Adapter в denoising для обоих prompt signs. Текст Project/
+  preset/provenance не заменяется на stripped prompt. Current editor Compel
+  suffixes и nested explicit weights покрываются compatibility tests; отсутствие
+  поддержки не допускает silent uniform weights. Anima generation request,
+  compiler и этот tensor path пока не реализованы.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
 - Для raster import worker применяет EXIF Orientation, затем преобразует pixels
   из встроенного ICC в рабочее sRGB. Он возвращает исходные ICC bytes отдельно
