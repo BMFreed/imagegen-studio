@@ -3,10 +3,7 @@ import {
   GENERATION_THUMBNAIL_MAX_BYTES,
   GENERATION_THUMBNAIL_MAX_SIDE,
 } from '../../shared/projects/generation-thumbnail.js'
-import {
-  IGS_GENERATION_PNG_MAX_BYTES,
-  IGS_SAFETY_CEILINGS,
-} from '../../shared/projects/project-schema.js'
+import { IGS_GENERATION_PNG_MAX_BYTES } from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable } from 'kysely'
 
@@ -20,7 +17,10 @@ import * as v from 'valibot'
 
 import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/database.types.js'
 
-import { GenerationQueueRepository } from './generation-queue.js'
+import {
+  FrozenIllustriousPayloadSchema as FrozenPayloadSchema,
+  GenerationQueueRepository,
+} from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { localProjectRecoveryKey } from './project-identity.js'
@@ -52,113 +52,6 @@ const ThumbnailCacheMetadataSchema = v.strictObject({
   thumbnail: ThumbnailMetadataSchema,
 })
 const Uint32Schema = v.pipe(SafeUIntSchema, v.maxValue(0xff_ff_ff_ff))
-const BboxSchema = v.pipe(
-  v.strictObject({
-    height: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-    width: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-    x: v.pipe(
-      v.number(),
-      v.safeInteger(),
-      v.minValue(-IGS_SAFETY_CEILINGS.coordinateMagnitude),
-      v.maxValue(IGS_SAFETY_CEILINGS.coordinateMagnitude),
-    ),
-    y: v.pipe(
-      v.number(),
-      v.safeInteger(),
-      v.minValue(-IGS_SAFETY_CEILINGS.coordinateMagnitude),
-      v.maxValue(IGS_SAFETY_CEILINGS.coordinateMagnitude),
-    ),
-  }),
-  v.check((bbox) => bbox.width % 8 === 0 && bbox.height % 8 === 0),
-  v.check((bbox) => bbox.width * bbox.height <= 4_000_000),
-)
-const PromptsSchema = v.strictObject({
-  negative: v.pipe(v.string(), v.maxBytes(16 * 1024)),
-  positive: v.pipe(v.string(), v.maxBytes(16 * 1024)),
-})
-const PredictionTypeSchema = v.picklist(['epsilon', 'sample', 'v_prediction'])
-const SchedulerSchema = v.picklist([
-  'dpmpp_2m_k',
-  'dpmpp_2m',
-  'euler_a',
-  'dpmpp_sde_k',
-  'dpmpp_sde',
-])
-const CheckpointSchema = v.strictObject({
-  baseModelFamily: v.literal('illustrious'),
-  civitaiFileId: v.nullable(SafeUIntSchema),
-  civitaiModelId: v.nullable(SafeUIntSchema),
-  civitaiVersionId: v.nullable(SafeUIntSchema),
-  displayName: v.pipe(v.string(), v.nonEmpty()),
-  fileSha256: Sha256Schema,
-  kind: v.literal('checkpoint'),
-  localModelId: v.pipe(v.string(), v.nonEmpty()),
-  localVersionId: v.pipe(v.string(), v.nonEmpty()),
-  predictionType: PredictionTypeSchema,
-  versionName: v.pipe(v.string(), v.nonEmpty()),
-})
-const TargetSchema = v.strictObject({
-  byteSize: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(MAX_IMAGE_BYTES)),
-  colorSpace: v.literal('srgb'),
-  format: v.literal('png'),
-  height: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-  iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
-  sha256: Sha256Schema,
-  width: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-})
-const FrozenPayloadSchema = v.strictObject({
-  context: v.strictObject({
-    bbox: BboxSchema,
-    documentId: UuidSchema,
-    documentRevision: UuidSchema,
-    kind: v.literal('normal-txt2img-preparation'),
-    model: v.strictObject({
-      managedPath: v.pipe(v.string(), v.nonEmpty()),
-      reference: CheckpointSchema,
-    }),
-    prompts: PromptsSchema,
-    sampling: v.strictObject({
-      cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
-      cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
-      invokeScheduler: SchedulerSchema,
-      requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
-      sampler: v.pipe(v.string(), v.nonEmpty()),
-      scheduler: v.pipe(v.string(), v.nonEmpty()),
-      seed: Uint32Schema,
-      seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
-      steps: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(200)),
-    }),
-    schemaVersion: v.literal(1),
-    target: TargetSchema,
-  }),
-  kind: v.literal('illustrious-txt2img'),
-  originRequestId: UuidSchema,
-  schemaVersion: v.literal(1),
-  workerJob: v.strictObject({
-    bbox: BboxSchema,
-    checkpoint: v.strictObject({
-      path: v.pipe(v.string(), v.nonEmpty()),
-      predictionType: PredictionTypeSchema,
-      sha256: Sha256Schema,
-    }),
-    prompts: PromptsSchema,
-    sampling: v.strictObject({
-      cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
-      cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
-      scheduler: SchedulerSchema,
-      seed: Uint32Schema,
-      steps: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(200)),
-    }),
-    schemaVersion: v.literal(1),
-    target: v.strictObject({
-      byteSize: v.pipe(SafeUIntSchema, v.minValue(1), v.maxValue(MAX_IMAGE_BYTES)),
-      height: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-      iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
-      sha256: Sha256Schema,
-      width: v.pipe(SafeUIntSchema, v.minValue(8), v.maxValue(2048)),
-    }),
-  }),
-})
 const CandidateEntrySchema = v.strictObject({
   actualSeed: Uint32Schema,
   candidateId: UuidSchema,
@@ -1498,6 +1391,9 @@ function parseFrozenPayload(json: string): FrozenPayload {
   const payload = parsed.output
   const { context, workerJob } = payload
   if (
+    (context.kind === 'normal-img2img-preparation' &&
+      (!('denoisingStrength' in workerJob.sampling) ||
+        context.sampling.denoisingStrength !== workerJob.sampling.denoisingStrength)) ||
     !isDeepStrictEqual(context.bbox, workerJob.bbox) ||
     !isDeepStrictEqual(context.prompts, workerJob.prompts) ||
     context.model.managedPath !== workerJob.checkpoint.path ||
@@ -1573,7 +1469,7 @@ function receiptMatches(
 function queueRowMatches(row: Selectable<GenerationQueueItem>, entry: CandidateEntry): boolean {
   return (
     row.id === entry.queueItemId &&
-    row.operation === 'illustrious-txt2img' &&
+    row.operation === parseFrozenPayload(entry.frozenPayloadJson).kind &&
     row.local_project_key === entry.localProjectKey &&
     row.staging_session_id === entry.stagingSessionId &&
     row.canonical_project_path === entry.projectPath &&

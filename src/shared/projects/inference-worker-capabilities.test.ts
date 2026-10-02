@@ -6,6 +6,7 @@ import {
   supportsInferenceCandidateThumbnails,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceImg2Img,
 } from './inference-worker-capabilities.js'
 
 const legacyReady = {
@@ -97,5 +98,32 @@ test('thumbnail qualification requires exact 0.4.0 and both progress and thumbna
   ]) {
     assert.equal(isQualifiedInferenceWorkerReady({ ...current, capabilities }), false)
     assert.equal(supportsInferenceCandidateThumbnails({ ...current, capabilities }), false)
+  }
+})
+
+test('opaque img2img requires qualified 0.6.0 and retains all earlier capabilities', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+  ]
+  const current = { ...legacyReady, capabilities, workerVersion: '0.6.0' }
+  assert.ok(isQualifiedInferenceWorkerReady(current))
+  assert.ok(supportsInferenceImg2Img(current))
+  assert.ok(supportsInferenceCFGRescale(current))
+  assert.ok(supportsInferenceDenoisingProgress(current))
+  assert.ok(supportsInferenceCandidateThumbnails(current))
+  for (const removed of capabilities) {
+    const incomplete: unknown = {
+      ...current,
+      capabilities: capabilities.filter((value) => value !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false)
+    assert.equal(supportsInferenceImg2Img(incomplete), false)
+  }
+  for (const workerVersion of ['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.7.0']) {
+    assert.equal(supportsInferenceImg2Img({ ...current, workerVersion }), false)
   }
 })

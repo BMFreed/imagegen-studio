@@ -3,7 +3,7 @@ export interface QualifiedInferenceWorkerReady {
   capabilities: readonly string[]
   protocolVersion: '1'
   runtimeProfile: 'linux-nvidia'
-  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0'
+  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0' | '0.6.0'
 }
 
 export function isQualifiedInferenceWorkerReady(
@@ -27,7 +27,12 @@ export function isQualifiedInferenceWorkerReady(
       (ready.workerVersion === '0.5.0' &&
         ready.capabilities.includes('denoising-progress') &&
         ready.capabilities.includes('candidate-thumbnails') &&
-        ready.capabilities.includes('illustrious-cfg-rescale')))
+        ready.capabilities.includes('illustrious-cfg-rescale')) ||
+      (ready.workerVersion === '0.6.0' &&
+        ready.capabilities.includes('denoising-progress') &&
+        ready.capabilities.includes('candidate-thumbnails') &&
+        ready.capabilities.includes('illustrious-cfg-rescale') &&
+        ready.capabilities.includes('illustrious-img2img')))
   )
 }
 
@@ -40,11 +45,20 @@ export function supportsInferenceDenoisingProgress(value: unknown): boolean {
 export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    (value.workerVersion === '0.4.0' || value.workerVersion === '0.5.0')
+    (value.workerVersion === '0.4.0' ||
+      value.workerVersion === '0.5.0' ||
+      value.workerVersion === '0.6.0')
   )
 }
 
 /** Legacy peers must never inherit rescale support merely by advertising an extra string. */
 export function supportsInferenceCFGRescale(value: unknown): boolean {
-  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.5.0'
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    (value.workerVersion === '0.5.0' || value.workerVersion === '0.6.0')
+  )
+}
+
+export function supportsInferenceImg2Img(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.6.0'
 }

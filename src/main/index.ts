@@ -37,6 +37,7 @@ import {
   isProjectDocumentId,
   isProjectGenerateOptions,
 } from '../shared/projects/project-generation-actions.js'
+import { isGenerationTargetKey } from '../shared/projects/project-generation-target-state.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 
@@ -120,6 +121,7 @@ import {
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
+import { ProjectTargetInspectionOwner } from './projects/project-target-inspection-owner.js'
 import {
   inspectTemporaryRecovery,
   type ProjectTemporaryRecoveryInspection,
@@ -275,6 +277,7 @@ if (!gotInstanceLock) {
         scratchDirectory: path.join(paths.dataRoot, 'scratch'),
         smokeOptIn: process.env.IMAGEGEN_TEST_IMAGE_WORKER,
       })
+      const targetInspectionOwner = new ProjectTargetInspectionOwner(developmentWorkerLocation)
       const saveProjectWithPreview = async (tabId: string) => {
         if (!developmentWorkerLocation) {
           return await projectService.save(tabId)
@@ -539,6 +542,7 @@ if (!gotInstanceLock) {
         coordinator: generationActions,
         pendingJobs: recoveredGeneration?.queue ?? null,
         runtimeExit: generationRuntime,
+        shutdownImageReads: () => targetInspectionOwner.shutdown(),
       })
       generationShutdown = appShutdown
 
@@ -1002,32 +1006,40 @@ if (!gotInstanceLock) {
           projectService.getAcceptedResultHistory(cursor as AcceptedResultHistoryCursor | null),
       )
       registerProjectHandler(
+        ipcChannels.projects.getGenerationTargetState,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isGenerationTargetKey(args[2]),
+        async (tabId, documentId, targetKey) => {
+          const read = (withWorker?: Parameters<ProjectService['getGenerationTargetState']>[3]) =>
+            projectService.getGenerationTargetState(
+              tabId as string,
+              documentId as string,
+              targetKey as string,
+              withWorker,
+            )
+          return (await targetInspectionOwner.read(read)) ?? (await read())
+        },
+      )
+      registerProjectHandler(
         ipcChannels.projects.getRasterGenerationData,
         (args) =>
           args.length === 3 &&
           isProjectId(args[0]) &&
           isProjectDocumentId(args[1]) &&
           isProjectDocumentId(args[2]),
-        async (tabId, documentId, layerId) =>
-          await projectService.getRasterGenerationData(
-            tabId as string,
-            documentId as string,
-            layerId as string,
-            developmentWorkerLocation
-              ? async (use) => {
-                  // The existing image worker is CPU-only. Comparison never acquires an inference
-                  // lease, prepares a job, or resolves resources and random seeds.
-                  const worker = await ProjectWorkerClient.start(developmentWorkerLocation, {
-                    environment: { ...process.env, CUDA_VISIBLE_DEVICES: '' },
-                  })
-                  try {
-                    return await use(worker)
-                  } finally {
-                    await worker.close()
-                  }
-                }
-              : undefined,
-          ),
+        async (tabId, documentId, layerId) => {
+          const read = (withWorker?: Parameters<ProjectService['getRasterGenerationData']>[3]) =>
+            projectService.getRasterGenerationData(
+              tabId as string,
+              documentId as string,
+              layerId as string,
+              withWorker,
+            )
+          return (await targetInspectionOwner.read(read, 'comparison')) ?? (await read())
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.reviewAcceptedResult,

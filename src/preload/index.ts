@@ -35,6 +35,10 @@ import {
   isProjectGenerationActionState,
 } from '../shared/projects/project-generation-actions.js'
 import { isProjectGenerationResultsSnapshot } from '../shared/projects/project-generation-results.js'
+import {
+  isProjectGenerationTargetState,
+  type ProjectGenerationTargetState,
+} from '../shared/projects/project-generation-target-state.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
 
@@ -679,6 +683,15 @@ const api: StudioApi = {
         ipcChannels.projects.getGenerationState,
         [tabId],
         isProjectGenerationActionState,
+      ),
+    getGenerationTargetState: (tabId, documentId, targetKey) =>
+      invokeProject(
+        ipcChannels.projects.getGenerationTargetState,
+        [tabId, documentId, targetKey],
+        (value): value is ProjectGenerationTargetState =>
+          isProjectGenerationTargetState(value) &&
+          value.documentId === documentId &&
+          value.targetKey === targetKey,
       ),
     getRasterGenerationData: (tabId, documentId, layerId) =>
       invokeProject(

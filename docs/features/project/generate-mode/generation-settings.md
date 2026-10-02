@@ -146,7 +146,7 @@ value means effective zero without dirtying the document merely by viewing it.
 Existing v1 drafts containing `1` remain loadable, but this pipeline rejects
 them until edited or reset.
 
-Nonneutral values require qualified worker 0.5.0 with
+Nonneutral values require qualified worker 0.5.0 or 0.6.0 with
 `illustrious-cfg-rescale`; unsupported/unavailable runtimes disable the numeric
 control with a reason. Reset remains available for an editable draft. Main
 independently checks capability before enqueue and again at dispatch. Neutral
@@ -156,7 +156,31 @@ Prepare freezes the effective value, the worker applies it through the pinned
 Diffusers SDXL adapter, and Add records it in immutable provenance. Later draft
 edits and Retry cannot change that record. Old results with no recorded value
 stay unknown in comparison. This checkpoint supports Illustrious txt2img only;
-Anima, other modes and the remaining advanced controls are still open.
+Anima and the remaining advanced controls are still open. The following checkpoint
+extends supported generation to opaque img2img.
+
+## Production opaque img2img checkpoint
+
+[Opaque img2img](../../../engineering/phase-2c-img2img-research.md) adds a visible
+`Denoising Strength` control in Generation settings. Main reads the exact target
+pixels through the existing CPU compositor without qualifying or starting a GPU
+worker. The field explains disabled states for transparent input, unavailable
+composition, unsupported model/runtime and partial-alpha outpaint. This advisory
+read never modifies the Project or admission state; Generate independently
+captures and verifies its real input again.
+
+The existing nullable draft has no implicit production default: opaque img2img
+requires an explicitly chosen finite value in 0–1. Viewing the field does not
+persist the prototype's displayed 0.75 fallback. Reset restores unset; invalid
+unacknowledged raw text blocks Save and Generate until corrected. A stored strength
+is ignored for transparent txt2img and is not recorded as an applied setting there.
+
+Qualified worker 0.6.0 is required for opaque img2img. Prepare freezes strength and
+source pixels, Retry reuses them, and Add records actual mode/strength in immutable
+portable provenance. Changing the current draft cannot alter a queued or accepted
+result. Strength 0 uses the VAE roundtrip without denoising, so it does not guarantee
+pixel-identical output. Partially transparent targets, inpaint, Anima, LoRA and
+release runtime installation remain pending.
 
 ## Vue Prototype Coverage
 

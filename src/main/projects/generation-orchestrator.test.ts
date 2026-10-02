@@ -14,7 +14,7 @@ import type { AppDatabase } from '../db/database.js'
 import type { QualifiedGenerationBatchItem } from './generation-orchestrator.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
@@ -263,7 +263,7 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>): Promise<vo
 
 function inferenceTransport(
   outputBytes: Buffer,
-  onRequest?: (request: IllustriousTxt2ImgRequestV1) => Promise<void>,
+  onRequest?: (request: IllustriousGenerationRequestV1) => Promise<void>,
 ): GenerationWorkerTransport {
   return {
     close: async () => undefined,
@@ -485,9 +485,9 @@ test(
         fixture.worker,
         inferenceTransport(fixture.outputBytes),
       )
-      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
+      const enqueue = fixture.queue.enqueueIllustriousGenerationBatch.bind(fixture.queue)
       let published: string[] = []
-      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+      fixture.queue.enqueueIllustriousGenerationBatch = async (input) => {
         const queued = await enqueue(input)
         published = queued.map((item) => item.id)
         await fixture.database.db
@@ -517,9 +517,9 @@ test(
   { skip: !devRuntimeRoot() },
   async () => {
     await withFixture(async (fixture) => {
-      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
+      const enqueue = fixture.queue.enqueueIllustriousGenerationBatch.bind(fixture.queue)
       const cancel = fixture.processor.cancelAndWait.bind(fixture.processor)
-      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+      fixture.queue.enqueueIllustriousGenerationBatch = async (input) => {
         const queued = await enqueue(input)
         await fixture.database.db
           .updateTable('project_index')
@@ -1723,8 +1723,8 @@ test(
         fixture.modelService,
       )
       let enqueueCalls = 0
-      const enqueue = fixture.queue.enqueueIllustriousTxt2ImgBatch.bind(fixture.queue)
-      fixture.queue.enqueueIllustriousTxt2ImgBatch = async (input) => {
+      const enqueue = fixture.queue.enqueueIllustriousGenerationBatch.bind(fixture.queue)
+      fixture.queue.enqueueIllustriousGenerationBatch = async (input) => {
         enqueueCalls++
         return await enqueue(input)
       }

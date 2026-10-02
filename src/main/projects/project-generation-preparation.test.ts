@@ -23,7 +23,7 @@ import { ModelService } from '../models/model-service.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
-import { prepareNormalTxt2Img } from './project-generation-preparation.js'
+import { prepareNormalGeneration, prepareNormalTxt2Img } from './project-generation-preparation.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
@@ -1096,6 +1096,92 @@ test(
         code: 'MODEL_FILE_CORRUPT',
       })
       assert.equal(service.getOpenTabs()[0].dirty, false)
+    })
+  },
+)
+
+test(
+  'CPU composed target selects opaque preparation, requires explicit strength and ignores it for transparent jobs',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const installed = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('first exact Illustrious checkpoint'),
+        civitaiModelId: 801,
+        civitaiVersionId: 802,
+        kind: 'checkpoint',
+      })
+      const model = await modelService.resolveGenerationCheckpoint(
+        installed.published.resourceId,
+        installed.published.versionId,
+      )
+      const opaque = await importProject(service, dataRoot, {
+        model,
+        name: 'opaque preparation',
+        raster: true,
+      })
+      await assert.rejects(
+        service.prepareNormalGenerationContext(opaque.tabId, worker, modelService),
+        { code: 'GENERATION_SAMPLING_REQUIRED' },
+      )
+      const target = await service.prepareNormalGenerationInput(opaque.tabId, worker)
+      assert.equal(target.mode, 'img2img')
+      for (const denoisingStrength of [0, 0.65, 1]) {
+        const prepared = await prepareNormalGeneration({
+          modelService,
+          target: {
+            ...target,
+            generationDraft: {
+              ...target.generationDraft,
+              sampling: { ...target.generationDraft.sampling, denoisingStrength },
+            },
+          },
+        })
+        assert.equal(prepared.context.kind, 'normal-img2img-preparation')
+        if (prepared.context.kind !== 'normal-img2img-preparation') {
+          assert.fail('wrong prepared operation')
+        }
+        assert.equal(prepared.context.sampling.denoisingStrength, denoisingStrength)
+        assert.equal(prepared.context.target.sha256, target.composite.sha256)
+      }
+      for (const denoisingStrength of [-0.01, 1.01, NaN, Infinity]) {
+        await assert.rejects(
+          prepareNormalGeneration({
+            modelService,
+            target: {
+              ...target,
+              generationDraft: {
+                ...target.generationDraft,
+                sampling: { ...target.generationDraft.sampling, denoisingStrength },
+              },
+            },
+          }),
+          { code: 'GENERATION_PARAMETER_UNSUPPORTED' },
+        )
+      }
+      await assert.rejects(
+        prepareNormalGeneration({ modelService, target: { ...target, mode: 'txt2img' } }),
+        { code: 'GENERATION_TARGET_CHANGED' },
+      )
+      const transparent = await importProject(service, dataRoot, {
+        draft: { sampling: { ...target.generationDraft.sampling, denoisingStrength: 0.65 } },
+        model,
+        name: 'transparent strength',
+      })
+      const prepared = await service.prepareNormalGenerationContext(
+        transparent.tabId,
+        worker,
+        modelService,
+      )
+      assert.equal(prepared.context.kind, 'normal-txt2img-preparation')
+      assert.equal('denoisingStrength' in prepared.context.sampling, false)
+      // Shift bbox by one pixel: real CPU alpha now proves partial coverage/outpaint, not an operation hint.
+      await service.setPrimaryBbox(opaque.tabId, { ...target.bbox, x: target.bbox.x + 1 })
+      const partial = await service.prepareNormalGenerationInput(opaque.tabId, worker)
+      assert.equal(partial.mode, 'outpaint')
+      await assert.rejects(prepareNormalGeneration({ modelService, target: partial }), {
+        code: 'GENERATION_MODE_UNSUPPORTED',
+      })
     })
   },
 )

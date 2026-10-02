@@ -9,6 +9,63 @@ import { GenerationAppShutdown, GenerationAppShutdownError } from './generation-
 
 const migrations = path.resolve('src/main/db/migrations')
 
+test(
+  'CPU inspection cleanup fences shutdown before coordinator and real SQLite, and a failed exit can retry',
+  { timeout: 10_000 },
+  async () => {
+    await withDatabase(async ({ close, query }) => {
+      const entered = deferred()
+      const release = deferred()
+      let reads = 0
+      let coordinated = false
+      let closed = false
+      const shutdown = new GenerationAppShutdown({
+        closeDatabase: async () => {
+          await close()
+          closed = true
+        },
+        context: { shutdown: () => undefined },
+        coordinator: {
+          shutdown: async () => {
+            coordinated = true
+          },
+        },
+        pendingJobs: null,
+        shutdownImageReads: async () => {
+          reads++
+          if (reads === 1) {
+            entered.resolve()
+            await release.promise
+            throw new Error('CPU child exit is unconfirmed')
+          }
+        },
+      })
+      const first = shutdown.finalize()
+      try {
+        assert.equal(reads, 1, 'shutdown must enter the CPU lease before starting later owners')
+        assert.equal(coordinated, false)
+        await entered.promise
+        await query()
+        assert.equal(closed, false)
+        assert.equal(coordinated, false)
+        release.resolve()
+        await assert.rejects(first, /CPU child exit is unconfirmed/)
+        await query()
+        assert.equal(closed, false)
+        assert.equal(coordinated, false)
+        await shutdown.finalize()
+        assert.equal(reads, 2)
+        assert.equal(coordinated, true)
+        assert.equal(closed, true)
+        await assert.rejects(query)
+      } finally {
+        release.resolve()
+        await first.catch(() => undefined)
+      }
+    })
+  },
+)
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
   const promise = new Promise<void>((done) => {

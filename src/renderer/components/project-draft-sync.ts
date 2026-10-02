@@ -192,6 +192,13 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'denoising-strength') {
+    if (draft.sampling.denoisingStrength === change.value) {
+      return false
+    }
+    draft.sampling.denoisingStrength = change.value
+    return true
+  }
   if (change.kind === 'cfg-rescale') {
     if (draft.cfgRescale === (change.value ?? undefined)) {
       return false

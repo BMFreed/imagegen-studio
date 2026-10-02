@@ -17,11 +17,13 @@ from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
     INFERENCE_CFG_RESCALE_CAPABILITY,
+    INFERENCE_IMG2IMG_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
     INFERENCE_THUMBNAIL_CAPABILITY,
     INFERENCE_WORKER_VERSION,
     MLRuntime,
+    generate_illustrious_img2img,
     generate_illustrious_txt2img,
     qualify_ml_runtime,
 )
@@ -29,6 +31,7 @@ from imagegen_worker.inference_config import configured_sdxl_path
 from imagegen_worker.protocol import (
     MAX_MESSAGE_BYTES,
     ComposeTargetCommand,
+    GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
     error_message,
     parse_request,
@@ -57,6 +60,7 @@ def inference_ready_message() -> dict[str, object]:
             INFERENCE_PROGRESS_CAPABILITY,
             INFERENCE_THUMBNAIL_CAPABILITY,
             INFERENCE_CFG_RESCALE_CAPABILITY,
+            INFERENCE_IMG2IMG_CAPABILITY,
         ],
     }
 
@@ -110,6 +114,13 @@ def process_inference_request(
                 )
 
         with contextlib.redirect_stdout(sys.stderr):
+            if isinstance(command, GenerateIllustriousImg2ImgCommand):
+                return generate_illustrious_img2img(
+                    command,
+                    config_dir=config_dir,
+                    runtime=runtime,
+                    on_progress=report_progress if on_progress is not None else None,
+                )
             return generate_illustrious_txt2img(
                 command,
                 config_dir=config_dir,

@@ -380,3 +380,51 @@ test('accepted CFG Rescale is projected from frozen inputs including zero withou
   })
   assert.equal(map(neutralLegacyTransport).generationConfiguration.cfgRescale, 0)
 })
+
+test('img2img provenance records actual strength including zero and rejects crossed or missing durable values', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (entry: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-10-02T00:00:00.000Z',
+      candidate: entry,
+      imagePngBytes,
+    })
+  assert.equal(map(candidate).generationConfiguration.mode, 'txt2img')
+  assert.equal('denoisingStrength' in map(candidate).generationConfiguration.sampling, false)
+  for (const denoisingStrength of [0, 0.65, 1]) {
+    const img = structuredClone(candidate)
+    replacePayload(img, (raw) => {
+      const payload = raw as unknown as {
+        context: { kind: string; sampling: Record<string, unknown> }
+        kind: string
+        workerJob: { sampling: Record<string, unknown> }
+      }
+      payload.kind = 'illustrious-img2img'
+      payload.context.kind = 'normal-img2img-preparation'
+      payload.context.sampling.denoisingStrength = denoisingStrength
+      payload.workerJob.sampling.denoisingStrength = denoisingStrength
+    })
+    const provenance = map(img)
+    assert.equal(provenance.kind, 'illustrious-img2img')
+    if (provenance.kind !== 'illustrious-img2img') {
+      assert.fail('wrong portable kind')
+    }
+    assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, denoisingStrength)
+    assert.equal(
+      provenance.layerSourceContext.sourceTargetSha256,
+      map(candidate).layerSourceContext.sourceTargetSha256,
+    )
+    for (const workerStrength of [undefined, denoisingStrength === 0.65 ? 0.4 : 0.65, -0.1, 1.1]) {
+      const invalid = structuredClone(img)
+      replacePayload(invalid, (raw) => {
+        const payload = raw as unknown as { workerJob: { sampling: Record<string, unknown> } }
+        if (workerStrength === undefined) {
+          delete payload.workerJob.sampling.denoisingStrength
+        } else {
+          payload.workerJob.sampling.denoisingStrength = workerStrength
+        }
+      })
+      assert.throws(() => map(invalid), { code: 'PROVENANCE_INPUT_INVALID' })
+    }
+  }
+})

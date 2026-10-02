@@ -73,6 +73,7 @@ const report = {
     'Actual transient JSONL denoising progress, typed preload event/getter, Project indicator and Queue Manager projection; held controlled inference prevents progress from being confused with completed publication.',
     'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
     'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
+    'Actual contextual Denoising Strength control and opaque accepted Raster → img2img queue → later draft edit → Add → Save/reopen/comparison; partial-alpha neighboring target is visibly refused.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -101,8 +102,8 @@ function lines(file) {
 }
 
 function generations() {
-  return lines(peerRequests).filter(
-    (entry) => entry.request.type === 'generate-illustrious-txt2img',
+  return lines(peerRequests).filter((entry) =>
+    ['generate-illustrious-txt2img', 'generate-illustrious-img2img'].includes(entry.request.type),
   )
 }
 
@@ -521,8 +522,8 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify(role === 'inference'
-  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.5.0',
-    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale']}
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.6.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
     runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
@@ -533,12 +534,19 @@ process.stdin.on('data',data=>{
     const end=buffer.indexOf('\n'); const request=JSON.parse(buffer.slice(0,end)); buffer=buffer.slice(end+1)
     fs.appendFileSync(requestLog,JSON.stringify({pid:process.pid,role,request})+'\n')
     if(request.type==='compose-target') {
-      if(request.layers.length) process.exit(25)
+      // The added img2img scenario has a top opaque layer exactly covering the bbox.
+      // Other geometry remains outside this controlled peer's explicit fixture domain.
+      const top=request.layers[0]
+      if(top && (top.width!==request.bbox.width || top.height!==request.bbox.height
+        || top.opacity!==1 || top.blendMode!=='normal'
+        || top.transform.x!==request.bbox.x || top.transform.y!==request.bbox.y
+        || top.transform.scaleX!==1 || top.transform.scaleY!==1 || top.transform.rotationDegrees!==0
+        || hash(fs.readFileSync(top.path))!==top.sha256)) process.exit(25)
       const respond=()=>{
-        const bytes=png(request.bbox.width,request.bbox.height,false)
+        const bytes=top ? fs.readFileSync(top.path) : png(request.bbox.width,request.bbox.height,false)
         fs.writeFileSync(request.output.targetPngPath,bytes,{flag:'wx',mode:0o600})
         process.stdout.write(JSON.stringify({type:'target-done',protocolVersion:'1',requestId:request.requestId,
-          mode:'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',
+          mode:top ? 'img2img' : 'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',
           width:request.bbox.width,height:request.bbox.height,sha256:hash(bytes)}})+'\n')
       }
       if(role==='derivatives' && fs.existsSync(path.join(fixtureRoot,'hold-cpu-compose'))) {
@@ -548,7 +556,7 @@ process.stdin.on('data',data=>{
           respond()
         },10)
       } else respond()
-    } else if(request.type==='generate-illustrious-txt2img') {
+    } else if(['generate-illustrious-txt2img','generate-illustrious-img2img'].includes(request.type)) {
       if (role !== 'inference') process.exit(30)
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
@@ -2184,6 +2192,145 @@ try {
   )
   checked(
     'Legacy draft CFG Rescale 1 opens through Main/preload, refuses Generate and resets through ordinary UI without changing accepted provenance',
+  )
+  // Reuse the real accepted/saved opaque Raster as input. No renderer fixture setter
+  // creates the new preparation, queue record, candidate or accepted provenance.
+  await resizeNativeWindow(1380, 900)
+  const denoising = window.locator('input[aria-label="Denoising Strength"]')
+  await denoising.scrollIntoViewIfNeeded()
+  await expect(denoising).toBeEnabled()
+  await expect(denoising).toHaveValue('')
+  await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+  const unchangedOpaque = await tab(cfgProject.id)
+  await denoising.fill('oops')
+  await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeDisabled()
+  assert.deepEqual(await tab(cfgProject.id), unchangedOpaque)
+  await denoising.fill('0.75')
+  await denoising.press('Enter')
+  await expect
+    .poll(async () => (await tab(cfgProject.id)).generationDraft.sampling.denoisingStrength)
+    .toBe(0.75)
+  await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeEnabled()
+  await screenshot('23-img2img-opaque-control-1380x900')
+  const beforeImgCount = generations().length
+  const beforeImgSaved = readFileSync(cfgProject.packagePath)
+  const imgIterations = window.locator('input[aria-label="Images per click"]')
+  await imgIterations.fill('1')
+  await imgIterations.press('Enter')
+  await expect(imgIterations).toHaveValue('1')
+  await window.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(beforeImgCount + 1)
+  const imgRequest = generations().at(-1)
+  assert.equal(imgRequest.request.type, 'generate-illustrious-img2img')
+  assert.equal(imgRequest.request.job.sampling.denoisingStrength, 0.75)
+  assert.equal(imgRequest.request.job.target.sha256, cfgSaved.layers[0].asset.sha256)
+  assert.equal(imgRequest.request.job.sampling.seed, 42)
+  const imgRows = await rows(cfgProject.id)
+  assert.equal(imgRows.at(-1).operation, 'illustrious-img2img')
+  await denoising.fill('0.25')
+  await denoising.press('Enter')
+  await expect
+    .poll(async () => (await tab(cfgProject.id)).generationDraft.sampling.denoisingStrength)
+    .toBe(0.25)
+  assert.equal(imgRequest.request.job.sampling.denoisingStrength, 0.75)
+  assert.deepEqual(readFileSync(cfgProject.packagePath), beforeImgSaved)
+  await openManager.click()
+  await expect(manager).toBeVisible()
+  await managerRow(imgRows.at(-1).id)
+    .getByRole('button', { name: 'Show job details', exact: true })
+    .click()
+  const frozenStrengthDetail = manager
+    .locator('[data-testid="queue-job-details"]')
+    .getByText('Denoising Strength', { exact: true })
+    .locator('..')
+  await expect(frozenStrengthDetail).toContainText('0.75')
+  await screenshot('23b-img2img-frozen-queue-details')
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  await expect(manager).toHaveCount(0)
+  release(imgRequest)
+  await expect
+    .poll(async () => (await api('listGenerationResults', cfgProject.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(1)
+  await expect.poll(async () => (await api('getGenerationState', cfgProject.id)).phase).toBe('idle')
+  await window.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).layers.length).toBe(2)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(cfgProject.id)).dirty).toBe(false)
+  const imgSaved = (await readIgsPackage(cfgProject.packagePath)).project
+  const imgLayer = imgSaved.layers.find(
+    (layer) => layer.generationProvenance?.kind === 'illustrious-img2img',
+  )
+  assert.ok(imgLayer)
+  assert.equal(imgSaved.generationDraft.sampling.denoisingStrength, 0.25)
+  assert.equal(imgLayer.generationProvenance.generationConfiguration.mode, 'img2img')
+  assert.equal(
+    imgLayer.generationProvenance.generationConfiguration.sampling.denoisingStrength,
+    0.75,
+  )
+  assert.equal(
+    imgLayer.generationProvenance.layerSourceContext.sourceTargetSha256,
+    imgRequest.request.job.target.sha256,
+  )
+  assert.equal(imgLayer.generationProvenance.generationConfiguration.sampling.actualSeed, 42)
+  await window.getByRole('button', { name: 'Close CFG Rescale acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open CFG Rescale acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'CFG Rescale acceptance', exact: true }).waitFor()
+  await expect
+    .poll(async () => (await tab(cfgProject.id)).generationDraft.sampling.denoisingStrength)
+    .toBe(0.25)
+  await window
+    .getByRole('button', { name: `Layer actions for ${imgLayer.name}`, exact: true })
+    .click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+  const strengthRow = comparison.locator('[data-setting="denoisingStrength.value"]')
+  await expect(strengthRow).toContainText('Changed')
+  await expect(strengthRow).toContainText('0.75')
+  await expect(strengthRow).toContainText('0.25')
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await screenshot(`24-img2img-comparison-${width}x${height}`)
+    const bounds = await comparison.boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0)
+    assert.ok(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
+  }
+  await window.keyboard.press('Escape')
+  await denoising.scrollIntoViewIfNeeded()
+  await screenshot('25-img2img-opaque-control-900x620')
+  const savedImgBytes = readFileSync(cfgProject.packagePath)
+  const partialWidth = window.locator('input[aria-label="Generation area width"]')
+  await partialWidth.fill('104')
+  await partialWidth.press('Enter')
+  await expect.poll(async () => (await tab(cfgProject.id)).primaryBbox.width).toBe(104)
+  await expect(denoising).toBeDisabled()
+  await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+  await expect(window.locator('.project-settings')).toContainText(/outpaint|partly transparent/i)
+  const partialQueue = await rows(cfgProject.id)
+  assert.equal(generations().length, beforeImgCount + 1)
+  assert.deepEqual(readFileSync(cfgProject.packagePath), savedImgBytes)
+  await denoising.scrollIntoViewIfNeeded()
+  await screenshot('26-img2img-partial-target-refusal-900x620')
+  await partialWidth.fill('96')
+  await partialWidth.press('Enter')
+  await expect.poll(async () => (await tab(cfgProject.id)).primaryBbox.width).toBe(96)
+  await expect(denoising).toBeEnabled()
+  assert.deepEqual(await rows(cfgProject.id), partialQueue)
+  checked(
+    'Opaque Raster input and explicit strength freeze img2img through real queue, Add, Save, reopen and comparison',
+    {
+      currentStrength: 0.25,
+      documentId: imgSaved.documentId,
+      frozenStrength: 0.75,
+      layerId: imgLayer.id,
+      requestId: imgRequest.request.requestId,
+      sourceTargetSha256: imgRequest.request.job.target.sha256,
+    },
   )
   for (const entry of lines(peerLaunches)) {
     assert.throws(() => process.kill(entry.pid, 0), { code: 'ESRCH' })

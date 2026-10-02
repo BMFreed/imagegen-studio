@@ -16,7 +16,7 @@ import type { AppDatabase } from '../db/database.js'
 import type { GenerationWorkerLease } from './generation-dispatch-coordinator.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type {
-  IllustriousTxt2ImgRequestV1,
+  IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
@@ -35,7 +35,10 @@ import { GenerationProcessor, GenerationProcessorError } from './generation-proc
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
 import { readIgsPackage } from './igs-package.js'
-import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import {
+  withIllustriousGenerationRequest,
+  withIllustriousTxt2ImgRequest,
+} from './illustrious-txt2img-job.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
@@ -243,7 +246,7 @@ async function enqueue(fixture: Fixture): Promise<string> {
 }
 
 function transport(
-  generate: (request: IllustriousTxt2ImgRequestV1) => Promise<unknown>,
+  generate: (request: IllustriousGenerationRequestV1) => Promise<unknown>,
   ready = qualifiedReady,
   close: () => Promise<void> = async () => undefined,
 ): GenerationWorkerTransport {
@@ -251,7 +254,7 @@ function transport(
 }
 
 async function writeDone(
-  request: IllustriousTxt2ImgRequestV1,
+  request: IllustriousGenerationRequestV1,
   outputBytes: Buffer,
   actualSeed = 42,
 ) {
@@ -269,7 +272,7 @@ test('qualified completion publishes real PNG and actual seed through SQLite sta
   await withFixture(async (fixture) => {
     const id = await enqueue(fixture)
     const originalProject = await readFile(path.join(fixture.root, 'Project.igs'))
-    const seen: IllustriousTxt2ImgRequestV1[] = []
+    const seen: IllustriousGenerationRequestV1[] = []
     const result = await fixture.processor.runOne(
       transport(async (request) => {
         seen.push(request)
@@ -942,8 +945,8 @@ test('failed close does not acknowledge an active cancellation', async () => {
   await withFixture(async (fixture) => {
     const id = await enqueue(fixture)
     const secondId = await enqueue(fixture)
-    let enterResolve!: (request: IllustriousTxt2ImgRequestV1) => void
-    const entered = new Promise<IllustriousTxt2ImgRequestV1>((resolve) => {
+    let enterResolve!: (request: IllustriousGenerationRequestV1) => void
+    const entered = new Promise<IllustriousGenerationRequestV1>((resolve) => {
       enterResolve = resolve
     })
     let lateDone!: (response: unknown) => void
@@ -1037,8 +1040,8 @@ test('failed close does not acknowledge an active cancellation', async () => {
 test('cancel retains the running slot until worker exit and rejects a late done', async () => {
   await withFixture(async (fixture) => {
     const id = await enqueue(fixture)
-    let enterResolve!: (request: IllustriousTxt2ImgRequestV1) => void
-    const entered = new Promise<IllustriousTxt2ImgRequestV1>((resolve) => {
+    let enterResolve!: (request: IllustriousGenerationRequestV1) => void
+    const entered = new Promise<IllustriousGenerationRequestV1>((resolve) => {
       enterResolve = resolve
     })
     let doneResolve!: (value: unknown) => void
@@ -1316,5 +1319,283 @@ test('processor forwards candidate thumbnails only from the qualified finite wor
       )
     }
     assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+  })
+})
+
+const img2imgReady: InferenceWorkerReady = {
+  ...qualifiedReady,
+  capabilities: [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+  ],
+  workerVersion: '0.6.0',
+}
+
+async function opaquePreparation(fixture: Fixture, denoisingStrength: number) {
+  const targetPngBytes = await srgbPng(true)
+  return {
+    context: {
+      ...fixture.prepared.context,
+      kind: 'normal-img2img-preparation' as const,
+      sampling: { ...fixture.prepared.context.sampling, cfgRescale: 0, denoisingStrength },
+      target: {
+        ...fixture.prepared.context.target,
+        byteSize: targetPngBytes.length,
+        sha256: sha256(targetPngBytes),
+      },
+    },
+    targetPngBytes,
+  }
+}
+
+async function enqueueOpaque(fixture: Fixture, denoisingStrength: number) {
+  const prepared = await opaquePreparation(fixture, denoisingStrength)
+  return await withIllustriousGenerationRequest({
+    modelService: fixture.modelService,
+    prepared,
+    ready: img2imgReady,
+    scratchBasePath: path.join(fixture.root, 'scratch'),
+    use: async (request) =>
+      await fixture.queue.enqueueIllustriousGeneration({
+        prepared,
+        projectPath: path.join(fixture.root, 'Project.igs'),
+        request,
+        stagingSessionId: randomUUID(),
+      }),
+  })
+}
+
+test('opaque img2img keeps frozen strength through Retry, restart, Add and portable Save', async (t) => {
+  for (const strength of [0, 0.65, 1]) {
+    await t.test(`strength ${strength}`, async () => {
+      await withFixture(async (fixture) => {
+        const neighbor = await enqueue(fixture)
+        await fixture.queue.cancel(neighbor)
+        const original = await enqueueOpaque(fixture, strength)
+        const canceled = await fixture.queue.cancel(original.id)
+        // Retry copies the original opaque target and sampling, independently of later draft choices.
+        let retry = await fixture.queue.retryTerminal(original.id, canceled.statusSequence)
+        await fixture.queue.recoverAfterRestart()
+        const recovered = await fixture.queue.loadVerifiedRetryInput(retry.id)
+        assert.equal(recovered.item.status, 'canceled')
+        assert.equal(recovered.payload.kind, 'illustrious-img2img')
+        if (recovered.payload.kind !== 'illustrious-img2img') {
+          assert.fail('wrong recovered operation')
+        }
+        assert.equal(recovered.payload.context.sampling.denoisingStrength, strength)
+        retry = await fixture.queue.retryTerminal(retry.id, recovered.item.statusSequence)
+        const frozen = await fixture.queue.loadVerifiedInput(retry.id)
+        assert.equal(frozen.payload.kind, 'illustrious-img2img')
+        if (frozen.payload.kind !== 'illustrious-img2img') {
+          assert.fail('wrong durable operation')
+        }
+        assert.equal(frozen.payload.context.sampling.denoisingStrength, strength)
+        assert.equal(frozen.payload.workerJob.sampling.denoisingStrength, strength)
+        const page = await fixture.queue.listManagerPage()
+        assert.equal(
+          page.items.find((item) => item.id === retry.id)?.details?.sampling.denoisingStrength,
+          strength,
+        )
+        assert.equal(
+          page.items.find((item) => item.id === neighbor)?.details?.sampling.denoisingStrength,
+          undefined,
+        )
+        await fixture.queue.deleteTerminal(
+          original.id,
+          (await fixture.queue.loadVerifiedInput(original.id)).item.statusSequence,
+        )
+        const result = await fixture.processor.runOne(
+          transport(async (request) => {
+            assert.equal(request.type, 'generate-illustrious-img2img')
+            if (request.type !== 'generate-illustrious-img2img') {
+              assert.fail('wrong transport operation')
+            }
+            assert.equal(request.job.sampling.denoisingStrength, strength)
+            assert.deepEqual(await readFile(request.job.target.path), await srgbPng(true))
+            return await writeDone(request, fixture.outputBytes, 0)
+          }, img2imgReady),
+        )
+        assert.equal(result.kind, 'completed')
+        const completed = await fixture.queue.loadVerifiedInput(retry.id)
+        // Pruned queue rows do not remove the staging context needed for acceptance.
+        await fixture.queue.deleteTerminal(retry.id, completed.item.statusSequence)
+        await fixture.staging.recoverAfterRestart()
+        const candidates = await fixture.staging.listVerifiedCandidates(retry.localProjectKey)
+        assert.equal(candidates.length, 1)
+        await withAcceptance(fixture, retry.localProjectKey, async (owner, acceptance) => {
+          await owner.applyDocument({
+            ...owner.document,
+            generationDraft: {
+              ...owner.document.generationDraft,
+              sampling: { ...owner.document.generationDraft.sampling, denoisingStrength: 0.2 },
+            },
+          })
+          assert.equal(
+            (await acceptance.accept(retry.localProjectKey, [retry.id], retry.id, [retry.id])).kind,
+            'accepted',
+          )
+          await owner.save({ lastActualSeedSnapshot: 0 })
+          const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
+          const provenance = saved.project.layers[0]?.generationProvenance
+          assert.equal(provenance?.kind, 'illustrious-img2img')
+          if (provenance?.kind !== 'illustrious-img2img') {
+            assert.fail('wrong portable operation')
+          }
+          assert.equal(provenance.generationConfiguration.mode, 'img2img')
+          assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, strength)
+          assert.equal(provenance.generationConfiguration.sampling.actualSeed, 0)
+          assert.equal(provenance.generationConfiguration.cfgRescale, 0)
+          assert.equal(
+            provenance.layerSourceContext.sourceTargetSha256,
+            frozen.payload.context.target.sha256,
+          )
+          assert.deepEqual(
+            await saved.readMember(saved.project.layers[0].asset.path),
+            fixture.outputBytes,
+          )
+        })
+      })
+    })
+  }
+})
+
+test('opaque admission rejects old peers, crossed strength and mislabeled alpha without a visible row', async () => {
+  await withFixture(async (fixture) => {
+    const prepared = await opaquePreparation(fixture, 0.65)
+    let materialized = false
+    await assert.rejects(
+      withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared,
+        ready: qualifiedReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async () => {
+          materialized = true
+        },
+      }),
+      { code: 'INFERENCE_UNAVAILABLE' },
+    )
+    assert.equal(materialized, false)
+    await withIllustriousGenerationRequest({
+      modelService: fixture.modelService,
+      prepared,
+      ready: img2imgReady,
+      scratchBasePath: path.join(fixture.root, 'scratch'),
+      use: async (request) => {
+        if (request.type !== 'generate-illustrious-img2img') {
+          assert.fail('wrong request operation')
+        }
+        const { denoisingStrength: _strength, ...txtSampling } = request.job.sampling
+        await assert.rejects(
+          fixture.queue.enqueueIllustriousGeneration({
+            prepared: {
+              ...prepared,
+              context: {
+                ...prepared.context,
+                kind: 'normal-txt2img-preparation',
+                sampling: fixture.prepared.context.sampling,
+              },
+            },
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request: {
+              ...request,
+              job: { ...request.job, sampling: txtSampling },
+              type: 'generate-illustrious-txt2img',
+            },
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'QUEUE_INPUT_INVALID' },
+        )
+        for (const denoisingStrength of [0, -0.1, 1.01, NaN]) {
+          await assert.rejects(
+            fixture.queue.enqueueIllustriousGeneration({
+              prepared,
+              projectPath: path.join(fixture.root, 'Project.igs'),
+              request: {
+                ...request,
+                job: { ...request.job, sampling: { ...request.job.sampling, denoisingStrength } },
+              },
+              stagingSessionId: randomUUID(),
+            }),
+            { code: 'QUEUE_INPUT_INVALID' },
+          )
+        }
+        await assert.rejects(
+          fixture.queue.enqueueIllustriousGeneration({
+            prepared: {
+              ...prepared,
+              context: { ...prepared.context, target: fixture.prepared.context.target },
+              targetPngBytes: fixture.prepared.targetPngBytes,
+            },
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request: {
+              ...request,
+              job: {
+                ...request.job,
+                target: { ...request.job.target, ...fixture.prepared.context.target },
+              },
+            },
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'QUEUE_INPUT_INVALID' },
+        )
+      },
+    })
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+    const neighbor = await enqueue(fixture)
+    assert.equal(
+      (await fixture.queue.loadVerifiedInput(neighbor)).payload.kind,
+      'illustrious-txt2img',
+    )
+  })
+})
+
+test('durable img2img reads reject crossed strength and operation even with a coherent file manifest', async () => {
+  await withFixture(async (fixture) => {
+    const item = await enqueueOpaque(fixture, 0.65)
+    const row = await fixture.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', item.id)
+      .executeTakeFirstOrThrow()
+    await fixture.database.db
+      .updateTable('generation_queue_item')
+      .set({ operation: 'illustrious-txt2img' })
+      .where('id', '=', item.id)
+      .execute()
+    await assert.rejects(fixture.queue.loadVerifiedInput(item.id), { code: 'QUEUE_INPUT_INVALID' })
+    await fixture.database.db
+      .updateTable('generation_queue_item')
+      .set({ operation: row.operation })
+      .where('id', '=', item.id)
+      .execute()
+    assert.equal(
+      (await fixture.queue.loadVerifiedInput(item.id)).payload.kind,
+      'illustrious-img2img',
+    )
+    const target = await fixture.queue.loadVerifiedInput(item.id)
+    const manifestPath = path.join(path.dirname(target.targetPath), 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const payload = JSON.parse(row.frozen_payload_json)
+    payload.context.sampling.denoisingStrength = 0.8
+    const crossed = JSON.stringify(payload)
+    manifest.payloadSha256 = sha256(Buffer.from(crossed))
+    await fixture.database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: crossed })
+      .where('id', '=', item.id)
+      .execute()
+    await writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 })
+    await assert.rejects(fixture.queue.loadVerifiedInput(item.id), { code: 'QUEUE_INPUT_INVALID' })
+    const neighbor = await enqueue(fixture)
+    const claimed = await fixture.queue.claimNextPending()
+    assert.equal(claimed?.item.id, neighbor)
+    assert.equal(
+      (await fixture.queue.listManagerPage()).items.find((entry) => entry.id === item.id)?.status,
+      'failed',
+    )
   })
 })

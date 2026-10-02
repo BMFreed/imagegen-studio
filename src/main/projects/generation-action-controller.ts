@@ -6,7 +6,10 @@ import type {
   GenerationQueueReview,
   GenerationQueueTerminalStatus,
 } from '../../shared/projects/generation-queue-manager.js'
-import { supportsInferenceCFGRescale } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  supportsInferenceCFGRescale,
+  supportsInferenceImg2Img,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
@@ -27,11 +30,11 @@ import type { ProjectWorkerClient } from './worker-client.js'
 import {
   IllustriousJobError,
   type InferenceWorkerReady,
-  withIllustriousTxt2ImgRequest,
+  withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
 import {
   GenerationPreparationError,
-  prepareNormalTxt2Img,
+  prepareNormalGeneration,
 } from './project-generation-preparation.js'
 
 type CapturedNormalInput = {
@@ -298,6 +301,7 @@ export class ProjectGenerationActionController {
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
       error: this.error,
+      img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
       jobs,
       phase: this.blocked
         ? 'blocked'
@@ -443,12 +447,18 @@ export class ProjectGenerationActionController {
           }
           const target = await capture.composeTarget(targetWorker)
           this.assertAdmissionOpen()
+          if (target.mode === 'img2img' && !supportsInferenceImg2Img(inferenceReady)) {
+            throw new IllustriousJobError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker has not qualified opaque Illustrious img2img.',
+            )
+          }
           const lastActualSeed = await this.options.staging.readLastActualSeed(
             tabId,
             request.documentId,
           )
           this.assertAdmissionOpen()
-          const prepared = await prepareNormalTxt2Img({
+          const prepared = await prepareNormalGeneration({
             lastActualSeed,
             modelService: this.options.models,
             target,
@@ -619,7 +629,7 @@ export class ProjectGenerationActionController {
         async (ready) => {
           this.assertAdmissionOpen()
           this.assertDocument(tabId, documentId)
-          await withIllustriousTxt2ImgRequest({
+          await withIllustriousGenerationRequest({
             modelService: this.options.models,
             prepared,
             ready,

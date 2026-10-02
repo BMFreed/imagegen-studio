@@ -8,6 +8,7 @@ import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 /** Main-owned snapshot, deliberately distinct from a qualified worker request or queue row. */
 export interface FrozenNormalTxt2ImgPreparationV1 {
@@ -48,7 +49,21 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
 }
 export interface PreparedNormalTxt2Img {
   context: FrozenNormalTxt2ImgPreparationV1
-  /** Copy of the verified PNG, for future main-owned materialization before queue insertion. */
+  /** Copy of the verified PNG for main-owned materialization before queue insertion. */
+  targetPngBytes: Buffer
+}
+
+export interface FrozenNormalImg2ImgPreparationV1 extends Omit<
+  FrozenNormalTxt2ImgPreparationV1,
+  'kind' | 'sampling'
+> {
+  kind: 'normal-img2img-preparation'
+  sampling: FrozenNormalTxt2ImgPreparationV1['sampling'] & { denoisingStrength: number }
+}
+export type FrozenNormalGenerationPreparationV1 =
+  FrozenNormalImg2ImgPreparationV1 | FrozenNormalTxt2ImgPreparationV1
+export interface PreparedNormalGeneration {
+  context: FrozenNormalGenerationPreparationV1
   targetPngBytes: Buffer
 }
 
@@ -68,6 +83,21 @@ export class GenerationPreparationError extends Error {
 
 /** Reject unsupported draft settings before invoking an image worker. Recheck the frozen draft too. */
 export function validateNormalTxt2ImgDraft(
+  draft: IgsProjectDocumentV1['generationDraft'],
+  operationalSeed?: number | null,
+  savedSnapshot?: number | null,
+): ReturnType<typeof validateNormalGenerationDraft> {
+  if (draft.sampling.denoisingStrength !== null) {
+    throw new GenerationPreparationError(
+      'GENERATION_SAMPLING_UNSUPPORTED',
+      'Denoising strength is not supported for this txt2img preparation.',
+    )
+  }
+  return validateNormalGenerationDraft(draft, operationalSeed, savedSnapshot)
+}
+
+/** Validate stored settings without inventing a mode from layer presence or UI state. */
+export function validateNormalGenerationDraft(
   draft: IgsProjectDocumentV1['generationDraft'],
   operationalSeed?: number | null,
   savedSnapshot?: number | null,
@@ -114,10 +144,15 @@ export function validateNormalTxt2ImgDraft(
     )
   }
   const { sampling } = draft
-  if (sampling.denoisingStrength !== null) {
+  if (
+    sampling.denoisingStrength !== null &&
+    (!Number.isFinite(sampling.denoisingStrength) ||
+      sampling.denoisingStrength < 0 ||
+      sampling.denoisingStrength > 1)
+  ) {
     throw new GenerationPreparationError(
-      'GENERATION_SAMPLING_UNSUPPORTED',
-      'Denoising strength is not supported for this txt2img preparation.',
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'Denoising strength must be between 0 and 1.',
     )
   }
   const schedulerSelection = resolveIllustriousScheduler(sampling.sampler, sampling.scheduler)
@@ -163,8 +198,8 @@ export function validateNormalTxt2ImgDraft(
 }
 
 /**
- * Freeze the inputs that today's Project can prove. Sampling implementation and runtime
- * capabilities remain unqualified, so this result must not be dispatched to the worker.
+ * Preserve the strict transparent-target API for legacy callers. Production preparation supports
+ * both normal modes; queue admission separately qualifies the live runtime before dispatch.
  */
 export async function prepareNormalTxt2Img(input: {
   lastActualSeed?: number | null
@@ -172,13 +207,35 @@ export async function prepareNormalTxt2Img(input: {
   randomUint32?: () => number
   target: FrozenGenerationTarget
 }): Promise<PreparedNormalTxt2Img> {
-  const { target } = input
-  if (target.mode !== 'txt2img') {
+  if (input.target.mode !== 'txt2img') {
     throw new GenerationPreparationError(
       'GENERATION_MODE_UNSUPPORTED',
       'Only an empty generation area can be prepared for the first Illustrious txt2img slice.',
     )
   }
+  validateNormalTxt2ImgDraft(
+    input.target.generationDraft,
+    input.lastActualSeed,
+    input.target.lastActualSeedSnapshot,
+  )
+  const prepared = await prepareNormalGeneration(input)
+  if (prepared.context.kind !== 'normal-txt2img-preparation') {
+    throw new GenerationPreparationError(
+      'GENERATION_MODE_UNSUPPORTED',
+      'The frozen target is not txt2img.',
+    )
+  }
+  return { ...prepared, context: prepared.context }
+}
+
+/** Freeze one verified transparent txt2img or opaque img2img target for the same queue pipeline. */
+export async function prepareNormalGeneration(input: {
+  lastActualSeed?: number | null
+  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  randomUint32?: () => number
+  target: FrozenGenerationTarget
+}): Promise<PreparedNormalGeneration> {
+  const { target } = input
   // Freeze everything before the model-file verification await. The target is main-owned but its
   // nested objects and Buffer are mutable to a caller that retains the original references.
   const draft = structuredClone(target.generationDraft)
@@ -186,7 +243,7 @@ export async function prepareNormalTxt2Img(input: {
   const composite = { ...target.composite, bytes: Buffer.from(target.composite.bytes) }
   const { documentId, documentRevision } = target
   const savedSnapshot = target.lastActualSeedSnapshot
-  const { cfgRescale, cfgScale, invokeScheduler, model, steps } = validateNormalTxt2ImgDraft(
+  const { cfgRescale, cfgScale, invokeScheduler, model, steps } = validateNormalGenerationDraft(
     draft,
     input.lastActualSeed,
     savedSnapshot,
@@ -219,40 +276,85 @@ export async function prepareNormalTxt2Img(input: {
     )
   }
 
+  let actualMode: ReturnType<typeof classifyTargetPngAlpha>
+  try {
+    actualMode = classifyTargetPngAlpha(bytes, bbox.width, bbox.height)
+  } catch {
+    throw new GenerationPreparationError(
+      'GENERATION_TARGET_CHANGED',
+      'The frozen target is not valid bounded RGBA pixels.',
+    )
+  }
+  if (actualMode !== target.mode) {
+    throw new GenerationPreparationError(
+      'GENERATION_TARGET_CHANGED',
+      'The frozen generation mode differs from the target pixels.',
+    )
+  }
+  if (actualMode === 'outpaint') {
+    throw new GenerationPreparationError(
+      'GENERATION_MODE_UNSUPPORTED',
+      'Partially transparent generation areas are not supported by this Illustrious pipeline yet.',
+    )
+  }
+  if (actualMode === 'img2img' && draft.sampling.denoisingStrength === null) {
+    throw new GenerationPreparationError(
+      'GENERATION_SAMPLING_REQUIRED',
+      'Set Denoising Strength before generating from the image in this area.',
+    )
+  }
+
   // Main re-hashes the exact installed file; Default and same-model alternatives are irrelevant.
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(model)
-  return {
-    context: {
-      bbox,
-      documentId,
-      documentRevision,
-      kind: 'normal-txt2img-preparation',
-      model: { managedPath: verified.managedPath, reference: { ...verified.reference } },
-      prompts: {
-        negative: draft.negativePrompt.text,
-        positive: draft.positivePrompt.text,
-      },
-      sampling: {
-        cfgRescale,
-        cfgScale,
-        invokeScheduler,
-        requestedSeedPolicy: draft.seed.policy,
-        sampler: draft.sampling.sampler,
-        scheduler: draft.sampling.scheduler,
-        seed: actualSeed,
-        steps,
-      },
-      schemaVersion: 1,
-      target: {
-        byteSize: bytes.length,
-        colorSpace: 'srgb',
-        format: 'png',
-        height: composite.height,
-        iccSha256: composite.iccSha256,
-        sha256: composite.sha256,
-        width: composite.width,
-      },
+  const common: Omit<FrozenNormalTxt2ImgPreparationV1, 'kind'> = {
+    bbox,
+    documentId,
+    documentRevision,
+    model: { managedPath: verified.managedPath, reference: { ...verified.reference } },
+    prompts: {
+      negative: draft.negativePrompt.text,
+      positive: draft.positivePrompt.text,
     },
+    sampling: {
+      cfgRescale,
+      cfgScale,
+      invokeScheduler,
+      requestedSeedPolicy: draft.seed.policy,
+      sampler: draft.sampling.sampler,
+      scheduler: draft.sampling.scheduler,
+      seed: actualSeed,
+      steps,
+    },
+    schemaVersion: 1,
+    target: {
+      byteSize: bytes.length,
+      colorSpace: 'srgb',
+      format: 'png',
+      height: composite.height,
+      iccSha256: composite.iccSha256,
+      sha256: composite.sha256,
+      width: composite.width,
+    },
+  }
+  let context: FrozenNormalGenerationPreparationV1
+  if (actualMode === 'img2img') {
+    const denoisingStrength = draft.sampling.denoisingStrength
+    if (denoisingStrength === null) {
+      throw new GenerationPreparationError(
+        'GENERATION_SAMPLING_REQUIRED',
+        'Set Denoising Strength before generating from this image.',
+      )
+    }
+    context = {
+      ...common,
+      kind: 'normal-img2img-preparation',
+      sampling: { ...common.sampling, denoisingStrength },
+    }
+  } else {
+    context = { ...common, kind: 'normal-txt2img-preparation' }
+  }
+  return {
+    context,
     targetPngBytes: bytes,
   }
 }

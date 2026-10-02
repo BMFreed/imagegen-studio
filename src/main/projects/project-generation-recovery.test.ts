@@ -41,6 +41,7 @@ import {
 import {
   acceptedOutputPngFixture,
   acceptedRasterProvenanceFixture,
+  transparentTargetPngFixture,
 } from './test-fixtures/accepted-provenance.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -111,6 +112,7 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
   const aPath = (await repository.getProject(a.id))!.canonicalPath
   const bPath = (await repository.getProject(b.id))!.canonicalPath
   const pixels = await acceptedOutputPngFixture(64, 64)
+  const targetPixels = await transparentTargetPngFixture(64, 64)
   const base = (await readIgsPackage(aPath)).project
   const layerId = randomUUID()
   const assetPath = `assets/layers/${layerId}.png`
@@ -189,16 +191,16 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
       },
       schemaVersion: 1,
       target: {
-        byteSize: pixels.length,
+        byteSize: targetPixels.length,
         colorSpace: 'srgb',
         format: 'png',
         height: 64,
         iccSha256: IGS_SRGB_ICC_SHA256,
-        sha256: hash(pixels),
+        sha256: hash(targetPixels),
         width: 64,
       },
     },
-    targetPngBytes: pixels,
+    targetPngBytes: targetPixels,
   })
   const enqueue = async (
     projectPath: string,

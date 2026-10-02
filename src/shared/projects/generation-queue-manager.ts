@@ -34,7 +34,9 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     negativePrompt: string
     prompt: string
     sampling: {
+      cfgRescale?: number
       cfgScale: number
+      denoisingStrength?: number
       predictionType: 'epsilon' | 'sample' | 'v_prediction'
       sampler: string
       scheduler: string
@@ -46,7 +48,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   documentId: string
   error: { code: string; message: string } | null
   finishedAt: string | null
-  operation: 'illustrious-txt2img'
+  operation: 'illustrious-img2img' | 'illustrious-txt2img'
   projectKey: string
   projectName: string
   publicationPending: boolean
@@ -87,7 +89,9 @@ const EntrySchema = v.strictObject({
       negativePrompt: text,
       prompt: text,
       sampling: v.strictObject({
+        cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
         cfgScale: v.pipe(v.number(), v.finite()),
+        denoisingStrength: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1))),
         predictionType: v.picklist(['epsilon', 'sample', 'v_prediction']),
         sampler: text,
         scheduler: text,
@@ -112,7 +116,7 @@ const EntrySchema = v.strictObject({
   ),
   finishedAt: v.nullable(timestamp),
   id: uuid,
-  operation: v.literal('illustrious-txt2img'),
+  operation: v.picklist(['illustrious-txt2img', 'illustrious-img2img']),
   projectKey: v.pipe(v.string(), v.regex(/^project-v1-[a-f0-9]{64}$/)),
   projectName: text,
   publicationPending: v.boolean(),

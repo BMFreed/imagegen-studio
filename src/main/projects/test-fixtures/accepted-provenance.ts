@@ -11,43 +11,12 @@ import { crc32, deflateSync } from 'node:zlib'
 
 /** A real ICC-tagged image, so ZIP/shadow tests retain realistic accepted bytes. */
 export async function acceptedOutputPngFixture(width = 8, height = 8): Promise<Buffer> {
-  const profile = await readFile(path.resolve('worker-python/src/imagegen_worker/srgb.icc'))
-  const profileSha256 = createHash('sha256').update(profile).digest('hex')
-  if (profileSha256 !== IGS_SRGB_ICC_SHA256) {
-    throw new Error('Bundled sRGB profile no longer matches the accepted-output fixture.')
-  }
-  const chunk = (name: string, payload: Buffer): Buffer => {
-    const type = Buffer.from(name, 'ascii')
-    const result = Buffer.alloc(12 + payload.length)
-    result.writeUInt32BE(payload.length, 0)
-    type.copy(result, 4)
-    payload.copy(result, 8)
-    result.writeUInt32BE(crc32(Buffer.concat([type, payload])), payload.length + 8)
-    return result
-  }
-  const header = Buffer.alloc(13)
-  header.writeUInt32BE(width, 0)
-  header.writeUInt32BE(height, 4)
-  header[8] = 8 // 8-bit RGBA.
-  header[9] = 6
-  const rowBytes = 1 + width * 4
-  const scanlines = Buffer.alloc(rowBytes * height)
-  for (let row = 0; row < height; row += 1) {
-    for (let column = 0; column < width; column += 1) {
-      const offset = row * rowBytes + 1 + column * 4
-      scanlines[offset] = 37
-      scanlines[offset + 1] = 94
-      scanlines[offset + 2] = 181
-      scanlines[offset + 3] = 255
-    }
-  }
-  return Buffer.concat([
-    Buffer.from('89504e470d0a1a0a', 'hex'),
-    chunk('IHDR', header),
-    chunk('iCCP', Buffer.concat([Buffer.from('sRGB\0\0'), deflateSync(profile)])),
-    chunk('IDAT', deflateSync(scanlines)),
-    chunk('IEND', Buffer.alloc(0)),
-  ])
+  return await srgbRgbaPngFixture(width, height, 255)
+}
+
+/** A real fully transparent txt2img source; generation output remains opaque. */
+export async function transparentTargetPngFixture(width = 8, height = 8): Promise<Buffer> {
+  return await srgbRgbaPngFixture(width, height, 0)
 }
 
 /** A complete frozen Illustrious result, used only as input to real storage boundaries. */
@@ -110,4 +79,44 @@ export function acceptedRasterProvenanceFixture(
     },
     schemaVersion: 1,
   }
+}
+
+async function srgbRgbaPngFixture(width: number, height: number, alpha: 0 | 255): Promise<Buffer> {
+  const profile = await readFile(path.resolve('worker-python/src/imagegen_worker/srgb.icc'))
+  const profileSha256 = createHash('sha256').update(profile).digest('hex')
+  if (profileSha256 !== IGS_SRGB_ICC_SHA256) {
+    throw new Error('Bundled sRGB profile no longer matches the accepted-output fixture.')
+  }
+  const chunk = (name: string, payload: Buffer): Buffer => {
+    const type = Buffer.from(name, 'ascii')
+    const result = Buffer.alloc(12 + payload.length)
+    result.writeUInt32BE(payload.length, 0)
+    type.copy(result, 4)
+    payload.copy(result, 8)
+    result.writeUInt32BE(crc32(Buffer.concat([type, payload])), payload.length + 8)
+    return result
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8 // 8-bit RGBA.
+  header[9] = 6
+  const rowBytes = 1 + width * 4
+  const scanlines = Buffer.alloc(rowBytes * height)
+  for (let row = 0; row < height; row += 1) {
+    for (let column = 0; column < width; column += 1) {
+      const offset = row * rowBytes + 1 + column * 4
+      scanlines[offset] = 37
+      scanlines[offset + 1] = 94
+      scanlines[offset + 2] = 181
+      scanlines[offset + 3] = alpha
+    }
+  }
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    chunk('IHDR', header),
+    chunk('iCCP', Buffer.concat([Buffer.from('sRGB\0\0'), deflateSync(profile)])),
+    chunk('IDAT', deflateSync(scanlines)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
 }

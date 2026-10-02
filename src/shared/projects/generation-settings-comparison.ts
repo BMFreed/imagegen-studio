@@ -118,6 +118,12 @@ export function compareRasterGenerationSettings(
     input == null ? 'Not set' : String(input)
   const currentCfgRescale =
     draft.model?.baseModelFamily === 'illustrious' ? (draft.cfgRescale ?? 0) : undefined
+  const recordedStrength =
+    'denoisingStrength' in baseline.sampling ? baseline.sampling.denoisingStrength : undefined
+  const currentStrength =
+    data.currentMode === 'img2img' && draft.model?.baseModelFamily === 'illustrious'
+      ? (draft.sampling.denoisingStrength ?? undefined)
+      : undefined
   return [
     promptSection('prompt', 'Prompt', baseline.positivePrompt, draft.positivePrompt, current),
     promptSection(
@@ -257,10 +263,19 @@ export function compareRasterGenerationSettings(
       key: 'denoisingStrength',
       label: 'Denoising Strength',
       rows: [
-        unrecordedRow(
+        row(
           'denoisingStrength.value',
           'Denoising Strength',
-          value(draft.sampling.denoisingStrength),
+          recordedStrength,
+          currentStrength,
+          recordedStrength === undefined ? UNRECORDED : String(recordedStrength),
+          currentStrength !== undefined
+            ? String(currentStrength)
+            : data.currentMode === 'txt2img'
+              ? 'Not applied to the current raster input'
+              : data.currentMode === 'img2img'
+                ? 'Not set or unsupported by the current model'
+                : 'Unavailable for the current generation area',
         ),
       ],
     },

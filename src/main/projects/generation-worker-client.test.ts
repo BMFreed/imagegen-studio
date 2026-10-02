@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -71,7 +71,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img') process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !(mode === 'img2img-done' && request.type === 'generate-illustrious-img2img')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -667,5 +667,70 @@ test('thumbnail-capable 0.4.0 peer qualifies through the actual subprocess bound
     } finally {
       await client.close()
     }
+  })
+})
+
+test('real transport carries opaque strength only to qualified 0.6 peers and refuses legacy before wire', async () => {
+  await withFixture(async (fixture) => {
+    const request = await requestFor(fixture)
+    const payloadMarker = path.join(fixture.root, 'opaque-wire.json')
+    const imgRequest = {
+      ...request,
+      job: {
+        ...request.job,
+        sampling: { ...request.job.sampling, cfgRescale: 0, denoisingStrength: 0.65 },
+      },
+      type: 'generate-illustrious-img2img' as const,
+    }
+    const old = await GenerationWorkerClient.start(fixture.location, {
+      ...options('rescale-done'),
+      environment: { FAKE_MODE: 'rescale-done', FAKE_PAYLOAD_MARKER: payloadMarker },
+    })
+    try {
+      await assert.rejects(old.generate(imgRequest), { code: 'WORKER_VERSION_MISMATCH' })
+      assert.equal(existsSync(payloadMarker), false)
+      await old.generate(request)
+      assert.equal(
+        JSON.parse(await readFile(payloadMarker, 'utf8')).type,
+        'generate-illustrious-txt2img',
+      )
+    } finally {
+      await old.close()
+    }
+    await rm(payloadMarker)
+    const current = await GenerationWorkerClient.start(fixture.location, {
+      ...options('img2img-done'),
+      environment: { FAKE_MODE: 'img2img-done', FAKE_PAYLOAD_MARKER: payloadMarker },
+    })
+    try {
+      for (const denoisingStrength of [0, 0.65, 1]) {
+        await current.generate({
+          ...imgRequest,
+          job: { ...imgRequest.job, sampling: { ...imgRequest.job.sampling, denoisingStrength } },
+          requestId: randomUUID(),
+        })
+        const wire = JSON.parse(await readFile(payloadMarker, 'utf8'))
+        assert.equal(wire.type, 'generate-illustrious-img2img')
+        assert.equal(wire.job.sampling.denoisingStrength, denoisingStrength)
+        assert.equal(wire.job.sampling.cfgRescale, 0)
+      }
+      await rm(payloadMarker)
+      for (const denoisingStrength of [undefined, -0.1, 1.1, Infinity, NaN]) {
+        await assert.rejects(
+          current.generate({
+            ...imgRequest,
+            job: { ...imgRequest.job, sampling: { ...imgRequest.job.sampling, denoisingStrength } },
+          } as never),
+          { code: 'INVALID_REQUEST' },
+        )
+      }
+      assert.equal(existsSync(payloadMarker), false)
+    } finally {
+      await current.close()
+    }
+    await assert.rejects(
+      GenerationWorkerClient.start(fixture.location, options('img2img-missing-capability')),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
   })
 })

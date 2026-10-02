@@ -877,6 +877,10 @@ onBeforeUnmount(() => {
                     <dt>CFG</dt>
                     <dd>{{ selected.details.sampling.cfgScale }}</dd>
                   </div>
+                  <div v-if="selected.details.sampling.denoisingStrength !== undefined">
+                    <dt>Denoising Strength</dt>
+                    <dd>{{ selected.details.sampling.denoisingStrength }}</dd>
+                  </div>
                   <div>
                     <dt>Size</dt>
                     <dd>{{ selected.details.size.width }} × {{ selected.details.size.height }}</dd>

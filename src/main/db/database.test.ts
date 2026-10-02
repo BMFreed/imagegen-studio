@@ -58,7 +58,7 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 12)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 13)
     assert.equal(statSync(root).mode & 0o777, 0o700)
     assert.equal(statSync(path.join(root, 'database')).mode & 0o777, 0o700)
     assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
@@ -423,7 +423,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 12)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 13)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })
@@ -487,6 +487,77 @@ test('reopening refuses a missing installed migration without discarding the dat
       .where('key', '=', 'probe')
       .executeTakeFirstOrThrow()
     assert.equal(row.value, 'saved')
+    await reopened.close()
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('img2img migration preserves all old queue rows and expands only the operation constraint', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-db-img2img-'))
+  const legacyMigrations = path.join(root, 'legacy-migrations')
+  cpSync(sourceMigrations, legacyMigrations, { recursive: true })
+  rmSync(path.join(legacyMigrations, '0013_illustrious_img2img_queue.sql'))
+  try {
+    const before = openAppDatabase(root, legacyMigrations)
+    const rows = ['pending', 'running', 'completed', 'failed', 'canceled'].map((status, index) => ({
+      batch_id: 'existing-batch',
+      canonical_project_path: '/existing/project.igs',
+      created_at: '2026-10-01T00:00:00.000Z',
+      document_id: 'existing-document',
+      document_revision: 'existing-revision',
+      error_code: status === 'failed' ? 'FAILED' : null,
+      error_message: status === 'failed' ? 'Existing failure' : null,
+      finished_at: ['canceled', 'completed', 'failed'].includes(status)
+        ? '2026-10-02T00:00:00.000Z'
+        : null,
+      frozen_payload_json: `{"legacy":${index}}`,
+      id: `legacy-${index}`,
+      local_project_key: 'existing-project',
+      operation: 'illustrious-txt2img',
+      staging_session_id: 'existing-session',
+      started_at: status === 'pending' ? null : '2026-10-01T00:00:00.000Z',
+      status,
+      status_sequence: index,
+      updated_at: '2026-10-02T00:00:00.000Z',
+    }))
+    await before.db.insertInto('generation_queue_item').values(rows).execute()
+    await before.close()
+    const after = openAppDatabase(root, sourceMigrations)
+    assert.deepEqual(
+      await after.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
+      rows,
+    )
+    await after.db
+      .insertInto('generation_queue_item')
+      .values({ ...rows[0], id: 'opaque-job', operation: 'illustrious-img2img' })
+      .execute()
+    await assert.rejects(
+      after.db
+        .insertInto('generation_queue_item')
+        .values({ ...rows[0], id: 'unsupported-job', operation: 'anima-img2img' })
+        .execute(),
+      /CHECK constraint failed/,
+    )
+    const indexes = await sql<{
+      name: string
+    }>`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'generation_queue_item' ORDER BY name`.execute(
+      after.db,
+    )
+    assert.deepEqual(
+      indexes.rows.map((row) => row.name),
+      [
+        'idx_generation_queue_project',
+        'idx_generation_queue_status',
+        'sqlite_autoindex_generation_queue_item_1',
+      ],
+    )
+    await after.close()
+    const reopened = openAppDatabase(root, sourceMigrations)
+    assert.equal(
+      (await reopened.db.selectFrom('generation_queue_item').selectAll().execute()).length,
+      6,
+    )
     await reopened.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

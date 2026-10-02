@@ -16,7 +16,7 @@ export interface GenerationAppDependencies {
   projectIndex: Pick<ProjectIndexRepository, 'getProject'>
   projectService: Pick<
     ProjectService,
-    'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalTxt2ImgContext'
+    'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'
   >
   scratchBasePath: string
 }

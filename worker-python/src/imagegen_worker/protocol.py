@@ -101,6 +101,13 @@ class GenerateIllustriousTxt2ImgCommand:
     cfg_rescale: float = 0.0
 
 
+@dataclass(frozen=True, kw_only=True)
+class GenerateIllustriousImg2ImgCommand(GenerateIllustriousTxt2ImgCommand):
+    """Opaque frozen target; strength is explicit and never inferred by the worker."""
+
+    denoising_strength: float
+
+
 def ready_message() -> dict[str, object]:
     return {
         "type": "ready",
@@ -208,7 +215,7 @@ def _target_bbox(value: object) -> PreviewRect:
 
 
 def _generate_illustrious_txt2img(
-    value: object, request_id: str
+    value: object, request_id: str, *, img2img: bool = False
 ) -> GenerateIllustriousTxt2ImgCommand:
     job = _object(
         value,
@@ -274,7 +281,7 @@ def _generate_illustrious_txt2img(
     sampling = _object(
         job["sampling"],
         "Sampling",
-        {"steps", "cfgScale", "seed", "scheduler"},
+        {"steps", "cfgScale", "seed", "scheduler"} | ({"denoisingStrength"} if img2img else set()),
         optional_keys={"cfgRescale"},
     )
     steps = _positive_integer(sampling["steps"], "Sampling steps")
@@ -286,6 +293,13 @@ def _generate_illustrious_txt2img(
     cfg_rescale = _number(sampling.get("cfgRescale", 0.0), "CFG rescale")
     if not 0 <= cfg_rescale <= MAX_GENERATION_CFG_RESCALE:
         raise DerivativeError("INVALID_REQUEST", "CFG rescale is outside the supported range.")
+    denoising_strength = (
+        _number(sampling["denoisingStrength"], "Denoising strength") if img2img else None
+    )
+    if denoising_strength is not None and not 0 <= denoising_strength <= 1:
+        raise DerivativeError(
+            "INVALID_REQUEST", "Denoising strength is outside the supported range."
+        )
     seed = sampling["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
         raise DerivativeError("INVALID_REQUEST", "Seed must be an unsigned 32-bit integer.")
@@ -308,7 +322,7 @@ def _generate_illustrious_txt2img(
         raise DerivativeError("INVALID_REQUEST", "Output PNG must be a direct staging child.")
     if png_path == target_path:
         raise DerivativeError("INVALID_REQUEST", "Output PNG must not replace the target PNG.")
-    return GenerateIllustriousTxt2ImgCommand(
+    command = GenerateIllustriousTxt2ImgCommand(
         request_id=request_id,
         checkpoint_path=checkpoint_path,
         checkpoint_sha256=checkpoint_sha256,
@@ -330,6 +344,11 @@ def _generate_illustrious_txt2img(
         staging_root=staging_root,
         output_path=png_path,
     )
+    if denoising_strength is not None:
+        return GenerateIllustriousImg2ImgCommand(
+            **vars(command), denoising_strength=denoising_strength
+        )
+    return command
 
 
 def _preview_layer(value: object) -> PreviewLayer:
@@ -387,13 +406,15 @@ def parse_request(
     if fields.get("type") == "self-test":
         _object(fields, "Self-test request", {"type", "requestId", "protocolVersion"})
         return SelfTestCommand(request_id)
-    if fields.get("type") == "generate-illustrious-txt2img":
+    if fields.get("type") in ("generate-illustrious-txt2img", "generate-illustrious-img2img"):
         _object(
             fields,
             "Generation request",
             {"type", "requestId", "protocolVersion", "job"},
         )
-        return _generate_illustrious_txt2img(fields["job"], request_id)
+        return _generate_illustrious_txt2img(
+            fields["job"], request_id, img2img=fields["type"] == "generate-illustrious-img2img"
+        )
     if fields.get("type") == "normalize-import":
         _object(
             fields,

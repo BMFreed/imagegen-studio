@@ -33,11 +33,16 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
-from imagegen_worker.protocol import MAX_GENERATION_STEPS, GenerateIllustriousTxt2ImgCommand
+from imagegen_worker.protocol import (
+    MAX_GENERATION_STEPS,
+    GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousTxt2ImgCommand,
+)
 
-INFERENCE_WORKER_VERSION = "0.5.0"
+INFERENCE_WORKER_VERSION = "0.6.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
+INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
 INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
@@ -119,6 +124,7 @@ def qualify_ml_runtime() -> MLRuntime:
         importlib.import_module("torchsde")
         for name in (
             "StableDiffusionXLPipeline",
+            "StableDiffusionXLImg2ImgPipeline",
             "DPMSolverMultistepScheduler",
             "DPMSolverSDEScheduler",
             "EulerAncestralDiscreteScheduler",
@@ -159,8 +165,8 @@ def _checkpoint_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> None:
-    """Verify the exact model, transparent target, and main-nominated output before GPU work."""
+def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> Image.Image | None:
+    """Verify immutable input and retain decoded opaque pixels from the verified snapshot."""
     root = canonical_absolute_path(command.staging_root, label="Staging root")
     if not root.is_dir():
         raise DerivativeError("INVALID_PATH", "Generation staging root is unavailable.")
@@ -200,10 +206,16 @@ def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> No
                         "GENERATION_INPUT_CHANGED", "Target PNG metadata changed after enqueue."
                     )
                 decoded.load()
-                if decoded.getchannel("A").getextrema() != (0, 0):
+                opaque = isinstance(command, GenerateIllustriousImg2ImgCommand)
+                if decoded.getchannel("A").getextrema() != ((255, 255) if opaque else (0, 0)):
                     raise DerivativeError(
-                        "GENERATION_TARGET_UNSUPPORTED", "Txt2img target must be transparent."
+                        "GENERATION_TARGET_UNSUPPORTED",
+                        "Img2img target must be opaque."
+                        if opaque
+                        else "Txt2img target must be transparent.",
                     )
+                if opaque:
+                    return decoded.convert("RGB")
     except (
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
@@ -211,6 +223,7 @@ def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> No
         OSError,
     ) as error:
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Target PNG is invalid.") from error
+    return None
 
 
 def validate_compel_prompt(prompt: str, tokenizer: Any) -> None:
@@ -482,6 +495,75 @@ def build_sdxl_conditioning(
     )
 
 
+def img2img_pipeline_class(diffusers: Any, torch: Any) -> Any:
+    """Adapt two public methods of pinned Diffusers; retain its VAE and denoising loop.
+
+    Invoke selects actual training timesteps rather than flooring Steps * strength.
+    Its unseeded VAE posterior is deliberately made replayable: use an independent
+    copy of the frozen CPU generator, leaving the initial noise stream unchanged.
+    No image/latent cache is introduced, so a cache hit cannot consume fewer draws.
+    """
+    base = diffusers.StableDiffusionXLImg2ImgPipeline
+
+    class InvokeCompatibleImg2ImgPipeline(base):
+        def get_timesteps(
+            self,
+            num_inference_steps: int,
+            strength: float,
+            device: Any,
+            denoising_start: float | None = None,
+        ) -> tuple[Any, int]:
+            if denoising_start is not None:
+                raise DerivativeError("GENERATION_WORKER_FAILED", "Unexpected denoising start.")
+            scheduler = self.scheduler
+            cutoff = int(round(scheduler.config.num_train_timesteps * strength))
+            start = int((scheduler.timesteps[:: scheduler.order] >= cutoff).sum().item())
+            begin = start * scheduler.order
+            timesteps = scheduler.timesteps[begin:]
+            if hasattr(scheduler, "set_begin_index"):
+                scheduler.set_begin_index(begin)
+            return timesteps, len(timesteps[:: scheduler.order])
+
+        def prepare_latents(
+            self,
+            image: Any,
+            timestep: Any,
+            batch_size: int,
+            num_images_per_prompt: int,
+            dtype: Any,
+            device: Any,
+            generator: Any = None,
+            add_noise: bool = True,
+        ) -> Any:
+            if not isinstance(generator, torch.Generator) or generator.device.type != "cpu":
+                raise DerivativeError(
+                    "GENERATION_WORKER_FAILED", "Frozen CPU generator is required."
+                )
+            posterior_generator = torch.Generator(device="cpu")
+            posterior_generator.set_state(generator.get_state())
+            encoded = base.prepare_latents(
+                self,
+                image,
+                timestep,
+                batch_size,
+                num_images_per_prompt,
+                dtype,
+                device,
+                posterior_generator,
+                add_noise=False,
+            )
+            if len(timestep) == 0:
+                return encoded
+            if not add_noise:
+                raise DerivativeError("GENERATION_WORKER_FAILED", "Img2img requires initial noise.")
+            noise = torch.randn(encoded.shape, generator=generator, device="cpu", dtype=dtype).to(
+                device
+            )
+            return self.scheduler.add_noise(encoded, noise, timestep)
+
+    return InvokeCompatibleImg2ImgPipeline
+
+
 def run_sdxl_pipeline(
     pipeline: Any,
     conditioning: SdxlConditioning,
@@ -494,6 +576,8 @@ def run_sdxl_pipeline(
     torch: Any,
     on_progress: DenoisingProgressSink | None = None,
     cfg_rescale: float = 0.0,
+    image: Image.Image | None = None,
+    denoising_strength: float | None = None,
 ) -> Any:
     """Mask only the final positive/negative padding through a scoped UNet hook.
 
@@ -527,7 +611,11 @@ def run_sdxl_pipeline(
         # The pinned DPMSolverSDE schedule includes second-order evaluations: its loop has
         # 2 * requested Steps - 1 timesteps. Read the actual schedule after initialization.
         try:
-            actual_total = len(callback_pipeline.scheduler.timesteps)
+            actual_total = (
+                callback_pipeline.num_timesteps
+                if image is not None
+                else len(callback_pipeline.scheduler.timesteps)
+            )
         except (AttributeError, TypeError, OverflowError) as error:
             raise DerivativeError(
                 "GENERATION_WORKER_FAILED", "Invalid denoising progress schedule."
@@ -535,6 +623,7 @@ def run_sdxl_pipeline(
         if (
             callback_pipeline is not pipeline
             or type(step_index) is not int
+            or type(actual_total) is not int
             or not 1 <= actual_total <= 2 * MAX_GENERATION_STEPS
             or actual_total > 2 * steps
             or (total_steps is not None and actual_total != total_steps)
@@ -552,13 +641,19 @@ def run_sdxl_pipeline(
         return callback_kwargs
 
     def call_pipeline() -> Any:
+        if (image is None) != (denoising_strength is None):
+            raise DerivativeError("GENERATION_WORKER_FAILED", "Incomplete img2img input.")
+        mode_options: dict[str, Any] = (
+            {"image": image, "strength": denoising_strength}
+            if image is not None
+            else {"width": width, "height": height}
+        )
         result = pipeline(
             prompt_embeds=positive,
             negative_prompt_embeds=negative,
             pooled_prompt_embeds=conditioning.positive_pooled,
             negative_pooled_prompt_embeds=conditioning.negative_pooled,
-            width=width,
-            height=height,
+            **mode_options,
             original_size=_SDXL_MICRO_CONDITIONING_SIZE,
             target_size=_SDXL_MICRO_CONDITIONING_SIZE,
             negative_original_size=_SDXL_MICRO_CONDITIONING_SIZE,
@@ -573,7 +668,12 @@ def run_sdxl_pipeline(
             callback_on_step_end=report_step if on_progress is not None else None,
             callback_on_step_end_tensor_inputs=[],
         )
-        if on_progress is not None and (total_steps is None or completed_step != total_steps):
+        no_denoising = image is not None and pipeline.num_timesteps == 0
+        if (
+            on_progress is not None
+            and not no_denoising
+            and (total_steps is None or completed_step != total_steps)
+        ):
             raise DerivativeError(
                 "GENERATION_WORKER_FAILED", "Denoising progress did not finish its schedule."
             )
@@ -633,7 +733,7 @@ def run_sdxl_pipeline(
     handle = pipeline.unet.register_forward_pre_hook(add_encoder_attention_mask, with_kwargs=True)
     try:
         result = call_pipeline()
-        if hook_calls == 0:
+        if hook_calls == 0 and not (image is not None and pipeline.num_timesteps == 0):
             raise DerivativeError("GENERATION_WORKER_FAILED", "SDXL UNet did not receive its mask.")
         return result
     finally:
@@ -641,6 +741,34 @@ def run_sdxl_pipeline(
 
 
 def generate_illustrious_txt2img(
+    command: GenerateIllustriousTxt2ImgCommand,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
+    if isinstance(command, GenerateIllustriousImg2ImgCommand):
+        raise DerivativeError(
+            "INVALID_REQUEST", "Txt2img entrypoint requires a transparent target."
+        )
+    return _generate_illustrious(
+        command, config_dir=config_dir, runtime=runtime, on_progress=on_progress
+    )
+
+
+def generate_illustrious_img2img(
+    command: GenerateIllustriousImg2ImgCommand,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
+    return _generate_illustrious(
+        command, config_dir=config_dir, runtime=runtime, on_progress=on_progress
+    )
+
+
+def _generate_illustrious(
     command: GenerateIllustriousTxt2ImgCommand,
     *,
     config_dir: Path,
@@ -655,10 +783,15 @@ def generate_illustrious_txt2img(
     normalize_compel_prompt(command.positive_prompt)
     normalize_compel_prompt(command.negative_prompt)
     verify_pinned_config(str(config_dir))
-    validate_generation_assets(command)
+    image = validate_generation_assets(command)
     torch = cast(Any, runtime.torch)
     diffusers = cast(Any, runtime.diffusers)
-    pipeline = diffusers.StableDiffusionXLPipeline.from_single_file(
+    pipeline_class = (
+        img2img_pipeline_class(diffusers, torch)
+        if isinstance(command, GenerateIllustriousImg2ImgCommand)
+        else diffusers.StableDiffusionXLPipeline
+    )
+    pipeline = pipeline_class.from_single_file(
         str(command.checkpoint_path),
         config=str(config_dir),
         local_files_only=True,
@@ -685,6 +818,12 @@ def generate_illustrious_txt2img(
         generator=generator,
         torch=torch,
         on_progress=on_progress,
+        image=image,
+        denoising_strength=(
+            command.denoising_strength
+            if isinstance(command, GenerateIllustriousImg2ImgCommand)
+            else None
+        ),
     )
     image = result.images[0]
     if not isinstance(image, Image.Image) or image.size != (command.width, command.height):

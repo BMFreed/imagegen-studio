@@ -18,6 +18,7 @@ export interface ProjectGenerationActionState {
   cfgRescaleSupported: boolean
   documentId: string
   error: { code: string; message: string } | null
+  img2imgSupported: boolean
   jobs: ProjectGenerationQueueJob[]
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
@@ -87,11 +88,13 @@ export function isProjectGenerationActionState(
       'cfgRescaleSupported',
       'documentId',
       'error',
+      'img2imgSupported',
       'jobs',
       'phase',
       'runningJobId',
     ]) ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
+    typeof value['img2imgSupported'] !== 'boolean' ||
     !isProjectDocumentId(value['documentId']) ||
     !phases.has(value['phase'] as ProjectGenerationActionState['phase']) ||
     (value['error'] !== null && !isSafeError(value['error'])) ||

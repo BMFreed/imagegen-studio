@@ -17,6 +17,7 @@ import type {
   ProjectGenerateResult,
   ProjectGenerationActionState,
 } from './projects/project-generation-actions.js'
+import type { ProjectGenerationTargetState } from './projects/project-generation-target-state.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
 
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
@@ -69,6 +70,7 @@ export const ipcChannels = {
     getGenerationProgress: 'projects:get-generation-progress',
     getGenerationQueue: 'projects:get-generation-queue',
     getGenerationState: 'projects:get-generation-state',
+    getGenerationTargetState: 'projects:get-generation-target-state',
     getRasterGenerationData: 'projects:get-raster-generation-data',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
@@ -195,6 +197,7 @@ export type ProjectGenerationDraftChange =
   | (ProjectLoraIdentity & { kind: 'lora-enabled'; value: boolean })
   | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
   | { kind: 'cfg-rescale'; value: number | null }
+  | { kind: 'denoising-strength'; value: number | null }
   | { kind: 'dynamic-prompt'; value: GenerationDynamicPromptSettings }
   | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
@@ -318,6 +321,11 @@ export interface ProjectApi {
     cursor?: GenerationQueueCursor | null,
   ) => Promise<ApiResult<GenerationQueuePage>>
   getGenerationState: (tabId: string) => Promise<ApiResult<ProjectGenerationActionState>>
+  getGenerationTargetState: (
+    tabId: string,
+    documentId: string,
+    targetKey: string,
+  ) => Promise<ApiResult<ProjectGenerationTargetState>>
   getRasterGenerationData: (
     tabId: string,
     documentId: string,
@@ -553,7 +561,7 @@ export function isProjectGenerationDraftChange(
       new TextEncoder().encode(value['text']).length <= IGS_SAFETY_CEILINGS.textBytes
     )
   }
-  if (value['kind'] === 'cfg-rescale') {
+  if (value['kind'] === 'cfg-rescale' || value['kind'] === 'denoising-strength') {
     return (
       keys.length === 2 &&
       keys.includes('kind') &&
@@ -562,7 +570,7 @@ export function isProjectGenerationDraftChange(
         (typeof value['value'] === 'number' &&
           Number.isFinite(value['value']) &&
           value['value'] >= 0 &&
-          value['value'] <= 0.99))
+          value['value'] <= (value['kind'] === 'cfg-rescale' ? 0.99 : 1)))
     )
   }
   if (value['kind'] === 'sampling-steps' || value['kind'] === 'sampling-cfg-scale') {

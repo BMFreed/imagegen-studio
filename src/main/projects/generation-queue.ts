@@ -21,9 +21,16 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { DB, GenerationQueueItem } from '../db/database.types.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type {
+  IllustriousGenerationRequestV1,
+  IllustriousImg2ImgRequestV1,
+  IllustriousTxt2ImgRequestV1,
+} from './illustrious-txt2img-job.js'
+import type {
+  FrozenNormalGenerationPreparationV1,
+  FrozenNormalImg2ImgPreparationV1,
   FrozenNormalTxt2ImgPreparationV1,
+  PreparedNormalGeneration,
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
@@ -31,6 +38,7 @@ import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_PAYLOAD_BYTES = 128 * 1024
@@ -95,7 +103,7 @@ const ExactCheckpointSchema = v.strictObject({
   predictionType: PredictionTypeSchema,
   versionName: NonemptySchema,
 })
-const FrozenContextSchema = v.strictObject({
+const Txt2ImgFrozenContextSchema = v.strictObject({
   bbox: BboxSchema,
   documentId: UuidSchema,
   documentRevision: UuidSchema,
@@ -124,7 +132,7 @@ const FrozenContextSchema = v.strictObject({
     width: TargetSideSchema,
   }),
 })
-const WorkerJobSchema = v.strictObject({
+const Txt2ImgWorkerJobSchema = v.strictObject({
   bbox: BboxSchema,
   checkpoint: v.strictObject({
     path: NonemptySchema,
@@ -148,23 +156,70 @@ const WorkerJobSchema = v.strictObject({
     width: TargetSideSchema,
   }),
 })
-const SourceRequestSchema = v.strictObject({
+const Txt2ImgSourceRequestSchema = v.strictObject({
   job: v.strictObject({
-    ...WorkerJobSchema.entries,
+    ...Txt2ImgWorkerJobSchema.entries,
     output: v.strictObject({ pngPath: NonemptySchema, stagingRoot: NonemptySchema }),
-    target: v.strictObject({ ...WorkerJobSchema.entries.target.entries, path: NonemptySchema }),
+    target: v.strictObject({
+      ...Txt2ImgWorkerJobSchema.entries.target.entries,
+      path: NonemptySchema,
+    }),
   }),
   protocolVersion: v.literal('1'),
   requestId: UuidSchema,
   type: v.literal('generate-illustrious-txt2img'),
 })
-const FrozenPayloadSchema = v.strictObject({
-  context: FrozenContextSchema,
+const Txt2ImgFrozenPayloadSchema = v.strictObject({
+  context: Txt2ImgFrozenContextSchema,
   kind: v.literal('illustrious-txt2img'),
   originRequestId: UuidSchema,
   schemaVersion: v.literal(1),
-  workerJob: WorkerJobSchema,
+  workerJob: Txt2ImgWorkerJobSchema,
 })
+
+const DenoisingStrengthSchema = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1))
+const Img2ImgFrozenContextSchema = v.strictObject({
+  ...Txt2ImgFrozenContextSchema.entries,
+  kind: v.literal('normal-img2img-preparation'),
+  sampling: v.strictObject({
+    ...Txt2ImgFrozenContextSchema.entries.sampling.entries,
+    denoisingStrength: DenoisingStrengthSchema,
+  }),
+})
+const Img2ImgWorkerJobSchema = v.strictObject({
+  ...Txt2ImgWorkerJobSchema.entries,
+  sampling: v.strictObject({
+    ...Txt2ImgWorkerJobSchema.entries.sampling.entries,
+    denoisingStrength: DenoisingStrengthSchema,
+  }),
+})
+const Img2ImgSourceRequestSchema = v.strictObject({
+  ...Txt2ImgSourceRequestSchema.entries,
+  job: v.strictObject({
+    ...Img2ImgWorkerJobSchema.entries,
+    output: Txt2ImgSourceRequestSchema.entries.job.entries.output,
+    target: Txt2ImgSourceRequestSchema.entries.job.entries.target,
+  }),
+  type: v.literal('generate-illustrious-img2img'),
+})
+const FrozenContextSchema = v.variant('kind', [
+  Txt2ImgFrozenContextSchema,
+  Img2ImgFrozenContextSchema,
+])
+const SourceRequestSchema = v.variant('type', [
+  Txt2ImgSourceRequestSchema,
+  Img2ImgSourceRequestSchema,
+])
+/** Shared strict durable variants, also used after the queue row has been pruned. */
+export const FrozenIllustriousPayloadSchema = v.variant('kind', [
+  Txt2ImgFrozenPayloadSchema,
+  v.strictObject({
+    ...Txt2ImgFrozenPayloadSchema.entries,
+    context: Img2ImgFrozenContextSchema,
+    kind: v.literal('illustrious-img2img'),
+    workerJob: Img2ImgWorkerJobSchema,
+  }),
+])
 
 /** One frozen request and context. A dispatch attempt must assign fresh output and request paths. */
 export interface FrozenQueuedIllustriousTxt2ImgV1 {
@@ -174,6 +229,19 @@ export interface FrozenQueuedIllustriousTxt2ImgV1 {
   schemaVersion: 1
   workerJob: WorkerJobWithoutPaths
 }
+
+export interface FrozenQueuedIllustriousImg2ImgV1 extends Omit<
+  FrozenQueuedIllustriousTxt2ImgV1,
+  'context' | 'kind' | 'workerJob'
+> {
+  context: FrozenNormalImg2ImgPreparationV1
+  kind: 'illustrious-img2img'
+  workerJob: Omit<IllustriousImg2ImgRequestV1['job'], 'output' | 'target'> & {
+    target: WorkerJobWithoutPaths['target']
+  }
+}
+export type FrozenQueuedIllustriousGenerationV1 =
+  FrozenQueuedIllustriousImg2ImgV1 | FrozenQueuedIllustriousTxt2ImgV1
 
 export interface QueuedGenerationItem {
   batchId: string
@@ -202,7 +270,7 @@ export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
 
 export interface VerifiedQueuedInput {
   item: QueuedGenerationItem
-  payload: FrozenQueuedIllustriousTxt2ImgV1
+  payload: FrozenQueuedIllustriousGenerationV1
   targetPath: string
 }
 
@@ -563,10 +631,10 @@ export class GenerationQueueRepository {
   }
 
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
-  async enqueueIllustriousTxt2Img(input: {
-    prepared: PreparedNormalTxt2Img
+  async enqueueIllustriousGeneration(input: {
+    prepared: PreparedNormalGeneration
     projectPath: string
-    request: IllustriousTxt2ImgRequestV1
+    request: IllustriousGenerationRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
     // Freeze caller-owned objects before any await, including the source Project path.
@@ -603,26 +671,7 @@ export class GenerationQueueRepository {
       const id = randomUUID()
       const batchId = randomUUID()
       const now = new Date().toISOString()
-      const payload: FrozenQueuedIllustriousTxt2ImgV1 = {
-        context,
-        kind: 'illustrious-txt2img',
-        originRequestId: request.requestId,
-        schemaVersion: 1,
-        workerJob: {
-          bbox: request.job.bbox,
-          checkpoint: request.job.checkpoint,
-          prompts: request.job.prompts,
-          sampling: request.job.sampling,
-          schemaVersion: request.job.schemaVersion,
-          target: {
-            byteSize: request.job.target.byteSize,
-            height: request.job.target.height,
-            iccSha256: request.job.target.iccSha256,
-            sha256: request.job.target.sha256,
-            width: request.job.target.width,
-          },
-        },
-      }
+      const payload = frozenPayload(context, request)
       const payloadJson = JSON.stringify(payload)
       if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
         throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
@@ -668,7 +717,7 @@ export class GenerationQueueRepository {
             frozen_payload_json: payloadJson,
             id,
             local_project_key: localProjectKey,
-            operation: 'illustrious-txt2img',
+            operation: payload.kind,
             staging_session_id: stagingSessionId,
             started_at: null,
             status: 'pending',
@@ -716,8 +765,11 @@ export class GenerationQueueRepository {
   }
 
   /** Publish one fresh group of already qualified concrete jobs, with no partial visible batch. */
-  async enqueueIllustriousTxt2ImgBatch(input: {
-    items: readonly { prepared: PreparedNormalTxt2Img; request: IllustriousTxt2ImgRequestV1 }[]
+  async enqueueIllustriousGenerationBatch(input: {
+    items: readonly {
+      prepared: PreparedNormalGeneration
+      request: IllustriousGenerationRequestV1
+    }[]
     preflight: (
       entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
     ) => Promise<void>
@@ -812,7 +864,10 @@ export class GenerationQueueRepository {
         frozen_payload_json: frozenBatchPayloadJson(item.context, item.request),
         id: ids[index],
         local_project_key: localProjectKey,
-        operation: 'illustrious-txt2img',
+        operation:
+          item.context.kind === 'normal-img2img-preparation'
+            ? 'illustrious-img2img'
+            : 'illustrious-txt2img',
         staging_session_id: stagingSessionId,
         started_at: null,
         status: 'pending',
@@ -906,6 +961,47 @@ export class GenerationQueueRepository {
         throw error
       }
     })
+  }
+
+  async enqueueIllustriousTxt2Img(input: {
+    prepared: PreparedNormalTxt2Img
+    projectPath: string
+    request: IllustriousTxt2ImgRequestV1
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem> {
+    if (
+      input.prepared.context.kind !== 'normal-txt2img-preparation' ||
+      input.request.type !== 'generate-illustrious-txt2img'
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The legacy txt2img entry requires a transparent target.',
+      )
+    }
+    return await this.enqueueIllustriousGeneration(input)
+  }
+
+  async enqueueIllustriousTxt2ImgBatch(input: {
+    items: readonly { prepared: PreparedNormalTxt2Img; request: IllustriousTxt2ImgRequestV1 }[]
+    preflight: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    projectPath: string
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    if (
+      input.items.some(
+        (item) =>
+          item.prepared.context.kind !== 'normal-txt2img-preparation' ||
+          item.request.type !== 'generate-illustrious-txt2img',
+      )
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The legacy txt2img entry requires transparent targets.',
+      )
+    }
+    return await this.enqueueIllustriousGenerationBatch(input)
   }
 
   /** A worker failure is accepted only for the exact running revision it was started for. */
@@ -1109,6 +1205,7 @@ export class GenerationQueueRepository {
         }
         const payload = parsePayload(row.frozen_payload_json)
         if (
+          payload.kind !== row.operation ||
           payload.context.documentId !== row.document_id ||
           payload.context.documentRevision !== row.document_revision ||
           payload.workerJob.prompts.positive !== payload.context.prompts.positive ||
@@ -1599,6 +1696,7 @@ export class GenerationQueueRepository {
     }
     const payload = parsePayload(row.frozen_payload_json)
     if (
+      payload.kind !== row.operation ||
       payload.context.documentId !== row.document_id ||
       payload.context.documentRevision !== row.document_revision ||
       !path.isAbsolute(row.canonical_project_path) ||
@@ -1645,7 +1743,7 @@ function validateQueueId(id: string): void {
   }
 }
 
-function comparableBatchContext(context: FrozenNormalTxt2ImgPreparationV1) {
+function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
   return {
     ...context,
     prompts: { negative: '', positive: '' },
@@ -1653,30 +1751,72 @@ function comparableBatchContext(context: FrozenNormalTxt2ImgPreparationV1) {
   }
 }
 
-function frozenBatchPayloadJson(
-  context: FrozenNormalTxt2ImgPreparationV1,
-  request: IllustriousTxt2ImgRequestV1,
-): string {
-  const payload: FrozenQueuedIllustriousTxt2ImgV1 = {
-    context,
-    kind: 'illustrious-txt2img',
-    originRequestId: request.requestId,
-    schemaVersion: 1,
-    workerJob: {
+function frozenPayload(
+  context: FrozenNormalGenerationPreparationV1,
+  request: IllustriousGenerationRequestV1,
+): FrozenQueuedIllustriousGenerationV1 {
+  const target = {
+    byteSize: request.job.target.byteSize,
+    height: request.job.target.height,
+    iccSha256: request.job.target.iccSha256,
+    sha256: request.job.target.sha256,
+    width: request.job.target.width,
+  }
+  if (
+    context.kind === 'normal-img2img-preparation' &&
+    request.type === 'generate-illustrious-img2img'
+  ) {
+    const job = {
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
       prompts: request.job.prompts,
       sampling: request.job.sampling,
       schemaVersion: request.job.schemaVersion,
-      target: {
-        byteSize: request.job.target.byteSize,
-        height: request.job.target.height,
-        iccSha256: request.job.target.iccSha256,
-        sha256: request.job.target.sha256,
-        width: request.job.target.width,
-      },
-    },
+    }
+    return {
+      context,
+      kind: 'illustrious-img2img',
+      originRequestId: request.requestId,
+      schemaVersion: 1,
+      workerJob: { ...job, target },
+    }
   }
+  if (
+    context.kind === 'normal-txt2img-preparation' &&
+    request.type === 'generate-illustrious-txt2img'
+  ) {
+    const job = {
+      bbox: request.job.bbox,
+      checkpoint: request.job.checkpoint,
+      prompts: request.job.prompts,
+      sampling: request.job.sampling,
+      schemaVersion: request.job.schemaVersion,
+    }
+    return {
+      context,
+      kind: 'illustrious-txt2img',
+      originRequestId: request.requestId,
+      schemaVersion: 1,
+      workerJob: { ...job, target },
+    }
+  }
+  throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The context and worker operation differ.')
+}
+function denoisingFieldsAgree(
+  context: FrozenNormalGenerationPreparationV1,
+  sampling: IllustriousGenerationRequestV1['job']['sampling'],
+): boolean {
+  return context.kind === 'normal-img2img-preparation'
+    ? 'denoisingStrength' in sampling &&
+        sampling.denoisingStrength === context.sampling.denoisingStrength
+    : !('denoisingStrength' in sampling)
+}
+
+function frozenBatchPayloadJson(
+  context: FrozenNormalGenerationPreparationV1,
+  request: IllustriousGenerationRequestV1,
+): string {
+  const payload = frozenPayload(context, request)
   const json = JSON.stringify(payload)
   if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
@@ -1792,8 +1932,8 @@ function validateNormalizedFailure(error: NormalizedQueueFailure): NormalizedQue
 }
 
 function validateSnapshot(
-  context: FrozenNormalTxt2ImgPreparationV1,
-  request: IllustriousTxt2ImgRequestV1,
+  context: FrozenNormalGenerationPreparationV1,
+  request: IllustriousGenerationRequestV1,
   bytes: Buffer,
   stagingSessionId: string,
 ): void {
@@ -1805,9 +1945,12 @@ function validateSnapshot(
   }
   const target = request.job.target
   if (
-    context.kind !== 'normal-txt2img-preparation' ||
+    request.type !==
+      (context.kind === 'normal-img2img-preparation'
+        ? 'generate-illustrious-img2img'
+        : 'generate-illustrious-txt2img') ||
+    !denoisingFieldsAgree(context, request.job.sampling) ||
     context.schemaVersion !== 1 ||
-    request.type !== 'generate-illustrious-txt2img' ||
     request.protocolVersion !== '1' ||
     request.job.schemaVersion !== 1 ||
     !UUID_PATTERN.test(context.documentId) ||
@@ -1847,27 +1990,28 @@ function validateSnapshot(
   }
 }
 
-function parsePayload(json: string): FrozenQueuedIllustriousTxt2ImgV1 {
+function parsePayload(json: string): FrozenQueuedIllustriousGenerationV1 {
   let value: unknown
   try {
     value = JSON.parse(json)
   } catch {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
   }
-  const parsed = v.safeParse(FrozenPayloadSchema, value)
+  const parsed = v.safeParse(FrozenIllustriousPayloadSchema, value)
   if (!parsed.success || !payloadFieldsAgree(parsed.output)) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
   }
   return parsed.output
 }
 
-function payloadFieldsAgree(payload: FrozenQueuedIllustriousTxt2ImgV1): boolean {
+function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boolean {
   const { context, workerJob } = payload
   const scheduler = resolveIllustriousScheduler(
     context.sampling.sampler,
     context.sampling.scheduler,
   )
   return (
+    denoisingFieldsAgree(context, workerJob.sampling) &&
     path.isAbsolute(context.model.managedPath) &&
     path.resolve(context.model.managedPath) === context.model.managedPath &&
     workerJob.checkpoint.path === context.model.managedPath &&
@@ -1893,8 +2037,9 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousTxt2ImgV1): boolean 
 
 async function validateTargetPng(
   bytes: Buffer,
-  context: FrozenNormalTxt2ImgPreparationV1,
+  context: FrozenNormalGenerationPreparationV1,
 ): Promise<void> {
+  let actualMode: ReturnType<typeof classifyTargetPngAlpha>
   try {
     await validateSrgbPngStream(
       (async function* () {
@@ -1904,6 +2049,7 @@ async function validateTargetPng(
       MAX_TARGET_BYTES,
       Math.max(context.bbox.width, context.bbox.height),
     )
+    actualMode = classifyTargetPngAlpha(bytes, context.bbox.width, context.bbox.height)
   } catch {
     throw new GenerationQueueError(
       'QUEUE_INPUT_INVALID',
@@ -1914,7 +2060,8 @@ async function validateTargetPng(
     bytes.readUInt32BE(16) !== context.bbox.width ||
     bytes.readUInt32BE(20) !== context.bbox.height ||
     bytes[25] !== 6 ||
-    !hasIccProfile(bytes)
+    !hasIccProfile(bytes) ||
+    actualMode !== (context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img')
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued target has wrong PNG pixels.')
   }
@@ -2028,7 +2175,10 @@ function toManagerEntry(
   indexedName?: string,
 ): GenerationQueueEntry {
   const item = toItem(row)
-  if (row.operation !== 'illustrious-txt2img' || !v.is(UuidSchema, row.document_id)) {
+  if (
+    (row.operation !== 'illustrious-txt2img' && row.operation !== 'illustrious-img2img') ||
+    !v.is(UuidSchema, row.document_id)
+  ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue identity is invalid.')
   }
   const extension = path.extname(row.canonical_project_path)
@@ -2063,8 +2213,9 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
     if (Buffer.byteLength(row.frozen_payload_json, 'utf8') > MAX_PAYLOAD_BYTES) {
       return null
     }
-    const { context } = parsePayload(row.frozen_payload_json)
+    const { context, kind } = parsePayload(row.frozen_payload_json)
     if (
+      kind !== row.operation ||
       context.documentId !== row.document_id ||
       context.documentRevision !== row.document_revision ||
       context.sampling.sampler === null ||
@@ -2079,6 +2230,12 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       negativePrompt: context.prompts.negative,
       prompt: context.prompts.positive,
       sampling: {
+        ...(context.sampling.cfgRescale !== undefined
+          ? { cfgRescale: context.sampling.cfgRescale }
+          : {}),
+        ...(context.kind === 'normal-img2img-preparation'
+          ? { denoisingStrength: context.sampling.denoisingStrength }
+          : {}),
         cfgScale: context.sampling.cfgScale,
         predictionType: context.model.reference.predictionType,
         sampler: context.sampling.sampler,

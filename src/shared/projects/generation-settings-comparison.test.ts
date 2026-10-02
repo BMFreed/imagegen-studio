@@ -24,6 +24,41 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
 const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
 
+test('Denoising Strength compares immutable applied img2img settings and ignores stored txt2img strength', () => {
+  const source = fixture()
+  source.current.generationDraft.sampling.denoisingStrength = 0.75
+  assert.equal(
+    result(source, 'denoisingStrength.value').status,
+    'Unavailable',
+    'legacy/txt output never invents an applied strength',
+  )
+  const old = source.data.generationConfiguration!
+  source.data.generationConfiguration = {
+    ...old,
+    mode: 'img2img',
+    sampling: { ...old.sampling, denoisingStrength: 0.75 },
+  }
+  assert.ok(isRasterGenerationConfigurationV1(source.data.generationConfiguration))
+  source.data.currentMode = 'img2img'
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Same')
+  source.current.generationDraft.sampling.denoisingStrength = 0.25
+  const frozen = structuredClone(source.data)
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Changed')
+  assert.equal(result(source, 'denoisingStrength.value').before, '0.75')
+  assert.equal(result(source, 'denoisingStrength.value').after, '0.25')
+  source.data.generationConfiguration.sampling.denoisingStrength = 0
+  source.current.generationDraft.sampling.denoisingStrength = 0
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Same')
+  assert.equal(result(source, 'denoisingStrength.value').before, '0')
+  source.data.currentMode = 'txt2img'
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')
+  assert.match(result(source, 'denoisingStrength.value').after, /Not applied/)
+  source.data.currentMode = 'outpaint'
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')
+  assert.equal(frozen.generationConfiguration!.mode, 'img2img')
+  assert.equal('denoisingStrength' in old.sampling, false)
+})
+
 test('recorded CFG Rescale compares actual values and Illustrious default zero without rewriting legacy absence', () => {
   const source = fixture()
   assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')

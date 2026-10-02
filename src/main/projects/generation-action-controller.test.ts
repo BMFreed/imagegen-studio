@@ -15,7 +15,7 @@ import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationQueueTestHooks } from './generation-queue.js'
 import type { GenerationWorkerClient } from './generation-worker-client.js'
 import type {
-  IllustriousTxt2ImgRequestV1,
+  IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 import type { ProjectWorkerClient } from './worker-client.js'
@@ -81,7 +81,7 @@ class ControlledRuntime {
   closedCount = 0
   closeFailures = 0
   composedTargets: Parameters<ProjectWorkerClient['composeTarget']>[0][] = []
-  generated: IllustriousTxt2ImgRequestV1[] = []
+  generated: IllustriousGenerationRequestV1[] = []
   leaseCount = 0
   preparationClosedCount = 0
   preparationCloseFailures = 0

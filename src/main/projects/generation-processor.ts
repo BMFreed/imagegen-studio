@@ -7,6 +7,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
+  supportsInferenceImg2Img,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -20,7 +21,7 @@ import type { GenerationQueueRepository } from './generation-queue.js'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type {
-  IllustriousTxt2ImgRequestV1,
+  IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
@@ -32,7 +33,7 @@ const MAX_TARGET_BYTES = 32 * 1024 * 1024
 export interface GenerationWorkerTransport {
   close: () => Promise<void>
   generate: (
-    request: IllustriousTxt2ImgRequestV1,
+    request: IllustriousGenerationRequestV1,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ) => Promise<unknown>
   readonly ready: InferenceWorkerReady
@@ -284,7 +285,7 @@ export class GenerationProcessor {
     targetPath: string,
     outputPath: string,
     provisionalRoot: string,
-  ): Promise<IllustriousTxt2ImgRequestV1> {
+  ): Promise<IllustriousGenerationRequestV1> {
     const frozen = claimed.payload
     const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
       frozen.context.model.reference,
@@ -297,17 +298,31 @@ export class GenerationProcessor {
     ) {
       throw new Error('The exact checkpoint or prediction type changed after enqueue.')
     }
-    const request: IllustriousTxt2ImgRequestV1 = {
-      job: {
-        ...structuredClone(frozen.workerJob),
-        checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
-        output: { pngPath: outputPath, stagingRoot: provisionalRoot },
-        target: { ...frozen.workerJob.target, path: targetPath },
-      },
-      protocolVersion: PROTOCOL_VERSION,
-      requestId: randomUUID(),
-      type: 'generate-illustrious-txt2img',
-    }
+    const requestId = randomUUID()
+    const request: IllustriousGenerationRequestV1 =
+      frozen.kind === 'illustrious-img2img'
+        ? {
+            job: {
+              ...structuredClone(frozen.workerJob),
+              checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
+              output: { pngPath: outputPath, stagingRoot: provisionalRoot },
+              target: { ...frozen.workerJob.target, path: targetPath },
+            },
+            protocolVersion: PROTOCOL_VERSION,
+            requestId,
+            type: 'generate-illustrious-img2img',
+          }
+        : {
+            job: {
+              ...structuredClone(frozen.workerJob),
+              checkpoint: { ...frozen.workerJob.checkpoint, path: verified.managedPath },
+              output: { pngPath: outputPath, stagingRoot: provisionalRoot },
+              target: { ...frozen.workerJob.target, path: targetPath },
+            },
+            protocolVersion: PROTOCOL_VERSION,
+            requestId,
+            type: 'generate-illustrious-txt2img',
+          }
     if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
       throw new Error('The generation request exceeds the worker message limit.')
     }
@@ -362,6 +377,15 @@ export class GenerationProcessor {
         }
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        if (
+          claimed.payload.kind === 'illustrious-img2img' &&
+          !supportsInferenceImg2Img(transport.ready)
+        ) {
+          throw new GenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified opaque Illustrious img2img.',
+          )
         }
         const provisionalRoot = await createProvisionalRoot(this.scratchBasePath)
         active.provisionalRoot = provisionalRoot
@@ -551,7 +575,7 @@ function requireInferenceReady(ready: InferenceWorkerReady): void {
 
 function requireCorrelatedDone(
   response: unknown,
-  request: IllustriousTxt2ImgRequestV1,
+  request: IllustriousGenerationRequestV1,
 ): { actualSeed: number; thumbnail: unknown } {
   if (typeof response !== 'object' || response === null) {
     throw new Error('The generation worker response is invalid.')

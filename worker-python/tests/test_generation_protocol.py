@@ -12,12 +12,13 @@ from typing import cast
 import pytest
 
 from imagegen_worker.compositor import MAX_WORLD_COORDINATE
-from imagegen_worker.derivatives import PINNED_SRGB_ICC_SHA256
+from imagegen_worker.derivatives import PINNED_SRGB_ICC_SHA256, DerivativeError
 from imagegen_worker.protocol import (
     MAX_GENERATION_CFG_SCALE,
     MAX_GENERATION_PROMPT_BYTES,
     MAX_GENERATION_STEPS,
     MAX_GENERATION_TARGET_BYTES,
+    GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
     parse_request,
     process_request,
@@ -57,6 +58,40 @@ def generation_request(root: Path) -> dict[str, object]:
             },
         },
     }
+
+
+@pytest.mark.parametrize("strength", [0, 0.0001, 0.75, 1])
+def test_img2img_explicit_strength_and_legacy_txt2img_are_distinct(
+    tmp_path: Path, strength: float
+) -> None:
+    request = generation_request(tmp_path)
+    request["type"] = "generate-illustrious-img2img"
+    set_nested(request, ("job", "sampling", "denoisingStrength"), strength)
+    command = parse_request(request)
+    assert isinstance(command, GenerateIllustriousImg2ImgCommand)
+    assert command.denoising_strength == strength
+    assert command.cfg_rescale == 0
+    assert process_request(request)["code"] == "INFERENCE_UNAVAILABLE"
+    request["type"] = "generate-illustrious-txt2img"
+    with pytest.raises(DerivativeError, match="Sampling"):
+        parse_request(request)
+    delete_nested(request, ("job", "sampling", "denoisingStrength"))
+    assert not isinstance(parse_request(request), GenerateIllustriousImg2ImgCommand)
+    request["type"] = "generate-illustrious-img2img"
+    assert process_request(request)["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "strength", [True, False, None, "0.75", -0.01, 1.01, float("nan"), float("inf")]
+)
+def test_img2img_strength_rejects_invalid_and_nonfinite_values(
+    tmp_path: Path, strength: object
+) -> None:
+    request = generation_request(tmp_path)
+    request["type"] = "generate-illustrious-img2img"
+    set_nested(request, ("job", "sampling", "denoisingStrength"), strength)
+    assert process_request(request)["code"] == "INVALID_REQUEST"
+    assert list(tmp_path.iterdir()) == []
 
 
 def set_nested(request: dict[str, object], keys: tuple[str, ...], value: object) -> None:

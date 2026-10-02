@@ -37,7 +37,11 @@ from imagegen_worker.inference import (
 )
 from imagegen_worker.inference_config import verify_pinned_config
 from imagegen_worker.inference_main import inference_ready_message, process_inference_request
-from imagegen_worker.protocol import GenerateIllustriousTxt2ImgCommand, parse_request
+from imagegen_worker.protocol import (
+    GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousTxt2ImgCommand,
+    parse_request,
+)
 
 
 def _sha256(content: bytes) -> str:
@@ -109,6 +113,40 @@ def test_real_composed_txt2img_target_is_accepted_and_opaque_neighbor_is_rejecte
     with pytest.raises(DerivativeError, match="transparent") as error:
         validate_generation_assets(opaque)
     assert error.value.code == "GENERATION_TARGET_UNSUPPORTED"
+    assert not command.output_path.exists()
+
+
+@pytest.mark.parametrize("alpha", [255, 254, 128, 0])
+def test_img2img_verified_snapshot_retains_only_fully_opaque_source(
+    tmp_path: Path, alpha: int
+) -> None:
+    original = _command(tmp_path)
+    Image.new("RGBA", (64, 64), (23, 45, 67, alpha)).save(
+        original.target_path, format="PNG", icc_profile=SRGB_ICC_PROFILE
+    )
+    snapshot = original.target_path.read_bytes()
+    request = _request(
+        tmp_path / "staging", original.checkpoint_path, _sha256(snapshot), len(snapshot)
+    )
+    request["type"] = "generate-illustrious-img2img"
+    job = cast(dict[str, object], request["job"])
+    sampling = cast(dict[str, object], job["sampling"])
+    sampling["denoisingStrength"] = 0
+    command = parse_request(request)
+    assert isinstance(command, GenerateIllustriousImg2ImgCommand)
+    if alpha != 255:
+        with pytest.raises(DerivativeError, match="opaque") as error:
+            validate_generation_assets(command)
+        assert error.value.code == "GENERATION_TARGET_UNSUPPORTED"
+    else:
+        verified = validate_generation_assets(command)
+        assert verified is not None and verified.mode == "RGB"
+        assert verified.size == (64, 64) and verified.getpixel((0, 0)) == (23, 45, 67)
+        original.target_path.write_bytes(b"changed after validation")
+        assert verified.getpixel((0, 0)) == (23, 45, 67)
+        with pytest.raises(DerivativeError) as changed:
+            validate_generation_assets(command)
+        assert changed.value.code == "GENERATION_INPUT_CHANGED"
     assert not command.output_path.exists()
 
 
@@ -1051,7 +1089,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.5.0"
+    assert inference_ready_message()["workerVersion"] == "0.6.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1059,4 +1097,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "denoising-progress",
         "candidate-thumbnails",
         "illustrious-cfg-rescale",
+        "illustrious-img2img",
     ]

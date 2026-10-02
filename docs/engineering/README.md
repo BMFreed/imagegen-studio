@@ -7,6 +7,7 @@
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
 - [Illustrious CFG Rescale](./phase-2c-cfg-rescale-research.md) — production Advanced Options, capability-gated frozen jobs, actual denoising, immutable portable record and legacy-unknown comparison.
+- [Illustrious opaque img2img](./phase-2c-img2img-research.md) — pixel-derived target mode, contextual denoising strength, frozen queue/Retry, Invoke timestep window and portable mode-specific provenance; release runtime and other pipelines remain separate.
 - [Confirmed early Raster Add](./phase-2b-early-raster-acceptance.md) — exact candidate/job confirmation, scoped cancellation, confirmed worker exit and preserved journal/shadow/Save boundary; qualified batch grouping follows in a separate internal checkpoint.
 - [Qualified batch grouping](./phase-2b-batch-grouping-research.md) — atomic queue publication, shared staging session, escaped-manifest capacity and early Add integration; renderer Generate and release runtime remain open.
 - [Prepared batch planning and capacity](./phase-2b-batch-planning-research.md) — bounded concrete prompt/seed planning, shared request qualification, optional seed behavior in immutable provenance and reproducible persistent-storage measurements; Generate UI remains separate.

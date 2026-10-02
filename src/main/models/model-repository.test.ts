@@ -1,7 +1,15 @@
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -118,10 +126,15 @@ test('verified installation survives reopen with exact CivitAI file identity and
     await reopened.close()
 
     const sqlite = new Database(first.filePath)
-    const migrationCount = sqlite
-      .prepare<[], { count: number }>('SELECT count(*) AS count FROM schema_migrations')
-      .get()
-    assert.equal(migrationCount?.count, 12)
+    const installedMigrations = sqlite
+      .prepare<[], { name: string }>('SELECT name FROM schema_migrations ORDER BY name')
+      .all()
+    assert.deepEqual(
+      installedMigrations.map(({ name }) => name),
+      readdirSync(migrations)
+        .filter((name) => name.endsWith('.sql'))
+        .sort(),
+    )
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })

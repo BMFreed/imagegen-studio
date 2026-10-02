@@ -126,11 +126,14 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         ...(context.sampling.cfgRescale !== undefined
           ? { cfgRescale: context.sampling.cfgRescale }
           : {}),
-        mode: 'txt2img',
+        mode: context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img',
         model: { ...context.model.reference },
         negativePrompt: { embeddingRefs: [], text: context.prompts.negative },
         positivePrompt: { embeddingRefs: [], text: context.prompts.positive },
         sampling: {
+          ...(context.kind === 'normal-img2img-preparation'
+            ? { denoisingStrength: context.sampling.denoisingStrength }
+            : {}),
           actualSeed: candidate.actualSeed,
           cfgScale: context.sampling.cfgScale,
           invokeScheduler: context.sampling.invokeScheduler,
@@ -142,7 +145,10 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         },
         size: { height: context.bbox.height, width: context.bbox.width },
       },
-      kind: 'illustrious-txt2img',
+      kind:
+        context.kind === 'normal-img2img-preparation'
+          ? 'illustrious-img2img'
+          : 'illustrious-txt2img',
       layerSourceContext: {
         bbox: { ...candidate.bbox },
         sourceDocumentId: candidate.documentId,

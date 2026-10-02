@@ -361,7 +361,7 @@ type WorkerMessage =
 The narrow implemented txt2img request has optional
 `job.sampling.cfgRescale` (finite 0–0.99). New preparations freeze an effective
 number, including zero; legacy omitted transport means neutral zero for Python.
-Qualified inference worker 0.5.0 must advertise `illustrious-cfg-rescale` along
+Qualified inference worker 0.5.0 (and its qualified 0.6.0 successor) must advertise `illustrious-cfg-rescale` along
 with txt2img, denoising progress and candidate thumbnails. Existing 0.2/0.3/0.4
 workers retain their previous neutral request schema. Main strips only neutral
 zero from the disposable wire copy for those peers; it rejects nonneutral input
@@ -374,6 +374,30 @@ payload must agree on effective value. Add stores the new frozen number in
 portable provenance; legacy context absence remains unrecorded. This does not
 add img2img, Anima or the rest of Advanced Options. See
 [executed evidence and limits](../engineering/phase-2c-cfg-rescale-research.md).
+
+## Qualified opaque Illustrious img2img checkpoint
+
+Worker 0.6.0 adds `illustrious-img2img` and retains the previous required
+capabilities. The request `generate-illustrious-img2img` uses the same verified
+checkpoint, target, prompt, output and sampling boundaries, with required finite
+`job.sampling.denoisingStrength` in 0–1. The actual target PNG must be fully opaque;
+txt2img requires fully transparent pixels. Partial alpha is outpaint and is not
+supported by this checkpoint. Old peers cannot dispatch img2img even if they
+advertise the new capability without a qualified version.
+
+The frozen preparation kind, queue operation, request type, actual target alpha
+and strength must agree at materialization, durable reads and acceptance. Retry
+retains the exact source target and settings. The queue upgrade preserves old
+txt2img rows, their IDs/sequences and independent completion receipts.
+
+The pinned adapter selects Invoke's rounded training-timestep window rather than
+Diffusers' floored `steps * strength`. An empty window (including strength 0)
+still encodes and decodes through VAE, adds no image noise and emits no denoising
+callbacks. It does not promise source-pixel identity. Nonempty windows use the
+frozen seed for deterministic posterior sampling and separate initial image noise;
+progress reports the actual sliced scheduler loop. Accepted provenance records
+`img2img` and applied strength. No mode selector or persistent mode label is added.
+See [evidence and remaining limits](../engineering/phase-2c-img2img-research.md).
 
 ## Queue item lifecycle
 

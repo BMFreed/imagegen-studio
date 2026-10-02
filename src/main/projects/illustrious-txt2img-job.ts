@@ -2,6 +2,7 @@ import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
+  supportsInferenceImg2Img,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -11,9 +12,13 @@ import path from 'node:path'
 
 import type { ModelService } from '../models/model-service.js'
 import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
-import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
+import type {
+  PreparedNormalGeneration,
+  PreparedNormalTxt2Img,
+} from './project-generation-preparation.js'
 
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 const MAX_TARGET_SIDE = 2048
 const MAX_TARGET_PIXELS = 4_000_000
@@ -64,6 +69,18 @@ export interface InferenceWorkerReady {
   workerVersion: string
 }
 
+export interface IllustriousImg2ImgRequestV1 extends Omit<
+  IllustriousTxt2ImgRequestV1,
+  'job' | 'type'
+> {
+  job: Omit<IllustriousTxt2ImgRequestV1['job'], 'sampling'> & {
+    sampling: IllustriousTxt2ImgRequestV1['job']['sampling'] & { denoisingStrength: number }
+  }
+  type: 'generate-illustrious-img2img'
+}
+export type IllustriousGenerationRequestV1 =
+  IllustriousImg2ImgRequestV1 | IllustriousTxt2ImgRequestV1
+
 export class IllustriousJobError extends Error {
   constructor(
     readonly code:
@@ -94,6 +111,34 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
   scratchBasePath: string
   use: (request: IllustriousTxt2ImgRequestV1) => Promise<T>
 }): Promise<T> {
+  if (input.prepared.context.kind !== 'normal-txt2img-preparation') {
+    throw new IllustriousJobError(
+      'GENERATION_TARGET_UNSUPPORTED',
+      'The legacy request requires a transparent txt2img target.',
+    )
+  }
+  return await withIllustriousGenerationRequest({
+    ...input,
+    use: async (request) => {
+      if (request.type !== 'generate-illustrious-txt2img') {
+        throw new IllustriousJobError(
+          'GENERATION_TARGET_UNSUPPORTED',
+          'The legacy request requires a transparent txt2img target.',
+        )
+      }
+      return await input.use(request)
+    },
+  })
+}
+
+/** Materialize either normal Illustrious operation through one verified scratch lease. */
+export async function withIllustriousGenerationRequest<T>(input: {
+  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  prepared: PreparedNormalGeneration
+  ready: InferenceWorkerReady
+  scratchBasePath: string
+  use: (request: IllustriousGenerationRequestV1) => Promise<T>
+}): Promise<T> {
   // Copy before any await: a caller retaining the preparatory context or Buffer cannot alter this
   // request while model verification or filesystem materialization is in progress.
   const context = structuredClone(input.prepared.context)
@@ -109,6 +154,12 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
     throw new IllustriousJobError(
       'INFERENCE_UNAVAILABLE',
       'The active worker has not qualified Illustrious CFG Rescale.',
+    )
+  }
+  if (context.kind === 'normal-img2img-preparation' && !supportsInferenceImg2Img(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious img2img.',
     )
   }
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
@@ -138,7 +189,7 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
         'The materialized generation target failed verification.',
       )
     }
-    const request: IllustriousTxt2ImgRequestV1 = {
+    const common: IllustriousTxt2ImgRequestV1 = {
       job: {
         bbox: { ...context.bbox },
         checkpoint: {
@@ -171,6 +222,20 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
       requestId: randomUUID(),
       type: 'generate-illustrious-txt2img',
     }
+    const request: IllustriousGenerationRequestV1 =
+      context.kind === 'normal-img2img-preparation'
+        ? {
+            ...common,
+            job: {
+              ...common.job,
+              sampling: {
+                ...common.job.sampling,
+                denoisingStrength: context.sampling.denoisingStrength,
+              },
+            },
+            type: 'generate-illustrious-img2img',
+          }
+        : common
     assertIllustriousTxt2ImgRequestFitsTransport(request)
     return await input.use(request)
   } finally {
@@ -180,7 +245,7 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
 
 /** Check each concrete request, including JSON escaping, before grouped queue publication. */
 export function assertIllustriousTxt2ImgRequestFitsTransport(
-  request: IllustriousTxt2ImgRequestV1,
+  request: IllustriousGenerationRequestV1,
 ): void {
   if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > MAX_PROTOCOL_LINE_BYTES) {
     throw new IllustriousJobError(
@@ -191,14 +256,17 @@ export function assertIllustriousTxt2ImgRequestFitsTransport(
 }
 
 function validatePrepared(
-  context: PreparedNormalTxt2Img['context'],
+  context: PreparedNormalGeneration['context'],
   bytes: Buffer,
 ): {
   predictionType: 'epsilon' | 'sample' | 'v_prediction'
   scheduler: IllustriousSchedulerKey
 } {
   const { bbox, model, prompts, sampling, target } = context
-  if (context.kind !== 'normal-txt2img-preparation' || context.schemaVersion !== 1) {
+  if (
+    !['normal-img2img-preparation', 'normal-txt2img-preparation'].includes(context.kind) ||
+    context.schemaVersion !== 1
+  ) {
     throw new IllustriousJobError('GENERATION_INPUT_CHANGED', 'Unknown preparation context.')
   }
   if (
@@ -236,6 +304,39 @@ function validatePrepared(
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',
       'The prepared PNG target no longer matches its verified metadata.',
+    )
+  }
+  const expectedMode = context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img'
+  let actualMode: ReturnType<typeof classifyTargetPngAlpha>
+  try {
+    actualMode = classifyTargetPngAlpha(bytes, bbox.width, bbox.height)
+  } catch {
+    throw new IllustriousJobError(
+      'GENERATION_INPUT_CHANGED',
+      'The frozen target has invalid RGBA pixels.',
+    )
+  }
+  if (actualMode !== expectedMode) {
+    throw new IllustriousJobError(
+      'GENERATION_TARGET_UNSUPPORTED',
+      'The frozen operation differs from its RGBA target pixels.',
+    )
+  }
+  if (context.kind === 'normal-img2img-preparation') {
+    if (
+      !Number.isFinite(context.sampling.denoisingStrength) ||
+      context.sampling.denoisingStrength < 0 ||
+      context.sampling.denoisingStrength > 1
+    ) {
+      throw new IllustriousJobError(
+        'GENERATION_PARAMETER_UNSUPPORTED',
+        'Illustrious img2img requires Denoising Strength between 0 and 1.',
+      )
+    }
+  } else if ('denoisingStrength' in sampling) {
+    throw new IllustriousJobError(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'A txt2img request cannot contain active denoising strength.',
     )
   }
   if (

@@ -17,6 +17,7 @@ export interface GenerationAppShutdownDependencies {
   coordinator: Pick<GenerationDispatchCoordinator, 'shutdown'> | null
   pendingJobs: PendingGenerationShutdown | null
   runtimeExit?: GenerationRuntimeExit | null
+  shutdownImageReads?: () => Promise<void>
 }
 
 export class GenerationAppShutdownError extends Error {
@@ -88,6 +89,9 @@ export class GenerationAppShutdown {
     // This runs synchronously when prepareWindowClose creates the promise. No status probe or
     // generation lease can be admitted while the remaining shutdown steps await I/O.
     this.dependencies.runtimeExit?.preventNewGenerationWork()
+    if (this.dependencies.shutdownImageReads) {
+      await this.dependencies.shutdownImageReads()
+    }
     await this.dependencies.coordinator?.shutdown()
     await this.dependencies.pendingJobs?.cancelPendingForShutdown()
     if (

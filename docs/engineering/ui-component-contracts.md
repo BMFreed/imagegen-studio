@@ -116,6 +116,18 @@ clamping; `validity` сообщает именно о неотправленно
 operational правило Project блокирует Generate с объяснением. Отображение
 unset как `0` не вызывает setter/dirty. [Evidence](./phase-2c-cfg-rescale-research.md).
 
+## Production Denoising Strength
+
+Production `ProjectDenoisingStrength` использует те же `LabeledControl`/`IconButton`
+и публичный `NInput`: `defineModel<number | null>`, finite 0–1, пустое поле — unset,
+компактный Reset. `target`, `targetError`, `modelFamily`, `supported`,
+`runtimeUnavailableReason` и `editingDisabled` принадлежат владельцу; компонент
+не делает IPC, композицию или enqueue. Поле постоянно видно в Generation,
+disabled state объясняется рядом; Reset исправляет raw invalid/unset даже при
+неподдерживаемом текущем target. Без внесённого текста просмотр не меняет draft.
+Advisory mode поступает из guarded CPU-composed pixels; layout/bounds слоёв не
+доказывают opaque input. [Evidence](./phase-2c-img2img-research.md).
+
 ## Как собирать новый экран
 
 1. Найдите существующего потребителя нужного компонента и проверьте его props,

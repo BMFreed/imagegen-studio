@@ -19,6 +19,10 @@ import {
   ILLUSTRIOUS_SCHEDULER_PAIRS,
   isIllustriousSamplingDraftPair,
 } from '../../shared/projects/illustrious-scheduler.js'
+import {
+  generationTargetSignature,
+  type ProjectGenerationTargetState,
+} from '../../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -63,7 +67,9 @@ import {
   cfgRescaleGenerationCapabilityReason,
   cfgRescaleGenerationRangeReason,
 } from './cfg-rescale-control.js'
+import { denoisingGenerationReason } from './denoising-strength-control.js'
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
+import { GenerationTargetReader } from './generation-target-reader.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 import GenerationSettingsComparison from './GenerationSettingsComparison.vue'
 import PlainPromptEditor from './PlainPromptEditor.vue'
@@ -78,6 +84,7 @@ import {
 import { projectPromptLoraSources } from './project-prompt-context.js'
 import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
+import ProjectDenoisingStrength from './ProjectDenoisingStrength.vue'
 import ProjectGenerationAdvancedOptions from './ProjectGenerationAdvancedOptions.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
@@ -545,10 +552,48 @@ const samplingCfgScaleInvalid = computed(
 )
 const lorasValid = ref(true)
 const advancedOptionsValid = ref(true)
+const denoisingValid = ref(true)
+const targetState = ref<ProjectGenerationTargetState | null>(null)
+const targetError = ref<string | null>(null)
+const targetReader = new GenerationTargetReader({
+  onState: (state, error) => {
+    targetState.value = state
+    targetError.value = error
+  },
+  read: async (projectKey, documentId, targetKey) => {
+    const api = globalThis.window.api?.projects
+    if (!api) {
+      throw new Error('The application connection is unavailable.')
+    }
+    const result = await api.getGenerationTargetState(projectKey, documentId, targetKey)
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    return result.value
+  },
+})
+const targetSignature = computed(() => generationTargetSignature(props.tab))
+watch(
+  [() => props.tab.id, () => props.tab.documentId, targetSignature],
+  () => {
+    targetReader.change(
+      targetSignature.value
+        ? {
+            documentId: props.tab.documentId,
+            projectKey: props.tab.id,
+            signature: targetSignature.value,
+          }
+        : null,
+    )
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => targetReader.dispose())
 const draftInvalid = computed(
   () =>
     !lorasValid.value ||
     !advancedOptionsValid.value ||
+    !denoisingValid.value ||
     fixedSeedInvalid.value ||
     samplingStepsInvalid.value ||
     samplingCfgScaleInvalid.value,
@@ -1100,6 +1145,14 @@ const generationBlockingReason = computed(() => {
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
   }
+  const denoisingReason = denoisingGenerationReason(
+    targetState.value?.mode ?? null,
+    props.generationDraft.sampling.denoisingStrength,
+    props.generationState.img2imgSupported,
+  )
+  if (denoisingReason) {
+    return denoisingReason
+  }
   return cfgRescaleGenerationCapabilityReason(
     props.generationDraft.cfgRescale,
     props.generationState.cfgRescaleSupported,
@@ -1577,6 +1630,19 @@ function applyFitBbox() {
             <p v-if="samplingCfgScaleInvalid" class="sampling-validation" role="alert">
               Enter a CFG scale of zero or greater, or leave it unset.
             </p>
+            <ProjectDenoisingStrength
+              :editingDisabled="busy || reloadRequired"
+              :modelFamily="selectedModel?.baseModelFamily ?? null"
+              :modelValue="generationDraft.sampling.denoisingStrength"
+              :runtimeUnavailableReason
+              :supported="generationState?.img2imgSupported ?? null"
+              :target="targetState"
+              :targetError
+              @update:modelValue="
+                emit('updateDraft', { kind: 'denoising-strength', value: $event })
+              "
+              @validity="denoisingValid = $event"
+            />
             <div class="seed-fields">
               <NFormItem label="Seed" :showFeedback="false">
                 <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">

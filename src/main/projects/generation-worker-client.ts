@@ -7,6 +7,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceImg2Img,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
@@ -17,7 +18,7 @@ import path from 'node:path'
 
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type {
-  IllustriousTxt2ImgRequestV1,
+  IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
@@ -315,7 +316,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   async generate(
-    request: IllustriousTxt2ImgRequestV1,
+    request: IllustriousGenerationRequestV1,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ): Promise<unknown> {
     if (this.closed) {
@@ -327,7 +328,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     this.busy = true
     try {
       // Snapshot before any asynchronous path validation: the caller may still own mutable state.
-      let frozen: IllustriousTxt2ImgRequestV1
+      let frozen: IllustriousGenerationRequestV1
       try {
         frozen = structuredClone(request)
       } catch {
@@ -335,6 +336,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       }
       if (!validRequestShape(frozen)) {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
+      }
+      if (
+        frozen.type === 'generate-illustrious-img2img' &&
+        !supportsInferenceImg2Img(this.readyMessage)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified opaque Illustrious img2img.',
+        )
       }
       if (!supportsInferenceCFGRescale(this.readyMessage)) {
         if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
@@ -607,7 +617,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     }
   }
 
-  private async validateRequestPaths(request: IllustriousTxt2ImgRequestV1): Promise<void> {
+  private async validateRequestPaths(request: IllustriousGenerationRequestV1): Promise<void> {
     const stagingRoot = await canonicalDirectory(request.job.output.stagingRoot, 'Staging root')
     if (!isWithin(this.scratchBasePath, stagingRoot)) {
       throw new GenerationWorkerError('INVALID_PATH', 'Staging is outside app-owned scratch.')
@@ -666,9 +676,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 }
 
-function validRequestShape(request: IllustriousTxt2ImgRequestV1): boolean {
+function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
   return (
-    request?.type === 'generate-illustrious-txt2img' &&
+    (request?.type === 'generate-illustrious-txt2img' ||
+      request?.type === 'generate-illustrious-img2img') &&
+    (request.type === 'generate-illustrious-img2img'
+      ? Number.isFinite(request.job?.sampling?.denoisingStrength) &&
+        request.job.sampling.denoisingStrength >= 0 &&
+        request.job.sampling.denoisingStrength <= 1
+      : !('denoisingStrength' in (request.job?.sampling ?? {}))) &&
     request.protocolVersion === PROTOCOL_VERSION &&
     typeof request.requestId === 'string' &&
     UUID_PATTERN.test(request.requestId) &&

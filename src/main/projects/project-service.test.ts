@@ -7,6 +7,10 @@ import { isAcceptedResultHistoryPage } from '../../shared/projects/accepted-resu
 import { isRasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { isProjectAcceptedResultView } from '../../shared/projects/project-accepted-results.js'
 import {
+  generationTargetSignature,
+  hashGenerationTargetSignature,
+} from '../../shared/projects/project-generation-target-state.js'
+import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
@@ -53,6 +57,136 @@ import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+
+test('standalone target reports unavailable CPU pixels without requiring a result layer or mutating the document', async () => {
+  await withService(async ({ service }) => {
+    const tab = await service.create({ height: 64, title: 'Standalone target', width: 64 })
+    const key = await hashGenerationTargetSignature(generationTargetSignature(tab)!)
+    const result = await service.getGenerationTargetState(tab.id, tab.documentId, key)
+    assert.equal(result.mode, null)
+    assert.match(result.unavailableReason!, /unavailable/)
+    assert.deepEqual(service.getOpenTabs()[0], tab)
+  })
+})
+
+test('Denoising Strength typed edits, explicit zero and unset survive real recovery, Undo and Save', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const tab = await service.create({ height: 64, title: 'Denoising storage', width: 64 })
+    const neighbor = await service.create({ height: 64, title: 'Neighbor', width: 64 })
+    const filePath = (await repository.getProject(tab.id))!.canonicalPath
+    const savedBytes = await readFile(filePath)
+    assert.equal(tab.generationDraft.sampling.denoisingStrength, null)
+    const unchanged = await service.updateGenerationDraft(tab.id, {
+      kind: 'denoising-strength',
+      value: null,
+    })
+    assert.equal(unchanged.dirty, false)
+    assert.equal(unchanged.canUndo, false)
+    for (const value of [-0.01, 1.001, NaN, Infinity, undefined, '0']) {
+      const invalid = { kind: 'denoising-strength', value }
+      assert.equal(isProjectGenerationDraftChange(invalid), false)
+      await assert.rejects(service.updateGenerationDraft(tab.id, invalid as never), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    assert.equal(
+      isProjectGenerationDraftChange({ extra: true, kind: 'denoising-strength', value: 0 }),
+      false,
+    )
+    assert.equal(service.getOpenTabs().find((item) => item.id === tab.id)!.canUndo, false)
+    await service.updateGenerationDraft(tab.id, { kind: 'denoising-strength', value: 0.75 })
+    const zero = await service.updateGenerationDraft(tab.id, {
+      kind: 'denoising-strength',
+      value: 0,
+    })
+    assert.equal(zero.generationDraft.sampling.denoisingStrength, 0)
+    await service.flushAutosave(tab.id)
+    assert.deepEqual(await readFile(filePath), savedBytes)
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(tab.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(tab.id, 'recover')
+    assert.equal(recovered.generationDraft.sampling.denoisingStrength, 0)
+    await restarted.updateGenerationDraft(tab.id, { kind: 'denoising-strength', value: 1 })
+    assert.equal((await restarted.undo(tab.id)).generationDraft.sampling.denoisingStrength, 0)
+    assert.equal((await restarted.redo(tab.id)).generationDraft.sampling.denoisingStrength, 1)
+    await restarted.save(tab.id)
+    assert.equal(
+      (await readIgsPackage(filePath)).project.generationDraft.sampling.denoisingStrength,
+      1,
+    )
+    await restarted.close(tab.id)
+    const opened = await restarted.open(tab.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Saved denoising draft did not reopen')
+    }
+    assert.equal(opened.tab.generationDraft.sampling.denoisingStrength, 1)
+    await restarted.updateGenerationDraft(tab.id, { kind: 'denoising-strength', value: null })
+    await restarted.save(tab.id)
+    assert.equal(
+      (await readIgsPackage(filePath)).project.generationDraft.sampling.denoisingStrength,
+      null,
+    )
+    assert.equal(service.getOpenTabs().find((item) => item.id === neighbor.id)?.dirty, false)
+    await restarted.close(tab.id)
+  })
+})
+
+test('optimistic denoising draft reaches real Save in order including zero and unset', async () => {
+  await withService(async ({ repository, service }) => {
+    let tab = await service.create({ height: 64, title: 'Denoising sync', width: 64 })
+    const overlays: (typeof tab.generationDraft | null)[] = []
+    const changes: ProjectGenerationDraftChange[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sync = new ProjectDraftSync({
+      onAcknowledged: (ack) => {
+        tab = ack
+      },
+      onError: () => assert.fail('Unexpected draft error'),
+      onOverlay: (_id, draft) => overlays.push(draft),
+      send: async (id, change) => {
+        changes.push(change)
+        if (changes.length === 1) {
+          await held
+        }
+        return service.updateGenerationDraft(id, change)
+      },
+    })
+    sync.change(tab, { kind: 'denoising-strength', value: 0.75 })
+    sync.change(tab, { kind: 'denoising-strength', value: 0 })
+    assert.equal(overlays.at(-1)?.sampling.denoisingStrength, 0)
+    release()
+    await sync.flush(tab.id)
+    await service.save(tab.id)
+    const filePath = (await repository.getProject(tab.id))!.canonicalPath
+    assert.equal(
+      (await readIgsPackage(filePath)).project.generationDraft.sampling.denoisingStrength,
+      0,
+    )
+    sync.change(tab, { kind: 'denoising-strength', value: null })
+    assert.equal(overlays.at(-1)?.sampling.denoisingStrength, null)
+    await sync.flush(tab.id)
+    await service.save(tab.id)
+    assert.equal(
+      (await readIgsPackage(filePath)).project.generationDraft.sampling.denoisingStrength,
+      null,
+    )
+    assert.deepEqual(changes, [
+      { kind: 'denoising-strength', value: 0.75 },
+      { kind: 'denoising-strength', value: 0 },
+      { kind: 'denoising-strength', value: null },
+    ])
+  })
+})
 
 test('CFG Rescale draft zero, upper bound and unset survive real shadow recovery and explicit Save', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
@@ -3798,6 +3932,8 @@ test(
           await readFile((await repository.getProject(tab.id))!.canonicalPath),
           savedBytes,
         )
+        // A changed pixel key must compose again; an unchanged key is intentionally cached.
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 2, y: 0 })
         await assert.rejects(
           service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, (use) =>
             use({
@@ -3839,6 +3975,146 @@ test(
         assert.equal(
           (await readdir(stagingBasePath)).some((entry) => entry.startsWith('project-target-')),
           false,
+        )
+      } finally {
+        await worker.close()
+        await service.flushAutosave(tab.id)
+      }
+    })
+  },
+)
+
+test(
+  'standalone CPU target uses verified pixels, caches editor-only edits and refuses changed or reopened owners',
+  { skip: !devRuntimeRoot(), timeout: 30_000 },
+  async () => {
+    await withService(async ({ dataRoot, repository, service }) => {
+      const empty = await service.create({ height: 64, title: 'Empty target', width: 64 })
+      const fixture = await openRasterComparisonFixture(dataRoot, service)
+      const tab = fixture.tab
+      const scratch = path.join(dataRoot, 'scratch')
+      await mkdir(scratch, { recursive: true })
+      const worker = await ProjectWorkerClient.start(
+        { pythonExecutable: devPython, runtimeRoot: devRuntimeRoot()!, stagingBasePath: scratch },
+        { requestTimeoutMs: 15_000 },
+      )
+      let compositions = 0
+      const useWorker: NonNullable<Parameters<ProjectService['getGenerationTargetState']>[3]> = (
+        use,
+      ) =>
+        use({
+          composeTarget: async (input) => {
+            compositions++
+            return worker.composeTarget(input)
+          },
+        })
+      const key = async (id: string) =>
+        hashGenerationTargetSignature(
+          generationTargetSignature(service.getOpenTabs().find((current) => current.id === id)!)!,
+        )
+      const savedPath = (await repository.getProject(tab.id))!.canonicalPath
+      const saved = await readFile(savedPath)
+      try {
+        assert.equal(
+          (
+            await service.getGenerationTargetState(
+              empty.id,
+              empty.documentId,
+              await key(empty.id),
+              useWorker,
+            )
+          ).mode,
+          'txt2img',
+        )
+        assert.equal(service.getOpenTabs().find((current) => current.id === empty.id)!.dirty, false)
+        const opaqueKey = await key(tab.id)
+        const before = service.getOpenTabs().find((current) => current.id === tab.id)!
+        assert.equal(
+          (await service.getGenerationTargetState(tab.id, tab.documentId, opaqueKey, useWorker))
+            .mode,
+          'img2img',
+        )
+        assert.deepEqual(
+          service.getOpenTabs().find((current) => current.id === tab.id),
+          before,
+        )
+        assert.deepEqual(await readFile(savedPath), saved)
+        await service.updateGenerationDraft(tab.id, {
+          kind: 'positive-prompt',
+          text: 'Only text changed',
+        })
+        assert.equal(await key(tab.id), opaqueKey)
+        const calls = compositions
+        assert.equal(
+          (await service.getGenerationTargetState(tab.id, tab.documentId, opaqueKey, useWorker))
+            .mode,
+          'img2img',
+        )
+        assert.equal(compositions, calls, 'prompt edits cannot cause another pixel composition')
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 100, y: 0 })
+        await assert.rejects(
+          service.getGenerationTargetState(tab.id, tab.documentId, opaqueKey, useWorker),
+          { code: 'PROJECT_TARGET_CHANGED' },
+        )
+        assert.equal(
+          (
+            await service.getGenerationTargetState(
+              tab.id,
+              tab.documentId,
+              await key(tab.id),
+              useWorker,
+            )
+          ).mode,
+          'txt2img',
+        )
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 4, y: 0 })
+        assert.equal(
+          (
+            await service.getGenerationTargetState(
+              tab.id,
+              tab.documentId,
+              await key(tab.id),
+              useWorker,
+            )
+          ).mode,
+          'outpaint',
+        )
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 2, y: 0 })
+        const changedKey = await key(tab.id)
+        await assert.rejects(
+          service.getGenerationTargetState(tab.id, tab.documentId, changedKey, (use) =>
+            use({
+              composeTarget: async (input) => {
+                const result = await worker.composeTarget(input)
+                await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: -2, y: 0 })
+                return result
+              },
+            }),
+          ),
+          { code: 'PROJECT_TARGET_CHANGED' },
+        )
+        await service.save(tab.id)
+        const reopenedKey = await key(tab.id)
+        await assert.rejects(
+          service.getGenerationTargetState(tab.id, tab.documentId, reopenedKey, (use) =>
+            use({
+              composeTarget: async (input) => {
+                const result = await worker.composeTarget(input)
+                await service.close(tab.id)
+                assert.equal((await service.open(tab.id)).kind, 'opened')
+                return result
+              },
+            }),
+          ),
+          { code: 'PROJECT_TARGET_CHANGED' },
+        )
+        assert.equal(
+          (await readdir(scratch)).some((entry) => entry.startsWith('project-target-')),
+          false,
+        )
+        assert.equal(
+          service.getOpenTabs().find((current) => current.id === empty.id)!.lastActualSeedSnapshot,
+          null,
         )
       } finally {
         await worker.close()

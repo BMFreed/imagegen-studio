@@ -21,6 +21,11 @@ import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generat
 import type { RasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import {
+  generationTargetSignature,
+  isGenerationTargetKey,
+  type ProjectGenerationTargetState,
+} from '../../shared/projects/project-generation-target-state.js'
+import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
   type IgsProjectDocumentV1,
@@ -29,7 +34,7 @@ import {
 } from '../../shared/projects/project-schema.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
 import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -55,7 +60,9 @@ import {
   type ProjectAutosaveOptions,
 } from './project-autosave.js'
 import {
+  prepareNormalGeneration,
   prepareNormalTxt2Img,
+  validateNormalGenerationDraft,
   validateNormalTxt2ImgDraft,
 } from './project-generation-preparation.js'
 import {
@@ -151,6 +158,7 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_RECOVERY_REQUIRED'
       | 'PROJECT_RECOVERY_UNAVAILABLE'
       | 'PROJECT_SAVE_IN_PROGRESS'
+      | 'PROJECT_TARGET_CHANGED'
       | 'PROJECT_WORKER_UNAVAILABLE',
     message: string,
   ) {
@@ -170,6 +178,10 @@ export class ProjectService {
   private readonly pendingImports = new Map<string, PendingProjectImport>()
   private readonly rebuilding = new Map<string, Promise<unknown>>()
   private readonly saving = new Map<string, Promise<ProjectSaveResult>>()
+  private readonly targetModes = new WeakMap<
+    ProjectAutosaveCoordinator,
+    { key: string; mode: NonNullable<ProjectGenerationTargetState['mode']> }
+  >()
 
   constructor(private readonly options: ProjectServiceOptions) {}
 
@@ -447,6 +459,80 @@ export class ProjectService {
     }
   }
 
+  /** Read exact current pixel mode independently of result/layer ownership or generation admission. */
+  async getGenerationTargetState(
+    tabId: string,
+    documentId: string,
+    targetKey: string,
+    withWorker?: (
+      use: (
+        worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+      ) => Promise<ProjectGenerationTargetState['mode']>,
+    ) => Promise<ProjectGenerationTargetState['mode']>,
+  ): Promise<ProjectGenerationTargetState> {
+    if (!isProjectDocumentId(documentId) || !isGenerationTargetKey(targetKey)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The generation area owner is invalid.',
+      )
+    }
+    const coordinator = this.requireTab(tabId)
+    const assertCurrent = () => {
+      const current = this.openTabs.get(tabId)
+      const signature = current ? generationTargetSignature(toTab(tabId, current)) : null
+      if (
+        current !== coordinator ||
+        current?.document.documentId !== documentId ||
+        !signature ||
+        createHash('sha256').update(signature).digest('hex') !== targetKey
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_TARGET_CHANGED',
+          'The generation area changed while its pixels were being read.',
+        )
+      }
+    }
+    assertCurrent()
+    const cached = this.targetModes.get(coordinator)
+    if (cached?.key === targetKey) {
+      return { documentId, mode: cached.mode, targetKey, unavailableReason: null }
+    }
+    let mode: ProjectGenerationTargetState['mode'] = null
+    let unavailableReason =
+      'The generation area pixels are unavailable. The image worker could not compose this Canvas.'
+    if (withWorker) {
+      try {
+        mode = await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
+          assertCurrent()
+          return await withWorker(async (worker) => {
+            assertCurrent()
+            const target = await capture.composeTarget(worker)
+            assertCurrent()
+            return target.mode
+          })
+        })
+      } catch (error) {
+        assertCurrent()
+        if (error instanceof Error) {
+          unavailableReason = `The generation area pixels are unavailable. ${error.message}`.slice(
+            0,
+            512,
+          )
+        }
+      }
+    }
+    assertCurrent()
+    if (mode !== null) {
+      this.targetModes.set(coordinator, { key: targetKey, mode })
+    }
+    return {
+      documentId,
+      mode,
+      targetKey,
+      unavailableReason: mode === null ? unavailableReason : null,
+    }
+  }
+
   /** Resolve a process-issued image capability only against a currently open document revision. */
   getLayerAsset(resource: ProjectLayerResourceRequest):
     | { filePath: string; kind: 'saved'; member: IgsProjectDocumentV1['layers'][number]['asset'] }
@@ -541,15 +627,18 @@ export class ProjectService {
     let currentMode: RasterGenerationData['currentMode'] = null
     if (withWorker) {
       try {
-        currentMode = await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
-          assertCurrent()
-          return await withWorker(async (worker) => {
-            assertCurrent()
-            const target = await capture.composeTarget(worker)
-            assertCurrent()
-            return target.mode
-          })
-        })
+        const signature = generationTargetSignature(toTab(tabId, coordinator))
+        if (!signature) {
+          throw new Error('The generation area inputs are unavailable.')
+        }
+        const result = await this.getGenerationTargetState(
+          tabId,
+          documentId,
+          createHash('sha256').update(signature).digest('hex'),
+          withWorker,
+        )
+        assertCurrent()
+        currentMode = result.mode
       } catch {
         // A changed owner is refused rather than disguised as an unavailable worker.
         assertCurrent()
@@ -687,6 +776,23 @@ export class ProjectService {
     } finally {
       this.opening.delete(projectId)
     }
+  }
+
+  async prepareNormalGenerationContext(
+    tabId: string,
+    worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+    modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    randomUint32?: () => number,
+    lastActualSeed?: number | null,
+  ): ReturnType<typeof prepareNormalGeneration> {
+    const document = this.requireTab(tabId).document
+    validateNormalGenerationDraft(
+      document.generationDraft,
+      lastActualSeed,
+      document.lastActualSeedSnapshot,
+    )
+    const target = await this.prepareNormalGenerationInput(tabId, worker)
+    return await prepareNormalGeneration({ lastActualSeed, modelService, randomUint32, target })
   }
 
   /** Freeze the current normal-generation target entirely in main-owned bytes for a future job. */
@@ -1137,6 +1243,13 @@ export class ProjectService {
         } else {
           nextDraft.cfgRescale = change.value
         }
+        break
+      }
+      case 'denoising-strength': {
+        if (draft.sampling.denoisingStrength === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        nextDraft = { ...draft, sampling: { ...draft.sampling, denoisingStrength: change.value } }
         break
       }
       case 'dynamic-prompt': {

@@ -18,8 +18,11 @@ import type { GenerationProcessor } from './generation-processor.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
-import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
+import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
+import type {
+  FrozenNormalGenerationPreparationV1,
+  PreparedNormalGeneration,
+} from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
@@ -27,7 +30,7 @@ import type { ProjectWorkerClient } from './worker-client.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
-  withIllustriousTxt2ImgRequest,
+  withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 
@@ -35,8 +38,8 @@ const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3
 
 /** Concrete jobs whose caller retains the qualified target lease until enqueue resolves. */
 export interface QualifiedGenerationBatchItem {
-  prepared: PreparedNormalTxt2Img
-  request: IllustriousTxt2ImgRequestV1
+  prepared: PreparedNormalGeneration
+  request: IllustriousGenerationRequestV1
 }
 
 export type GenerationPreparedBatchOptions = Pick<
@@ -95,7 +98,7 @@ export class GenerationOrchestrator {
   constructor(
     private readonly projects: Pick<
       ProjectService,
-      'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalTxt2ImgContext'
+      'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'
     >,
     private readonly projectIndex: Pick<ProjectIndexRepository, 'getProject'>,
     private readonly models: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
@@ -277,7 +280,7 @@ export class GenerationOrchestrator {
   /** Plan one already-frozen Project preparation; its caller owns base-seed resolution. */
   async enqueuePreparedBatch(
     tabId: string,
-    prepared: PreparedNormalTxt2Img,
+    prepared: PreparedNormalGeneration,
     options: GenerationPreparedBatchOptions,
     inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
     beforePublication?: () => Promise<void>,
@@ -330,40 +333,31 @@ export class GenerationOrchestrator {
         { prepared: { context, targetPngBytes } },
       ])
       const first = plan.items[0]
-      const firstContext = {
-        ...context,
-        prompts: { ...first.prompts },
-        sampling: {
-          ...context.sampling,
-          seed: first.seed,
-          seedBehavior: plannedOptions.seedBehavior,
-        },
-      }
-      return await withIllustriousTxt2ImgRequest({
+      const firstContext = variedContext(
+        context,
+        first.prompts,
+        first.seed,
+        plannedOptions.seedBehavior,
+      )
+      return await withIllustriousGenerationRequest({
         modelService: this.models,
         prepared: { context: firstContext, targetPngBytes },
         ready,
         scratchBasePath: this.scratchBasePath,
         use: async (request) => {
           const concrete = plan.items.map((item, index) => {
-            const jobContext = {
-              ...context,
-              prompts: { ...item.prompts },
-              sampling: {
-                ...context.sampling,
-                seed: item.seed,
-                seedBehavior: plannedOptions.seedBehavior,
-              },
-            }
-            const job = {
-              ...request,
-              job: {
-                ...request.job,
-                prompts: { ...item.prompts },
-                sampling: { ...request.job.sampling, seed: item.seed },
-              },
-              requestId: index === 0 ? request.requestId : randomUUID(),
-            }
+            const jobContext = variedContext(
+              context,
+              item.prompts,
+              item.seed,
+              plannedOptions.seedBehavior,
+            )
+            const job = variedRequest(
+              request,
+              item.prompts,
+              item.seed,
+              index === 0 ? request.requestId : randomUUID(),
+            )
             assertIllustriousTxt2ImgRequestFitsTransport(job)
             return { prepared: { context: jobContext, targetPngBytes }, request: job }
           })
@@ -510,7 +504,7 @@ export class GenerationOrchestrator {
       )
     }
     const stagingSessionId = randomUUID()
-    const queued = await this.queue.enqueueIllustriousTxt2ImgBatch({
+    const queued = await this.queue.enqueueIllustriousGenerationBatch({
       items,
       preflight: async (entries) => {
         this.assertGenerationOpen(tabId)
@@ -576,7 +570,7 @@ export class GenerationOrchestrator {
     this.assertGenerationOpen(tabId)
     const project = await this.indexedProject(tabId)
     const lastActualSeed = await this.staging.readLastActualSeed(tabId, project.documentId)
-    const prepared = await this.projects.prepareNormalTxt2ImgContext(
+    const prepared = await this.projects.prepareNormalGenerationContext(
       tabId,
       compositionWorker,
       this.models,
@@ -590,7 +584,7 @@ export class GenerationOrchestrator {
       )
     }
 
-    return await withIllustriousTxt2ImgRequest({
+    return await withIllustriousGenerationRequest({
       modelService: this.models,
       prepared,
       ready: inferenceWorker.ready,
@@ -610,7 +604,7 @@ export class GenerationOrchestrator {
           )
         }
         this.assertGenerationOpen(tabId)
-        const queued = await this.queue.enqueueIllustriousTxt2Img({
+        const queued = await this.queue.enqueueIllustriousGeneration({
           prepared,
           projectPath: project.canonicalPath,
           request,
@@ -783,4 +777,43 @@ function sameAcceptanceScope(
   return (
     left.documentId === right.documentId && sameIds(left.stagingSessionIds, right.stagingSessionIds)
   )
+}
+
+function variedContext(
+  context: FrozenNormalGenerationPreparationV1,
+  prompts: { negative: string; positive: string },
+  seed: number,
+  seedBehavior: 'per-iteration' | 'per-prompt',
+): FrozenNormalGenerationPreparationV1 {
+  if (context.kind === 'normal-img2img-preparation') {
+    return {
+      ...context,
+      prompts: { ...prompts },
+      sampling: { ...context.sampling, seed, seedBehavior },
+    }
+  }
+  return {
+    ...context,
+    prompts: { ...prompts },
+    sampling: { ...context.sampling, seed, seedBehavior },
+  }
+}
+function variedRequest(
+  request: IllustriousGenerationRequestV1,
+  prompts: { negative: string; positive: string },
+  seed: number,
+  requestId: string,
+): IllustriousGenerationRequestV1 {
+  if (request.type === 'generate-illustrious-img2img') {
+    return {
+      ...request,
+      job: { ...request.job, prompts: { ...prompts }, sampling: { ...request.job.sampling, seed } },
+      requestId,
+    }
+  }
+  return {
+    ...request,
+    job: { ...request.job, prompts: { ...prompts }, sampling: { ...request.job.sampling, seed } },
+    requestId,
+  }
 }

@@ -287,6 +287,23 @@ Full pipeline provenance, Smart Patch comparison and
 result-to-preset remain separate roadmap work. This checkpoint does not complete
 PP-005 or prove release runtime/inference readiness.
 
+## Production opaque img2img provenance
+
+The [opaque img2img checkpoint](../../../engineering/phase-2c-img2img-research.md)
+extends the strict portable v1 record with `kind: illustrious-img2img`,
+`generationConfiguration.mode: img2img` and required
+`generationConfiguration.sampling.denoisingStrength`. The applied 0–1 value,
+source target SHA, bbox and other supported settings come from the verified frozen
+attempt, not the current draft. Txt2img keeps its existing shape and carries no
+applied denoising strength. Source pixels remain an operational queue/recovery
+input; local paths do not enter portable provenance.
+
+Comparison uses the current pixel-derived mode and shows applied strength for
+img2img, including 0. Transparent current input makes strength not applicable;
+unknown current composition remains unavailable. Legacy absence is not silently
+filled with a default. Add, Undo/recovery and explicit Save/reopen preserve the
+record; result-to-preset, Smart Patch and the full MVP pipeline remain open.
+
 ## Vue Prototype Coverage
 
 The Project prototype freezes a detached generation record when each mock job is

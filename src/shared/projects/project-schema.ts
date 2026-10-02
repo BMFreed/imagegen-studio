@@ -185,7 +185,7 @@ const ProvenancePromptSchema = v.strictObject({
   text: PromptTextSchema,
 })
 
-const RasterGenerationConfigurationV1Schema = v.strictObject({
+const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
   cfgRescale: v.optional(v.pipe(FiniteNumberSchema, v.minValue(0), v.maxValue(0.99))),
   mode: v.literal('txt2img'),
   model: IllustriousCheckpointRefSchema,
@@ -204,42 +204,63 @@ const RasterGenerationConfigurationV1Schema = v.strictObject({
   size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
 })
 
+const Img2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationConfigurationV1Schema.entries,
+  mode: v.literal('img2img'),
+  sampling: v.strictObject({
+    ...Txt2ImgRasterGenerationConfigurationV1Schema.entries.sampling.entries,
+    denoisingStrength: UnitIntervalSchema,
+  }),
+})
+const RasterGenerationConfigurationV1Schema = v.variant('mode', [
+  Txt2ImgRasterGenerationConfigurationV1Schema,
+  Img2ImgRasterGenerationConfigurationV1Schema,
+])
+
 /**
  * The first accepted-result format records the exact supported Illustrious txt2img run. The owning
  * Raster Layer ID is the accepted-result identity; candidateId records staging origin.
  */
-const RasterGenerationProvenanceV1Schema = v.pipe(
-  v.strictObject({
-    executionResultContext: v.strictObject({
-      acceptedAt: IsoUtcTimestampSchema,
-      candidateId: UuidSchema,
-      completedAt: IsoUtcTimestampSchema,
-      output: v.strictObject({
-        byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(IGS_GENERATION_PNG_MAX_BYTES)),
-        colorSpace: v.literal('srgb'),
-        format: v.literal('png'),
-        height: GenerationDimensionSchema,
-        iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
-        sha256: Sha256Schema,
-        width: GenerationDimensionSchema,
-      }),
-      queueItemId: UuidSchema,
+const Txt2ImgRasterGenerationProvenanceV1Schema = v.strictObject({
+  executionResultContext: v.strictObject({
+    acceptedAt: IsoUtcTimestampSchema,
+    candidateId: UuidSchema,
+    completedAt: IsoUtcTimestampSchema,
+    output: v.strictObject({
+      byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(IGS_GENERATION_PNG_MAX_BYTES)),
+      colorSpace: v.literal('srgb'),
+      format: v.literal('png'),
+      height: GenerationDimensionSchema,
+      iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+      sha256: Sha256Schema,
+      width: GenerationDimensionSchema,
     }),
-    generationConfiguration: RasterGenerationConfigurationV1Schema,
-    kind: v.literal('illustrious-txt2img'),
-    layerSourceContext: v.strictObject({
-      bbox: v.strictObject({
-        height: GenerationDimensionSchema,
-        width: GenerationDimensionSchema,
-        x: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
-        y: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
-      }),
-      sourceDocumentId: UuidSchema,
-      sourceDocumentRevision: UuidSchema,
-      sourceTargetSha256: Sha256Schema,
-    }),
-    schemaVersion: v.literal(1),
+    queueItemId: UuidSchema,
   }),
+  generationConfiguration: Txt2ImgRasterGenerationConfigurationV1Schema,
+  kind: v.literal('illustrious-txt2img'),
+  layerSourceContext: v.strictObject({
+    bbox: v.strictObject({
+      height: GenerationDimensionSchema,
+      width: GenerationDimensionSchema,
+      x: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+      y: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+    }),
+    sourceDocumentId: UuidSchema,
+    sourceDocumentRevision: UuidSchema,
+    sourceTargetSha256: Sha256Schema,
+  }),
+  schemaVersion: v.literal(1),
+})
+const RasterGenerationProvenanceV1Schema = v.pipe(
+  v.variant('kind', [
+    Txt2ImgRasterGenerationProvenanceV1Schema,
+    v.strictObject({
+      ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
+      generationConfiguration: Img2ImgRasterGenerationConfigurationV1Schema,
+      kind: v.literal('illustrious-img2img'),
+    }),
+  ]),
   v.check(
     ({ executionResultContext, generationConfiguration, layerSourceContext }) =>
       generationConfiguration.size.width === layerSourceContext.bbox.width &&

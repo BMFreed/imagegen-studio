@@ -39,6 +39,7 @@ function pendingState(): ProjectGenerationActionState {
     cfgRescaleSupported: false,
     documentId,
     error: null,
+    img2imgSupported: false,
     jobs: [
       {
         batchId,
