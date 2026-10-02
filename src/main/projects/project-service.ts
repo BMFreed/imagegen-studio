@@ -1341,7 +1341,7 @@ export class ProjectService {
     try {
       await this.options.repository.indexSaved(record.canonicalPath, UNCATEGORIZED_WORKSPACE_ID)
     } catch {
-      indexWarning = 'The Home index could not be refreshed.'
+      indexWarning = 'The Home and saved accepted-result indexes could not be refreshed.'
     }
     if (committed.reloadRequired) {
       indexWarning = `${indexWarning ? `${indexWarning} ` : ''}Reopen the Project before editing it.`
@@ -1445,7 +1445,8 @@ export class ProjectService {
     } catch {
       // The .igs has already committed. Reporting Save as failed would invite a second Save and
       // misstate the saved revision; a later Home scan rebuilds this derived row.
-      indexWarning = 'The Project was saved, but its Home index could not be updated.'
+      indexWarning =
+        'The Project was saved, but its Home and accepted-result indexes could not be updated.'
     }
     return {
       committed: true,

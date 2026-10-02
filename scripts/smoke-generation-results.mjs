@@ -16,6 +16,7 @@ import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { crc32, deflateSync } from 'node:zlib'
 import { _electron as electron, expect } from '@playwright/test'
+import Database from 'better-sqlite3'
 
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
@@ -31,7 +32,8 @@ import { withIllustriousTxt2ImgRequest } from '../src/main/projects/illustrious-
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { createEmptyProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 
-const migrations = path.resolve('src/main/db/migrations')
+// Fixture connections must use the same schema history as the tested main bundle.
+const migrations = path.resolve('dist/main/migrations')
 const icc = readFileSync('worker-python/src/imagegen_worker/srgb.icc')
 const ready = {
   capabilities: ['illustrious-txt2img'],
@@ -42,6 +44,65 @@ const ready = {
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+// Read the real main-process Save projection through a read-only SQLite connection.
+// An old bundle has no saved result rows; the missing behavior is an empty projection.
+// Never inject expected rows through source repository code at this boundary.
+function savedAcceptedIndex(projectKey) {
+  const sqlite = new Database(path.join(appDataRoot, 'database', 'app.sqlite'), {
+    readonly: true,
+    fileMustExist: true,
+  })
+  try {
+    const tablePresent = Boolean(
+      sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get('project_accepted_result_index'),
+    )
+    const rows = tablePresent
+      ? sqlite
+          .prepare(
+            'SELECT * FROM project_accepted_result_index WHERE local_project_key = ? ORDER BY layer_id',
+          )
+          .all(projectKey)
+      : []
+    return { tablePresent, rows }
+  } finally {
+    sqlite.close()
+  }
+}
+
+function assertSavedAcceptedIndex(projectKey, document) {
+  const actual = savedAcceptedIndex(projectKey)
+  assert.equal(actual.tablePresent, true)
+  const expected = document.layers
+    .filter((layer) => layer.generationProvenance)
+    .map((layer) => {
+      const provenance = layer.generationProvenance
+      return {
+        local_project_key: projectKey,
+        layer_id: layer.id,
+        document_id: document.documentId,
+        document_revision: document.documentRevision,
+        accepted_at: provenance.executionResultContext.acceptedAt,
+        actual_seed: provenance.generationConfiguration.sampling.actualSeed,
+        output_width: provenance.executionResultContext.output.width,
+        output_height: provenance.executionResultContext.output.height,
+        model_file_sha256: provenance.generationConfiguration.model.fileSha256,
+        model_name: provenance.generationConfiguration.model.displayName,
+        model_version_name: provenance.generationConfiguration.model.versionName,
+        layer_name: layer.name,
+        asset_path: layer.asset.path,
+        asset_sha256: layer.asset.sha256,
+        asset_bytes: layer.asset.bytes,
+        asset_width: layer.asset.width,
+        asset_height: layer.asset.height,
+      }
+    })
+    .sort((a, b) => a.layer_id.localeCompare(b.layer_id))
+  assert.deepEqual(actual.rows, expected)
+  return actual.rows
 }
 
 function fixtureDatabaseDescriptors(pid) {
@@ -2016,6 +2077,7 @@ try {
   assert.equal(tabAfterCanceledAdd.ok, true)
   assert.equal(tabAfterCanceledAdd.value.tab.layers.length, 0)
   assert.equal(tabAfterCanceledAdd.value.tab.dirty, false)
+  assert.deepEqual(savedAcceptedIndex(project.id).rows, [])
   assert.ok(acceptedCandidates.every((item) => readFileSync(item.assetPath).equals(output)))
   await acceptanceWindow.getByRole('button', { name: 'Add 2 as Layers' }).click()
   await expect(acceptanceDialog).toBeVisible()
@@ -2031,6 +2093,7 @@ try {
   assert.equal(acceptedTab.ok, true)
   assert.equal(acceptedTab.value.tab.layers.length, 2)
   assert.equal(acceptedTab.value.tab.dirty, true)
+  assert.deepEqual(savedAcceptedIndex(project.id).rows, [])
   assert.equal(acceptedTab.value.tab.layers.filter((layer) => layer.visible).length, 1)
   await queueNavigationScreenshot(acceptanceWindow, '15-accepted-results-after-add')
   assert.equal(Array.isArray(acceptedTab.value.tab.acceptedResults), true)
@@ -2303,6 +2366,7 @@ try {
     recoveredTab.value.tab.acceptedResults.map((entry) => entry.seed),
     acceptedTab.value.tab.acceptedResults.map((entry) => entry.seed),
   )
+  assert.deepEqual(savedAcceptedIndex(project.id).rows, [])
   await recoveryWindow.getByRole('button', { name: 'Save Project' }).click()
   await expect
     .poll(async () => {
@@ -2319,6 +2383,12 @@ try {
     })
     .toBe(2)
   const savedAcceptance = (await readIgsPackage(packagePath)).project
+  await expect
+    .poll(() => savedAcceptedIndex(project.id).rows.length, {
+      message: 'The actual Electron Save must persist both accepted results in SQLite',
+    })
+    .toBe(2)
+  const savedAcceptedRows = assertSavedAcceptedIndex(project.id, savedAcceptance)
   assert.equal(savedAcceptance.lastActualSeedSnapshot, 73)
   assert.deepEqual(savedAcceptance.primaryBbox, acceptanceSource.primaryBbox)
   assert.deepEqual(
@@ -2346,6 +2416,7 @@ try {
   const reopened = await recoveryWindow.evaluate((id) => window.api.projects.open(id), project.id)
   assert.equal(reopened.ok, true)
   assert.equal(reopened.value.tab.layers.length, 2)
+  assert.deepEqual(assertSavedAcceptedIndex(project.id, savedAcceptance), savedAcceptedRows)
   assert.deepEqual(
     reopened.value.tab.acceptedResults.map((entry) => entry.layerId),
     acceptedTab.value.tab.acceptedResults.map((entry) => entry.layerId),
@@ -2367,6 +2438,9 @@ try {
     .click()
   queueNavigationReport.checks.push({
     name: 'Dirty-shadow Recover and explicit Save/reopen reconstruct accepted history from actual provenance independently of staging and Queue history',
+  })
+  queueNavigationReport.checks.push({
+    name: 'Actual Electron Save indexes both accepted results with frozen provenance/current assets; unsaved Add and canceled Add do not index, and saved rows persist across reopen',
   })
   console.log(
     'Desktop acceptance smoke passed: confirmed early Add, exact sibling cancellation, neighbor preservation, grouped Undo/Redo, shadow recovery and portable Save/reopen.',
@@ -2446,6 +2520,15 @@ try {
   assert.equal(layoutBefore.ok, true)
   assert.equal(layoutBefore.value.tab.storageWarning, undefined)
   assert.equal(layoutBefore.value.tab.acceptedResults.length, 32)
+  const layoutDocument = (await readIgsPackage(layoutPath)).project
+  const layoutIndex = assertSavedAcceptedIndex(layoutProject.id, layoutDocument)
+  assert.equal(layoutIndex.length, 32)
+  assert.equal(layoutIndex.find((row) => row.actual_seed === 0)?.output_width, 64)
+  assert.equal(layoutIndex.find((row) => row.actual_seed === 0)?.asset_width, 16)
+  assert.deepEqual(savedAcceptedIndex(project.id).rows, savedAcceptedRows)
+  queueNavigationReport.checks.push({
+    name: 'Workspace Refresh rebuilds all 32 saved results from a verified .igs, preserving original 64px output versus current 16px assets and seed 0 without affecting the neighboring Project',
+  })
   const layoutModal = recoveryWindow.getByRole('dialog', { name: 'Accepted results', exact: true })
   const initialGeometry = await application.evaluate(({ BrowserWindow }) => ({
     bounds: BrowserWindow.getAllWindows()[0].getBounds(),
@@ -2620,7 +2703,12 @@ try {
       `${JSON.stringify({ ...queueNavigationReport, buildSha256: testedBuild, scriptSha256: testedScript, windowIsolationHelperSha256: testedWindowIsolationHelper }, null, 2)}\n`,
     )
   }
-  application?.process().kill('SIGKILL')
+  try {
+    application?.process().kill('SIGKILL')
+  } catch {
+    // A failed launch may already have disposed the Playwright application.
+    // Preserve the primary assertion/launch error instead of masking it in cleanup.
+  }
   await liveFixtureDatabase?.close()
   rmSync(dataRoot, { force: true, recursive: true })
 }

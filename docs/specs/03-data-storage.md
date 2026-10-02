@@ -262,8 +262,8 @@ action was connected at that first storage checkpoint. The subsequent
 attaches it through renderer → IPC → shadow → Save. New
 [prepared batches](../engineering/phase-2b-batch-planning-research.md) retain
 optional `sampling.seedBehavior` in frozen metadata and accepted provenance;
-legacy absence remains unspecified. Smart Patch/other modes and the durable
-accepted-history index remain open. See the
+legacy absence remains unspecified. Smart Patch/other modes remain open;
+the saved-result SQLite projection below covers generated Raster Layers. See the
 [storage checkpoint](../engineering/phase-2b-accepted-provenance-storage.md).
 
 `generationConfiguration` contains:
@@ -328,8 +328,28 @@ now projects current generated Raster Layer provenance into the open tab and
 rebuilds the read-only list after Undo/Redo, shadow Recover and `.igs` reopen.
 The history identity is the owning layer ID. Original output dimensions/seed
 remain recorded generation values even when the current asset dimensions differ.
-This projection introduces no new stored catalog; the derived global SQLite
-index and explicit Save synchronization described above are still unimplemented.
+This Project-local projection introduces no new stored catalog.
+
+[Production saved-result index](../engineering/phase-2b-saved-accepted-index-research.md)
+now derives metadata in `project_accepted_result_index` from verified saved
+generated Raster Layers. Create, Import, explicit Save, preview rebuild and
+workspace Refresh use the same `ProjectIndexRepository.indexSaved` owner. Within
+one SQLite transaction it replaces Home metadata and that path's result rows.
+The key is `(local_project_key, layer_id)`; portable copies may share document,
+candidate and layer IDs without collapsing across local paths. Records retain
+the source document revision, frozen actual seed/checkpoint/acceptedAt/original
+output size, and separate current layer name/asset path/hash/bytes/dimensions.
+No signed URLs, pixels or duplicate full provenance are stored.
+
+An internal Project-scoped query includes only ready, non-trashed parents with
+matching document lineage and a verified file fingerprint. Missing/corrupt/
+unsupported sources retain recoverable metadata but are excluded from that query;
+repaired files and an empty/lost index are rebuilt by scanning saved sources.
+Unsaved Add, editing, Undo/Redo and shadow Recover do not update these durable rows.
+`.igs` commits before index synchronization: if indexing fails, Save reports its
+existing committed-file warning, the whole previous DB snapshot remains intact,
+and Refresh repairs the projection. Index rebuilding never deletes source files.
+Global browser/navigation, public IPC and Smart Patch indexing remain pending.
 
 ### Temporary generation staging
 

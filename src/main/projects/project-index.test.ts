@@ -1,23 +1,391 @@
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+
 import Database from 'better-sqlite3'
+import { sql } from 'kysely'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { openAppDatabase } from '../db/database.js'
-import { readIgsPackage } from './igs-package.js'
+import { type AppDatabase, openAppDatabase } from '../db/database.js'
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import {
   ProjectIndexError,
   ProjectIndexRepository,
+  type ProjectWorkspaceRecord,
   UNCATEGORIZED_WORKSPACE_ID,
 } from './project-index.js'
+import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectSession } from './project-session.js'
+import {
+  acceptedOutputPngFixture,
+  acceptedRasterProvenanceFixture,
+} from './test-fixtures/accepted-provenance.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
+
+async function withSavedResultProject(
+  run: (context: {
+    database: AppDatabase
+    directory: string
+    index: ProjectIndexRepository
+    session: ProjectSession
+    workspace: ProjectWorkspaceRecord
+  }) => Promise<void>,
+): Promise<void> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-saved-results-index-'))
+  const database = openAppDatabase(directory, migrations)
+  try {
+    const index = new ProjectIndexRepository(database.db)
+    const workspace = await index.ensureDefaultWorkspace(directory)
+    const session = await ProjectSession.create(
+      path.join(workspace.directoryPath, 'Generated.igs'),
+      'Saved results',
+      {
+        placeholdersDir,
+        scratchDir: path.join(directory, 'scratch'),
+      },
+    )
+    const originalOutput = await acceptedOutputPngFixture()
+    const currentAsset = await acceptedOutputPngFixture(16, 16)
+    const sources = {} as Record<string, { bytes: Buffer }>
+    const layers = [0, 1, 2].map((position) => {
+      const id = randomUUID()
+      const assetPath = `assets/layers/${id}.png`
+      sources[assetPath] = { bytes: currentAsset }
+      const provenance = acceptedRasterProvenanceFixture(session.document, originalOutput, {
+        height: 8,
+        width: 8,
+        x: -24,
+        y: 48,
+      })
+      provenance.generationConfiguration.sampling.actualSeed = position === 0 ? 0 : 0xff_ff_ff_ff
+      if (position === 1) {
+        provenance.executionResultContext.acceptedAt = '2026-09-30T10:01:00.000Z'
+      }
+      return {
+        asset: {
+          bytes: currentAsset.length,
+          height: 16,
+          path: assetPath,
+          sha256: createHash('sha256').update(currentAsset).digest('hex'),
+          width: 16,
+        },
+        blendMode: 'normal' as const,
+        ...(position < 2 ? { generationProvenance: provenance } : {}),
+        id,
+        kind: 'raster' as const,
+        locked: false,
+        name: position < 2 ? `Accepted ${position + 1}` : 'Imported image',
+        opacity: 1,
+        transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -24, y: 48 },
+        visible: position === 0,
+      }
+    })
+    session.applyDocument({ ...session.document, layers })
+    await session.save({ assets: sources })
+    await index.indexSaved(session.filePath, workspace.id)
+    await run({ database, directory, index, session, workspace })
+  } finally {
+    await database.close()
+    await rm(directory, { force: true, recursive: true })
+  }
+}
+
+test('saved result index copies generation metadata and keeps current assets separate through rescan and reopen', async () => {
+  await withSavedResultProject(async ({ database, directory, index, session, workspace }) => {
+    const projectId = session.localRecoveryKey
+    const [parent] = await index.listProjects()
+    const rows = await index.listSavedAcceptedResults(projectId)
+    assert.equal(rows.length, 2)
+    assert.deepEqual(
+      rows.map((row) => row.layerId),
+      [session.document.layers[1].id, session.document.layers[0].id],
+    )
+    for (const row of rows) {
+      const layer = session.document.layers.find((item) => item.id === row.layerId)!
+      const provenance = layer.generationProvenance!
+      assert.deepEqual(row, {
+        acceptedAt: provenance.executionResultContext.acceptedAt,
+        actualSeed: provenance.generationConfiguration.sampling.actualSeed,
+        assetBytes: layer.asset.bytes,
+        assetHeight: 16,
+        assetPath: layer.asset.path,
+        assetSha256: layer.asset.sha256,
+        assetWidth: 16,
+        canonicalPath: session.filePath,
+        documentId: session.document.documentId,
+        documentRevision: session.document.documentRevision,
+        fileFingerprint: parent.fileFingerprint,
+        layerId: layer.id,
+        layerName: layer.name,
+        localProjectKey: projectId,
+        modelFileSha256: provenance.generationConfiguration.model.fileSha256,
+        modelName: provenance.generationConfiguration.model.displayName,
+        modelVersionName: provenance.generationConfiguration.model.versionName,
+        outputHeight: 8,
+        outputWidth: 8,
+        projectTitle: session.document.title,
+      })
+      assert.equal('imageUrl' in row, false)
+      assert.equal('generationProvenance' in row, false)
+    }
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), rows)
+    const secondary = openAppDatabase(directory, migrations)
+    try {
+      assert.deepEqual(
+        await new ProjectIndexRepository(secondary.db).listSavedAcceptedResults(projectId),
+        rows,
+      )
+    } finally {
+      await secondary.close()
+    }
+    assert.equal(
+      (await database.db.selectFrom('project_accepted_result_index').selectAll().execute()).length,
+      2,
+    )
+    assert.deepEqual(await index.listSavedAcceptedResults('invalid-project'), [])
+    assert.deepEqual(await index.listSavedAcceptedResults(`project-v1-${'f'.repeat(64)}`), [])
+  })
+})
+
+test('saved result replacement follows saved owning layers and ignores unsaved document changes', async () => {
+  await withSavedResultProject(async ({ database, index, session, workspace }) => {
+    const projectId = session.localRecoveryKey
+    const saved = session.document
+    const before = await index.listSavedAcceptedResults(projectId)
+    session.applyDocument({ ...saved, layers: saved.layers.slice(1), title: 'Unsaved removal' })
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), before)
+    session.applyDocument(saved)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), before)
+    session.applyDocument({ ...saved, layers: saved.layers.slice(1), title: 'Saved removal' })
+    await session.save()
+    await index.indexSaved(session.filePath, workspace.id)
+    const after = await index.listSavedAcceptedResults(projectId)
+    assert.equal(after.length, 1)
+    assert.equal(after[0].layerId, saved.layers[1].id)
+    assert.equal(after[0].projectTitle, 'Saved removal')
+    assert.equal(after[0].documentRevision, session.document.documentRevision)
+    assert.equal(
+      (await database.db.selectFrom('project_accepted_result_index').selectAll().execute()).length,
+      1,
+    )
+    await index.indexSaved(session.filePath, workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), after)
+
+    // Replacing a file at the same path replaces its document ownership and removes all old rows.
+    const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+    await saveIgsPackage(session.filePath, {
+      assets: {},
+      preview: { ...placeholders, rect: null, status: 'empty' },
+      project: createEmptyProjectDocumentV1({ title: 'Replacement document' }),
+    })
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
+    assert.deepEqual(
+      await database.db.selectFrom('project_accepted_result_index').selectAll().execute(),
+      [],
+    )
+  })
+})
+
+test('portable copies and repeated candidate provenance remain separate saved owning-layer identities', async () => {
+  await withSavedResultProject(async ({ index, session, workspace }) => {
+    const firstLayer = session.document.layers[0]
+    const duplicateId = randomUUID()
+    const copiedLayer = { ...firstLayer, id: duplicateId, name: 'Duplicated accepted layer' }
+    session.applyDocument({
+      ...session.document,
+      layers: [copiedLayer, ...session.document.layers],
+    })
+    await session.save()
+    await index.indexSaved(session.filePath, workspace.id)
+    assert.equal((await index.listSavedAcceptedResults(session.localRecoveryKey)).length, 3)
+    const copyPath = path.join(workspace.directoryPath, 'Copy.igs')
+    await copyFile(session.filePath, copyPath)
+    await index.scanWorkspace(workspace.id)
+    const copyKey = localProjectRecoveryKey(copyPath)
+    const source = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    const copied = await index.listSavedAcceptedResults(copyKey)
+    assert.equal(copied.length, 3)
+    assert.deepEqual(
+      copied.map((row) => row.layerId),
+      source.map((row) => row.layerId),
+    )
+    assert.ok(
+      copied.every(
+        (row) =>
+          row.documentId === session.document.documentId &&
+          row.localProjectKey !== session.localRecoveryKey,
+      ),
+    )
+    await rename(copyPath, path.join(workspace.directoryPath, 'Moved.igs'))
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(copyKey), [])
+    assert.equal(
+      (
+        await index.listSavedAcceptedResults(
+          localProjectRecoveryKey(path.join(workspace.directoryPath, 'Moved.igs')),
+        )
+      ).length,
+      3,
+    )
+    assert.deepEqual(await index.listSavedAcceptedResults(session.localRecoveryKey), source)
+  })
+})
+
+test('unhealthy and trashed sources retain rebuildable rows but do not expose saved history', async () => {
+  await withSavedResultProject(async ({ database, index, session, workspace }) => {
+    const projectId = session.localRecoveryKey
+    const goodBytes = await readFile(session.filePath)
+    const original = await index.listSavedAcceptedResults(projectId)
+    await writeFile(session.filePath, Buffer.from('corrupt ZIP'))
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
+    assert.equal(
+      (await database.db.selectFrom('project_accepted_result_index').selectAll().execute()).length,
+      2,
+    )
+    await writeFile(session.filePath, goodBytes)
+    await index.scanWorkspace(workspace.id)
+    const repaired = await index.listSavedAcceptedResults(projectId)
+    assert.deepEqual(
+      repaired.map(({ fileFingerprint: _, ...row }) => row),
+      original.map(({ fileFingerprint: _, ...row }) => row),
+    )
+    await rm(session.filePath)
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
+    await writeFile(session.filePath, goodBytes)
+    await index.scanWorkspace(workspace.id)
+    assert.equal((await index.listSavedAcceptedResults(projectId)).length, 2)
+    await database.db
+      .updateTable('project_index')
+      .set({ trashed_at: '2026-10-02T10:00:00.000Z' })
+      .where('local_project_key', '=', projectId)
+      .execute()
+    await index.indexSaved(session.filePath, workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
+    assert.ok(
+      (
+        await database.db
+          .selectFrom('project_index')
+          .select('trashed_at')
+          .where('local_project_key', '=', projectId)
+          .executeTakeFirstOrThrow()
+      ).trashed_at,
+    )
+    await database.db
+      .updateTable('project_index')
+      .set({ document_revision: randomUUID(), trashed_at: null })
+      .where('local_project_key', '=', projectId)
+      .execute()
+    assert.deepEqual(await index.listSavedAcceptedResults(projectId), [])
+    await index.scanWorkspace(workspace.id)
+    assert.equal((await index.listSavedAcceptedResults(projectId)).length, 2)
+  })
+})
+
+test('deleting all derived rows is repaired from the verified saved file without changing the source', async () => {
+  await withSavedResultProject(async ({ database, index, session, workspace }) => {
+    const bytes = await readFile(session.filePath)
+    const rows = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    await database.db.deleteFrom('project_accepted_result_index').execute()
+    await database.db.deleteFrom('project_index').execute()
+    assert.deepEqual(await index.listSavedAcceptedResults(session.localRecoveryKey), [])
+    await index.scanWorkspace(workspace.id)
+    assert.deepEqual(await index.listSavedAcceptedResults(session.localRecoveryKey), rows)
+    assert.deepEqual(await readFile(session.filePath), bytes)
+  })
+})
+
+test('failed derived row insertion rolls back the Home revision and every saved-history replacement', async () => {
+  await withSavedResultProject(async ({ database, index, session, workspace }) => {
+    const beforeParent = await index.getProject(session.localRecoveryKey)
+    const beforeRows = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    const baseLayer = session.document.layers[0]
+    const manyLayers = Array.from({ length: 101 }, (_, position) => ({
+      ...baseLayer,
+      id: randomUUID(),
+      name: `Accepted chunk ${position}`,
+    }))
+    session.applyDocument({
+      ...session.document,
+      layers: manyLayers,
+      title: 'Saved despite index failure',
+    })
+    await session.save()
+    // One insertion batch succeeds before the next statement fails; no earlier rows may escape.
+    await sql
+      .raw(
+        `CREATE TRIGGER reject_saved_result_insert BEFORE INSERT ON project_accepted_result_index
+      WHEN NEW.layer_id = '${manyLayers[100].id}'
+      BEGIN SELECT RAISE(ABORT, 'injected saved result index failure'); END`,
+      )
+      .execute(database.db)
+    await assert.rejects(
+      index.indexSaved(session.filePath, workspace.id),
+      /injected saved result index failure/,
+    )
+    assert.deepEqual(await index.getProject(session.localRecoveryKey), beforeParent)
+    assert.deepEqual(await index.listSavedAcceptedResults(session.localRecoveryKey), beforeRows)
+    assert.equal(
+      (await readIgsPackage(session.filePath)).project.title,
+      'Saved despite index failure',
+    )
+    await sql`DROP TRIGGER reject_saved_result_insert`.execute(database.db)
+    await index.scanWorkspace(workspace.id)
+    const repaired = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    assert.equal(repaired.length, 101)
+    assert.deepEqual(
+      repaired.map((row) => row.layerId),
+      manyLayers.map((layer) => layer.id).sort(),
+    )
+    assert.ok(
+      repaired.every(
+        (row) =>
+          row.projectTitle === 'Saved despite index failure' &&
+          row.documentRevision === session.document.documentRevision,
+      ),
+    )
+  })
+})
+
+test('a lost application database rebuilds saved accepted history solely from portable workspace files', async () => {
+  await withSavedResultProject(async ({ database, directory, index, session, workspace }) => {
+    const savedBytes = await readFile(session.filePath)
+    const rows = await index.listSavedAcceptedResults(session.localRecoveryKey)
+    await database.close()
+    await rm(path.join(directory, 'database'), { force: true, recursive: true })
+    const rebuiltDatabase = openAppDatabase(directory, migrations)
+    try {
+      const rebuiltIndex = new ProjectIndexRepository(rebuiltDatabase.db)
+      await rebuiltIndex.ensureDefaultWorkspace(directory)
+      assert.deepEqual(await rebuiltIndex.listSavedAcceptedResults(session.localRecoveryKey), [])
+      await rebuiltIndex.scanWorkspace(workspace.id)
+      assert.deepEqual(await rebuiltIndex.listSavedAcceptedResults(session.localRecoveryKey), rows)
+      assert.deepEqual(await readFile(session.filePath), savedBytes)
+    } finally {
+      await rebuiltDatabase.close()
+    }
+  })
+})
 
 test('a lost Home index rebuilds from a saved .igs in the same workspace and its preview metadata', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-index-'))

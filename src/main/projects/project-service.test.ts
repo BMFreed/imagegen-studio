@@ -9,6 +9,7 @@ import {
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
 
+import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
@@ -28,7 +29,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { ProjectDraftSync } from '../../renderer/components/project-draft-sync.js'
-import { openAppDatabase } from '../db/database.js'
+import { type AppDatabase, openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
@@ -190,6 +191,7 @@ async function openTwoLayerProject(
 
 async function withService(
   run: (context: {
+    database: AppDatabase
     dataRoot: string
     modelRepository: ModelRepository
     modelService: ModelService
@@ -231,7 +233,7 @@ async function withService(
     shadow,
   })
   try {
-    await run({ dataRoot, modelRepository, modelService, repository, service, shadow })
+    await run({ database, dataRoot, modelRepository, modelService, repository, service, shadow })
   } finally {
     await database.close()
     await rm(dataRoot, { force: true, recursive: true })
@@ -2135,7 +2137,7 @@ test('Raster Layer commands persist top-first order and properties through shado
 })
 
 test('editing an accepted Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
-  await withService(async ({ dataRoot, repository, service, shadow }) => {
+  await withService(async ({ database, dataRoot, repository, service, shadow }) => {
     const originalOutput = await acceptedOutputPngFixture()
     const output = await acceptedOutputPngFixture(16, 16)
     const externalPath = path.join(dataRoot, 'Generated source.igs')
@@ -2214,6 +2216,11 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
     assert.ok(indexed)
     const savedBeforeEdit = await readIgsPackage(indexed.canonicalPath)
     assert.deepEqual(savedBeforeEdit.project.layers[0].generationProvenance, provenance)
+    const durableBeforeEdit = await repository.listSavedAcceptedResults(tabId)
+    assert.equal(durableBeforeEdit.length, 1)
+    assert.equal(durableBeforeEdit[0].actualSeed, 0)
+    assert.deepEqual([durableBeforeEdit[0].outputWidth, durableBeforeEdit[0].outputHeight], [8, 8])
+    assert.deepEqual([durableBeforeEdit[0].assetWidth, durableBeforeEdit[0].assetHeight], [16, 16])
 
     const changed = await service.updateRasterLayer(tabId, layerId, {
       kind: 'opacity',
@@ -2234,12 +2241,59 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
       assert.equal(recovery.document.layers[0].opacity, 0.4)
     }
     assert.equal((await readIgsPackage(indexed.canonicalPath)).project.layers[0].opacity, 1)
+    assert.deepEqual(await repository.listSavedAcceptedResults(tabId), durableBeforeEdit)
+
+    // The source Save commits first; a failed derived insert must leave the prior Home+history
+    // snapshot intact and surface a warning. A later real Home refresh repairs it from saved bytes.
+    await sql`CREATE TRIGGER reject_service_saved_result BEFORE INSERT ON project_accepted_result_index
+      BEGIN SELECT RAISE(ABORT, 'injected saved-history service failure'); END`.execute(database.db)
+    const savedWithIndexWarning = await service.save(tabId)
+    assert.equal(savedWithIndexWarning.committed, true)
+    assert.equal(savedWithIndexWarning.tab.dirty, false)
+    assert.match(savedWithIndexWarning.indexWarning ?? '', /saved.*accepted-result indexes/)
+    assert.deepEqual(await repository.getProject(tabId), indexed)
+    assert.deepEqual(await repository.listSavedAcceptedResults(tabId), durableBeforeEdit)
+    const committedBeforeRefresh = await readIgsPackage(indexed.canonicalPath)
+    assert.equal(committedBeforeRefresh.project.layers[0].opacity, 0.4)
+    await sql`DROP TRIGGER reject_service_saved_result`.execute(database.db)
+    await service.list()
+    const repairedFromRefresh = await repository.listSavedAcceptedResults(tabId)
+    assert.equal(repairedFromRefresh.length, 1)
+    assert.equal(
+      repairedFromRefresh[0].documentRevision,
+      committedBeforeRefresh.project.documentRevision,
+    )
+    assert.equal(
+      (await repository.getProject(tabId))?.documentRevision,
+      committedBeforeRefresh.project.documentRevision,
+    )
+    assert.notEqual(repairedFromRefresh[0].fileFingerprint, durableBeforeEdit[0].fileFingerprint)
+    assert.equal(repairedFromRefresh[0].assetSha256, savedBeforeEdit.project.layers[0].asset.sha256)
 
     assert.equal((await service.save(tabId)).committed, true)
     const saved = await readIgsPackage(indexed.canonicalPath)
     assert.equal(saved.project.layers[0].opacity, 0.4)
     assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
     assert.deepEqual(await saved.readMember(assetPath), output)
+    const durableSaved = await repository.listSavedAcceptedResults(tabId)
+    assert.equal(durableSaved.length, 1)
+    assert.equal(durableSaved[0].documentRevision, saved.project.documentRevision)
+    assert.equal(durableSaved[0].actualSeed, 0)
+    assert.deepEqual(
+      [
+        durableSaved[0].outputWidth,
+        durableSaved[0].outputHeight,
+        durableSaved[0].assetWidth,
+        durableSaved[0].assetHeight,
+      ],
+      [8, 8, 16, 16],
+    )
+    const undoAfterSave = await service.undo(tabId)
+    assert.equal(undoAfterSave.dirty, true)
+    assert.deepEqual(await repository.listSavedAcceptedResults(tabId), durableSaved)
+    const redoAfterSave = await service.redo(tabId)
+    assert.equal(redoAfterSave.dirty, false)
+    assert.deepEqual(await repository.listSavedAcceptedResults(tabId), durableSaved)
     await service.close(tabId)
     const reopened = await service.open(tabId)
     assert.equal(reopened.kind, 'opened')

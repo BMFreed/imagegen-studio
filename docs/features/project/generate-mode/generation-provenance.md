@@ -178,8 +178,15 @@ If current owned inputs differ from the active variant provenance, the Smart Pat
 
 Global generation history is a derived view of accepted project results. The
 open Project shows an in-memory history projection immediately after Add; its
-planned durable SQLite index will be rebuilt from saved `.igs` results after
-explicit Save; that global index is not yet implemented.
+durable SQLite metadata index is rebuilt from verified saved `.igs` results on
+explicit Save and workspace Refresh. The
+[saved-index checkpoint](../../../engineering/phase-2b-saved-accepted-index-research.md)
+covers generated Raster Layers with path/layer identity and atomic Home/history
+replacement; an internal query excludes unhealthy/trashed or foreign-lineage
+sources. Unsaved changes do not enter it, and an index failure after committed
+Save keeps the previous DB snapshot and reports a warning until rescan repairs it.
+App-level history browser/navigation, public IPC and Smart Patch indexing are
+still pending.
 Crash recovery can reconstruct the unsaved projection from the document shadow.
 
 - one accepted candidate → one accepted result → one history entry;
@@ -262,8 +269,8 @@ makes the created preset available to Project Apply without reloading.
 undo/redo, active-variant ownership, read-only comparison and result-to-preset-to-
 Apply. `project-audit.spec.ts` covers replacement and cancellation boundaries.
 These are prototype checks, not production evidence: source/mask hashes, exact
-worker/runtime identities, real output assets, `.igs` serialization and the global
-accepted-result index remain unimplemented. Mock staleness compares owned draft,
+worker/runtime identities, real output assets, `.igs` serialization and the
+saved-result SQLite index are not implemented by the prototype. Mock staleness compares owned draft,
 bbox, mask revision and internal dimensions; it does not hash source composites.
 The mock still reads generation Size from its finite Project Canvas frame rather
 than an independently movable default generation bbox; this is a prototype gap.

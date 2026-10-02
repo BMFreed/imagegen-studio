@@ -160,6 +160,26 @@ export interface ModelVersionDependency {
   role: string
 }
 
+export interface ProjectAcceptedResultIndex {
+  accepted_at: string
+  actual_seed: number
+  asset_bytes: number
+  asset_height: number
+  asset_path: string
+  asset_sha256: string
+  asset_width: number
+  document_id: string
+  document_revision: string
+  layer_id: string
+  layer_name: string
+  local_project_key: string
+  model_file_sha256: string
+  model_name: string
+  model_version_name: string
+  output_height: number
+  output_width: number
+}
+
 export interface ProjectIndex {
   bbox_height: number | null
   bbox_width: number | null
@@ -212,6 +232,7 @@ export interface DB {
   model_resource: ModelResource
   model_resource_version: ModelResourceVersion
   model_version_dependency: ModelVersionDependency
+  project_accepted_result_index: ProjectAcceptedResultIndex
   project_index: ProjectIndex
   project_workspace: ProjectWorkspace
   schema_migrations: SchemaMigrations

@@ -41,6 +41,29 @@ export interface ProjectIndexRecord {
   workspaceId: string
 }
 
+export interface ProjectSavedAcceptedResultRecord {
+  acceptedAt: string
+  actualSeed: number
+  assetBytes: number
+  assetHeight: number
+  assetPath: string
+  assetSha256: string
+  assetWidth: number
+  canonicalPath: string
+  documentId: string
+  documentRevision: string
+  fileFingerprint: string
+  layerId: string
+  layerName: string
+  localProjectKey: string
+  modelFileSha256: string
+  modelName: string
+  modelVersionName: string
+  outputHeight: number
+  outputWidth: number
+  projectTitle: string
+}
+
 export class ProjectIndexError extends Error {
   constructor(
     readonly code: 'INDEX_FILE_CHANGED' | 'INDEX_OUTSIDE_WORKSPACE' | 'WORKSPACE_UNAVAILABLE',
@@ -121,6 +144,53 @@ export class ProjectIndexRepository {
     }
     const rows = await query.orderBy('last_opened_at', 'desc').orderBy('display_name').execute()
     return rows.map(indexRecord)
+  }
+
+  /** Last verified saved snapshot, scoped to one Project. Dirty tabs and shadow are not sources. */
+  async listSavedAcceptedResults(
+    localProjectKey: string,
+  ): Promise<ProjectSavedAcceptedResultRecord[]> {
+    if (typeof localProjectKey !== 'string' || !/^project-v1-[a-f0-9]{64}$/.test(localProjectKey)) {
+      return []
+    }
+    return await this.db
+      .selectFrom('project_accepted_result_index as result')
+      .innerJoin('project_index as project', (join) =>
+        join
+          .onRef('project.local_project_key', '=', 'result.local_project_key')
+          .onRef('project.document_id', '=', 'result.document_id')
+          .onRef('project.document_revision', '=', 'result.document_revision'),
+      )
+      .select([
+        'result.accepted_at as acceptedAt',
+        'result.actual_seed as actualSeed',
+        'result.asset_bytes as assetBytes',
+        'result.asset_height as assetHeight',
+        'result.asset_path as assetPath',
+        'result.asset_sha256 as assetSha256',
+        'result.asset_width as assetWidth',
+        'project.canonical_path as canonicalPath',
+        'result.document_id as documentId',
+        'result.document_revision as documentRevision',
+        'project.file_fingerprint as fileFingerprint',
+        'result.layer_id as layerId',
+        'result.layer_name as layerName',
+        'result.local_project_key as localProjectKey',
+        'result.model_file_sha256 as modelFileSha256',
+        'result.model_name as modelName',
+        'result.model_version_name as modelVersionName',
+        'result.output_height as outputHeight',
+        'result.output_width as outputWidth',
+        'project.display_name as projectTitle',
+      ])
+      .where('result.local_project_key', '=', localProjectKey)
+      .where('project.file_health', '=', 'ready')
+      .where('project.trashed_at', 'is', null)
+      .where('project.file_fingerprint', 'is not', null)
+      .orderBy('result.accepted_at', 'desc')
+      .orderBy('result.layer_id')
+      .$narrowType<{ fileFingerprint: string }>()
+      .execute()
   }
 
   async markOpened(canonicalPath: string): Promise<void> {
@@ -280,30 +350,72 @@ export class ProjectIndexRepository {
       search_name: normalizeSearchName(project.title),
       workspace_id: workspaceId,
     } as const
-    await this.db
-      .insertInto('project_index')
-      .values({ ...values, last_opened_at: null, trashed_at: null })
-      .onConflict((conflict) =>
-        conflict.column('local_project_key').doUpdateSet({
-          bbox_height: values.bbox_height,
-          bbox_width: values.bbox_width,
-          canonical_path: values.canonical_path,
-          diagnostic_code: null,
-          display_name: values.display_name,
-          document_id: values.document_id,
-          document_revision: values.document_revision,
-          file_fingerprint: values.file_fingerprint,
-          file_health: values.file_health,
-          file_mtime_ns: values.file_mtime_ns,
-          file_size_bytes: values.file_size_bytes,
-          indexed_at: now,
-          preview_status: values.preview_status,
-          preview_thumbnail_sha256: values.preview_thumbnail_sha256,
-          search_name: values.search_name,
-          workspace_id: values.workspace_id,
-        }),
-      )
-      .execute()
+    const savedResults = project.layers.flatMap((layer) => {
+      const provenance = layer.generationProvenance
+      if (!provenance) {
+        return []
+      }
+      const { executionResultContext, generationConfiguration } = provenance
+      return [
+        {
+          accepted_at: executionResultContext.acceptedAt,
+          actual_seed: generationConfiguration.sampling.actualSeed,
+          asset_bytes: layer.asset.bytes,
+          asset_height: layer.asset.height,
+          asset_path: layer.asset.path,
+          asset_sha256: layer.asset.sha256,
+          asset_width: layer.asset.width,
+          document_id: project.documentId,
+          document_revision: project.documentRevision,
+          layer_id: layer.id,
+          layer_name: layer.name,
+          local_project_key: key,
+          model_file_sha256: generationConfiguration.model.fileSha256,
+          model_name: generationConfiguration.model.displayName,
+          model_version_name: generationConfiguration.model.versionName,
+          output_height: executionResultContext.output.height,
+          output_width: executionResultContext.output.width,
+        },
+      ]
+    })
+    await this.db.transaction().execute(async (transaction) => {
+      await transaction
+        .insertInto('project_index')
+        .values({ ...values, last_opened_at: null, trashed_at: null })
+        .onConflict((conflict) =>
+          conflict.column('local_project_key').doUpdateSet({
+            bbox_height: values.bbox_height,
+            bbox_width: values.bbox_width,
+            canonical_path: values.canonical_path,
+            diagnostic_code: null,
+            display_name: values.display_name,
+            document_id: values.document_id,
+            document_revision: values.document_revision,
+            file_fingerprint: values.file_fingerprint,
+            file_health: values.file_health,
+            file_mtime_ns: values.file_mtime_ns,
+            file_size_bytes: values.file_size_bytes,
+            indexed_at: now,
+            preview_status: values.preview_status,
+            preview_thumbnail_sha256: values.preview_thumbnail_sha256,
+            search_name: values.search_name,
+            workspace_id: values.workspace_id,
+          }),
+        )
+        .execute()
+      await transaction
+        .deleteFrom('project_accepted_result_index')
+        .where('local_project_key', '=', key)
+        .execute()
+      // A full document can contain thousands of small results. Keep statement bindings bounded;
+      // every batch and the parent Home row still share this one transaction.
+      for (let offset = 0; offset < savedResults.length; offset += 100) {
+        await transaction
+          .insertInto('project_accepted_result_index')
+          .values(savedResults.slice(offset, offset + 100))
+          .execute()
+      }
+    })
     const indexed = await this.db
       .selectFrom('project_index')
       .select('last_opened_at')
