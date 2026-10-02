@@ -11,6 +11,7 @@ import type {
   GenerationQueueReview,
   GenerationQueueTerminalStatus,
 } from './projects/generation-queue-manager.js'
+import type { RasterGenerationData } from './projects/generation-settings-comparison.js'
 import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
@@ -68,6 +69,7 @@ export const ipcChannels = {
     getGenerationProgress: 'projects:get-generation-progress',
     getGenerationQueue: 'projects:get-generation-queue',
     getGenerationState: 'projects:get-generation-state',
+    getRasterGenerationData: 'projects:get-raster-generation-data',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
@@ -315,6 +317,11 @@ export interface ProjectApi {
     cursor?: GenerationQueueCursor | null,
   ) => Promise<ApiResult<GenerationQueuePage>>
   getGenerationState: (tabId: string) => Promise<ApiResult<ProjectGenerationActionState>>
+  getRasterGenerationData: (
+    tabId: string,
+    documentId: string,
+    layerId: string,
+  ) => Promise<ApiResult<RasterGenerationData>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
@@ -517,68 +524,70 @@ export function isProjectGenerationDraftChange(
   }
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
-  if (value.kind === 'dynamic-prompt') {
+  if (value['kind'] === 'dynamic-prompt') {
     return (
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('value') &&
-      isGenerationDynamicPromptSettings(value.value)
+      isGenerationDynamicPromptSettings(value['value'])
     )
   }
-  if (value.kind === 'lora-enabled' || value.kind === 'lora-weight') {
+  if (value['kind'] === 'lora-enabled' || value['kind'] === 'lora-weight') {
     return (
       keys.length === 4 &&
       keys.includes('value') &&
-      isProjectLoraIdentity({ resourceId: value.resourceId, versionId: value.versionId }) &&
-      (value.kind === 'lora-enabled'
-        ? typeof value.value === 'boolean'
-        : typeof value.value === 'number' && Number.isFinite(value.value))
+      isProjectLoraIdentity({ resourceId: value['resourceId'], versionId: value['versionId'] }) &&
+      (value['kind'] === 'lora-enabled'
+        ? typeof value['value'] === 'boolean'
+        : typeof value['value'] === 'number' && Number.isFinite(value['value']))
     )
   }
-  if (value.kind === 'positive-prompt' || value.kind === 'negative-prompt') {
+  if (value['kind'] === 'positive-prompt' || value['kind'] === 'negative-prompt') {
     return (
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('text') &&
-      typeof value.text === 'string' &&
-      value.text.length <= IGS_SAFETY_CEILINGS.textBytes &&
-      new TextEncoder().encode(value.text).length <= IGS_SAFETY_CEILINGS.textBytes
+      typeof value['text'] === 'string' &&
+      value['text'].length <= IGS_SAFETY_CEILINGS.textBytes &&
+      new TextEncoder().encode(value['text']).length <= IGS_SAFETY_CEILINGS.textBytes
     )
   }
-  if (value.kind === 'sampling-steps' || value.kind === 'sampling-cfg-scale') {
+  if (value['kind'] === 'sampling-steps' || value['kind'] === 'sampling-cfg-scale') {
     if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('value')) {
       return false
     }
-    if (value.value === null) {
+    if (value['value'] === null) {
       return true
     }
-    return value.kind === 'sampling-steps'
-      ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && value.value >= 1
-      : typeof value.value === 'number' && Number.isFinite(value.value) && value.value >= 0
+    return value['kind'] === 'sampling-steps'
+      ? typeof value['value'] === 'number' &&
+          Number.isSafeInteger(value['value']) &&
+          value['value'] >= 1
+      : typeof value['value'] === 'number' && Number.isFinite(value['value']) && value['value'] >= 0
   }
-  if (value.kind === 'sampling-pair') {
+  if (value['kind'] === 'sampling-pair') {
     return (
       keys.length === 3 &&
       keys.includes('kind') &&
       keys.includes('sampler') &&
       keys.includes('scheduler') &&
-      isIllustriousSamplingDraftPair(value.sampler, value.scheduler)
+      isIllustriousSamplingDraftPair(value['sampler'], value['scheduler'])
     )
   }
   if (
-    value.kind !== 'seed' ||
+    value['kind'] !== 'seed' ||
     keys.length !== 3 ||
     !keys.includes('policy') ||
     !keys.includes('value')
   ) {
     return false
   }
-  return value.policy === 'fixed'
-    ? typeof value.value === 'number' &&
-        Number.isSafeInteger(value.value) &&
-        value.value >= 0 &&
-        value.value <= 0xff_ff_ff_ff
-    : (value.policy === 'random' || value.policy === 'reuse') && value.value === null
+  return value['policy'] === 'fixed'
+    ? typeof value['value'] === 'number' &&
+        Number.isSafeInteger(value['value']) &&
+        value['value'] >= 0 &&
+        value['value'] <= 0xff_ff_ff_ff
+    : (value['policy'] === 'random' || value['policy'] === 'reuse') && value['value'] === null
 }
 
 export function isProjectGenerationModelSelection(
@@ -597,10 +606,10 @@ export function isProjectGenerationModelSelection(
     keys.length === 2 &&
     keys.includes('resourceId') &&
     keys.includes('versionId') &&
-    typeof value.resourceId === 'string' &&
-    typeof value.versionId === 'string' &&
-    uuid.test(value.resourceId) &&
-    uuid.test(value.versionId)
+    typeof value['resourceId'] === 'string' &&
+    typeof value['versionId'] === 'string' &&
+    uuid.test(value['resourceId']) &&
+    uuid.test(value['versionId'])
   )
 }
 
@@ -611,30 +620,30 @@ export function isProjectRasterLayerChange(input: unknown): input is ProjectRast
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
   return (
-    (value.kind === 'visibility' &&
+    (value['kind'] === 'visibility' &&
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('visible') &&
-      typeof value.visible === 'boolean') ||
-    (value.kind === 'lock' &&
+      typeof value['visible'] === 'boolean') ||
+    (value['kind'] === 'lock' &&
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('locked') &&
-      typeof value.locked === 'boolean') ||
-    (value.kind === 'opacity' &&
+      typeof value['locked'] === 'boolean') ||
+    (value['kind'] === 'opacity' &&
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('opacity') &&
-      typeof value.opacity === 'number' &&
-      Number.isFinite(value.opacity) &&
-      value.opacity >= 0 &&
-      value.opacity <= 1) ||
-    (value.kind === 'blend-mode' &&
+      typeof value['opacity'] === 'number' &&
+      Number.isFinite(value['opacity']) &&
+      value['opacity'] >= 0 &&
+      value['opacity'] <= 1) ||
+    (value['kind'] === 'blend-mode' &&
       keys.length === 2 &&
       keys.includes('kind') &&
       keys.includes('blendMode') &&
-      typeof value.blendMode === 'string' &&
-      ['multiply', 'normal', 'overlay', 'screen'].includes(value.blendMode))
+      typeof value['blendMode'] === 'string' &&
+      ['multiply', 'normal', 'overlay', 'screen'].includes(value['blendMode']))
   )
 }
 
@@ -652,11 +661,11 @@ export function isProjectLoraIdentity(input: unknown): input is ProjectLoraIdent
   const value = input as Record<string, unknown>
   return (
     Object.keys(value).length === 2 &&
-    typeof value.resourceId === 'string' &&
-    value.resourceId.trim().length > 0 &&
-    new TextEncoder().encode(value.resourceId).length <= IGS_SAFETY_CEILINGS.titleBytes &&
-    typeof value.versionId === 'string' &&
-    value.versionId.trim().length > 0 &&
-    new TextEncoder().encode(value.versionId).length <= IGS_SAFETY_CEILINGS.titleBytes
+    typeof value['resourceId'] === 'string' &&
+    value['resourceId'].trim().length > 0 &&
+    new TextEncoder().encode(value['resourceId']).length <= IGS_SAFETY_CEILINGS.titleBytes &&
+    typeof value['versionId'] === 'string' &&
+    value['versionId'].trim().length > 0 &&
+    new TextEncoder().encode(value['versionId']).length <= IGS_SAFETY_CEILINGS.titleBytes
   )
 }

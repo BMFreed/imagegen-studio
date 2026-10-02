@@ -1,0 +1,491 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import type { ModelCatalogItem } from '../api.js'
+import type { IgsRasterGenerationProvenanceV1 } from './project-schema.js'
+
+import {
+  compareRasterGenerationSettings,
+  type GenerationSettingsComparisonCurrent,
+  type GenerationSettingsComparisonRow,
+  isRasterGenerationData,
+  type RasterGenerationData,
+} from './generation-settings-comparison.js'
+import {
+  createEmptyProjectDocumentV1,
+  isRasterGenerationConfigurationV1,
+} from './project-schema.js'
+
+const DOCUMENT_ID = 'f1099bf4-05ea-44d8-b5de-6884ece7ba45'
+const REVISION_ID = '6ea21a66-41e5-43ee-80e2-e9837b7c0eb8'
+const LAYER_ID = 'b8468727-804a-4522-a3e7-c5145967e43f'
+const MODEL_ID = '57424ef4-e87e-4413-9c38-17ec576265f2'
+const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
+const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
+const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
+
+function generationConfiguration(): IgsRasterGenerationProvenanceV1['generationConfiguration'] {
+  const config: IgsRasterGenerationProvenanceV1['generationConfiguration'] = {
+    mode: 'txt2img',
+    model: {
+      baseModelFamily: 'illustrious',
+      civitaiFileId: 93,
+      civitaiModelId: 91,
+      civitaiVersionId: 92,
+      displayName: 'Illustrious checkpoint',
+      fileSha256: 'a'.repeat(64),
+      kind: 'checkpoint',
+      localModelId: MODEL_ID,
+      localVersionId: VERSION_ID,
+      predictionType: 'epsilon',
+      versionName: 'v1',
+    },
+    negativePrompt: { embeddingRefs: [], text: 'blur' },
+    positivePrompt: { embeddingRefs: [], text: 'a red lantern' },
+    sampling: {
+      actualSeed: 0,
+      cfgScale: 7,
+      invokeScheduler: 'dpmpp_2m_k',
+      requestedSeedPolicy: 'fixed',
+      sampler: 'DPM++ 2M',
+      scheduler: 'Karras',
+      seedBehavior: 'per-iteration',
+      steps: 30,
+    },
+    size: { height: 128, width: 64 },
+  }
+  assert.ok(isRasterGenerationConfigurationV1(config), 'fixture is valid portable v1 settings')
+  return config
+}
+
+function catalogItem(
+  model: NonNullable<GenerationSettingsComparisonCurrent['generationDraft']['model']>,
+) {
+  const resource: ModelCatalogItem = {
+    author: null,
+    defaultVersionId: model.localVersionId,
+    description: null,
+    id: model.localModelId,
+    modelId: model.civitaiModelId,
+    name: model.displayName,
+    previewDataUrl: null,
+    resourceType: model.kind,
+    sourceUrl: null,
+    trainedWords: [],
+    versions: [
+      {
+        baseModelFamily: model.baseModelFamily,
+        civitaiFileId: model.civitaiFileId,
+        civitaiVersionId: model.civitaiVersionId,
+        dependencyIssues: [],
+        fileName: 'checkpoint.safetensors',
+        fileSizeBytes: 1234,
+        fileStatus: 'ready',
+        format: 'SafeTensor',
+        id: model.localVersionId,
+        installedAt: '2026-10-02T10:00:00.000Z',
+        name: model.versionName,
+        predictionType: model.predictionType,
+        sha256: model.fileSha256,
+        trainedWords: [],
+      },
+    ],
+  }
+  return resource
+}
+
+function fixture(): { current: GenerationSettingsComparisonCurrent; data: RasterGenerationData } {
+  const config = generationConfiguration()
+  const document = createEmptyProjectDocumentV1({
+    documentId: DOCUMENT_ID,
+    documentRevision: REVISION_ID,
+    title: 'Comparison test',
+  })
+  Object.assign(document.generationDraft, {
+    model: structuredClone(config.model),
+    negativePrompt: structuredClone(config.negativePrompt),
+    positivePrompt: structuredClone(config.positivePrompt),
+    sampling: {
+      cfgScale: config.sampling.cfgScale,
+      denoisingStrength: null,
+      sampler: config.sampling.sampler,
+      scheduler: config.sampling.scheduler,
+      steps: config.sampling.steps,
+    },
+    seed: { policy: 'fixed', value: 0 },
+  })
+  const result = {
+    current: {
+      bbox: { height: 128, width: 64 },
+      generationDraft: document.generationDraft,
+      modelCatalog: [catalogItem(config.model)],
+      modelCatalogError: null,
+      reuseSeed: null,
+    },
+    data: {
+      currentMode: 'txt2img' as const,
+      documentId: DOCUMENT_ID,
+      generationConfiguration: config,
+      layerId: LAYER_ID,
+      modeUnavailableReason: null,
+    },
+  }
+  assert.ok(isRasterGenerationData(result.data), 'fixture crosses the real strict DTO guard')
+  return result
+}
+
+function rows(source: ReturnType<typeof fixture>): GenerationSettingsComparisonRow[] {
+  return compareRasterGenerationSettings(source.data, source.current).flatMap(
+    (section) => section.rows,
+  )
+}
+
+function result(source: ReturnType<typeof fixture>, key: string): GenerationSettingsComparisonRow {
+  const found = rows(source).find((item) => item.key === key)
+  assert.ok(found, `projection must expose ${key}`)
+  return found
+}
+
+test('strict portable DTO admits legacy optional seed behavior and imported layers, rejects private context', () => {
+  const source = fixture()
+  delete source.data.generationConfiguration!.sampling.seedBehavior
+  assert.ok(isRasterGenerationData(source.data))
+  assert.ok(isRasterGenerationData({ ...source.data, generationConfiguration: null }))
+  assert.deepEqual(
+    compareRasterGenerationSettings(
+      { ...source.data, generationConfiguration: null },
+      source.current,
+    ),
+    [],
+  )
+  for (const invalid of [
+    { ...source.data, layerSourceContext: { bbox: { x: 1, y: 2 } } },
+    { ...source.data, documentId: 'foreign-tab' },
+    { ...source.data, currentMode: null },
+    { ...source.data, modeUnavailableReason: 'worker missing' },
+    { ...source.data, currentMode: null, modeUnavailableReason: ' ' },
+    { ...source.data, currentMode: null, modeUnavailableReason: 'ø'.repeat(513) },
+    {
+      ...source.data,
+      generationConfiguration: { ...source.data.generationConfiguration, managedPath: '/private' },
+    },
+    {
+      ...source.data,
+      generationConfiguration: {
+        ...source.data.generationConfiguration,
+        sampling: { ...source.data.generationConfiguration!.sampling, workerPath: '/private' },
+      },
+    },
+    {
+      ...source.data,
+      generationConfiguration: {
+        ...source.data.generationConfiguration,
+        sampling: { ...source.data.generationConfiguration!.sampling, seedBehavior: 'unknown' },
+      },
+    },
+  ]) {
+    assert.equal(isRasterGenerationData(invalid), false)
+  }
+  assert.ok(
+    isRasterGenerationData({
+      ...source.data,
+      currentMode: null,
+      modeUnavailableReason: 'Worker down',
+    }),
+  )
+})
+
+test('actual frozen settings compare with Current Canvas while v1 omissions stay explicitly Unavailable', () => {
+  const source = fixture()
+  const projected = rows(source)
+  for (const key of [
+    'prompt.text',
+    'negativePrompt.text',
+    'model.resource',
+    'model.predictionType',
+    'size.dimensions',
+    'sampling.sampler',
+    'sampling.scheduler',
+    'sampling.invokeScheduler',
+    'guidance.steps',
+    'guidance.cfg',
+    'seed.actual',
+    'seed.policy',
+    'seed.behavior',
+    'context.mode',
+  ]) {
+    assert.equal(result(source, key).status, 'Same', key)
+  }
+  for (const key of [
+    'loras.stack',
+    'cfgRescale.value',
+    'denoisingStrength.value',
+    'vae.resource',
+    'vaePrecision.value',
+    'clipSkip.value',
+  ]) {
+    assert.equal(result(source, key).status, 'Unavailable', key)
+    assert.match(result(source, key).before, /Unavailable in saved generation data/)
+  }
+  assert.equal(new Set(projected.map((row) => row.key)).size, projected.length)
+  assert.ok(
+    projected.every((row) => typeof row.before === 'string' && typeof row.after === 'string'),
+  )
+  assert.equal(JSON.stringify(projected).includes('Regional Guidance'), false)
+})
+
+test('semantic identity ignores copied names and local IDs only when both exact bindings are present', () => {
+  const source = fixture()
+  const copied = {
+    ...source.current.generationDraft.model!,
+    displayName: 'Renamed on this computer',
+    localModelId: OTHER_MODEL_ID,
+    localVersionId: OTHER_VERSION_ID,
+    versionName: 'Renamed v1',
+  }
+  source.current.generationDraft.model = copied
+  source.current.modelCatalog!.push(catalogItem(copied))
+  assert.equal(result(source, 'model.resource').status, 'Same')
+  assert.match(result(source, 'model.resource').after, /Renamed on this computer/)
+  source.current.modelCatalog = [catalogItem(copied)]
+  assert.equal(result(source, 'model.resource').status, 'Missing resource')
+})
+
+test('portable relink candidates and catalog defaults never mask an unlinked or incorrect exact version', () => {
+  for (const change of [
+    'local-binding',
+    'sha256',
+    'family',
+    'version-id',
+    'file-id',
+    'model-id',
+    'corrupt',
+  ] as const) {
+    const source = fixture()
+    const installed = source.current.modelCatalog![0]
+    const version = installed.versions[0]
+    switch (change) {
+      case 'corrupt': {
+        version.fileStatus = 'corrupt'
+        break
+      }
+      case 'family': {
+        version.baseModelFamily = 'anima'
+        break
+      }
+      case 'file-id': {
+        version.civitaiFileId = 999
+        break
+      }
+      case 'local-binding': {
+        installed.id = OTHER_MODEL_ID
+        version.id = OTHER_VERSION_ID
+        installed.defaultVersionId = OTHER_VERSION_ID
+        break
+      }
+      case 'model-id': {
+        installed.modelId = 999
+        break
+      }
+      case 'sha256': {
+        version.sha256 = 'b'.repeat(64)
+        break
+      }
+      case 'version-id': {
+        version.civitaiVersionId = 999
+        break
+      }
+    }
+    assert.equal(result(source, 'model.resource').status, 'Missing resource', change)
+    assert.equal(result(source, 'model.predictionType').status, 'Missing resource', change)
+  }
+  const source = fixture()
+  source.current.generationDraft.model = null
+  assert.equal(result(source, 'model.resource').status, 'Removed')
+})
+
+test('two ready resource bindings still differ when any portable identity axis changes', () => {
+  const variants: Partial<
+    NonNullable<GenerationSettingsComparisonCurrent['generationDraft']['model']>
+  >[] = [
+    { baseModelFamily: 'anima' },
+    { civitaiFileId: 999 },
+    { civitaiModelId: 999 },
+    { civitaiVersionId: 999 },
+    { fileSha256: 'b'.repeat(64) },
+    { kind: 'lora' },
+  ]
+  for (const changedIdentity of variants) {
+    const source = fixture()
+    const copied = {
+      ...source.current.generationDraft.model!,
+      ...changedIdentity,
+      localModelId: OTHER_MODEL_ID,
+      localVersionId: OTHER_VERSION_ID,
+    }
+    source.current.generationDraft.model = copied
+    source.current.modelCatalog!.push(catalogItem(copied))
+    assert.equal(
+      result(source, 'model.resource').status,
+      'Changed',
+      JSON.stringify(changedIdentity),
+    )
+    assert.notEqual(result(source, 'model.resource').before, result(source, 'model.resource').after)
+    assert.match(result(source, 'model.resource').before, /CivitAI model 91 · version 92 · file 93/)
+  }
+})
+
+test('Illustrious scheduler resolution is unavailable for Anima, unknown family or no current checkpoint', () => {
+  for (const family of ['anima', null] as const) {
+    const source = fixture()
+    source.current.generationDraft.model!.baseModelFamily = family
+    source.current.modelCatalog![0].versions[0].baseModelFamily = family
+    assert.equal(result(source, 'sampling.invokeScheduler').status, 'Unavailable')
+    assert.equal(result(source, 'sampling.sampler').status, 'Same')
+    assert.equal(result(source, 'sampling.scheduler').status, 'Same')
+  }
+  const source = fixture()
+  source.current.generationDraft.model = null
+  assert.equal(result(source, 'sampling.invokeScheduler').status, 'Unavailable')
+})
+
+test('Current prediction type comes from installed library override while actual baseline remains frozen', () => {
+  const source = fixture()
+  source.current.modelCatalog![0].versions[0].predictionType = 'v_prediction'
+  source.current.modelCatalog![0].versions[0].predictionTypeSource = 'user'
+  assert.equal(source.current.generationDraft.model!.predictionType, 'epsilon')
+  assert.equal(result(source, 'model.resource').status, 'Same')
+  assert.deepEqual(result(source, 'model.predictionType'), {
+    after: 'v_prediction',
+    before: 'epsilon',
+    key: 'model.predictionType',
+    label: 'Prediction type',
+    status: 'Changed',
+  })
+  assert.equal(source.data.generationConfiguration!.model.predictionType, 'epsilon')
+})
+
+test('unknown catalog is Unavailable, known empty library is Missing resource, and prompts remain comparable', () => {
+  const source = fixture()
+  source.current.modelCatalog = null
+  assert.equal(result(source, 'model.resource').status, 'Unavailable')
+  assert.equal(result(source, 'prompt.text').status, 'Same')
+  assert.equal(result(source, 'prompt.embeddings').status, 'Same')
+  source.current.modelCatalog = []
+  assert.equal(result(source, 'model.resource').status, 'Missing resource')
+  source.current.modelCatalogError = 'Catalog request failed'
+  assert.equal(result(source, 'model.resource').status, 'Unavailable')
+  assert.match(result(source, 'model.resource').after, /Catalog request failed/)
+})
+
+test('concrete dynamic output compares against authored syntax and embedding token identities independently', () => {
+  const source = fixture()
+  source.current.generationDraft.positivePrompt.text = 'a {red|blue} lantern'
+  source.current.generationDraft.negativePrompt.text = 'blur, noise'
+  assert.equal(result(source, 'prompt.text').status, 'Changed')
+  assert.equal(result(source, 'prompt.text').before, 'a red lantern')
+  assert.equal(result(source, 'prompt.text').after, 'a {red|blue} lantern')
+  assert.equal(result(source, 'negativePrompt.text').status, 'Changed')
+  const embedding = { ...source.data.generationConfiguration!.model, kind: 'embedding' as const }
+  source.data.generationConfiguration!.positivePrompt.embeddingRefs = [
+    { resource: embedding, token: 'warm-light' },
+  ]
+  source.current.generationDraft.positivePrompt.embeddingRefs = [
+    { resource: { ...embedding, displayName: 'Display rename' }, token: 'warm-light' },
+  ]
+  source.current.modelCatalog!.push(catalogItem(embedding))
+  assert.equal(result(source, 'prompt.embeddings').status, 'Same')
+  source.data.generationConfiguration!.positivePrompt.embeddingRefs = []
+  assert.equal(result(source, 'prompt.embeddings').status, 'Added')
+  source.data.generationConfiguration!.positivePrompt.embeddingRefs = [
+    { resource: embedding, token: 'warm-light' },
+  ]
+  source.current.generationDraft.positivePrompt.embeddingRefs = []
+  assert.equal(result(source, 'prompt.embeddings').status, 'Removed')
+  source.current.generationDraft.positivePrompt.embeddingRefs = [
+    { resource: embedding, token: 'warm-light' },
+  ]
+  source.current.generationDraft.positivePrompt.embeddingRefs[0].token = 'cold-light'
+  assert.equal(result(source, 'prompt.embeddings').status, 'Changed')
+  source.current.modelCatalog!.pop()
+  assert.equal(result(source, 'prompt.embeddings').status, 'Missing resource')
+  source.data.generationConfiguration!.negativePrompt.text = ''
+  assert.equal(result(source, 'negativePrompt.text').status, 'Added')
+  source.data.generationConfiguration!.negativePrompt.text = 'blur, noise'
+  source.current.generationDraft.negativePrompt.text = ''
+  assert.equal(result(source, 'negativePrompt.text').status, 'Removed')
+})
+
+test('baseline actual seed zero, requested policy and seed behavior compare as distinct facts', () => {
+  const source = fixture()
+  assert.equal(result(source, 'seed.actual').before, '0')
+  assert.equal(result(source, 'seed.actual').after, '0')
+  source.current.generationDraft.seed = { policy: 'reuse', value: 200 }
+  source.current.reuseSeed = 0
+  assert.equal(result(source, 'seed.actual').status, 'Same')
+  assert.equal(result(source, 'seed.policy').status, 'Changed')
+  source.current.reuseSeed = null
+  assert.equal(result(source, 'seed.actual').status, 'Unavailable')
+  source.current.generationDraft.seed = { policy: 'random', value: 0 }
+  assert.equal(result(source, 'seed.actual').status, 'Unavailable')
+  source.current.generationDraft.dynamicPrompt = { maxPrompts: 10, seedBehavior: 'per-prompt' }
+  assert.equal(result(source, 'seed.behavior').status, 'Changed')
+  delete source.data.generationConfiguration!.sampling.seedBehavior
+  assert.equal(result(source, 'seed.behavior').status, 'Unavailable')
+})
+
+test('size and mode use current derived generation context, mode failure is explicit and unrelated values remain useful', () => {
+  const source = fixture()
+  source.current.bbox = { height: 64, width: 128 }
+  source.data.currentMode = 'outpaint'
+  assert.equal(result(source, 'size.dimensions').status, 'Changed')
+  assert.equal(result(source, 'context.mode').status, 'Changed')
+  source.data.currentMode = null
+  source.data.modeUnavailableReason = 'Image engine is not installed'
+  assert.equal(result(source, 'context.mode').status, 'Unavailable')
+  assert.equal(result(source, 'context.mode').after, 'Image engine is not installed')
+  assert.equal(result(source, 'guidance.steps').status, 'Same')
+})
+
+test('semantic scalar changes and unchosen controls are distinguished without inventing missing defaults', () => {
+  const source = fixture()
+  source.current.generationDraft.sampling.cfgScale = 8
+  source.current.generationDraft.sampling.steps = null
+  source.current.generationDraft.sampling.sampler = null
+  source.current.generationDraft.sampling.scheduler = null
+  source.current.generationDraft.cfgRescale = 0
+  source.current.generationDraft.vaePrecision = 'Auto'
+  assert.equal(result(source, 'guidance.cfg').status, 'Changed')
+  assert.equal(result(source, 'guidance.steps').status, 'Removed')
+  assert.equal(result(source, 'sampling.sampler').status, 'Removed')
+  assert.equal(result(source, 'sampling.invokeScheduler').status, 'Unavailable')
+  assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
+  assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
+})
+
+test('pure projection leaves frozen inputs unchanged and never allocates a random seed', () => {
+  const source = fixture()
+  source.current.generationDraft.seed = { policy: 'random', value: null }
+  const snapshot = structuredClone(source)
+  function freeze(value: unknown): void {
+    if (value !== null && typeof value === 'object') {
+      Object.values(value).forEach(freeze)
+      Object.freeze(value)
+    }
+  }
+  freeze(source)
+  const random = Math.random
+  Math.random = () => {
+    throw new Error('Comparison must not allocate a seed')
+  }
+  try {
+    const first = rows(source)
+    const second = rows(source)
+    assert.deepEqual(first, second)
+    first[0].after = 'mutating the disposable view'
+    assert.equal(second[0].after, snapshot.current.generationDraft.positivePrompt.text)
+    assert.deepEqual(source, snapshot)
+  } finally {
+    Math.random = random
+  }
+})

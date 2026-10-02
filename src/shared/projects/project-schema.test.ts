@@ -15,6 +15,7 @@ import {
   IGS_REQUIRED_MEMBER_PATHS,
   IgsSchemaError,
   isIgsMemberPathV1,
+  isRasterGenerationConfigurationV1,
   parseIgsManifestV1,
   parseProjectDocumentV1,
   parseRasterGenerationProvenanceV1,
@@ -462,4 +463,39 @@ test('dynamic draft settings strictly validate count bounds and seed behavior at
     Object.assign(document.generationDraft, { dynamicPrompt: settings })
     assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
   }
+})
+
+test('portable comparison configuration uses the same strict accepted provenance schema', () => {
+  const baseline = rasterGenerationProvenance().generationConfiguration
+  assert.equal(isRasterGenerationConfigurationV1(baseline), true)
+  assert.equal(isRasterGenerationConfigurationV1({ ...baseline, layerSourceContext: {} }), false)
+  assert.equal(
+    isRasterGenerationConfigurationV1({ ...baseline, executionResultContext: {} }),
+    false,
+  )
+  assert.equal(
+    isRasterGenerationConfigurationV1({
+      ...baseline,
+      model: { ...baseline.model, path: '/private/model' },
+    }),
+    false,
+  )
+  assert.equal(
+    isRasterGenerationConfigurationV1({
+      ...baseline,
+      sampling: { ...baseline.sampling, actualSeed: -1 },
+    }),
+    false,
+  )
+  assert.equal(
+    isRasterGenerationConfigurationV1({
+      ...baseline,
+      sampling: { ...baseline.sampling, seedBehavior: 'per-prompt' },
+    }),
+    true,
+  )
+  assert.deepEqual(
+    parseRasterGenerationProvenanceV1(rasterGenerationProvenance()).generationConfiguration,
+    baseline,
+  )
 })

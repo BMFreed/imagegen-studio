@@ -18,6 +18,8 @@ import {
   isAcceptedResultHistoryReference,
 } from '../../shared/projects/accepted-result-history.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
+import type { RasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
+import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -127,6 +129,7 @@ export class ProjectServiceError extends Error {
   constructor(
     readonly code:
       | 'PROJECT_ALREADY_OPEN'
+      | 'PROJECT_COMPARISON_CHANGED'
       | 'PROJECT_CREATED_NOT_INDEXED'
       | 'PROJECT_DIRTY'
       | 'PROJECT_IDENTITY_MISMATCH'
@@ -484,6 +487,85 @@ export class ProjectService {
 
   getOpenTabs(): ProjectTab[] {
     return [...this.openTabs].map(([id, coordinator]) => toTab(id, coordinator))
+  }
+
+  /** Read portable result settings and current pixel mode without admitting a generation or edit. */
+  async getRasterGenerationData(
+    tabId: string,
+    documentId: string,
+    layerId: string,
+    withWorker?: (
+      use: (
+        worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+      ) => Promise<RasterGenerationData['currentMode']>,
+    ) => Promise<RasterGenerationData['currentMode']>,
+  ): Promise<RasterGenerationData> {
+    if (!isProjectDocumentId(documentId) || !isProjectDocumentId(layerId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The comparison owner is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (document.documentId !== documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The comparison belongs to another Project document.',
+      )
+    }
+    const layer = document.layers.find((candidate) => candidate.id === layerId)
+    if (!layer) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This Raster Layer is not available.',
+      )
+    }
+    const documentEpoch = coordinator.documentEpoch
+    const generationConfiguration = layer.generationProvenance
+      ? structuredClone(layer.generationProvenance.generationConfiguration)
+      : null
+    const assertCurrent = (): void => {
+      const current = this.openTabs.get(tabId)
+      const currentDocument = current?.document
+      if (
+        current !== coordinator ||
+        current.documentEpoch !== documentEpoch ||
+        currentDocument?.documentId !== documentId ||
+        currentDocument.documentRevision !== document.documentRevision ||
+        !currentDocument.layers.some((candidate) => candidate.id === layerId)
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_COMPARISON_CHANGED',
+          'The Project changed while reading generation settings. Open the comparison again.',
+        )
+      }
+    }
+    let currentMode: RasterGenerationData['currentMode'] = null
+    if (withWorker) {
+      try {
+        currentMode = await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
+          assertCurrent()
+          return await withWorker(async (worker) => {
+            assertCurrent()
+            const target = await capture.composeTarget(worker)
+            assertCurrent()
+            return target.mode
+          })
+        })
+      } catch {
+        // A changed owner is refused rather than disguised as an unavailable worker.
+        assertCurrent()
+      }
+    }
+    assertCurrent()
+    return {
+      currentMode,
+      documentId,
+      generationConfiguration,
+      layerId,
+      modeUnavailableReason:
+        currentMode === null
+          ? 'The current generation mode is unavailable. The image worker could not compose this Canvas.'
+          : null,
+    }
   }
 
   hasDirtyTabs(): boolean {

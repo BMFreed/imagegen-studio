@@ -74,6 +74,20 @@ Vue-прототипа, а не готовность production UI.
   не меняют выделение. **Корень составного редактора,
   включая его отступы, помечайте `data-entity-control`**: иначе клик вне нативного
   input попадёт в выбор слоя. Детали смонтированы независимо от выделения.
+  Production [`ProjectEntitySurface`](../../src/renderer/components/ProjectEntitySurface.vue)
+  использует тот же DI-подход: необязательный `popoverOpen` и `menu-overlay`
+  принадлежат адаптеру, без знания provenance/API в базовом компоненте. Popover
+  использует публичные `x`/`y` Naive с placement `left`: горизонтальный якорь
+  берётся от кнопки menu, вертикальный — центр viewport для bounded tall body.
+  Resize/scroll пересчитывают якорь; internal shift установленного Naive не
+  доступен публично и не используется. `menuProps`/`nodeProps` дают
+  контекстному меню роли `menu`/`menuitem` и явное `aria-disabled`. Raster-адаптер
+  хранит `comparisonLayerId` через `defineModel`; слой без данных сохраняет
+  disabled пункт. Закрытие/очистка поздних ответов и возврат фокуса — владелец
+  Project. [`GenerationSettingsComparison`](../../src/renderer/components/GenerationSettingsComparison.vue)
+  принимает `sections`, `layerName`, `loading`, `error` и испускает `close`; он
+  знает только presentation/statuses, имеет scroll body и локальный переключатель
+  unchanged rows, без чтения Project или команд Apply/Recall.
 - **Выбор ресурса:** `defineModel<string | null>` хранит выбранное значение;
   `valueKey` — `id` (по умолчанию) либо уникальное и стабильное `name`. `resources` содержит
   `id`, `name` и необязательные `version`, `missing`, `previewSrc`, `baseModel`,

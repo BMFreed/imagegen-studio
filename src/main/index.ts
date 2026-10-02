@@ -1000,6 +1000,34 @@ if (!gotInstanceLock) {
           projectService.getAcceptedResultHistory(cursor as AcceptedResultHistoryCursor | null),
       )
       registerProjectHandler(
+        ipcChannels.projects.getRasterGenerationData,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectDocumentId(args[2]),
+        async (tabId, documentId, layerId) =>
+          await projectService.getRasterGenerationData(
+            tabId as string,
+            documentId as string,
+            layerId as string,
+            developmentWorkerLocation
+              ? async (use) => {
+                  // The existing image worker is CPU-only. Comparison never acquires an inference
+                  // lease, prepares a job, or resolves resources and random seeds.
+                  const worker = await ProjectWorkerClient.start(developmentWorkerLocation, {
+                    environment: { ...process.env, CUDA_VISIBLE_DEVICES: '' },
+                  })
+                  try {
+                    return await use(worker)
+                  } finally {
+                    await worker.close()
+                  }
+                }
+              : undefined,
+          ),
+      )
+      registerProjectHandler(
         ipcChannels.projects.reviewAcceptedResult,
         (args) => args.length === 1 && isAcceptedResultHistoryReference(args[0]),
         (reference) =>

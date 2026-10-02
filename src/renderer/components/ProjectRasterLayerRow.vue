@@ -8,11 +8,23 @@ import ProjectEntitySurface from './ProjectEntitySurface.vue'
 
 const props = defineProps<{
   disabled: boolean
+  hasGenerationData: boolean
   index: number
   layer: ProjectRasterLayerView
   layerCount: number
   selected: boolean
 }>()
+const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
+const comparisonOpen = computed({
+  get: () => comparisonLayerId.value === props.layer.id,
+  set: (open) => {
+    if (open) {
+      comparisonLayerId.value = props.layer.id
+    } else if (comparisonLayerId.value === props.layer.id) {
+      comparisonLayerId.value = null
+    }
+  },
+})
 
 const emit = defineEmits<{
   move: [layerId: string, targetIndex: number]
@@ -21,6 +33,16 @@ const emit = defineEmits<{
 }>()
 
 const menu = computed<ProjectEntityRowAction[]>(() => [
+  {
+    disabled: props.disabled || !props.hasGenerationData,
+    key: 'compare-generation',
+    label: props.hasGenerationData
+      ? 'Compare generation settings'
+      : 'Compare generation settings · No generation data',
+    run: () => {
+      comparisonOpen.value = true
+    },
+  },
   {
     disabled: props.disabled || props.layer.locked || props.index === 0,
     key: 'up',
@@ -37,6 +59,7 @@ const menu = computed<ProjectEntityRowAction[]>(() => [
 
 provideProjectEntityRow({
   menu,
+  popoverOpen: comparisonOpen,
   select: () => emit('select', props.layer.id),
   state: computed(() => ({
     disabled: props.disabled,
@@ -64,5 +87,6 @@ const blendLabel = computed(() =>
     <template v-slot:details>
       <span>{{ blendLabel }} · X {{ layer.transform.x }} · Y {{ layer.transform.y }}</span>
     </template>
+    <template v-slot:menu-overlay><slot :layer name="comparison" /></template>
   </ProjectEntitySurface>
 </template>

@@ -28,6 +28,7 @@ import AppChrome from './components/AppChrome.vue'
 import DocumentTabs from './components/DocumentTabs.vue'
 import ProjectContextMock from './components/ProjectContextMock.vue'
 import { readAcceptedResultsMockPage } from './prototypes/accepted-results/accepted-results.mock'
+import GenerationComparisonPrototype from './prototypes/generation-comparison/GenerationComparisonPrototype.vue'
 import HomePrototype from './prototypes/home/HomePrototype.vue'
 import ModelManagerPrototype from './prototypes/model-manager/ModelManagerPrototype.vue'
 import ApplyPresetPrototype from './prototypes/presets/ApplyPresetPrototype.vue'
@@ -52,6 +53,7 @@ import { imageGenNaiveTheme } from './theme/naive-theme'
 type PrototypeId =
   | 'accepted-results'
   | 'apply-preset'
+  | 'generation-comparison'
   | 'home'
   | 'model-manager'
   | 'preset-manager'
@@ -61,6 +63,7 @@ type PrototypeId =
 const prototypeIds = new Set<PrototypeId>([
   'accepted-results',
   'apply-preset',
+  'generation-comparison',
   'home',
   'model-manager',
   'preset-manager',
@@ -514,6 +517,10 @@ function syncProjectTab(project: HomeProjectRecord) {
                   {{ selectedSavedAcceptedResult.layerId }}
                 </div>
               </template>
+              <GenerationComparisonPrototype
+                v-else-if="activePrototype === 'generation-comparison'"
+                :scenario="requestedScenario ?? 'default'"
+              />
               <ProjectContextMock v-else-if="usesProjectContext" />
               <section v-else aria-hidden="true" class="home-context">
                 <div class="workspace-sidebar">

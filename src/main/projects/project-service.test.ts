@@ -4,6 +4,7 @@ import {
 } from '../../shared/api.js'
 import type { ProjectGenerationDraftChange } from '../../shared/api.js'
 import { isAcceptedResultHistoryPage } from '../../shared/projects/accepted-result-history.js'
+import { isRasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { isProjectAcceptedResultView } from '../../shared/projects/project-accepted-results.js'
 import {
   createEmptyProjectDocumentV1,
@@ -3408,3 +3409,314 @@ test('LoRA relink refuses an existing portable duplicate without merging rows or
     await service.close(tabId)
   })
 })
+
+/** A generated and an imported owner enter comparison through verified ZIP import, not a DTO mock. */
+async function openRasterComparisonFixture(dataRoot: string, service: ProjectService) {
+  const output = await acceptedOutputPngFixture()
+  const project = createEmptyProjectDocumentV1({
+    primaryBbox: { height: 8, width: 8, x: 0, y: 0 },
+    title: 'Read-only comparison',
+  })
+  const generatedLayerId = randomUUID()
+  const importedLayerId = randomUUID()
+  const provenance = acceptedRasterProvenanceFixture(project, output, project.primaryBbox)
+  provenance.generationConfiguration.sampling.actualSeed = 0
+  const document = {
+    ...project,
+    lastActualSeedSnapshot: 0,
+    layers: [generatedLayerId, importedLayerId].map((id, index) => ({
+      asset: {
+        bytes: output.length,
+        height: 8,
+        path: `assets/layers/${id}.png`,
+        sha256: createHash('sha256').update(output).digest('hex'),
+        width: 8,
+      },
+      blendMode: 'normal' as const,
+      ...(index === 0 ? { generationProvenance: provenance } : {}),
+      id,
+      kind: 'raster' as const,
+      locked: index === 0,
+      name: index === 0 ? 'Accepted generated owner' : 'Imported without metadata',
+      opacity: 1,
+      transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+      visible: index === 0,
+    })),
+  }
+  const sourcePath = path.join(dataRoot, 'Comparison source.igs')
+  await saveIgsPackage(sourcePath, {
+    assets: Object.fromEntries(
+      document.layers.map((layer) => [layer.asset.path, { bytes: output }]),
+    ),
+    preview: {
+      ...(await readProjectPlaceholders(placeholdersDir, 'unavailable')),
+      rect: project.primaryBbox,
+      status: 'unavailable',
+    },
+    project: document,
+  })
+  const selected = await service.selectImport(sourcePath)
+  assert.equal(selected.kind, 'transfer-required')
+  if (selected.kind !== 'transfer-required') {
+    throw new Error('Expected comparison fixture import.')
+  }
+  const imported = await service.finishImport(selected.importId, 'copy')
+  assert.equal(imported.result.kind, 'opened')
+  if (imported.result.kind !== 'opened') {
+    throw new Error('Expected comparison fixture tab.')
+  }
+  return { generatedLayerId, importedLayerId, provenance, tab: imported.result.tab }
+}
+
+test('Raster comparison reads portable immutable baseline without worker, preserves shadow and prompt history', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const { generatedLayerId, importedLayerId, provenance, tab } =
+      await openRasterComparisonFixture(dataRoot, service)
+    const projectPath = (await repository.getProject(tab.id))!.canonicalPath
+    const savedPackage = await readIgsPackage(projectPath)
+    const savedBytes = await readFile(projectPath)
+    const groupId = randomUUID()
+    await service.updateGenerationDraft(
+      tab.id,
+      { kind: 'positive-prompt', text: 'first edit' },
+      groupId,
+    )
+    await service.flushAutosave(tab.id)
+    const beforeTab = service.getOpenTabs()[0]
+    const beforeDocument = service.getOpenDocumentForAcceptance(tab.id)!.document
+    const beforeShadow = await shadow.inspect({ projectPath, savedPackage })
+    const beforeIndex = await repository.listSavedAcceptedResults(tab.id)
+    const result = await service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId)
+    assert.ok(isRasterGenerationData(result))
+    assert.deepEqual(result.generationConfiguration, provenance.generationConfiguration)
+    assert.equal(result.generationConfiguration.sampling.actualSeed, 0)
+    assert.equal(result.currentMode, null)
+    assert.match(result.modeUnavailableReason!, /worker/)
+    assert.deepEqual(Object.keys(result).sort(), [
+      'currentMode',
+      'documentId',
+      'generationConfiguration',
+      'layerId',
+      'modeUnavailableReason',
+    ])
+    assert.equal('executionResultContext' in result, false)
+    assert.equal('layerSourceContext' in result, false)
+    assert.deepEqual(service.getOpenTabs()[0], beforeTab)
+    assert.deepEqual(service.getOpenDocumentForAcceptance(tab.id)!.document, beforeDocument)
+    assert.deepEqual(await shadow.inspect({ projectPath, savedPackage }), beforeShadow)
+    assert.deepEqual(await readFile(projectPath), savedBytes)
+    assert.deepEqual(await repository.listSavedAcceptedResults(tab.id), beforeIndex)
+    result.generationConfiguration.positivePrompt.text = 'mutated response'
+    assert.deepEqual(service.getOpenDocumentForAcceptance(tab.id)!.document, beforeDocument)
+    const imported = await service.getRasterGenerationData(tab.id, tab.documentId, importedLayerId)
+    assert.equal(imported.generationConfiguration, null)
+    const failed = await service.getRasterGenerationData(
+      tab.id,
+      tab.documentId,
+      generatedLayerId,
+      async () => {
+        throw new Error(`Private worker failure at ${dataRoot}/runtime`)
+      },
+    )
+    assert.ok(isRasterGenerationData(failed))
+    assert.deepEqual(failed.generationConfiguration, provenance.generationConfiguration)
+    assert.equal(failed.currentMode, null)
+    assert.equal(failed.modeUnavailableReason!.includes(dataRoot), false)
+    await service.updateGenerationDraft(
+      tab.id,
+      { kind: 'positive-prompt', text: 'second edit' },
+      groupId,
+    )
+    const undone = await service.undo(tab.id)
+    assert.equal(undone.generationDraft.positivePrompt.text, '')
+    assert.equal(undone.canUndo, false, 'comparison must not seal the prompt edit group')
+    assert.equal(undone.dirty, false)
+    assert.equal(undone.lastActualSeedSnapshot, 0)
+  })
+})
+
+test('Raster comparison rejects foreign owners, document changes and a closed/reopened coordinator', async () => {
+  await withService(async ({ dataRoot, service }) => {
+    const { generatedLayerId, tab } = await openRasterComparisonFixture(dataRoot, service)
+    await assert.rejects(service.getRasterGenerationData(tab.id, randomUUID(), generatedLayerId), {
+      code: 'PROJECT_IDENTITY_MISMATCH',
+    })
+    await assert.rejects(service.getRasterGenerationData(tab.id, tab.documentId, randomUUID()), {
+      code: 'PROJECT_LAYER_NOT_FOUND',
+    })
+    await assert.rejects(service.getRasterGenerationData(tab.id, 'invalid', generatedLayerId), {
+      code: 'PROJECT_INVALID_INPUT',
+    })
+    await assert.rejects(service.getRasterGenerationData(tab.id, tab.documentId, 'invalid'), {
+      code: 'PROJECT_INVALID_INPUT',
+    })
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const continueWorker = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let composeCalled = false
+    const pending = service.getRasterGenerationData(
+      tab.id,
+      tab.documentId,
+      generatedLayerId,
+      async (use) => {
+        entered()
+        await continueWorker
+        return await use({
+          composeTarget: async () => {
+            composeCalled = true
+            throw new Error('Stale comparison must not reach worker composition')
+          },
+        })
+      },
+    )
+    const rejection = assert.rejects(pending, { code: 'PROJECT_COMPARISON_CHANGED' })
+    await started
+    await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 100, y: 100 })
+    release()
+    await rejection
+    assert.equal(composeCalled, false)
+    await service.undo(tab.id)
+    await assert.rejects(
+      service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, async () => {
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 123, y: 0 })
+        await service.undo(tab.id)
+        return null
+      }),
+      { code: 'PROJECT_COMPARISON_CHANGED' },
+      'an edit followed by exact saved-revision Undo still invalidates the read',
+    )
+    await service
+      .getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, async () => {
+        await service.close(tab.id)
+        assert.equal((await service.open(tab.id)).kind, 'opened')
+        return null
+      })
+      .then(
+        () => assert.fail('A reopened tab must invalidate the captured coordinator'),
+        (error: unknown) => {
+          assert.equal((error as { code: string }).code, 'PROJECT_COMPARISON_CHANGED')
+        },
+      )
+    await service.close(tab.id)
+  })
+})
+
+test(
+  'Raster comparison derives current mode from actual CPU composition and refuses an edit during composition',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, repository, service }) => {
+      const { generatedLayerId, provenance, tab } = await openRasterComparisonFixture(
+        dataRoot,
+        service,
+      )
+      const stagingBasePath = path.join(dataRoot, 'scratch')
+      await mkdir(stagingBasePath, { recursive: true })
+      const worker = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: devPython,
+          runtimeRoot: devRuntimeRoot()!,
+          stagingBasePath,
+        },
+        { requestTimeoutMs: 15_000 },
+      )
+      const useWorker: NonNullable<Parameters<ProjectService['getRasterGenerationData']>[3]> = (
+        use,
+      ) => use(worker)
+      const savedBytes = await readFile((await repository.getProject(tab.id))!.canonicalPath)
+      try {
+        const opaque = await service.getRasterGenerationData(
+          tab.id,
+          tab.documentId,
+          generatedLayerId,
+          useWorker,
+        )
+        assert.ok(isRasterGenerationData(opaque))
+        assert.equal(opaque.currentMode, 'img2img')
+        assert.equal(opaque.modeUnavailableReason, null)
+        assert.deepEqual(opaque.generationConfiguration, provenance.generationConfiguration)
+        assert.equal(service.getOpenTabs()[0].dirty, false)
+        assert.equal(service.getOpenTabs()[0].canUndo, false)
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 100, y: 0 })
+        const outside = await service.getRasterGenerationData(
+          tab.id,
+          tab.documentId,
+          generatedLayerId,
+          useWorker,
+        )
+        assert.equal(
+          outside.currentMode,
+          'txt2img',
+          'a visible layer outside bbox cannot imply img2img',
+        )
+        await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 4, y: 0 })
+        const partial = await service.getRasterGenerationData(
+          tab.id,
+          tab.documentId,
+          generatedLayerId,
+          useWorker,
+        )
+        assert.equal(partial.currentMode, 'outpaint')
+        const before = service.getOpenTabs()[0]
+        const beforeDocument = service.getOpenDocumentForAcceptance(tab.id)!.document
+        await service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, useWorker)
+        assert.deepEqual(service.getOpenTabs()[0], before)
+        assert.deepEqual(service.getOpenDocumentForAcceptance(tab.id)!.document, beforeDocument)
+        assert.deepEqual(
+          await readFile((await repository.getProject(tab.id))!.canonicalPath),
+          savedBytes,
+        )
+        await assert.rejects(
+          service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, (use) =>
+            use({
+              composeTarget: async (input) => {
+                await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: -4, y: 0 })
+                return await worker.composeTarget(input)
+              },
+            }),
+          ),
+          { code: 'PROJECT_COMPARISON_CHANGED' },
+        )
+        while (service.getOpenTabs()[0].canUndo) {
+          await service.undo(tab.id)
+        }
+        assert.equal(service.getOpenTabs()[0].dirty, false)
+        const beforeAbaRevision = service.getOpenDocumentForAcceptance(tab.id)!.document
+          .documentRevision
+        let lateModeReturned = false
+        await assert.rejects(
+          service.getRasterGenerationData(tab.id, tab.documentId, generatedLayerId, (use) =>
+            use({
+              composeTarget: async (input) => {
+                await service.setPrimaryBbox(tab.id, { height: 8, width: 8, x: 321, y: 0 })
+                await service.undo(tab.id)
+                assert.equal(
+                  service.getOpenDocumentForAcceptance(tab.id)!.document.documentRevision,
+                  beforeAbaRevision,
+                )
+                const mode = await worker.composeTarget(input)
+                lateModeReturned = true
+                return mode
+              },
+            }),
+          ),
+          { code: 'PROJECT_COMPARISON_CHANGED' },
+          'a late verified mode after edit/Undo cannot reopen an earlier read',
+        )
+        assert.equal(lateModeReturned, true, 'the late verified worker response actually completed')
+        assert.equal(
+          (await readdir(stagingBasePath)).some((entry) => entry.startsWith('project-target-')),
+          false,
+        )
+      } finally {
+        await worker.close()
+        await service.flushAutosave(tab.id)
+      }
+    })
+  },
+)

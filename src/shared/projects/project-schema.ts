@@ -185,6 +185,24 @@ const ProvenancePromptSchema = v.strictObject({
   text: PromptTextSchema,
 })
 
+const RasterGenerationConfigurationV1Schema = v.strictObject({
+  mode: v.literal('txt2img'),
+  model: IllustriousCheckpointRefSchema,
+  negativePrompt: ProvenancePromptSchema,
+  positivePrompt: ProvenancePromptSchema,
+  sampling: v.strictObject({
+    actualSeed: UInt32Schema,
+    cfgScale: v.pipe(FiniteNumberSchema, v.minValue(1), v.maxValue(30)),
+    invokeScheduler: v.picklist(['dpmpp_2m_k', 'dpmpp_2m', 'euler_a', 'dpmpp_sde_k', 'dpmpp_sde']),
+    requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
+    sampler: NonemptyTextSchema,
+    scheduler: NonemptyTextSchema,
+    seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
+    steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
+  }),
+  size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
+})
+
 /**
  * The first accepted-result format records the exact supported Illustrious txt2img run. The owning
  * Raster Layer ID is the accepted-result identity; candidateId records staging origin.
@@ -206,29 +224,7 @@ const RasterGenerationProvenanceV1Schema = v.pipe(
       }),
       queueItemId: UuidSchema,
     }),
-    generationConfiguration: v.strictObject({
-      mode: v.literal('txt2img'),
-      model: IllustriousCheckpointRefSchema,
-      negativePrompt: ProvenancePromptSchema,
-      positivePrompt: ProvenancePromptSchema,
-      sampling: v.strictObject({
-        actualSeed: UInt32Schema,
-        cfgScale: v.pipe(FiniteNumberSchema, v.minValue(1), v.maxValue(30)),
-        invokeScheduler: v.picklist([
-          'dpmpp_2m_k',
-          'dpmpp_2m',
-          'euler_a',
-          'dpmpp_sde_k',
-          'dpmpp_sde',
-        ]),
-        requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
-        sampler: NonemptyTextSchema,
-        scheduler: NonemptyTextSchema,
-        seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
-        steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
-      }),
-      size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
-    }),
+    generationConfiguration: RasterGenerationConfigurationV1Schema,
     kind: v.literal('illustrious-txt2img'),
     layerSourceContext: v.strictObject({
       bbox: v.strictObject({
@@ -408,6 +404,13 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
     }
   }
   return document
+}
+
+/** Validate the portable comparison payload without accepting private provenance groups. */
+export function isRasterGenerationConfigurationV1(
+  input: unknown,
+): input is IgsRasterGenerationProvenanceV1['generationConfiguration'] {
+  return v.is(RasterGenerationConfigurationV1Schema, input)
 }
 
 /** Validate a mapper-produced record before it is attached to a generated Raster Layer. */

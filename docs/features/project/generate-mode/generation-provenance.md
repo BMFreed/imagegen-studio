@@ -222,8 +222,8 @@ stores optional `sampling.seedBehavior` (`per-iteration` or `per-prompt`) from
 the frozen main context; legacy absence remains unspecified. Concrete prompts
 and the actual completed seed belong to the accepted result, while authored
 dynamic templates remain in the live draft. These integration checks replace
-external inference; comparison and result-to-preset remain unimplemented in
-production. The subsequent Project-local history checkpoint below connects the
+external inference; at that earlier checkpoint comparison and result-to-preset
+were not implemented in production. The subsequent Project-local history checkpoint below connects the
 read-only accepted-result projection; the global durable index remains separate.
 
 ## Production Project-local accepted results
@@ -247,6 +247,41 @@ This checkpoint supports generated Raster Layers only and adds no global
 SQLite history index or cross-project browser. Full settings comparison,
 result-to-preset and Smart Patch variants remain separate roadmap work. It is
 not a catalog of every past generation or of layers removed from current state.
+
+## Production Raster settings comparison
+
+The [preparatory Phase 2C checkpoint](../../../engineering/phase-2c-raster-comparison-research.md)
+connects `Compare generation settings` to the production Raster context menu and
+the same read-only UI in the focused Vue prototype. Locked generated layers are
+inspectable; imported layers retain the disabled `No generation data` item.
+Opening or closing the popover does not select or mutate the layer. Escape or
+Close returns focus to its menu trigger; outside dismissal leaves the clicked
+control's focus alone. The bounded popover stays horizontally next to that trigger and vertically
+centered in the viewport, with a scrolling body and reachable unchanged-settings
+toggle at the supported minimum window size.
+
+Main reads only the exact owning document/layer's cloned generation configuration.
+Preload validates both the strict portable shape and requested document/layer
+identity. The current side combines the live renderer draft, primary bbox size,
+exact installed catalog and document-scoped completed seed. Model prediction type
+uses the current library override; the saved value remains immutable. Resource
+comparison uses exact portable identity, while presence requires a matching ready
+local binding. Random seeds are not allocated for comparison.
+
+Current mode comes from verified CPU target composition, including actual alpha
+coverage. Off-bbox or transparent layers do not imply img2img. This read starts
+no GPU inference/queue job or Prepare, and writes no history/seed/document state.
+If CPU composition is unavailable, recorded settings remain inspectable and the
+mode row says `Unavailable`. Main rejects edits, Undo ABA and close/reopen during
+the read; renderer tokens discard superseded or dismissed responses.
+
+The current `illustrious-txt2img` provenance v1 records model, prompts, seed,
+sampling and original generation size. Historical LoRA, VAE, CFG Rescale, Clip
+Skip and VAE precision are absent and explicitly `Unavailable`, even when the
+current draft has default values. No schema migration or fabricated legacy
+settings is introduced. Full pipeline provenance, Smart Patch comparison and
+result-to-preset remain separate roadmap work. This checkpoint does not complete
+PP-005 or prove release runtime/inference readiness.
 
 ## Vue Prototype Coverage
 

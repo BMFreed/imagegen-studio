@@ -12,6 +12,7 @@ type RasterLayerChange = Parameters<ProjectApi['updateRasterLayer']>[2]
 
 const props = defineProps<{
   disabled: boolean
+  generatedLayerIds: readonly string[]
   importing: boolean
   layers: ProjectRasterLayerView[]
 }>()
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   update: [layerId: string, change: RasterLayerChange]
 }>()
 const selectedLayerId = defineModel<string | null>('selectedLayerId', { required: true })
+const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
 const selectedLayer = computed(
   () => props.layers.find((layer) => layer.id === selectedLayerId.value) ?? null,
 )
@@ -36,7 +38,7 @@ watch(
 
 const blendModes = ['normal', 'multiply', 'screen', 'overlay'] as const
 const blendOptions = blendModes.map((value) => ({
-  label: value[0].toUpperCase() + value.slice(1),
+  label: value.charAt(0).toUpperCase() + value.slice(1),
   value,
 }))
 
@@ -202,8 +204,10 @@ makeDroppable(
       <ProjectSortableRasterLayerRow
         v-for="(layer, index) of layers"
         :key="layer.id"
+        v-model:comparisonLayerId="comparisonLayerId"
         :data-layer-id="layer.id"
         :disabled
+        :hasGenerationData="generatedLayerIds.includes(layer.id)"
         :index
         :layer
         :layers
@@ -211,7 +215,11 @@ makeDroppable(
         @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
         @select="selectedLayerId = $event"
         @update="(layerId, change) => emit('update', layerId, change)"
-      />
+      >
+        <template v-slot:comparison="slotProps">
+          <slot name="comparison" v-bind="slotProps" />
+        </template>
+      </ProjectSortableRasterLayerRow>
     </div>
   </aside>
 </template>

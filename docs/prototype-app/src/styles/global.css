@@ -48,6 +48,11 @@ body {
   font-size: var(--app-font-size);
 }
 
+/* The production comparison preview follows the desktop's 900 px minimum width. */
+body:has(.comparison-prototype) {
+  min-width: 900px;
+}
+
 body .n-modal-mask {
   background: var(--app-overlay-mask);
   backdrop-filter: blur(8px);

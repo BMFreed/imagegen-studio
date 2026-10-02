@@ -8,11 +8,13 @@ import ProjectRasterLayerRow from './ProjectRasterLayerRow.vue'
 
 const props = defineProps<{
   disabled: boolean
+  hasGenerationData: boolean
   index: number
   layer: ProjectRasterLayerView
   layers: ProjectRasterLayerView[]
   selected: boolean
 }>()
+const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
 const emit = defineEmits<{
   move: [layerId: string, targetIndex: number]
   select: [layerId: string]
@@ -42,7 +44,9 @@ const placementClass = computed(() => ({
 <template>
   <div ref="row" class="sortable-row" :class="placementClass">
     <ProjectRasterLayerRow
+      v-model:comparisonLayerId="comparisonLayerId"
       :disabled
+      :hasGenerationData
       :index
       :layer
       :layerCount="layers.length"
@@ -50,7 +54,11 @@ const placementClass = computed(() => ({
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
       @select="emit('select', $event)"
       @update="(layerId, change) => emit('update', layerId, change)"
-    />
+    >
+      <template v-slot:comparison="slotProps">
+        <slot name="comparison" v-bind="slotProps" />
+      </template>
+    </ProjectRasterLayerRow>
   </div>
 </template>
 

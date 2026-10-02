@@ -24,6 +24,10 @@ import { isAcceptedResultHistoryPage } from '../shared/projects/accepted-result-
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import { isGenerationQueuePage } from '../shared/projects/generation-queue-manager.js'
+import {
+  isRasterGenerationData,
+  type RasterGenerationData,
+} from '../shared/projects/generation-settings-comparison.js'
 import { isProjectAcceptedResultView } from '../shared/projects/project-accepted-results.js'
 import {
   isProjectDocumentId,
@@ -672,6 +676,15 @@ const api: StudioApi = {
         ipcChannels.projects.getGenerationState,
         [tabId],
         isProjectGenerationActionState,
+      ),
+    getRasterGenerationData: (tabId, documentId, layerId) =>
+      invokeProject(
+        ipcChannels.projects.getRasterGenerationData,
+        [tabId, documentId, layerId],
+        (value): value is RasterGenerationData =>
+          isRasterGenerationData(value) &&
+          value.documentId === documentId &&
+          value.layerId === layerId,
       ),
     importRasterImage: (tabId) =>
       invokeProject(

@@ -1,11 +1,40 @@
 <script setup lang="ts">
 import { DotsVertical, Eye, EyeOff, Lock, LockOpen } from '@vicons/tabler'
-import { NButton, NDropdown, NIcon } from 'naive-ui'
-import { computed } from 'vue'
+import { NButton, NDropdown, NIcon, NPopover, type PopoverInst } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useProjectEntityRow } from './project-entity-row.js'
 
 const row = useProjectEntityRow()
+const popover = ref<PopoverInst | null>(null)
+const menuTrigger = ref<HTMLElement | null>(null)
+const popoverPosition = ref({ x: 0, y: 0 })
+function syncPopoverPosition() {
+  if (!row.popoverOpen?.value || !menuTrigger.value) {
+    return
+  }
+  // Public NPopover x/y support avoids its non-shifting primary/cross-axis overflow.
+  // Keep horizontal context at the menu, and use viewport center for a bounded tall body.
+  popoverPosition.value = {
+    x: menuTrigger.value.getBoundingClientRect().left,
+    y: window.innerHeight / 2,
+  }
+  void nextTick(() => popover.value?.syncPosition())
+}
+watch(
+  () => row.popoverOpen?.value,
+  () => {
+    void nextTick(syncPopoverPosition)
+  },
+)
+onMounted(() => {
+  window.addEventListener('resize', syncPopoverPosition)
+  window.addEventListener('scroll', syncPopoverPosition, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncPopoverPosition)
+  window.removeEventListener('scroll', syncPopoverPosition, true)
+})
 const menuOptions = computed(() =>
   row.menu.value.map(({ disabled, key, label }) => ({ disabled, key, label })),
 )
@@ -96,20 +125,47 @@ function selectFromSurface(event: MouseEvent) {
           <NIcon :component="row.state.value.locked ? Lock : LockOpen" :size="17" />
         </template>
       </NButton>
-      <NDropdown :options="menuOptions" trigger="click" @select="runAction">
-        <NButton
-          :aria-label="`Layer actions for ${row.state.value.name}`"
-          circle
-          class="entity-action"
-          :disabled="row.state.value.disabled"
-          quaternary
-          size="tiny"
+      <span ref="menuTrigger" class="entity-action">
+        <NDropdown
+          :menuProps="() => ({ role: 'menu' })"
+          :nodeProps="
+            (option) => ({
+              role: 'menuitem',
+              'aria-disabled': option.disabled ? 'true' : 'false',
+            })
+          "
+          :options="menuOptions"
+          trigger="click"
+          @select="runAction"
         >
-          <template v-slot:icon><NIcon :component="DotsVertical" :size="17" /></template>
-        </NButton>
-      </NDropdown>
+          <NButton
+            :aria-label="`Layer actions for ${row.state.value.name}`"
+            circle
+            class="entity-action"
+            data-entity-menu-trigger
+            :disabled="row.state.value.disabled"
+            quaternary
+            size="tiny"
+          >
+            <template v-slot:icon><NIcon :component="DotsVertical" :size="17" /></template>
+          </NButton>
+        </NDropdown>
+      </span>
+      <NPopover
+        ref="popover"
+        placement="left"
+        :show="row.popoverOpen?.value ?? false"
+        :showArrow="false"
+        trigger="manual"
+        :x="popoverPosition.x"
+        :y="popoverPosition.y"
+        @clickoutside="row.popoverOpen && (row.popoverOpen.value = false)"
+        @update:show="(open) => row.popoverOpen && (row.popoverOpen.value = open)"
+      >
+        <slot name="menu-overlay" />
+      </NPopover>
     </div>
-    <div v-if="$slots.details" class="entity-details"><slot name="details" /></div>
+    <div v-if="$slots['details']" class="entity-details"><slot name="details" /></div>
   </article>
 </template>
 

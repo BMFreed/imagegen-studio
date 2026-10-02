@@ -63,16 +63,16 @@ export function isProjectGenerateOptions(value: unknown): value is ProjectGenera
   return (
     isRecord(value) &&
     exactKeys(value, ['documentId', 'iterations'], ['confirmation']) &&
-    isProjectDocumentId(value.documentId) &&
-    typeof value.iterations === 'number' &&
-    Number.isSafeInteger(value.iterations) &&
-    value.iterations >= 1 &&
-    value.iterations <= 100 &&
-    (value.confirmation === undefined ||
-      (isRecord(value.confirmation) &&
-        exactKeys(value.confirmation, ['candidateIds', 'unfinishedJobIds']) &&
-        isIds(value.confirmation.candidateIds) &&
-        isIds(value.confirmation.unfinishedJobIds)))
+    isProjectDocumentId(value['documentId']) &&
+    typeof value['iterations'] === 'number' &&
+    Number.isSafeInteger(value['iterations']) &&
+    value['iterations'] >= 1 &&
+    value['iterations'] <= 100 &&
+    (value['confirmation'] === undefined ||
+      (isRecord(value['confirmation']) &&
+        exactKeys(value['confirmation'], ['candidateIds', 'unfinishedJobIds']) &&
+        isIds(value['confirmation']['candidateIds']) &&
+        isIds(value['confirmation']['unfinishedJobIds'])))
   )
 }
 
@@ -82,45 +82,47 @@ export function isProjectGenerationActionState(
   if (
     !isRecord(value) ||
     !exactKeys(value, ['documentId', 'error', 'jobs', 'phase', 'runningJobId']) ||
-    !isProjectDocumentId(value.documentId) ||
-    !phases.has(value.phase as ProjectGenerationActionState['phase']) ||
-    (value.error !== null && !isSafeError(value.error)) ||
-    !Array.isArray(value.jobs) ||
-    value.jobs.length > IGS_SAFETY_CEILINGS.archiveEntries ||
-    !value.jobs.every(isJob) ||
-    new Set(value.jobs.map((job) => job.id)).size !== value.jobs.length
+    !isProjectDocumentId(value['documentId']) ||
+    !phases.has(value['phase'] as ProjectGenerationActionState['phase']) ||
+    (value['error'] !== null && !isSafeError(value['error'])) ||
+    !Array.isArray(value['jobs']) ||
+    value['jobs'].length > IGS_SAFETY_CEILINGS.archiveEntries ||
+    !value['jobs'].every(isJob) ||
+    new Set(value['jobs'].map((job) => job.id)).size !== value['jobs'].length
   ) {
     return false
   }
-  const running = value.jobs.filter((job) => job.status === 'running')
+  const running = value['jobs'].filter((job) => job.status === 'running')
   return (
     running.length <= 1 &&
-    (value.runningJobId === null
+    (value['runningJobId'] === null
       ? running.length === 0
-      : isUuid(value.runningJobId) && running.length === 1 && running[0].id === value.runningJobId)
+      : isUuid(value['runningJobId']) &&
+        running.length === 1 &&
+        running[0]?.id === value['runningJobId'])
   )
 }
 
 export function isProjectGenerateResult(value: unknown): value is ProjectGenerateResult {
-  if (!isRecord(value) || !isProjectDocumentId(value.documentId)) {
+  if (!isRecord(value) || !isProjectDocumentId(value['documentId'])) {
     return false
   }
-  if (value.kind === 'confirmation-required') {
+  if (value['kind'] === 'confirmation-required') {
     return (
       exactKeys(value, ['candidateIds', 'documentId', 'kind', 'unfinishedJobIds']) &&
-      isIds(value.candidateIds) &&
-      isIds(value.unfinishedJobIds) &&
-      value.candidateIds.length + value.unfinishedJobIds.length > 0
+      isIds(value['candidateIds']) &&
+      isIds(value['unfinishedJobIds']) &&
+      value['candidateIds'].length + value['unfinishedJobIds'].length > 0
     )
   }
   return (
-    value.kind === 'queued' &&
+    value['kind'] === 'queued' &&
     exactKeys(value, ['batchId', 'documentId', 'jobIds', 'kind', 'truncated']) &&
-    isUuid(value.batchId) &&
-    isIds(value.jobIds) &&
-    value.jobIds.length >= 1 &&
-    value.jobIds.length <= GENERATION_BATCH_JOB_LIMIT &&
-    typeof value.truncated === 'boolean'
+    isUuid(value['batchId']) &&
+    isIds(value['jobIds']) &&
+    value['jobIds'].length >= 1 &&
+    value['jobIds'].length <= GENERATION_BATCH_JOB_LIMIT &&
+    typeof value['truncated'] === 'boolean'
   )
 }
 
@@ -136,20 +138,20 @@ function isJob(value: unknown): value is ProjectGenerationQueueJob {
       'status',
       'statusSequence',
     ]) &&
-    isUuid(value.id) &&
-    isUuid(value.batchId) &&
-    typeof value.createdAt === 'string' &&
-    Number.isFinite(Date.parse(value.createdAt)) &&
-    typeof value.prompt === 'string' &&
-    new TextEncoder().encode(value.prompt).byteLength <= 16 * 1024 &&
-    typeof value.seed === 'number' &&
-    Number.isSafeInteger(value.seed) &&
-    value.seed >= 0 &&
-    value.seed <= 0xff_ff_ff_ff &&
-    (value.status === 'pending' || value.status === 'running') &&
-    typeof value.statusSequence === 'number' &&
-    Number.isSafeInteger(value.statusSequence) &&
-    value.statusSequence >= 0
+    isUuid(value['id']) &&
+    isUuid(value['batchId']) &&
+    typeof value['createdAt'] === 'string' &&
+    Number.isFinite(Date.parse(value['createdAt'])) &&
+    typeof value['prompt'] === 'string' &&
+    new TextEncoder().encode(value['prompt']).byteLength <= 16 * 1024 &&
+    typeof value['seed'] === 'number' &&
+    Number.isSafeInteger(value['seed']) &&
+    value['seed'] >= 0 &&
+    value['seed'] <= 0xff_ff_ff_ff &&
+    (value['status'] === 'pending' || value['status'] === 'running') &&
+    typeof value['statusSequence'] === 'number' &&
+    Number.isSafeInteger(value['statusSequence']) &&
+    value['statusSequence'] >= 0
   )
 }
 
@@ -170,10 +172,10 @@ function isSafeError(value: unknown): boolean {
   return (
     isRecord(value) &&
     exactKeys(value, ['code', 'message']) &&
-    typeof value.code === 'string' &&
-    /^[A-Z][A-Z0-9_]{0,127}$/.test(value.code) &&
-    typeof value.message === 'string' &&
-    value.message.length <= 512
+    typeof value['code'] === 'string' &&
+    /^[A-Z][A-Z0-9_]{0,127}$/.test(value['code']) &&
+    typeof value['message'] === 'string' &&
+    value['message'].length <= 512
   )
 }
 

@@ -120,6 +120,10 @@ export class ProjectAutosaveCoordinator {
   get document(): IgsProjectDocumentV1 {
     return this.session.document
   }
+  /** Monotonic in-memory read token; Undo may restore an older portable document revision. */
+  get documentEpoch(): number {
+    return this.editGeneration
+  }
   get filePath(): string {
     return this.session.filePath
   }

@@ -12,6 +12,10 @@ import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generat
 import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
 import { progressForJob } from '../../shared/projects/generation-progress.js'
 import {
+  compareRasterGenerationSettings,
+  type RasterGenerationData,
+} from '../../shared/projects/generation-settings-comparison.js'
+import {
   ILLUSTRIOUS_SCHEDULER_PAIRS,
   isIllustriousSamplingDraftPair,
 } from '../../shared/projects/illustrious-scheduler.js'
@@ -57,6 +61,7 @@ import {
 } from './accepted-history-navigation.js'
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
+import GenerationSettingsComparison from './GenerationSettingsComparison.vue'
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
@@ -732,6 +737,108 @@ function restoreInvalidFixedSeed() {
 
 const selectedLayerId = ref<string | null>(null)
 const layersPanel = ref<InstanceType<typeof ProjectLayerStack> | null>(null)
+const comparisonLayerId = ref<string | null>(null)
+const comparisonData = ref<RasterGenerationData | null>(null)
+const comparisonLoading = ref(false)
+const comparisonError = ref<string | null>(null)
+let comparisonRequest = 0
+const comparisonSections = computed(() =>
+  comparisonData.value
+    ? compareRasterGenerationSettings(comparisonData.value, {
+        bbox: props.tab.primaryBbox,
+        generationDraft: props.generationDraft,
+        modelCatalog:
+          props.modelCatalogLoaded && !props.modelCatalogLoading ? props.modelCatalog : null,
+        modelCatalogError: props.modelCatalogError,
+        reuseSeed: lastActualSeed.value,
+      })
+    : [],
+)
+// Resource capabilities include the document revision; the source pixels only depend on asset SHA.
+const comparisonSourceKey = computed(() =>
+  JSON.stringify({
+    bbox: props.tab.primaryBbox,
+    layers: props.tab.layers.map(({ imageUrl, locked: _locked, name: _name, ...layer }) => ({
+      ...layer,
+      asset: /\/([a-f0-9]{64})\/[a-f0-9]{64}\.img$/.exec(imageUrl)?.[1] ?? imageUrl,
+    })),
+  }),
+)
+watch(
+  [
+    comparisonLayerId,
+    () => props.tab.id,
+    () => props.tab.documentId,
+    comparisonSourceKey,
+    () => props.draftPending,
+    () => props.reloadRequired,
+  ],
+  async (values, previous) => {
+    const request = ++comparisonRequest
+    const layerId = comparisonLayerId.value
+    comparisonError.value = null
+    comparisonData.value = null
+    comparisonLoading.value = false
+    if (!layerId) {
+      return
+    }
+    if (previous && (values[1] !== previous[1] || values[2] !== previous[2])) {
+      comparisonLayerId.value = null
+      return
+    }
+    if (
+      props.reloadRequired ||
+      !props.tab.acceptedResults.some((result) => result.layerId === layerId)
+    ) {
+      comparisonLayerId.value = null
+      return
+    }
+    comparisonLoading.value = true
+    if (props.draftPending) {
+      return
+    }
+    const documentId = props.tab.documentId
+    const tabId = props.tab.id
+    try {
+      const api = globalThis.window.api?.projects
+      if (!api) {
+        throw new Error('The application connection is unavailable.')
+      }
+      const result = await api.getRasterGenerationData(tabId, documentId, layerId)
+      if (request !== comparisonRequest || comparisonLayerId.value !== layerId) {
+        return
+      }
+      if (!result.ok) {
+        throw new Error(result.error.message)
+      }
+      comparisonData.value = result.value
+    } catch (cause) {
+      if (request === comparisonRequest) {
+        comparisonError.value =
+          cause instanceof Error ? cause.message : 'Generation data could not be read.'
+      }
+    } finally {
+      if (request === comparisonRequest) {
+        comparisonLoading.value = false
+      }
+    }
+  },
+)
+onBeforeUnmount(() => {
+  comparisonRequest += 1
+})
+function closeComparison() {
+  const layerId = comparisonLayerId.value
+  comparisonLayerId.value = null
+  if (layerId) {
+    void nextTick(() => {
+      const row = layersPanel.value?.$el.querySelector(
+        `[data-layer-id="${CSS.escape(layerId)}"]`,
+      ) as HTMLElement | null
+      row?.querySelector<HTMLElement>('[data-entity-menu-trigger]')?.focus({ preventScroll: true })
+    })
+  }
+}
 const acceptedResultsOpen = ref(false)
 const acceptedResultsContext = ref<{ documentId: string; projectId: string } | null>(null)
 const acceptedResultRevealLayerId = ref<string | null>(null)
@@ -1614,14 +1721,26 @@ function applyFitBbox() {
       <DnDProvider :autoScrollViewport="false">
         <ProjectLayerStack
           ref="layersPanel"
+          v-model:comparisonLayerId="comparisonLayerId"
           v-model:selectedLayerId="selectedLayerId"
           :disabled="busy || reloadRequired"
+          :generatedLayerIds="tab.acceptedResults.map((result) => result.layerId)"
           :importing="pending === 'import-image'"
           :layers="tab.layers"
           @importImage="emit('importImage')"
           @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
           @update="(layerId, change) => emit('updateLayer', layerId, change)"
         >
+          <template v-slot:comparison="{ layer }">
+            <GenerationSettingsComparison
+              :key="`${tab.id}:${tab.documentId}:${layer.id}`"
+              :error="comparisonError"
+              :layerName="layer.name"
+              :loading="comparisonLoading"
+              :sections="comparisonSections"
+              @close="closeComparison"
+            />
+          </template>
           <template v-slot:header-actions>
             <NButton
               aria-label="Accepted results"
