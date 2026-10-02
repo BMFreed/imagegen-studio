@@ -8,6 +8,7 @@ import {
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
+  supportsInferenceLora,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
@@ -346,6 +347,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'The active worker has not qualified opaque Illustrious img2img.',
         )
       }
+      if (!supportsInferenceLora(this.readyMessage)) {
+        if (frozen.job.loras?.length) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified Illustrious LoRA.',
+          )
+        }
+        delete frozen.job.loras
+      }
       if (!supportsInferenceCFGRescale(this.readyMessage)) {
         if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
           throw new GenerationWorkerError(
@@ -618,6 +628,27 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   private async validateRequestPaths(request: IllustriousGenerationRequestV1): Promise<void> {
+    for (const lora of request.job.loras ?? []) {
+      try {
+        const entry = await lstat(lora.path)
+        if (
+          !entry.isFile() ||
+          entry.isSymbolicLink() ||
+          entry.size !== lora.byteSize ||
+          (await realpath(lora.path)) !== lora.path
+        ) {
+          throw new GenerationWorkerError(
+            'INVALID_PATH',
+            'The generation LoRA is unsafe or changed.',
+          )
+        }
+      } catch (error) {
+        if (error instanceof GenerationWorkerError) {
+          throw error
+        }
+        throw new GenerationWorkerError('INVALID_PATH', 'The generation LoRA is unavailable.')
+      }
+    }
     const stagingRoot = await canonicalDirectory(request.job.output.stagingRoot, 'Staging root')
     if (!isWithin(this.scratchBasePath, stagingRoot)) {
       throw new GenerationWorkerError('INVALID_PATH', 'Staging is outside app-owned scratch.')
@@ -685,6 +716,7 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.denoisingStrength >= 0 &&
         request.job.sampling.denoisingStrength <= 1
       : !('denoisingStrength' in (request.job?.sampling ?? {}))) &&
+    validWorkerLoras(request.job?.loras) &&
     request.protocolVersion === PROTOCOL_VERSION &&
     typeof request.requestId === 'string' &&
     UUID_PATTERN.test(request.requestId) &&
@@ -699,6 +731,36 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.cfgRescale >= 0 &&
         request.job.sampling.cfgRescale <= 0.99))
   )
+}
+
+function validWorkerLoras(value: unknown): boolean {
+  if (value === undefined) {
+    return true
+  }
+  if (!Array.isArray(value)) {
+    return false
+  }
+  const paths = new Set<string>()
+  return value.every((entry: unknown) => {
+    if (
+      !isRecord(entry) ||
+      Object.keys(entry).length !== 4 ||
+      typeof entry.path !== 'string' ||
+      !path.isAbsolute(entry.path) ||
+      path.resolve(entry.path) !== entry.path ||
+      typeof entry.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+      !Number.isSafeInteger(entry.byteSize) ||
+      (entry.byteSize as number) <= 0 ||
+      typeof entry.weight !== 'number' ||
+      !Number.isFinite(entry.weight) ||
+      paths.has(entry.path)
+    ) {
+      return false
+    }
+    paths.add(entry.path)
+    return true
+  })
 }
 
 function validReady(

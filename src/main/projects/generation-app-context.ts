@@ -1,7 +1,7 @@
 import type { AppDatabase } from '../db/database.js'
-import type { ModelService } from '../models/model-service.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 
@@ -12,7 +12,7 @@ import { GenerationProcessor } from './generation-processor.js'
 export interface GenerationAppDependencies {
   database: Pick<AppDatabase, 'db'>
   dataRoot: string
-  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  modelService: GenerationModelResolver
   projectIndex: Pick<ProjectIndexRepository, 'getProject'>
   projectService: Pick<
     ProjectService,

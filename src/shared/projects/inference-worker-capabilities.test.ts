@@ -7,6 +7,7 @@ import {
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
+  supportsInferenceLora,
 } from './inference-worker-capabilities.js'
 
 const legacyReady = {
@@ -126,4 +127,38 @@ test('opaque img2img requires qualified 0.6.0 and retains all earlier capabiliti
   for (const workerVersion of ['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.7.0']) {
     assert.equal(supportsInferenceImg2Img({ ...current, workerVersion }), false)
   }
+})
+
+test('native LoRA qualification requires exact 0.7.0 and all retained pipeline capabilities', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+  ]
+  const current = { ...legacyReady, capabilities, workerVersion: '0.7.0' }
+  assert.ok(isQualifiedInferenceWorkerReady(current))
+  for (const supports of [
+    supportsInferenceLora,
+    supportsInferenceImg2Img,
+    supportsInferenceCFGRescale,
+    supportsInferenceCandidateThumbnails,
+    supportsInferenceDenoisingProgress,
+  ]) {
+    assert.ok(supports(current))
+  }
+  for (const removed of capabilities) {
+    const incomplete: unknown = {
+      ...current,
+      capabilities: capabilities.filter((entry) => entry !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false)
+    assert.equal(supportsInferenceLora(incomplete), false)
+  }
+  for (const workerVersion of ['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.1']) {
+    assert.equal(supportsInferenceLora({ ...current, workerVersion }), false)
+  }
+  assert.equal(supportsInferenceImg2Img(null), false)
 })

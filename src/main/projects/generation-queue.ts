@@ -8,7 +8,10 @@ import type {
   GenerationQueueEntry,
   GenerationQueuePage,
 } from '../../shared/projects/generation-queue-manager.js'
-import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import {
+  IGS_SAFETY_CEILINGS,
+  RecordedGenerationLoraStackSchema,
+} from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable } from 'kysely'
 
@@ -36,6 +39,7 @@ import type {
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
+import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
@@ -103,11 +107,40 @@ const ExactCheckpointSchema = v.strictObject({
   predictionType: PredictionTypeSchema,
   versionName: NonemptySchema,
 })
+const ExactLoraSchema = v.strictObject({
+  ...ExactCheckpointSchema.entries,
+  kind: v.literal('lora'),
+  predictionType: v.nullable(PredictionTypeSchema),
+})
+const FrozenGenerationLorasSchema = v.pipe(
+  v.array(
+    v.strictObject({
+      byteSize: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+      managedPath: NonemptySchema,
+      reference: ExactLoraSchema,
+      weight: v.pipe(v.number(), v.finite()),
+    }),
+  ),
+  v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+)
+const WorkerLorasSchema = v.pipe(
+  v.array(
+    v.strictObject({
+      byteSize: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+      path: NonemptySchema,
+      sha256: Sha256Schema,
+      weight: v.pipe(v.number(), v.finite()),
+    }),
+  ),
+  v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+)
 const Txt2ImgFrozenContextSchema = v.strictObject({
   bbox: BboxSchema,
   documentId: UuidSchema,
   documentRevision: UuidSchema,
   kind: v.literal('normal-txt2img-preparation'),
+  loras: v.optional(FrozenGenerationLorasSchema),
+  loraStack: v.optional(RecordedGenerationLoraStackSchema),
   model: v.strictObject({ managedPath: NonemptySchema, reference: ExactCheckpointSchema }),
   prompts: PromptsSchema,
   sampling: v.strictObject({
@@ -139,6 +172,7 @@ const Txt2ImgWorkerJobSchema = v.strictObject({
     predictionType: PredictionTypeSchema,
     sha256: Sha256Schema,
   }),
+  loras: v.optional(WorkerLorasSchema),
   prompts: PromptsSchema,
   sampling: v.strictObject({
     cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
@@ -1767,6 +1801,7 @@ function frozenPayload(
     request.type === 'generate-illustrious-img2img'
   ) {
     const job = {
+      ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
       prompts: request.job.prompts,
@@ -1786,6 +1821,7 @@ function frozenPayload(
     request.type === 'generate-illustrious-txt2img'
   ) {
     const job = {
+      ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
       prompts: request.job.prompts,
@@ -1950,6 +1986,7 @@ function validateSnapshot(
         ? 'generate-illustrious-img2img'
         : 'generate-illustrious-txt2img') ||
     !denoisingFieldsAgree(context, request.job.sampling) ||
+    !frozenLoraFieldsAgree(context, request.job.loras) ||
     context.schemaVersion !== 1 ||
     request.protocolVersion !== '1' ||
     request.job.schemaVersion !== 1 ||
@@ -2012,6 +2049,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
   )
   return (
     denoisingFieldsAgree(context, workerJob.sampling) &&
+    frozenLoraFieldsAgree(context, workerJob.loras) &&
     path.isAbsolute(context.model.managedPath) &&
     path.resolve(context.model.managedPath) === context.model.managedPath &&
     workerJob.checkpoint.path === context.model.managedPath &&

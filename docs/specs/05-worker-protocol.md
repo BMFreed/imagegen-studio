@@ -413,3 +413,33 @@ Startup rule:
   if their queue rows are pruned or were not updated before the crash;
 - invalid/partial outputs are excluded and diagnosed; terminal queue history
   may be pruned independently of valid candidate recovery.
+
+## Qualified Illustrious LoRA checkpoint
+
+The [LoRA slice](../engineering/phase-2c-lora-research.md) extends the same strict
+normal txt2img/img2img requests with optional `job.loras`: an ordered array of
+`{path, sha256, byteSize, weight}`. Only enabled resources reach the worker. New
+preparations retain the full copied authoring stack separately, including disabled
+refs, and cross-check its enabled subset against operational fields. Historical
+absence is preserved. An empty array is removed only from a disposable wire copy
+for a qualified older peer; a nonempty array requires worker **0.7.0**, capability
+`illustrious-lora` and all previously qualified 0.6.0 capabilities. Unknown versions
+never inherit this capability.
+
+Main qualifies exact managed files and ordinary Kohya target/rank/header structure
+before enqueue, and reverifies frozen resources before admission, Retry and
+dispatch. Python independently verifies exact size/hash, bounded safetensors
+header, complete tensor conversion, actual module shapes and finite tensors.
+It ignores file-supplied PEFT metadata and derives native rank/alpha/target
+configuration from verified tensors. Pinned PEFT **0.21.2** applies adapters to
+UNet and both CLIP encoders before conditioning. Zero and signed finite weights
+are preserved; no weight clamp or default substitution is performed. Nonfinite
+effective scale, conditioning or inference output fails explicitly.
+
+This checkpoint supports ordinary F16/BF16/F32 Kohya up/down pairs with optional
+scalar alpha, SGM or Diffusers UNet names and pinned Linear/Conv2d targets. Missing
+alpha uses rank (intrinsic scale 1). Mixed UNet naming, unsupported algorithms,
+unknown target aliases and incompatible dimensions are refused, not partially
+loaded. This is Illustrious support; Anima and other adapter algorithms remain
+open Phase 2C work. The development runtime evidence is not release installation
+qualification.

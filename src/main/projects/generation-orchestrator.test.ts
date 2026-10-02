@@ -4,7 +4,7 @@ import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-bat
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator, GenerationOrchestratorError } from './generation-orchestrator.js'
@@ -1838,6 +1839,72 @@ test(
       )
       assert.equal(calls, 0)
       assert.deepEqual(await fixture.queue.listUnfinishedByProject(fixture.tabId), [])
+    })
+  },
+)
+
+test(
+  'batch publication reverifies the exact adapter after request qualification before inserting any durable item',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const installed = await publishIllustriousLoraFixture(
+        fixture.modelService.repository,
+        fixture.root,
+        9900,
+        9901,
+      )
+      const reference = await fixture.modelService.resolveGenerationLora(
+        installed.resourceId,
+        installed.versionId,
+      )
+      await fixture.projects.addGenerationLora(fixture.tabId, reference)
+      const prepared = await fixture.projects.prepareNormalGenerationContext(
+        fixture.tabId,
+        fixture.worker,
+        fixture.modelService,
+      )
+      const ready = {
+        ...qualifiedReady,
+        capabilities: [
+          'illustrious-txt2img',
+          'denoising-progress',
+          'candidate-thumbnails',
+          'illustrious-cfg-rescale',
+          'illustrious-img2img',
+          'illustrious-lora',
+        ],
+        workerVersion: '0.7.0',
+      }
+      const options = { iterations: 2, maxPrompts: 100, seedBehavior: 'per-iteration' as const }
+      await assert.rejects(
+        fixture.orchestrator.enqueuePreparedBatch(
+          fixture.tabId,
+          prepared,
+          options,
+          { ready },
+          async () => {
+            await writeFile(installed.managedPath, Buffer.alloc(installed.bytes.length, 0))
+          },
+        ),
+        { code: 'MODEL_FILE_CORRUPT' },
+      )
+      assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+      assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+      await writeFile(installed.managedPath, installed.bytes)
+      const admitted = await fixture.orchestrator.enqueuePreparedBatch(
+        fixture.tabId,
+        prepared,
+        options,
+        { ready },
+      )
+      assert.equal(admitted.items.length, 2)
+      for (const item of admitted.items) {
+        assert.equal(
+          (await fixture.queue.loadVerifiedInput(item.id)).payload.workerJob.loras?.[0]?.weight,
+          0.7,
+        )
+      }
     })
   },
 )

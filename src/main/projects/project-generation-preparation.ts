@@ -3,10 +3,15 @@ import type { IgsProjectDocumentV1, IgsRectV1 } from '../../shared/projects/proj
 
 import { createHash, randomBytes } from 'node:crypto'
 
-import type { ModelService } from '../models/model-service.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 
+import {
+  type FrozenGenerationLora,
+  type FrozenLoraStack,
+  validAuthoredGenerationLoras,
+} from './illustrious-generation-loras.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -16,6 +21,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
   documentId: string
   documentRevision: string
   kind: 'normal-txt2img-preparation'
+  loras?: FrozenGenerationLora[]
+  loraStack?: FrozenLoraStack
   model: {
     managedPath: string
     reference: ExactCheckpoint
@@ -118,10 +125,10 @@ export function validateNormalGenerationDraft(
       'This preparation supports only an Illustrious checkpoint.',
     )
   }
-  if (draft.loras.some((lora) => lora.enabled)) {
+  if (!validAuthoredGenerationLoras(draft.loras)) {
     throw new GenerationPreparationError(
       'GENERATION_LORA_UNSUPPORTED',
-      'Active LoRAs are not supported by this preparation.',
+      'Enabled LoRAs require distinct Illustrious resources and finite weights.',
     )
   }
   if (draft.positivePrompt.embeddingRefs.length || draft.negativePrompt.embeddingRefs.length) {
@@ -203,7 +210,7 @@ export function validateNormalGenerationDraft(
  */
 export async function prepareNormalTxt2Img(input: {
   lastActualSeed?: number | null
-  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  modelService: GenerationModelResolver
   randomUint32?: () => number
   target: FrozenGenerationTarget
 }): Promise<PreparedNormalTxt2Img> {
@@ -231,7 +238,7 @@ export async function prepareNormalTxt2Img(input: {
 /** Freeze one verified transparent txt2img or opaque img2img target for the same queue pipeline. */
 export async function prepareNormalGeneration(input: {
   lastActualSeed?: number | null
-  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  modelService: GenerationModelResolver
   randomUint32?: () => number
   target: FrozenGenerationTarget
 }): Promise<PreparedNormalGeneration> {
@@ -306,10 +313,22 @@ export async function prepareNormalGeneration(input: {
 
   // Main re-hashes the exact installed file; Default and same-model alternatives are irrelevant.
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(model)
+  const loras: FrozenGenerationLora[] = []
+  for (const entry of draft.loras) {
+    if (!entry.enabled) {
+      continue
+    }
+    const verifiedLora = await input.modelService.resolveVerifiedGenerationLoraForPlan(
+      entry.resource,
+    )
+    loras.push({ ...verifiedLora, weight: entry.weight })
+  }
   const common: Omit<FrozenNormalTxt2ImgPreparationV1, 'kind'> = {
     bbox,
     documentId,
     documentRevision,
+    loras,
+    loraStack: draft.loras,
     model: { managedPath: verified.managedPath, reference: { ...verified.reference } },
     prompts: {
       negative: draft.negativePrompt.text,

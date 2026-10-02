@@ -15,6 +15,7 @@ import { crc32, deflateSync } from 'node:zlib'
 import type { AppDatabase } from '../db/database.js'
 import type { GenerationWorkerLease } from './generation-dispatch-coordinator.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
+import type { FrozenQueuedIllustriousGenerationV1 } from './generation-queue.js'
 import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
@@ -26,6 +27,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import {
   GenerationDispatchCoordinator,
@@ -35,6 +37,7 @@ import { GenerationProcessor, GenerationProcessorError } from './generation-proc
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
 import { readIgsPackage } from './igs-package.js'
+import { workerLoras } from './illustrious-generation-loras.js'
 import {
   withIllustriousGenerationRequest,
   withIllustriousTxt2ImgRequest,
@@ -1597,5 +1600,312 @@ test('durable img2img reads reject crossed strength and operation even with a co
       (await fixture.queue.listManagerPage()).items.find((entry) => entry.id === item.id)?.status,
       'failed',
     )
+  })
+})
+
+const loraReady: InferenceWorkerReady = {
+  ...img2imgReady,
+  capabilities: [...img2imgReady.capabilities, 'illustrious-lora'],
+  workerVersion: '0.7.0',
+}
+
+async function preparationWithLoras(fixture: Fixture, opaque = false) {
+  const active = []
+  for (const [index, weight] of [-0.5, 0, 1e-10].entries()) {
+    const installed = await publishIllustriousLoraFixture(
+      fixture.modelService.repository,
+      fixture.root,
+      9500 + index,
+      9600 + index,
+      0.125 * (index + 1),
+    )
+    const selected = await fixture.modelService.resolveGenerationLora(
+      installed.resourceId,
+      installed.versionId,
+    )
+    const reference = { ...selected, displayName: `Copied authored LoRA ${index}` }
+    const verified = await fixture.modelService.resolveVerifiedGenerationLoraForPlan(reference)
+    active.push({ ...verified, weight })
+  }
+  const missing = {
+    ...active[0].reference,
+    baseModelFamily: 'anima' as const,
+    civitaiModelId: 9700,
+    localModelId: 'missing disabled resource',
+    localVersionId: 'missing disabled version',
+  }
+  const loraStack = [
+    { enabled: true, resource: active[0].reference, weight: active[0].weight },
+    { enabled: false, resource: missing, weight: -0.75 },
+    { enabled: true, resource: active[1].reference, weight: active[1].weight },
+    { enabled: true, resource: active[2].reference, weight: active[2].weight },
+  ]
+  const prepared = opaque
+    ? await opaquePreparation(fixture, 0.65)
+    : structuredClone(fixture.prepared)
+  // structuredClone does not preserve Buffer identity; keep verified pixels as a Buffer.
+  return {
+    context: { ...prepared.context, loras: active, loraStack },
+    targetPngBytes: Buffer.from(prepared.targetPngBytes),
+  }
+}
+
+test('LoRA signed/zero/tiny stack survives Retry, restart, dispatch, staging recovery, Add and explicit Save', async (t) => {
+  for (const opaque of [false, true]) {
+    await t.test(opaque ? 'opaque img2img' : 'transparent txt2img', async () => {
+      await withFixture(async (fixture) => {
+        const prepared = await preparationWithLoras(fixture, opaque)
+        const stack = structuredClone(prepared.context.loraStack)
+        const expectedWire = workerLoras(prepared.context)
+        const original = await withIllustriousGenerationRequest({
+          modelService: fixture.modelService,
+          prepared,
+          ready: loraReady,
+          scratchBasePath: path.join(fixture.root, 'scratch'),
+          use: async (request) =>
+            await fixture.queue.enqueueIllustriousGeneration({
+              prepared,
+              projectPath: path.join(fixture.root, 'Project.igs'),
+              request,
+              stagingSessionId: randomUUID(),
+            }),
+        })
+        prepared.context.loraStack[0].weight = 0.9
+        prepared.context.loras[0].weight = 0.9
+        const canceled = await fixture.queue.cancel(original.id)
+        await fixture.queue.recoverAfterRestart()
+        const beforeRetry = await fixture.queue.loadVerifiedRetryInput(original.id)
+        const retry = await fixture.queue.retryTerminal(
+          original.id,
+          canceled.statusSequence,
+          async (input) => {
+            assert.deepEqual(JSON.parse(input.frozenPayloadJson).context.loraStack, stack)
+            await withIllustriousGenerationRequest({
+              modelService: fixture.modelService,
+              prepared: {
+                context: beforeRetry.payload.context,
+                targetPngBytes: await readFile(beforeRetry.targetPath),
+              },
+              ready: loraReady,
+              scratchBasePath: path.join(fixture.root, 'scratch'),
+              use: async (request) => {
+                assert.deepEqual(request.job.loras, expectedWire)
+              },
+            })
+          },
+        )
+        assert.deepEqual(beforeRetry.payload.context.loraStack, stack)
+        const copied = await fixture.queue.loadVerifiedInput(retry.id)
+        assert.deepEqual(copied.payload.context.loraStack, stack)
+        assert.deepEqual(copied.payload.workerJob.loras, expectedWire)
+        const result = await fixture.processor.runOne(
+          transport(async (request) => {
+            assert.equal(
+              request.type,
+              opaque ? 'generate-illustrious-img2img' : 'generate-illustrious-txt2img',
+            )
+            assert.deepEqual(request.job.loras, expectedWire)
+            return await writeDone(request, fixture.outputBytes, 0)
+          }, loraReady),
+        )
+        assert.equal(result.kind, 'completed')
+        const completed = await fixture.queue.loadVerifiedInput(retry.id)
+        await fixture.queue.deleteTerminal(retry.id, completed.item.statusSequence)
+        await fixture.staging.recoverAfterRestart()
+        assert.equal(
+          (await fixture.staging.listVerifiedCandidates(retry.localProjectKey)).length,
+          1,
+        )
+        await withAcceptance(fixture, retry.localProjectKey, async (owner, acceptance) => {
+          await owner.applyDocument({
+            ...owner.document,
+            generationDraft: { ...owner.document.generationDraft, loras: [] },
+          })
+          assert.equal(
+            (await acceptance.accept(retry.localProjectKey, [retry.id], retry.id, [retry.id])).kind,
+            'accepted',
+          )
+          await owner.save({ lastActualSeedSnapshot: 0 })
+          const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
+          const provenance = saved.project.layers[0]?.generationProvenance
+          assert.deepEqual(provenance?.generationConfiguration.loras, stack)
+          assert.equal(provenance?.generationConfiguration.sampling.actualSeed, 0)
+          assert.equal(JSON.stringify(provenance).includes(fixture.root), false)
+          assert.deepEqual(saved.project.generationDraft.loras, [])
+        })
+      })
+    })
+  }
+})
+
+test('LoRA materialization, Retry preflight and dispatch refuse old capabilities and changed exact files', async () => {
+  await withFixture(async (fixture) => {
+    const prepared = await preparationWithLoras(fixture)
+    let materialized = false
+    await assert.rejects(
+      withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared,
+        ready: img2imgReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async () => {
+          materialized = true
+        },
+      }),
+      { code: 'INFERENCE_UNAVAILABLE' },
+    )
+    assert.equal(materialized, false)
+    assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+    const queued = await withIllustriousGenerationRequest({
+      modelService: fixture.modelService,
+      prepared,
+      ready: loraReady,
+      scratchBasePath: path.join(fixture.root, 'scratch'),
+      use: async (request) =>
+        await fixture.queue.enqueueIllustriousGeneration({
+          prepared,
+          projectPath: path.join(fixture.root, 'Project.igs'),
+          request,
+          stagingSessionId: randomUUID(),
+        }),
+    })
+    const canceled = await fixture.queue.cancel(queued.id)
+    const retryInput = await fixture.queue.loadVerifiedRetryInput(queued.id)
+    const retry = (ready: InferenceWorkerReady) =>
+      fixture.queue.retryTerminal(queued.id, canceled.statusSequence, async (input) => {
+        assert.deepEqual(
+          JSON.parse(input.frozenPayloadJson).context.loraStack,
+          prepared.context.loraStack,
+        )
+        await withIllustriousGenerationRequest({
+          modelService: fixture.modelService,
+          prepared: {
+            context: retryInput.payload.context,
+            targetPngBytes: await readFile(retryInput.targetPath),
+          },
+          ready,
+          scratchBasePath: path.join(fixture.root, 'scratch'),
+          use: async () => {},
+        })
+      })
+    await assert.rejects(retry(img2imgReady), { code: 'INFERENCE_UNAVAILABLE' })
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+    const actual = prepared.context.loras[0]
+    const originalBytes = await readFile(actual.managedPath)
+    await writeFile(actual.managedPath, Buffer.alloc(originalBytes.length, 0))
+    await assert.rejects(retry(loraReady), { code: 'MODEL_FILE_CORRUPT' })
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+    await writeFile(actual.managedPath, originalBytes)
+    const validRetry = await retry(loraReady)
+    let dispatched = false
+    const oldPeer = await fixture.processor.runOne(
+      transport(async () => {
+        dispatched = true
+        assert.fail('old peer may not dispatch')
+      }, img2imgReady),
+    )
+    assert.equal(oldPeer.kind, 'failed')
+    assert.equal(dispatched, false)
+    assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+    const second = await fixture.queue.retryTerminal(
+      validRetry.id,
+      (await fixture.queue.loadVerifiedInput(validRetry.id)).item.statusSequence,
+    )
+    await writeFile(actual.managedPath, Buffer.alloc(originalBytes.length, 0))
+    const changed = await fixture.processor.runOne(
+      transport(async () => {
+        dispatched = true
+        assert.fail('changed exact adapter may not dispatch')
+      }, loraReady),
+    )
+    assert.equal(changed.kind, 'failed')
+    assert.equal(changed.queueItemId, second.id)
+    assert.equal(dispatched, false)
+    assert.equal((await fixture.staging.listVerifiedCandidates(second.localProjectKey)).length, 0)
+    assert.deepEqual(await readdir(path.join(fixture.root, 'scratch')), [])
+  })
+})
+
+test('durable LoRA reads refuse hash-consistent authored/operational/wire disagreement and continue to a valid neighbor', async () => {
+  await withFixture(async (fixture) => {
+    const prepared = await preparationWithLoras(fixture)
+    const mutate = [
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.loraStack![0].weight = 0.9
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.loras![0].weight = 0.9
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.loras![0].weight = 0.9
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.loras![0].byteSize += 1
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.loraStack!.reverse()
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.loraStack![0].enabled = false
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.loras![0].reference.fileSha256 = 'f'.repeat(64)
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.context.loraStack
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.workerJob.loras
+      },
+    ]
+    const invalidIds: string[] = []
+    for (const edit of mutate) {
+      const item = await withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared,
+        ready: loraReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async (request) =>
+          await fixture.queue.enqueueIllustriousGeneration({
+            prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          }),
+      })
+      const verified = await fixture.queue.loadVerifiedInput(item.id)
+      const row = await fixture.database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', item.id)
+        .executeTakeFirstOrThrow()
+      const payload = JSON.parse(row.frozen_payload_json)
+      edit(payload)
+      const changed = JSON.stringify(payload)
+      const manifestPath = path.join(path.dirname(verified.targetPath), 'manifest.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      manifest.payloadSha256 = sha256(Buffer.from(changed))
+      await fixture.database.db
+        .updateTable('generation_queue_item')
+        .set({ frozen_payload_json: changed })
+        .where('id', '=', item.id)
+        .execute()
+      await writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 })
+      await assert.rejects(fixture.queue.loadVerifiedInput(item.id), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      invalidIds.push(item.id)
+    }
+    const legacy = await enqueue(fixture)
+    const claimed = await fixture.queue.claimNextPending()
+    assert.equal(claimed?.item.id, legacy)
+    assert.equal(claimed?.payload.context.loraStack, undefined)
+    assert.equal(claimed?.payload.context.loras, undefined)
+    assert.equal(claimed?.payload.workerJob.loras, undefined)
+    const statuses = (await fixture.queue.listManagerPage()).items
+    for (const id of invalidIds) {
+      assert.equal(statuses.find((item) => item.id === id)?.status, 'failed')
+    }
   })
 })

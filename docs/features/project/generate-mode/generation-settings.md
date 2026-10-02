@@ -274,7 +274,19 @@ Production LoRA selection/editing is now covered separately in
 [LoRA selector](./lora-selector.md#production-coverage-27092026): exact versions,
 weights, enabled state, removal and explicit portable relinking persist through
 document recovery/Save. This
-extends the draft controls only; inference is not yet available. Exact-version
+describes the authoring checkpoint; ordinary Illustrious LoRA inference is now
+covered by the checkpoint below. Exact-version
 LoRA trigger completion and prompt editing actions are connected in Electron;
 embedding insertion/diagnostics and Danbooru completion remain pending. See
 [Prompt Editor](./prompt-editor.md#production-coverage-at-the-phase-2a-checkpoint).
+
+## Illustrious LoRA generation checkpoint (02.10.2026)
+
+The existing LoRA selector now feeds qualified Illustrious txt2img and opaque
+img2img through [frozen exact inputs](../../../engineering/phase-2c-lora-research.md).
+Signed finite weights, enabled 0 and disabled missing rows retain their authoring
+semantics. Unsupported formats/families fail explicitly before enqueue; successful
+installation is not inference qualification. The whole configured stack is copied
+to accepted provenance and its read-only comparison; only enabled verified
+resources reach ML. Anima, other adapter algorithms and remaining advanced options
+are still open.

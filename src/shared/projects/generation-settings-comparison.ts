@@ -68,6 +68,7 @@ export interface GenerationSettingsComparisonCurrent {
 }
 
 type Resource = NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
+type Lora = IgsProjectDocumentV1['generationDraft']['loras'][number]
 
 type Prompt = IgsProjectDocumentV1['generationDraft']['positivePrompt']
 type Availability = 'Missing resource' | 'Unavailable' | null
@@ -92,6 +93,16 @@ export function compareRasterGenerationSettings(
     [baseline.model, ...(draft.model ? [draft.model] : [])],
     current,
   )
+  const recordedLoras = baseline.loras
+  const loraAvailability =
+    recordedLoras === undefined
+      ? null
+      : resourceAvailability(
+          [...recordedLoras, ...draft.loras]
+            .filter((lora) => lora.enabled)
+            .map((lora) => lora.resource),
+          current,
+        )
   const currentModelVersion =
     draft.model && current.modelCatalog && !current.modelCatalogError
       ? exactBoundVersion(draft.model, current.modelCatalog)
@@ -161,17 +172,14 @@ export function compareRasterGenerationSettings(
       key: 'loras',
       label: 'LoRA',
       rows: [
-        unrecordedRow(
+        row(
           'loras.stack',
           'LoRA stack',
-          draft.loras.length
-            ? draft.loras
-                .map(
-                  (lora) =>
-                    `${lora.enabled ? 'Enabled' : 'Disabled'} · ${describeResource(lora.resource)} · Weight ${lora.weight}`,
-                )
-                .join('\n')
-            : 'None',
+          recordedLoras === undefined ? undefined : loraStackIdentity(recordedLoras),
+          loraStackIdentity(draft.loras),
+          recordedLoras === undefined ? UNRECORDED : describeLoraStack(recordedLoras),
+          resourceAfter(describeLoraStack(draft.loras), loraAvailability, current),
+          loraAvailability,
         ),
       ],
     },
@@ -351,6 +359,27 @@ function portableIdentity(resource: Resource) {
     fileSha256: resource.fileSha256,
     kind: resource.kind,
   }
+}
+
+function loraStackIdentity(stack: readonly Lora[]) {
+  return stack.length
+    ? stack.map((lora) => ({
+        enabled: lora.enabled,
+        resource: portableIdentity(lora.resource),
+        weight: lora.weight,
+      }))
+    : null
+}
+
+function describeLoraStack(stack: readonly Lora[]): string {
+  return stack.length
+    ? stack
+        .map(
+          (lora) =>
+            `${lora.enabled ? 'Enabled' : 'Disabled'} · ${describeResource(lora.resource)} · Weight ${lora.weight}`,
+        )
+        .join('\n')
+    : 'None'
 }
 
 /** A portable match elsewhere in the catalog is not an already-linked resource. */

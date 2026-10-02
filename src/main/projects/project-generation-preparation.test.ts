@@ -20,6 +20,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { illustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
@@ -436,6 +437,9 @@ test(
               source.bbox.x = 999
               return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
             },
+            resolveVerifiedGenerationLoraForPlan: async () => {
+              throw new Error('This fixture has no active LoRAs.')
+            },
           },
           randomUint32: () => 7,
           target: source,
@@ -497,6 +501,9 @@ test(
             target.lastActualSeedSnapshot = 999
             target.generationDraft.seed = { policy: 'random', value: null }
             return await modelService.resolveVerifiedGenerationCheckpointForPlan(savedModel)
+          },
+          resolveVerifiedGenerationLoraForPlan: async () => {
+            throw new Error('This fixture has no active LoRAs.')
           },
         },
         randomUint32: () => assert.fail('Reuse must not choose a random seed'),
@@ -562,8 +569,12 @@ test(
         { code: 'GENERATION_MODE_UNSUPPORTED', name: 'opaque-img2img', raster: true },
         {
           code: 'GENERATION_LORA_UNSUPPORTED',
-          draft: { loras: [{ enabled: true, resource: lora, weight: 0.7 }] },
-          name: 'active-lora',
+          draft: {
+            loras: [
+              { enabled: true, resource: { ...lora, baseModelFamily: 'anima' }, weight: 0.7 },
+            ],
+          },
+          name: 'unsupported-family-active-lora',
         },
         {
           code: 'GENERATION_EMBEDDING_UNSUPPORTED',
@@ -799,6 +810,9 @@ test(
                 verified = true
                 throw new Error('must reject unsupported worker before verification')
               },
+              resolveVerifiedGenerationLoraForPlan: async () => {
+                throw new Error('This fixture has no active LoRAs.')
+              },
             },
             prepared: nonneutral,
             ready,
@@ -855,6 +869,9 @@ test(
               managedPath: installed.managedPath,
               reference: { ...saved, predictionType: 'v_prediction' },
             }),
+            resolveVerifiedGenerationLoraForPlan: async () => {
+              throw new Error('This fixture has no active LoRAs.')
+            },
           },
           prepared,
           ready,
@@ -1001,6 +1018,9 @@ test(
             prepared.context.prompts.positive = 'changed during model verification'
             prepared.targetPngBytes.fill(0)
             return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
+          },
+          resolveVerifiedGenerationLoraForPlan: async () => {
+            throw new Error('This fixture has no active LoRAs.')
           },
         },
         prepared,
@@ -1182,6 +1202,127 @@ test(
       await assert.rejects(prepareNormalGeneration({ modelService, target: partial }), {
         code: 'GENERATION_MODE_UNSUPPORTED',
       })
+    })
+  },
+)
+
+test(
+  'LoRA preparation freezes the full authored stack and verifies only ordered enabled exact files including zero',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const checkpoint = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('one exact model for failure cases'),
+        civitaiModelId: 9100,
+        civitaiVersionId: 9101,
+        kind: 'checkpoint',
+      })
+      const first = await publishResource(modelRepository, dataRoot, {
+        bytes: illustriousLoraFixture(),
+        civitaiModelId: 9200,
+        civitaiVersionId: 9201,
+        kind: 'lora',
+      })
+      const second = await publishResource(modelRepository, dataRoot, {
+        bytes: illustriousLoraFixture(0.25),
+        civitaiModelId: 9300,
+        civitaiVersionId: 9301,
+        kind: 'lora',
+      })
+      const missing = {
+        ...first.reference,
+        baseModelFamily: 'anima' as const,
+        civitaiModelId: 9400,
+        localModelId: 'missing disabled portable model',
+        localVersionId: 'missing disabled version',
+      }
+      const stack = [
+        { enabled: true, resource: first.reference, weight: 0 },
+        { enabled: false, resource: missing, weight: -0.5 },
+        { enabled: true, resource: second.reference, weight: 1e-10 },
+      ]
+      const { tabId } = await importProject(service, dataRoot, {
+        draft: { loras: stack },
+        model: checkpoint.reference,
+        name: 'frozen-lora-stack',
+      })
+      let verified = 0
+      const prepared = await service.prepareNormalGenerationContext(tabId, worker, {
+        resolveVerifiedGenerationCheckpointForPlan: (saved) =>
+          modelService.resolveVerifiedGenerationCheckpointForPlan(saved),
+        resolveVerifiedGenerationLoraForPlan: async (saved) => {
+          verified++
+          if (verified === 1) {
+            await service.updateGenerationDraft(tabId, {
+              kind: 'lora-weight',
+              resourceId: second.reference.localModelId,
+              value: 0.9,
+              versionId: second.reference.localVersionId,
+            })
+          }
+          return await modelService.resolveVerifiedGenerationLoraForPlan(saved)
+        },
+      })
+      assert.equal(verified, 2)
+      assert.deepEqual(prepared.context.loraStack, stack)
+      assert.deepEqual(
+        prepared.context.loras?.map((entry) => [
+          entry.reference.localVersionId,
+          entry.weight,
+          entry.byteSize,
+        ]),
+        [
+          [first.reference.localVersionId, 0, illustriousLoraFixture().length],
+          [second.reference.localVersionId, 1e-10, illustriousLoraFixture(0.25).length],
+        ],
+      )
+      assert.equal(service.getOpenTabs()[0].generationDraft.loras[2]?.weight, 0.9)
+      assert.equal(
+        prepared.context.loras?.some(
+          (entry) => entry.reference.localModelId === missing.localModelId,
+        ),
+        false,
+      )
+      await service.discardAndClose(tabId)
+      for (const invalidStack of [
+        [
+          { enabled: true, resource: first.reference, weight: 0.7 },
+          {
+            enabled: true,
+            resource: { ...first.reference, civitaiVersionId: 9299, localVersionId: randomUUID() },
+            weight: 0.2,
+          },
+        ],
+        [
+          {
+            enabled: true,
+            resource: { ...first.reference, baseModelFamily: 'anima' as const },
+            weight: 0.7,
+          },
+        ],
+      ]) {
+        const invalid = await importProject(service, dataRoot, {
+          draft: { loras: invalidStack },
+          model: checkpoint.reference,
+          name: 'refuse-incompatible-lora',
+        })
+        let composed = false
+        await assert.rejects(
+          service.prepareNormalGenerationContext(
+            invalid.tabId,
+            {
+              composeTarget: async () => {
+                composed = true
+                throw new Error('must not compose')
+              },
+            },
+            modelService,
+          ),
+          { code: 'GENERATION_LORA_UNSUPPORTED' },
+        )
+        assert.equal(composed, false)
+        await service.discardAndClose(invalid.tabId)
+      }
     })
   },
 )

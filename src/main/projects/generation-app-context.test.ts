@@ -30,6 +30,9 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
       resolveVerifiedGenerationCheckpointForPlan: async () => {
         throw new Error('No model should be resolved during bootstrap.')
       },
+      resolveVerifiedGenerationLoraForPlan: async () => {
+        throw new Error('This fixture has no active LoRAs.')
+      },
     },
     projectIndex: { getProject: async () => null },
     projectService: {

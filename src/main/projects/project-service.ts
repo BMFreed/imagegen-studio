@@ -39,7 +39,7 @@ import { type BigIntStats, constants } from 'node:fs'
 import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { ModelService } from '../models/model-service.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { buildFrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
@@ -781,7 +781,7 @@ export class ProjectService {
   async prepareNormalGenerationContext(
     tabId: string,
     worker: Pick<ProjectWorkerClient, 'composeTarget'>,
-    modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    modelService: GenerationModelResolver,
     randomUint32?: () => number,
     lastActualSeed?: number | null,
   ): ReturnType<typeof prepareNormalGeneration> {
@@ -809,7 +809,7 @@ export class ProjectService {
   async prepareNormalTxt2ImgContext(
     tabId: string,
     worker: Pick<ProjectWorkerClient, 'composeTarget'>,
-    modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    modelService: GenerationModelResolver,
     randomUint32?: () => number,
     lastActualSeed?: number | null,
   ): ReturnType<typeof prepareNormalTxt2Img> {

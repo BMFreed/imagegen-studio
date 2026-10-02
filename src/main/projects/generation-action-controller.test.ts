@@ -25,6 +25,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import {
   ProjectGenerationActionController,
   toProjectGenerationActionApiError,
@@ -62,6 +63,7 @@ type Fixture = {
   database: AppDatabase
   dispatch: GenerationDispatchCoordinator
   documentId: string
+  modelService: ModelService
   packagePath: string
   processor: GenerationProcessor
   projects: ProjectService
@@ -418,6 +420,7 @@ async function withFixture(
       database,
       dispatch,
       documentId,
+      modelService,
       packagePath,
       processor,
       projects,
@@ -2369,5 +2372,138 @@ test('Queue Manager may retry cancel after unconfirmed exit without releasing th
       'canceled',
     )
     assert.equal(fixture.runtime.generated.length, 1)
+  })
+})
+
+const nativeLoraReady: InferenceWorkerReady = {
+  ...rescaleReady,
+  capabilities: [...rescaleReady.capabilities, 'illustrious-img2img', 'illustrious-lora'],
+  workerVersion: '0.7.0',
+}
+async function addControllerLora(fixture: Fixture) {
+  const installed = await publishIllustriousLoraFixture(
+    fixture.modelService.repository,
+    fixture.root,
+    9800,
+    9801,
+  )
+  const reference = await fixture.modelService.resolveGenerationLora(
+    installed.resourceId,
+    installed.versionId,
+  )
+  await fixture.projects.addGenerationLora(fixture.tabId, reference)
+  await fixture.projects.updateGenerationDraft(fixture.tabId, {
+    kind: 'lora-weight',
+    resourceId: reference.localModelId,
+    value: -0.5,
+    versionId: reference.localVersionId,
+  })
+  await fixture.projects.updateGenerationDraft(fixture.tabId, {
+    kind: 'positive-prompt',
+    text: 'a lantern',
+  })
+  await fixture.projects.updateGenerationDraft(fixture.tabId, {
+    kind: 'negative-prompt',
+    text: 'blur',
+  })
+  return reference
+}
+
+test('Generate refuses active LoRA before composition on an older peer and freezes captured weight before draft edits', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, runtime, tabId } = fixture
+    const reference = await addControllerLora(fixture)
+    const saved = await readFile(fixture.packagePath)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 1 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    runtime.ready = structuredClone(nativeLoraReady)
+    runtime.beforeCompose = async () => {
+      await projects.updateGenerationDraft(tabId, {
+        kind: 'lora-weight',
+        resourceId: reference.localModelId,
+        value: 0.9,
+        versionId: reference.localVersionId,
+      })
+      await projects.updateGenerationDraft(tabId, {
+        kind: 'lora-enabled',
+        resourceId: reference.localModelId,
+        value: false,
+        versionId: reference.localVersionId,
+      })
+    }
+    const queued = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(queued.kind, 'queued')
+    if (queued.kind !== 'queued') {
+      assert.fail('qualified adapter must publish a job')
+    }
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const frozen = await fixture.queue.loadVerifiedInput(queued.jobIds[0])
+    assert.equal(frozen.item.status, 'completed')
+    assert.deepEqual(frozen.payload.context.loraStack, [
+      { enabled: true, resource: reference, weight: -0.5 },
+    ])
+    assert.equal(runtime.generated[0]?.job.loras?.[0]?.weight, -0.5)
+    assert.equal(
+      projects.getOpenDocumentForAcceptance(tabId)?.document.generationDraft.loras[0]?.enabled,
+      false,
+    )
+    assert.equal(
+      projects.getOpenDocumentForAcceptance(tabId)?.document.generationDraft.loras[0]?.weight,
+      0.9,
+    )
+    assert.deepEqual(await readFile(fixture.packagePath), saved)
+  })
+})
+
+test('actual Retry controller requires native adapter capability and reverified original file while ignoring later disabled draft', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, runtime, tabId } = fixture
+    const reference = await addControllerLora(fixture)
+    runtime.ready = structuredClone(nativeLoraReady)
+    runtime.beforeGenerate = async () => {
+      throw new Error('controlled adapter job failure')
+    }
+    const queued = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(queued.kind, 'queued')
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    const frozen = await fixture.queue.loadVerifiedInput(source.id)
+    const loraPath = frozen.payload.context.loras![0].managedPath
+    const bytes = await readFile(loraPath)
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'lora-weight',
+      resourceId: reference.localModelId,
+      value: 0.9,
+      versionId: reference.localVersionId,
+    })
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'lora-enabled',
+      resourceId: reference.localModelId,
+      value: false,
+      versionId: reference.localVersionId,
+    })
+    runtime.beforeGenerate = null
+    runtime.ready = structuredClone(rescaleReady)
+    await assert.rejects(controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    assert.equal((await controller.getQueue()).items.length, 1)
+    runtime.ready = structuredClone(nativeLoraReady)
+    await writeFile(loraPath, Buffer.alloc(bytes.length, 0))
+    await assert.rejects(controller.retryJob(source), { code: 'MODEL_FILE_CORRUPT' })
+    assert.equal((await controller.getQueue()).items.length, 1)
+    assert.equal(runtime.generated.length, 1)
+    await writeFile(loraPath, bytes)
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.equal(runtime.generated[1]?.job.loras?.[0]?.weight, -0.5)
+    assert.equal(runtime.generated[1]?.job.loras?.[0]?.sha256, reference.fileSha256)
+    assert.equal(
+      (await controller.getQueue()).items.filter((item) => item.status === 'completed').length,
+      1,
+    )
   })
 })

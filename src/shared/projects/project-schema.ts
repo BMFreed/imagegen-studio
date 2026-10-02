@@ -146,6 +146,20 @@ const LoraSchema = v.strictObject({
   weight: FiniteNumberSchema,
 })
 
+/** Copied authored configuration; disabled missing references remain portable authoring data. */
+export const RecordedGenerationLoraStackSchema = v.pipe(
+  v.array(
+    v.strictObject({
+      ...LoraSchema.entries,
+      resource: v.strictObject({ ...ExactResourceRefSchema.entries, kind: v.literal('lora') }),
+    }),
+  ),
+  v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+  v.check((stack) =>
+    stack.every((entry) => !entry.enabled || entry.resource.baseModelFamily === 'illustrious'),
+  ),
+)
+
 const GenerationDimensionSchema = v.pipe(
   BoundedDimensionSchema,
   v.minValue(8),
@@ -187,6 +201,7 @@ const ProvenancePromptSchema = v.strictObject({
 
 const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
   cfgRescale: v.optional(v.pipe(FiniteNumberSchema, v.minValue(0), v.maxValue(0.99))),
+  loras: v.optional(RecordedGenerationLoraStackSchema),
   mode: v.literal('txt2img'),
   model: IllustriousCheckpointRefSchema,
   negativePrompt: ProvenancePromptSchema,

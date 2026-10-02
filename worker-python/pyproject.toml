@@ -14,6 +14,7 @@ inference = [
   "accelerate==1.14.0",
   "compel==2.4.0",
   "diffusers==0.40.0",
+  "peft==0.21.2",
   "safetensors==0.8.0",
   "torch==2.7.1",
   "torchsde==0.2.6",

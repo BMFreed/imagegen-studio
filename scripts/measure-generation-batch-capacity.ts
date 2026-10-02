@@ -402,6 +402,9 @@ async function runCase(config: CaseConfig): Promise<void> {
               managedPath: modelPath,
               reference,
             }),
+            resolveVerifiedGenerationLoraForPlan: async () => {
+              throw new Error('Capacity fixture has no active LoRAs.')
+            },
           },
           prepared,
           ready,

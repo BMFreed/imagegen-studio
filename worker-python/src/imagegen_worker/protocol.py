@@ -76,6 +76,14 @@ class ComposeTargetCommand:
 
 
 @dataclass(frozen=True)
+class GenerationLora:
+    path: Path
+    sha256: str
+    byte_size: int
+    weight: float
+
+
+@dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
     """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
@@ -99,6 +107,7 @@ class GenerateIllustriousTxt2ImgCommand:
     staging_root: Path
     output_path: Path
     cfg_rescale: float = 0.0
+    loras: tuple[GenerationLora, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -221,6 +230,7 @@ def _generate_illustrious_txt2img(
         value,
         "Generation job",
         {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
+        optional_keys={"loras"},
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
         raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
@@ -228,6 +238,26 @@ def _generate_illustrious_txt2img(
     checkpoint = _object(job["checkpoint"], "Checkpoint", {"path", "sha256", "predictionType"})
     checkpoint_path = _absolute_path(checkpoint["path"], "Checkpoint path")
     checkpoint_sha256 = _sha256(checkpoint["sha256"], "Checkpoint SHA-256")
+    lora_values = job.get("loras", [])
+    if not isinstance(lora_values, list):
+        raise DerivativeError("INVALID_REQUEST", "LoRAs must be an array.")
+    loras: list[GenerationLora] = []
+    paths: set[Path] = set()
+    for value in cast(list[object], lora_values):
+        fields = _object(value, "LoRA", {"path", "sha256", "byteSize", "weight"})
+        path = _absolute_path(fields["path"], "LoRA path")
+        digest = _sha256(fields["sha256"], "LoRA SHA-256")
+        if path in paths:
+            raise DerivativeError("INVALID_REQUEST", "Enabled LoRAs must be distinct.")
+        paths.add(path)
+        loras.append(
+            GenerationLora(
+                path=path,
+                sha256=digest,
+                byte_size=_positive_integer(fields["byteSize"], "LoRA byte size"),
+                weight=_number(fields["weight"], "LoRA weight"),
+            )
+        )
     prediction_type = checkpoint["predictionType"]
     if not isinstance(prediction_type, str) or prediction_type not in (
         "epsilon",
@@ -339,6 +369,7 @@ def _generate_illustrious_txt2img(
         steps=steps,
         cfg_scale=cfg_scale,
         cfg_rescale=cfg_rescale,
+        loras=tuple(loras),
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

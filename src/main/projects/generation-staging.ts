@@ -23,6 +23,7 @@ import {
 } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
+import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
 const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
@@ -1394,6 +1395,7 @@ function parseFrozenPayload(json: string): FrozenPayload {
     (context.kind === 'normal-img2img-preparation' &&
       (!('denoisingStrength' in workerJob.sampling) ||
         context.sampling.denoisingStrength !== workerJob.sampling.denoisingStrength)) ||
+    !frozenLoraFieldsAgree(context, workerJob.loras) ||
     !isDeepStrictEqual(context.bbox, workerJob.bbox) ||
     !isDeepStrictEqual(context.prompts, workerJob.prompts) ||
     context.model.managedPath !== workerJob.checkpoint.path ||

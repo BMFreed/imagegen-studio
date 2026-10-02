@@ -208,6 +208,9 @@ async function inRequestLease<T>(
         managedPath: prepared.context.model.managedPath,
         reference,
       }),
+      resolveVerifiedGenerationLoraForPlan: async () => {
+        throw new Error('This fixture has no active LoRAs.')
+      },
     },
     prepared,
     ready,

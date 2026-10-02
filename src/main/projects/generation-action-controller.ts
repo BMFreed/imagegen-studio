@@ -9,6 +9,7 @@ import type {
 import {
   supportsInferenceCFGRescale,
   supportsInferenceImg2Img,
+  supportsInferenceLora,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
   ProjectGenerateOptions,
@@ -17,12 +18,12 @@ import type {
 } from '../../shared/projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
-import type { ModelService } from '../models/model-service.js'
 import type { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { GenerationProcessor } from './generation-processor.js'
 import type { GenerationQueueRepository, QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
@@ -71,7 +72,7 @@ interface GenerationActionRuntime {
 interface GenerationActionDependencies {
   dispatch: Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
   gate: ProjectGenerationOperationGate
-  models: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  models: GenerationModelResolver
   orchestrator: Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
   processor: Pick<GenerationProcessor, 'cancelAndWait' | 'onChanged'>
   projects: CapturedProjectService
@@ -443,6 +444,15 @@ export class ProjectGenerationActionController {
             throw new IllustriousJobError(
               'INFERENCE_UNAVAILABLE',
               'The active worker has not qualified Illustrious CFG Rescale.',
+            )
+          }
+          if (
+            capture.document.generationDraft.loras.some((entry) => entry.enabled) &&
+            !supportsInferenceLora(inferenceReady)
+          ) {
+            throw new IllustriousJobError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker has not qualified Illustrious LoRA.',
             )
           }
           const target = await capture.composeTarget(targetWorker)

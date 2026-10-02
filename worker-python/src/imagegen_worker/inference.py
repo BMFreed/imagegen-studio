@@ -6,6 +6,7 @@ inference entrypoint qualifies its offline config and CUDA runtime.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib
 import importlib.metadata
@@ -33,16 +34,18 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
+from imagegen_worker.inference_lora import finite_lora_outputs, load_generation_loras
 from imagegen_worker.protocol import (
     MAX_GENERATION_STEPS,
     GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.6.0"
+INFERENCE_WORKER_VERSION = "0.7.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
+INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
@@ -58,6 +61,7 @@ PINNED_ML_VERSIONS: dict[str, str] = {
     "safetensors": "0.8.0",
     "torchsde": "0.2.6",
     "compel": "2.4.0",
+    "peft": "0.21.2",
     "pillow": "12.2.0",
 }
 
@@ -121,6 +125,7 @@ def qualify_ml_runtime() -> MLRuntime:
         importlib.import_module("transformers")
         importlib.import_module("accelerate")
         importlib.import_module("safetensors")
+        importlib.import_module("peft")
         importlib.import_module("torchsde")
         for name in (
             "StableDiffusionXLPipeline",
@@ -803,28 +808,42 @@ def _generate_illustrious(
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed during loading.")
     pipeline.scheduler = select_inference_scheduler(command, pipeline, runtime)
     pipeline.set_progress_bar_config(disable=True)
+    load_generation_loras(pipeline, command.loras, torch)
     pipeline = pipeline.to("cuda")
-    with torch.inference_mode():
-        conditioning = build_sdxl_conditioning(command, pipeline, runtime)
-    generator = torch.Generator(device="cpu").manual_seed(command.seed)
-    result = run_sdxl_pipeline(
-        pipeline,
-        conditioning,
-        width=command.width,
-        height=command.height,
-        steps=command.steps,
-        cfg_scale=command.cfg_scale,
-        cfg_rescale=command.cfg_rescale,
-        generator=generator,
-        torch=torch,
-        on_progress=on_progress,
-        image=image,
-        denoising_strength=(
-            command.denoising_strength
-            if isinstance(command, GenerateIllustriousImg2ImgCommand)
-            else None
-        ),
-    )
+    with finite_lora_outputs(pipeline, torch) if command.loras else contextlib.nullcontext():
+        with torch.inference_mode():
+            conditioning = build_sdxl_conditioning(command, pipeline, runtime)
+        if command.loras and any(
+            not bool(torch.isfinite(tensor).all().item())
+            for tensor in (
+                conditioning.positive,
+                conditioning.negative,
+                conditioning.positive_pooled,
+                conditioning.negative_pooled,
+            )
+        ):
+            raise DerivativeError(
+                "GENERATION_WORKER_FAILED", "LoRA conditioning produced non-finite values."
+            )
+        generator = torch.Generator(device="cpu").manual_seed(command.seed)
+        result = run_sdxl_pipeline(
+            pipeline,
+            conditioning,
+            width=command.width,
+            height=command.height,
+            steps=command.steps,
+            cfg_scale=command.cfg_scale,
+            cfg_rescale=command.cfg_rescale,
+            generator=generator,
+            torch=torch,
+            on_progress=on_progress,
+            image=image,
+            denoising_strength=(
+                command.denoising_strength
+                if isinstance(command, GenerateIllustriousImg2ImgCommand)
+                else None
+            ),
+        )
     image = result.images[0]
     if not isinstance(image, Image.Image) or image.size != (command.width, command.height):
         raise DerivativeError(

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
+import type { FrozenNormalTxt2ImgPreparationV1 } from './project-generation-preparation.js'
 
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 import { localProjectRecoveryKey } from './project-identity.js'
@@ -427,4 +428,77 @@ test('img2img provenance records actual strength including zero and rejects cros
       assert.throws(() => map(invalid), { code: 'PROVENANCE_INPUT_INVALID' })
     }
   }
+})
+
+test('portable LoRA provenance distinguishes legacy unknown from recorded empty and refuses crossed frozen weights', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (candidate: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-09-29T12:01:00.000Z',
+      candidate,
+      imagePngBytes,
+    })
+  assert.equal(Object.hasOwn(map(candidate).generationConfiguration, 'loras'), false)
+  const empty = structuredClone(candidate)
+  replacePayload(empty, (payload) => {
+    Object.assign(payload.context as object, { loras: [], loraStack: [] })
+    Object.assign(payload.workerJob as object, { loras: [] })
+  })
+  assert.deepEqual(map(empty).generationConfiguration.loras, [])
+  const recorded = structuredClone(candidate)
+  replacePayload(recorded, (payload) => {
+    const context = payload.context as FrozenNormalTxt2ImgPreparationV1
+    const checkpoint = context.model.reference
+    const resource = { ...checkpoint, kind: 'lora' as const, predictionType: null }
+    context.loraStack = [
+      { enabled: true, resource, weight: 0 },
+      {
+        enabled: false,
+        resource: {
+          ...resource,
+          baseModelFamily: null,
+          civitaiModelId: 999,
+          localModelId: 'portable disabled missing model',
+          localVersionId: 'portable missing version',
+        },
+        weight: -0.5,
+      },
+    ]
+    context.loras = [
+      {
+        byteSize: 32,
+        managedPath: '/private/models/lora.safetensors',
+        reference: resource,
+        weight: 0,
+      },
+    ]
+    Object.assign(payload.workerJob as object, {
+      loras: [
+        {
+          byteSize: 32,
+          path: '/private/models/lora.safetensors',
+          sha256: resource.fileSha256,
+          weight: 0,
+        },
+      ],
+    })
+  })
+  const provenance = map(recorded)
+  assert.deepEqual(
+    provenance.generationConfiguration.loras?.map((entry) => [entry.enabled, entry.weight]),
+    [
+      [true, 0],
+      [false, -0.5],
+    ],
+  )
+  assert.equal(
+    provenance.generationConfiguration.loras?.[1]?.resource.localModelId,
+    'portable disabled missing model',
+  )
+  assert.equal(JSON.stringify(provenance).includes('/private/models/lora.safetensors'), false)
+  const crossed = structuredClone(recorded)
+  replacePayload(crossed, (payload) => {
+    ;(payload.workerJob as { loras: { weight: number }[] }).loras[0].weight = 0.9
+  })
+  assert.throws(() => map(crossed), { code: 'PROVENANCE_INPUT_INVALID' })
 })

@@ -349,3 +349,16 @@ than an independently movable default generation bbox; this is a prototype gap.
 - Regional Guidance never appears in result provenance, comparison or result-derived presets; results generated with regions cannot be fully reconstructed from their saved record.
 - Smart Patch outdated state can be derived from active variant provenance versus current layer-owned inputs.
 - Provenance is not presented or implemented as an undo snapshot.
+
+## Illustrious LoRA recording checkpoint (02.10.2026)
+
+[The LoRA slice](../../../engineering/phase-2c-lora-research.md) adds optional
+`generationConfiguration.loras` to both normal-mode v1 records. New records copy
+the full frozen configured stack: exact resource metadata, enabled state and
+weight in authoring order. The verified enabled subset is separately frozen for
+operational execution; disabled references do not require installed files and may
+retain transferred string IDs or an unknown/different family. Portable records
+never include managed paths. Old field absence is unknown, while new `[]` records
+a known empty stack. Comparison retains this distinction and reports resource
+availability only for enabled references. Other missing pipeline settings are
+still Unavailable; this checkpoint does not complete PP-005 or result-to-preset.

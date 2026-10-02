@@ -171,6 +171,9 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
   }
   const models = {
     resolveVerifiedGenerationCheckpointForPlan: async () => ({ managedPath, reference }),
+    resolveVerifiedGenerationLoraForPlan: async () => {
+      throw new Error('This fixture has no active LoRAs.')
+    },
   }
   const prepared = (document: IgsProjectDocumentV1, seed: number): PreparedNormalTxt2Img => ({
     context: {

@@ -29,6 +29,7 @@ import { gunzipSync } from 'node:zlib'
 import { _electron as electron, expect } from '@playwright/test'
 
 import { openAppDatabase } from '../src/main/db/database.ts'
+import { qualifyIllustriousLora } from '../src/main/models/illustrious-lora-qualification.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualification.ts'
 import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
@@ -51,6 +52,8 @@ const peerProgress = path.join(fixtureRoot, 'peer-progress.jsonl')
 const peerExits = path.join(fixtureRoot, 'peer-exits.jsonl')
 const projectTitle = 'Native Generate actions'
 const checkpointName = 'Native structural checkpoint fixture'
+const loraName = 'Native LoRA fixture'
+const disabledLoraName = 'Native disabled missing LoRA'
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const environment = {
   ...process.env,
@@ -74,6 +77,7 @@ const report = {
     'Actual optional worker WEBP publication, signed thumbnail resource and thumbnail-only result strip; damaged derivative cache cannot remove the full candidate.',
     'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
     'Actual contextual Denoising Strength control and opaque accepted Raster → img2img queue → later draft edit → Add → Save/reopen/comparison; partial-alpha neighboring target is visibly refused.',
+    'Actual exact LoRA selection and frozen full stack/verified enabled wire through Generate, later weight/default edit, Retry, Add, Save/reopen and read-only comparison; disabled missing files remain ignored by inference.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -450,6 +454,93 @@ async function seedCheckpoint() {
   }
 }
 
+/** Actual contiguous F32 Kohya tensors; valid header/file identity without claiming ML execution. */
+function miniatureLora(alpha = 1) {
+  const prefix = 'lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k'
+  const tensors = [
+    { key: `${prefix}.lora_down.weight`, shape: [1, 2048], value: 0.01 },
+    { key: `${prefix}.lora_up.weight`, shape: [640, 1], value: 0.02 },
+    { key: `${prefix}.alpha`, shape: [], value: alpha },
+  ]
+  const header = {}
+  const payloads = []
+  let offset = 0
+  for (const tensor of tensors) {
+    const count = tensor.shape.reduce((product, dimension) => product * dimension, 1)
+    const payload = Buffer.alloc(count * 4)
+    for (let index = 0; index < count; index++) payload.writeFloatLE(tensor.value, index * 4)
+    header[tensor.key] = {
+      data_offsets: [offset, offset + payload.length],
+      dtype: 'F32',
+      shape: tensor.shape,
+    }
+    payloads.push(payload)
+    offset += payload.length
+  }
+  const json = Buffer.from(JSON.stringify(header))
+  const length = Buffer.alloc(8)
+  length.writeBigUInt64LE(BigInt(json.length))
+  return Buffer.concat([length, json, ...payloads])
+}
+
+async function seedLoras() {
+  const database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  const repository = new ModelRepository(database.db)
+  try {
+    const publish = async (versionId, modelId, name, family, alpha) => {
+      const bytes = miniatureLora(alpha)
+      const managedPath = path.join(appDataRoot, 'models', `native-lora-${versionId}.safetensors`)
+      writeFileSync(managedPath, bytes, { mode: 0o600 })
+      await qualifyIllustriousLora(managedPath)
+      const published = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: path.basename(managedPath),
+            sha256: digest(bytes),
+            sizeBytes: bytes.length,
+            verifiedAt: new Date().toISOString(),
+          },
+          resource: {
+            creator: 'Native smoke fixture',
+            displayName: name,
+            source: { kind: 'civitai', modelId },
+            sourceMetadata: {},
+            type: 'lora',
+          },
+          version: {
+            baseModelFamily: family,
+            format: 'safetensors',
+            name: `Native LoRA v${versionId}`,
+            source: {
+              expectedSha256: digest(bytes),
+              fileId: versionId + 92000,
+              kind: 'civitai',
+              versionId,
+            },
+            sourceMetadata: { trainedWords: [`native trigger ${versionId}`] },
+          },
+        },
+      })
+      return {
+        ...published,
+        bytes,
+        managedPath,
+        sha256: digest(bytes),
+        sizeBytes: bytes.length,
+        versionName: `Native LoRA v${versionId}`,
+      }
+    }
+    return {
+      first: await publish(1, 91001, loraName, 'illustrious', 1),
+      second: await publish(2, 91001, loraName, 'illustrious', 0.5),
+      disabled: await publish(3, 91002, disabledLoraName, 'illustrious', 1),
+    }
+  } finally {
+    await database.close()
+  }
+}
+
 async function installControlledRuntime() {
   const roots = await createRuntimeRoots(appDataRoot)
   const runtimeId = 'native-smoke-linux-nvidia'
@@ -522,8 +613,8 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify(role === 'inference'
-  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.6.0',
-    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img']}
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.7.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
     runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
@@ -560,6 +651,15 @@ process.stdin.on('data',data=>{
       if (role !== 'inference') process.exit(30)
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
+      if(request.job.loras!==undefined) {
+        if(!Array.isArray(request.job.loras)) process.exit(31)
+        for(const lora of request.job.loras) {
+          if(Object.keys(lora).sort().join(',')!=='byteSize,path,sha256,weight'
+            || !Number.isFinite(lora.weight) || !Number.isSafeInteger(lora.byteSize)
+            || lora.byteSize<1 || fs.statSync(lora.path).size!==lora.byteSize
+            || hash(fs.readFileSync(lora.path))!==lora.sha256) process.exit(32)
+        }
+      }
       const emitProgress = (progress, source, prefix='') => {
         const message = {type:'generation-progress',protocolVersion:'1',requestId:request.requestId,...progress}
         fs.appendFileSync(progressLog,JSON.stringify({message,pid:process.pid,source})+'\n')
@@ -689,6 +789,7 @@ try {
     playwrightKeyboardUnchanged: true,
   }
   const installed = await seedCheckpoint()
+  const installedLoras = await seedLoras()
   await launch()
   const unavailable = await window.evaluate(() => window.api.runtime.getStatus())
   assert.equal(unavailable.ok, true)
@@ -2330,6 +2431,200 @@ try {
       layerId: imgLayer.id,
       requestId: imgRequest.request.requestId,
       sourceTargetSha256: imgRequest.request.job.target.sha256,
+    },
+  )
+  await resizeNativeWindow(1380, 900)
+  const loraProject = await createConfiguredProject(
+    'LoRA acceptance',
+    'native LoRA frozen prompt',
+    73,
+    96,
+    installed.versionId,
+  )
+  const lorasRegion = loraProject.region.getByRole('region', { name: 'LoRAs', exact: true })
+  const chooseLora = async (fixture) => {
+    await lorasRegion.locator('[aria-label="Add LoRA"]').click()
+    await window
+      .getByText(`native trigger ${fixture === installedLoras.first ? 1 : 3}`, { exact: true })
+      .last()
+      .click()
+  }
+  await chooseLora(installedLoras.first)
+  await expect.poll(async () => (await tab(loraProject.id)).generationDraft.loras.length).toBe(1)
+  const authoredLora = (await tab(loraProject.id)).generationDraft.loras[0]
+  assert.equal(authoredLora.resource.localVersionId, installedLoras.first.versionId)
+  assert.equal(authoredLora.weight, 0.7)
+  await chooseLora(installedLoras.disabled)
+  const disabledRow = lorasRegion.getByRole('article', {
+    name: `LoRA ${disabledLoraName}`,
+    exact: true,
+  })
+  await disabledRow.getByRole('switch', { name: `Enable ${disabledLoraName}`, exact: true }).click()
+  await expect
+    .poll(async () => (await tab(loraProject.id)).generationDraft.loras[1]?.enabled)
+    .toBe(false)
+  rmSync(installedLoras.disabled.managedPath)
+  await loraProject.region.getByRole('button', { name: 'Refresh models', exact: true }).click()
+  await expect(disabledRow).toContainText('Exact version unavailable')
+  const frozenStack = structuredClone((await tab(loraProject.id)).generationDraft.loras)
+  assert.equal(frozenStack[1].resource.baseModelFamily, 'illustrious')
+  const savedBeforeLora = readFileSync(loraProject.packagePath)
+  const requestCountBeforeLora = generations().length
+  await window.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect.poll(async () => (await rows(loraProject.id)).length).toBe(1)
+  await expect
+    .poll(() => generations().some((entry) => entry.request.job.sampling.seed === 73), {
+      timeout: 20_000,
+    })
+    .toBe(true)
+  const loraRequest = generations().find((entry) => entry.request.job.sampling.seed === 73)
+  assert.equal(generations().length, requestCountBeforeLora + 1)
+  assert.equal(loraRequest.request.type, 'generate-illustrious-txt2img')
+  assert.deepEqual(loraRequest.request.job.loras, [
+    {
+      byteSize: installedLoras.first.sizeBytes,
+      path: installedLoras.first.managedPath,
+      sha256: installedLoras.first.sha256,
+      weight: 0.7,
+    },
+  ])
+  const loraSource = (await rows(loraProject.id))[0]
+  const sourceFrozen = JSON.parse(loraSource.frozen_payload_json)
+  assert.deepEqual(sourceFrozen.context.loraStack, frozenStack)
+  assert.equal(sourceFrozen.context.loras.length, 1)
+  assert.equal(
+    sourceFrozen.context.loras[0].reference.localVersionId,
+    installedLoras.first.versionId,
+  )
+  const activeRow = lorasRegion.getByRole('article', { name: `LoRA ${loraName}`, exact: true })
+  const loraWeight = activeRow.getByRole('textbox', { name: `${loraName} weight`, exact: true })
+  await loraWeight.fill('-0.35')
+  await loraWeight.press('Tab')
+  await expect
+    .poll(async () => (await tab(loraProject.id)).generationDraft.loras[0].weight)
+    .toBe(-0.35)
+  const defaultChange = await window.evaluate(
+    (identity) => window.api.models.setDefaultVersion(identity.resourceId, identity.versionId),
+    installedLoras.second,
+  )
+  assert.equal(defaultChange.ok, true)
+  await loraProject.region.getByRole('button', { name: 'Refresh models', exact: true }).click()
+  assert.equal(
+    (await tab(loraProject.id)).generationDraft.loras[0].resource.localVersionId,
+    installedLoras.first.versionId,
+  )
+  assert.deepEqual(readFileSync(loraProject.packagePath), savedBeforeLora)
+  assert.equal((await rows(loraProject.id))[0].frozen_payload_json, loraSource.frozen_payload_json)
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await loraWeight.scrollIntoViewIfNeeded()
+    await screenshot(`27-lora-authored-stack-${width}x${height}`)
+  }
+  await openManager.click()
+  await expect(manager).toBeVisible()
+  // Retry is promised only for failed/canceled jobs; cancel through the actual owner rather
+  // than converting completed history into a fabricated retryable fixture.
+  await managerRow(loraSource.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect.poll(async () => (await rows(loraProject.id))[0].status).toBe('canceled')
+  await expect
+    .poll(async () => (await api('getGenerationState', loraProject.id)).phase)
+    .toBe('idle')
+  assert.throws(() => process.kill(loraRequest.pid, 0), { code: 'ESRCH' })
+  assert.equal((await api('listGenerationResults', loraProject.id)).candidates.length, 0)
+  assert.equal((await rows(loraProject.id))[0].frozen_payload_json, loraSource.frozen_payload_json)
+  assert.deepEqual(readFileSync(loraProject.packagePath), savedBeforeLora)
+  await managerRow(loraSource.id).getByRole('button', { name: 'Retry job', exact: true }).click()
+  await expect.poll(async () => (await rows(loraProject.id)).length).toBe(2)
+  const loraRetry = (await rows(loraProject.id)).find((entry) => entry.id !== loraSource.id)
+  assert.equal(loraRetry.frozen_payload_json, loraSource.frozen_payload_json)
+  await expect
+    .poll(() => generations().filter((entry) => entry.request.job.sampling.seed === 73).length, {
+      timeout: 20_000,
+    })
+    .toBe(2)
+  const loraRetryRequest = generations()
+    .filter((entry) => entry.request.job.sampling.seed === 73)
+    .at(-1)
+  assert.deepEqual(loraRetryRequest.request.job.loras, loraRequest.request.job.loras)
+  assert.equal(
+    loraRetryRequest.request.job.prompts.positive,
+    loraRequest.request.job.prompts.positive,
+  )
+  assert.equal(loraRetryRequest.request.job.sampling.seed, 73)
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  release(loraRetryRequest)
+  await expect
+    .poll(async () => (await api('listGenerationResults', loraProject.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(1)
+  await expect
+    .poll(async () => (await api('getGenerationState', loraProject.id)).phase)
+    .toBe('idle')
+  const loraTray = loraProject.region.getByRole('region', {
+    name: 'Generation Results',
+    exact: true,
+  })
+  await loraTray.getByRole('button', { name: 'Result selection actions', exact: true }).click()
+  await window
+    .getByRole('menuitem', { name: 'Select all completed across all sessions', exact: true })
+    .click()
+  await window.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
+  await expect.poll(async () => (await tab(loraProject.id)).layers.length).toBe(1)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(loraProject.id)).dirty).toBe(false)
+  const loraSaved = (await readIgsPackage(loraProject.packagePath)).project
+  assert.equal(loraSaved.generationDraft.loras[0].weight, -0.35)
+  for (const layer of loraSaved.layers)
+    assert.deepEqual(layer.generationProvenance.generationConfiguration.loras, frozenStack)
+  assert.equal(loraSaved.generationDraft.loras[1].enabled, false)
+  const loraSavedBytes = readFileSync(loraProject.packagePath)
+  await window.getByRole('button', { name: 'Close LoRA acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open LoRA acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'LoRA acceptance', exact: true }).waitFor()
+  assert.equal(
+    (await tab(loraProject.id)).generationDraft.loras[0].resource.localVersionId,
+    installedLoras.first.versionId,
+  )
+  await window
+    .getByRole('button', { name: `Layer actions for ${loraSaved.layers[0].name}`, exact: true })
+    .click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+  const stackRow = comparison.locator('[data-setting="loras.stack"]')
+  await expect(stackRow).toHaveAttribute('data-status', 'Changed')
+  await expect(stackRow).toContainText('Weight 0.7')
+  await expect(stackRow).toContainText('Weight -0.35')
+  await expect(stackRow).toContainText(disabledLoraName)
+  await expect(stackRow).not.toContainText('Model catalog unavailable')
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await stackRow.scrollIntoViewIfNeeded()
+    await screenshot(`28-lora-frozen-comparison-${width}x${height}`)
+    const bounds = await comparison.boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0)
+    assert.ok(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
+  }
+  assert.deepEqual(readFileSync(loraProject.packagePath), loraSavedBytes)
+  await window.keyboard.press('Escape')
+  checked(
+    'Native exact LoRA selection freezes enabled weight/order for Retry and full enabled/disabled stack for Add, Save/reopen and comparison',
+    {
+      authoredWeight: -0.35,
+      disabledMissingVersion: installedLoras.disabled.versionId,
+      exactVersion: installedLoras.first.versionId,
+      frozenWeight: 0.7,
+      layerIds: loraSaved.layers.map((layer) => layer.id),
+      originalJobId: loraSource.id,
+      retryJobId: loraRetry.id,
+      requestCountAtAdmission: requestCountBeforeLora,
     },
   )
   for (const entry of lines(peerLaunches)) {

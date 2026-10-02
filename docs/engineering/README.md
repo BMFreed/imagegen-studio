@@ -118,3 +118,8 @@ branch review, запускать существующие проверки и �
 Он не должен автоматически коммитить, публиковать review, менять чужую ветку
 или требовать отсутствующий work project stand. `.claude/commands/mr-review.md`
 служит примером организации процесса, а не готовым к переносу skill.
+
+- [Phase 2C Illustrious LoRA](./phase-2c-lora-research.md): native pinned adapters
+  in both normal modes, exact enabled file preflight and full configured stack
+  through queue/Retry/Add/Save/comparison. Actual ML, native controlled peer and
+  semantic mutations have separate evidence; other algorithms/Anima remain open.

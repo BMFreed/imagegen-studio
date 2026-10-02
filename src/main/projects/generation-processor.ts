@@ -8,6 +8,7 @@ import {
   supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
+  supportsInferenceLora,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -15,15 +16,17 @@ import { constants } from 'node:fs'
 import { lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { ModelService } from '../models/model-service.js'
 import type { QueuedGenerationItem, VerifiedQueuedInput } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
+
+import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 
 const PROTOCOL_VERSION = '1'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
@@ -91,7 +94,7 @@ export class GenerationProcessor {
   constructor(
     private readonly queue: GenerationQueueRepository,
     private readonly staging: GenerationStagingRepository,
-    private readonly modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    private readonly modelService: GenerationModelResolver,
     private readonly scratchBasePath: string,
   ) {}
 
@@ -298,6 +301,7 @@ export class GenerationProcessor {
     ) {
       throw new Error('The exact checkpoint or prediction type changed after enqueue.')
     }
+    await reverifyFrozenGenerationLoras(frozen.context, this.modelService)
     const requestId = randomUUID()
     const request: IllustriousGenerationRequestV1 =
       frozen.kind === 'illustrious-img2img'
@@ -386,6 +390,9 @@ export class GenerationProcessor {
             'INFERENCE_UNAVAILABLE',
             'The active worker has not qualified opaque Illustrious img2img.',
           )
+        }
+        if (claimed.payload.context.loras?.length && !supportsInferenceLora(transport.ready)) {
+          throw new Error('The active worker has not qualified Illustrious LoRA.')
         }
         const provisionalRoot = await createProvisionalRoot(this.scratchBasePath)
         active.provisionalRoot = provisionalRoot

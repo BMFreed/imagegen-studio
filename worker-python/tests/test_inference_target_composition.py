@@ -151,7 +151,7 @@ def test_inference_target_capability_is_additive_and_other_derivative_route_stay
 ) -> None:
     ready = inference_ready_message()
     assert ready["protocolVersion"] == "1"
-    assert ready["workerVersion"] == "0.6.0"
+    assert ready["workerVersion"] == "0.7.0"
     assert ready["runtimeProfile"] == "linux-nvidia"
     assert ready["capabilities"] == [
         "illustrious-txt2img",
@@ -160,6 +160,7 @@ def test_inference_target_capability_is_additive_and_other_derivative_route_stay
         "candidate-thumbnails",
         "illustrious-cfg-rescale",
         "illustrious-img2img",
+        "illustrious-lora",
     ]
 
     response = process_inference_request(

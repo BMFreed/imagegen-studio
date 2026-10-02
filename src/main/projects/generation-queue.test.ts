@@ -163,11 +163,14 @@ async function inQualifiedLease<T>(
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
-      // ModelService's real exact-byte verification is covered by the request-boundary tests.
       resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
         managedPath: prepared.context.model.managedPath,
         reference,
       }),
+      // ModelService's real exact-byte verification is covered by the request-boundary tests.
+      resolveVerifiedGenerationLoraForPlan: async () => {
+        throw new Error('This fixture has no active LoRAs.')
+      },
     },
     prepared,
     ready: workerReady,

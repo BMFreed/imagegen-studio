@@ -255,6 +255,10 @@ def test_version_gate_accepts_only_pinned_ml_stack() -> None:
         )
     with pytest.raises(DerivativeError):
         require_dependency_versions({**PINNED_ML_VERSIONS, "compel": "2.4.1"})
+    with pytest.raises(DerivativeError):
+        require_dependency_versions(
+            {key: value for key, value in PINNED_ML_VERSIONS.items() if key != "peft"}
+        )
 
 
 class _FakeTokenizer:
@@ -1089,7 +1093,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.6.0"
+    assert inference_ready_message()["workerVersion"] == "0.7.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1098,4 +1102,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "candidate-thumbnails",
         "illustrious-cfg-rescale",
         "illustrious-img2img",
+        "illustrious-lora",
     ]

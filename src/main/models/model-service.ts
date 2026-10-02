@@ -31,6 +31,7 @@ import {
   isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
 import { validateCivitaiToken } from './civitai-token-store.js'
+import { qualifyIllustriousLora } from './illustrious-lora-qualification.js'
 import {
   CHECKPOINT_COMPATIBILITY_MANIFEST,
   type CheckpointCompatibilityFingerprint,
@@ -89,6 +90,7 @@ export class ModelService {
     private readonly checkpointQualifier: (
       managedPath: string,
     ) => Promise<void> = qualifySdxlCheckpoint,
+    private readonly loraQualifier: (managedPath: string) => Promise<void> = qualifyIllustriousLora,
   ) {}
 
   async checkUpdates(
@@ -591,6 +593,61 @@ export class ModelService {
     return {
       managedPath: resolved.managedPath,
       reference: { ...reference, predictionType },
+    }
+  }
+
+  /** Reverify the exact enabled adapter without replacing the Project's copied metadata. */
+  async resolveVerifiedGenerationLoraForPlan(
+    inputSaved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+  ): Promise<{ byteSize: number; managedPath: string; reference: typeof inputSaved }> {
+    const saved = structuredClone(inputSaved)
+    if (saved.kind !== 'lora' || saved.baseModelFamily !== 'illustrious') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'Generation requires an Illustrious LoRA.',
+      )
+    }
+    const resolved = await this.resolveGenerationResourceWithFile(
+      saved.localModelId,
+      saved.localVersionId,
+      'lora',
+    )
+    const reference = resolved.reference
+    if (
+      reference.baseModelFamily !== 'illustrious' ||
+      saved.localModelId !== reference.localModelId ||
+      saved.localVersionId !== reference.localVersionId ||
+      saved.civitaiModelId !== reference.civitaiModelId ||
+      saved.civitaiVersionId !== reference.civitaiVersionId ||
+      saved.civitaiFileId !== reference.civitaiFileId ||
+      saved.fileSha256 !== reference.fileSha256 ||
+      saved.baseModelFamily !== reference.baseModelFamily
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed LoRA no longer matches this Project exact version.',
+      )
+    }
+    if (path.extname(resolved.managedPath).toLowerCase() !== '.safetensors') {
+      throw new ModelServiceError(
+        'MODEL_LORA_INCOMPATIBLE',
+        'Generation requires a safetensors LoRA.',
+      )
+    }
+    try {
+      await this.loraQualifier(resolved.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_LORA_INCOMPATIBLE',
+        error instanceof Error
+          ? `The installed LoRA is unsupported: ${error.message}`
+          : 'The installed LoRA could not be structurally qualified.',
+      )
+    }
+    return {
+      byteSize: resolved.fileSizeBytes,
+      managedPath: resolved.managedPath,
+      reference: structuredClone(saved),
     }
   }
 

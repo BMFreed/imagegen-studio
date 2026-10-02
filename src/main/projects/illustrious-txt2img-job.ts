@@ -3,6 +3,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
   supportsInferenceImg2Img,
+  supportsInferenceLora,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -10,13 +11,19 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { ModelService } from '../models/model-service.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
 import type {
   PreparedNormalGeneration,
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
+import {
+  frozenLoraFieldsAgree,
+  type IllustriousWorkerLora,
+  reverifyFrozenGenerationLoras,
+  workerLoras,
+} from './illustrious-generation-loras.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -38,6 +45,7 @@ export interface IllustriousTxt2ImgRequestV1 {
       predictionType: 'epsilon' | 'sample' | 'v_prediction'
       sha256: string
     }
+    loras?: IllustriousWorkerLora[]
     output: { pngPath: string; stagingRoot: string }
     prompts: { negative: string; positive: string }
     sampling: {
@@ -105,7 +113,7 @@ export class IllustriousJobError extends Error {
  * This is deliberately separate from durable queue/candidate materialization.
  */
 export async function withIllustriousTxt2ImgRequest<T>(input: {
-  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  modelService: GenerationModelResolver
   prepared: PreparedNormalTxt2Img
   ready: InferenceWorkerReady
   scratchBasePath: string
@@ -133,7 +141,7 @@ export async function withIllustriousTxt2ImgRequest<T>(input: {
 
 /** Materialize either normal Illustrious operation through one verified scratch lease. */
 export async function withIllustriousGenerationRequest<T>(input: {
-  modelService: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>
+  modelService: GenerationModelResolver
   prepared: PreparedNormalGeneration
   ready: InferenceWorkerReady
   scratchBasePath: string
@@ -162,6 +170,13 @@ export async function withIllustriousGenerationRequest<T>(input: {
       'The active worker has not qualified Illustrious img2img.',
     )
   }
+  if (context.loras?.length && !supportsInferenceLora(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious LoRA.',
+    )
+  }
+  await reverifyFrozenGenerationLoras(context, input.modelService)
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
   )
@@ -191,6 +206,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
     }
     const common: IllustriousTxt2ImgRequestV1 = {
       job: {
+        ...(context.loras !== undefined ? { loras: workerLoras(context) } : {}),
         bbox: { ...context.bbox },
         checkpoint: {
           path: verified.managedPath,
@@ -263,6 +279,12 @@ function validatePrepared(
   scheduler: IllustriousSchedulerKey
 } {
   const { bbox, model, prompts, sampling, target } = context
+  if (!frozenLoraFieldsAgree(context, workerLoras(context))) {
+    throw new IllustriousJobError(
+      'GENERATION_INPUT_CHANGED',
+      'The frozen LoRA configuration is invalid.',
+    )
+  }
   if (
     !['normal-img2img-preparation', 'normal-txt2img-preparation'].includes(context.kind) ||
     context.schemaVersion !== 1

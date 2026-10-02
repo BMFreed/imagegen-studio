@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -71,7 +71,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !(mode === 'img2img-done' && request.type === 'generate-illustrious-img2img')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -730,6 +730,123 @@ test('real transport carries opaque strength only to qualified 0.6 peers and ref
     }
     await assert.rejects(
       GenerationWorkerClient.start(fixture.location, options('img2img-missing-capability')),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
+  })
+})
+
+test('qualified native LoRA transport snapshots exact ordered signed, zero and tiny weights', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'actual-lora-wire.json')
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'lora-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      const request = await requestFor(fixture)
+      request.job.loras = []
+      for (const [index, weight] of [-0.5, 0, 1e-10].entries()) {
+        const loraPath = path.join(fixture.root, `adapter-${index}.safetensors`)
+        await writeFile(loraPath, 'adapter')
+        request.job.loras.push({
+          byteSize: 7,
+          path: loraPath,
+          sha256: String(index + 1).repeat(64),
+          weight,
+        })
+      }
+      const expected = structuredClone(request.job.loras)
+      const pending = client.generate(request)
+      request.job.loras[0].weight = 0.9
+      await pending
+      const actual = JSON.parse(await readFile(marker, 'utf8'))
+      assert.deepEqual(actual.job.loras, expected)
+      assert.deepEqual(
+        actual.job.loras.map((entry: { weight: number }) => entry.weight),
+        [-0.5, 0, 1e-10],
+      )
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('older qualified transport strips only empty disposable LoRA data and refuses active adapters before writing', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'old-lora-wire.json')
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'img2img-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      const empty = await requestFor(fixture)
+      empty.job.loras = []
+      await client.generate(empty)
+      assert.deepEqual(empty.job.loras, [])
+      assert.equal(Object.hasOwn(JSON.parse(await readFile(marker, 'utf8')).job, 'loras'), false)
+      await rm(marker)
+      const active = await requestFor(fixture)
+      active.job.loras = [
+        {
+          byteSize: 1,
+          path: path.join(fixture.root, 'missing.safetensors'),
+          sha256: 'a'.repeat(64),
+          weight: 0,
+        },
+      ]
+      await assert.rejects(client.generate(active), { code: 'WORKER_VERSION_MISMATCH' })
+      assert.equal(existsSync(marker), false)
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('LoRA transport rejects malformed, duplicate and exchanged file records before any worker request', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'refused-lora-wire.json')
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'lora-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      const loraPath = path.join(fixture.root, 'adapter.safetensors')
+      await writeFile(loraPath, 'adapter')
+      const valid = { byteSize: 7, path: loraPath, sha256: 'a'.repeat(64), weight: -0.5 }
+      for (const change of [
+        { byteSize: 0 },
+        { byteSize: 1.5 },
+        { byteSize: Infinity },
+        { weight: NaN },
+        { sha256: 'z'.repeat(64) },
+        { path: 'relative.safetensors' },
+        { extra: true },
+      ]) {
+        const request = await requestFor(fixture)
+        request.job.loras = [{ ...valid, ...change }]
+        await assert.rejects(client.generate(request), { code: 'INVALID_REQUEST' })
+        assert.equal(existsSync(marker), false)
+      }
+      const duplicate = await requestFor(fixture)
+      duplicate.job.loras = [valid, { ...valid, weight: 0 }]
+      await assert.rejects(client.generate(duplicate), { code: 'INVALID_REQUEST' })
+      const changed = await requestFor(fixture)
+      changed.job.loras = [{ ...valid, byteSize: 8 }]
+      await assert.rejects(client.generate(changed), { code: 'INVALID_PATH' })
+      assert.equal(existsSync(marker), false)
+      const neighbor = await requestFor(fixture)
+      neighbor.job.loras = [valid]
+      await client.generate(neighbor)
+      assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')).job.loras, [valid])
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('worker 0.7.0 without its adapter capability fails handshake qualification', async () => {
+  await withFixture(async (fixture) => {
+    await assert.rejects(
+      GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: 'lora-missing-capability' },
+      }),
       { code: 'WORKER_VERSION_MISMATCH' },
     )
   })

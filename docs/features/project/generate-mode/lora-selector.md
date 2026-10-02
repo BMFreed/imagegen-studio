@@ -62,8 +62,9 @@ it does not establish inference compatibility.
 Duplicate detection uses local and portable resource identity, so transferred
 rows are marked Added in the selector too. Existing duplicates are preserved
 and must be explicitly resolved before linking. A late response after any
-Project edit, row removal or close/reopen is rejected. Presets and actual
-inference/preflight remain unimplemented. Evidence and test
+Project edit, row removal or close/reopen is rejected. Presets remain unimplemented. Inference/preflight was pending at this authoring
+checkpoint; the Illustrious inference checkpoint below now qualifies ordinary
+Kohya adapters. Evidence and test
 boundaries: [Phase 2A research](../../../engineering/phase-2a-project-storage-research.md#project-lora-stack-validation).
 
 Portable relinking evidence: [LoRA relink review](../../../engineering/phase-2a-project-storage-research.md#portable-lora-relinking-validation).
@@ -79,3 +80,27 @@ passes through the existing draft/Save path. Both renderers share matching,
 source aggregation and ranking rules. Stored embedding tokens take precedence
 over LoRA decoration; production embedding insertion/diagnostics are still pending.
 Evidence: [Project prompt review](../../../engineering/project-lora-prompt-research.md).
+
+## Production Illustrious inference checkpoint (02.10.2026)
+
+[The first LoRA inference slice](../../../engineering/phase-2c-lora-research.md)
+connects the existing exact-version stack to Illustrious txt2img and opaque
+img2img. Preparation verifies only enabled files and freezes their order, exact
+identity, path, size and signed finite weight. Enabled weight 0 is still verified
+and recorded. Disabled missing/unknown-family references remain nonblocking and
+are preserved in the full copied authoring stack. Runtime/library Default changes
+and later Project edits do not alter queue/Retry inputs.
+
+The qualified format is ordinary Kohya up/down pairs with optional scalar alpha
+on pinned UNet/CLIP1/CLIP2 Linear/Conv2d targets. The managed file's family must
+be Illustrious. Unknown family, corrupt exact file, unsupported algorithm, mixed
+UNet naming, duplicate active resource/path or incompatible dimensions produces
+an explicit refusal. Install and authoring remain available for other stored
+formats; successful install alone does not establish inference compatibility.
+Anima and other adapter algorithms remain roadmap work.
+
+New accepted records store the whole frozen configured stack (including disabled
+entries) without managed paths. Old records without this field stay Unavailable;
+a newly recorded empty array means an empty stack. Read-only comparison uses
+ordered portable identities, enabled state and exact weights, and checks missing
+resources only for enabled entries. This does not implement result-to-preset.

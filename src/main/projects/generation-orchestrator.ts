@@ -11,13 +11,13 @@ import {
 
 import { randomUUID } from 'node:crypto'
 
-import type { ModelService } from '../models/model-service.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationProcessorResult } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
+import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
 import type {
   FrozenNormalGenerationPreparationV1,
@@ -28,6 +28,7 @@ import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
+import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousGenerationRequest,
@@ -101,7 +102,7 @@ export class GenerationOrchestrator {
       'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'
     >,
     private readonly projectIndex: Pick<ProjectIndexRepository, 'getProject'>,
-    private readonly models: Pick<ModelService, 'resolveVerifiedGenerationCheckpointForPlan'>,
+    private readonly models: GenerationModelResolver,
     private readonly queue: GenerationQueueRepository,
     private readonly staging: GenerationStagingRepository,
     private readonly processor: GenerationProcessor,
@@ -491,6 +492,7 @@ export class GenerationOrchestrator {
         'The exact checkpoint changed after the batch was qualified. Prepare it again.',
       )
     }
+    await reverifyFrozenGenerationLoras(items[0].prepared.context, this.models)
     this.assertGenerationOpen(tabId)
     const before = await this.indexedProject(tabId)
     this.requireBatchDocument(tabId, project.documentId, items)

@@ -108,6 +108,86 @@ def delete_nested(request: dict[str, object], keys: tuple[str, ...]) -> None:
     del current[keys[-1]]
 
 
+@pytest.mark.parametrize("weight", [0, -0.5, 1e-10, 1e100])
+def test_lora_wire_preserves_signed_finite_weights_and_legacy_absence(
+    tmp_path: Path, weight: float
+) -> None:
+    request = generation_request(tmp_path)
+    legacy = parse_request(request)
+    assert isinstance(legacy, GenerateIllustriousTxt2ImgCommand) and legacy.loras == ()
+    set_nested(request, ("job", "loras"), [])
+    assert parse_request(request) == legacy
+    set_nested(
+        request,
+        ("job", "loras"),
+        [
+            {
+                "path": str(tmp_path / "adapter.safetensors"),
+                "sha256": SHA256,
+                "byteSize": 1234,
+                "weight": weight,
+            }
+        ],
+    )
+    command = parse_request(request)
+    assert isinstance(command, GenerateIllustriousTxt2ImgCommand)
+    assert len(command.loras) == 1
+    assert command.loras[0].weight == weight
+    assert command.loras[0].byte_size == 1234
+    request["type"] = "generate-illustrious-img2img"
+    set_nested(request, ("job", "sampling", "denoisingStrength"), 0.65)
+    assert isinstance(parse_request(request), GenerateIllustriousImg2ImgCommand)
+    img_command = parse_request(request)
+    assert isinstance(img_command, GenerateIllustriousImg2ImgCommand)
+    assert img_command.loras == command.loras
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("path", "relative.safetensors"),
+        ("sha256", "wrong"),
+        ("byteSize", 0),
+        ("byteSize", True),
+        ("weight", None),
+        ("weight", True),
+        ("weight", "0.7"),
+        ("weight", float("nan")),
+        ("weight", float("inf")),
+        ("unsupported", 1),
+    ],
+)
+def test_lora_wire_refuses_malformed_entries(tmp_path: Path, field: str, value: object) -> None:
+    request = generation_request(tmp_path)
+    entry: dict[str, object] = {
+        "path": str(tmp_path / "adapter.safetensors"),
+        "sha256": SHA256,
+        "byteSize": 1234,
+        "weight": 0.7,
+    }
+    entry[field] = value
+    set_nested(request, ("job", "loras"), [entry])
+    assert process_request(request)["code"] == "INVALID_REQUEST"
+
+
+def test_lora_wire_refuses_same_path_but_keeps_distinct_resources_with_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    request = generation_request(tmp_path)
+    entry = {
+        "path": str(tmp_path / "adapter.safetensors"),
+        "sha256": SHA256,
+        "byteSize": 1234,
+        "weight": -0.5,
+    }
+    set_nested(request, ("job", "loras"), [entry, entry.copy()])
+    assert process_request(request)["code"] == "INVALID_REQUEST"
+    other = {**entry, "path": str(tmp_path / "other.safetensors")}
+    set_nested(request, ("job", "loras"), [entry, other])
+    command = parse_request(request)
+    assert isinstance(command, GenerateIllustriousTxt2ImgCommand) and len(command.loras) == 2
+
+
 def test_valid_generation_shape_is_recognized_but_never_executed(tmp_path: Path) -> None:
     request = generation_request(tmp_path)
     command = parse_request(request)

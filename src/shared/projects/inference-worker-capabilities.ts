@@ -3,7 +3,7 @@ export interface QualifiedInferenceWorkerReady {
   capabilities: readonly string[]
   protocolVersion: '1'
   runtimeProfile: 'linux-nvidia'
-  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0' | '0.6.0'
+  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0' | '0.6.0' | '0.7.0'
 }
 
 export function isQualifiedInferenceWorkerReady(
@@ -32,7 +32,13 @@ export function isQualifiedInferenceWorkerReady(
         ready.capabilities.includes('denoising-progress') &&
         ready.capabilities.includes('candidate-thumbnails') &&
         ready.capabilities.includes('illustrious-cfg-rescale') &&
-        ready.capabilities.includes('illustrious-img2img')))
+        ready.capabilities.includes('illustrious-img2img')) ||
+      (ready.workerVersion === '0.7.0' &&
+        ready.capabilities.includes('denoising-progress') &&
+        ready.capabilities.includes('candidate-thumbnails') &&
+        ready.capabilities.includes('illustrious-cfg-rescale') &&
+        ready.capabilities.includes('illustrious-img2img') &&
+        ready.capabilities.includes('illustrious-lora')))
   )
 }
 
@@ -47,7 +53,8 @@ export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
     isQualifiedInferenceWorkerReady(value) &&
     (value.workerVersion === '0.4.0' ||
       value.workerVersion === '0.5.0' ||
-      value.workerVersion === '0.6.0')
+      value.workerVersion === '0.6.0' ||
+      value.workerVersion === '0.7.0')
   )
 }
 
@@ -55,10 +62,20 @@ export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
 export function supportsInferenceCFGRescale(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    (value.workerVersion === '0.5.0' || value.workerVersion === '0.6.0')
+    (value.workerVersion === '0.5.0' ||
+      value.workerVersion === '0.6.0' ||
+      value.workerVersion === '0.7.0')
   )
 }
 
 export function supportsInferenceImg2Img(value: unknown): boolean {
-  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.6.0'
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    (value.workerVersion === '0.6.0' || value.workerVersion === '0.7.0')
+  )
+}
+
+/** Only the qualified native adapter runtime may consume nonempty LoRA requests. */
+export function supportsInferenceLora(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.7.0'
 }

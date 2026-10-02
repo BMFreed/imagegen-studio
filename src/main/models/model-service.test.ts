@@ -18,6 +18,7 @@ import { ModelDownloader } from './model-downloader.js'
 import { ModelInstallCoordinator } from './model-install-coordinator.js'
 import { ModelRepository, type VerifiedModelArtifact } from './model-repository.js'
 import { ModelService } from './model-service.js'
+import { publishIllustriousLoraFixture } from './test-fixtures/illustrious-lora.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const MODEL_URL = 'https://civitai.com/models/42?modelVersionId=7'
@@ -1704,6 +1705,105 @@ test('Illustrious preview omits Anima companion checks and their download sizes'
       assert.equal(preview.license, null)
       assert.deepEqual(companionLookups, [])
       assert.equal(preview.totalAdditionalBytes, preview.files[0]?.sizeEstimateBytes)
+    },
+  )
+})
+
+test('generation LoRA planning verifies exact registry bytes, structure and family while preserving copied metadata', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const first = await publishIllustriousLoraFixture(repository, root, 8100, 8101)
+      const other = await publishIllustriousLoraFixture(repository, root, 8100, 8102, 0.25)
+      const selected = await service.resolveGenerationLora(first.resourceId, first.versionId)
+      const saved = {
+        ...selected,
+        displayName: 'Copied Project title',
+        predictionType: 'epsilon' as const,
+        versionName: 'Copied exact version',
+      }
+      await service.setDefaultVersion(other.resourceId, other.versionId)
+      const planned = await service.resolveVerifiedGenerationLoraForPlan(saved)
+      assert.equal(planned.managedPath, first.managedPath)
+      assert.equal(planned.byteSize, first.bytes.length)
+      assert.deepEqual(planned.reference, saved)
+      assert.notEqual(planned.reference, saved)
+      saved.displayName = 'Later Project edit'
+      assert.equal(planned.reference.displayName, 'Copied Project title')
+      for (const change of [
+        { civitaiFileId: 999 },
+        { civitaiVersionId: 999 },
+        { civitaiModelId: 999 },
+        { fileSha256: 'f'.repeat(64) },
+        { localVersionId: other.versionId },
+      ]) {
+        await assert.rejects(
+          service.resolveVerifiedGenerationLoraForPlan({ ...selected, ...change }),
+          { code: 'MODEL_VERSION_MISMATCH' },
+        )
+      }
+      await assert.rejects(
+        service.resolveVerifiedGenerationLoraForPlan({ ...selected, baseModelFamily: 'anima' }),
+        { code: 'MODEL_FAMILY_UNSUPPORTED' },
+      )
+      await assert.rejects(
+        service.resolveVerifiedGenerationLoraForPlan({ ...selected, kind: 'checkpoint' }),
+        { code: 'MODEL_FAMILY_UNSUPPORTED' },
+      )
+      await writeFile(first.managedPath, Buffer.alloc(first.bytes.length, 0))
+      await assert.rejects(service.resolveVerifiedGenerationLoraForPlan(selected), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await writeFile(first.managedPath, first.bytes)
+      assert.equal(
+        (await service.resolveVerifiedGenerationLoraForPlan(selected)).byteSize,
+        first.bytes.length,
+      )
+      await rm(first.managedPath)
+      await assert.rejects(service.resolveVerifiedGenerationLoraForPlan(selected), {
+        code: 'MODEL_FILE_MISSING',
+      })
+      const invalidBytes = Buffer.from('hash-verified unsupported adapter')
+      const invalid = await publishIllustriousLoraFixture(repository, root, 8200, 8201)
+      // Change both actual registered content and expected digest through a new installed version;
+      // exact-file verification succeeds, so structural qualification owns the refusal.
+      const managedPath = path.join(root, 'unsupported.safetensors')
+      await writeFile(managedPath, invalidBytes)
+      const digest = sha256(invalidBytes)
+      const broken = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: 'unsupported.safetensors',
+            sha256: digest,
+            sizeBytes: invalidBytes.length,
+            verifiedAt: '2026-10-02T00:00:00.000Z',
+          },
+          resource: {
+            displayName: 'Unsupported adapter',
+            source: { kind: 'civitai', modelId: 8300 },
+            sourceMetadata: {},
+            type: 'lora',
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'safetensors',
+            name: 'v8301',
+            source: { expectedSha256: digest, fileId: 9301, kind: 'civitai', versionId: 8301 },
+            sourceMetadata: {},
+          },
+        },
+      })
+      const unsupported = await service.resolveGenerationLora(broken.resourceId, broken.versionId)
+      await assert.rejects(service.resolveVerifiedGenerationLoraForPlan(unsupported), {
+        code: 'MODEL_LORA_INCOMPATIBLE',
+      })
+      const neighbor = await service.resolveGenerationLora(invalid.resourceId, invalid.versionId)
+      assert.equal(
+        (await service.resolveVerifiedGenerationLoraForPlan(neighbor)).managedPath,
+        invalid.managedPath,
+      )
     },
   )
 })

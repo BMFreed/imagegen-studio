@@ -24,6 +24,162 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
 const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
 
+test('recorded empty LoRA stack is Same while legacy absence stays Unavailable', () => {
+  const source = fixture()
+  assert.equal(result(source, 'loras.stack').status, 'Unavailable')
+  source.data.generationConfiguration!.loras = []
+  assert.ok(isRasterGenerationData(source.data))
+  assert.equal(result(source, 'loras.stack').status, 'Same')
+  assert.equal(result(source, 'loras.stack').before, 'None')
+  assert.equal(result(source, 'loras.stack').after, 'None')
+})
+
+test('LoRA comparison preserves ordered frozen weight/enabled/exact portable identity without inspecting disabled files', () => {
+  const source = fixture()
+  const resource = {
+    ...source.current.generationDraft.model!,
+    displayName: 'Frozen LoRA',
+    fileSha256: 'c'.repeat(64),
+    kind: 'lora' as const,
+    localModelId: OTHER_MODEL_ID,
+    localVersionId: OTHER_VERSION_ID,
+    predictionType: null,
+    versionName: 'Exact v1',
+  }
+  const enabled = { enabled: true, resource, weight: 0 }
+  const disabled = {
+    enabled: false,
+    resource: {
+      ...resource,
+      baseModelFamily: 'anima' as const,
+      civitaiModelId: 101,
+      displayName: 'Disabled unavailable LoRA',
+      fileSha256: 'd'.repeat(64),
+      localModelId: 'former-local-id',
+      localVersionId: 'former-version-id',
+    },
+    weight: -0.35,
+  }
+  source.current.modelCatalog!.push(catalogItem(resource))
+  source.current.generationDraft.loras = structuredClone([enabled, disabled])
+  source.data.generationConfiguration!.loras = structuredClone([enabled, disabled])
+  assert.ok(
+    isRasterGenerationData(source.data),
+    'enabled zero and disabled unavailable references cross the actual IPC guard',
+  )
+  const snapshot = structuredClone(source)
+  assert.equal(result(source, 'loras.stack').status, 'Same')
+  assert.match(result(source, 'loras.stack').before, /Enabled.*Frozen LoRA.*Weight 0/s)
+  assert.match(
+    result(source, 'loras.stack').before,
+    /Disabled.*Disabled unavailable LoRA.*Weight -0.35/s,
+  )
+  assert.deepEqual(source, snapshot)
+  source.current.generationDraft.loras[0].weight = 0.7
+  assert.equal(result(source, 'loras.stack').status, 'Changed')
+  assert.match(result(source, 'loras.stack').before, /Weight 0/)
+  assert.match(result(source, 'loras.stack').after, /Weight 0.7/)
+  source.current.generationDraft.loras = structuredClone([disabled, enabled])
+  assert.equal(result(source, 'loras.stack').status, 'Changed', 'stack order is a recorded setting')
+  source.current.generationDraft.loras = structuredClone([enabled, disabled])
+  source.current.generationDraft.loras[0].resource.displayName = 'Current renamed label'
+  source.current.generationDraft.loras[0].resource.versionName = 'Current renamed version'
+  assert.equal(
+    result(source, 'loras.stack').status,
+    'Same',
+    'labels are copied descriptions rather than exact identity',
+  )
+  source.current.modelCatalog = []
+  assert.equal(
+    result(source, 'loras.stack').status,
+    'Missing resource',
+    'enabled weight zero still owns a verified resource',
+  )
+  source.current.modelCatalog = null
+  assert.equal(result(source, 'loras.stack').status, 'Unavailable')
+  source.current.generationDraft.loras = [disabled]
+  source.data.generationConfiguration!.loras = [disabled]
+  assert.equal(
+    result(source, 'loras.stack').status,
+    'Same',
+    'disabled unknown resources never require a live catalog',
+  )
+})
+
+test('LoRA comparison distinguishes exact portable settings while local rebinding preserves identity', () => {
+  const source = fixture()
+  const resource = {
+    ...source.current.generationDraft.model!,
+    fileSha256: 'c'.repeat(64),
+    kind: 'lora' as const,
+    localModelId: OTHER_MODEL_ID,
+    localVersionId: OTHER_VERSION_ID,
+    predictionType: null,
+  }
+  const entry = { enabled: true, resource, weight: -0.35 }
+  source.data.generationConfiguration!.loras = [structuredClone(entry)]
+  source.current.generationDraft.loras = [structuredClone(entry)]
+  source.current.modelCatalog!.push(catalogItem(resource))
+  assert.ok(isRasterGenerationData(source.data))
+  const original = structuredClone(source)
+  for (const change of [
+    { fileSha256: 'd'.repeat(64) },
+    { civitaiVersionId: 194 },
+    { civitaiFileId: 195 },
+  ]) {
+    const current = {
+      ...resource,
+      ...change,
+      localModelId: '158f0b45-8aba-4989-9188-f477cae67bf5',
+      localVersionId: '11f3ac96-8075-47b4-9260-86d4d4d55d4c',
+    }
+    source.current.generationDraft.loras = [{ ...entry, resource: current }]
+    source.current.modelCatalog = [...original.current.modelCatalog!, catalogItem(current)]
+    assert.equal(
+      result(source, 'loras.stack').status,
+      'Changed',
+      'both exact versions are installed; portable identity still differs',
+    )
+  }
+  const rebound = {
+    ...resource,
+    displayName: 'Local renamed resource',
+    localModelId: '158f0b45-8aba-4989-9188-f477cae67bf5',
+    localVersionId: '11f3ac96-8075-47b4-9260-86d4d4d55d4c',
+    versionName: 'Local renamed version',
+  }
+  source.current.generationDraft.loras = [{ ...entry, resource: rebound }]
+  source.current.modelCatalog = [...original.current.modelCatalog!, catalogItem(rebound)]
+  assert.equal(
+    result(source, 'loras.stack').status,
+    'Same',
+    'machine-local bindings and copied labels do not change portable identity',
+  )
+  source.current.generationDraft.loras[0].enabled = false
+  assert.equal(result(source, 'loras.stack').status, 'Changed')
+  source.current.modelCatalog = [catalogItem(rebound)]
+  assert.equal(
+    result(source, 'loras.stack').status,
+    'Missing resource',
+    'enabled baseline still requires its exact binding even when current row is disabled',
+  )
+  source.current.modelCatalog = original.current.modelCatalog
+  source.current.generationDraft.loras = []
+  assert.equal(result(source, 'loras.stack').status, 'Removed')
+  source.data.generationConfiguration!.loras = []
+  source.current.generationDraft.loras = [structuredClone(entry)]
+  assert.equal(result(source, 'loras.stack').status, 'Added')
+  source.data.generationConfiguration!.loras = [structuredClone(entry)]
+  source.current.generationDraft.loras[0].weight = 1e-10
+  assert.equal(result(source, 'loras.stack').status, 'Changed')
+  assert.match(result(source, 'loras.stack').after, /Weight 1e-10/)
+  assert.deepEqual(
+    source.data.generationConfiguration!.loras,
+    original.data.generationConfiguration!.loras,
+    'current edits never rewrite accepted settings',
+  )
+})
+
 test('Denoising Strength compares immutable applied img2img settings and ignores stored txt2img strength', () => {
   const source = fixture()
   source.current.generationDraft.sampling.denoisingStrength = 0.75
