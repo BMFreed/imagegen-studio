@@ -1,5 +1,6 @@
 import {
   ipcChannels,
+  isProjectEmbeddingIdentity,
   isProjectGenerationDraftChange,
   isProjectGenerationModelSelection,
   isProjectLoraIdentity,
@@ -7,6 +8,7 @@ import {
 } from '../shared/api.js'
 import type {
   ApiResult,
+  ProjectEmbeddingIdentity,
   ProjectGenerateOptions,
   ProjectGenerationDraftChange,
   ProjectGenerationModelSelection,
@@ -40,6 +42,7 @@ import {
 import { isGenerationTargetKey } from '../shared/projects/project-generation-target-state.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
+import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -262,6 +265,20 @@ if (!gotInstanceLock) {
         readLastActualSeed: async (projectKey, documentId) =>
           readGenerationSeed ? await readGenerationSeed(projectKey, documentId) : null,
         repository: projectRepository,
+        resolvePromptEmbeddings: (input) => {
+          if (!modelStorageAvailable) {
+            if (input.selection) {
+              throw new ModelServiceError(
+                'MODEL_STORAGE_UNAVAILABLE',
+                'Managed model storage needs repair.',
+              )
+            }
+            return Promise.resolve(
+              reconcilePromptEmbeddings({ ...input.prompt, text: input.text }, []),
+            )
+          }
+          return modelService.resolveGenerationPromptEmbeddings(input)
+        },
         roots: {
           placeholdersDir: path.join(moduleDir, 'placeholders'),
           scratchDir: path.join(paths.dataRoot, 'scratch'),
@@ -1353,6 +1370,24 @@ if (!gotInstanceLock) {
             modelService.resolvePortableGenerationVae(saved),
           )
         }),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.relinkGenerationEmbedding,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectEmbeddingIdentity(args[1]),
+        (tabId, identity) =>
+          runProjectDocumentAction(tabId as string, async () => {
+            if (!modelStorageAvailable) {
+              throw new ModelServiceError(
+                'MODEL_STORAGE_UNAVAILABLE',
+                'Managed model storage needs repair.',
+              )
+            }
+            return projectService.relinkGenerationEmbedding(
+              tabId as string,
+              identity as ProjectEmbeddingIdentity,
+              (saved) => modelService.resolvePortableGenerationEmbedding(saved),
+            )
+          }),
       )
       registerProjectHandler(
         ipcChannels.projects.setPrimaryBbox,

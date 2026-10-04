@@ -368,7 +368,11 @@ export class ProjectAutosaveCoordinator {
   async applyDocument(
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>> = {},
-    options: { expectedDocumentRevision?: string; historyGroupId?: string } = {},
+    options: {
+      expectedDocumentEpoch?: number
+      expectedDocumentRevision?: string
+      historyGroupId?: string
+    } = {},
   ): Promise<{ documentRevision: string }> {
     if (
       options.historyGroupId !== undefined &&
@@ -750,7 +754,7 @@ export class ProjectAutosaveCoordinator {
   private async applyDocumentInternal(
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>>,
-    options: { expectedDocumentRevision?: string },
+    options: { expectedDocumentEpoch?: number; expectedDocumentRevision?: string },
     afterCommit: (before: IgsProjectDocumentV1, after: IgsProjectDocumentV1) => void,
     beforeCommit?: () => void,
   ): Promise<string> {
@@ -760,6 +764,15 @@ export class ProjectAutosaveCoordinator {
     this.assertOpen()
     const before = this.session.document
     const historyEpoch = this.historyEpoch
+    if (
+      options.expectedDocumentEpoch !== undefined &&
+      this.documentEpoch !== options.expectedDocumentEpoch
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while preparing this edit.',
+      )
+    }
     if (
       options.expectedDocumentRevision !== undefined &&
       before.documentRevision !== options.expectedDocumentRevision
@@ -781,6 +794,15 @@ export class ProjectAutosaveCoordinator {
       await this.options.beforeEditCommit?.(candidate)
       await this.editGate
       this.assertOpen()
+      if (
+        options.expectedDocumentEpoch !== undefined &&
+        this.documentEpoch !== options.expectedDocumentEpoch
+      ) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'The Project changed while committing this edit.',
+        )
+      }
       if (!sameEditableDocument(this.session.document, before)) {
         throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed during this edit.')
       }

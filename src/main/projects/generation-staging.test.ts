@@ -204,6 +204,7 @@ async function inRequestLease<T>(
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
+      assertNoUnboundGenerationEmbeddings: async () => {},
       resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
         managedPath: prepared.context.model.managedPath,
         reference,

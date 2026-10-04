@@ -27,6 +27,7 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
     database,
     dataRoot,
     modelService: {
+      assertNoUnboundGenerationEmbeddings: async () => {},
       resolveVerifiedGenerationCheckpointForPlan: async () => {
         throw new Error('No model should be resolved during bootstrap.')
       },

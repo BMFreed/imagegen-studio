@@ -785,6 +785,12 @@ const api: StudioApi = {
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
     redo: (tabId) => invokeProject(ipcChannels.projects.redo, [tabId], isProjectTab),
+    relinkGenerationEmbedding: (tabId, identity) =>
+      invokeProject(
+        ipcChannels.projects.relinkGenerationEmbedding,
+        [tabId, identity],
+        isProjectTab,
+      ),
     relinkGenerationLora: (tabId, identity) =>
       invokeProject(ipcChannels.projects.relinkGenerationLora, [tabId, identity], isProjectTab),
     relinkGenerationModel: (tabId) =>

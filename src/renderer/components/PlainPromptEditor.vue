@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import type { LoraTriggerSource } from '../../shared/projects/lora-triggers.js'
 import { inspectPromptSyntax } from '../../shared/projects/prompt-diagnostics.js'
+import type {
+  PromptEmbeddingRef,
+  PromptEmbeddingSelection,
+  PromptEmbeddingSource,
+} from '../../shared/projects/prompt-embeddings.js'
 import { findTopLevelPromptPhraseRange } from '../../shared/projects/prompt-text.js'
 
 import {
@@ -21,6 +26,11 @@ import {
   promptAttentionKeymap,
   tripleClickPhraseSelection,
 } from './prompt-editing-codemirror.js'
+import {
+  embeddingCompletionSource,
+  embeddingContextExtensions,
+  selectPromptEmbedding,
+} from './prompt-embeddings-codemirror.js'
 import { loraCompletionSource, loraContextExtensions } from './prompt-lora-codemirror.js'
 import PromptDiagnosticsIndicator from './PromptDiagnosticsIndicator.vue'
 import PromptEditorActions from './PromptEditorActions.vue'
@@ -30,11 +40,20 @@ const props = defineProps<{
   ariaLabel: string
   disabled: boolean
   dynamicPreviewAvailable?: boolean
+  embeddingCatalogReady: boolean
+  embeddingRefs: PromptEmbeddingRef[]
+  embeddingSources: PromptEmbeddingSource[]
   embeddingTokens: string[]
   loraSources: LoraTriggerSource[]
+  modelFamily: string | null
   polarity: 'negative' | 'positive'
 }>()
-const emit = defineEmits<{ blur: []; dynamicPreview: []; focus: [] }>()
+const emit = defineEmits<{
+  blur: []
+  dynamicPreview: []
+  focus: []
+  selectEmbedding: [selection: PromptEmbeddingSelection, text: string]
+}>()
 const text = defineModel<string>({ required: true })
 const host = ref<HTMLElement | null>(null)
 const focused = ref(false)
@@ -103,8 +122,26 @@ function completionExtensions() {
     ? []
     : autocompletion({
         activateOnTyping: true,
-        override: [loraCompletionSource(props.loraSources)],
+        override: [
+          loraCompletionSource(props.loraSources),
+          embeddingCompletionSource(props.embeddingSources, props.modelFamily),
+        ],
       })
+}
+
+function contextExtensions() {
+  return [
+    loraContextExtensions(props.loraSources, [
+      ...props.embeddingTokens,
+      ...props.embeddingSources.map((source) => source.token),
+    ]),
+    embeddingContextExtensions(
+      props.embeddingRefs,
+      props.embeddingSources,
+      props.embeddingCatalogReady,
+      props.modelFamily,
+    ),
+  ]
 }
 
 onMounted(() => {
@@ -120,7 +157,7 @@ onMounted(() => {
         tripleClickPhraseSelection(),
         promptSyntaxExtensions,
         tooltips({ parent: document.body, position: 'fixed' }),
-        context.of(loraContextExtensions(props.loraSources, props.embeddingTokens)),
+        context.of(contextExtensions()),
         completion.of(completionExtensions()),
         EditorView.contentAttributes.of({
           'aria-label': props.ariaLabel,
@@ -146,9 +183,16 @@ onMounted(() => {
             const main = update.state.selection.main
             selection.value = { anchor: main.anchor, head: main.head }
           }
-          if (update.docChanged && !syncingExternal) {
+          const chosen = update.transactions
+            .flatMap((transaction) => transaction.effects)
+            .find((effect) => effect.is(selectPromptEmbedding))
+          if ((update.docChanged || chosen) && !syncingExternal) {
             copyStatus.value = ''
-            text.value = update.state.doc.toString()
+            if (chosen?.is(selectPromptEmbedding)) {
+              emit('selectEmbedding', chosen.value, update.state.doc.toString())
+            } else {
+              text.value = update.state.doc.toString()
+            }
           }
         }),
       ],
@@ -175,13 +219,21 @@ watch(
 )
 
 watch(
-  () => JSON.stringify([props.loraSources, props.embeddingTokens]),
+  () =>
+    JSON.stringify([
+      props.loraSources,
+      props.embeddingTokens,
+      props.embeddingRefs,
+      props.embeddingSources,
+      props.embeddingCatalogReady,
+      props.modelFamily,
+    ]),
   () => {
     if (view) {
       closeCompletion(view)
       view.dispatch({
         effects: [
-          context.reconfigure(loraContextExtensions(props.loraSources, props.embeddingTokens)),
+          context.reconfigure(contextExtensions()),
           completion.reconfigure(completionExtensions()),
         ],
       })
@@ -222,7 +274,7 @@ onBeforeUnmount(() => {
     <header class="prompt-heading">
       <strong>{{ ariaLabel }}</strong>
       <PromptEditorHelp
-        completionSources="LoRA triggers"
+        completionSources="embeddings and LoRA triggers"
         :editorFocused="focused"
         :title="ariaLabel"
         @focusEditor="focus"
@@ -336,5 +388,16 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   background: var(--prompt-context-surface);
   box-shadow: inset 0 -1px 0 var(--prompt-context-border);
+}
+
+.prompt-editor :deep(.cm-prompt-embedding) {
+  border-radius: 2px;
+  background: var(--prompt-resource-surface);
+  box-shadow: inset 0 -1px 0 var(--prompt-resource-border);
+}
+.prompt-editor :deep(.cm-prompt-embedding-warning) {
+  background: var(--prompt-warning-surface);
+  text-decoration: underline wavy var(--prompt-syntax-warning);
+  text-underline-offset: 3px;
 }
 </style>

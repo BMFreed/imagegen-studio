@@ -2,6 +2,7 @@
 import type {
   ModelCatalogItem,
   ProjectApi,
+  ProjectEmbeddingIdentity,
   ProjectGenerationActionState,
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
@@ -25,6 +26,12 @@ import {
 } from '../../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import {
+  embeddingSourcesFromCatalog,
+  getPromptEmbeddingMatches,
+  type PromptEmbeddingRef,
+  type PromptEmbeddingSelection,
+} from '../../shared/projects/prompt-embeddings.js'
 
 import {
   X as CancelIcon,
@@ -92,6 +99,8 @@ import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
 import ProjectQueuePanel from './ProjectQueuePanel.vue'
 import ProjectVaePicker from './ProjectVaePicker.vue'
+import { promptEmbeddingDiagnosticReason } from './prompt-embeddings-codemirror.js'
+import PromptEmbeddingDiagnostics from './PromptEmbeddingDiagnostics.vue'
 import ResolutionControl from './ResolutionControl.vue'
 import { vaePrecisionGenerationReason } from './vae-precision-control.js'
 
@@ -155,6 +164,7 @@ const emit = defineEmits<{
   refreshGenerationResults: []
   refreshGenerationState: []
   refreshModels: []
+  relinkEmbedding: [identity: ProjectEmbeddingIdentity]
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
   relinkVae: []
@@ -234,8 +244,39 @@ function beginPromptEdit(polarity: PromptPolarity): string {
   return groupId
 }
 
-function updatePrompt(polarity: PromptPolarity, text: string) {
-  emit('updateDraft', { kind: `${polarity}-prompt`, text }, beginPromptEdit(polarity))
+function updatePrompt(
+  polarity: PromptPolarity,
+  text: string,
+  embeddingSelection?: PromptEmbeddingSelection,
+) {
+  emit(
+    'updateDraft',
+    { kind: `${polarity}-prompt`, text, ...(embeddingSelection ? { embeddingSelection } : {}) },
+    beginPromptEdit(polarity),
+  )
+}
+
+function openEmbeddingManager(reference: PromptEmbeddingRef | undefined) {
+  emit(
+    'manageModels',
+    reference
+      ? {
+          resourceId: reference.resource.localModelId,
+          resourceName: reference.resource.displayName,
+          versionId: reference.resource.localVersionId,
+          versionName: reference.resource.versionName,
+        }
+      : null,
+  )
+}
+
+function relinkEmbedding(polarity: PromptPolarity, reference: PromptEmbeddingRef) {
+  emit('relinkEmbedding', {
+    polarity,
+    resourceId: reference.resource.localModelId,
+    token: reference.token,
+    versionId: reference.resource.localVersionId,
+  })
 }
 
 function endPromptEdit(polarity: PromptPolarity) {
@@ -260,6 +301,28 @@ const promptLoraSources = computed(() =>
   ),
 )
 const selectedModel = computed(() => props.generationDraft.model)
+const embeddingCatalogReady = computed(
+  () => props.modelCatalogLoaded && !props.modelCatalogLoading && !props.modelCatalogError,
+)
+const embeddingSources = computed(() => embeddingSourcesFromCatalog(props.modelCatalog))
+const positiveEmbeddingMatches = computed(() =>
+  getPromptEmbeddingMatches(
+    props.generationDraft.positivePrompt,
+    embeddingSources.value,
+    embeddingCatalogReady.value,
+    selectedModel.value?.baseModelFamily ?? null,
+    true,
+  ),
+)
+const negativeEmbeddingMatches = computed(() =>
+  getPromptEmbeddingMatches(
+    props.generationDraft.negativePrompt,
+    embeddingSources.value,
+    embeddingCatalogReady.value,
+    selectedModel.value?.baseModelFamily ?? null,
+    true,
+  ),
+)
 const selectedModelVersion = computed(() =>
   props.modelCatalog
     .find((resource) => resource.id === selectedModel.value?.localModelId)
@@ -1143,6 +1206,13 @@ const generationBlockingReason = computed(() => {
   if (externalVaeReason) {
     return externalVaeReason
   }
+  const embeddingIssue = [
+    ...positiveEmbeddingMatches.value,
+    ...negativeEmbeddingMatches.value,
+  ].find((match) => match.status !== 'ready')
+  if (embeddingIssue && embeddingIssue.status !== 'ready') {
+    return `Embedding ${embeddingIssue.token}: ${promptEmbeddingDiagnosticReason(embeddingIssue.status)}`
+  }
   if (props.generationDraft.seed.policy === 'reuse' && lastActualSeed.value === null) {
     return 'Complete a generation before using Reuse.'
   }
@@ -1160,6 +1230,12 @@ const generationBlockingReason = computed(() => {
   }
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
+  }
+  if (
+    props.generationDraft.positivePrompt.embeddingRefs.length ||
+    props.generationDraft.negativePrompt.embeddingRefs.length
+  ) {
+    return 'This image engine does not support embeddings yet. Remove their activation tokens to generate.'
   }
   const denoisingReason = denoisingGenerationReason(
     targetState.value?.mode ?? null,
@@ -1545,16 +1621,28 @@ function applyFitBbox() {
                 ariaLabel="Positive prompt"
                 :disabled="busy || reloadRequired"
                 dynamicPreviewAvailable
+                :embeddingCatalogReady
+                :embeddingRefs="generationDraft.positivePrompt.embeddingRefs"
+                :embeddingSources="embeddingCatalogReady ? embeddingSources : []"
                 :embeddingTokens="
                   generationDraft.positivePrompt.embeddingRefs.map((ref) => ref.token)
                 "
                 :loraSources="promptLoraSources"
+                :modelFamily="selectedModel?.baseModelFamily ?? null"
                 :modelValue="generationDraft.positivePrompt.text"
                 polarity="positive"
                 @blur="endPromptEdit('positive')"
                 @dynamicPreview="dynamicPreviewOpen = true"
                 @focus="beginPromptEdit('positive')"
+                @selectEmbedding="(selection, text) => updatePrompt('positive', text, selection)"
                 @update:modelValue="updatePrompt('positive', $event)"
+              />
+              <PromptEmbeddingDiagnostics
+                :disabled="busy || reloadRequired"
+                :matches="positiveEmbeddingMatches"
+                title="Positive prompt"
+                @manage="openEmbeddingManager"
+                @relink="relinkEmbedding('positive', $event)"
               />
             </div>
             <div class="prompt-field">
@@ -1562,16 +1650,28 @@ function applyFitBbox() {
                 ariaLabel="Negative prompt"
                 :disabled="busy || reloadRequired"
                 dynamicPreviewAvailable
+                :embeddingCatalogReady
+                :embeddingRefs="generationDraft.negativePrompt.embeddingRefs"
+                :embeddingSources="embeddingCatalogReady ? embeddingSources : []"
                 :embeddingTokens="
                   generationDraft.negativePrompt.embeddingRefs.map((ref) => ref.token)
                 "
                 :loraSources="promptLoraSources"
+                :modelFamily="selectedModel?.baseModelFamily ?? null"
                 :modelValue="generationDraft.negativePrompt.text"
                 polarity="negative"
                 @blur="endPromptEdit('negative')"
                 @dynamicPreview="dynamicPreviewOpen = true"
                 @focus="beginPromptEdit('negative')"
+                @selectEmbedding="(selection, text) => updatePrompt('negative', text, selection)"
                 @update:modelValue="updatePrompt('negative', $event)"
+              />
+              <PromptEmbeddingDiagnostics
+                :disabled="busy || reloadRequired"
+                :matches="negativeEmbeddingMatches"
+                title="Negative prompt"
+                @manage="openEmbeddingManager"
+                @relink="relinkEmbedding('negative', $event)"
               />
             </div>
             <ProjectLoraStack

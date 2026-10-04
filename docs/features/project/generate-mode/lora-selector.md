@@ -75,10 +75,12 @@ disabled, missing, corrupt or not-yet-linked rows supply no context. Catalog
 loading/error hides context until availability is known. Unknown family can
 still supply authoring context; this does not certify inference compatibility.
 Automatic suggestions start at two normalized characters; Ctrl+Space browses
-active phrases. A completion inserts plain text, supports local Undo/Redo and
+active phrases. A completion inserts plain text, supports document Undo/Redo in Project and
 passes through the existing draft/Save path. Both renderers share matching,
 source aggregation and ranking rules. Stored embedding tokens take precedence
-over LoRA decoration; production embedding insertion/diagnostics are still pending.
+over LoRA decoration. [Exact Illustrious embedding authoring](../../../engineering/phase-2c-embedding-authoring-research.md)
+now connects insertion and diagnostics through main-verified refs, document
+history/shadow/Save and portable relink. Embedding inference remains unsupported.
 Evidence: [Project prompt review](../../../engineering/project-lora-prompt-research.md).
 
 ## Production Illustrious inference checkpoint (02.10.2026)

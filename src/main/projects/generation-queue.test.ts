@@ -163,6 +163,8 @@ async function inQualifiedLease<T>(
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
+      // ModelService's real exact-byte verification is covered by the request-boundary tests.
+      assertNoUnboundGenerationEmbeddings: async () => {},
       resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
         managedPath: prepared.context.model.managedPath,
         reference,
@@ -170,7 +172,6 @@ async function inQualifiedLease<T>(
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
-      // ModelService's real exact-byte verification is covered by the request-boundary tests.
       resolveVerifiedGenerationVaeForPlan: async () => {
         throw new Error('This fixture does not select an external VAE.')
       },

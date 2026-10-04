@@ -719,7 +719,18 @@ inpaint
 
 `payload_json` содержит типизированные generation sections. Текущим доменным источником формы является `docs/prototype-app/src/prototypes/presets/presets.types.ts`; storage mapper не должен вводить другую группировку полей.
 
-Предварительная TypeScript-форма:
+Ниже — предварительный DTO текущего Vue-прототипа, а не production envelope
+для `.igs`. В частности, `activationToken`/`negativeToken` у embedding resource
+описывают mock-каталог; они не являются гарантированными CivitAI metadata.
+Production Project создаёт новый literal `<original safetensors filename stem>`
+одинаково для обеих полярностей, использует `trainedWords` только для поиска и
+хранит exact resource reference + copied `token` по действующей `.igs` schema.
+Это уточнение не меняет формат `.igs`. Production preset persistence остаётся
+отдельной незавершённой границей; при её реализации mapper должен использовать
+[embedding contract](../features/project/generate-mode/embeddings-selector.md),
+не превращая prototype negative aliases в production storage requirement.
+
+Предварительная TypeScript-форма прототипа:
 
 ```ts
 type PresetWorkflow = 'imageToImage' | 'smartPatch' | 'textToImage'
@@ -766,6 +777,7 @@ interface GenerationPrompt {
 
 interface GenerationPromptEmbeddingRef {
   resource: PresetResourceRef & {
+    // Prototype catalog aliases only; production tokens derive from exact original filename.
     activationToken: string
     baseModel?: string
     negativeToken?: string
@@ -838,7 +850,7 @@ interface PresetApplicationDraft {
 - Catalog metadata (`name`, `description`, `workflow`, `tags`, `favorite`) живёт в `PresetDefinition` и строгих columns, но не внутри `PresetPayload`.
 - Storage mapper нормализует nullable DB `description` в доменную пустую строку и SQLite `favorite` 0/1 в boolean; UI draft не должен разносить SQL-nullability по форме.
 - `workflow_type` storage tokens маппятся на доменные значения: `txt2img` ↔ `textToImage`, `img2img` ↔ `imageToImage`, `inpaint` ↔ `smartPatch`. Storage tokens не показываются в UI.
-- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`; prompt content/order хранится в `GenerationPrompt.text`, а embedding dependencies — в sidecar `embeddingRefs` соответствующего `prompt`/`negativePrompt`. Offsets, Danbooru metadata и LoRA trigger refs не сохраняются.
+- Source of truth для model/LoRA/VAE настроек находится внутри `PresetPayload`; prompt content/order хранится в `GenerationPrompt.text`, а embedding dependencies — в sidecar `embeddingRefs` соответствующего `prompt`/`negativePrompt`. Offsets, Danbooru metadata и LoRA trigger refs не сохраняются. Prototype `activationToken`/`negativeToken` не задают дополнительные production поля: новый embedding token берётся из original safetensors filename, а уже скопированный token остаётся неизменным.
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.

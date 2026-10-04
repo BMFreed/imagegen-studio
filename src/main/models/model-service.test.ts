@@ -1,4 +1,5 @@
 import type { ModelImportPreview, ModelInstallJobView } from '../../shared/api.js'
+import type { GenerationPrompt } from '../../shared/projects/prompt-embeddings.js'
 
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
@@ -18,6 +19,10 @@ import { ModelDownloader } from './model-downloader.js'
 import { ModelInstallCoordinator } from './model-install-coordinator.js'
 import { ModelRepository, type VerifiedModelArtifact } from './model-repository.js'
 import { ModelService } from './model-service.js'
+import {
+  illustriousEmbeddingFixture,
+  publishIllustriousEmbeddingFixture,
+} from './test-fixtures/illustrious-embedding.js'
 import { publishIllustriousLoraFixture } from './test-fixtures/illustrious-lora.js'
 import {
   illustriousVaeFixture,
@@ -2177,3 +2182,637 @@ test('VAE install and exact repair enter generation preflight through the real c
     },
   )
 })
+
+// Production boundary: real catalog, SQLite identities, managed bytes and ModelService resolution.
+// These fixtures exercise authoring, not ML tensor qualification or live CivitAI access.
+test('embedding authoring installs through the coordinator and binds the filename token in either polarity', async () => {
+  const bytes = illustriousEmbeddingFixture()
+  await withModelHarness(
+    civitaiApi({ fileHash: sha256(bytes), requests: [], type: 'TextualInversion' }),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => new Response(new Uint8Array(bytes)),
+    }),
+    async ({ coordinator, repository, root, service }) => {
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const job = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(job.status, 'completed', job.error?.message ?? '')
+      const [installed] = await repository.listInstalled()
+      assert.equal(installed.type, 'embedding')
+      const version = installed.versions[0]
+      const before: GenerationPrompt = { embeddingRefs: [], text: '' }
+      for (const text of ['portrait, <selected>', '<selected>, low quality']) {
+        const actual = await service.resolveGenerationPromptEmbeddings({
+          modelFamily: 'illustrious',
+          prompt: before,
+          text,
+        })
+        assert.equal(actual.text, text)
+        assert.deepEqual(actual.embeddingRefs, [
+          {
+            resource: {
+              baseModelFamily: 'illustrious',
+              civitaiFileId: 701,
+              civitaiModelId: 42,
+              civitaiVersionId: 7,
+              displayName: 'Portrait Model',
+              fileSha256: sha256(bytes),
+              kind: 'embedding',
+              localModelId: installed.id,
+              localVersionId: version.id,
+              predictionType: null,
+              versionName: 'v1',
+            },
+            token: '<selected>',
+          },
+        ])
+        const reopened = openAppDatabase(root, migrations)
+        try {
+          const fresh = new ModelService(
+            new ModelRepository(reopened.db),
+            service.civitai,
+            service.tokenStore,
+          )
+          assert.deepEqual(
+            await fresh.resolveGenerationPromptEmbeddings({
+              modelFamily: null,
+              prompt: before,
+              text,
+            }),
+            actual,
+          )
+        } finally {
+          await reopened.close()
+        }
+      }
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: before,
+          text: 'portrait, Portrait Model',
+        }),
+        { embeddingRefs: [], text: 'portrait, Portrait Model' },
+      )
+      assert.deepEqual(before, { embeddingRefs: [], text: '' })
+    },
+  )
+})
+
+test('embedding authoring preserves copied refs through rename, Default change and same-token ambiguity', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ databaseFile, repository, root, service }) => {
+      const first = await publishIllustriousEmbeddingFixture(repository, root, 9400, 9401)
+      const linked = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: { embeddingRefs: [], text: '' },
+        text: '<clean-style>, <clean-style>',
+      })
+      assert.equal(linked.embeddingRefs.length, 1)
+      assert.equal(linked.embeddingRefs[0].resource.localVersionId, first.versionId)
+      linked.embeddingRefs[0].resource.displayName = 'Copied Project name'
+      linked.embeddingRefs[0].resource.versionName = 'Copied Project version'
+      const saved = structuredClone(linked)
+      const second = await publishIllustriousEmbeddingFixture(
+        repository,
+        root,
+        9400,
+        9402,
+        'clean-style.safetensors',
+        0.25,
+      )
+      await service.setDefaultVersion(second.resourceId, second.versionId)
+      const sqlite = new Database(databaseFile)
+      try {
+        sqlite
+          .prepare('UPDATE model_resource SET display_name = ? WHERE id = ?')
+          .run('Renamed library name', first.resourceId)
+      } finally {
+        sqlite.close()
+      }
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: 'illustrious',
+          prompt: linked,
+          text: linked.text,
+        }),
+        saved,
+      )
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: { embeddingRefs: [], text: '' },
+          text: '<clean-style>',
+        }),
+        { embeddingRefs: [], text: '<clean-style>' },
+      )
+      const retained = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: linked,
+        selection: {
+          resourceId: first.resourceId,
+          token: '<clean-style>',
+          versionId: first.versionId,
+        },
+        text: linked.text,
+      })
+      assert.deepEqual(retained, saved)
+      const replaced = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: linked,
+        selection: {
+          resourceId: second.resourceId,
+          token: '<clean-style>',
+          versionId: second.versionId,
+        },
+        text: linked.text,
+      })
+      assert.equal(replaced.embeddingRefs.length, 1)
+      assert.equal(replaced.embeddingRefs[0].resource.localVersionId, second.versionId)
+      assert.equal(replaced.embeddingRefs[0].resource.fileSha256, sha256(second.bytes))
+      assert.equal(replaced.embeddingRefs[0].resource.displayName, 'Renamed library name')
+      assert.deepEqual(linked, saved)
+    },
+  )
+})
+
+test('embedding authoring verifies IDs and canonical registry token rather than renderer aliases or other resource kinds', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const embedding = await publishIllustriousEmbeddingFixture(repository, root, 9410, 9411)
+      const lora = await publishIllustriousLoraFixture(repository, root, 9420, 9421)
+      const prompt: GenerationPrompt = { embeddingRefs: [], text: '' }
+      for (const selection of [
+        {
+          resourceId: embedding.resourceId,
+          token: '<source-search-phrase>',
+          versionId: embedding.versionId,
+        },
+        {
+          resourceId: embedding.resourceId,
+          token: '<Embedding 9410>',
+          versionId: embedding.versionId,
+        },
+        { resourceId: embedding.resourceId, token: '<clean-style>', versionId: randomUUID() },
+        { resourceId: lora.resourceId, token: '<clean-style>', versionId: lora.versionId },
+      ]) {
+        for (const text of [selection.token, '<clean-style>']) {
+          await assert.rejects(
+            service.resolveGenerationPromptEmbeddings({
+              modelFamily: null,
+              prompt,
+              selection,
+              text,
+            }),
+            { code: 'MODEL_EMBEDDING_SELECTION_UNAVAILABLE' },
+          )
+        }
+      }
+      await assert.rejects(
+        service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt,
+          selection: {
+            resourceId: embedding.resourceId,
+            token: '<clean-style>',
+            versionId: embedding.versionId,
+          },
+          text: 'unrelated text',
+        }),
+        { code: 'MODEL_EMBEDDING_SELECTION_UNAVAILABLE' },
+      )
+      await assert.rejects(
+        service.resolveGenerationPromptEmbeddings({
+          modelFamily: 'anima',
+          prompt,
+          selection: {
+            resourceId: embedding.resourceId,
+            token: '<clean-style>',
+            versionId: embedding.versionId,
+          },
+          text: '<clean-style>',
+        }),
+        { code: 'MODEL_EMBEDDING_SELECTION_UNAVAILABLE' },
+      )
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: 'anima',
+          prompt,
+          text: '<clean-style>',
+        }),
+        { embeddingRefs: [], text: '<clean-style>' },
+      )
+      assert.deepEqual(prompt, { embeddingRefs: [], text: '' })
+    },
+  )
+})
+
+for (const failure of ['missing', 'same-size corruption'] as const) {
+  test(`embedding authoring rehashes a newly auto-linked file after its advisory catalog snapshot: ${failure}`, async () => {
+    await withModelHarness(
+      civitaiApi({ requests: [] }),
+      new ModelDownloader(),
+      async ({ repository, root, service }) => {
+        const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9430, 9431)
+        const originalCatalog = service.getCatalog.bind(service)
+        service.getCatalog = async () => {
+          const catalog = await originalCatalog()
+          assert.equal(catalog[0].versions[0].fileStatus, 'ready')
+          await (failure === 'missing'
+            ? rm(fixture.managedPath)
+            : writeFile(fixture.managedPath, Buffer.alloc(fixture.bytes.length, 0x78)))
+          return catalog
+        }
+        const prompt: GenerationPrompt = { embeddingRefs: [], text: 'previous durable text' }
+        await assert.rejects(
+          service.resolveGenerationPromptEmbeddings({
+            modelFamily: null,
+            prompt,
+            text: '<clean-style>',
+          }),
+          { code: failure === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT' },
+        )
+        assert.deepEqual(prompt, { embeddingRefs: [], text: 'previous durable text' })
+      },
+    )
+  })
+}
+
+test('embedding authoring preserves a missing saved token and prunes only after its last literal occurrence disappears', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9440, 9441)
+      const linked = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: { embeddingRefs: [], text: '' },
+        text: '<clean-style>',
+      })
+      linked.embeddingRefs[0].token = 'legacy-token'
+      linked.text = 'legacy-token, legacy-token'
+      const saved = structuredClone(linked)
+      await rm(fixture.managedPath)
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: 'anima',
+          prompt: linked,
+          text: 'legacy-token',
+        }),
+        { ...saved, text: 'legacy-token' },
+      )
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: linked,
+          text: 'legacy-tokenized',
+        }),
+        { embeddingRefs: [], text: 'legacy-tokenized' },
+      )
+      assert.deepEqual(
+        await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: linked,
+          text: '',
+        }),
+        { embeddingRefs: [], text: '' },
+      )
+      assert.deepEqual(linked, saved)
+    },
+  )
+})
+
+for (const change of [
+  { code: 'MODEL_FAMILY_UNSUPPORTED', column: 'base_model_family', value: 'anima' },
+  { code: 'MODEL_FAMILY_UNSUPPORTED', column: 'prediction_type', value: 'epsilon' },
+  { code: 'MODEL_VERSION_MISMATCH', column: 'civitai_file_id', value: 999_999 },
+] as const) {
+  test(`embedding authoring refuses registry ${change.column} changes during explicit verification`, async () => {
+    await withModelHarness(
+      civitaiApi({ requests: [] }),
+      new ModelDownloader(),
+      async ({ databaseFile, repository, root, service }) => {
+        const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9450, 9451)
+        const originalCatalog = service.getCatalog.bind(service)
+        service.getCatalog = async () => {
+          const catalog = await originalCatalog()
+          const sqlite = new Database(databaseFile)
+          try {
+            sqlite
+              .prepare(`UPDATE model_resource_version SET ${change.column} = ? WHERE id = ?`)
+              .run(change.value, fixture.versionId)
+          } finally {
+            sqlite.close()
+          }
+          return catalog
+        }
+        await assert.rejects(
+          service.resolveGenerationPromptEmbeddings({
+            modelFamily: null,
+            prompt: { embeddingRefs: [], text: '' },
+            selection: {
+              resourceId: fixture.resourceId,
+              token: '<clean-style>',
+              versionId: fixture.versionId,
+            },
+            text: '<clean-style>',
+          }),
+          { code: change.code },
+        )
+      },
+    )
+  })
+}
+
+test('embedding authoring rechecks the registry filename after catalog projection', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ databaseFile, repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9460, 9461)
+      const originalCatalog = service.getCatalog.bind(service)
+      service.getCatalog = async () => {
+        const catalog = await originalCatalog()
+        const sqlite = new Database(databaseFile)
+        try {
+          sqlite
+            .prepare(
+              'UPDATE local_model_file SET original_filename = ? WHERE resource_version_id = ?',
+            )
+            .run('another-token.safetensors', fixture.versionId)
+        } finally {
+          sqlite.close()
+        }
+        return catalog
+      }
+      await assert.rejects(
+        service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: { embeddingRefs: [], text: '' },
+          selection: {
+            resourceId: fixture.resourceId,
+            token: '<clean-style>',
+            versionId: fixture.versionId,
+          },
+          text: '<clean-style>',
+        }),
+        { code: 'MODEL_VERSION_MISMATCH' },
+      )
+    },
+  )
+})
+
+test('embedding portable relink verifies exact source identity and bytes while changing only local IDs', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9470, 9471)
+      const linked = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: { embeddingRefs: [], text: '' },
+        text: '<clean-style>',
+      })
+      const saved = {
+        ...linked.embeddingRefs[0].resource,
+        displayName: 'Copied portable display',
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        versionName: 'Copied portable version',
+      }
+      const relinked = await service.resolvePortableGenerationEmbedding(saved)
+      assert.deepEqual(relinked, {
+        ...saved,
+        localModelId: fixture.resourceId,
+        localVersionId: fixture.versionId,
+      })
+      assert.notEqual(relinked, saved)
+      for (const change of [
+        { civitaiModelId: 0 },
+        { civitaiVersionId: 0 },
+        { civitaiFileId: 0 },
+        { fileSha256: 'f'.repeat(64) },
+      ]) {
+        await assert.rejects(service.resolvePortableGenerationEmbedding({ ...saved, ...change }), {
+          code: 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
+        })
+      }
+      for (const change of [
+        { kind: 'lora' as const },
+        { baseModelFamily: 'anima' as const },
+        { predictionType: 'epsilon' as const },
+        { civitaiFileId: null },
+      ]) {
+        await assert.rejects(service.resolvePortableGenerationEmbedding({ ...saved, ...change }), {
+          code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',
+        })
+      }
+      await writeFile(fixture.managedPath, Buffer.alloc(fixture.bytes.length, 0))
+      await assert.rejects(service.resolvePortableGenerationEmbedding(saved), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await rm(fixture.managedPath)
+      await assert.rejects(service.resolvePortableGenerationEmbedding(saved), {
+        code: 'MODEL_FILE_MISSING',
+      })
+    },
+  )
+})
+
+test('embedding Generate admission refuses known unbound tokens without silently creating refs', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9480, 9481)
+      const plain: GenerationPrompt = { embeddingRefs: [], text: 'ordinary portrait' }
+      const typed: GenerationPrompt = { embeddingRefs: [], text: '<clean-style>' }
+      await service.assertNoUnboundGenerationEmbeddings({
+        modelFamily: 'illustrious',
+        negativePrompt: plain,
+        positivePrompt: plain,
+      })
+      for (const positive of [true, false]) {
+        await assert.rejects(
+          service.assertNoUnboundGenerationEmbeddings({
+            modelFamily: null,
+            negativePrompt: positive ? plain : typed,
+            positivePrompt: positive ? typed : plain,
+          }),
+          { code: 'MODEL_EMBEDDING_UNBOUND' },
+        )
+      }
+      assert.deepEqual(typed, { embeddingRefs: [], text: '<clean-style>' })
+      const linked = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: null,
+        prompt: plain,
+        text: typed.text,
+      })
+      await service.assertNoUnboundGenerationEmbeddings({
+        modelFamily: 'illustrious',
+        negativePrompt: plain,
+        positivePrompt: linked,
+      })
+      await publishIllustriousEmbeddingFixture(
+        repository,
+        root,
+        9480,
+        9482,
+        'clean-style.safetensors',
+        0.25,
+      )
+      await assert.rejects(
+        service.assertNoUnboundGenerationEmbeddings({
+          modelFamily: null,
+          negativePrompt: plain,
+          positivePrompt: typed,
+        }),
+        { code: 'MODEL_EMBEDDING_UNBOUND' },
+      )
+      await rm(fixture.managedPath)
+      await assert.rejects(
+        service.assertNoUnboundGenerationEmbeddings({
+          modelFamily: 'anima',
+          negativePrompt: typed,
+          positivePrompt: plain,
+        }),
+        { code: 'MODEL_EMBEDDING_UNBOUND' },
+      )
+      await service.assertNoUnboundGenerationEmbeddings({
+        modelFamily: null,
+        negativePrompt: plain,
+        positivePrompt: { embeddingRefs: [], text: '<Clean-style>, <not-installed>' },
+      })
+    },
+  )
+})
+
+test('embedding authoring captures caller input before asynchronous catalog verification', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9490, 9491)
+      let release!: () => void
+      const pause = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const originalCatalog = service.getCatalog.bind(service)
+      service.getCatalog = async () => {
+        await pause
+        return originalCatalog()
+      }
+      const input = {
+        modelFamily: null,
+        prompt: { embeddingRefs: [], text: 'previous text' } as GenerationPrompt,
+        selection: {
+          resourceId: fixture.resourceId,
+          token: '<clean-style>',
+          versionId: fixture.versionId,
+        },
+        text: '<clean-style>',
+      }
+      const resolution = service.resolveGenerationPromptEmbeddings(input)
+      input.selection.versionId = randomUUID()
+      input.prompt.text = 'later caller edit'
+      input.text = 'unrelated later text'
+      release()
+      const settled = await Promise.allSettled([resolution])
+      assert.ok(
+        settled[0].status === 'fulfilled',
+        'Captured input must resolve despite later caller edits.',
+      )
+      const actual = settled[0].value
+      assert.equal(actual.text, '<clean-style>')
+      assert.equal(actual.embeddingRefs[0].resource.localVersionId, fixture.versionId)
+      assert.equal(input.prompt.text, 'later caller edit')
+    },
+  )
+})
+
+for (const unavailable of ['missing', 'corrupt'] as const) {
+  test(`embedding authoring does not guess a same-token version when another installed owner becomes ${unavailable}`, async () => {
+    await withModelHarness(
+      civitaiApi({ requests: [] }),
+      new ModelDownloader(),
+      async ({ repository, root, service }) => {
+        const first = await publishIllustriousEmbeddingFixture(repository, root, 9500, 9501)
+        const existing = await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: { embeddingRefs: [], text: '' },
+          text: '<clean-style>',
+        })
+        const second = await publishIllustriousEmbeddingFixture(
+          repository,
+          root,
+          9500,
+          9502,
+          'clean-style.safetensors',
+          0.25,
+        )
+        if (unavailable === 'missing') {
+          await rm(first.managedPath)
+        } else {
+          await writeFile(first.managedPath, Buffer.alloc(first.bytes.length, 0))
+          // Catalog browsing is provisional; explicit verification observes same-size corruption.
+          await assert.rejects(
+            service.resolveGenerationPromptEmbeddings({
+              modelFamily: null,
+              prompt: { embeddingRefs: [], text: '' },
+              selection: {
+                resourceId: first.resourceId,
+                token: '<clean-style>',
+                versionId: first.versionId,
+              },
+              text: '<clean-style>',
+            }),
+            { code: 'MODEL_FILE_CORRUPT' },
+          )
+        }
+        const catalog = await service.getCatalog()
+        assert.equal(
+          catalog[0].versions.find((version) => version.id === first.versionId)?.fileStatus,
+          unavailable,
+        )
+        assert.equal(
+          catalog[0].versions.find((version) => version.id === second.versionId)?.fileStatus,
+          'ready',
+        )
+        const unbound: GenerationPrompt = { embeddingRefs: [], text: 'previous text' }
+        assert.deepEqual(
+          await service.resolveGenerationPromptEmbeddings({
+            modelFamily: null,
+            prompt: unbound,
+            text: '<clean-style>',
+          }),
+          { embeddingRefs: [], text: '<clean-style>' },
+        )
+        assert.deepEqual(
+          await service.resolveGenerationPromptEmbeddings({
+            modelFamily: null,
+            prompt: existing,
+            text: existing.text,
+          }),
+          existing,
+        )
+        const chosen = await service.resolveGenerationPromptEmbeddings({
+          modelFamily: null,
+          prompt: unbound,
+          selection: {
+            resourceId: second.resourceId,
+            token: '<clean-style>',
+            versionId: second.versionId,
+          },
+          text: '<clean-style>',
+        })
+        assert.equal(chosen.embeddingRefs.length, 1)
+        assert.equal(chosen.embeddingRefs[0].resource.localVersionId, second.versionId)
+      },
+    )
+  })
+}

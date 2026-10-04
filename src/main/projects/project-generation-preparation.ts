@@ -275,6 +275,11 @@ export async function prepareNormalGeneration(input: {
     input.lastActualSeed,
     savedSnapshot,
   )
+  await input.modelService.assertNoUnboundGenerationEmbeddings({
+    modelFamily: model.baseModelFamily,
+    negativePrompt: structuredClone(draft.negativePrompt),
+    positivePrompt: structuredClone(draft.positivePrompt),
+  })
   const actualSeed =
     draft.seed.policy === 'fixed'
       ? draft.seed.value

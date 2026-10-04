@@ -19,6 +19,7 @@ import type {
 } from './projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from './projects/project-generation-target-state.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
+import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
@@ -81,6 +82,7 @@ export const ipcChannels = {
     pruneGenerationQueue: 'projects:prune-generation-queue',
     rebuildPreview: 'projects:rebuild-preview',
     redo: 'projects:redo',
+    relinkGenerationEmbedding: 'projects:relink-generation-embedding',
     relinkGenerationLora: 'projects:relink-generation-lora',
     relinkGenerationModel: 'projects:relink-generation-model',
     relinkGenerationVae: 'projects:relink-generation-vae',
@@ -195,13 +197,22 @@ export interface ProjectLoraIdentity {
   versionId: string
 }
 
+/** Addresses a saved literal sidecar; portable local IDs need not belong to this registry. */
+export type ProjectEmbeddingIdentity = PromptEmbeddingSelection & {
+  polarity: 'negative' | 'positive'
+}
+
 export type ProjectGenerationDraftChange =
   | (ProjectLoraIdentity & { kind: 'lora-enabled'; value: boolean })
   | (ProjectLoraIdentity & { kind: 'lora-weight'; value: number })
+  | {
+      embeddingSelection?: PromptEmbeddingSelection
+      kind: 'negative-prompt' | 'positive-prompt'
+      text: string
+    }
   | { kind: 'cfg-rescale'; value: number | null }
   | { kind: 'denoising-strength'; value: number | null }
   | { kind: 'dynamic-prompt'; value: GenerationDynamicPromptSettings }
-  | { kind: 'negative-prompt' | 'positive-prompt'; text: string }
   | { kind: 'sampling-cfg-scale'; value: number | null }
   | { kind: 'sampling-pair'; sampler: string | null; scheduler: string | null }
   | { kind: 'sampling-steps'; value: number | null }
@@ -350,6 +361,10 @@ export interface ProjectApi {
   pruneGenerationQueue: (statuses: GenerationQueueTerminalStatus[]) => Promise<ApiResult<number>>
   rebuildPreview: (projectId: string) => Promise<ApiResult<ProjectRebuildResult>>
   redo: (tabId: string) => Promise<ApiResult<ProjectTab>>
+  relinkGenerationEmbedding: (
+    tabId: string,
+    identity: ProjectEmbeddingIdentity,
+  ) => Promise<ApiResult<ProjectTab>>
   relinkGenerationLora: (
     tabId: string,
     identity: ProjectLoraIdentity,
@@ -572,7 +587,10 @@ export function isProjectGenerationDraftChange(
   }
   if (value['kind'] === 'positive-prompt' || value['kind'] === 'negative-prompt') {
     return (
-      keys.length === 2 &&
+      (keys.length === 2 ||
+        (keys.length === 3 &&
+          keys.includes('embeddingSelection') &&
+          isPromptEmbeddingSelection(value['embeddingSelection']))) &&
       keys.includes('kind') &&
       keys.includes('text') &&
       typeof value['text'] === 'string' &&
@@ -630,6 +648,35 @@ export function isProjectGenerationDraftChange(
     : (value['policy'] === 'random' || value['policy'] === 'reuse') && value['value'] === null
 }
 
+/** A completion may select installed registry IDs and its literal, never resource metadata. */
+export function isPromptEmbeddingSelection(input: unknown): input is PromptEmbeddingSelection {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  return (
+    Object.keys(value).length === 3 &&
+    isProjectGenerationModelSelection({
+      resourceId: value['resourceId'],
+      versionId: value['versionId'],
+    }) &&
+    isBoundedEmbeddingToken(value['token'])
+  )
+}
+
+export function isProjectEmbeddingIdentity(input: unknown): input is ProjectEmbeddingIdentity {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  return (
+    Object.keys(value).length === 4 &&
+    (value['polarity'] === 'negative' || value['polarity'] === 'positive') &&
+    isProjectLoraIdentity({ resourceId: value['resourceId'], versionId: value['versionId'] }) &&
+    isBoundedEmbeddingToken(value['token'])
+  )
+}
+
 export function isProjectGenerationModelSelection(
   input: unknown,
 ): input is ProjectGenerationModelSelection {
@@ -684,6 +731,15 @@ export function isProjectRasterLayerChange(input: unknown): input is ProjectRast
       keys.includes('blendMode') &&
       typeof value['blendMode'] === 'string' &&
       ['multiply', 'normal', 'overlay', 'screen'].includes(value['blendMode']))
+  )
+}
+
+function isBoundedEmbeddingToken(input: unknown): input is string {
+  return (
+    typeof input === 'string' &&
+    input.trim().length > 0 &&
+    input.length <= IGS_SAFETY_CEILINGS.titleBytes &&
+    new TextEncoder().encode(input).length <= IGS_SAFETY_CEILINGS.titleBytes
   )
 }
 

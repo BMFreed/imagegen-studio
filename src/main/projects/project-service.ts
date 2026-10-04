@@ -1,4 +1,5 @@
 import type {
+  ProjectEmbeddingIdentity,
   ProjectGenerationDraftChange,
   ProjectImportFinishResult,
   ProjectImportSelection,
@@ -10,7 +11,11 @@ import type {
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
-import { isProjectGenerationDraftChange, isProjectRasterLayerChange } from '../../shared/api.js'
+import {
+  isProjectEmbeddingIdentity,
+  isProjectGenerationDraftChange,
+  isProjectRasterLayerChange,
+} from '../../shared/api.js'
 import {
   type AcceptedResultHistoryCursor,
   type AcceptedResultHistoryPage,
@@ -32,6 +37,11 @@ import {
   type IgsRectV1,
   IgsSchemaError,
 } from '../../shared/projects/project-schema.js'
+import {
+  type GenerationPrompt,
+  type PromptEmbeddingSelection,
+  reconcilePromptEmbeddings,
+} from '../../shared/projects/prompt-embeddings.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -128,6 +138,13 @@ export interface ProjectServiceOptions {
   /** Test seam for a post-commit source removal failure; production uses fs.unlink. */
   removeImportedSource?: (sourcePath: string) => Promise<void>
   repository: ProjectIndexRepository
+  /** Main verifies new embedding choices; document-only consumers may only retain/prune refs. */
+  resolvePromptEmbeddings?: (input: {
+    modelFamily: string | null
+    prompt: GenerationPrompt
+    selection?: PromptEmbeddingSelection
+    text: string
+  }) => Promise<GenerationPrompt>
   roots: ProjectSessionRoots
   shadow: ProjectShadowStore
 }
@@ -139,6 +156,8 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_COMPARISON_CHANGED'
       | 'PROJECT_CREATED_NOT_INDEXED'
       | 'PROJECT_DIRTY'
+      | 'PROJECT_EMBEDDING_NOT_SELECTED'
+      | 'PROJECT_EMBEDDING_RELINK_MISMATCH'
       | 'PROJECT_IDENTITY_MISMATCH'
       | 'PROJECT_IMPORT_INVALID_SOURCE'
       | 'PROJECT_IMPORT_SELECTION_MISSING'
@@ -793,8 +812,16 @@ export class ProjectService {
       lastActualSeed,
       document.lastActualSeedSnapshot,
     )
-    const target = await this.prepareNormalGenerationInput(tabId, worker)
-    return await prepareNormalGeneration({ lastActualSeed, modelService, randomUint32, target })
+    return await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
+      const draft = capture.document.generationDraft
+      await modelService.assertNoUnboundGenerationEmbeddings({
+        modelFamily: draft.model?.baseModelFamily ?? null,
+        negativePrompt: draft.negativePrompt,
+        positivePrompt: draft.positivePrompt,
+      })
+      const target = await capture.composeTarget(worker)
+      return await prepareNormalGeneration({ lastActualSeed, modelService, randomUint32, target })
+    })
   }
 
   /** Freeze the current normal-generation target entirely in main-owned bytes for a future job. */
@@ -822,8 +849,16 @@ export class ProjectService {
       lastActualSeed,
       document.lastActualSeedSnapshot,
     )
-    const target = await this.prepareNormalGenerationInput(tabId, worker)
-    return await prepareNormalTxt2Img({ lastActualSeed, modelService, randomUint32, target })
+    return await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
+      const draft = capture.document.generationDraft
+      await modelService.assertNoUnboundGenerationEmbeddings({
+        modelFamily: draft.model?.baseModelFamily ?? null,
+        negativePrompt: draft.negativePrompt,
+        positivePrompt: draft.positivePrompt,
+      })
+      const target = await capture.composeTarget(worker)
+      return await prepareNormalTxt2Img({ lastActualSeed, modelService, randomUint32, target })
+    })
   }
 
   /** Rebuild a saved derivative without silently saving document edits or touching recovery. */
@@ -850,6 +885,104 @@ export class ProjectService {
   async redo(tabId: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     await coordinator.redo()
+    return toTab(tabId, coordinator)
+  }
+
+  /** Relink one saved embedding literal without rewriting copied resource metadata. */
+  async relinkGenerationEmbedding(
+    tabId: string,
+    identity: ProjectEmbeddingIdentity,
+    resolve: (
+      saved: GenerationPrompt['embeddingRefs'][number]['resource'],
+    ) => Promise<GenerationPrompt['embeddingRefs'][number]['resource']>,
+  ): Promise<ProjectTab> {
+    if (!isProjectEmbeddingIdentity(identity)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The embedding identity is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
+    const field = identity.polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
+    const prompt = document.generationDraft[field]
+    const index = prompt.embeddingRefs.findIndex(
+      (ref) =>
+        ref.resource.localModelId === identity.resourceId &&
+        ref.resource.localVersionId === identity.versionId &&
+        ref.token === identity.token,
+    )
+    if (index < 0) {
+      throw new ProjectServiceError(
+        'PROJECT_EMBEDDING_NOT_SELECTED',
+        'This exact embedding literal is no longer present in the Project prompt.',
+      )
+    }
+    const ref = prompt.embeddingRefs[index]
+    const saved = ref.resource
+    if (
+      saved.kind !== 'embedding' ||
+      saved.baseModelFamily !== 'illustrious' ||
+      saved.predictionType !== null
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Only an Illustrious embedding can be linked.',
+      )
+    }
+    const resolved = await resolve(structuredClone(saved))
+    if (
+      resolved.kind !== 'embedding' ||
+      resolved.baseModelFamily !== saved.baseModelFamily ||
+      resolved.predictionType !== saved.predictionType ||
+      resolved.civitaiModelId !== saved.civitaiModelId ||
+      resolved.civitaiVersionId !== saved.civitaiVersionId ||
+      resolved.civitaiFileId !== saved.civitaiFileId ||
+      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase()
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_EMBEDDING_RELINK_MISMATCH',
+        'The installed embedding does not match the exact Project reference.',
+      )
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.documentEpoch !== documentEpoch ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while linking its embedding.',
+      )
+    }
+    const linked = {
+      ...saved,
+      localModelId: resolved.localModelId,
+      localVersionId: resolved.localVersionId,
+    }
+    if (
+      linked.localModelId === saved.localModelId &&
+      linked.localVersionId === saved.localVersionId
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: {
+          ...document.generationDraft,
+          [field]: {
+            ...prompt,
+            embeddingRefs: prompt.embeddingRefs.map((entry, current) =>
+              current === index ? { ...entry, resource: linked } : entry,
+            ),
+          },
+        },
+      },
+      {},
+      {
+        expectedDocumentEpoch: documentEpoch,
+        expectedDocumentRevision: document.documentRevision,
+      },
+    )
     return toTab(tabId, coordinator)
   }
 
@@ -1345,6 +1478,7 @@ export class ProjectService {
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
     const draft = document.generationDraft
     let nextDraft = draft
     switch (change.kind) {
@@ -1452,22 +1586,53 @@ export class ProjectService {
       default: {
         const field = change.kind === 'positive-prompt' ? 'positivePrompt' : 'negativePrompt'
         const before = draft[field]
-        const embeddingRefs = before.embeddingRefs.filter((ref) =>
-          hasLiteralActivationToken(change.text, ref.token),
-        )
-        if (before.text === change.text && embeddingRefs.length === before.embeddingRefs.length) {
+        if (change.embeddingSelection && !this.options.resolvePromptEmbeddings) {
+          throw new ProjectServiceError(
+            'PROJECT_NOT_READY',
+            'Installed embedding verification is unavailable in this Project session.',
+          )
+        }
+        const prompt = this.options.resolvePromptEmbeddings
+          ? await this.options.resolvePromptEmbeddings({
+              modelFamily: draft.model?.baseModelFamily ?? null,
+              prompt: structuredClone(before),
+              selection: change.embeddingSelection && { ...change.embeddingSelection },
+              text: change.text,
+            })
+          : reconcilePromptEmbeddings({ ...before, text: change.text }, [])
+        if (prompt.text !== change.text) {
+          throw new ProjectServiceError(
+            'PROJECT_INVALID_INPUT',
+            'Embedding reconciliation cannot rewrite the authored prompt text.',
+          )
+        }
+        if (
+          this.openTabs.get(tabId) !== coordinator ||
+          coordinator.documentEpoch !== documentEpoch ||
+          coordinator.document.documentRevision !== document.documentRevision
+        ) {
+          throw new ProjectAutosaveError(
+            'EDIT_CONFLICT',
+            'The Project changed while verifying its prompt embeddings.',
+          )
+        }
+        if (JSON.stringify(before) === JSON.stringify(prompt)) {
           return toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
-          [field]: { embeddingRefs, text: change.text },
+          [field]: prompt,
         }
       }
     }
     await coordinator.applyDocument(
       { ...document, generationDraft: nextDraft },
       {},
-      { expectedDocumentRevision: document.documentRevision, historyGroupId },
+      {
+        expectedDocumentEpoch: documentEpoch,
+        expectedDocumentRevision: document.documentRevision,
+        historyGroupId,
+      },
     )
     return toTab(tabId, coordinator)
   }
@@ -1985,28 +2150,6 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     primaryBbox: document.primaryBbox,
     title: document.title,
   }
-}
-
-/** Match the prototype editor's literal activation token boundary rule. */
-function hasLiteralActivationToken(text: string, token: string): boolean {
-  if (!token) {
-    return false
-  }
-  let from = 0
-  while (from <= text.length - token.length) {
-    const index = text.indexOf(token, from)
-    if (index < 0) {
-      return false
-    }
-    const end = index + token.length
-    const leftBoundary = !/^\w/u.test(token) || index === 0 || !/\w/u.test(text[index - 1])
-    const rightBoundary = !/\w$/u.test(token) || end === text.length || !/\w/u.test(text[end])
-    if (leftBoundary && rightBoundary) {
-      return true
-    }
-    from = end
-  }
-  return false
 }
 
 function describeRecovery(inspection: ProjectShadowInspection): string {

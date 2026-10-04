@@ -67,6 +67,14 @@ Illustrious или Anima с поддерживаемым `.safetensors`-файл
 целостность установленного VAE не доказывает его ML compatibility: она требует
 структурной проверки и actual loading следующим pipeline checkpoint.
 
+Для нового Illustrious embedding activation token определяется приложением как
+`<original safetensors filename stem>` одинаково в positive и negative prompt.
+Исходное имя файла берётся из проверенной exact версии; display name и CivitAI
+`trainedWords` используются для поиска, но не становятся activation/negative
+alias. Уже скопированные токены Project не меняются. Совпадение имени файла у
+нескольких установленных exact версий требует явного выбора; missing/corrupt
+состояние другого владельца не делает оставшуюся версию автоматическим выбором.
+
 CivitAI metadata и форма весов не доказывают Illustrious/SDXL `predictionType`.
 Пользовательский override `epsilon` или `v_prediction` редактируется только в
 Model Manager и хранится для точных SHA-256 и размера файла отдельно от source
@@ -208,6 +216,13 @@ Local file import и folder scan могут появиться как отдел
   структуре или отсутствии обязательных компонентов; Anima устанавливается с
   закреплёнными Qwen3/VAE, но не получает SDXL `predictionType`;
 - model selectors получают ресурсы из одной библиотеки Model Manager;
+- новый embedding ref создаётся только main после проверки managed bytes и
+  exact source/version/token; renderer передаёт текст и IDs без metadata/paths;
+- уникальный canonical embedding token может автоматически связаться при вводе,
+  collision остаётся unbound до явного выбора; existing missing ref сохраняется,
+  пока его буквальный токен присутствует;
+- portable embedding relink проверяет CivitAI source/hash/family и меняет только
+  локальные IDs, сохраняя скопированные token/display/version metadata;
 - model card показывает source metadata, но не редактирует её.
 
 ## Текущее состояние и границы
@@ -237,9 +252,22 @@ header anchors перед обоими normal modes; worker 0.9.0 проверя
 SDXL scaling. Одинаковая форма тензоров не доказывает training lineage. Старый
 worker, неподдерживаемый профиль или changed bytes явно блокируют Generate;
 Retry сохраняет исходную версию независимо от нового Default. Полную ML
-compatibility всех моделей, embedding selectors, Preset handoff
+compatibility всех моделей, embedding inference, Preset handoff
 и full accepted-result provenance эти проверки ещё не доказывают;
 PP-004 остаётся неполным и публично не обещается как готовый flow.
+
+[Exact embedding authoring](../engineering/phase-2c-embedding-authoring-research.md)
+подключает установленную Illustrious embedding версию к обоим Project prompts
+через autocomplete, main verification и атомарную запись text+refs. Existing
+identity сохраняется при смене Default, rename или потере файла; Delete/Clear
+prune и Project Undo/Redo, shadow recovery, Save/reopen сохраняют согласованность
+текста и refs. Explicit Link меняет только local IDs. Монотонный epoch и revision
+отклоняют позднюю verification после edit/Undo или закрытия вкладки, включая
+асинхронную commit boundary. Проверены реальные SQLite/filesystem и `.igs`
+writer/loader; авторинг не доказывает tensor compatibility. Anima embedding
+actions unsupported; Generate с embedding refs или известным unbound token
+отказывает явно до enqueue. Загрузка embedding weights остаётся следующей
+pipeline-границей, статус PP-004 не повышен.
 
 Для быстрого открытия каталога его статус файла проверяет metadata, путь и
 размер, используя результат полной проверки, если он уже есть в кэше.
@@ -271,7 +299,8 @@ generation worker и Project references.
 Отсутствующий локальный ID объясняется предупреждением, без подстановки другой
 модели. Desktop smoke проходит через Project UI и реальный каталог SQLite и
 проверяет, что переход не меняет Project reference или dirty state. Обратный
-переход из менеджера, другие resource selectors и worker load ещё отсутствуют.
+переход из менеджера и прочие resource handoff ещё не завершены; embedding
+authoring и отдельные Illustrious LoRA/VAE worker paths описаны checkpoints выше.
 
 Успешное восстановление зависит от доступности exact file у источника и прав
 доступа: если файл удалён или доступ закрыт, приложение объясняет отказ и не

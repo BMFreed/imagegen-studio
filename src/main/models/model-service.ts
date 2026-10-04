@@ -5,6 +5,16 @@ import type {
   ModelVersionView,
 } from '../../shared/api.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import {
+  embeddingActivationToken,
+  embeddingSourcesFromCatalog,
+  type GenerationPrompt,
+  promptEmbeddingLiteralRanges,
+  type PromptEmbeddingSelection,
+  reconcilePromptEmbeddings,
+  sameExactPromptEmbedding,
+  selectablePromptEmbeddingSources,
+} from '../../shared/projects/prompt-embeddings.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -93,6 +103,31 @@ export class ModelService {
     ) => Promise<void> = qualifySdxlCheckpoint,
     private readonly loraQualifier: (managedPath: string) => Promise<void> = qualifyIllustriousLora,
   ) {}
+
+  /** Generate never silently binds a typed activation literal or guesses among exact versions. */
+  async assertNoUnboundGenerationEmbeddings(input: {
+    modelFamily: string | null
+    negativePrompt: GenerationPrompt
+    positivePrompt: GenerationPrompt
+  }): Promise<void> {
+    const captured = structuredClone(input)
+    const sources = embeddingSourcesFromCatalog(await this.getCatalog())
+    for (const prompt of [captured.positivePrompt, captured.negativePrompt]) {
+      for (const source of sources) {
+        if (
+          promptEmbeddingLiteralRanges(prompt.text, source.token).length &&
+          !prompt.embeddingRefs.some(
+            (ref) => ref.token === source.token && ref.resource.kind === 'embedding',
+          )
+        ) {
+          throw new ModelServiceError(
+            'MODEL_EMBEDDING_UNBOUND',
+            `The embedding token ${source.token} has no exact resource reference. Select its installed version through prompt suggestions, or remove the token.`,
+          )
+        }
+      }
+    }
+  }
 
   async checkUpdates(
     modelId: number,
@@ -516,6 +551,99 @@ export class ModelService {
     return this.resolveGenerationResource(resourceId, versionId, 'lora')
   }
 
+  /** Only verified registry choices create sidecars; existing copied refs remain authoring data. */
+  async resolveGenerationPromptEmbeddings(input: {
+    modelFamily: string | null
+    prompt: GenerationPrompt
+    selection?: PromptEmbeddingSelection
+    text: string
+  }): Promise<GenerationPrompt> {
+    const captured = structuredClone(input)
+    const prompt = { ...captured.prompt, text: captured.text }
+    const sources = embeddingSourcesFromCatalog(await this.getCatalog())
+    const candidates = selectablePromptEmbeddingSources(sources, captured.modelFamily)
+    // Availability does not erase installed ownership. A missing/corrupt sibling never makes
+    // another version an implicit choice; explicit completion can still choose a verified one.
+    const automaticCandidates = candidates.filter((candidate) =>
+      sources
+        .filter(
+          (source) =>
+            source.token === candidate.token &&
+            source.resource.baseModelFamily === 'illustrious' &&
+            source.resource.predictionType === null,
+        )
+        .every((owner) => sameExactPromptEmbedding(owner.resource, candidate.resource)),
+    )
+    const verified = new Map<string, GenerationPrompt['embeddingRefs'][number]['resource']>()
+    const identityKey = (ref: GenerationPrompt['embeddingRefs'][number]) =>
+      JSON.stringify([ref.resource.localModelId, ref.resource.localVersionId, ref.token])
+    const verify = async (ref: GenerationPrompt['embeddingRefs'][number]) => {
+      const resolved = await this.resolveGenerationResourceWithFile(
+        ref.resource.localModelId,
+        ref.resource.localVersionId,
+        'embedding',
+      )
+      if (
+        embeddingActivationToken(resolved.originalFilename) !== ref.token ||
+        !sameExactPromptEmbedding(resolved.reference, ref.resource)
+      ) {
+        throw new ModelServiceError(
+          'MODEL_VERSION_MISMATCH',
+          'The installed embedding changed while its exact token and file were being verified.',
+        )
+      }
+      verified.set(identityKey(ref), resolved.reference)
+      return resolved.reference
+    }
+
+    let selected: GenerationPrompt['embeddingRefs'][number] | undefined
+    if (captured.selection) {
+      const choice = captured.selection
+      const candidate = candidates.find(
+        (source) =>
+          source.resource.localModelId === choice.resourceId &&
+          source.resource.localVersionId === choice.versionId &&
+          source.token === choice.token,
+      )
+      if (!candidate) {
+        throw new ModelServiceError(
+          'MODEL_EMBEDDING_SELECTION_UNAVAILABLE',
+          'Choose an available Illustrious embedding version and its exact activation token.',
+        )
+      }
+      const selectedRef = { resource: candidate.resource, token: candidate.token }
+      const resource = await verify(selectedRef)
+      const existing = prompt.embeddingRefs.find(
+        (ref) =>
+          ref.token === selectedRef.token && sameExactPromptEmbedding(ref.resource, resource),
+      )
+      selected = existing ?? { resource, token: candidate.token }
+    }
+
+    const reconciled = reconcilePromptEmbeddings(prompt, automaticCandidates, selected)
+    if (
+      selected &&
+      !reconciled.embeddingRefs.some((ref) => identityKey(ref) === identityKey(selected))
+    ) {
+      throw new ModelServiceError(
+        'MODEL_EMBEDDING_SELECTION_UNAVAILABLE',
+        'The selected embedding activation token must appear in the prompt text.',
+      )
+    }
+    for (const ref of reconciled.embeddingRefs) {
+      const retained = prompt.embeddingRefs.some(
+        (before) =>
+          before.token === ref.token && sameExactPromptEmbedding(before.resource, ref.resource),
+      )
+      if (retained) {
+        continue
+      }
+      const key = identityKey(ref)
+      ref.resource = verified.get(key) ?? (await verify(ref))
+    }
+    return structuredClone(reconciled)
+  }
+
   /** Select a verified managed component; this does not qualify it for inference. */
   async resolveGenerationVae(
     resourceId: string,
@@ -529,6 +657,12 @@ export class ModelService {
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
     return this.resolvePortableGenerationResource(saved, 'checkpoint')
+  }
+
+  async resolvePortableGenerationEmbedding(
+    saved: GenerationPrompt['embeddingRefs'][number]['resource'],
+  ): Promise<GenerationPrompt['embeddingRefs'][number]['resource']> {
+    return this.resolvePortableGenerationResource(saved, 'embedding')
   }
 
   async resolvePortableGenerationLora(
@@ -978,7 +1112,7 @@ export class ModelService {
   private async resolveGenerationResource(
     resourceId: string,
     versionId: string,
-    kind: 'checkpoint' | 'lora' | 'vae',
+    kind: 'checkpoint' | 'embedding' | 'lora' | 'vae',
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
     return (await this.resolveGenerationResourceWithFile(resourceId, versionId, kind)).reference
   }
@@ -986,13 +1120,21 @@ export class ModelService {
   private async resolveGenerationResourceWithFile(
     resourceId: string,
     versionId: string,
-    kind: 'checkpoint' | 'lora' | 'vae',
+    kind: 'checkpoint' | 'embedding' | 'lora' | 'vae',
   ): Promise<{
     fileSizeBytes: number
     managedPath: string
+    originalFilename: string
     reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
   }> {
-    const label = kind === 'checkpoint' ? 'checkpoint' : kind === 'lora' ? 'LoRA' : 'VAE'
+    const label =
+      kind === 'checkpoint'
+        ? 'checkpoint'
+        : kind === 'embedding'
+          ? 'embedding'
+          : kind === 'lora'
+            ? 'LoRA'
+            : 'VAE'
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (!uuid.test(resourceId) || !uuid.test(versionId)) {
       throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
@@ -1024,12 +1166,14 @@ export class ModelService {
       )
     }
     if (
-      kind === 'vae' &&
+      (kind === 'vae' || kind === 'embedding') &&
       (version.baseModelFamily !== 'illustrious' || version.predictionType !== null)
     ) {
       throw new ModelServiceError(
         'MODEL_FAMILY_UNSUPPORTED',
-        'External VAE selection requires an Illustrious-compatible component without a prediction type.',
+        kind === 'embedding'
+          ? 'Embedding authoring supports only Illustrious components without a prediction type.'
+          : 'External VAE selection requires an Illustrious-compatible component without a prediction type.',
       )
     }
     const status = await this.actualFileStatus(version.file, true)
@@ -1078,6 +1222,7 @@ export class ModelService {
     return {
       fileSizeBytes: version.file.sizeBytes,
       managedPath: version.file.managedPath,
+      originalFilename: version.file.originalFilename,
       reference: {
         baseModelFamily: version.baseModelFamily,
         civitaiFileId: version.civitaiFileId,
@@ -1096,15 +1241,22 @@ export class ModelService {
 
   private async resolvePortableGenerationResource(
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
-    kind: 'checkpoint' | 'lora' | 'vae',
+    kind: 'checkpoint' | 'embedding' | 'lora' | 'vae',
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
-    const label = kind === 'checkpoint' ? 'checkpoint' : kind === 'lora' ? 'LoRA' : 'VAE'
+    const label =
+      kind === 'checkpoint'
+        ? 'checkpoint'
+        : kind === 'embedding'
+          ? 'embedding'
+          : kind === 'lora'
+            ? 'LoRA'
+            : 'VAE'
     if (
       saved.kind !== kind ||
       saved.civitaiModelId === null ||
       saved.civitaiVersionId === null ||
       saved.civitaiFileId === null ||
-      (kind === 'vae' &&
+      ((kind === 'vae' || kind === 'embedding') &&
         (saved.baseModelFamily !== 'illustrious' || saved.predictionType !== null)) ||
       (kind === 'checkpoint' &&
         saved.baseModelFamily !== 'illustrious' &&

@@ -141,6 +141,7 @@ test(
             raster,
           })
           const prepared = await service.prepareNormalGenerationContext(opened.tabId, worker, {
+            assertNoUnboundGenerationEmbeddings: async () => {},
             resolveVerifiedGenerationCheckpointForPlan: async (reference) => {
               await service.setGenerationVae(opened.tabId, async () => replacement)
               await modelRepository.setDefaultVersion(second.resourceId, second.versionId)
@@ -555,6 +556,7 @@ test(
         const originalSteps = source.generationDraft.sampling.steps
         const copied = await prepareNormalTxt2Img({
           modelService: {
+            assertNoUnboundGenerationEmbeddings: async () => {},
             resolveVerifiedGenerationCheckpointForPlan: async (saved) => {
               // Mutation during real async file verification must not change the captured plan.
               source.composite.bytes.fill(0)
@@ -629,6 +631,7 @@ test(
       const frozen = await prepareNormalTxt2Img({
         lastActualSeed: 0,
         modelService: {
+          assertNoUnboundGenerationEmbeddings: async () => {},
           resolveVerifiedGenerationCheckpointForPlan: async (savedModel) => {
             target.lastActualSeedSnapshot = 999
             target.generationDraft.seed = { policy: 'random', value: null }
@@ -941,6 +944,7 @@ test(
         await assert.rejects(
           withIllustriousTxt2ImgRequest({
             modelService: {
+              assertNoUnboundGenerationEmbeddings: async () => {},
               resolveVerifiedGenerationCheckpointForPlan: async () => {
                 verified = true
                 throw new Error('must reject unsupported worker before verification')
@@ -1003,6 +1007,7 @@ test(
       await assert.rejects(
         withIllustriousTxt2ImgRequest({
           modelService: {
+            assertNoUnboundGenerationEmbeddings: async () => {},
             resolveVerifiedGenerationCheckpointForPlan: async (saved) => ({
               managedPath: installed.managedPath,
               reference: { ...saved, predictionType: 'v_prediction' },
@@ -1155,6 +1160,7 @@ test(
       let materializedTarget = ''
       const requestId = await withIllustriousTxt2ImgRequest({
         modelService: {
+          assertNoUnboundGenerationEmbeddings: async () => {},
           resolveVerifiedGenerationCheckpointForPlan: async (saved) => {
             prepared.context.prompts.positive = 'changed during model verification'
             prepared.targetPngBytes.fill(0)
@@ -1392,6 +1398,7 @@ test(
       })
       let verified = 0
       const prepared = await service.prepareNormalGenerationContext(tabId, worker, {
+        assertNoUnboundGenerationEmbeddings: async () => {},
         resolveVerifiedGenerationCheckpointForPlan: (saved) =>
           modelService.resolveVerifiedGenerationCheckpointForPlan(saved),
         resolveVerifiedGenerationLoraForPlan: async (saved) => {

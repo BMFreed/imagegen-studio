@@ -434,6 +434,21 @@ export class ProjectGenerationActionController {
       if (!confirmationMatches(initial, request.confirmation)) {
         return toConfirmationResult(initial)
       }
+      if (
+        capture.document.generationDraft.positivePrompt.embeddingRefs.length ||
+        capture.document.generationDraft.negativePrompt.embeddingRefs.length
+      ) {
+        throw new GenerationPreparationError(
+          'GENERATION_EMBEDDING_UNSUPPORTED',
+          'Prompt embeddings are not supported by this preparation.',
+        )
+      }
+      await this.options.models.assertNoUnboundGenerationEmbeddings({
+        modelFamily: capture.document.generationDraft.model?.baseModelFamily ?? null,
+        negativePrompt: capture.document.generationDraft.negativePrompt,
+        positivePrompt: capture.document.generationDraft.positivePrompt,
+      })
+      this.assertAdmissionOpen()
       const dynamic = getEffectiveDynamicPromptSettings(
         capture.document.generationDraft.dynamicPrompt,
       )

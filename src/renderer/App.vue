@@ -4,6 +4,7 @@ import type {
   ModelCatalogItem,
   ProjectApi,
   ProjectCloseImpact,
+  ProjectEmbeddingIdentity,
   ProjectGenerateOptions,
   ProjectGenerationActionState,
   ProjectGenerationDraftChange,
@@ -1066,6 +1067,12 @@ function setGenerationVae(
 
 function relinkGenerationVae(tabId: string) {
   return runGenerationModelAction(tabId, () => projectApi().relinkGenerationVae(tabId))
+}
+
+function relinkGenerationEmbedding(tabId: string, identity: ProjectEmbeddingIdentity) {
+  return runGenerationModelAction(tabId, () =>
+    projectApi().relinkGenerationEmbedding(tabId, identity),
+  )
 }
 
 function setDraftValidity(tabId: string, valid: boolean) {
@@ -2495,6 +2502,7 @@ onBeforeUnmount(() => {
           @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
           @refreshGenerationState="refreshGenerationState(activeTab.id)"
           @refreshModels="refreshModelCatalog"
+          @relinkEmbedding="relinkGenerationEmbedding(activeTab.id, $event)"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
           @relinkVae="relinkGenerationVae(activeTab.id)"

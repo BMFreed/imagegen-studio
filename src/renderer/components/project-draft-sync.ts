@@ -1,5 +1,6 @@
 import type { ProjectGenerationDraftChange, ProjectTab } from '../../shared/api.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
+import { reconcilePromptEmbeddings } from '../../shared/projects/prompt-embeddings.js'
 
 export interface ProjectDraftSyncOptions {
   onAcknowledged: (tab: ProjectTab) => void
@@ -36,6 +37,8 @@ export class ProjectDraftSync {
   change(tab: ProjectTab, change: ProjectGenerationDraftChange, historyGroupId?: string): void {
     if (change.kind === 'dynamic-prompt') {
       change = { kind: change.kind, value: { ...change.value } }
+    } else if (isEmbeddingChoice(change)) {
+      change = { ...change, embeddingSelection: { ...change.embeddingSelection } }
     }
     let state = this.states.get(tab.id)
     if (!state) {
@@ -61,7 +64,9 @@ export class ProjectDraftSync {
     if (
       previous?.kind === 'change' &&
       previous.key === key &&
-      previous.historyGroupId === historyGroupId
+      previous.historyGroupId === historyGroupId &&
+      !isEmbeddingChoice(previous.change) &&
+      !isEmbeddingChoice(change)
     ) {
       // Only adjacent updates commute. Moving an edit before an intervening
       // setting change or history seal would change the resulting Undo order.
@@ -255,17 +260,23 @@ function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChang
     return true
   }
   if (change.kind === 'positive-prompt') {
-    if (draft.positivePrompt.text === change.text) {
+    if (draft.positivePrompt.text === change.text && !change.embeddingSelection) {
       return false
     }
-    draft.positivePrompt.text = change.text
+    draft.positivePrompt = reconcilePromptEmbeddings(
+      { ...draft.positivePrompt, text: change.text },
+      [],
+    )
     return true
   }
   if (change.kind === 'negative-prompt') {
-    if (draft.negativePrompt.text === change.text) {
+    if (draft.negativePrompt.text === change.text && !change.embeddingSelection) {
       return false
     }
-    draft.negativePrompt.text = change.text
+    draft.negativePrompt = reconcilePromptEmbeddings(
+      { ...draft.negativePrompt, text: change.text },
+      [],
+    )
     return true
   }
   if (change.kind === 'seed') {
@@ -301,6 +312,23 @@ function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChang
     return true
   }
   return false
+}
+
+function isEmbeddingChoice(change: ProjectGenerationDraftChange): change is Extract<
+  ProjectGenerationDraftChange,
+  { kind: 'negative-prompt' | 'positive-prompt' }
+> & {
+  embeddingSelection: NonNullable<
+    Extract<
+      ProjectGenerationDraftChange,
+      { kind: 'negative-prompt' | 'positive-prompt' }
+    >['embeddingSelection']
+  >
+} {
+  return (
+    (change.kind === 'positive-prompt' || change.kind === 'negative-prompt') &&
+    change.embeddingSelection !== undefined
+  )
 }
 
 function changeKey(change: ProjectGenerationDraftChange): string {

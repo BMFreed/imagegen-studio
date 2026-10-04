@@ -351,7 +351,8 @@ document recovery/Save. This
 describes the authoring checkpoint; ordinary Illustrious LoRA inference is now
 covered by the checkpoint below. Exact-version
 LoRA trigger completion and prompt editing actions are connected in Electron;
-embedding insertion/diagnostics and Danbooru completion remain pending. See
+installed Illustrious embedding insertion/diagnostics are connected by the
+authoring checkpoint below. Danbooru completion remains pending. See
 [Prompt Editor](./prompt-editor.md#production-coverage-at-the-phase-2a-checkpoint).
 
 ## Illustrious LoRA generation checkpoint (02.10.2026)
@@ -364,3 +365,21 @@ installation is not inference qualification. The whole configured stack is copie
 to accepted provenance and its read-only comparison; only enabled verified
 resources reach ML. Anima, other adapter algorithms and remaining advanced options
 are still open.
+
+## Exact embedding authoring checkpoint (04.10.2026)
+
+[Normal Project prompt authoring](../../../engineering/phase-2c-embedding-authoring-research.md)
+uses installed Illustrious embeddings through each prompt's autocomplete rather
+than a separate selector. Both polarities insert `<original safetensors filename
+stem>`; `trainedWords` aid search only. Main receives text and an optional ID-only
+choice, verifies managed bytes and exact source/version identity, then stores
+text and refs atomically through document history/shadow/Save/reopen.
+Unique canonical manual input can link after verification; filename collisions
+require selection even when another installed owner is unavailable. Saved refs
+survive Default changes, rename and file loss. Portable Link changes local IDs
+only; deleting the literal prunes its ref and document Undo can restore it.
+
+Anima embedding authoring is unsupported. This checkpoint does not load weights
+or add generated embedding provenance: stored refs and known unbound installed
+tokens still block Generate with an explanation before enqueue. Full inference
+and Preset resource integration remain open.

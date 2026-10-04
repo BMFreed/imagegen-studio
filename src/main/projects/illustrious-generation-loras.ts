@@ -9,6 +9,7 @@ import type { ModelService } from '../models/model-service.js'
 
 export type GenerationModelResolver = Pick<
   ModelService,
+  | 'assertNoUnboundGenerationEmbeddings'
   | 'resolveVerifiedGenerationCheckpointForPlan'
   | 'resolveVerifiedGenerationLoraForPlan'
   | 'resolveVerifiedGenerationVaeForPlan'

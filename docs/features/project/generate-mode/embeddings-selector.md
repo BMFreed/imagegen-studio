@@ -18,25 +18,64 @@ interface GenerationPrompt {
 
 The same resource/token pair is stored once regardless of how many times the literal appears. Refs are normalized by first appearance and then resource ID for deterministic dirty comparison.
 
+New installed Illustrious embeddings use the literal
+`<original safetensors filename stem>` in both prompt polarities. This is an
+app-defined token, not CivitAI metadata. Display names and `trainedWords` are
+search context; they do not define another activation token or negative alias.
+Existing copied ref tokens remain unchanged.
+
 ## Resolution
 
-After completed text changes the editor reconciles refs:
+After text changes, main reconciles the authored prompt with the managed library:
 
 1. retain an existing ref while its exact token remains;
 2. remove it when all literal occurrences disappear;
-3. auto-link a manually typed exact token when exactly one installed embedding owns it;
-4. report ambiguity when several installed embeddings own the same unbound token;
+3. auto-link a manually typed canonical token only when one applicable installed exact version owns it and its managed file passes verification;
+4. leave a collision unbound and require explicit selection, including when another installed owner is missing or corrupt;
 5. preserve a recalled missing ref while its token remains;
 6. prefer stored resource identity over competing activation-token matches.
 
 Matching is case-sensitive, longest-first, and literal. Word boundaries are required only on token sides ending in a word character, so forms such as `<bad-hands-5>` work naturally.
 
+Renderer sends text and an optional resource ID, version ID and chosen literal.
+It never supplies reference metadata or paths. Main verifies exact file/source
+identity before creating a sidecar, then persists text and refs as one Project
+history edit. Mutable Default, display rename and a competing token owner do not
+replace an existing ref. Removing every occurrence prunes it; document Undo can
+restore both its text and the copied ref.
+
 ## Polarity and autocomplete
 
-Embedding completion inserts `activationToken` in Positive Prompt. Negative Prompt prefers `negativeToken` when defined. The selected resource is carried through a custom CodeMirror `StateEffect` and deduplicated into `embeddingRefs`.
+Embedding completion inserts the canonical literal in either prompt. A custom
+CodeMirror `StateEffect` carries its ID-only selection to main, including when
+the text was already present. Repeated selection of the same exact resource and
+token preserves copied metadata and does not duplicate the sidecar.
+
+Prototype fixtures may contain `activationToken`/`negativeToken` aliases. They
+do not establish a production metadata contract. Current production authoring
+supports Illustrious embeddings; Anima embedding actions are unsupported.
 
 ## Diagnostics
 
 Resolved embeddings receive a restrained resource decoration and an explicitly labeled `Embedding` tooltip with name, version, base model, activation token, and missing state. Recalled missing embeddings use an amber warning decoration and text diagnostic. Ambiguous unbound tokens use an amber diagnostic underline and require explicit selection from autocomplete.
 
 Missing and ambiguous embeddings block generation for the active prompt. Apply Preset and New Project validate only selected prompt sections. Deleting the literal removes its ref and blocking error automatically.
+
+An unlinked portable ref offers explicit `Link` when the exact installed file
+can be verified. Linking changes only local registry IDs; the saved token,
+display/version names, hash and source identity remain copied Project data.
+Model Manager provides the restore path for an unavailable exact file.
+
+## Production authoring checkpoint (04.10.2026)
+
+[Exact embedding authoring](../../../engineering/phase-2c-embedding-authoring-research.md)
+connects installed resources to both normal Project editors, literal decorations,
+diagnostics, selection and portable relink. Main checks revision and monotonic
+epoch across verification and commit; late edits, edit/Undo and tab close cannot
+overwrite newer state. History, shadow recovery and explicit `.igs` Save/reopen
+keep prompt text and refs together.
+
+This checkpoint does not load embedding weights. Generation with embedding refs
+still refuses explicitly; known unbound installed tokens also refuse before
+CPU composition or enqueue. Preset integrations, Anima embedding support and
+qualified embedding inference remain outside this checkpoint.

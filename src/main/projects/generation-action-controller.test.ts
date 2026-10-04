@@ -25,6 +25,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { publishIllustriousEmbeddingFixture } from '../models/test-fixtures/illustrious-embedding.js'
 import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
 import {
@@ -499,6 +500,113 @@ async function holdCurrentGeneration(fixture: Fixture) {
   await entered.promise
   return { release, result }
 }
+
+test('unbound embedding tokens refuse Generate in either polarity before worker, composition or queue publication', async () => {
+  await withFixture(async (fixture) => {
+    const repository = new ModelRepository(fixture.database.db)
+    await publishIllustriousEmbeddingFixture(
+      repository,
+      fixture.root,
+      500,
+      501,
+      'collision.safetensors',
+    )
+    await publishIllustriousEmbeddingFixture(
+      repository,
+      fixture.root,
+      500,
+      502,
+      'collision.safetensors',
+      0.25,
+    )
+    const saved = await readFile(fixture.packagePath)
+    for (const polarity of ['positive-prompt', 'negative-prompt'] as const) {
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'positive-prompt',
+        text: polarity === 'positive-prompt' ? 'portrait <collision>' : 'portrait',
+      })
+      await fixture.projects.updateGenerationDraft(fixture.tabId, {
+        kind: 'negative-prompt',
+        text: polarity === 'negative-prompt' ? 'blur <collision>' : 'blur',
+      })
+      await assert.rejects(
+        fixture.controller.generate(fixture.tabId, {
+          documentId: fixture.documentId,
+          iterations: 1,
+        }),
+        { code: 'MODEL_EMBEDDING_UNBOUND' },
+      )
+      assert.equal(fixture.runtime.admissionCount, 0)
+      assert.equal(fixture.runtime.leaseCount, 0)
+      assert.equal(fixture.runtime.composedTargets.length, 0)
+      assert.equal(fixture.runtime.generated.length, 0)
+      assert.deepEqual(
+        await fixture.queue.listUnfinishedByProjectDocument(fixture.tabId, fixture.documentId),
+        [],
+      )
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    }
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'negative-prompt',
+      text: 'blur',
+    })
+    const neighbor = await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    assert.equal(neighbor.kind, 'queued')
+    assert.equal(fixture.runtime.composedTargets.length, 1)
+    await waitForState(
+      fixture.controller,
+      fixture.tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    assert.equal(fixture.runtime.generated.length, 1)
+  })
+})
+
+test('bound embedding refs keep the explicit unsupported refusal before acquiring a worker in either polarity', async () => {
+  await withFixture(async (fixture) => {
+    const installed = await publishIllustriousEmbeddingFixture(
+      new ModelRepository(fixture.database.db),
+      fixture.root,
+      510,
+      511,
+    )
+    const prompt = await fixture.modelService.resolveGenerationPromptEmbeddings({
+      modelFamily: 'illustrious',
+      prompt: { embeddingRefs: [], text: '' },
+      selection: {
+        resourceId: installed.resourceId,
+        token: '<clean-style>',
+        versionId: installed.versionId,
+      },
+      text: '<clean-style>',
+    })
+    const owner = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!
+    const draft = structuredClone(owner.document.generationDraft)
+    for (const polarity of ['positivePrompt', 'negativePrompt'] as const) {
+      await owner.applyDocument({
+        ...owner.document,
+        generationDraft: { ...draft, [polarity]: prompt },
+      })
+      await assert.rejects(
+        fixture.controller.generate(fixture.tabId, {
+          documentId: fixture.documentId,
+          iterations: 1,
+        }),
+        { code: 'GENERATION_EMBEDDING_UNSUPPORTED' },
+      )
+      assert.equal(fixture.runtime.leaseCount, 0)
+      assert.equal(fixture.runtime.composedTargets.length, 0)
+      assert.equal(fixture.runtime.generated.length, 0)
+      assert.deepEqual(
+        await fixture.queue.listUnfinishedByProjectDocument(fixture.tabId, fixture.documentId),
+        [],
+      )
+    }
+  })
+})
 
 test('busy Generate publishes a sibling frozen Project before the held inference finishes', async () => {
   await withFixture(async (fixture) => {

@@ -398,6 +398,7 @@ async function runCase(config: CaseConfig): Promise<void> {
         await withIllustriousTxt2ImgRequest({
           // This adapter preserves exact fixture identity. The subject is storage, not model qualification.
           modelService: {
+            assertNoUnboundGenerationEmbeddings: async () => {},
             resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
               managedPath: modelPath,
               reference,

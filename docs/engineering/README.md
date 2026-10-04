@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Exact embedding authoring](./phase-2c-embedding-authoring-research.md) — plain-text autocomplete in both prompts, verified exact refs, atomic history/Save, portable relink and missing/collision diagnostics; worker embedding inference remains separate.
 - [Illustrious CFG Rescale](./phase-2c-cfg-rescale-research.md) — production Advanced Options, capability-gated frozen jobs, actual denoising, immutable portable record and legacy-unknown comparison.
 - [Illustrious opaque img2img](./phase-2c-img2img-research.md) — pixel-derived target mode, contextual denoising strength, frozen queue/Retry, Invoke timestep window and portable mode-specific provenance; release runtime and other pipelines remain separate.
 - [Confirmed early Raster Add](./phase-2b-early-raster-acceptance.md) — exact candidate/job confirmation, scoped cancellation, confirmed worker exit and preserved journal/shadow/Save boundary; qualified batch grouping follows in a separate internal checkpoint.
