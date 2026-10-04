@@ -4,6 +4,7 @@ import {
   supportsInferenceCFGRescale,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
@@ -64,6 +65,7 @@ export interface IllustriousTxt2ImgRequestV1 {
       sha256: string
       width: number
     }
+    vaePrecision?: 'Auto' | 'FP16' | 'FP32'
   }
   protocolVersion: '1'
   requestId: string
@@ -176,6 +178,16 @@ export async function withIllustriousGenerationRequest<T>(input: {
       'The active worker has not qualified Illustrious LoRA.',
     )
   }
+  if (
+    context.vaePrecision !== undefined &&
+    context.vaePrecision !== 'Auto' &&
+    !supportsInferenceVaePrecision(input.ready)
+  ) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified manual Illustrious VAE Precision.',
+    )
+  }
   await reverifyFrozenGenerationLoras(context, input.modelService)
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
@@ -206,6 +218,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
     }
     const common: IllustriousTxt2ImgRequestV1 = {
       job: {
+        ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
         ...(context.loras !== undefined ? { loras: workerLoras(context) } : {}),
         bbox: { ...context.bbox },
         checkpoint: {
@@ -279,6 +292,15 @@ function validatePrepared(
   scheduler: IllustriousSchedulerKey
 } {
   const { bbox, model, prompts, sampling, target } = context
+  if (
+    context.vaePrecision !== undefined &&
+    !['Auto', 'FP16', 'FP32'].includes(context.vaePrecision)
+  ) {
+    throw new IllustriousJobError(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'The frozen VAE Precision is invalid.',
+    )
+  }
   if (!frozenLoraFieldsAgree(context, workerLoras(context))) {
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',

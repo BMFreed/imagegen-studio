@@ -182,6 +182,29 @@ result. Strength 0 uses the VAE roundtrip without denoising, so it does not guar
 pixel-identical output. Partially transparent targets, inpaint, Anima, LoRA and
 release runtime installation remain pending.
 
+## Production VAE precision checkpoint
+
+[VAE precision evidence](../../../engineering/phase-2c-vae-precision-research.md)
+connects `Auto`, `FP16` and `FP32` in production `Generation > Advanced Options`
+to typed draft edits, Undo, recovery shadow and explicit Save/reopen. Displaying
+an absent field as Auto does not write a default or dirty the document. Reset
+restores absence. Illustrious settings remain editable without an installed
+runtime; a manual precision choice needs qualified worker 0.8.0 with
+`illustrious-vae-precision` before Generate or Retry. Anima is explicitly disabled.
+
+All new jobs freeze the effective policy, including Auto, and queue/worker inputs
+must agree. Older qualified peers can use Auto through their previous request
+shape; only the transport copy loses that field. Manual values never silently
+fall back. The worker controls both native VAE encoding and decoding independently
+of UNet/CLIP precision. Auto preserves the native checkpoint policy; it is not an
+alias for an assumed hardware dtype. Under the pinned current config it uses FP32.
+
+Add stores the copied policy in immutable portable metadata, and comparison
+uses that record after Save/reopen. Historical results without precision remain
+Unavailable. FP16 non-finite tensors fail before a successful PNG can be published.
+FP32 uses more memory; this does not establish a supported maximum GPU resolution.
+External VAE selection and CLIP Skip remain unsupported production inputs.
+
 ## Vue Prototype Coverage
 
 The current Project settings stack implements:

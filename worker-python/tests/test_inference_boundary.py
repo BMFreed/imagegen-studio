@@ -431,6 +431,9 @@ class _HookUnet:
         self.register_count += 1
         return _HookHandle(self)
 
+    def register_forward_hook(self, hook: Any) -> _HookHandle:
+        return self.register_forward_pre_hook(hook, with_kwargs=True)
+
 
 class _MaskPipeline:
     def __init__(self, batch_size: int, *, fail: bool = False, hidden_length: int = 154) -> None:
@@ -669,6 +672,14 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         def __init__(self) -> None:
             super().__init__(total=3, equal_lengths=True)
             self.image = Image.new("RGBA", (command.width, command.height), (20, 60, 140, 40))
+            # This fixture verifies protocol progress and real image publication;
+            # native VAE numeric behavior is covered by test_sdxl_vae_precision.
+            self.vae = SimpleNamespace(
+                encoder=_HookUnet(),
+                quant_conv=_HookUnet(),
+                post_quant_conv=_HookUnet(),
+                decoder=_HookUnet(),
+            )
 
         def set_progress_bar_config(self, *, disable: bool) -> None:
             assert disable
@@ -771,6 +782,10 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         command, config_dir=tmp_path, runtime=runtime, on_progress=observe
     )
     assert events == [(1, 3), (2, 3), (3, 3)]
+    assert all(
+        module.register_count == module.remove_count == 1 and module.hook is None
+        for module in vars(pipeline.vae).values()
+    )
     thumbnail_path = Path(str(command.output_path) + ".thumb.webp")
     if thumbnail_failure is None:
         thumbnail = cast(dict[str, object], result.pop("thumbnail"))
@@ -1093,7 +1108,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.7.0"
+    assert inference_ready_message()["workerVersion"] == "0.8.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1103,4 +1118,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-cfg-rescale",
         "illustrious-img2img",
         "illustrious-lora",
+        "illustrious-vae-precision",
     ]

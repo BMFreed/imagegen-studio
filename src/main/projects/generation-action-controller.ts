@@ -10,6 +10,7 @@ import {
   supportsInferenceCFGRescale,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
   ProjectGenerateOptions,
@@ -314,6 +315,7 @@ export class ProjectGenerationActionController {
               ? 'processing'
               : 'idle',
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
+      vaePrecisionSupported: !this.blocked && !this.closed && supportsInferenceVaePrecision(ready),
     }
   }
 
@@ -437,6 +439,16 @@ export class ProjectGenerationActionController {
         this.options.scratchBasePath,
         async ({ inferenceReady, targetWorker }) => {
           this.assertAdmissionOpen()
+          if (
+            capture.document.generationDraft.vaePrecision !== undefined &&
+            capture.document.generationDraft.vaePrecision !== 'Auto' &&
+            !supportsInferenceVaePrecision(inferenceReady)
+          ) {
+            throw new IllustriousJobError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker has not qualified manual Illustrious VAE Precision.',
+            )
+          }
           if (
             (capture.document.generationDraft.cfgRescale ?? 0) !== 0 &&
             !supportsInferenceCFGRescale(inferenceReady)

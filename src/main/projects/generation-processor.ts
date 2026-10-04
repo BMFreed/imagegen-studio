@@ -9,6 +9,7 @@ import {
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -389,6 +390,16 @@ export class GenerationProcessor {
           throw new GenerationProcessorError(
             'INFERENCE_UNAVAILABLE',
             'The active worker has not qualified opaque Illustrious img2img.',
+          )
+        }
+        if (
+          claimed.payload.context.vaePrecision !== undefined &&
+          claimed.payload.context.vaePrecision !== 'Auto' &&
+          !supportsInferenceVaePrecision(transport.ready)
+        ) {
+          throw new GenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified manual Illustrious VAE Precision.',
           )
         }
         if (claimed.payload.context.loras?.length && !supportsInferenceLora(transport.ready)) {

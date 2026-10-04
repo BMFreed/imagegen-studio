@@ -53,6 +53,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
     sha256: string
     width: number
   }
+  /** Authored/default precision policy; historical preparations omit it. */
+  vaePrecision?: 'Auto' | 'FP16' | 'FP32'
 }
 export interface PreparedNormalTxt2Img {
   context: FrozenNormalTxt2ImgPreparationV1
@@ -137,10 +139,16 @@ export function validateNormalGenerationDraft(
       'Embedding references are not supported by this preparation.',
     )
   }
-  if (draft.vae || draft.clipSkip !== undefined || draft.vaePrecision !== undefined) {
+  if (draft.vae || draft.clipSkip !== undefined) {
     throw new GenerationPreparationError(
       'GENERATION_ADVANCED_UNSUPPORTED',
-      'Advanced generation options are not supported by this preparation.',
+      'External VAE selection and CLIP Skip are not supported by this preparation.',
+    )
+  }
+  if (draft.vaePrecision !== undefined && !['Auto', 'FP16', 'FP32'].includes(draft.vaePrecision)) {
+    throw new GenerationPreparationError(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'VAE Precision must be Auto, FP16 or FP32.',
     )
   }
   const cfgRescale = draft.cfgRescale ?? 0
@@ -354,6 +362,7 @@ export async function prepareNormalGeneration(input: {
       sha256: composite.sha256,
       width: composite.width,
     },
+    vaePrecision: draft.vaePrecision ?? 'Auto',
   }
   let context: FrozenNormalGenerationPreparationV1
   if (actualMode === 'img2img') {

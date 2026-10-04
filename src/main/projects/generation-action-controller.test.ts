@@ -613,6 +613,109 @@ const rescaleReady: InferenceWorkerReady = {
   workerVersion: '0.5.0',
 }
 
+const precisionReady: InferenceWorkerReady = {
+  ...rescaleReady,
+  capabilities: [
+    ...rescaleReady.capabilities,
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+  ],
+  workerVersion: '0.8.0',
+}
+
+test('Generate gates manual VAE Precision before composition and freezes one captured policy across a concrete batch', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, queue, runtime, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.updateGenerationDraft(tabId, { kind: 'vae-precision', value: 'FP32' })
+    assert.equal((await controller.getState(tabId)).vaePrecisionSupported, false)
+    const saved = await readFile(fixture.packagePath)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 2 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    runtime.ready = structuredClone(precisionReady)
+    assert.equal((await controller.getState(tabId)).vaePrecisionSupported, true)
+    const entered = signal()
+    const release = signal()
+    runtime.beforeCompose = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    try {
+      const pending = controller.generate(tabId, { documentId, iterations: 2 })
+      await entered.promise
+      await projects.updateGenerationDraft(tabId, { kind: 'vae-precision', value: 'FP16' })
+      release.resolve()
+      const result = await pending
+      assert.equal(result.kind, 'queued')
+      if (result.kind !== 'queued') {
+        throw new Error('expected durable precision batch')
+      }
+      assert.equal(result.jobIds.length, 2)
+      await waitForState(controller, tabId, (state) => state.phase === 'idle')
+      for (const id of result.jobIds) {
+        const item = await queue.loadVerifiedInput(id)
+        assert.equal(item.item.status, 'completed')
+        assert.equal(item.payload.context.vaePrecision, 'FP32')
+        assert.equal(item.payload.workerJob.vaePrecision, 'FP32')
+      }
+      assert.deepEqual(
+        runtime.generated.map((item) => item.job.vaePrecision),
+        ['FP32', 'FP32'],
+      )
+      assert.equal(
+        projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.vaePrecision,
+        'FP16',
+      )
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('Retry rechecks manual VAE capability and retains frozen policy after later draft edits', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, runtime, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    runtime.ready = structuredClone(precisionReady)
+    await projects.updateGenerationDraft(tabId, { kind: 'vae-precision', value: 'FP32' })
+    runtime.beforeGenerate = async () => {
+      throw new Error('controlled precision failure')
+    }
+    await controller.generate(tabId, { documentId, iterations: 1 })
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    await projects.updateGenerationDraft(tabId, { kind: 'vae-precision', value: 'FP16' })
+    runtime.beforeGenerate = null
+    runtime.ready = {
+      ...precisionReady,
+      capabilities: precisionReady.capabilities.filter(
+        (item) => item !== 'illustrious-vae-precision',
+      ),
+      workerVersion: '0.7.0',
+    }
+    await assert.rejects(controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    assert.equal((await controller.getQueue()).items.length, 1)
+    assert.equal(runtime.generated.length, 1)
+    runtime.ready = structuredClone(precisionReady)
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.equal(runtime.generated[1].job.vaePrecision, 'FP32')
+    assert.equal(
+      projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.vaePrecision,
+      'FP16',
+    )
+  })
+})
+
 test('Generate gates CFG Rescale before composition and freezes the supported value through concurrent draft edits and completion', async () => {
   await withFixture(async (fixture) => {
     const { controller, documentId, projects, queue, runtime, staging, tabId } = fixture

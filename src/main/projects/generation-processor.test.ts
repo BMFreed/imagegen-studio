@@ -1609,6 +1609,245 @@ const loraReady: InferenceWorkerReady = {
   workerVersion: '0.7.0',
 }
 
+const precisionReady: InferenceWorkerReady = {
+  ...loraReady,
+  capabilities: [...loraReady.capabilities, 'illustrious-vae-precision'],
+  workerVersion: '0.8.0',
+}
+
+// Boundary: durable main queue -> Retry -> dispatch -> verified staging -> Add -> .igs loader.
+// Neighbor: each mode/policy and legacy absence. Mutants: dropped policy, mutable retry/default,
+// manual legacy admission, crossed wire policy, and invented legacy Auto metadata.
+test('VAE Precision policies survive both modes, Retry, recovery, Add and explicit Save without rewriting legacy absence', async (t) => {
+  for (const opaque of [false, true]) {
+    for (const precision of [undefined, 'Auto', 'FP16', 'FP32'] as const) {
+      await t.test(`${opaque ? 'img2img' : 'txt2img'} ${precision ?? 'legacy'}`, async () => {
+        await withFixture(async (fixture) => {
+          const base = opaque ? await opaquePreparation(fixture, 0.65) : fixture.prepared
+          const prepared = {
+            context: structuredClone(base.context),
+            targetPngBytes: Buffer.from(base.targetPngBytes),
+          }
+          if (precision !== undefined) {
+            prepared.context.vaePrecision = precision
+          }
+          const original = await withIllustriousGenerationRequest({
+            modelService: fixture.modelService,
+            prepared,
+            ready: precisionReady,
+            scratchBasePath: path.join(fixture.root, 'scratch'),
+            use: async (request) => {
+              assert.equal(request.job.vaePrecision, precision)
+              const crossed = structuredClone(request)
+              crossed.job.vaePrecision = precision === 'FP16' ? 'FP32' : 'FP16'
+              await assert.rejects(
+                fixture.queue.enqueueIllustriousGeneration({
+                  prepared,
+                  projectPath: path.join(fixture.root, 'Project.igs'),
+                  request: crossed,
+                  stagingSessionId: randomUUID(),
+                }),
+                { code: 'QUEUE_INPUT_INVALID' },
+              )
+              return await fixture.queue.enqueueIllustriousGeneration({
+                prepared,
+                projectPath: path.join(fixture.root, 'Project.igs'),
+                request,
+                stagingSessionId: randomUUID(),
+              })
+            },
+          })
+          prepared.context.vaePrecision = precision === 'FP16' ? 'FP32' : 'FP16'
+          const savedBefore = await readFile(path.join(fixture.root, 'Project.igs'))
+          const canceled = await fixture.queue.cancel(original.id)
+          await fixture.queue.recoverAfterRestart()
+          const frozen = await fixture.queue.loadVerifiedRetryInput(original.id)
+          const checkRetry = async (ready: InferenceWorkerReady) => {
+            await withIllustriousGenerationRequest({
+              modelService: fixture.modelService,
+              prepared: {
+                context: frozen.payload.context,
+                targetPngBytes: await readFile(frozen.targetPath),
+              },
+              ready,
+              scratchBasePath: path.join(fixture.root, 'scratch'),
+              use: async (request) => {
+                assert.equal(request.job.vaePrecision, precision)
+              },
+            })
+          }
+          if (precision === 'FP16' || precision === 'FP32') {
+            await assert.rejects(
+              fixture.queue.retryTerminal(original.id, canceled.statusSequence, async () => {
+                await checkRetry(loraReady)
+              }),
+              { code: 'INFERENCE_UNAVAILABLE' },
+            )
+            assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+          } else {
+            await checkRetry(loraReady)
+          }
+          const retried = await fixture.queue.retryTerminal(
+            original.id,
+            canceled.statusSequence,
+            async () => {
+              await checkRetry(precisionReady)
+            },
+          )
+          const copied = await fixture.queue.loadVerifiedInput(retried.id)
+          assert.equal(copied.payload.context.vaePrecision, precision)
+          assert.equal(copied.payload.workerJob.vaePrecision, precision)
+          const completed = await fixture.processor.runOne(
+            transport(async (request) => {
+              assert.equal(request.job.vaePrecision, precision)
+              assert.equal(
+                request.type,
+                opaque ? 'generate-illustrious-img2img' : 'generate-illustrious-txt2img',
+              )
+              return await writeDone(request, fixture.outputBytes, 42)
+            }, precisionReady),
+          )
+          assert.equal(completed.kind, 'completed')
+          const finished = await fixture.queue.loadVerifiedInput(retried.id)
+          await fixture.queue.deleteTerminal(retried.id, finished.item.statusSequence)
+          await fixture.staging.recoverAfterRestart()
+          const candidates = await fixture.staging.listVerifiedCandidates(retried.localProjectKey)
+          assert.equal(candidates.length, 1)
+          assert.equal(JSON.parse(candidates[0].frozenPayloadJson).context.vaePrecision, precision)
+          assert.deepEqual(await readFile(path.join(fixture.root, 'Project.igs')), savedBefore)
+          await withAcceptance(fixture, retried.localProjectKey, async (owner, acceptance) => {
+            await owner.applyDocument({
+              ...owner.document,
+              generationDraft: { ...owner.document.generationDraft, vaePrecision: 'FP16' },
+            })
+            assert.equal(
+              (
+                await acceptance.accept(retried.localProjectKey, [retried.id], retried.id, [
+                  retried.id,
+                ])
+              ).kind,
+              'accepted',
+            )
+            await owner.save()
+            const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
+            const configuration =
+              saved.project.layers[0]?.generationProvenance?.generationConfiguration
+            assert.equal(configuration?.vaePrecision, precision)
+            assert.equal(Object.hasOwn(configuration!, 'vaePrecision'), precision !== undefined)
+            assert.equal(saved.project.generationDraft.vaePrecision, 'FP16')
+          })
+        })
+      })
+    }
+  }
+})
+
+test('manual VAE Precision is refused again at dispatch with old capabilities while Auto and legacy remain usable', async () => {
+  for (const precision of [undefined, 'Auto', 'FP16', 'FP32'] as const) {
+    await withFixture(async (fixture) => {
+      if (precision !== undefined) {
+        fixture.prepared.context.vaePrecision = precision
+      }
+      await withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared: fixture.prepared,
+        ready: precisionReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async (request) => {
+          await fixture.queue.enqueueIllustriousGeneration({
+            prepared: fixture.prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          })
+        },
+      })
+      let called = 0
+      const result = await fixture.processor.runOne(
+        transport(async (request) => {
+          called += 1
+          assert.equal(request.job.vaePrecision, precision)
+          return await writeDone(request, fixture.outputBytes)
+        }, loraReady),
+      )
+      const manual = precision === 'FP16' || precision === 'FP32'
+      assert.equal(result.kind, manual ? 'failed' : 'completed')
+      assert.equal(called, manual ? 0 : 1)
+      if (manual) {
+        const row = (await fixture.queue.listManagerPage()).items[0]
+        assert.equal(row.error?.code, 'GENERATION_INPUT_CHANGED')
+        const input = await fixture.queue.loadVerifiedInput(row.id)
+        assert.deepEqual(
+          await fixture.staging.listVerifiedCandidates(input.item.localProjectKey),
+          [],
+        )
+      }
+    })
+  }
+})
+
+test('durable VAE Precision reads refuse hash-consistent crossed and dropped policies and still dispatch a legacy neighbor', async () => {
+  await withFixture(async (fixture) => {
+    const invalidIds: string[] = []
+    for (const mutate of [
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.vaePrecision = 'FP16'
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.vaePrecision = 'FP16'
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.context.vaePrecision
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.workerJob.vaePrecision
+      },
+    ]) {
+      fixture.prepared.context.vaePrecision = 'FP32'
+      const item = await withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared: fixture.prepared,
+        ready: precisionReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async (request) =>
+          await fixture.queue.enqueueIllustriousGeneration({
+            prepared: fixture.prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          }),
+      })
+      const input = await fixture.queue.loadVerifiedInput(item.id)
+      const payload = structuredClone(input.payload)
+      mutate(payload)
+      const changed = JSON.stringify(payload)
+      const manifestPath = path.join(path.dirname(input.targetPath), 'manifest.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      manifest.payloadSha256 = sha256(Buffer.from(changed))
+      await fixture.database.db
+        .updateTable('generation_queue_item')
+        .set({ frozen_payload_json: changed })
+        .where('id', '=', item.id)
+        .execute()
+      await writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 })
+      await assert.rejects(fixture.queue.loadVerifiedInput(item.id), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      invalidIds.push(item.id)
+    }
+    delete fixture.prepared.context.vaePrecision
+    const neighbor = await enqueue(fixture)
+    const claimed = await fixture.queue.claimNextPending()
+    assert.equal(claimed?.item.id, neighbor)
+    assert.equal(Object.hasOwn(claimed.payload.context, 'vaePrecision'), false)
+    assert.equal(Object.hasOwn(claimed.payload.workerJob, 'vaePrecision'), false)
+    const statuses = (await fixture.queue.listManagerPage()).items
+    for (const id of invalidIds) {
+      assert.equal(statuses.find((item) => item.id === id)?.status, 'failed')
+    }
+  })
+})
+
 async function preparationWithLoras(fixture: Fixture, opaque = false) {
   const active = []
   for (const [index, weight] of [-0.5, 0, 1e-10].entries()) {

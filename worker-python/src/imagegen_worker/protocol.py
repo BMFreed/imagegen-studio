@@ -108,6 +108,7 @@ class GenerateIllustriousTxt2ImgCommand:
     output_path: Path
     cfg_rescale: float = 0.0
     loras: tuple[GenerationLora, ...] = ()
+    vae_precision: Literal["Auto", "FP16", "FP32"] = "Auto"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -230,10 +231,13 @@ def _generate_illustrious_txt2img(
         value,
         "Generation job",
         {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
-        optional_keys={"loras"},
+        optional_keys={"loras", "vaePrecision"},
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
         raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
+    vae_precision = job.get("vaePrecision", "Auto")
+    if not isinstance(vae_precision, str) or vae_precision not in ("Auto", "FP16", "FP32"):
+        raise DerivativeError("INVALID_REQUEST", "VAE precision is unsupported.")
 
     checkpoint = _object(job["checkpoint"], "Checkpoint", {"path", "sha256", "predictionType"})
     checkpoint_path = _absolute_path(checkpoint["path"], "Checkpoint path")
@@ -370,6 +374,7 @@ def _generate_illustrious_txt2img(
         cfg_scale=cfg_scale,
         cfg_rescale=cfg_rescale,
         loras=tuple(loras),
+        vae_precision=vae_precision,
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

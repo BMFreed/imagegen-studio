@@ -123,3 +123,7 @@ branch review, запускать существующие проверки и �
   in both normal modes, exact enabled file preflight and full configured stack
   through queue/Retry/Add/Save/comparison. Actual ML, native controlled peer and
   semantic mutations have separate evidence; other algorithms/Anima remain open.
+- [Phase 2C VAE precision](./phase-2c-vae-precision-research.md): embedded
+  Illustrious VAE Auto/FP16/FP32 in both normal modes, frozen queue/Retry,
+  portable acceptance/comparison and finite-output refusal. Actual native ML and
+  controlled Electron evidence are separate; external VAE/Anima remain open.

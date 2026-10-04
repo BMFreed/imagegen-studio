@@ -164,6 +164,7 @@ const Txt2ImgFrozenContextSchema = v.strictObject({
     sha256: Sha256Schema,
     width: TargetSideSchema,
   }),
+  vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 const Txt2ImgWorkerJobSchema = v.strictObject({
   bbox: BboxSchema,
@@ -189,6 +190,7 @@ const Txt2ImgWorkerJobSchema = v.strictObject({
     sha256: Sha256Schema,
     width: TargetSideSchema,
   }),
+  vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 const Txt2ImgSourceRequestSchema = v.strictObject({
   job: v.strictObject({
@@ -1802,6 +1804,7 @@ function frozenPayload(
   ) {
     const job = {
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
+      ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
       prompts: request.job.prompts,
@@ -1822,6 +1825,7 @@ function frozenPayload(
   ) {
     const job = {
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
+      ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
       prompts: request.job.prompts,
@@ -1987,6 +1991,7 @@ function validateSnapshot(
         : 'generate-illustrious-txt2img') ||
     !denoisingFieldsAgree(context, request.job.sampling) ||
     !frozenLoraFieldsAgree(context, request.job.loras) ||
+    request.job.vaePrecision !== context.vaePrecision ||
     context.schemaVersion !== 1 ||
     request.protocolVersion !== '1' ||
     request.job.schemaVersion !== 1 ||
@@ -2050,6 +2055,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
   return (
     denoisingFieldsAgree(context, workerJob.sampling) &&
     frozenLoraFieldsAgree(context, workerJob.loras) &&
+    workerJob.vaePrecision === context.vaePrecision &&
     path.isAbsolute(context.model.managedPath) &&
     path.resolve(context.model.managedPath) === context.model.managedPath &&
     workerJob.checkpoint.path === context.model.managedPath &&

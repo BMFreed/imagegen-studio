@@ -78,6 +78,7 @@ const report = {
     'Actual Queue Manager cached/placeholder result context and View result navigation through the production App/Canvas; navigation preserves acceptance selection and durable Project state.',
     'Actual contextual Denoising Strength control and opaque accepted Raster → img2img queue → later draft edit → Add → Save/reopen/comparison; partial-alpha neighboring target is visibly refused.',
     'Actual exact LoRA selection and frozen full stack/verified enabled wire through Generate, later weight/default edit, Retry, Add, Save/reopen and read-only comparison; disabled missing files remain ignored by inference.',
+    'Actual embedded VAE Precision selection and frozen FP32 transport through Generate, later FP16 draft edit, confirmed Cancel, Retry, Add, Save/reopen and read-only comparison; controlled peer verifies the field rather than performing ML precision arithmetic.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -613,8 +614,8 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify(role === 'inference'
-  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.7.0',
-    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora']}
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.8.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora','illustrious-vae-precision']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
     runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
@@ -651,6 +652,7 @@ process.stdin.on('data',data=>{
       if (role !== 'inference') process.exit(30)
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
+      if(request.job.vaePrecision!==undefined && !['Auto','FP16','FP32'].includes(request.job.vaePrecision)) process.exit(33)
       if(request.job.loras!==undefined) {
         if(!Array.isArray(request.job.loras)) process.exit(31)
         for(const lora of request.job.loras) {
@@ -2625,6 +2627,152 @@ try {
       originalJobId: loraSource.id,
       retryJobId: loraRetry.id,
       requestCountAtAdmission: requestCountBeforeLora,
+    },
+  )
+  await resizeNativeWindow(1380, 900)
+  const vaeProject = await createConfiguredProject(
+    'VAE precision acceptance',
+    'native embedded VAE precision frozen prompt',
+    83,
+    96,
+    installed.versionId,
+  )
+  await window.getByText('Advanced Options', { exact: true }).click()
+  const vaePrecision = vaeProject.region.locator('[aria-label="VAE precision"]')
+  const chooseVaePrecision = async (precision) => {
+    await vaePrecision.scrollIntoViewIfNeeded()
+    await vaePrecision.click()
+    await window.getByText(precision, { exact: true }).last().click()
+    await expect
+      .poll(async () => (await tab(vaeProject.id)).generationDraft.vaePrecision)
+      .toBe(precision)
+  }
+  await chooseVaePrecision('FP32')
+  const vaeBeforeGenerate = readFileSync(vaeProject.packagePath)
+  const vaeRequestCount = generations().length
+  await window.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(vaeRequestCount + 1)
+  const vaeRequest = generations().at(-1)
+  assert.equal(vaeRequest.request.type, 'generate-illustrious-txt2img')
+  assert.equal(vaeRequest.request.job.vaePrecision, 'FP32')
+  const vaeSource = (await rows(vaeProject.id))[0]
+  assert.equal(vaeSource.status, 'running')
+  const vaeFrozen = JSON.parse(vaeSource.frozen_payload_json)
+  assert.equal(vaeFrozen.context.vaePrecision, 'FP32')
+  assert.equal(vaeFrozen.workerJob.vaePrecision, 'FP32')
+  await chooseVaePrecision('FP16')
+  assert.deepEqual(readFileSync(vaeProject.packagePath), vaeBeforeGenerate)
+  assert.equal((await rows(vaeProject.id))[0].frozen_payload_json, vaeSource.frozen_payload_json)
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await vaePrecision.scrollIntoViewIfNeeded()
+    await screenshot(`29-vae-precision-advanced-options-${width}x${height}`)
+  }
+  await openManager.click()
+  await expect(manager).toBeVisible()
+  await managerRow(vaeSource.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect.poll(async () => (await rows(vaeProject.id))[0].status).toBe('canceled')
+  await expect.poll(async () => (await api('getGenerationState', vaeProject.id)).phase).toBe('idle')
+  assert.throws(() => process.kill(vaeRequest.pid, 0), { code: 'ESRCH' })
+  assert.equal((await api('listGenerationResults', vaeProject.id)).candidates.length, 0)
+  assert.deepEqual(readFileSync(vaeProject.packagePath), vaeBeforeGenerate)
+  await managerRow(vaeSource.id).getByRole('button', { name: 'Retry job', exact: true }).click()
+  await expect.poll(async () => (await rows(vaeProject.id)).length).toBe(2)
+  const vaeRetry = (await rows(vaeProject.id)).find((entry) => entry.id !== vaeSource.id)
+  assert.equal(vaeRetry.frozen_payload_json, vaeSource.frozen_payload_json)
+  await expect
+    .poll(() => generations().filter((entry) => entry.request.job.sampling.seed === 83).length, {
+      timeout: 20_000,
+    })
+    .toBe(2)
+  const vaeRetryRequest = generations()
+    .filter((entry) => entry.request.job.sampling.seed === 83)
+    .at(-1)
+  assert.equal(vaeRetryRequest.request.job.vaePrecision, 'FP32')
+  assert.equal(vaeRetryRequest.request.job.sampling.seed, 83)
+  assert.equal(
+    vaeRetryRequest.request.job.prompts.positive,
+    vaeRequest.request.job.prompts.positive,
+  )
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  release(vaeRetryRequest)
+  await expect
+    .poll(async () => (await api('listGenerationResults', vaeProject.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(1)
+  await expect.poll(async () => (await api('getGenerationState', vaeProject.id)).phase).toBe('idle')
+  const vaeTray = vaeProject.region.getByRole('region', {
+    name: 'Generation Results',
+    exact: true,
+  })
+  await vaeTray.getByRole('button', { name: 'Result selection actions', exact: true }).click()
+  await window
+    .getByRole('menuitem', { name: 'Select all completed across all sessions', exact: true })
+    .click()
+  await window.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
+  await expect.poll(async () => (await tab(vaeProject.id)).layers.length).toBe(1)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(vaeProject.id)).dirty).toBe(false)
+  const vaeSaved = (await readIgsPackage(vaeProject.packagePath)).project
+  assert.equal(vaeSaved.generationDraft.vaePrecision, 'FP16')
+  assert.equal(vaeSaved.layers[0].generationProvenance.generationConfiguration.vaePrecision, 'FP32')
+  const vaeSavedBytes = readFileSync(vaeProject.packagePath)
+  await window.getByRole('button', { name: 'Close VAE precision acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open VAE precision acceptance', exact: true }).click()
+  await window.getByRole('tab', { name: 'VAE precision acceptance', exact: true }).waitFor()
+  const vaeReopened = await tab(vaeProject.id)
+  assert.equal(vaeReopened.generationDraft.vaePrecision, 'FP16')
+  const vaeReopenedGenerationData = await api(
+    'getRasterGenerationData',
+    vaeProject.id,
+    vaeSaved.documentId,
+    vaeSaved.layers[0].id,
+  )
+  assert.equal(vaeReopenedGenerationData.generationConfiguration.vaePrecision, 'FP32')
+  await window
+    .getByRole('button', { name: `Layer actions for ${vaeSaved.layers[0].name}`, exact: true })
+    .click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+  const vaeRow = comparison.locator('[data-setting="vaePrecision.value"]')
+  await expect(vaeRow).toHaveAttribute('data-status', 'Changed')
+  await expect(vaeRow).toContainText('FP32')
+  await expect(vaeRow).toContainText('FP16')
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await vaeRow.scrollIntoViewIfNeeded()
+    await screenshot(`30-vae-precision-frozen-comparison-${width}x${height}`)
+    const bounds = await comparison.boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0)
+    assert.ok(bounds.x + bounds.width <= width && bounds.y + bounds.height <= height)
+    const horizontalOverflow = await comparison.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )
+    assert.equal(horizontalOverflow, false)
+    report.viewportChecks.push({ bounds, height, horizontalOverflow, name: 'VAE precision', width })
+  }
+  assert.deepEqual(readFileSync(vaeProject.packagePath), vaeSavedBytes)
+  assert.deepEqual(await tab(vaeProject.id), vaeReopened)
+  await window.keyboard.press('Escape')
+  checked(
+    'Native VAE Precision freezes FP32 through Generate/Cancel/Retry/Add/Save/reopen while current FP16 stays separate in read-only comparison',
+    {
+      currentPrecision: 'FP16',
+      frozenPrecision: 'FP32',
+      layerId: vaeSaved.layers[0].id,
+      originalJobId: vaeSource.id,
+      originalPid: vaeRequest.pid,
+      projectId: vaeProject.id,
+      retryJobId: vaeRetry.id,
+      retryPid: vaeRetryRequest.pid,
     },
   )
   for (const entry of lines(peerLaunches)) {

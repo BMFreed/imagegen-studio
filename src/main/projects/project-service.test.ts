@@ -58,6 +58,132 @@ import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 
+test('VAE Precision typed edits preserve explicit policy through real shadow recovery, Undo, Save and reopen', async () => {
+  await withService(async ({ dataRoot, repository, service, shadow }) => {
+    const created = await service.create({ height: 64, title: 'VAE precision storage', width: 64 })
+    const neighbor = await service.create({ height: 64, title: 'Neighbor', width: 64 })
+    const filePath = (await repository.getProject(created.id))!.canonicalPath
+    assert.equal('vaePrecision' in created.generationDraft, false)
+    const unchanged = await service.updateGenerationDraft(created.id, {
+      kind: 'vae-precision',
+      value: null,
+    })
+    assert.equal(unchanged.dirty, false)
+    assert.equal(unchanged.canUndo, false)
+    for (const value of ['Auto', 'FP16', 'FP32'] as const) {
+      const edited = await service.updateGenerationDraft(created.id, {
+        kind: 'vae-precision',
+        value,
+      })
+      assert.equal(edited.generationDraft.vaePrecision, value)
+      await service.save(created.id)
+      assert.equal((await readIgsPackage(filePath)).project.generationDraft.vaePrecision, value)
+    }
+    const saved = await readFile(filePath)
+    await service.updateGenerationDraft(created.id, { kind: 'vae-precision', value: 'FP16' })
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(filePath), saved)
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.equal(recovered.generationDraft.vaePrecision, 'FP16')
+    const reset = await restarted.updateGenerationDraft(created.id, {
+      kind: 'vae-precision',
+      value: null,
+    })
+    assert.equal('vaePrecision' in reset.generationDraft, false)
+    assert.equal((await restarted.undo(created.id)).generationDraft.vaePrecision, 'FP16')
+    assert.equal('vaePrecision' in (await restarted.redo(created.id)).generationDraft, false)
+    await restarted.save(created.id)
+    assert.equal('vaePrecision' in (await readIgsPackage(filePath)).project.generationDraft, false)
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved VAE precision Project did not reopen')
+    }
+    assert.equal('vaePrecision' in reopened.tab.generationDraft, false)
+    assert.equal(service.getOpenTabs().find((tab) => tab.id === neighbor.id)?.dirty, false)
+    await restarted.close(created.id)
+  })
+})
+
+test('VAE Precision typed IPC refuses unknown policies without changing document, history or saved bytes', async () => {
+  await withService(async ({ repository, service }) => {
+    const created = await service.create({ height: 64, title: 'VAE precision guard', width: 64 })
+    const filePath = (await repository.getProject(created.id))!.canonicalPath
+    const saved = await readFile(filePath)
+    for (const value of ['auto', 'fp16', 'BF16', '', undefined, false, 16, NaN, {}]) {
+      const invalid = { kind: 'vae-precision', value }
+      assert.equal(isProjectGenerationDraftChange(invalid), false)
+      await assert.rejects(service.updateGenerationDraft(created.id, invalid as never), {
+        code: 'PROJECT_INVALID_INPUT',
+      })
+    }
+    const extra = { extra: true, kind: 'vae-precision', value: 'FP32' }
+    assert.equal(isProjectGenerationDraftChange(extra), false)
+    await assert.rejects(service.updateGenerationDraft(created.id, extra as never), {
+      code: 'PROJECT_INVALID_INPUT',
+    })
+    const current = service.getOpenTabs().find((tab) => tab.id === created.id)!
+    assert.equal(current.dirty, false)
+    assert.equal(current.canUndo, false)
+    assert.equal('vaePrecision' in current.generationDraft, false)
+    assert.deepEqual(await readFile(filePath), saved)
+  })
+})
+
+test('VAE Precision optimistic draft serializes manual edits and reset through real service before Save', async () => {
+  await withService(async ({ repository, service }) => {
+    let acknowledged = await service.create({ height: 64, title: 'VAE precision sync', width: 64 })
+    const filePath = (await repository.getProject(acknowledged.id))!.canonicalPath
+    const overlays: (typeof acknowledged.generationDraft | null)[] = []
+    const sent: ProjectGenerationDraftChange[] = []
+    let release: (() => void) | undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sync = new ProjectDraftSync({
+      onAcknowledged: (tab) => {
+        acknowledged = tab
+      },
+      onError: () => assert.fail('Unexpected precision draft error'),
+      onOverlay: (_id, draft) => overlays.push(draft),
+      send: async (id, change) => {
+        sent.push(change)
+        if (sent.length === 1) {
+          await held
+        }
+        return service.updateGenerationDraft(id, change)
+      },
+    })
+    sync.change(acknowledged, { kind: 'vae-precision', value: 'FP16' })
+    sync.change(acknowledged, { kind: 'vae-precision', value: 'FP32' })
+    assert.equal(overlays.at(-1)?.vaePrecision, 'FP32')
+    const flushed = sync.flush(acknowledged.id)
+    release?.()
+    await flushed
+    await service.save(acknowledged.id)
+    assert.equal((await readIgsPackage(filePath)).project.generationDraft.vaePrecision, 'FP32')
+    sync.change(acknowledged, { kind: 'vae-precision', value: null })
+    assert.equal('vaePrecision' in overlays.at(-1)!, false)
+    await sync.flush(acknowledged.id)
+    await service.save(acknowledged.id)
+    assert.equal('vaePrecision' in (await readIgsPackage(filePath)).project.generationDraft, false)
+    assert.deepEqual(sent, [
+      { kind: 'vae-precision', value: 'FP16' },
+      { kind: 'vae-precision', value: 'FP32' },
+      { kind: 'vae-precision', value: null },
+    ])
+  })
+})
+
 test('standalone target reports unavailable CPU pixels without requiring a result layer or mutating the document', async () => {
   await withService(async ({ service }) => {
     const tab = await service.create({ height: 64, title: 'Standalone target', width: 64 })

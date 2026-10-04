@@ -24,6 +24,80 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
 const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
 
+test('VAE Precision compares frozen applied values with family-scoped current Auto without inventing legacy values', () => {
+  const source = fixture()
+  const legacy = structuredClone(source)
+  assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
+  assert.match(result(source, 'vaePrecision.value').before, /Unavailable in saved generation data/)
+  assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
+  assert.deepEqual(source, legacy, 'projecting the default never writes either input')
+  source.data.generationConfiguration!.vaePrecision = 'Auto'
+  assert.ok(isRasterGenerationData(source.data))
+  assert.equal('vaePrecision' in source.current.generationDraft, false)
+  assert.equal(result(source, 'vaePrecision.value').status, 'Same')
+  assert.equal(result(source, 'vaePrecision.value').before, 'Auto')
+  assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
+  for (const precision of ['Auto', 'FP16', 'FP32'] as const) {
+    source.data.generationConfiguration!.vaePrecision = precision
+    source.current.generationDraft.vaePrecision = precision
+    assert.ok(isRasterGenerationData(source.data))
+    assert.equal(result(source, 'vaePrecision.value').status, 'Same', precision)
+    assert.equal(result(source, 'vaePrecision.value').before, precision)
+    assert.equal(result(source, 'vaePrecision.value').after, precision)
+  }
+  source.data.generationConfiguration!.vaePrecision = 'FP32'
+  source.current.generationDraft.vaePrecision = 'FP16'
+  const frozen = structuredClone(source)
+  assert.deepEqual(result(source, 'vaePrecision.value'), {
+    after: 'FP16',
+    before: 'FP32',
+    key: 'vaePrecision.value',
+    label: 'VAE Precision',
+    status: 'Changed',
+  })
+  assert.deepEqual(source, frozen, 'current selection never rewrites accepted precision')
+  delete source.current.generationDraft.vaePrecision
+  assert.equal(result(source, 'vaePrecision.value').status, 'Changed')
+  assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
+  const old = source.data.generationConfiguration!
+  source.data.generationConfiguration = {
+    ...old,
+    mode: 'img2img',
+    sampling: { ...old.sampling, denoisingStrength: 0.75 },
+  }
+  assert.ok(isRasterGenerationData(source.data), 'both normal-mode variants record the value')
+  assert.equal(result(source, 'vaePrecision.value').before, 'FP32')
+})
+
+test('VAE Precision current default does not escape Illustrious and invalid recorded precision fails the strict DTO', () => {
+  for (const family of ['anima', null] as const) {
+    const source = fixture()
+    source.data.generationConfiguration!.vaePrecision = 'FP32'
+    source.current.generationDraft.model!.baseModelFamily = family
+    source.current.generationDraft.vaePrecision = 'FP32'
+    assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
+    assert.match(result(source, 'vaePrecision.value').after, /Unsupported|Unavailable/)
+    delete source.current.generationDraft.vaePrecision
+    assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
+    assert.notEqual(result(source, 'vaePrecision.value').after, 'Auto')
+  }
+  const source = fixture()
+  source.current.generationDraft.model = null
+  source.data.generationConfiguration!.vaePrecision = 'FP16'
+  assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
+  assert.notEqual(result(source, 'vaePrecision.value').after, 'Auto')
+  for (const precision of ['auto', 'BF16', 'FP64', null, 16, { mode: 'FP16' }]) {
+    const invalid = {
+      ...source.data,
+      generationConfiguration: { ...source.data.generationConfiguration, vaePrecision: precision },
+    }
+    assert.equal(isRasterGenerationData(invalid), false, JSON.stringify(precision))
+  }
+  const legacy = fixture()
+  assert.ok(isRasterGenerationData(legacy.data))
+  assert.equal('vaePrecision' in legacy.data.generationConfiguration!, false)
+})
+
 test('recorded empty LoRA stack is Same while legacy absence stays Unavailable', () => {
   const source = fixture()
   assert.equal(result(source, 'loras.stack').status, 'Unavailable')

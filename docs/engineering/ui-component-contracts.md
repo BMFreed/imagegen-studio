@@ -116,6 +116,16 @@ clamping; `validity` сообщает именно о неотправленно
 operational правило Project блокирует Generate с объяснением. Отображение
 unset как `0` не вызывает setter/dirty. [Evidence](./phase-2c-cfg-rescale-research.md).
 
+Named `defineModel<VaePrecision | null>('vaePrecision')` stores the optional
+embedded-VAE policy in the same disclosure. A labeled public `NSelect` exposes
+Auto/FP16/FP32; null displays Auto without a setter. The input receives the
+generated label id through `inputProps`; filtering and keyboard navigation use
+the public API. Reset removes the explicit policy. `vaePrecisionRuntimeSupported`
+is advisory: an editable Illustrious draft can retain manual settings offline,
+while Generate independently refuses unsupported manual precision. Unsupported
+families disable the selector with an explanation; Reset remains reachable.
+[Evidence](./phase-2c-vae-precision-research.md).
+
 ## Production Denoising Strength
 
 Production `ProjectDenoisingStrength` использует те же `LabeledControl`/`IconButton`

@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode.startsWith('precision-') ? '0.8.0' : mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'precision-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -71,7 +71,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -767,6 +767,67 @@ test('qualified native LoRA transport snapshots exact ordered signed, zero and t
     } finally {
       await client.close()
     }
+  })
+})
+
+test('VAE Precision transport freezes both modes and strips Auto only from the disposable legacy wire copy', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'precision-wire.json')
+    for (const mode of ['precision-done', 'lora-done']) {
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: mode, FAKE_PAYLOAD_MARKER: marker },
+      })
+      try {
+        for (const opaque of [false, true]) {
+          for (const precision of ['Auto', 'FP16', 'FP32'] as const) {
+            const source = await requestFor(fixture)
+            const request = opaque
+              ? {
+                  ...source,
+                  job: {
+                    ...source.job,
+                    sampling: { ...source.job.sampling, denoisingStrength: 0.65 },
+                  },
+                  type: 'generate-illustrious-img2img' as const,
+                }
+              : source
+            request.job.vaePrecision = precision
+            await rm(marker, { force: true })
+            if (mode === 'lora-done' && precision !== 'Auto') {
+              await assert.rejects(client.generate(request), { code: 'WORKER_VERSION_MISMATCH' })
+              assert.equal(existsSync(marker), false)
+              continue
+            }
+            const pending = client.generate(request)
+            request.job.vaePrecision = precision === 'FP32' ? 'FP16' : 'FP32'
+            await pending
+            const actual = JSON.parse(await readFile(marker, 'utf8'))
+            assert.equal(actual.type, request.type)
+            if (mode === 'precision-done') {
+              assert.equal(actual.job.vaePrecision, precision)
+            } else {
+              assert.equal(Object.hasOwn(actual.job, 'vaePrecision'), false)
+            }
+            assert.equal(request.job.vaePrecision, precision === 'FP32' ? 'FP16' : 'FP32')
+          }
+        }
+        for (const value of [null, 'BF16', 16]) {
+          const invalid = await requestFor(fixture)
+          Object.assign(invalid.job, { vaePrecision: value })
+          await rm(marker, { force: true })
+          await assert.rejects(client.generate(invalid), { code: 'INVALID_REQUEST' })
+          assert.equal(existsSync(marker), false)
+        }
+      } finally {
+        await client.close()
+      }
+    }
+    await assert.rejects(
+      GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: 'precision-missing-capability' },
+      }),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
   })
 })
 

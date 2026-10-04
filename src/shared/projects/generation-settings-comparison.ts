@@ -129,6 +129,8 @@ export function compareRasterGenerationSettings(
     input == null ? 'Not set' : String(input)
   const currentCfgRescale =
     draft.model?.baseModelFamily === 'illustrious' ? (draft.cfgRescale ?? 0) : undefined
+  const currentVaePrecision =
+    draft.model?.baseModelFamily === 'illustrious' ? (draft.vaePrecision ?? 'Auto') : undefined
   const recordedStrength =
     'denoisingStrength' in baseline.sampling ? baseline.sampling.denoisingStrength : undefined
   const currentStrength =
@@ -325,7 +327,19 @@ export function compareRasterGenerationSettings(
     {
       key: 'vaePrecision',
       label: 'VAE Precision',
-      rows: [unrecordedRow('vaePrecision.value', 'VAE Precision', value(draft.vaePrecision))],
+      rows: [
+        row(
+          'vaePrecision.value',
+          'VAE Precision',
+          baseline.vaePrecision,
+          currentVaePrecision,
+          baseline.vaePrecision ?? UNRECORDED,
+          currentVaePrecision ??
+            (draft.model?.baseModelFamily === 'anima'
+              ? 'Unsupported for Anima'
+              : 'Unavailable for the current model'),
+        ),
+      ],
     },
     {
       key: 'clipSkip',

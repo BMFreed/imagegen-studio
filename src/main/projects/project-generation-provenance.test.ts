@@ -382,6 +382,32 @@ test('accepted CFG Rescale is projected from frozen inputs including zero withou
   assert.equal(map(neutralLegacyTransport).generationConfiguration.cfgRescale, 0)
 })
 
+test('accepted VAE Precision records frozen policies without inventing legacy or accepting crossed wire values', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (entry: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-10-04T12:01:00.000Z',
+      candidate: entry,
+      imagePngBytes,
+    })
+  assert.equal(Object.hasOwn(map(candidate).generationConfiguration, 'vaePrecision'), false)
+  for (const precision of ['Auto', 'FP16', 'FP32'] as const) {
+    const recorded = structuredClone(candidate)
+    replacePayload(recorded, (payload) => {
+      Object.assign(payload.context as Record<string, unknown>, { vaePrecision: precision })
+      Object.assign(payload.workerJob as Record<string, unknown>, { vaePrecision: precision })
+    })
+    assert.equal(map(recorded).generationConfiguration.vaePrecision, precision)
+    for (const wire of [undefined, precision === 'FP32' ? 'FP16' : 'FP32', null, 'BF16']) {
+      const crossed = structuredClone(recorded)
+      replacePayload(crossed, (payload) => {
+        Object.assign(payload.workerJob as Record<string, unknown>, { vaePrecision: wire })
+      })
+      assert.throws(() => map(crossed), { code: 'PROVENANCE_INPUT_INVALID' })
+    }
+  }
+})
+
 test('img2img provenance records actual strength including zero and rejects crossed or missing durable values', async () => {
   const { candidate, imagePngBytes } = await fixture()
   const map = (entry: VerifiedGenerationCandidate) =>

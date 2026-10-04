@@ -41,6 +41,62 @@ const sourcePng = Buffer.from(
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type ExactRef = NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
 
+test(
+  'real Project preparation freezes Auto and manual embedded VAE Precision policies in both normal modes before concurrent edits',
+  { skip: !devRuntimeRoot() },
+  async (t) => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const installed = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('first exact Illustrious checkpoint'),
+        civitaiModelId: 104,
+        civitaiVersionId: 105,
+        kind: 'checkpoint',
+      })
+      for (const raster of [false, true]) {
+        for (const precision of [undefined, 'Auto', 'FP16', 'FP32'] as const) {
+          await t.test(`${raster ? 'img2img' : 'txt2img'} ${precision ?? 'default'}`, async () => {
+            const opened = await importProject(service, dataRoot, {
+              draft: {
+                ...(precision !== undefined ? { vaePrecision: precision } : {}),
+                sampling: {
+                  cfgScale: 7.5,
+                  denoisingStrength: raster ? 0.65 : null,
+                  sampler: 'DPM++ 2M',
+                  scheduler: 'Karras',
+                  steps: 24,
+                },
+              },
+              model: installed.reference,
+              name: `precision ${raster} ${precision ?? 'default'}`,
+              raster,
+            })
+            const prepared = await service.prepareNormalGenerationContext(
+              opened.tabId,
+              {
+                composeTarget: async (input) => {
+                  await service.updateGenerationDraft(opened.tabId, {
+                    kind: 'vae-precision',
+                    value: 'FP16',
+                  })
+                  return await worker.composeTarget(input)
+                },
+              },
+              modelService,
+            )
+            assert.equal(prepared.context.vaePrecision, precision ?? 'Auto')
+            assert.equal(
+              prepared.context.kind,
+              raster ? 'normal-img2img-preparation' : 'normal-txt2img-preparation',
+            )
+            assert.equal(service.getOpenTabs()[0].generationDraft.vaePrecision, 'FP16')
+            await service.discardAndClose(opened.tabId)
+          })
+        }
+      }
+    })
+  },
+)
+
 function devRuntimeRoot(): string | null {
   if (!existsSync(devPython)) {
     return null
@@ -593,7 +649,7 @@ test(
         },
         {
           code: 'GENERATION_ADVANCED_UNSUPPORTED',
-          draft: { vaePrecision: 'FP32' },
+          draft: { clipSkip: 2 },
           name: 'advanced-option',
         },
         {

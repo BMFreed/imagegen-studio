@@ -1322,6 +1322,18 @@ export class ProjectService {
         }
         break
       }
+      case 'vae-precision': {
+        if (draft.vaePrecision === (change.value ?? undefined)) {
+          return toTab(tabId, coordinator)
+        }
+        nextDraft = { ...draft }
+        if (change.value === null) {
+          delete nextDraft.vaePrecision
+        } else {
+          nextDraft.vaePrecision = change.value
+        }
+        break
+      }
       default: {
         const field = change.kind === 'positive-prompt' ? 'positivePrompt' : 'negativePrompt'
         const before = draft[field]

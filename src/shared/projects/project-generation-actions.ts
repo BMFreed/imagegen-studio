@@ -23,6 +23,7 @@ export interface ProjectGenerationActionState {
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
   runningJobId: string | null
+  vaePrecisionSupported: boolean
 }
 
 export interface ProjectGenerateOptions {
@@ -92,9 +93,11 @@ export function isProjectGenerationActionState(
       'jobs',
       'phase',
       'runningJobId',
+      'vaePrecisionSupported',
     ]) ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
     typeof value['img2imgSupported'] !== 'boolean' ||
+    typeof value['vaePrecisionSupported'] !== 'boolean' ||
     !isProjectDocumentId(value['documentId']) ||
     !phases.has(value['phase'] as ProjectGenerationActionState['phase']) ||
     (value['error'] !== null && !isSafeError(value['error'])) ||

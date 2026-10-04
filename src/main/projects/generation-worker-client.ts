@@ -9,6 +9,7 @@ import {
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
@@ -355,6 +356,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           )
         }
         delete frozen.job.loras
+      }
+      if (!supportsInferenceVaePrecision(this.readyMessage)) {
+        if (frozen.job.vaePrecision !== undefined && frozen.job.vaePrecision !== 'Auto') {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified manual Illustrious VAE Precision.',
+          )
+        }
+        // Preserve durable metadata; old Python parsers receive only this disposable copy.
+        delete frozen.job.vaePrecision
       }
       if (!supportsInferenceCFGRescale(this.readyMessage)) {
         if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
@@ -717,6 +728,8 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.denoisingStrength <= 1
       : !('denoisingStrength' in (request.job?.sampling ?? {}))) &&
     validWorkerLoras(request.job?.loras) &&
+    (request.job?.vaePrecision === undefined ||
+      ['Auto', 'FP16', 'FP32'].includes(request.job.vaePrecision)) &&
     request.protocolVersion === PROTOCOL_VERSION &&
     typeof request.requestId === 'string' &&
     UUID_PATTERN.test(request.requestId) &&

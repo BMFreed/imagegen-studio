@@ -192,6 +192,17 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'vae-precision') {
+    if (draft.vaePrecision === (change.value ?? undefined)) {
+      return false
+    }
+    if (change.value === null) {
+      delete draft.vaePrecision
+    } else {
+      draft.vaePrecision = change.value
+    }
+    return true
+  }
   if (change.kind === 'denoising-strength') {
     if (draft.sampling.denoisingStrength === change.value) {
       return false

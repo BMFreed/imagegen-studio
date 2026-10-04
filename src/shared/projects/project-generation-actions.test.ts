@@ -53,6 +53,7 @@ function pendingState(): ProjectGenerationActionState {
     ],
     phase: 'processing',
     runningJobId: null,
+    vaePrecisionSupported: false,
   }
 }
 
@@ -124,6 +125,21 @@ test('action state accepts only an explicit boolean rescale capability without e
     isProjectGenerationActionState({ ...pendingState(), ready: { runtimeRoot: '/private' } }),
     false,
   )
+})
+
+test('action state requires an explicit boolean VAE Precision capability', () => {
+  for (const vaePrecisionSupported of [false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), vaePrecisionSupported }), true)
+  }
+  for (const vaePrecisionSupported of [undefined, null, 0, 'true']) {
+    assert.equal(
+      isProjectGenerationActionState({ ...pendingState(), vaePrecisionSupported }),
+      false,
+    )
+  }
+  const legacy = { ...pendingState() } as Partial<ProjectGenerationActionState>
+  delete legacy.vaePrecisionSupported
+  assert.equal(isProjectGenerationActionState(legacy), false)
 })
 
 test('Generate response needs actual bounded admission or a nonempty exact loss review', () => {

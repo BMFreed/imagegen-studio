@@ -1396,6 +1396,7 @@ function parseFrozenPayload(json: string): FrozenPayload {
       (!('denoisingStrength' in workerJob.sampling) ||
         context.sampling.denoisingStrength !== workerJob.sampling.denoisingStrength)) ||
     !frozenLoraFieldsAgree(context, workerJob.loras) ||
+    workerJob.vaePrecision !== context.vaePrecision ||
     !isDeepStrictEqual(context.bbox, workerJob.bbox) ||
     !isDeepStrictEqual(context.prompts, workerJob.prompts) ||
     context.model.managedPath !== workerJob.checkpoint.path ||

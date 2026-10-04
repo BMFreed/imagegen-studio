@@ -443,3 +443,27 @@ unknown target aliases and incompatible dimensions are refused, not partially
 loaded. This is Illustrious support; Anima and other adapter algorithms remain
 open Phase 2C work. The development runtime evidence is not release installation
 qualification.
+
+## Qualified Illustrious VAE precision checkpoint
+
+The [VAE precision slice](../engineering/phase-2c-vae-precision-research.md) adds
+optional `job.vaePrecision: Auto | FP16 | FP32` to both normal generation requests.
+New frozen contexts and stored requests always record a policy, including Auto;
+legacy omission remains omitted and operates through the native Auto path.
+Context/wire disagreement is refused at queue/staging validation. Only the
+transport's disposable request may remove Auto for a qualified older parser.
+
+Manual precision requires qualified inference worker **0.8.0** with
+`illustrious-vae-precision` and all preceding capabilities. Earlier qualified
+versions cannot gain it by advertising the string. Main checks Generate, batch
+admission, Retry and dispatch; transport checks again before sending any job.
+No protocol operation or SQLite migration is introduced.
+
+The pinned Diffusers VAE config controls actual encoding and decoding. Auto keeps
+the native policy; FP32 enables full native upcast, FP16 disables it and retains
+the half-precision VAE. UNet, CLIP and conditioning precision are not changed.
+Scoped checks reject non-finite encoder/quantization/decoder outputs before
+native image processing can turn NaN into a successful black PNG. Hooks are
+removed after both success and failure; no silent precision retry is performed.
+Immutable provenance records the selected policy; no effective dtype is invented
+for Auto or legacy results. External VAE/Anima remain separate work.

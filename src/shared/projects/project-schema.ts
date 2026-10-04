@@ -217,6 +217,7 @@ const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
     steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
   }),
   size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
+  vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 
 const Img2ImgRasterGenerationConfigurationV1Schema = v.strictObject({

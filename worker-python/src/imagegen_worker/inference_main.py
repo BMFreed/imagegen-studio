@@ -22,6 +22,7 @@ from imagegen_worker.inference import (
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
     INFERENCE_THUMBNAIL_CAPABILITY,
+    INFERENCE_VAE_PRECISION_CAPABILITY,
     INFERENCE_WORKER_VERSION,
     MLRuntime,
     generate_illustrious_img2img,
@@ -63,6 +64,7 @@ def inference_ready_message() -> dict[str, object]:
             INFERENCE_CFG_RESCALE_CAPABILITY,
             INFERENCE_IMG2IMG_CAPABILITY,
             INFERENCE_LORA_CAPABILITY,
+            INFERENCE_VAE_PRECISION_CAPABILITY,
         ],
     }
 

@@ -91,6 +91,7 @@ import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
 import ProjectQueuePanel from './ProjectQueuePanel.vue'
 import ResolutionControl from './ResolutionControl.vue'
+import { vaePrecisionGenerationReason } from './vae-precision-control.js'
 
 const props = defineProps<{
   acceptedHistoryFocus: AcceptedHistoryFocusRequest | null
@@ -1153,9 +1154,15 @@ const generationBlockingReason = computed(() => {
   if (denoisingReason) {
     return denoisingReason
   }
-  return cfgRescaleGenerationCapabilityReason(
-    props.generationDraft.cfgRescale,
-    props.generationState.cfgRescaleSupported,
+  return (
+    cfgRescaleGenerationCapabilityReason(
+      props.generationDraft.cfgRescale,
+      props.generationState.cfgRescaleSupported,
+    ) ??
+    vaePrecisionGenerationReason(
+      props.generationDraft.vaePrecision,
+      props.generationState.vaePrecisionSupported,
+    )
   )
 })
 
@@ -1714,7 +1721,10 @@ function applyFitBbox() {
               :modelValue="generationDraft.cfgRescale ?? null"
               :runtimeSupported="generationState?.cfgRescaleSupported ?? null"
               :runtimeUnavailableReason
+              :vaePrecision="generationDraft.vaePrecision ?? null"
+              :vaePrecisionRuntimeSupported="generationState?.vaePrecisionSupported ?? null"
               @update:modelValue="emit('updateDraft', { kind: 'cfg-rescale', value: $event })"
+              @update:vaePrecision="emit('updateDraft', { kind: 'vae-precision', value: $event })"
               @validity="advancedOptionsValid = $event"
             />
           </section>

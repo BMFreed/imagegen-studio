@@ -205,6 +205,7 @@ export type ProjectGenerationDraftChange =
   | { kind: 'sampling-steps'; value: number | null }
   | { kind: 'seed'; policy: 'fixed'; value: number }
   | { kind: 'seed'; policy: 'random' | 'reuse'; value: null }
+  | { kind: 'vae-precision'; value: 'Auto' | 'FP16' | 'FP32' | null }
 
 /** A renderer selection carries IDs only; main copies exact metadata from its verified registry. */
 export type ProjectGenerationModelSelection = { resourceId: string; versionId: string } | null
@@ -533,6 +534,17 @@ export function isProjectGenerationDraftChange(
   }
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
+  if (value['kind'] === 'vae-precision') {
+    return (
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('value') &&
+      (value['value'] === null ||
+        value['value'] === 'Auto' ||
+        value['value'] === 'FP16' ||
+        value['value'] === 'FP32')
+    )
+  }
   if (value['kind'] === 'dynamic-prompt') {
     return (
       keys.length === 2 &&

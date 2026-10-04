@@ -8,6 +8,7 @@ import {
   supportsInferenceDenoisingProgress,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceVaePrecision,
 } from './inference-worker-capabilities.js'
 
 const legacyReady = {
@@ -161,4 +162,40 @@ test('native LoRA qualification requires exact 0.7.0 and all retained pipeline c
     assert.equal(supportsInferenceLora({ ...current, workerVersion }), false)
   }
   assert.equal(supportsInferenceImg2Img(null), false)
+})
+
+test('VAE Precision requires exact 0.8.0 and every retained pipeline capability', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+  ]
+  const current = { ...legacyReady, capabilities, workerVersion: '0.8.0' }
+  for (const supports of [
+    isQualifiedInferenceWorkerReady,
+    supportsInferenceVaePrecision,
+    supportsInferenceLora,
+    supportsInferenceImg2Img,
+    supportsInferenceCFGRescale,
+    supportsInferenceCandidateThumbnails,
+    supportsInferenceDenoisingProgress,
+  ]) {
+    assert.equal(supports(current), true)
+  }
+  for (const removed of capabilities) {
+    const incomplete = {
+      ...current,
+      capabilities: capabilities.filter((entry) => entry !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false)
+    assert.equal(supportsInferenceVaePrecision(incomplete), false)
+  }
+  for (const workerVersion of ['0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.0', '0.8.1']) {
+    assert.equal(supportsInferenceVaePrecision({ ...current, workerVersion }), false)
+  }
+  assert.equal(supportsInferenceVaePrecision(null), false)
 })
