@@ -34,6 +34,12 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
+from imagegen_worker.inference_embeddings import (
+    EmbeddingConditioningInputs,
+    load_generation_embeddings,
+    masked_embedding_prompts,
+    validate_expanded_conditioning,
+)
 from imagegen_worker.inference_external_vae import load_generation_vae
 from imagegen_worker.inference_lora import finite_lora_outputs, load_generation_loras
 from imagegen_worker.inference_vae import configure_vae_precision, finite_vae_outputs
@@ -43,13 +49,14 @@ from imagegen_worker.protocol import (
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.9.0"
+INFERENCE_WORKER_VERSION = "0.10.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
 INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_VAE_PRECISION_CAPABILITY = "illustrious-vae-precision"
 INFERENCE_EXTERNAL_VAE_CAPABILITY = "illustrious-external-vae"
+INFERENCE_EMBEDDINGS_CAPABILITY = "illustrious-embeddings"
 INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
@@ -69,7 +76,7 @@ PINNED_ML_VERSIONS: dict[str, str] = {
     "pillow": "12.2.0",
 }
 
-# Embeddings, dynamic prompts, and complex cross-attention/conjunction inputs have no DTO yet.
+# Only verified embedding ranges become private tokens; unknown resource markup stays unsupported.
 _UNSUPPORTED_PROMPT_MARKUP = re.compile(
     r"[\[\]{}<>]|(?:\.(?:swap|and|add|blend)|(?:with|use)Lora)\s*\(", re.IGNORECASE
 )
@@ -375,15 +382,27 @@ def select_inference_scheduler(
 
 
 def validate_pipeline_prompts(
-    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any
+    command: GenerateIllustriousTxt2ImgCommand,
+    pipeline: Any,
+    *,
+    effective_prompts: tuple[str, str] | None = None,
 ) -> tuple[str, str]:
+    positive, negative = effective_prompts or (command.positive_prompt, command.negative_prompt)
     prompts = (
-        normalize_compel_prompt(command.positive_prompt),
-        normalize_compel_prompt(command.negative_prompt),
+        normalize_compel_prompt(positive),
+        normalize_compel_prompt(negative),
     )
     for tokenizer in (pipeline.tokenizer, pipeline.tokenizer_2):
         for prompt in prompts:
-            validate_compel_prompt(prompt, tokenizer)
+            if command.positive_embeddings or command.negative_embeddings:
+                if tokenizer.model_max_length != _CLIP_CHUNK_TOKENS:
+                    raise DerivativeError(
+                        "GENERATION_PROMPT_UNSUPPORTED", "Unsupported CLIP conditioning profile."
+                    )
+                # The actual parsed, vector-expanded chunk budget is checked below before forward.
+                # Counting weighting punctuation here would falsely reject otherwise valid prompts.
+            else:
+                validate_compel_prompt(prompt, tokenizer)
     return prompts
 
 
@@ -435,12 +454,17 @@ def _clip_embeddings(
 
 
 def build_sdxl_conditioning(
-    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any, runtime: MLRuntime
+    command: GenerateIllustriousTxt2ImgCommand,
+    pipeline: Any,
+    runtime: MLRuntime,
+    *,
+    embedding_inputs: EmbeddingConditioningInputs | None = None,
 ) -> SdxlConditioning:
     """Build bounded, independent CLIP1/CLIP2 conditioning for both prompt signs."""
-    prompts = validate_pipeline_prompts(command, pipeline)
     compel = cast(Any, runtime.compel)
     torch = cast(Any, runtime.torch)
+    inputs = embedding_inputs or load_generation_embeddings(command, pipeline, torch)
+    prompts = validate_pipeline_prompts(command, pipeline, effective_prompts=inputs.prompts)
     clip_builders = (
         compel.Compel(
             tokenizer=pipeline.tokenizer,
@@ -451,6 +475,7 @@ def build_sdxl_conditioning(
             truncate_long_prompts=False,
             split_long_text_mode=compel.SplitLongTextMode.SENTENCES,
             requires_pooled=False,
+            textual_inversion_manager=inputs.managers[0],
         ),
         compel.Compel(
             tokenizer=pipeline.tokenizer_2,
@@ -461,8 +486,15 @@ def build_sdxl_conditioning(
             truncate_long_prompts=False,
             split_long_text_mode=compel.SplitLongTextMode.SENTENCES,
             requires_pooled=True,
+            textual_inversion_manager=inputs.managers[1],
         ),
     )
+
+    if command.positive_embeddings or command.negative_embeddings:
+        # Validate both signs and both actual splitters before the first text encoder executes.
+        for builder in clip_builders:
+            for prompt in prompts:
+                validate_expanded_conditioning(builder, prompt)
 
     signed: list[tuple[Any, Any]] = []
     for prompt in prompts:
@@ -790,8 +822,8 @@ def _generate_illustrious(
         raise DerivativeError(
             "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
         )
-    normalize_compel_prompt(command.positive_prompt)
-    normalize_compel_prompt(command.negative_prompt)
+    for prompt in masked_embedding_prompts(command):
+        normalize_compel_prompt(prompt)
     verify_pinned_config(str(config_dir))
     image = validate_generation_assets(command)
     torch = cast(Any, runtime.torch)
@@ -820,6 +852,7 @@ def _generate_illustrious(
     pipeline.scheduler = select_inference_scheduler(command, pipeline, runtime)
     pipeline.set_progress_bar_config(disable=True)
     load_generation_loras(pipeline, command.loras, torch)
+    embedding_inputs = load_generation_embeddings(command, pipeline, torch)
     configure_vae_precision(pipeline, command.vae_precision, torch)
     pipeline = pipeline.to("cuda")
     with (
@@ -827,8 +860,10 @@ def _generate_illustrious(
         finite_lora_outputs(pipeline, torch) if command.loras else contextlib.nullcontext(),
     ):
         with torch.inference_mode():
-            conditioning = build_sdxl_conditioning(command, pipeline, runtime)
-        if command.loras and any(
+            conditioning = build_sdxl_conditioning(
+                command, pipeline, runtime, embedding_inputs=embedding_inputs
+            )
+        if (command.loras or command.positive_embeddings or command.negative_embeddings) and any(
             not bool(torch.isfinite(tensor).all().item())
             for tensor in (
                 conditioning.positive,
@@ -838,7 +873,7 @@ def _generate_illustrious(
             )
         ):
             raise DerivativeError(
-                "GENERATION_WORKER_FAILED", "LoRA conditioning produced non-finite values."
+                "GENERATION_WORKER_FAILED", "Resource conditioning produced non-finite values."
             )
         generator = torch.Generator(device="cpu").manual_seed(command.seed)
         result = run_sdxl_pipeline(

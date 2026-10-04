@@ -18,6 +18,7 @@ from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
     INFERENCE_CFG_RESCALE_CAPABILITY,
+    INFERENCE_EMBEDDINGS_CAPABILITY,
     INFERENCE_EXTERNAL_VAE_CAPABILITY,
     INFERENCE_IMG2IMG_CAPABILITY,
     INFERENCE_LORA_CAPABILITY,
@@ -68,6 +69,7 @@ def inference_ready_message() -> dict[str, object]:
             INFERENCE_LORA_CAPABILITY,
             INFERENCE_VAE_PRECISION_CAPABILITY,
             INFERENCE_EXTERNAL_VAE_CAPABILITY,
+            INFERENCE_EMBEDDINGS_CAPABILITY,
         ],
     }
 

@@ -23,6 +23,7 @@ import {
 } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
+import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
 import { localProjectRecoveryKey } from './project-identity.js'
@@ -1396,6 +1397,7 @@ function parseFrozenPayload(json: string): FrozenPayload {
     (context.kind === 'normal-img2img-preparation' &&
       (!('denoisingStrength' in workerJob.sampling) ||
         context.sampling.denoisingStrength !== workerJob.sampling.denoisingStrength)) ||
+    !frozenEmbeddingFieldsAgree(context, workerJob.embeddings) ||
     !frozenLoraFieldsAgree(context, workerJob.loras) ||
     !frozenVaeFieldsAgree(context, workerJob.vae) ||
     workerJob.vaePrecision !== context.vaePrecision ||

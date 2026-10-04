@@ -378,3 +378,18 @@ record or Retry input. Add, Undo/recovery and explicit Save/reopen preserve it.
 Comparison reports exact source/hash identity, known Embedded and missing/unknown
 catalog bindings separately; renamed display metadata does not change semantic
 identity. Anima, result-to-preset and the complete pipeline remain separate work.
+
+### Illustrious embedding inference checkpoint (04.10.2026)
+
+[Embedding inference](../../../engineering/phase-2c-embedding-inference-research.md)
+uses the existing prompt `embeddingRefs` fields without a schema revision.
+Positive and negative concrete prompt strings retain the original saved literals
+and copied exact metadata for the effective resources of that completed branch.
+Inactive dynamic choices, managed paths, byte-size descriptors, private worker
+aliases and authored dynamic templates do not enter this portable record.
+Historical empty sidecars remain empty; no reference is invented for old results.
+
+Add, Undo/recovery and explicit Save/reopen preserve the record. Comparison
+compares portable source/hash/family identity independently of local IDs and
+display names, and detects unavailable resources. This does not establish Preset
+creation/Apply, Anima conditioning or full MVP pipeline readiness.

@@ -14,6 +14,7 @@ import type { ProjectGenerationAcceptanceOptions } from './project-generation-ac
 import { openAppDatabase } from '../db/database.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { readIgsPackage } from './igs-package.js'
+import { workerEmbeddings } from './illustrious-generation-embeddings.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
@@ -21,6 +22,7 @@ import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { acceptedOutputPngFixture } from './test-fixtures/accepted-provenance.js'
+import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
 const migrationsDir = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
@@ -353,6 +355,87 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
       },
     )
     assert.equal(fixture.owner.document.layers.length, 2)
+  })
+})
+
+test('embedding acceptance keeps frozen concrete literals and exact refs through later draft edits, Undo, shadow recovery and explicit Save/reopen', async () => {
+  await withFixture(async (fixture) => {
+    const captured = capturedEmbeddingFieldsFixture('/private/models')
+    const payload = JSON.parse(fixture.first.frozenPayloadJson) as {
+      context: object
+      workerJob: object
+    }
+    Object.assign(payload.context, captured)
+    Object.assign(payload.workerJob, {
+      embeddings: workerEmbeddings(captured),
+      prompts: captured.prompts,
+    })
+    fixture.first.frozenPayloadJson = JSON.stringify(payload)
+    fixture.first.frozenPayloadSha256 = sha256(fixture.first.frozenPayloadJson)
+    const savedBefore = await readFile(fixture.projectPath)
+    const owner = fixture.owner!
+    const later = structuredClone(owner.document)
+    later.generationDraft.positivePrompt = { embeddingRefs: [], text: '{later|different} draft' }
+    later.generationDraft.negativePrompt = { embeddingRefs: [], text: 'later negative' }
+    await owner.applyDocument(later)
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    assert.equal(
+      (
+        await acceptance.accept(
+          fixture.tabId,
+          [fixture.first.candidateId],
+          null,
+          fixture.availableIds,
+        )
+      ).kind,
+      'accepted',
+    )
+    const provenance = structuredClone(owner.document.layers[0].generationProvenance!)
+    assert.deepEqual(provenance.generationConfiguration.positivePrompt, {
+      embeddingRefs: captured.embeddings.positive.map(({ reference, token }) => ({
+        resource: reference,
+        token,
+      })),
+      text: captured.prompts.positive,
+    })
+    assert.deepEqual(provenance.generationConfiguration.negativePrompt, {
+      embeddingRefs: captured.embeddings.negative.map(({ reference, token }) => ({
+        resource: reference,
+        token,
+      })),
+      text: captured.prompts.negative,
+    })
+    assert.equal(JSON.stringify(provenance).includes('<inactive>'), false)
+    assert.equal(JSON.stringify(provenance).includes('/private'), false)
+    assert.equal(owner.document.generationDraft.positivePrompt.text, '{later|different} draft')
+    assert.deepEqual(await readFile(fixture.projectPath), savedBefore)
+    await owner.undo()
+    assert.equal(owner.document.layers.length, 0)
+    await owner.redo()
+    assert.deepEqual(owner.document.layers[0].generationProvenance, provenance)
+    await owner.flush()
+    const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
+      fixture.projectPath,
+      fixture.shadow,
+    )
+    assert.equal(recovery.status, 'recoverable')
+    if (recovery.status === 'recoverable') {
+      assert.deepEqual(recovery.document.layers[0].generationProvenance, provenance)
+    }
+    const recovered = await ProjectAutosaveCoordinator.recover(
+      fixture.projectPath,
+      fixture.roots,
+      fixture.shadow,
+      { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+    )
+    fixture.setOwner(recovered)
+    assert.deepEqual(recovered.document.layers[0].generationProvenance, provenance)
+    assert.equal((await recovered.save()).committed, true)
+    const saved = await readIgsPackage(fixture.projectPath)
+    assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
+    const reopened = await ProjectSession.open(fixture.projectPath, fixture.roots)
+    assert.deepEqual(reopened.document.layers[0].generationProvenance, provenance)
+    assert.equal(reopened.document.generationDraft.positivePrompt.text, '{later|different} draft')
   })
 })
 

@@ -11,6 +11,7 @@ export type GenerationModelResolver = Pick<
   ModelService,
   | 'assertNoUnboundGenerationEmbeddings'
   | 'resolveVerifiedGenerationCheckpointForPlan'
+  | 'resolveVerifiedGenerationEmbeddingForPlan'
   | 'resolveVerifiedGenerationLoraForPlan'
   | 'resolveVerifiedGenerationVaeForPlan'
 >

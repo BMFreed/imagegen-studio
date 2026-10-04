@@ -17,6 +17,7 @@ export interface ProjectGenerationActionState {
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
   cfgRescaleSupported: boolean
   documentId: string
+  embeddingsSupported: boolean
   error: { code: string; message: string } | null
   externalVaeSupported: boolean
   img2imgSupported: boolean
@@ -89,6 +90,7 @@ export function isProjectGenerationActionState(
     !exactKeys(value, [
       'cfgRescaleSupported',
       'documentId',
+      'embeddingsSupported',
       'error',
       'externalVaeSupported',
       'img2imgSupported',
@@ -98,6 +100,7 @@ export function isProjectGenerationActionState(
       'vaePrecisionSupported',
     ]) ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
+    typeof value['embeddingsSupported'] !== 'boolean' ||
     typeof value['externalVaeSupported'] !== 'boolean' ||
     typeof value['img2imgSupported'] !== 'boolean' ||
     typeof value['vaePrecisionSupported'] !== 'boolean' ||

@@ -34,6 +34,7 @@ import { qualifyIllustriousVae } from '../src/main/models/illustrious-vae-qualif
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualification.ts'
 import { publishIllustriousVaeFixture } from '../src/main/models/test-fixtures/illustrious-vae.ts'
+import { publishIllustriousEmbeddingFixture } from '../src/main/models/test-fixtures/illustrious-embedding.ts'
 import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
 import { createRuntimeRoots } from '../src/main/runtime/index.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
@@ -82,6 +83,7 @@ const report = {
     'Actual exact LoRA selection and frozen full stack/verified enabled wire through Generate, later weight/default edit, Retry, Add, Save/reopen and read-only comparison; disabled missing files remain ignored by inference.',
     'Actual external VAE selection and frozen file/hash/size plus FP32 transport through Generate, later library Default change and draft reset/FP16 edit, confirmed Cancel, Retry, Add, Save/reopen and read-only comparison; controlled peer verifies frozen VAE inputs rather than performing ML precision arithmetic.',
     'Actual external VAE request for an opaque accepted Raster img2img target; controlled peer checks the exact VAE file identity and outputs pixels without loading ML weights.',
+    'Actual exact embedding selection through typed IPC, dynamic concrete branches, per-polarity file/hash/size/token wire, Cancel/Retry/Add/Save/reopen and read-only comparison. Paired finite miniature CLIP files and controlled pixels establish transport and persistence, not trained conditioning or GPU quality.',
     'Controlled Node executable replaces Python/CUDA/model loading/composition/inference only.',
     'IMAGEGEN_TEST_IMAGE_WORKER uses the existing development image worker for Project previews.',
     'No GPU, installed-runtime compatibility or complete checkpoint loadability claim.',
@@ -458,6 +460,44 @@ async function seedCheckpoint() {
   }
 }
 
+async function seedEmbeddings() {
+  const database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  try {
+    const repository = new ModelRepository(database.db)
+    const root = path.join(appDataRoot, 'models')
+    const positive = await publishIllustriousEmbeddingFixture(
+      repository,
+      root,
+      94001,
+      94002,
+      'native-shared.safetensors',
+      0.125,
+      { vectors: 3 },
+    )
+    const replacement = await publishIllustriousEmbeddingFixture(
+      repository,
+      root,
+      94001,
+      94003,
+      'native-shared.safetensors',
+      0.375,
+      { vectors: 3 },
+    )
+    const negative = await publishIllustriousEmbeddingFixture(
+      repository,
+      root,
+      94011,
+      94012,
+      'native-shared.safetensors',
+      -0.125,
+      { vectors: 2 },
+    )
+    return { negative, positive, replacement }
+  } finally {
+    await database.close()
+  }
+}
+
 /** Actual contiguous F32 Kohya tensors; valid header/file identity without claiming ML execution. */
 function miniatureLora(alpha = 1) {
   const prefix = 'lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k'
@@ -642,8 +682,8 @@ function png(width,height,opaque) {
 process.on('SIGTERM',()=>process.exit(0))
 process.stdin.on('end',()=>process.exit(0))
 process.stdout.write(JSON.stringify(role === 'inference'
-  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.9.0',
-    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora','illustrious-vae-precision','illustrious-external-vae']}
+  ? {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.10.0',
+    runtimeProfile:'linux-nvidia',capabilities:['illustrious-txt2img','target-composition','denoising-progress','candidate-thumbnails','illustrious-cfg-rescale','illustrious-img2img','illustrious-lora','illustrious-vae-precision','illustrious-external-vae','illustrious-embeddings']}
   : {type:'ready',protocolVersion:'1',pythonVersion:'3.12.13',workerVersion:'0.1.0',
     runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','preview-composition','self-test','target-composition']})+'\n')
 process.stdin.setEncoding('utf8')
@@ -680,6 +720,20 @@ process.stdin.on('data',data=>{
       if (role !== 'inference') process.exit(30)
       if(hash(fs.readFileSync(request.job.target.path))!==request.job.target.sha256) process.exit(26)
       if(hash(fs.readFileSync(request.job.checkpoint.path))!==request.job.checkpoint.sha256) process.exit(27)
+      if(request.job.embeddings!==undefined) {
+        const pair=request.job.embeddings
+        if(Object.keys(pair).sort().join(',')!=='negative,positive') process.exit(35)
+        for(const polarity of ['positive','negative']) {
+          if(!Array.isArray(pair[polarity])) process.exit(35)
+          for(const embedding of pair[polarity]) {
+            if(Object.keys(embedding).sort().join(',')!=='byteSize,path,sha256,token'
+              || typeof embedding.token!=='string' || !request.job.prompts[polarity].includes(embedding.token)
+              || !Number.isSafeInteger(embedding.byteSize) || embedding.byteSize<1
+              || fs.statSync(embedding.path).size!==embedding.byteSize
+              || hash(fs.readFileSync(embedding.path))!==embedding.sha256) process.exit(36)
+          }
+        }
+      }
       if(request.job.vaePrecision!==undefined && !['Auto','FP16','FP32'].includes(request.job.vaePrecision)) process.exit(33)
       if(request.job.vae!==undefined && request.job.vae!==null) {
         const vae=request.job.vae
@@ -828,6 +882,7 @@ try {
   const installed = await seedCheckpoint()
   const installedLoras = await seedLoras()
   const installedVaes = await seedVaes()
+  const installedEmbeddings = await seedEmbeddings()
   await launch()
   const unavailable = await window.evaluate(() => window.api.runtime.getStatus())
   assert.equal(unavailable.ok, true)
@@ -2947,6 +3002,276 @@ try {
       queueItemId: vaeImg2ImgSource.id,
       requestId: vaeImg2ImgRequest.request.requestId,
       targetSha256: vaeImg2ImgRequest.request.job.target.sha256,
+    },
+  )
+
+  // Explicit typed authoring selections disambiguate one copied literal across three installed
+  // versions. Rendering and Generate then use the reopened production Project, never injected
+  // renderer objects. Full-width finite tensors remain synthetic; the peer only verifies wire.
+  await resizeNativeWindow(1380, 900)
+  const embeddingProject = await createConfiguredProject(
+    'Embedding inference',
+    'embedding setup',
+    93,
+    96,
+    installed.versionId,
+  )
+  const embeddingToken = '<native-shared>'
+  await api('updateGenerationDraft', embeddingProject.id, {
+    kind: 'positive-prompt',
+    text: `portrait {${embeddingToken}|plain}`,
+    embeddingSelection: {
+      resourceId: installedEmbeddings.positive.resourceId,
+      versionId: installedEmbeddings.positive.versionId,
+      token: embeddingToken,
+    },
+  })
+  await api('updateGenerationDraft', embeddingProject.id, {
+    kind: 'negative-prompt',
+    text: `blur ${embeddingToken}`,
+    embeddingSelection: {
+      resourceId: installedEmbeddings.negative.resourceId,
+      versionId: installedEmbeddings.negative.versionId,
+      token: embeddingToken,
+    },
+  })
+  await api('updateGenerationDraft', embeddingProject.id, {
+    kind: 'dynamic-prompt',
+    value: { maxPrompts: 2, seedBehavior: 'per-prompt' },
+  })
+  await api('save', embeddingProject.id)
+  await window.getByRole('button', { name: 'Close Embedding inference', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open Embedding inference', exact: true }).click()
+  await window.getByRole('tab', { name: 'Embedding inference', exact: true }).waitFor()
+  const embeddingAuthored = (await tab(embeddingProject.id)).generationDraft
+  assert.equal(
+    embeddingAuthored.positivePrompt.embeddingRefs[0].resource.localVersionId,
+    installedEmbeddings.positive.versionId,
+  )
+  assert.equal(
+    embeddingAuthored.negativePrompt.embeddingRefs[0].resource.localVersionId,
+    installedEmbeddings.negative.versionId,
+  )
+  const embeddingBeforeGenerate = readFileSync(embeddingProject.packagePath)
+  const embeddingCountBefore = generations().length
+  const embeddingGenerate = window.getByRole('button', { name: /^(?:loading )?Generate$/ })
+  const embeddingIterations = window.locator('input[aria-label="Images per click"]')
+  await embeddingIterations.fill('1')
+  await embeddingIterations.press('Enter')
+  await expect(embeddingIterations).toHaveValue('1')
+  await expect(embeddingGenerate).toBeEnabled()
+  await screenshot('31-embedding-authored-dynamic-polarities')
+  await embeddingGenerate.click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(embeddingCountBefore + 1)
+  const embeddingRequest = generations().at(-1)
+  assert.deepEqual(embeddingRequest.request.job.prompts, {
+    positive: `portrait ${embeddingToken}`,
+    negative: `blur ${embeddingToken}`,
+  })
+  const embeddingWire = {
+    positive: [
+      {
+        token: embeddingToken,
+        byteSize: installedEmbeddings.positive.bytes.length,
+        path: installedEmbeddings.positive.managedPath,
+        sha256: digest(installedEmbeddings.positive.bytes),
+      },
+    ],
+    negative: [
+      {
+        token: embeddingToken,
+        byteSize: installedEmbeddings.negative.bytes.length,
+        path: installedEmbeddings.negative.managedPath,
+        sha256: digest(installedEmbeddings.negative.bytes),
+      },
+    ],
+  }
+  assert.deepEqual(embeddingRequest.request.job.embeddings, embeddingWire)
+  const embeddingInitialRows = await rows(embeddingProject.id)
+  assert.equal(embeddingInitialRows.length, 2)
+  const embeddingSource = embeddingInitialRows.find((entry) => entry.status === 'running')
+  const embeddingPending = embeddingInitialRows.find((entry) => entry.status === 'pending')
+  const embeddingFrozen = JSON.parse(embeddingSource.frozen_payload_json)
+  const inactiveFrozen = JSON.parse(embeddingPending.frozen_payload_json)
+  assert.deepEqual(embeddingFrozen.context.embeddingRefs, {
+    positive: embeddingAuthored.positivePrompt.embeddingRefs,
+    negative: embeddingAuthored.negativePrompt.embeddingRefs,
+  })
+  assert.deepEqual(inactiveFrozen.context.embeddings.positive, [])
+  assert.deepEqual(inactiveFrozen.workerJob.embeddings.positive, [])
+  assert.deepEqual(inactiveFrozen.workerJob.embeddings.negative, embeddingWire.negative)
+  assert.equal(inactiveFrozen.context.prompts.positive, 'portrait plain')
+  assert.equal(embeddingSource.batch_id, embeddingPending.batch_id)
+  const changedEmbeddingDefault = await window.evaluate(
+    async ({ resourceId, versionId }) =>
+      await window.api.models.setDefaultVersion(resourceId, versionId),
+    {
+      resourceId: installedEmbeddings.replacement.resourceId,
+      versionId: installedEmbeddings.replacement.versionId,
+    },
+  )
+  assert.equal(changedEmbeddingDefault.ok, true)
+  await embeddingProject.region
+    .getByRole('textbox', { name: 'Positive prompt', exact: true })
+    .fill('later ordinary positive')
+  await embeddingProject.region
+    .getByRole('textbox', { name: 'Negative prompt', exact: true })
+    .fill('later ordinary negative')
+  await expect
+    .poll(async () => (await tab(embeddingProject.id)).generationDraft.positivePrompt.text)
+    .toBe('later ordinary positive')
+  await expect
+    .poll(async () => (await tab(embeddingProject.id)).generationDraft.negativePrompt.text)
+    .toBe('later ordinary negative')
+  assert.deepEqual(readFileSync(embeddingProject.packagePath), embeddingBeforeGenerate)
+  await openManager.click()
+  await managerRow(embeddingSource.id)
+    .getByRole('button', { name: 'Cancel job', exact: true })
+    .click()
+  await expect
+    .poll(
+      async () =>
+        (await rows(embeddingProject.id)).find((entry) => entry.id === embeddingSource.id).status,
+    )
+    .toBe('canceled')
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(embeddingCountBefore + 2)
+  assert.throws(() => process.kill(embeddingRequest.pid, 0), { code: 'ESRCH' })
+  const inactiveRequest = generations().at(-1)
+  assert.equal(inactiveRequest.request.job.prompts.positive, 'portrait plain')
+  assert.deepEqual(inactiveRequest.request.job.embeddings, {
+    positive: [],
+    negative: embeddingWire.negative,
+  })
+  release(inactiveRequest)
+  await expect
+    .poll(
+      async () =>
+        (await rows(embeddingProject.id)).find((entry) => entry.id === embeddingPending.id).status,
+    )
+    .toBe('completed')
+  await managerRow(embeddingSource.id)
+    .getByRole('button', { name: 'Retry job', exact: true })
+    .click()
+  await expect.poll(() => generations().length, { timeout: 20_000 }).toBe(embeddingCountBefore + 3)
+  const embeddingRetryRequest = generations().at(-1)
+  const embeddingRetry = (await rows(embeddingProject.id)).find(
+    (entry) => !embeddingInitialRows.some((original) => original.id === entry.id),
+  )
+  assert.equal(embeddingRetry.frozen_payload_json, embeddingSource.frozen_payload_json)
+  assert.deepEqual(embeddingRetryRequest.request.job.embeddings, embeddingWire)
+  assert.deepEqual(embeddingRetryRequest.request.job.prompts, embeddingRequest.request.job.prompts)
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  release(embeddingRetryRequest)
+  await expect
+    .poll(async () => (await api('listGenerationResults', embeddingProject.id)).candidates.length, {
+      timeout: 20_000,
+    })
+    .toBe(2)
+  await expect
+    .poll(async () => (await api('getGenerationState', embeddingProject.id)).phase)
+    .toBe('idle')
+  const embeddingTray = embeddingProject.region.getByRole('region', {
+    name: 'Generation Results',
+    exact: true,
+  })
+  await embeddingTray.getByRole('button', { name: 'Result selection actions', exact: true }).click()
+  await window
+    .getByRole('menuitem', { name: 'Select all completed across all sessions', exact: true })
+    .click()
+  await window.getByRole('button', { name: 'Add 2 as Layers', exact: true }).click()
+  await expect.poll(async () => (await tab(embeddingProject.id)).layers.length).toBe(2)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(embeddingProject.id)).dirty).toBe(false)
+  const embeddingSaved = (await readIgsPackage(embeddingProject.packagePath)).project
+  assert.equal(embeddingSaved.generationDraft.positivePrompt.text, 'later ordinary positive')
+  const embeddingActiveLayer = embeddingSaved.layers.find(
+    (layer) =>
+      layer.generationProvenance.generationConfiguration.positivePrompt.embeddingRefs.length === 1,
+  )
+  const embeddingInactiveLayer = embeddingSaved.layers.find(
+    (layer) =>
+      layer.generationProvenance.generationConfiguration.positivePrompt.embeddingRefs.length === 0,
+  )
+  const recordedEmbedding = embeddingActiveLayer.generationProvenance.generationConfiguration
+  assert.deepEqual(recordedEmbedding.positivePrompt, {
+    text: `portrait ${embeddingToken}`,
+    embeddingRefs: embeddingAuthored.positivePrompt.embeddingRefs,
+  })
+  assert.deepEqual(recordedEmbedding.negativePrompt, {
+    text: `blur ${embeddingToken}`,
+    embeddingRefs: embeddingAuthored.negativePrompt.embeddingRefs,
+  })
+  assert.equal(
+    embeddingInactiveLayer.generationProvenance.generationConfiguration.positivePrompt.text,
+    'portrait plain',
+  )
+  assert.deepEqual(
+    embeddingInactiveLayer.generationProvenance.generationConfiguration.negativePrompt
+      .embeddingRefs,
+    embeddingAuthored.negativePrompt.embeddingRefs,
+  )
+  assert.equal(JSON.stringify(recordedEmbedding).includes(appDataRoot), false)
+  assert.equal('authoredPrompts' in recordedEmbedding, false)
+  const embeddingSavedBytes = readFileSync(embeddingProject.packagePath)
+  await window.getByRole('button', { name: 'Close Embedding inference', exact: true }).click()
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Open Embedding inference', exact: true }).click()
+  await window.getByRole('tab', { name: 'Embedding inference', exact: true }).waitFor()
+  const embeddingRead = await api(
+    'getRasterGenerationData',
+    embeddingProject.id,
+    embeddingSaved.documentId,
+    embeddingActiveLayer.id,
+  )
+  assert.deepEqual(embeddingRead.generationConfiguration, recordedEmbedding)
+  await window
+    .getByRole('button', { name: `Layer actions for ${embeddingActiveLayer.name}`, exact: true })
+    .click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+  const positiveEmbeddingRow = comparison.locator('[data-setting="prompt.embeddings"]')
+  const negativeEmbeddingRow = comparison.locator('[data-setting="negativePrompt.embeddings"]')
+  await expect(positiveEmbeddingRow).toHaveAttribute('data-status', 'Removed')
+  await expect(negativeEmbeddingRow).toHaveAttribute('data-status', 'Removed')
+  await expect(positiveEmbeddingRow).toContainText(embeddingToken)
+  await expect(positiveEmbeddingRow).toContainText('v94002')
+  await expect(negativeEmbeddingRow).toContainText('v94012')
+  for (const [width, height] of [
+    [1380, 900],
+    [900, 620],
+  ]) {
+    await resizeNativeWindow(width, height)
+    await negativeEmbeddingRow.scrollIntoViewIfNeeded()
+    await screenshot(`32-embedding-frozen-comparison-${width}x${height}`)
+    const bounds = await comparison.boundingBox()
+    assert.ok(
+      bounds &&
+        bounds.x >= 0 &&
+        bounds.y >= 0 &&
+        bounds.x + bounds.width <= width &&
+        bounds.y + bounds.height <= height,
+    )
+    assert.equal(
+      await comparison.evaluate((element) => element.scrollWidth > element.clientWidth),
+      false,
+    )
+  }
+  await window.keyboard.press('Escape')
+  assert.deepEqual(readFileSync(embeddingProject.packagePath), embeddingSavedBytes)
+  checked(
+    'Native concrete embeddings preserve independent positive/negative files and inactive branch, frozen Cancel/Retry, Add/Save/reopen and comparison despite later draft/Default changes',
+    {
+      projectId: embeddingProject.id,
+      originalQueueItemId: embeddingSource.id,
+      retryQueueItemId: embeddingRetry.id,
+      originalRequestId: embeddingRequest.request.requestId,
+      retryRequestId: embeddingRetryRequest.request.requestId,
+      originalRefs: embeddingFrozen.context.embeddingRefs,
+      frozenWire: embeddingWire,
+      acceptedLayerId: embeddingActiveLayer.id,
+      fixtureBoundary:
+        'Synthetic finite full-width dual-CLIP weights; controlled JSONL/pixels. No encoder execution, GPU or trained quality claim.',
     },
   )
   for (const entry of lines(peerLaunches)) {

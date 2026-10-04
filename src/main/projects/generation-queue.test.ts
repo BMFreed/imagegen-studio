@@ -23,11 +23,13 @@ import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 import { openAppDatabase } from '../db/database.js'
 import { GenerationQueueRepository, type QueuedGenerationItem } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { workerEmbeddings } from './illustrious-generation-embeddings.js'
 import {
   type IllustriousTxt2ImgRequestV1,
   withIllustriousTxt2ImgRequest,
 } from './illustrious-txt2img-job.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const iccPath = path.resolve('worker-python/src/imagegen_worker/srgb.icc')
@@ -36,6 +38,21 @@ const ready = {
   protocolVersion: '1',
   runtimeProfile: 'linux-nvidia',
   workerVersion: '0.2.0',
+}
+const embeddingReady = {
+  ...ready,
+  capabilities: [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+    'illustrious-embeddings',
+  ],
+  workerVersion: '0.10.0',
 }
 
 type BatchItem = { prepared: PreparedNormalTxt2Img; request: IllustriousTxt2ImgRequestV1 }
@@ -160,6 +177,9 @@ async function inQualifiedLease<T>(
   prepared: PreparedNormalTxt2Img,
   use: (request: IllustriousTxt2ImgRequestV1) => Promise<T>,
   workerReady = ready,
+  verifyEmbedding?: (
+    entry: NonNullable<PreparedNormalTxt2Img['context']['embeddings']>['positive'][number],
+  ) => Promise<NonNullable<PreparedNormalTxt2Img['context']['embeddings']>['positive'][number]>,
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
@@ -169,6 +189,17 @@ async function inQualifiedLease<T>(
         managedPath: prepared.context.model.managedPath,
         reference,
       }),
+      resolveVerifiedGenerationEmbeddingForPlan: async (reference) => {
+        const entry = [
+          ...(prepared.context.embeddings?.positive ?? []),
+          ...(prepared.context.embeddings?.negative ?? []),
+        ].find((embedding) => embedding.reference.localVersionId === reference.localVersionId)
+        assert.ok(entry, 'request verifier must receive an active frozen identity')
+        if (verifyEmbedding) {
+          return await verifyEmbedding({ ...entry, reference })
+        }
+        return { byteSize: entry.byteSize, managedPath: entry.managedPath, reference }
+      },
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
@@ -228,6 +259,289 @@ async function inQualifiedBatchLeases<T>(
   }
   return await next(0)
 }
+
+test('qualified request transmits concrete literal embeddings only to capable workers, with plain-text historical and known-empty neighbors', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-embedding-request-'))
+  try {
+    const { prepared } = await fixture(root)
+    const captured = capturedEmbeddingFieldsFixture(root)
+    Object.assign(prepared.context, captured)
+    await inQualifiedLease(
+      root,
+      prepared,
+      async (request) => {
+        assert.deepEqual(request.job.embeddings, workerEmbeddings(captured))
+        assert.deepEqual(request.job.prompts, captured.prompts)
+        assert.equal(JSON.stringify(request).includes('<inactive>'), false)
+        assert.notEqual(
+          request.job.embeddings!.positive[0].sha256,
+          request.job.embeddings!.negative[0].sha256,
+        )
+        assert.equal('reference' in request.job.embeddings!.positive[0], false)
+      },
+      embeddingReady,
+    )
+    let consumed = false
+    for (const old of [
+      { ...embeddingReady, workerVersion: '0.9.0' },
+      {
+        ...embeddingReady,
+        capabilities: embeddingReady.capabilities.filter(
+          (name) => name !== 'illustrious-embeddings',
+        ),
+      },
+    ]) {
+      await assert.rejects(
+        inQualifiedLease(
+          root,
+          prepared,
+          async () => {
+            consumed = true
+          },
+          old,
+        ),
+        { code: 'INFERENCE_UNAVAILABLE' },
+      )
+    }
+    assert.equal(consumed, false)
+    for (const change of [
+      (context: typeof prepared.context) => {
+        delete context.embeddingRefs
+      },
+      (context: typeof prepared.context) => {
+        context.embeddings!.positive = []
+      },
+    ]) {
+      const invalid = {
+        context: structuredClone(prepared.context),
+        targetPngBytes: prepared.targetPngBytes,
+      }
+      change(invalid.context)
+      await assert.rejects(
+        inQualifiedLease(
+          root,
+          invalid,
+          async () => {
+            consumed = true
+          },
+          embeddingReady,
+        ),
+        { code: 'GENERATION_INPUT_CHANGED' },
+      )
+    }
+    Object.assign(prepared.context, {
+      embeddingRefs: { negative: [], positive: [] },
+      embeddings: { negative: [], positive: [] },
+      prompts: { negative: '', positive: 'plain' },
+    })
+    await inQualifiedLease(root, prepared, async (request) =>
+      assert.equal(Object.hasOwn(request.job, 'embeddings'), false),
+    )
+    delete prepared.context.embeddingRefs
+    delete prepared.context.embeddings
+    await inQualifiedLease(root, prepared, async (request) =>
+      assert.equal(Object.hasOwn(request.job, 'embeddings'), false),
+    )
+    assert.deepEqual(await readdir(path.join(root, 'scratch')), [], 'all request leases clean up')
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('request revalidates only concrete active embedding files and refuses exact-byte or binding changes before scratch publication', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-embedding-request-reverify-'))
+  try {
+    const { prepared } = await fixture(root)
+    Object.assign(prepared.context, capturedEmbeddingFieldsFixture(root))
+    const checked: string[] = []
+    await inQualifiedLease(
+      root,
+      prepared,
+      async () => {},
+      embeddingReady,
+      async (entry) => {
+        checked.push(entry.reference.localVersionId)
+        return entry
+      },
+    )
+    assert.deepEqual(checked, [
+      prepared.context.embeddings!.positive[0].reference.localVersionId,
+      prepared.context.embeddings!.negative[0].reference.localVersionId,
+    ])
+    assert.equal(
+      checked.includes(prepared.context.embeddingRefs!.positive[1].resource.localVersionId),
+      false,
+    )
+    let consumed = false
+    for (const change of [
+      (entry: NonNullable<typeof prepared.context.embeddings>['positive'][number]) => {
+        entry.byteSize += 1
+      },
+      (entry: NonNullable<typeof prepared.context.embeddings>['positive'][number]) => {
+        entry.managedPath = path.join(root, 'different.safetensors')
+      },
+      (entry: NonNullable<typeof prepared.context.embeddings>['positive'][number]) => {
+        entry.reference.fileSha256 = 'd'.repeat(64)
+      },
+    ]) {
+      await assert.rejects(
+        inQualifiedLease(
+          root,
+          prepared,
+          async () => {
+            consumed = true
+          },
+          embeddingReady,
+          async (entry) => {
+            const changed = structuredClone(entry)
+            change(changed)
+            return changed
+          },
+        ),
+        /The exact embedding changed after preparation/,
+      )
+    }
+    assert.equal(consumed, false)
+    assert.deepEqual(await readdir(path.join(root, 'scratch')), [])
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('atomic concrete embedding branches preserve original refs and per-polarity wire through queue restart and frozen Retry', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-embedding-queue-'))
+  let database = openAppDatabase(root, migrations)
+  try {
+    let queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const captured = capturedEmbeddingFieldsFixture(root)
+    const capturedBefore = structuredClone(captured)
+    Object.assign(prepared.context, captured)
+    const alternate = structuredClone(prepared)
+    alternate.targetPngBytes = Buffer.from(prepared.targetPngBytes)
+    alternate.context.prompts.positive = 'portrait without the chosen branch'
+    alternate.context.embeddings!.positive = []
+    alternate.context.sampling.seed = 43
+    let originals: Awaited<ReturnType<GenerationQueueRepository['loadVerifiedInput']>>[] = []
+    const rows = await inQualifiedLease(
+      root,
+      prepared,
+      async (first) =>
+        await inQualifiedLease(
+          root,
+          alternate,
+          async (second) => {
+            const original: BatchItem[] = [
+              { prepared, request: first },
+              { prepared: alternate, request: second },
+            ]
+            const enqueue = async (items: BatchItem[]) =>
+              await queue.enqueueIllustriousTxt2ImgBatch({
+                items,
+                preflight: async () => {},
+                projectPath,
+                stagingSessionId: randomUUID(),
+              })
+            const changedOriginal = original.map((item) => ({
+              prepared: {
+                context: structuredClone(item.prepared.context),
+                targetPngBytes: item.prepared.targetPngBytes,
+              },
+              request: structuredClone(item.request),
+            }))
+            changedOriginal[1].prepared.context.embeddingRefs!.positive.pop()
+            await assert.rejects(enqueue(changedOriginal), { code: 'QUEUE_INPUT_INVALID' })
+            for (const change of [
+              (item: BatchItem) => {
+                item.request.job.embeddings!.negative[0].sha256 = 'e'.repeat(64)
+              },
+              (item: BatchItem) => {
+                item.request.job.embeddings!.negative[0].token = '<different>'
+              },
+              (item: BatchItem) => {
+                item.prepared.context.embeddings!.negative = []
+              },
+              (item: BatchItem) => {
+                delete item.prepared.context.embeddingRefs
+              },
+              (item: BatchItem) => {
+                const different = path.join(root, 'different-captured-path.safetensors')
+                item.prepared.context.embeddings!.negative[0].managedPath = different
+                item.request.job.embeddings!.negative[0].path = different
+              },
+              (item: BatchItem) => {
+                item.prepared.context.embeddings!.negative[0].byteSize += 1
+                item.request.job.embeddings!.negative[0].byteSize += 1
+              },
+              (item: BatchItem) => {
+                Object.assign(item.request.job.embeddings!.negative[0], {
+                  reference: captured.embeddings.negative[0].reference,
+                })
+              },
+            ]) {
+              const invalid = original.map((item) => ({
+                prepared: {
+                  context: structuredClone(item.prepared.context),
+                  targetPngBytes: item.prepared.targetPngBytes,
+                },
+                request: structuredClone(item.request),
+              }))
+              change(invalid[1])
+              await assert.rejects(enqueue(invalid), { code: 'QUEUE_INPUT_INVALID' })
+            }
+            assert.deepEqual(
+              await database.db.selectFrom('generation_queue_item').select('id').execute(),
+              [],
+            )
+            const committed = await enqueue(original)
+            originals = await Promise.all(committed.map((item) => queue.loadVerifiedInput(item.id)))
+            first.job.embeddings!.positive[0].token = '<later>'
+            prepared.context.embeddingRefs!.positive[0].resource.displayName =
+              'Changed after admission'
+            return committed
+          },
+          embeddingReady,
+        ),
+      embeddingReady,
+    )
+    assert.deepEqual(originals[0].payload.context.embeddingRefs, capturedBefore.embeddingRefs)
+    assert.equal(originals[0].payload.context.embeddings!.positive.length, 1)
+    assert.equal(originals[1].payload.context.embeddings!.positive.length, 0)
+    assert.equal(originals[1].payload.workerJob.embeddings!.positive.length, 0)
+    assert.equal(rows[0].batchId, rows[1].batchId)
+    await database.close()
+    database = openAppDatabase(root, migrations)
+    queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    for (let index = 0; index < rows.length; index++) {
+      const restored = await queue.loadVerifiedInput(rows[index].id)
+      assert.deepEqual(restored.payload, originals[index].payload)
+      const retried = await queue.retryTerminal(restored.item.id, restored.item.statusSequence)
+      assert.deepEqual(
+        (await queue.loadVerifiedInput(retried.id)).payload,
+        originals[index].payload,
+      )
+    }
+    const corrupt = structuredClone(originals[0].payload)
+    corrupt.workerJob.embeddings!.positive[0].sha256 = 'd'.repeat(64)
+    const changedJson = JSON.stringify(corrupt)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: changedJson })
+      .where('id', '=', rows[0].id)
+      .execute()
+    const manifestPath = path.join(path.dirname(originals[0].targetPath), 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { payloadSha256: string }
+    manifest.payloadSha256 = sha256(Buffer.from(changedJson))
+    await writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 })
+    await assert.rejects(queue.loadVerifiedInput(rows[0].id), { code: 'QUEUE_INPUT_INVALID' })
+    assert.deepEqual(await readFile(projectPath), Buffer.from('queue fixture path'))
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 test('atomic batch publishes one ordered group from immutable qualified inputs and survives restart', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-atomic-batch-'))

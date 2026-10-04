@@ -1232,8 +1232,9 @@ const generationBlockingReason = computed(() => {
     return 'Wait for the current batch to finish preparing.'
   }
   if (
-    props.generationDraft.positivePrompt.embeddingRefs.length ||
-    props.generationDraft.negativePrompt.embeddingRefs.length
+    (props.generationDraft.positivePrompt.embeddingRefs.length ||
+      props.generationDraft.negativePrompt.embeddingRefs.length) &&
+    !props.generationState.embeddingsSupported
   ) {
     return 'This image engine does not support embeddings yet. Remove their activation tokens to generate.'
   }

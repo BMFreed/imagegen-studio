@@ -827,6 +827,65 @@ test('concrete dynamic output compares against authored syntax and embedding tok
   assert.equal(result(source, 'negativePrompt.text').status, 'Removed')
 })
 
+test('effective embedding comparison preserves copied literals and exact per-polarity identity across library Default and display changes', () => {
+  const source = fixture()
+  const positive = {
+    ...source.data.generationConfiguration!.model,
+    fileSha256: 'b'.repeat(64),
+    kind: 'embedding' as const,
+    localModelId: '6e3b548d-6dc0-4c2e-bc5c-0b68971da010',
+    localVersionId: '6e3b548d-6dc0-4c2e-bc5c-0b68971da011',
+    predictionType: null,
+  }
+  const negative = {
+    ...positive,
+    civitaiModelId: 101,
+    fileSha256: 'c'.repeat(64),
+    localModelId: '6e3b548d-6dc0-4c2e-bc5c-0b68971da020',
+    localVersionId: '6e3b548d-6dc0-4c2e-bc5c-0b68971da021',
+  }
+  for (const [polarity, embedding] of [
+    ['positive', positive],
+    ['negative', negative],
+  ] as const) {
+    source.data.generationConfiguration![`${polarity}Prompt`] = {
+      embeddingRefs: [{ resource: embedding, token: '<custom>' }],
+      text: `literal <custom> ${polarity}`,
+    }
+    source.current.generationDraft[`${polarity}Prompt`] = structuredClone(
+      source.data.generationConfiguration![`${polarity}Prompt`],
+    )
+    source.current.modelCatalog!.push(catalogItem(embedding))
+  }
+  const before = structuredClone(source.data)
+  const catalog = source.current.modelCatalog!.find((item) => item.id === positive.localModelId)!
+  catalog.defaultVersionId = '6e3b548d-6dc0-4c2e-bc5c-0b68971da099'
+  catalog.name = 'New library label'
+  catalog.versions[0].name = 'Renamed installed v1'
+  source.current.generationDraft.positivePrompt.embeddingRefs[0].resource.displayName =
+    'Different copied label'
+  assert.equal(result(source, 'prompt.embeddings').status, 'Same')
+  assert.equal(result(source, 'negativePrompt.embeddings').status, 'Same')
+  assert.match(result(source, 'prompt.embeddings').before, /<custom>/)
+  assert.equal(result(source, 'prompt.text').before, 'literal <custom> positive')
+  assert.deepEqual(
+    source.data,
+    before,
+    'read-only comparison never rewrites copied metadata or tokens',
+  )
+  source.current.generationDraft.negativePrompt.embeddingRefs[0].resource = { ...positive }
+  assert.equal(result(source, 'negativePrompt.embeddings').status, 'Changed')
+  assert.equal(
+    result(source, 'prompt.embeddings').status,
+    'Same',
+    'polarity has an independent exact binding',
+  )
+  catalog.versions[0].fileStatus = 'missing'
+  assert.equal(result(source, 'prompt.embeddings').status, 'Missing resource')
+  source.current.modelCatalog = null
+  assert.equal(result(source, 'prompt.embeddings').status, 'Unavailable')
+})
+
 test('baseline actual seed zero, requested policy and seed behavior compare as distinct facts', () => {
   const source = fixture()
   assert.equal(result(source, 'seed.actual').before, '0')

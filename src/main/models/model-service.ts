@@ -9,7 +9,7 @@ import {
   embeddingActivationToken,
   embeddingSourcesFromCatalog,
   type GenerationPrompt,
-  promptEmbeddingLiteralRanges,
+  getPromptEmbeddingMatches,
   type PromptEmbeddingSelection,
   reconcilePromptEmbeddings,
   sameExactPromptEmbedding,
@@ -41,6 +41,7 @@ import {
   isPinnedAnimaBaseCheckpoint,
 } from './anima-manifest.js'
 import { validateCivitaiToken } from './civitai-token-store.js'
+import { qualifyIllustriousEmbedding } from './illustrious-embedding-qualification.js'
 import { qualifyIllustriousLora } from './illustrious-lora-qualification.js'
 import { qualifyIllustriousVae } from './illustrious-vae-qualification.js'
 import {
@@ -113,16 +114,11 @@ export class ModelService {
     const captured = structuredClone(input)
     const sources = embeddingSourcesFromCatalog(await this.getCatalog())
     for (const prompt of [captured.positivePrompt, captured.negativePrompt]) {
-      for (const source of sources) {
-        if (
-          promptEmbeddingLiteralRanges(prompt.text, source.token).length &&
-          !prompt.embeddingRefs.some(
-            (ref) => ref.token === source.token && ref.resource.kind === 'embedding',
-          )
-        ) {
+      for (const match of getPromptEmbeddingMatches(prompt, sources, true, captured.modelFamily)) {
+        if (match.candidates.length && match.ref?.resource.kind !== 'embedding') {
           throw new ModelServiceError(
             'MODEL_EMBEDDING_UNBOUND',
-            `The embedding token ${source.token} has no exact resource reference. Select its installed version through prompt suggestions, or remove the token.`,
+            `The embedding token ${match.token} has no exact resource reference. Select its installed version through prompt suggestions, or remove the token.`,
           )
         }
       }
@@ -742,6 +738,49 @@ export class ModelService {
     return {
       managedPath: resolved.managedPath,
       reference: { ...reference, predictionType },
+    }
+  }
+
+  /** Reverify exact dual-CLIP bytes; copied names and saved custom tokens remain Project data. */
+  async resolveVerifiedGenerationEmbeddingForPlan(
+    inputSaved: GenerationPrompt['embeddingRefs'][number]['resource'],
+  ): Promise<{ byteSize: number; managedPath: string; reference: typeof inputSaved }> {
+    const saved = structuredClone(inputSaved)
+    if (
+      saved.kind !== 'embedding' ||
+      saved.baseModelFamily !== 'illustrious' ||
+      saved.predictionType !== null
+    ) {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'Generation requires an Illustrious embedding without a prediction type.',
+      )
+    }
+    const resolved = await this.resolveGenerationResourceWithFile(
+      saved.localModelId,
+      saved.localVersionId,
+      'embedding',
+    )
+    if (!sameExactPromptEmbedding(saved, resolved.reference)) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed embedding no longer matches this Project exact version.',
+      )
+    }
+    try {
+      await qualifyIllustriousEmbedding(resolved.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_EMBEDDING_INCOMPATIBLE',
+        error instanceof Error
+          ? `The installed embedding is unsupported: ${error.message}`
+          : 'The installed embedding could not be structurally qualified.',
+      )
+    }
+    return {
+      byteSize: resolved.fileSizeBytes,
+      managedPath: resolved.managedPath,
+      reference: structuredClone(saved),
     }
   }
 

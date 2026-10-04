@@ -172,6 +172,9 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
   const models = {
     assertNoUnboundGenerationEmbeddings: async () => {},
     resolveVerifiedGenerationCheckpointForPlan: async () => ({ managedPath, reference }),
+    resolveVerifiedGenerationEmbeddingForPlan: async () => {
+      throw new Error('No embedding is configured in this fixture.')
+    },
     resolveVerifiedGenerationLoraForPlan: async () => {
       throw new Error('This fixture has no active LoRAs.')
     },

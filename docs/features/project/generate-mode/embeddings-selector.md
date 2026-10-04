@@ -75,7 +75,30 @@ epoch across verification and commit; late edits, edit/Undo and tab close cannot
 overwrite newer state. History, shadow recovery and explicit `.igs` Save/reopen
 keep prompt text and refs together.
 
-This checkpoint does not load embedding weights. Generation with embedding refs
-still refuses explicitly; known unbound installed tokens also refuse before
+At this authoring checkpoint no embedding weights were loaded and generation
+with embedding refs refused explicitly; known unbound installed tokens also refuse before
 CPU composition or enqueue. Preset integrations, Anima embedding support and
 qualified embedding inference remain outside this checkpoint.
+
+## Production inference checkpoint (04.10.2026)
+
+[Illustrious embedding inference](../../../engineering/phase-2c-embedding-inference-research.md)
+connects these exact refs to worker 0.10.0 in transparent txt2img and opaque img2img.
+Both CLIP encoders receive verified paired `clip_l`/`clip_g` safetensors; singleton
+and multiple vectors use the same literal binding in either prompt. The same
+literal may point to different exact resources in the two polarities. Within
+one polarity a literal has one binding. Matching stays case-sensitive, with
+word-side boundaries and longest-first overlap selection, including saved custom
+literals. Worker-private aliases never enter the draft or accepted metadata.
+
+Every dynamic branch freezes only its effective refs. Expanded known tokens
+without stored identity refuse before batch publication; Generate never auto-links
+resources. Retry verifies those frozen files again, ignores unused branches and
+later Project/default changes. Accepted records contain concrete prompts and
+actually used refs; dynamic templates stay in the live Project draft.
+
+Unsupported layouts/dtypes, missing/corrupt files, non-finite or overflowed values,
+old workers and expanded prompts above the existing four-chunk budget fail
+explicitly. Anima embeddings, Preset handoff and the release runtime remain
+separate gaps. Synthetic native tensor/image checks establish mechanics, not
+trained embedding quality or compatibility of every CivitAI file.

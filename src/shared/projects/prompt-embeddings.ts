@@ -130,6 +130,46 @@ export function sameExactPromptEmbedding(
   )
 }
 
+/** Concrete inference/provenance subset, without catalog guessing or changes to authored refs. */
+export function activePromptEmbeddingRefs(
+  text: string,
+  refs: PromptEmbeddingRef[],
+): PromptEmbeddingRef[] {
+  const tokens = [...new Set(refs.map((ref) => ref.token))]
+  const candidates = tokens.flatMap((token) =>
+    promptEmbeddingLiteralRanges(text, token).map((range) => ({ ...range, token })),
+  )
+  candidates.sort((a, b) => b.to - b.from - (a.to - a.from) || a.from - b.from)
+  const selected: typeof candidates = []
+  for (const range of candidates) {
+    if (!selected.some((other) => range.from < other.to && range.to > other.from)) {
+      selected.push(range)
+    }
+  }
+  const first = new Map<string, number>()
+  for (const range of selected) {
+    first.set(range.token, Math.min(first.get(range.token) ?? Infinity, range.from))
+  }
+  const active: PromptEmbeddingRef[] = []
+  for (const ref of refs) {
+    if (
+      first.has(ref.token) &&
+      !active.some(
+        (item) => item.token === ref.token && sameExactPromptEmbedding(item.resource, ref.resource),
+      )
+    ) {
+      active.push(ref)
+    }
+  }
+  active.sort(
+    (a, b) =>
+      first.get(a.token)! - first.get(b.token)! ||
+      a.resource.localModelId.localeCompare(b.resource.localModelId) ||
+      a.resource.localVersionId.localeCompare(b.resource.localVersionId),
+  )
+  return structuredClone(active)
+}
+
 /** Pure trusted-ref reconciliation. Production callers must verify every newly linked source. */
 export function reconcilePromptEmbeddings(
   prompt: GenerationPrompt,

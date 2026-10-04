@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import type { ModelCatalogItem } from '../api.js'
 
 import {
+  activePromptEmbeddingRefs,
   embeddingActivationToken,
   embeddingSourcesFromCatalog,
   getPromptEmbeddingMatches,
@@ -241,4 +242,22 @@ test('overlapping literal diagnostics use longest ranges instead of duplicate co
       ['<defg>', 'unbound'],
     ],
   )
+})
+
+test('active inference and visible matching agree on UTF-16 longest-first ties for crossing saved Unicode literals', () => {
+  const unicode = { resource: source('unicode').resource, token: '😀:' }
+  const latin = { resource: source('latin').resource, token: ':ab' }
+  const text = '😀:ab 😀: :ab'
+  const refs = [latin, unicode]
+  assert.deepEqual(activePromptEmbeddingRefs(text, refs), [unicode, latin])
+  const visible = getPromptEmbeddingMatches({ embeddingRefs: refs, text }, [])
+  assert.deepEqual(
+    visible.map(({ from, to, token }) => ({ from, to, token })),
+    [
+      { from: 0, to: 3, token: '😀:' },
+      { from: 6, to: 9, token: '😀:' },
+      { from: 10, to: 13, token: ':ab' },
+    ],
+  )
+  assert.equal(text.slice(visible[0].from, visible[0].to), '😀:')
 })

@@ -42,6 +42,7 @@ MAX_GENERATION_TARGET_BYTES = 32 * 1024 * 1024
 MAX_GENERATION_STEPS = 200
 MAX_GENERATION_CFG_RESCALE = 0.99
 MAX_GENERATION_CFG_SCALE = 30
+MAX_EMBEDDING_VECTORS = 300  # Four CLIP chunks, each with 75 content positions.
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -91,6 +92,14 @@ class GenerationVae:
 
 
 @dataclass(frozen=True)
+class GenerationEmbedding:
+    token: str
+    path: Path
+    sha256: str
+    byte_size: int
+
+
+@dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
     """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
@@ -117,6 +126,8 @@ class GenerateIllustriousTxt2ImgCommand:
     loras: tuple[GenerationLora, ...] = ()
     vae_precision: Literal["Auto", "FP16", "FP32"] = "Auto"
     vae: GenerationVae | None = None
+    positive_embeddings: tuple[GenerationEmbedding, ...] = ()
+    negative_embeddings: tuple[GenerationEmbedding, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -239,7 +250,7 @@ def _generate_illustrious_txt2img(
         value,
         "Generation job",
         {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
-        optional_keys={"loras", "vaePrecision", "vae"},
+        optional_keys={"loras", "vaePrecision", "vae", "embeddings"},
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
         raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
@@ -329,6 +340,46 @@ def _generate_illustrious_txt2img(
     if any(size > MAX_GENERATION_PROMPT_BYTES for size in prompt_sizes):
         raise DerivativeError("INVALID_REQUEST", "Generation prompt exceeds the provisional limit.")
 
+    signed_embeddings: list[tuple[GenerationEmbedding, ...]] = [(), ()]
+    if "embeddings" in job:
+        embedding_fields = _object(job["embeddings"], "Embeddings", {"positive", "negative"})
+        for index, sign in enumerate(("positive", "negative")):
+            values = embedding_fields[sign]
+            if (
+                not isinstance(values, list)
+                or len(cast(list[object], values)) > MAX_EMBEDDING_VECTORS
+            ):
+                raise DerivativeError(
+                    "INVALID_REQUEST", "Embedding list exceeds the vector budget."
+                )
+            entries: list[GenerationEmbedding] = []
+            tokens: set[str] = set()
+            for value in cast(list[object], values):
+                fields = _object(value, "Embedding", {"token", "path", "sha256", "byteSize"})
+                token = fields["token"]
+                if not isinstance(token, str) or not token or "\x00" in token:
+                    raise DerivativeError("INVALID_REQUEST", "Embedding token is invalid.")
+                try:
+                    token_size = len(token.encode("utf-8"))
+                except UnicodeEncodeError as error:
+                    raise DerivativeError(
+                        "INVALID_REQUEST", "Embedding token is invalid."
+                    ) from error
+                if token_size > MAX_GENERATION_PROMPT_BYTES or token in tokens:
+                    raise DerivativeError(
+                        "INVALID_REQUEST", "Embedding token is invalid or repeated."
+                    )
+                tokens.add(token)
+                entries.append(
+                    GenerationEmbedding(
+                        token=token,
+                        path=_absolute_path(fields["path"], "Embedding path"),
+                        sha256=_sha256(fields["sha256"], "Embedding SHA-256"),
+                        byte_size=_positive_integer(fields["byteSize"], "Embedding byte size"),
+                    )
+                )
+            signed_embeddings[index] = tuple(entries)
+
     sampling = _object(
         job["sampling"],
         "Sampling",
@@ -393,6 +444,8 @@ def _generate_illustrious_txt2img(
         loras=tuple(loras),
         vae_precision=vae_precision,
         vae=vae,
+        positive_embeddings=signed_embeddings[0],
+        negative_embeddings=signed_embeddings[1],
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

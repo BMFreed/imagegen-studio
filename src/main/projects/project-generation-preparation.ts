@@ -8,6 +8,12 @@ import type { IllustriousSchedulerKey } from './illustrious-scheduler.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 
 import {
+  effectiveGenerationEmbeddings,
+  type FrozenGenerationEmbeddings,
+  type FrozenPromptEmbeddingRefs,
+  validAuthoredGenerationEmbeddings,
+} from './illustrious-generation-embeddings.js'
+import {
   type FrozenGenerationLora,
   type FrozenLoraStack,
   validAuthoredGenerationLoras,
@@ -24,6 +30,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
   bbox: IgsRectV1
   documentId: string
   documentRevision: string
+  embeddingRefs?: FrozenPromptEmbeddingRefs
+  embeddings?: FrozenGenerationEmbeddings
   kind: 'normal-txt2img-preparation'
   loras?: FrozenGenerationLora[]
   loraStack?: FrozenLoraStack
@@ -64,6 +72,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
 }
 export interface PreparedNormalTxt2Img {
   context: FrozenNormalTxt2ImgPreparationV1
+  /** Verified authoring pool used only while expanding an atomic batch; never persisted. */
+  embeddingPool?: FrozenGenerationEmbeddings
   /** Copy of the verified PNG for main-owned materialization before queue insertion. */
   targetPngBytes: Buffer
 }
@@ -79,6 +89,7 @@ export type FrozenNormalGenerationPreparationV1 =
   FrozenNormalImg2ImgPreparationV1 | FrozenNormalTxt2ImgPreparationV1
 export interface PreparedNormalGeneration {
   context: FrozenNormalGenerationPreparationV1
+  embeddingPool?: FrozenGenerationEmbeddings
   targetPngBytes: Buffer
 }
 
@@ -139,10 +150,15 @@ export function validateNormalGenerationDraft(
       'Enabled LoRAs require distinct Illustrious resources and finite weights.',
     )
   }
-  if (draft.positivePrompt.embeddingRefs.length || draft.negativePrompt.embeddingRefs.length) {
+  if (
+    !validAuthoredGenerationEmbeddings({
+      negative: draft.negativePrompt.embeddingRefs,
+      positive: draft.positivePrompt.embeddingRefs,
+    })
+  ) {
     throw new GenerationPreparationError(
       'GENERATION_EMBEDDING_UNSUPPORTED',
-      'Embedding references are not supported by this preparation.',
+      'Prompt embeddings require distinct literals bound to exact Illustrious resources.',
     )
   }
   if (draft.clipSkip !== undefined) {
@@ -351,10 +367,26 @@ export async function prepareNormalGeneration(input: {
     )
     loras.push({ ...verifiedLora, weight: entry.weight })
   }
+  const embeddingRefs: FrozenPromptEmbeddingRefs = {
+    negative: structuredClone(draft.negativePrompt.embeddingRefs),
+    positive: structuredClone(draft.positivePrompt.embeddingRefs),
+  }
+  const embeddingPool: FrozenGenerationEmbeddings = { negative: [], positive: [] }
+  for (const polarity of ['positive', 'negative'] as const) {
+    for (const ref of embeddingRefs[polarity]) {
+      const verifiedEmbedding = await input.modelService.resolveVerifiedGenerationEmbeddingForPlan(
+        ref.resource,
+      )
+      embeddingPool[polarity].push({ ...verifiedEmbedding, token: ref.token })
+    }
+  }
+  const prompts = { negative: draft.negativePrompt.text, positive: draft.positivePrompt.text }
   const common: Omit<FrozenNormalTxt2ImgPreparationV1, 'kind'> = {
     bbox,
     documentId,
     documentRevision,
+    embeddingRefs,
+    embeddings: effectiveGenerationEmbeddings(prompts, embeddingRefs, embeddingPool),
     loras,
     loraStack: draft.loras,
     model: { managedPath: verified.managedPath, reference: { ...verified.reference } },
@@ -404,6 +436,7 @@ export async function prepareNormalGeneration(input: {
   }
   return {
     context,
+    embeddingPool,
     targetPngBytes: bytes,
   }
 }

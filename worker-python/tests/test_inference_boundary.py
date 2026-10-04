@@ -753,7 +753,7 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
     def select_scheduler(*_args: object) -> SimpleNamespace:
         return pipeline.scheduler
 
-    def build_conditioning(*_args: object) -> SdxlConditioning:
+    def build_conditioning(*_args: object, **_kwargs: object) -> SdxlConditioning:
         return _conditioned_lengths(77, 77)
 
     torch = SimpleNamespace(
@@ -1108,7 +1108,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.9.0"
+    assert inference_ready_message()["workerVersion"] == "0.10.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1120,4 +1120,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-lora",
         "illustrious-vae-precision",
         "illustrious-external-vae",
+        "illustrious-embeddings",
     ]

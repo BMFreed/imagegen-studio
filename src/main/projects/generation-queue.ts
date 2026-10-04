@@ -39,6 +39,12 @@ import type {
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
+import {
+  frozenEmbeddingFieldsAgree,
+  FrozenGenerationEmbeddingsSchema,
+  IllustriousWorkerEmbeddingsSchema,
+  PromptEmbeddingRefsSchema,
+} from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import {
   FrozenGenerationVaeSchema,
@@ -143,6 +149,8 @@ const Txt2ImgFrozenContextSchema = v.strictObject({
   bbox: BboxSchema,
   documentId: UuidSchema,
   documentRevision: UuidSchema,
+  embeddingRefs: v.optional(PromptEmbeddingRefsSchema),
+  embeddings: v.optional(FrozenGenerationEmbeddingsSchema),
   kind: v.literal('normal-txt2img-preparation'),
   loras: v.optional(FrozenGenerationLorasSchema),
   loraStack: v.optional(RecordedGenerationLoraStackSchema),
@@ -179,6 +187,7 @@ const Txt2ImgWorkerJobSchema = v.strictObject({
     predictionType: PredictionTypeSchema,
     sha256: Sha256Schema,
   }),
+  embeddings: v.optional(IllustriousWorkerEmbeddingsSchema),
   loras: v.optional(WorkerLorasSchema),
   prompts: PromptsSchema,
   sampling: v.strictObject({
@@ -857,6 +866,7 @@ export class GenerationQueueRepository {
     const group = comparableBatchContext(items[0].context)
     if (
       new Set(items.map((item) => item.request.requestId)).size !== items.length ||
+      !batchEmbeddingFilesAgree(items.map((item) => item.context)) ||
       items.some((item) => !isDeepStrictEqual(comparableBatchContext(item.context), group))
     ) {
       throw new GenerationQueueError(
@@ -1787,11 +1797,37 @@ function validateQueueId(id: string): void {
 }
 
 function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
+  // Concrete branches may activate different captured embeddings. Original authoring refs must
+  // still agree across the group; each active projection is checked before publication.
+  const { embeddings: _effectiveEmbeddings, ...common } = context
   return {
-    ...context,
+    ...common,
     prompts: { negative: '', positive: '' },
     sampling: { ...context.sampling, seed: 0 },
   }
+}
+
+/** Active subsets vary by branch, but a captured literal cannot change files within one batch. */
+function batchEmbeddingFilesAgree(
+  contexts: readonly FrozenNormalGenerationPreparationV1[],
+): boolean {
+  const captured = new Map<
+    string,
+    NonNullable<FrozenNormalGenerationPreparationV1['embeddings']>['positive'][number]
+  >()
+  for (const context of contexts) {
+    for (const polarity of ['positive', 'negative'] as const) {
+      for (const entry of context.embeddings?.[polarity] ?? []) {
+        const key = JSON.stringify([polarity, entry.token])
+        const prior = captured.get(key)
+        if (prior && !isDeepStrictEqual(prior, entry)) {
+          return false
+        }
+        captured.set(key, entry)
+      }
+    }
+  }
+  return true
 }
 
 function frozenPayload(
@@ -1810,6 +1846,7 @@ function frozenPayload(
     request.type === 'generate-illustrious-img2img'
   ) {
     const job = {
+      ...(request.job.embeddings !== undefined ? { embeddings: request.job.embeddings } : {}),
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
       ...(request.job.vae !== undefined ? { vae: request.job.vae } : {}),
       ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
@@ -1832,6 +1869,7 @@ function frozenPayload(
     request.type === 'generate-illustrious-txt2img'
   ) {
     const job = {
+      ...(request.job.embeddings !== undefined ? { embeddings: request.job.embeddings } : {}),
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
       ...(request.job.vae !== undefined ? { vae: request.job.vae } : {}),
       ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
@@ -1999,6 +2037,7 @@ function validateSnapshot(
         ? 'generate-illustrious-img2img'
         : 'generate-illustrious-txt2img') ||
     !denoisingFieldsAgree(context, request.job.sampling) ||
+    !frozenEmbeddingFieldsAgree(context, request.job.embeddings) ||
     !frozenLoraFieldsAgree(context, request.job.loras) ||
     !frozenVaeFieldsAgree(context, request.job.vae) ||
     request.job.vaePrecision !== context.vaePrecision ||
@@ -2064,6 +2103,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
   )
   return (
     denoisingFieldsAgree(context, workerJob.sampling) &&
+    frozenEmbeddingFieldsAgree(context, workerJob.embeddings) &&
     frozenLoraFieldsAgree(context, workerJob.loras) &&
     frozenVaeFieldsAgree(context, workerJob.vae) &&
     workerJob.vaePrecision === context.vaePrecision &&

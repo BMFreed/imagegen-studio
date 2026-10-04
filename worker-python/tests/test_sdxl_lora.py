@@ -550,8 +550,8 @@ def test_pipeline_loads_adapters_before_actual_compel_and_denoising(
     observed: list[Any] = []
     build = inference.build_sdxl_conditioning
 
-    def condition(*args: Any) -> Any:
-        result = build(*args)
+    def condition(*args: Any, **kwargs: Any) -> Any:
+        result = build(*args, **kwargs)
         assert not torch.equal(result.positive, before.positive)
         assert pipeline.get_active_adapters() == ["igs_lora_0"]
         observed.append(result.positive.detach().clone())

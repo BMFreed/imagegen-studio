@@ -31,9 +31,11 @@ import { GenerationQueueRepository } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   GenerationStagingRepository,
+  parseFrozenGenerationCandidatePayloadV1,
   type VerifiedGenerationCandidate,
 } from './generation-staging.js'
 import { readIgsPackage, validateSrgbPngStream } from './igs-package.js'
+import { workerEmbeddings } from './illustrious-generation-embeddings.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectCandidateImageExporter } from './project-candidate-image-export.js'
@@ -46,6 +48,7 @@ import {
 import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -201,6 +204,7 @@ async function inRequestLease<T>(
   root: string,
   prepared: PreparedNormalTxt2Img,
   use: (request: IllustriousTxt2ImgRequestV1) => Promise<T>,
+  workerReady = ready,
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
@@ -209,6 +213,14 @@ async function inRequestLease<T>(
         managedPath: prepared.context.model.managedPath,
         reference,
       }),
+      resolveVerifiedGenerationEmbeddingForPlan: async (reference) => {
+        const entry = [
+          ...(prepared.context.embeddings?.positive ?? []),
+          ...(prepared.context.embeddings?.negative ?? []),
+        ].find((embedding) => embedding.reference.localVersionId === reference.localVersionId)
+        assert.ok(entry, 'request verifier must receive an active frozen identity')
+        return { byteSize: entry.byteSize, managedPath: entry.managedPath, reference }
+      },
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
@@ -217,7 +229,7 @@ async function inRequestLease<T>(
       },
     },
     prepared,
-    ready,
+    ready: workerReady,
     scratchBasePath: path.join(root, 'scratch'),
     use,
   })
@@ -290,6 +302,101 @@ async function publishOne(
   assert.ok(published)
   return published
 }
+
+test('real staging publication and recovered payload preserve concrete embedding refs and refuse crossed operational wire', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-embedding-staging-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    const staging = new GenerationStagingRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    await staging.recoverAfterRestart()
+    const source = await fixture(root)
+    const captured = capturedEmbeddingFieldsFixture(root)
+    Object.assign(source.prepared.context, captured)
+    const embeddingReady = {
+      ...ready,
+      capabilities: [
+        'illustrious-txt2img',
+        'denoising-progress',
+        'candidate-thumbnails',
+        'illustrious-cfg-rescale',
+        'illustrious-img2img',
+        'illustrious-lora',
+        'illustrious-vae-precision',
+        'illustrious-external-vae',
+        'illustrious-embeddings',
+      ],
+      workerVersion: '0.10.0',
+    }
+    await inRequestLease(
+      root,
+      source.prepared,
+      async (request) => {
+        const item = await queue.enqueueIllustriousTxt2Img({
+          prepared: source.prepared,
+          projectPath: source.projectPath,
+          request,
+          stagingSessionId: randomUUID(),
+        })
+        const claim = await queue.claimNextPending()
+        assert.equal(claim!.item.id, item.id)
+        await writeFile(request.job.output.pngPath, source.outputBytes)
+        await staging.publishIllustriousTxt2Img({
+          actualSeed: 42,
+          expectedProvisionalRoot: request.job.output.stagingRoot,
+          expectedStatusSequence: claim!.item.statusSequence,
+          provisionalOutputPath: request.job.output.pngPath,
+          queueItemId: item.id,
+        })
+      },
+      embeddingReady,
+    )
+    const [published] = await staging.listVerifiedCandidates(
+      localProjectRecoveryKey(source.projectPath),
+    )
+    const payload = parseFrozenGenerationCandidatePayloadV1(published.frozenPayloadJson)
+    assert.deepEqual(payload.context.embeddingRefs, captured.embeddingRefs)
+    assert.deepEqual(payload.context.embeddings, captured.embeddings)
+    assert.deepEqual(payload.workerJob.embeddings, workerEmbeddings(captured))
+    assert.deepEqual(await readFile(published.assetPath), source.outputBytes)
+    const recovered = new GenerationStagingRepository(database.db, root)
+    await recovered.recoverAfterRestart()
+    assert.deepEqual(
+      (await recovered.listVerifiedCandidates(published.localProjectKey))[0],
+      published,
+    )
+    for (const change of [
+      (value: typeof payload) => {
+        value.workerJob.embeddings!.positive[0].token = '<worker-alias>'
+      },
+      (value: typeof payload) => {
+        value.workerJob.embeddings!.positive[0].byteSize += 1
+      },
+      (value: typeof payload) => {
+        value.workerJob.embeddings!.positive[0].sha256 = 'd'.repeat(64)
+      },
+      (value: typeof payload) => {
+        value.context.embeddingRefs!.negative = []
+      },
+      (value: typeof payload) => {
+        value.context.embeddings!.positive = []
+      },
+      (value: typeof payload) => {
+        delete value.context.embeddings
+      },
+    ]) {
+      const crossed = structuredClone(payload)
+      change(crossed)
+      assert.throws(() => parseFrozenGenerationCandidatePayloadV1(JSON.stringify(crossed)), {
+        code: 'STAGING_INPUT_INVALID',
+      })
+    }
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 async function batchCapacityFixture(root: string, escapedMetadata = false) {
   const database = openAppDatabase(root, migrations)

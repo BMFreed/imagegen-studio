@@ -301,11 +301,12 @@ async function withFixture(
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-actions-'))
   const database = openAppDatabase(root, migrations)
   let controller: ProjectGenerationActionController | undefined
+  let projects: ProjectService | undefined
   try {
     const scratch = path.join(root, 'scratch')
     await mkdir(scratch, { mode: 0o700 })
     const index = new ProjectIndexRepository(database.db)
-    const projects = new ProjectService({
+    projects = new ProjectService({
       autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
       dataRoot: root,
       repository: index,
@@ -434,6 +435,9 @@ async function withFixture(
     })
   } finally {
     await controller?.shutdown()
+    for (const tab of projects?.getOpenTabs() ?? []) {
+      await projects!.flushAutosave(tab.id)
+    }
     await database.close()
     await rm(root, { force: true, recursive: true })
   }
@@ -2911,5 +2915,273 @@ test('actual Retry controller requires native adapter capability and reverified 
       (await controller.getQueue()).items.filter((item) => item.status === 'completed').length,
       1,
     )
+  })
+})
+
+const embeddingReady: InferenceWorkerReady = {
+  ...externalVaeReady,
+  capabilities: [...externalVaeReady.capabilities, 'illustrious-embeddings'],
+  workerVersion: '0.10.0',
+}
+
+async function embeddingPrompt(
+  fixture: Fixture,
+  modelId: number,
+  versionId: number,
+  filename: string,
+  value = 0.125,
+) {
+  const file = await publishIllustriousEmbeddingFixture(
+    fixture.modelService.repository,
+    fixture.root,
+    modelId,
+    versionId,
+    filename,
+    value,
+  )
+  const token = `<${filename.replace(/\.safetensors$/, '')}>`
+  const prompt = await fixture.modelService.resolveGenerationPromptEmbeddings({
+    modelFamily: 'illustrious',
+    prompt: { embeddingRefs: [], text: '' },
+    selection: { resourceId: file.resourceId, token, versionId: file.versionId },
+    text: token,
+  })
+  return { file, prompt }
+}
+
+test('Generate freezes distinct per-polarity exact embeddings for every concrete dynamic branch through the real queue and staging', async () => {
+  await withFixture(async (fixture) => {
+    const positive = await embeddingPrompt(fixture, 610, 611, 'clean-style.safetensors')
+    const negative = await embeddingPrompt(fixture, 620, 621, 'rough-style.safetensors', -0.3)
+    const other = await embeddingPrompt(fixture, 630, 631, 'other-style.safetensors', 0.7)
+    const owner = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!
+    const positiveRefs = [...positive.prompt.embeddingRefs, ...other.prompt.embeddingRefs]
+    // Existing saved custom literals need no filename migration; same literal has a different
+    // exact resource in the negative polarity and never aliases the positive resource.
+    const negativeRefs = [
+      { resource: negative.prompt.embeddingRefs[0].resource, token: '<clean-style>' },
+    ]
+    await owner.applyDocument({
+      ...owner.document,
+      generationDraft: {
+        ...owner.document.generationDraft,
+        negativePrompt: { embeddingRefs: negativeRefs, text: '{<clean-style>|blur}' },
+        positivePrompt: {
+          embeddingRefs: positiveRefs,
+          text: 'portrait {<clean-style>|<other-style>}',
+        },
+      },
+    })
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    assert.equal((await fixture.controller.getState(fixture.tabId)).embeddingsSupported, true)
+    const result = await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    assert.equal(result.kind, 'queued')
+    if (result.kind !== 'queued') {
+      throw new Error('Expected qualified embedding batch.')
+    }
+    assert.equal(result.jobIds.length, 4)
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'positive-prompt',
+      text: 'later unrelated edit',
+    })
+    await fixture.modelService.repository.setDefaultVersion(
+      other.file.resourceId,
+      other.file.versionId,
+    )
+    await waitForState(fixture.controller, fixture.tabId, (state) => state.phase === 'idle')
+    assert.equal(fixture.runtime.generated.length, 4)
+    const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+    assert.equal(candidates.length, 4)
+    for (const id of result.jobIds) {
+      const loaded = await fixture.queue.loadVerifiedInput(id)
+      const { context, workerJob } = loaded.payload
+      assert.deepEqual(context.embeddingRefs, { negative: negativeRefs, positive: positiveRefs })
+      const selected = context.prompts.positive.includes('<other-style>') ? other : positive
+      assert.deepEqual(workerJob.embeddings?.positive, [
+        {
+          byteSize: selected.file.bytes.length,
+          path: selected.file.managedPath,
+          sha256: selected.prompt.embeddingRefs[0].resource.fileSha256,
+          token: selected.prompt.embeddingRefs[0].token,
+        },
+      ])
+      assert.deepEqual(
+        workerJob.embeddings?.negative,
+        context.prompts.negative === 'blur'
+          ? []
+          : [
+              {
+                byteSize: negative.file.bytes.length,
+                path: negative.file.managedPath,
+                sha256: negative.prompt.embeddingRefs[0].resource.fileSha256,
+                token: '<clean-style>',
+              },
+            ],
+      )
+      assert.equal('embeddingPool' in loaded.payload, false)
+      assert.equal('embeddingPool' in context, false)
+      const candidate = candidates.find((candidate) => candidate.queueItemId === id)
+      assert.ok(candidate)
+      assert.equal(
+        (JSON.parse(candidate.frozenPayloadJson) as { context: { prompts: { positive: string } } })
+          .context.prompts.positive,
+        context.prompts.positive,
+      )
+      assert.deepEqual(
+        (JSON.parse(candidate.frozenPayloadJson) as { context: { embeddings: unknown } }).context
+          .embeddings,
+        context.embeddings,
+      )
+    }
+  })
+})
+
+test('dynamic expansion cannot invent an unbound known embedding and refuses the entire batch before publication', async () => {
+  await withFixture(async (fixture) => {
+    await embeddingPrompt(fixture, 710, 711, 'clean-style.safetensors')
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'positive-prompt',
+      text: '<{clean|ordinary}-style>',
+    })
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'negative-prompt',
+      text: '',
+    })
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    await assert.rejects(
+      fixture.controller.generate(fixture.tabId, { documentId: fixture.documentId, iterations: 1 }),
+      { code: 'MODEL_EMBEDDING_UNBOUND' },
+    )
+    assert.equal((await fixture.controller.getQueue()).items.length, 0)
+    assert.equal(fixture.runtime.generated.length, 0)
+    assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+    assert.equal(await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId), null)
+    assert.equal(
+      fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!.document.generationDraft
+        .positivePrompt.text,
+      '<{clean|ordinary}-style>',
+    )
+  })
+})
+
+test('embedding Retry rechecks worker qualification and exact active bytes, keeps original literals and ignores inactive branches and later draft/default', async () => {
+  await withFixture(async (fixture) => {
+    const selected = await embeddingPrompt(fixture, 810, 811, 'clean-style.safetensors')
+    const inactive = await embeddingPrompt(fixture, 820, 821, 'other-style.safetensors', 0.9)
+    const owner = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!
+    await owner.applyDocument({
+      ...owner.document,
+      generationDraft: {
+        ...owner.document.generationDraft,
+        negativePrompt: { embeddingRefs: [], text: '' },
+        positivePrompt: {
+          embeddingRefs: [...selected.prompt.embeddingRefs, ...inactive.prompt.embeddingRefs],
+          text: '{<clean-style>|<other-style>}',
+        },
+      },
+    })
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    fixture.runtime.beforeGenerate = async () => {
+      throw new Error('Controlled inference failure.')
+    }
+    await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    await waitForState(fixture.controller, fixture.tabId, (state) => state.phase === 'idle')
+    const source = (await fixture.controller.getQueue()).items.find(
+      (item) => item.details?.prompt === '<clean-style>',
+    )!
+    assert.equal(source.status, 'failed')
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'positive-prompt',
+      text: 'different draft',
+    })
+    await fixture.modelService.repository.setDefaultVersion(
+      inactive.file.resourceId,
+      inactive.file.versionId,
+    )
+    fixture.runtime.beforeGenerate = null
+    fixture.runtime.ready = structuredClone(externalVaeReady)
+    await assert.rejects(fixture.controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    await writeFile(selected.file.managedPath, Buffer.alloc(selected.file.bytes.length, 1))
+    await assert.rejects(fixture.controller.retryJob(source), { code: 'MODEL_FILE_CORRUPT' })
+    assert.equal((await fixture.controller.getQueue()).items.length, 2)
+    await writeFile(selected.file.managedPath, selected.file.bytes)
+    await rm(inactive.file.managedPath)
+    await fixture.controller.retryJob(source)
+    await waitForState(fixture.controller, fixture.tabId, (state) => state.phase === 'idle')
+    assert.equal(fixture.runtime.generated.length, 3)
+    assert.equal(fixture.runtime.generated.at(-1)?.job.prompts.positive, '<clean-style>')
+    assert.equal(
+      fixture.runtime.generated.at(-1)?.job.embeddings?.positive[0]?.path,
+      selected.file.managedPath,
+    )
+    assert.equal((await fixture.controller.getQueue()).items.length, 3)
+    assert.equal(
+      fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!.document.generationDraft
+        .positivePrompt.text,
+      'different draft',
+    )
+  })
+})
+
+test('dispatch rechecks a queued embedding changed after admission while preserving the completed neighboring job', async () => {
+  await withFixture(async (fixture) => {
+    const first = await embeddingPrompt(fixture, 910, 911, 'clean-style.safetensors')
+    const second = await embeddingPrompt(fixture, 920, 921, 'other-style.safetensors', 0.8)
+    const owner = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!
+    await owner.applyDocument({
+      ...owner.document,
+      generationDraft: {
+        ...owner.document.generationDraft,
+        negativePrompt: { embeddingRefs: [], text: '' },
+        positivePrompt: {
+          embeddingRefs: [...first.prompt.embeddingRefs, ...second.prompt.embeddingRefs],
+          text: '{<clean-style>|<other-style>}',
+        },
+      },
+    })
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    const entered = signal()
+    const release = signal()
+    fixture.runtime.beforeGenerate = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    try {
+      await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      assert.equal(fixture.runtime.generated.length, 1)
+      const activePath = fixture.runtime.generated[0].job.embeddings!.positive[0].path
+      const changed = activePath === first.file.managedPath ? second.file : first.file
+      await writeFile(changed.managedPath, Buffer.alloc(changed.bytes.length, 1))
+      release.resolve()
+      await waitForState(fixture.controller, fixture.tabId, (state) => state.phase === 'idle')
+      assert.equal(
+        fixture.runtime.generated.length,
+        1,
+        'changed queued embedding must never reach heavy worker',
+      )
+      const page = await fixture.controller.getQueue()
+      assert.equal(page.counts.completed, 1)
+      assert.equal(page.counts.failed, 1)
+      const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
+      assert.equal(candidates.length, 1)
+      assert.equal(candidates[0].actualSeed, fixture.runtime.generated[0].job.sampling.seed)
+      assert.equal(
+        await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+        candidates[0].actualSeed,
+      )
+    } finally {
+      release.resolve()
+    }
   })
 })

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/projects/generation-queue-manager.js'
 import {
   supportsInferenceCFGRescale,
+  supportsInferenceEmbeddings,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
@@ -303,6 +304,7 @@ export class ProjectGenerationActionController {
     return {
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
+      embeddingsSupported: !this.blocked && !this.closed && supportsInferenceEmbeddings(ready),
       error: this.error,
       externalVaeSupported: !this.blocked && !this.closed && supportsInferenceExternalVae(ready),
       img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
@@ -434,13 +436,15 @@ export class ProjectGenerationActionController {
       if (!confirmationMatches(initial, request.confirmation)) {
         return toConfirmationResult(initial)
       }
-      if (
-        capture.document.generationDraft.positivePrompt.embeddingRefs.length ||
-        capture.document.generationDraft.negativePrompt.embeddingRefs.length
-      ) {
+      const hasEmbeddings =
+        capture.document.generationDraft.positivePrompt.embeddingRefs.length > 0 ||
+        capture.document.generationDraft.negativePrompt.embeddingRefs.length > 0
+      // Refuse known legacy peers before reserving a worker or composing target pixels.
+      const ready = hasEmbeddings ? await this.options.runtime.readQualifiedInferenceReady() : null
+      if (hasEmbeddings && ready && !supportsInferenceEmbeddings(ready)) {
         throw new GenerationPreparationError(
           'GENERATION_EMBEDDING_UNSUPPORTED',
-          'Prompt embeddings are not supported by this preparation.',
+          'The active image engine has not qualified Illustrious prompt embeddings.',
         )
       }
       await this.options.models.assertNoUnboundGenerationEmbeddings({
@@ -456,6 +460,12 @@ export class ProjectGenerationActionController {
         this.options.scratchBasePath,
         async ({ inferenceReady, targetWorker }) => {
           this.assertAdmissionOpen()
+          if (hasEmbeddings && !supportsInferenceEmbeddings(inferenceReady)) {
+            throw new GenerationPreparationError(
+              'GENERATION_EMBEDDING_UNSUPPORTED',
+              'The active image engine has not qualified Illustrious prompt embeddings.',
+            )
+          }
           if (
             capture.document.generationDraft.vae &&
             !supportsInferenceExternalVae(inferenceReady)

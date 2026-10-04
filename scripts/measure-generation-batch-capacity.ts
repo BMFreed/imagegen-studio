@@ -403,6 +403,9 @@ async function runCase(config: CaseConfig): Promise<void> {
               managedPath: modelPath,
               reference,
             }),
+            resolveVerifiedGenerationEmbeddingForPlan: async () => {
+              throw new Error('No embedding is configured in this fixture.')
+            },
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('Capacity fixture has no active LoRAs.')
             },

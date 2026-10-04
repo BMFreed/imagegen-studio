@@ -38,6 +38,7 @@ function pendingState(): ProjectGenerationActionState {
   return {
     cfgRescaleSupported: false,
     documentId,
+    embeddingsSupported: false,
     error: null,
     externalVaeSupported: false,
     img2imgSupported: false,
@@ -169,4 +170,14 @@ test('Generate response needs actual bounded admission or a nonempty exact loss 
   assert.equal(isProjectGenerateResult(review), true)
   assert.equal(isProjectGenerateResult({ ...review, candidateIds: [] }), false)
   assert.equal(isProjectGenerateResult({ ...review, acceptedLayerIds: [id] }), false)
+})
+
+test('action state requires an explicit boolean embedding capability', () => {
+  const state = pendingState()
+  assert.ok(isProjectGenerationActionState({ ...state, embeddingsSupported: true }))
+  const { embeddingsSupported: _ignored, ...missing } = state
+  assert.equal(isProjectGenerationActionState(missing), false)
+  for (const embeddingsSupported of [undefined, null, 1, 'true']) {
+    assert.equal(isProjectGenerationActionState({ ...state, embeddingsSupported }), false)
+  }
 })

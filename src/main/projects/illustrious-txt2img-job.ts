@@ -2,6 +2,7 @@ import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
+  supportsInferenceEmbeddings,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
@@ -20,6 +21,12 @@ import type {
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
+import {
+  frozenEmbeddingFieldsAgree,
+  type IllustriousWorkerEmbeddings,
+  reverifyFrozenGenerationEmbeddings,
+  workerEmbeddings,
+} from './illustrious-generation-embeddings.js'
 import {
   frozenLoraFieldsAgree,
   type IllustriousWorkerLora,
@@ -53,6 +60,7 @@ export interface IllustriousTxt2ImgRequestV1 {
       predictionType: 'epsilon' | 'sample' | 'v_prediction'
       sha256: string
     }
+    embeddings?: IllustriousWorkerEmbeddings
     loras?: IllustriousWorkerLora[]
     output: { pngPath: string; stagingRoot: string }
     prompts: { negative: string; positive: string }
@@ -186,6 +194,12 @@ export async function withIllustriousGenerationRequest<T>(input: {
       'The active worker has not qualified Illustrious LoRA.',
     )
   }
+  if (workerEmbeddings(context) && !supportsInferenceEmbeddings(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious embeddings.',
+    )
+  }
   if (context.vae && !supportsInferenceExternalVae(input.ready)) {
     throw new IllustriousJobError(
       'INFERENCE_UNAVAILABLE',
@@ -204,6 +218,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
   }
   await reverifyFrozenGenerationLoras(context, input.modelService)
   await reverifyFrozenGenerationVae(context, input.modelService)
+  await reverifyFrozenGenerationEmbeddings(context, input.modelService)
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
   )
@@ -233,6 +248,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
     }
     const common: IllustriousTxt2ImgRequestV1 = {
       job: {
+        ...(workerEmbeddings(context) ? { embeddings: workerEmbeddings(context) } : {}),
         ...(context.vae !== undefined ? { vae: workerVae(context) } : {}),
         ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
         ...(context.loras !== undefined ? { loras: workerLoras(context) } : {}),
@@ -308,6 +324,12 @@ function validatePrepared(
   scheduler: IllustriousSchedulerKey
 } {
   const { bbox, model, prompts, sampling, target } = context
+  if (!frozenEmbeddingFieldsAgree(context, workerEmbeddings(context))) {
+    throw new IllustriousJobError(
+      'GENERATION_INPUT_CHANGED',
+      'The frozen embedding configuration is invalid.',
+    )
+  }
   if (!frozenVaeFieldsAgree(context, workerVae(context))) {
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',

@@ -9,8 +9,10 @@ import { test } from 'node:test'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { FrozenNormalTxt2ImgPreparationV1 } from './project-generation-preparation.js'
 
+import { workerEmbeddings } from './illustrious-generation-embeddings.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
 const PNG_PATH = path.resolve('src/main/projects/placeholders/empty.png')
 const PROJECT_PATH = '/private/projects/portrait.igs'
@@ -137,6 +139,121 @@ function replacePayload(
   candidate.frozenPayloadJson = JSON.stringify(payload)
   candidate.frozenPayloadSha256 = sha256(candidate.frozenPayloadJson)
 }
+
+test('accepted concrete prompts retain independently frozen positive and negative embedding identities without inactive refs or worker paths', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const captured = capturedEmbeddingFieldsFixture('/private/models')
+  replacePayload(candidate, (payload) => {
+    Object.assign(payload.context as object, captured)
+    Object.assign(payload.workerJob as object, {
+      embeddings: workerEmbeddings(captured),
+      prompts: structuredClone(captured.prompts),
+    })
+  })
+  const original = structuredClone(candidate)
+  const mapped = provenanceFromVerifiedRasterCandidate({
+    acceptedAt: '2026-10-04T13:00:00.000Z',
+    candidate,
+    imagePngBytes,
+  })
+  for (const polarity of ['positive', 'negative'] as const) {
+    assert.deepEqual(mapped.generationConfiguration[`${polarity}Prompt`], {
+      embeddingRefs: captured.embeddings[polarity].map(({ reference, token }) => ({
+        resource: reference,
+        token,
+      })),
+      text: captured.prompts[polarity],
+    })
+  }
+  assert.notEqual(
+    mapped.generationConfiguration.positivePrompt.embeddingRefs[0].resource.fileSha256,
+    mapped.generationConfiguration.negativePrompt.embeddingRefs[0].resource.fileSha256,
+  )
+  assert.deepEqual(
+    candidate,
+    original,
+    'the accepted mapper never mutates frozen operational input',
+  )
+  const portable = JSON.stringify(mapped)
+  for (const excluded of [
+    '/private',
+    '<inactive>',
+    'managedPath',
+    'authoredPrompts',
+    'embeddingPool',
+  ]) {
+    assert.equal(portable.includes(excluded), false, `${excluded} cannot enter portable provenance`)
+  }
+  captured.embeddings.positive[0].reference.displayName = 'Later rename'
+  assert.equal(
+    mapped.generationConfiguration.positivePrompt.embeddingRefs[0].resource.displayName,
+    'Copied positive-embedding',
+  )
+})
+
+test('accepted embedding refs require the exact original-ref projection and matching worker polarity, token, hash, size and path', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const captured = capturedEmbeddingFieldsFixture('/private/models')
+  replacePayload(candidate, (payload) => {
+    Object.assign(payload.context as object, captured)
+    Object.assign(payload.workerJob as object, {
+      embeddings: workerEmbeddings(captured),
+      prompts: captured.prompts,
+    })
+  })
+  const edits: ((payload: Record<string, unknown>) => void)[] = [
+    (payload) => {
+      delete (payload.context as { embeddingRefs?: unknown }).embeddingRefs
+    },
+    (payload) => {
+      ;(payload.context as typeof captured).embeddingRefs.positive = []
+    },
+    (payload) => {
+      ;(payload.context as typeof captured).embeddings.positive = []
+    },
+    (payload) => {
+      ;(payload.context as typeof captured).embeddings.positive[0].token = '<aliased>'
+    },
+    (payload) => {
+      ;(
+        payload.workerJob as { embeddings: NonNullable<ReturnType<typeof workerEmbeddings>> }
+      ).embeddings.positive[0].sha256 = 'c'.repeat(64)
+    },
+    (payload) => {
+      ;(
+        payload.workerJob as { embeddings: NonNullable<ReturnType<typeof workerEmbeddings>> }
+      ).embeddings.positive[0].path = '/private/other.safetensors'
+    },
+    (payload) => {
+      ;(
+        payload.workerJob as { embeddings: NonNullable<ReturnType<typeof workerEmbeddings>> }
+      ).embeddings.positive[0].byteSize += 1
+    },
+    (payload) => {
+      const pair = (
+        payload.workerJob as { embeddings: NonNullable<ReturnType<typeof workerEmbeddings>> }
+      ).embeddings
+      ;[pair.positive, pair.negative] = [pair.negative, pair.positive]
+    },
+    (payload) => {
+      ;(payload.workerJob as { prompts: { positive: string } }).prompts.positive =
+        'portrait <worker-private-alias>'
+    },
+  ]
+  for (const edit of edits) {
+    const crossed = structuredClone(candidate)
+    replacePayload(crossed, edit)
+    assert.throws(
+      () =>
+        provenanceFromVerifiedRasterCandidate({
+          acceptedAt: '2026-10-04T13:00:00.000Z',
+          candidate: crossed,
+          imagePngBytes,
+        }),
+      { code: 'PROVENANCE_INPUT_INVALID' },
+    )
+  }
+})
 
 test('accepted Raster provenance projects the real frozen payload and verified PNG without private paths', async () => {
   const { candidate, imagePngBytes } = await fixture()

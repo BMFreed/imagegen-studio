@@ -28,6 +28,12 @@ import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
+import {
+  effectiveGenerationEmbeddings,
+  type FrozenGenerationEmbeddings,
+  reverifyFrozenGenerationEmbeddings,
+  workerEmbeddings,
+} from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 import {
@@ -301,6 +307,7 @@ export class GenerationOrchestrator {
     // Freeze before the admission barrier and before any model verification await. The caller
     // retains its original preparation; the plan can never reread later Project edits.
     const context = structuredClone(prepared.context)
+    const embeddingPool = structuredClone(prepared.embeddingPool ?? context.embeddings)
     const targetPngBytes = Buffer.from(prepared.targetPngBytes)
     const plannedOptions = { ...options }
     const ready = {
@@ -340,6 +347,7 @@ export class GenerationOrchestrator {
         first.prompts,
         first.seed,
         plannedOptions.seedBehavior,
+        embeddingPool,
       )
       return await withIllustriousGenerationRequest({
         modelService: this.models,
@@ -347,22 +355,44 @@ export class GenerationOrchestrator {
         ready,
         scratchBasePath: this.scratchBasePath,
         use: async (request) => {
-          const concrete = plan.items.map((item, index) => {
+          const concrete: QualifiedGenerationBatchItem[] = []
+          for (const [index, item] of plan.items.entries()) {
             const jobContext = variedContext(
               context,
               item.prompts,
               item.seed,
               plannedOptions.seedBehavior,
+              embeddingPool,
             )
             const job = variedRequest(
               request,
               item.prompts,
               item.seed,
               index === 0 ? request.requestId : randomUUID(),
+              jobContext,
             )
             assertIllustriousTxt2ImgRequestFitsTransport(job)
-            return { prepared: { context: jobContext, targetPngBytes }, request: job }
-          })
+            await this.models.assertNoUnboundGenerationEmbeddings({
+              modelFamily: jobContext.model.reference.baseModelFamily,
+              negativePrompt: {
+                embeddingRefs:
+                  jobContext.embeddings?.negative.map((entry) => ({
+                    resource: entry.reference,
+                    token: entry.token,
+                  })) ?? [],
+                text: item.prompts.negative,
+              },
+              positivePrompt: {
+                embeddingRefs:
+                  jobContext.embeddings?.positive.map((entry) => ({
+                    resource: entry.reference,
+                    token: entry.token,
+                  })) ?? [],
+                text: item.prompts.positive,
+              },
+            })
+            concrete.push({ prepared: { context: jobContext, targetPngBytes }, request: job })
+          }
           // Replacement is allowed only after the prepared request and every varied envelope
           // qualify, while admission still owns the barrier and before any new queue publication.
           await beforePublication?.()
@@ -495,6 +525,9 @@ export class GenerationOrchestrator {
     }
     await reverifyFrozenGenerationLoras(items[0].prepared.context, this.models)
     await reverifyFrozenGenerationVae(items[0].prepared.context, this.models)
+    for (const item of items) {
+      await reverifyFrozenGenerationEmbeddings(item.prepared.context, this.models)
+    }
     this.assertGenerationOpen(tabId)
     const before = await this.indexedProject(tabId)
     this.requireBatchDocument(tabId, project.documentId, items)
@@ -788,16 +821,23 @@ function variedContext(
   prompts: { negative: string; positive: string },
   seed: number,
   seedBehavior: 'per-iteration' | 'per-prompt',
+  embeddingPool?: FrozenGenerationEmbeddings,
 ): FrozenNormalGenerationPreparationV1 {
+  const embeddings =
+    context.embeddingRefs && embeddingPool
+      ? effectiveGenerationEmbeddings(prompts, context.embeddingRefs, embeddingPool)
+      : context.embeddings
   if (context.kind === 'normal-img2img-preparation') {
     return {
       ...context,
+      ...(embeddings !== undefined ? { embeddings } : {}),
       prompts: { ...prompts },
       sampling: { ...context.sampling, seed, seedBehavior },
     }
   }
   return {
     ...context,
+    ...(embeddings !== undefined ? { embeddings } : {}),
     prompts: { ...prompts },
     sampling: { ...context.sampling, seed, seedBehavior },
   }
@@ -807,17 +847,31 @@ function variedRequest(
   prompts: { negative: string; positive: string },
   seed: number,
   requestId: string,
+  context: FrozenNormalGenerationPreparationV1,
 ): IllustriousGenerationRequestV1 {
+  const job = structuredClone(request.job)
+  delete job.embeddings
+  const embeddings = workerEmbeddings(context)
   if (request.type === 'generate-illustrious-img2img') {
     return {
       ...request,
-      job: { ...request.job, prompts: { ...prompts }, sampling: { ...request.job.sampling, seed } },
+      job: {
+        ...job,
+        ...(embeddings ? { embeddings } : {}),
+        prompts: { ...prompts },
+        sampling: { ...request.job.sampling, seed },
+      },
       requestId,
     }
   }
   return {
     ...request,
-    job: { ...request.job, prompts: { ...prompts }, sampling: { ...request.job.sampling, seed } },
+    job: {
+      ...job,
+      ...(embeddings ? { embeddings } : {}),
+      prompts: { ...prompts },
+      sampling: { ...request.job.sampling, seed },
+    },
     requestId,
   }
 }

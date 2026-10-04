@@ -28,6 +28,7 @@ import type {
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
+import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 
@@ -306,6 +307,7 @@ export class GenerationProcessor {
     }
     await reverifyFrozenGenerationLoras(frozen.context, this.modelService)
     await reverifyFrozenGenerationVae(frozen.context, this.modelService)
+    await reverifyFrozenGenerationEmbeddings(frozen.context, this.modelService)
     const requestId = randomUUID()
     const request: IllustriousGenerationRequestV1 =
       frozen.kind === 'illustrious-img2img'

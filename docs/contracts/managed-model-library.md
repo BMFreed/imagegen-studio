@@ -252,7 +252,7 @@ header anchors перед обоими normal modes; worker 0.9.0 проверя
 SDXL scaling. Одинаковая форма тензоров не доказывает training lineage. Старый
 worker, неподдерживаемый профиль или changed bytes явно блокируют Generate;
 Retry сохраняет исходную версию независимо от нового Default. Полную ML
-compatibility всех моделей, embedding inference, Preset handoff
+compatibility всех моделей, Preset handoff
 и full accepted-result provenance эти проверки ещё не доказывают;
 PP-004 остаётся неполным и публично не обещается как готовый flow.
 
@@ -265,9 +265,20 @@ prune и Project Undo/Redo, shadow recovery, Save/reopen сохраняют со
 отклоняют позднюю verification после edit/Undo или закрытия вкладки, включая
 асинхронную commit boundary. Проверены реальные SQLite/filesystem и `.igs`
 writer/loader; авторинг не доказывает tensor compatibility. Anima embedding
-actions unsupported; Generate с embedding refs или известным unbound token
-отказывает явно до enqueue. Загрузка embedding weights остаётся следующей
-pipeline-границей, статус PP-004 не повышен.
+actions unsupported. На authoring checkpoint Generate с refs и known unbound
+literal отказывал до enqueue. Следующий
+[embedding inference checkpoint](../engineering/phase-2c-embedding-inference-research.md)
+подключает обе Illustrious prompt-полярности к paired CLIP safetensors через
+worker 0.10.0. Main проверяет exact source/hash/size и bounded header перед
+материализацией, batch publication, Retry и dispatch; worker использует один
+verified snapshot, проверяет полный формат, finite values и преобразование к
+dtype энкодеров. Каждый concrete branch выбирает effective subset из frozen
+pool; unused choices и текущий Default не подменяют Retry. Same-token resources
+двух polarities разделены; longest-first stored literals имеют приоритет над
+вложенными known tokens. Unsupported/changed/unbound input отказывает явно,
+без plain-text fallback. Synthetic public-loader/native pipeline evidence не
+доказывает качество обученных embeddings или совместимость каждого source-файла.
+Статус PP-004 не повышен.
 
 Для быстрого открытия каталога его статус файла проверяет metadata, путь и
 размер, используя результат полной проверки, если он уже есть в кэше.

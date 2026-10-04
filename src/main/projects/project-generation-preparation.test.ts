@@ -20,6 +20,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { publishIllustriousEmbeddingFixture } from '../models/test-fixtures/illustrious-embedding.js'
 import { illustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
@@ -147,6 +148,9 @@ test(
               await modelRepository.setDefaultVersion(second.resourceId, second.versionId)
               return await modelService.resolveVerifiedGenerationCheckpointForPlan(reference)
             },
+            resolveVerifiedGenerationEmbeddingForPlan: async () => {
+              throw new Error('No embedding is configured in this fixture.')
+            },
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('No LoRA selected in this VAE scenario.')
             },
@@ -254,6 +258,9 @@ async function withService(
     )
     await run({ dataRoot, modelRepository, modelService, projectRepository, service, worker })
   } finally {
+    for (const tab of service.getOpenTabs()) {
+      await service.flushAutosave(tab.id)
+    }
     await worker?.close()
     await database.close()
     await rm(dataRoot, { force: true, recursive: true })
@@ -568,6 +575,9 @@ test(
               source.bbox.x = 999
               return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
             },
+            resolveVerifiedGenerationEmbeddingForPlan: async () => {
+              throw new Error('No embedding is configured in this fixture.')
+            },
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('This fixture has no active LoRAs.')
             },
@@ -636,6 +646,9 @@ test(
             target.lastActualSeedSnapshot = 999
             target.generationDraft.seed = { policy: 'random', value: null }
             return await modelService.resolveVerifiedGenerationCheckpointForPlan(savedModel)
+          },
+          resolveVerifiedGenerationEmbeddingForPlan: async () => {
+            throw new Error('No embedding is configured in this fixture.')
           },
           resolveVerifiedGenerationLoraForPlan: async () => {
             throw new Error('This fixture has no active LoRAs.')
@@ -718,7 +731,9 @@ test(
           code: 'GENERATION_EMBEDDING_UNSUPPORTED',
           draft: {
             positivePrompt: {
-              embeddingRefs: [{ resource: embedding.reference, token: '<lamp>' }],
+              embeddingRefs: [
+                { resource: { ...embedding.reference, baseModelFamily: 'anima' }, token: '<lamp>' },
+              ],
               text: 'blue lantern <lamp>',
             },
           },
@@ -949,6 +964,9 @@ test(
                 verified = true
                 throw new Error('must reject unsupported worker before verification')
               },
+              resolveVerifiedGenerationEmbeddingForPlan: async () => {
+                throw new Error('No embedding is configured in this fixture.')
+              },
               resolveVerifiedGenerationLoraForPlan: async () => {
                 throw new Error('This fixture has no active LoRAs.')
               },
@@ -1012,6 +1030,9 @@ test(
               managedPath: installed.managedPath,
               reference: { ...saved, predictionType: 'v_prediction' },
             }),
+            resolveVerifiedGenerationEmbeddingForPlan: async () => {
+              throw new Error('No embedding is configured in this fixture.')
+            },
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('This fixture has no active LoRAs.')
             },
@@ -1165,6 +1186,9 @@ test(
             prepared.context.prompts.positive = 'changed during model verification'
             prepared.targetPngBytes.fill(0)
             return await modelService.resolveVerifiedGenerationCheckpointForPlan(saved)
+          },
+          resolveVerifiedGenerationEmbeddingForPlan: async () => {
+            throw new Error('No embedding is configured in this fixture.')
           },
           resolveVerifiedGenerationLoraForPlan: async () => {
             throw new Error('This fixture has no active LoRAs.')
@@ -1401,6 +1425,9 @@ test(
         assertNoUnboundGenerationEmbeddings: async () => {},
         resolveVerifiedGenerationCheckpointForPlan: (saved) =>
           modelService.resolveVerifiedGenerationCheckpointForPlan(saved),
+        resolveVerifiedGenerationEmbeddingForPlan: async () => {
+          throw new Error('No embedding is configured in this fixture.')
+        },
         resolveVerifiedGenerationLoraForPlan: async (saved) => {
           verified++
           if (verified === 1) {
@@ -1476,6 +1503,96 @@ test(
         )
         assert.equal(composed, false)
         await service.discardAndClose(invalid.tabId)
+      }
+    })
+  },
+)
+
+test(
+  'actual transparent and opaque Project targets freeze exact dual-CLIP embedding descriptors and detached authoring pool before edits',
+  { skip: !devRuntimeRoot() },
+  async (t) => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const checkpoint = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('first exact Illustrious checkpoint'),
+        civitaiModelId: 904,
+        civitaiVersionId: 905,
+        kind: 'checkpoint',
+      })
+      const embedding = await publishIllustriousEmbeddingFixture(
+        modelRepository,
+        dataRoot,
+        914,
+        915,
+        'clean-style.safetensors',
+        0.25,
+        { vectors: 3 },
+      )
+      const prompt = await modelService.resolveGenerationPromptEmbeddings({
+        modelFamily: 'illustrious',
+        prompt: { embeddingRefs: [], text: '' },
+        selection: {
+          resourceId: embedding.resourceId,
+          token: '<clean-style>',
+          versionId: embedding.versionId,
+        },
+        text: 'portrait <clean-style>',
+      })
+      for (const raster of [false, true]) {
+        await t.test(raster ? 'opaque img2img' : 'transparent txt2img', async () => {
+          const opened = await importProject(service, dataRoot, {
+            draft: {
+              positivePrompt: prompt,
+              sampling: {
+                cfgScale: 7.5,
+                denoisingStrength: raster ? 0.65 : null,
+                sampler: null,
+                scheduler: null,
+                steps: 24,
+              },
+            },
+            model: checkpoint.reference,
+            name: `embedding ${raster}`,
+            raster,
+          })
+          const prepared = await service.prepareNormalGenerationContext(
+            opened.tabId,
+            {
+              composeTarget: async (input) => {
+                await service.updateGenerationDraft(opened.tabId, {
+                  kind: 'positive-prompt',
+                  text: 'later ordinary text',
+                })
+                return await worker.composeTarget(input)
+              },
+            },
+            modelService,
+          )
+          const expected = {
+            negative: [],
+            positive: [
+              {
+                byteSize: embedding.bytes.length,
+                managedPath: embedding.managedPath,
+                reference: prompt.embeddingRefs[0].resource,
+                token: '<clean-style>',
+              },
+            ],
+          }
+          assert.equal(
+            prepared.context.kind,
+            raster ? 'normal-img2img-preparation' : 'normal-txt2img-preparation',
+          )
+          assert.deepEqual(prepared.context.embeddings, expected)
+          assert.deepEqual(prepared.embeddingPool, expected)
+          assert.deepEqual(prepared.context.embeddingRefs, {
+            negative: [],
+            positive: prompt.embeddingRefs,
+          })
+          assert.equal(prepared.context.prompts.positive, 'portrait <clean-style>')
+          prepared.embeddingPool.positive[0].token = 'caller mutation'
+          assert.deepEqual(prepared.context.embeddings, expected)
+        })
       }
     })
   },

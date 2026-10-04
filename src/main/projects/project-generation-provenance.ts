@@ -133,8 +133,20 @@ export function provenanceFromVerifiedRasterCandidate(input: {
           : {}),
         mode: context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img',
         model: { ...context.model.reference },
-        negativePrompt: { embeddingRefs: [], text: context.prompts.negative },
-        positivePrompt: { embeddingRefs: [], text: context.prompts.positive },
+        negativePrompt: {
+          embeddingRefs: (context.embeddings?.negative ?? []).map(({ reference, token }) => ({
+            resource: structuredClone(reference),
+            token,
+          })),
+          text: context.prompts.negative,
+        },
+        positivePrompt: {
+          embeddingRefs: (context.embeddings?.positive ?? []).map(({ reference, token }) => ({
+            resource: structuredClone(reference),
+            token,
+          })),
+          text: context.prompts.positive,
+        },
         sampling: {
           ...(context.kind === 'normal-img2img-preparation'
             ? { denoisingStrength: context.sampling.denoisingStrength }

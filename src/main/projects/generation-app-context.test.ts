@@ -31,6 +31,9 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
       resolveVerifiedGenerationCheckpointForPlan: async () => {
         throw new Error('No model should be resolved during bootstrap.')
       },
+      resolveVerifiedGenerationEmbeddingForPlan: async () => {
+        throw new Error('No embedding is configured in this fixture.')
+      },
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
