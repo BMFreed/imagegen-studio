@@ -9,7 +9,9 @@ import type { ModelService } from '../models/model-service.js'
 
 export type GenerationModelResolver = Pick<
   ModelService,
-  'resolveVerifiedGenerationCheckpointForPlan' | 'resolveVerifiedGenerationLoraForPlan'
+  | 'resolveVerifiedGenerationCheckpointForPlan'
+  | 'resolveVerifiedGenerationLoraForPlan'
+  | 'resolveVerifiedGenerationVaeForPlan'
 >
 export type FrozenLoraStack = IgsProjectDocumentV1['generationDraft']['loras']
 export interface FrozenGenerationLora {

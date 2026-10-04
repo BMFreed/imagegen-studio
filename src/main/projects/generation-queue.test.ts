@@ -167,9 +167,12 @@ async function inQualifiedLease<T>(
         managedPath: prepared.context.model.managedPath,
         reference,
       }),
-      // ModelService's real exact-byte verification is covered by the request-boundary tests.
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
+      },
+      // ModelService's real exact-byte verification is covered by the request-boundary tests.
+      resolveVerifiedGenerationVaeForPlan: async () => {
+        throw new Error('This fixture does not select an external VAE.')
       },
     },
     prepared,

@@ -72,8 +72,14 @@ export function projectVaeDiagnostic(
     : 'Choose an Illustrious model to select an external VAE.'
 }
 
-export function externalVaeGenerationReason(saved: SavedVae | null): string | null {
-  return saved
-    ? 'External VAE generation is not connected yet. Reset VAE to Embedded before generating.'
-    : null
+export function externalVaeGenerationReason(
+  saved: SavedVae | null,
+  runtimeSupported: boolean | null,
+): string | null {
+  if (!saved || runtimeSupported === true) {
+    return null
+  }
+  return runtimeSupported === null
+    ? 'Checking external VAE support…'
+    : 'This image engine does not support external VAE. Update it, or reset VAE to Embedded.'
 }

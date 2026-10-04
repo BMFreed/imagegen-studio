@@ -3,7 +3,7 @@ export interface QualifiedInferenceWorkerReady {
   capabilities: readonly string[]
   protocolVersion: '1'
   runtimeProfile: 'linux-nvidia'
-  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0' | '0.6.0' | '0.7.0' | '0.8.0'
+  workerVersion: '0.2.0' | '0.3.0' | '0.4.0' | '0.5.0' | '0.6.0' | '0.7.0' | '0.8.0' | '0.9.0'
 }
 
 export function isQualifiedInferenceWorkerReady(
@@ -45,7 +45,15 @@ export function isQualifiedInferenceWorkerReady(
         ready.capabilities.includes('illustrious-cfg-rescale') &&
         ready.capabilities.includes('illustrious-img2img') &&
         ready.capabilities.includes('illustrious-lora') &&
-        ready.capabilities.includes('illustrious-vae-precision')))
+        ready.capabilities.includes('illustrious-vae-precision')) ||
+      (ready.workerVersion === '0.9.0' &&
+        ready.capabilities.includes('denoising-progress') &&
+        ready.capabilities.includes('candidate-thumbnails') &&
+        ready.capabilities.includes('illustrious-cfg-rescale') &&
+        ready.capabilities.includes('illustrious-img2img') &&
+        ready.capabilities.includes('illustrious-lora') &&
+        ready.capabilities.includes('illustrious-vae-precision') &&
+        ready.capabilities.includes('illustrious-external-vae')))
   )
 }
 
@@ -62,7 +70,8 @@ export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
       value.workerVersion === '0.5.0' ||
       value.workerVersion === '0.6.0' ||
       value.workerVersion === '0.7.0' ||
-      value.workerVersion === '0.8.0')
+      value.workerVersion === '0.8.0' ||
+      value.workerVersion === '0.9.0')
   )
 }
 
@@ -73,7 +82,8 @@ export function supportsInferenceCFGRescale(value: unknown): boolean {
     (value.workerVersion === '0.5.0' ||
       value.workerVersion === '0.6.0' ||
       value.workerVersion === '0.7.0' ||
-      value.workerVersion === '0.8.0')
+      value.workerVersion === '0.8.0' ||
+      value.workerVersion === '0.9.0')
   )
 }
 
@@ -82,7 +92,8 @@ export function supportsInferenceImg2Img(value: unknown): boolean {
     isQualifiedInferenceWorkerReady(value) &&
     (value.workerVersion === '0.6.0' ||
       value.workerVersion === '0.7.0' ||
-      value.workerVersion === '0.8.0')
+      value.workerVersion === '0.8.0' ||
+      value.workerVersion === '0.9.0')
   )
 }
 
@@ -90,11 +101,21 @@ export function supportsInferenceImg2Img(value: unknown): boolean {
 export function supportsInferenceLora(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    (value.workerVersion === '0.7.0' || value.workerVersion === '0.8.0')
+    (value.workerVersion === '0.7.0' ||
+      value.workerVersion === '0.8.0' ||
+      value.workerVersion === '0.9.0')
   )
 }
 
 /** Manual VAE precision is available only on the qualified encode/decode runtime. */
 export function supportsInferenceVaePrecision(value: unknown): boolean {
-  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.8.0'
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    (value.workerVersion === '0.8.0' || value.workerVersion === '0.9.0')
+  )
+}
+
+/** External VAE loading never follows from an unqualified peer's capability string alone. */
+export function supportsInferenceExternalVae(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.9.0'
 }

@@ -211,6 +211,9 @@ async function inRequestLease<T>(
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
+      resolveVerifiedGenerationVaeForPlan: async () => {
+        throw new Error('This fixture does not select an external VAE.')
+      },
     },
     prepared,
     ready,

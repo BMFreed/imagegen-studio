@@ -8,6 +8,7 @@ import type {
 } from '../../shared/projects/generation-queue-manager.js'
 import {
   supportsInferenceCFGRescale,
+  supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -303,6 +304,7 @@ export class ProjectGenerationActionController {
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
       error: this.error,
+      externalVaeSupported: !this.blocked && !this.closed && supportsInferenceExternalVae(ready),
       img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
       jobs,
       phase: this.blocked
@@ -439,6 +441,15 @@ export class ProjectGenerationActionController {
         this.options.scratchBasePath,
         async ({ inferenceReady, targetWorker }) => {
           this.assertAdmissionOpen()
+          if (
+            capture.document.generationDraft.vae &&
+            !supportsInferenceExternalVae(inferenceReady)
+          ) {
+            throw new IllustriousJobError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker has not qualified external Illustrious VAE loading.',
+            )
+          }
           if (
             capture.document.generationDraft.vaePrecision !== undefined &&
             capture.document.generationDraft.vaePrecision !== 'Auto' &&

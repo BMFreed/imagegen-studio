@@ -229,8 +229,15 @@ storage, ведёт SQLite-версии и очередь, восстанавл�
 пользовательский выбор версии. Последующие [LoRA](../engineering/phase-2c-lora-research.md)
 и [VAE authoring](../engineering/phase-2c-external-vae-authoring-research.md)
 checkpoints подключают свои exact selectors; внешний VAE проходит
-install/repair/clear/relink и Project Undo/shadow/Save/reopen, но пока явно
-блокирует Generate. Полную ML compatibility, embedding selectors, Preset handoff
+install/repair/clear/relink и Project Undo/shadow/Save/reopen. Последующий
+[external VAE inference](../engineering/phase-2c-external-vae-inference-research.md)
+проверяет точную source identity, SHA/size и standalone LDM/native Diffusers
+header anchors перед обоими normal modes; worker 0.9.0 проверяет полный набор
+тензоров и загружает выбранный VAE через public offline AutoencoderKL с pinned
+SDXL scaling. Одинаковая форма тензоров не доказывает training lineage. Старый
+worker, неподдерживаемый профиль или changed bytes явно блокируют Generate;
+Retry сохраняет исходную версию независимо от нового Default. Полную ML
+compatibility всех моделей, embedding selectors, Preset handoff
 и full accepted-result provenance эти проверки ещё не доказывают;
 PP-004 остаётся неполным и публично не обещается как готовый flow.
 

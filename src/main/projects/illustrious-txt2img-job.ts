@@ -2,6 +2,7 @@ import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
+  supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -25,6 +26,12 @@ import {
   reverifyFrozenGenerationLoras,
   workerLoras,
 } from './illustrious-generation-loras.js'
+import {
+  frozenVaeFieldsAgree,
+  type IllustriousWorkerVae,
+  reverifyFrozenGenerationVae,
+  workerVae,
+} from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -65,6 +72,7 @@ export interface IllustriousTxt2ImgRequestV1 {
       sha256: string
       width: number
     }
+    vae?: IllustriousWorkerVae | null
     vaePrecision?: 'Auto' | 'FP16' | 'FP32'
   }
   protocolVersion: '1'
@@ -178,6 +186,12 @@ export async function withIllustriousGenerationRequest<T>(input: {
       'The active worker has not qualified Illustrious LoRA.',
     )
   }
+  if (context.vae && !supportsInferenceExternalVae(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified external Illustrious VAE loading.',
+    )
+  }
   if (
     context.vaePrecision !== undefined &&
     context.vaePrecision !== 'Auto' &&
@@ -189,6 +203,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
     )
   }
   await reverifyFrozenGenerationLoras(context, input.modelService)
+  await reverifyFrozenGenerationVae(context, input.modelService)
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(
     context.model.reference,
   )
@@ -218,6 +233,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
     }
     const common: IllustriousTxt2ImgRequestV1 = {
       job: {
+        ...(context.vae !== undefined ? { vae: workerVae(context) } : {}),
         ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
         ...(context.loras !== undefined ? { loras: workerLoras(context) } : {}),
         bbox: { ...context.bbox },
@@ -292,6 +308,12 @@ function validatePrepared(
   scheduler: IllustriousSchedulerKey
 } {
   const { bbox, model, prompts, sampling, target } = context
+  if (!frozenVaeFieldsAgree(context, workerVae(context))) {
+    throw new IllustriousJobError(
+      'GENERATION_INPUT_CHANGED',
+      'The frozen VAE configuration is invalid.',
+    )
+  }
   if (
     context.vaePrecision !== undefined &&
     !['Auto', 'FP16', 'FP32'].includes(context.vaePrecision)

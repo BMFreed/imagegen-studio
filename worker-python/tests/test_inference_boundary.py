@@ -1108,7 +1108,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.8.0"
+    assert inference_ready_message()["workerVersion"] == "0.9.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1119,4 +1119,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-img2img",
         "illustrious-lora",
         "illustrious-vae-precision",
+        "illustrious-external-vae",
     ]

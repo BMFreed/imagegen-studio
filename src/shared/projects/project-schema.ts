@@ -187,6 +187,12 @@ const IllustriousCheckpointRefSchema = v.strictObject({
   kind: v.literal('checkpoint'),
   predictionType: v.picklist(['epsilon', 'sample', 'v_prediction']),
 })
+const IllustriousVaeRefSchema = v.strictObject({
+  ...PortableResourceRefSchema.entries,
+  baseModelFamily: v.literal('illustrious'),
+  kind: v.literal('vae'),
+  predictionType: v.null(),
+})
 const ProvenanceEmbeddingRefSchema = v.strictObject({
   resource: v.strictObject({ ...PortableResourceRefSchema.entries, kind: v.literal('embedding') }),
   token: NonemptyTextSchema,
@@ -217,6 +223,7 @@ const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
     steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
   }),
   size: v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
+  vae: v.optional(v.nullable(IllustriousVaeRefSchema)),
   vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 

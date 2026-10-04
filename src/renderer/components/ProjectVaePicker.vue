@@ -25,6 +25,7 @@ const props = defineProps<{
   disabled: boolean
   loading: boolean
   modelFamily: string | null
+  runtimeSupported: boolean | null
   saved: SavedVae | null
 }>()
 // This is an exact resource command, not an ordinary v-model: main resolves IDs to trusted metadata.
@@ -37,7 +38,9 @@ const entries = computed(() => projectVaeOptions(props.catalog))
 const diagnostic = computed(() =>
   projectVaeDiagnostic(props.saved, props.catalog, props.catalogReady, props.modelFamily),
 )
-const generationReason = computed(() => externalVaeGenerationReason(props.saved))
+const generationReason = computed(() =>
+  externalVaeGenerationReason(props.saved, props.runtimeSupported),
+)
 const canRelink = computed(
   () =>
     props.catalogReady &&
@@ -151,8 +154,8 @@ function openModels() {
       Link installed exact VAE
     </NButton>
     <p v-if="generationReason" class="vae-diagnostic" role="status">{{ generationReason }}</p>
-    <p v-else-if="modelFamily === 'illustrious'" class="vae-diagnostic">
-      Uses the VAE included in the checkpoint.
+    <p v-else-if="modelFamily === 'illustrious' && !diagnostic" class="vae-diagnostic">
+      {{ saved ? 'Uses the selected external VAE.' : 'Uses the VAE included in the checkpoint.' }}
     </p>
   </section>
 </template>

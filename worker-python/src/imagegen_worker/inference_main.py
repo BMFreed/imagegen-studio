@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
     INFERENCE_CAPABILITY,
     INFERENCE_CFG_RESCALE_CAPABILITY,
+    INFERENCE_EXTERNAL_VAE_CAPABILITY,
     INFERENCE_IMG2IMG_CAPABILITY,
     INFERENCE_LORA_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
@@ -65,6 +67,7 @@ def inference_ready_message() -> dict[str, object]:
             INFERENCE_IMG2IMG_CAPABILITY,
             INFERENCE_LORA_CAPABILITY,
             INFERENCE_VAE_PRECISION_CAPABILITY,
+            INFERENCE_EXTERNAL_VAE_CAPABILITY,
         ],
     }
 
@@ -170,11 +173,15 @@ def main() -> int:
         except (UnicodeDecodeError, json.JSONDecodeError):
             emit(error_message(None, "INVALID_REQUEST", "Request is not valid UTF-8 JSON."))
             continue
-        emit(
-            process_inference_request(
-                value, config_dir=config_dir, runtime=runtime, on_progress=emit
-            )
+        result = process_inference_request(
+            value, config_dir=config_dir, runtime=runtime, on_progress=emit
         )
+        # Public pipeline/component objects may form unreachable cycles when an
+        # externally provided VAE is registered. Collect only after inference's
+        # frames have returned, before another job loads models into this child.
+        # Live objects remain owned; the CUDA allocator can reuse its cache.
+        gc.collect()
+        emit(result)
     return 0
 
 

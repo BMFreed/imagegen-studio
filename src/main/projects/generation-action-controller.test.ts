@@ -26,6 +26,7 @@ import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-to
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
+import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
 import {
   ProjectGenerationActionController,
   toProjectGenerationActionApiError,
@@ -623,6 +624,200 @@ const precisionReady: InferenceWorkerReady = {
   ],
   workerVersion: '0.8.0',
 }
+
+const externalVaeReady: InferenceWorkerReady = {
+  ...precisionReady,
+  capabilities: [...precisionReady.capabilities, 'illustrious-external-vae'],
+  workerVersion: '0.9.0',
+}
+
+// Production boundary: controller admission -> actual Project capture -> SQLite queue -> processor.
+// Neighbor: Embedded succeeds with 0.8; semantic mutants admit external on 0.8 or read later draft.
+test('Generate gates external VAE before composition and freezes its exact version across a batch and later Project edits', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, modelService, projects, queue, runtime, tabId } = fixture
+    const first = await publishIllustriousVaeFixture(
+      modelService.repository,
+      fixture.root,
+      410,
+      411,
+    )
+    const second = await publishIllustriousVaeFixture(
+      modelService.repository,
+      fixture.root,
+      410,
+      412,
+      'diffusers',
+    )
+    const selected = await modelService.resolveGenerationVae(first.resourceId, first.versionId)
+    const replacement = await modelService.resolveGenerationVae(second.resourceId, second.versionId)
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.setGenerationVae(tabId, async () => selected)
+    runtime.ready = structuredClone(precisionReady)
+    assert.equal((await controller.getState(tabId)).externalVaeSupported, false)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 2 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal(runtime.generated.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    const saved = await readFile(fixture.packagePath)
+    runtime.ready = structuredClone(externalVaeReady)
+    assert.equal((await controller.getState(tabId)).externalVaeSupported, true)
+    const entered = signal()
+    const release = signal()
+    runtime.beforeCompose = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    try {
+      const pending = controller.generate(tabId, { documentId, iterations: 2 })
+      await entered.promise
+      await projects.setGenerationVae(tabId, async () => replacement)
+      await modelService.repository.setDefaultVersion(second.resourceId, second.versionId)
+      release.resolve()
+      const result = await pending
+      assert.equal(result.kind, 'queued')
+      if (result.kind !== 'queued') {
+        throw new Error('Expected durable external VAE batch.')
+      }
+      await waitForState(controller, tabId, (state) => state.phase === 'idle')
+      for (const id of result.jobIds) {
+        const input = await queue.loadVerifiedInput(id)
+        assert.equal(input.item.status, 'completed')
+        assert.deepEqual(input.payload.context.vae?.reference, selected)
+        assert.deepEqual(input.payload.workerJob.vae, {
+          byteSize: first.bytes.length,
+          path: first.managedPath,
+          sha256: selected.fileSha256,
+        })
+      }
+      assert.deepEqual(
+        runtime.generated.map((entry) => entry.job.vae),
+        [
+          { byteSize: first.bytes.length, path: first.managedPath, sha256: selected.fileSha256 },
+          { byteSize: first.bytes.length, path: first.managedPath, sha256: selected.fileSha256 },
+        ],
+      )
+      assert.deepEqual(
+        projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.vae,
+        replacement,
+      )
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('Generate rechecks exact external VAE bytes again at durable batch publication after scratch materialization', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, modelService, projects, runtime, tabId } = fixture
+    const file = await publishIllustriousVaeFixture(modelService.repository, fixture.root, 430, 431)
+    const selected = await modelService.resolveGenerationVae(file.resourceId, file.versionId)
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.setGenerationVae(tabId, async () => selected)
+    runtime.ready = structuredClone(externalVaeReady)
+    const verify = modelService.resolveVerifiedGenerationVaeForPlan.bind(modelService)
+    let verifiedCalls = 0
+    modelService.resolveVerifiedGenerationVaeForPlan = async (reference) => {
+      const result = await verify(reference)
+      verifiedCalls += 1
+      if (verifiedCalls === 2) {
+        // Preparation and scratch request have passed; only the independent publication check
+        // can catch this same-size rewrite before any durable queue row is committed.
+        await writeFile(file.managedPath, Buffer.alloc(file.bytes.length, 1))
+      }
+      return result
+    }
+    const saved = await readFile(fixture.packagePath)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 1 }), {
+      code: 'MODEL_FILE_CORRUPT',
+    })
+    assert.equal(verifiedCalls, 2)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    assert.equal(runtime.generated.length, 0)
+    assert.deepEqual(await fixture.staging.listVerifiedCandidates(tabId), [])
+    assert.deepEqual(await readFile(fixture.packagePath), saved)
+  })
+})
+
+test('Retry rechecks external VAE capability and exact bytes without using a later Project VAE or library Default', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, modelService, projects, runtime, tabId } = fixture
+    const first = await publishIllustriousVaeFixture(
+      modelService.repository,
+      fixture.root,
+      420,
+      421,
+    )
+    const second = await publishIllustriousVaeFixture(
+      modelService.repository,
+      fixture.root,
+      420,
+      422,
+      'diffusers',
+    )
+    const selected = await modelService.resolveGenerationVae(first.resourceId, first.versionId)
+    const replacement = await modelService.resolveGenerationVae(second.resourceId, second.versionId)
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.setGenerationVae(tabId, async () => selected)
+    runtime.ready = structuredClone(externalVaeReady)
+    runtime.beforeGenerate = async () => {
+      throw new Error('Controlled external VAE failure.')
+    }
+    await controller.generate(tabId, { documentId, iterations: 1 })
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    await projects.setGenerationVae(tabId, async () => replacement)
+    await modelService.repository.setDefaultVersion(second.resourceId, second.versionId)
+    runtime.beforeGenerate = null
+    runtime.ready = structuredClone(precisionReady)
+    await assert.rejects(controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    assert.equal((await controller.getQueue()).items.length, 1)
+    assert.equal(runtime.generated.length, 1)
+    runtime.ready = structuredClone(externalVaeReady)
+    await writeFile(first.managedPath, Buffer.alloc(first.bytes.length, 1))
+    await assert.rejects(controller.retryJob(source), { code: 'MODEL_FILE_CORRUPT' })
+    assert.equal((await controller.getQueue()).items.length, 1)
+    assert.equal(runtime.generated.length, 1)
+    await writeFile(first.managedPath, first.bytes)
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.deepEqual(runtime.generated[1].job.vae, {
+      byteSize: first.bytes.length,
+      path: first.managedPath,
+      sha256: selected.fileSha256,
+    })
+    assert.deepEqual(
+      projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.vae,
+      replacement,
+    )
+    // Embedded uses the older runtime after the exact external resource has been reset explicitly.
+    await projects.setGenerationVae(tabId, null)
+    runtime.ready = structuredClone(precisionReady)
+    const impact = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(impact.kind, 'confirmation-required')
+    if (impact.kind !== 'confirmation-required') {
+      throw new Error('Expected visible candidates confirmation.')
+    }
+    await controller.generate(tabId, {
+      confirmation: {
+        candidateIds: impact.candidateIds,
+        unfinishedJobIds: impact.unfinishedJobIds,
+      },
+      documentId,
+      iterations: 1,
+    })
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.at(-1)?.job.vae, null)
+  })
+})
 
 test('Generate gates manual VAE Precision before composition and freezes one captured policy across a concrete batch', async () => {
   await withFixture(async (fixture) => {

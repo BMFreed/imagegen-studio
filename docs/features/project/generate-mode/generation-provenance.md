@@ -362,3 +362,19 @@ never include managed paths. Old field absence is unknown, while new `[]` record
 a known empty stack. Comparison retains this distinction and reports resource
 availability only for enabled references. Other missing pipeline settings are
 still Unavailable; this checkpoint does not complete PP-005 or result-to-preset.
+
+## External Illustrious VAE recording checkpoint (04.10.2026)
+
+[The external VAE slice](../../../engineering/phase-2c-external-vae-inference-research.md)
+adds optional `generationConfiguration.vae` to both normal-mode v1 records.
+Explicit null records a known Embedded choice; an exact portable Illustrious VAE
+reference records the component actually frozen and verified for that attempt.
+Paths and operational byte-size descriptors stay in queue/recovery inputs and
+never enter this portable field. Historical omission remains unrecorded and
+is never migrated to Embedded.
+
+Changing the current Project VAE or library Default does not change the accepted
+record or Retry input. Add, Undo/recovery and explicit Save/reopen preserve it.
+Comparison reports exact source/hash identity, known Embedded and missing/unknown
+catalog bindings separately; renamed display metadata does not change semantic
+identity. Anima, result-to-preset and the complete pipeline remain separate work.

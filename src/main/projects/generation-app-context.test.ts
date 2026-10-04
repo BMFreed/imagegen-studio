@@ -33,6 +33,9 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
       resolveVerifiedGenerationLoraForPlan: async () => {
         throw new Error('This fixture has no active LoRAs.')
       },
+      resolveVerifiedGenerationVaeForPlan: async () => {
+        throw new Error('This fixture does not select an external VAE.')
+      },
     },
     projectIndex: { getProject: async () => null },
     projectService: {

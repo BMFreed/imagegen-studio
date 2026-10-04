@@ -28,6 +28,7 @@ import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-to
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
+import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import {
   GenerationDispatchCoordinator,
@@ -38,6 +39,7 @@ import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
 import { readIgsPackage } from './igs-package.js'
 import { workerLoras } from './illustrious-generation-loras.js'
+import { workerVae } from './illustrious-generation-vae.js'
 import {
   withIllustriousGenerationRequest,
   withIllustriousTxt2ImgRequest,
@@ -1614,6 +1616,378 @@ const precisionReady: InferenceWorkerReady = {
   capabilities: [...loraReady.capabilities, 'illustrious-vae-precision'],
   workerVersion: '0.8.0',
 }
+
+const externalVaeReady: InferenceWorkerReady = {
+  ...precisionReady,
+  capabilities: [...precisionReady.capabilities, 'illustrious-external-vae'],
+  workerVersion: '0.9.0',
+}
+
+// Boundary: actual SQLite queue and private input manifests -> Retry -> dispatch -> recovered
+// staging -> Add -> portable .igs. Transport is controlled; it does not establish ML loading.
+test('external, Embedded and unrecorded VAE choices survive both normal modes, Retry, staging recovery, Add and Save', async (t) => {
+  for (const opaque of [false, true]) {
+    for (const choice of ['external', 'embedded', 'legacy'] as const) {
+      await t.test(`${opaque ? 'img2img' : 'txt2img'} ${choice}`, async () => {
+        await withFixture(async (fixture) => {
+          const file = await publishIllustriousVaeFixture(
+            fixture.modelService.repository,
+            fixture.root,
+            800,
+            801,
+          )
+          const selected = await fixture.modelService.resolveGenerationVae(
+            file.resourceId,
+            file.versionId,
+          )
+          const verified = await fixture.modelService.resolveVerifiedGenerationVaeForPlan(selected)
+          const base = opaque ? await opaquePreparation(fixture, 0.65) : fixture.prepared
+          const prepared = {
+            context: structuredClone(base.context),
+            targetPngBytes: Buffer.from(base.targetPngBytes),
+          }
+          if (choice !== 'legacy') {
+            prepared.context.vae = choice === 'external' ? verified : null
+          }
+          const expected = choice === 'legacy' ? undefined : choice === 'external' ? selected : null
+          const original = await withIllustriousGenerationRequest({
+            modelService: fixture.modelService,
+            prepared,
+            ready: externalVaeReady,
+            scratchBasePath: path.join(fixture.root, 'scratch'),
+            use: async (request) => {
+              assert.deepEqual(request.job.vae, workerVae(prepared.context))
+              const crossed = structuredClone(request)
+              crossed.job.vae = choice === 'external' ? null : workerVae({ vae: verified })
+              await assert.rejects(
+                fixture.queue.enqueueIllustriousGeneration({
+                  prepared,
+                  projectPath: path.join(fixture.root, 'Project.igs'),
+                  request: crossed,
+                  stagingSessionId: randomUUID(),
+                }),
+                { code: 'QUEUE_INPUT_INVALID' },
+              )
+              return await fixture.queue.enqueueIllustriousGeneration({
+                prepared,
+                projectPath: path.join(fixture.root, 'Project.igs'),
+                request,
+                stagingSessionId: randomUUID(),
+              })
+            },
+          })
+          prepared.context.vae = choice === 'external' ? null : verified
+          const savedBefore = await readFile(path.join(fixture.root, 'Project.igs'))
+          const canceled = await fixture.queue.cancel(original.id)
+          await fixture.queue.recoverAfterRestart()
+          const frozen = await fixture.queue.loadVerifiedRetryInput(original.id)
+          const checkRetry = async (ready: InferenceWorkerReady) =>
+            await withIllustriousGenerationRequest({
+              modelService: fixture.modelService,
+              prepared: { context: frozen.payload.context, targetPngBytes: frozen.targetPngBytes },
+              ready,
+              scratchBasePath: path.join(fixture.root, 'scratch'),
+              use: async (request) => {
+                assert.deepEqual(request.job.vae, frozen.payload.workerJob.vae)
+              },
+            })
+          if (choice === 'external') {
+            await assert.rejects(
+              fixture.queue.retryTerminal(
+                original.id,
+                canceled.statusSequence,
+                async () => await checkRetry(precisionReady),
+              ),
+              { code: 'INFERENCE_UNAVAILABLE' },
+            )
+            assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+          } else {
+            await checkRetry(precisionReady)
+          }
+          const retried = await fixture.queue.retryTerminal(
+            original.id,
+            canceled.statusSequence,
+            async () => await checkRetry(externalVaeReady),
+          )
+          const copied = await fixture.queue.loadVerifiedInput(retried.id)
+          assert.deepEqual(copied.payload.context.vae, frozen.payload.context.vae)
+          assert.deepEqual(copied.payload.workerJob.vae, frozen.payload.workerJob.vae)
+          const completed = await fixture.processor.runOne(
+            transport(async (request) => {
+              assert.deepEqual(request.job.vae, frozen.payload.workerJob.vae)
+              assert.equal(
+                request.type,
+                opaque ? 'generate-illustrious-img2img' : 'generate-illustrious-txt2img',
+              )
+              return await writeDone(request, fixture.outputBytes, 42)
+            }, externalVaeReady),
+          )
+          assert.equal(completed.kind, 'completed')
+          const finished = await fixture.queue.loadVerifiedInput(retried.id)
+          await fixture.queue.deleteTerminal(retried.id, finished.item.statusSequence)
+          await fixture.staging.recoverAfterRestart()
+          const candidates = await fixture.staging.listVerifiedCandidates(retried.localProjectKey)
+          assert.equal(candidates.length, 1)
+          assert.deepEqual(
+            JSON.parse(candidates[0].frozenPayloadJson).context.vae,
+            frozen.payload.context.vae,
+          )
+          assert.deepEqual(await readFile(path.join(fixture.root, 'Project.igs')), savedBefore)
+          await withAcceptance(fixture, retried.localProjectKey, async (owner, acceptance) => {
+            await owner.applyDocument({
+              ...owner.document,
+              generationDraft: { ...owner.document.generationDraft, vae: selected },
+            })
+            assert.equal(
+              (
+                await acceptance.accept(retried.localProjectKey, [retried.id], retried.id, [
+                  retried.id,
+                ])
+              ).kind,
+              'accepted',
+            )
+            await owner.save()
+            const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
+            const configuration =
+              saved.project.layers[0]?.generationProvenance?.generationConfiguration
+            assert.deepEqual(configuration?.vae, expected)
+            assert.equal(Object.hasOwn(configuration!, 'vae'), choice !== 'legacy')
+            assert.deepEqual(saved.project.generationDraft.vae, selected)
+            assert.equal(JSON.stringify(configuration).includes(file.managedPath), false)
+          })
+        })
+      })
+    }
+  }
+})
+
+test('external VAE dispatch rechecks qualified capability and exact original bytes without substituting Default', async () => {
+  for (const changed of ['capability', 'bytes', 'missing'] as const) {
+    await withFixture(async (fixture) => {
+      const file = await publishIllustriousVaeFixture(
+        fixture.modelService.repository,
+        fixture.root,
+        810,
+        811,
+      )
+      const reference = await fixture.modelService.resolveGenerationVae(
+        file.resourceId,
+        file.versionId,
+      )
+      fixture.prepared.context.vae =
+        await fixture.modelService.resolveVerifiedGenerationVaeForPlan(reference)
+      await withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared: fixture.prepared,
+        ready: externalVaeReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async (request) =>
+          await fixture.queue.enqueueIllustriousGeneration({
+            prepared: fixture.prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          }),
+      })
+      const defaultFile = await publishIllustriousVaeFixture(
+        fixture.modelService.repository,
+        fixture.root,
+        810,
+        812,
+        'diffusers',
+      )
+      await fixture.modelService.repository.setDefaultVersion(
+        defaultFile.resourceId,
+        defaultFile.versionId,
+      )
+      if (changed === 'bytes') {
+        await writeFile(file.managedPath, Buffer.alloc(file.bytes.length, 1))
+      }
+      if (changed === 'missing') {
+        await rm(file.managedPath)
+      }
+      let called = 0
+      const result = await fixture.processor.runOne(
+        transport(
+          async () => {
+            called += 1
+            throw new Error('External VAE should have been refused before transport.')
+          },
+          changed === 'capability' ? precisionReady : externalVaeReady,
+        ),
+      )
+      assert.equal(result.kind, 'failed')
+      assert.equal(called, 0)
+      const item = (await fixture.queue.listManagerPage()).items[0]
+      assert.equal(item.status, 'failed')
+      assert.deepEqual(
+        await fixture.staging.listVerifiedCandidates(
+          (await fixture.queue.loadVerifiedInput(item.id)).item.localProjectKey,
+        ),
+        [],
+      )
+    })
+  }
+})
+
+test('external VAE materialization refuses a coherent frozen alternate path or size after exact registry verification', async () => {
+  await withFixture(async (fixture) => {
+    const file = await publishIllustriousVaeFixture(
+      fixture.modelService.repository,
+      fixture.root,
+      830,
+      831,
+    )
+    const reference = await fixture.modelService.resolveGenerationVae(
+      file.resourceId,
+      file.versionId,
+    )
+    const verified = await fixture.modelService.resolveVerifiedGenerationVaeForPlan(reference)
+    const alternatePath = path.join(fixture.root, 'identical-bytes-alternate-vae.safetensors')
+    await writeFile(alternatePath, file.bytes)
+    let materialized = 0
+    for (const changed of ['path', 'size'] as const) {
+      const prepared = {
+        context: structuredClone(fixture.prepared.context),
+        targetPngBytes: fixture.prepared.targetPngBytes,
+      }
+      prepared.context.vae = structuredClone(verified)
+      if (changed === 'path') {
+        prepared.context.vae.managedPath = alternatePath
+      } else {
+        prepared.context.vae.byteSize += 2
+      }
+      await assert.rejects(
+        withIllustriousGenerationRequest({
+          modelService: fixture.modelService,
+          prepared,
+          ready: externalVaeReady,
+          scratchBasePath: path.join(fixture.root, 'scratch'),
+          use: async () => {
+            materialized += 1
+          },
+        }),
+        /The exact VAE changed after preparation/,
+      )
+    }
+    fixture.prepared.context.vae = verified
+    await withIllustriousGenerationRequest({
+      modelService: fixture.modelService,
+      prepared: fixture.prepared,
+      ready: externalVaeReady,
+      scratchBasePath: path.join(fixture.root, 'scratch'),
+      use: async () => {
+        materialized += 1
+      },
+    })
+    assert.equal(materialized, 1)
+  })
+})
+
+test('durable VAE contexts refuse crossed file identity and dropped choices with a valid manifest hash, retaining legacy neighbor', async () => {
+  await withFixture(async (fixture) => {
+    const file = await publishIllustriousVaeFixture(
+      fixture.modelService.repository,
+      fixture.root,
+      820,
+      821,
+    )
+    const reference = await fixture.modelService.resolveGenerationVae(
+      file.resourceId,
+      file.versionId,
+    )
+    const verified = await fixture.modelService.resolveVerifiedGenerationVaeForPlan(reference)
+    const invalidIds: string[] = []
+    for (const mutate of [
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.vae = null
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.vae = null
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.context.vae
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        delete payload.workerJob.vae
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.vae!.sha256 = 'a'.repeat(64)
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.workerJob.vae!.byteSize += 1
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.vae!.managedPath = path.join(fixture.root, 'other-vae.safetensors')
+      },
+      (payload: FrozenQueuedIllustriousGenerationV1) => {
+        payload.context.vae!.reference.baseModelFamily = 'anima'
+      },
+    ]) {
+      fixture.prepared.context.vae = structuredClone(verified)
+      const item = await withIllustriousGenerationRequest({
+        modelService: fixture.modelService,
+        prepared: fixture.prepared,
+        ready: externalVaeReady,
+        scratchBasePath: path.join(fixture.root, 'scratch'),
+        use: async (request) =>
+          await fixture.queue.enqueueIllustriousGeneration({
+            prepared: fixture.prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          }),
+      })
+      const input = await fixture.queue.loadVerifiedInput(item.id)
+      const payload = structuredClone(input.payload)
+      mutate(payload)
+      const changed = JSON.stringify(payload)
+      const manifestPath = path.join(path.dirname(input.targetPath), 'manifest.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      manifest.payloadSha256 = sha256(Buffer.from(changed))
+      await fixture.database.db
+        .updateTable('generation_queue_item')
+        .set({ frozen_payload_json: changed })
+        .where('id', '=', item.id)
+        .execute()
+      await writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 })
+      await assert.rejects(fixture.queue.loadVerifiedInput(item.id), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      invalidIds.push(item.id)
+    }
+    // Explicit Embedded cannot be dropped on one side of a newly recorded job either.
+    fixture.prepared.context.vae = null
+    await withIllustriousGenerationRequest({
+      modelService: fixture.modelService,
+      prepared: fixture.prepared,
+      ready: externalVaeReady,
+      scratchBasePath: path.join(fixture.root, 'scratch'),
+      use: async (request) => {
+        delete request.job.vae
+        await assert.rejects(
+          fixture.queue.enqueueIllustriousGeneration({
+            prepared: fixture.prepared,
+            projectPath: path.join(fixture.root, 'Project.igs'),
+            request,
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'QUEUE_INPUT_INVALID' },
+        )
+      },
+    })
+    delete fixture.prepared.context.vae
+    const neighbor = await enqueue(fixture)
+    const claimed = await fixture.queue.claimNextPending()
+    assert.equal(claimed?.item.id, neighbor)
+    assert.equal(Object.hasOwn(claimed.payload.context, 'vae'), false)
+    assert.equal(Object.hasOwn(claimed.payload.workerJob, 'vae'), false)
+    const statuses = (await fixture.queue.listManagerPage()).items
+    for (const id of invalidIds) {
+      assert.equal(statuses.find((item) => item.id === id)?.status, 'failed')
+    }
+  })
+})
 
 // Boundary: durable main queue -> Retry -> dispatch -> verified staging -> Add -> .igs loader.
 // Neighbor: each mode/policy and legacy absence. Mutants: dropped policy, mutable retry/default,

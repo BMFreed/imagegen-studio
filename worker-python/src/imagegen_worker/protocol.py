@@ -84,6 +84,13 @@ class GenerationLora:
 
 
 @dataclass(frozen=True)
+class GenerationVae:
+    path: Path
+    sha256: str
+    byte_size: int
+
+
+@dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
     """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
@@ -109,6 +116,7 @@ class GenerateIllustriousTxt2ImgCommand:
     cfg_rescale: float = 0.0
     loras: tuple[GenerationLora, ...] = ()
     vae_precision: Literal["Auto", "FP16", "FP32"] = "Auto"
+    vae: GenerationVae | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,13 +239,22 @@ def _generate_illustrious_txt2img(
         value,
         "Generation job",
         {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
-        optional_keys={"loras", "vaePrecision"},
+        optional_keys={"loras", "vaePrecision", "vae"},
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
         raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
     vae_precision = job.get("vaePrecision", "Auto")
     if not isinstance(vae_precision, str) or vae_precision not in ("Auto", "FP16", "FP32"):
         raise DerivativeError("INVALID_REQUEST", "VAE precision is unsupported.")
+    vae_value = job.get("vae")
+    vae: GenerationVae | None = None
+    if vae_value is not None:
+        vae_fields = _object(vae_value, "External VAE", {"path", "sha256", "byteSize"})
+        vae = GenerationVae(
+            path=_absolute_path(vae_fields["path"], "External VAE path"),
+            sha256=_sha256(vae_fields["sha256"], "External VAE SHA-256"),
+            byte_size=_positive_integer(vae_fields["byteSize"], "External VAE byte size"),
+        )
 
     checkpoint = _object(job["checkpoint"], "Checkpoint", {"path", "sha256", "predictionType"})
     checkpoint_path = _absolute_path(checkpoint["path"], "Checkpoint path")
@@ -375,6 +392,7 @@ def _generate_illustrious_txt2img(
         cfg_rescale=cfg_rescale,
         loras=tuple(loras),
         vae_precision=vae_precision,
+        vae=vae,
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

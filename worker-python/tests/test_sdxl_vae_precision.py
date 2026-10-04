@@ -123,7 +123,7 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _request(root: Path, opaque: bool) -> dict[str, Any]:
+def generation_request(root: Path, opaque: bool) -> dict[str, Any]:
     root.mkdir(mode=0o700)
     checkpoint = root / "checkpoint.safetensors"
     checkpoint.write_bytes(b"exact managed checkpoint identity; native tiny loader is injected")
@@ -212,7 +212,7 @@ def _modules(pipeline: Any) -> tuple[Any, ...]:
 def test_protocol_precision_is_optional_auto_and_exactly_frozen(
     tmp_path: Path, opaque: bool, precision: Precision | None
 ) -> None:
-    request = _request(tmp_path / "stage", opaque)
+    request = generation_request(tmp_path / "stage", opaque)
     if precision is not None:
         request["job"]["vaePrecision"] = precision
     command = parse_request(request)
@@ -227,7 +227,7 @@ def test_protocol_precision_is_optional_auto_and_exactly_frozen(
 def test_protocol_refuses_invalid_precision_before_ml(
     tmp_path: Path, opaque: bool, invalid: object
 ) -> None:
-    request = _request(tmp_path / "stage", opaque)
+    request = generation_request(tmp_path / "stage", opaque)
     request["job"]["vaePrecision"] = invalid
     with pytest.raises(inference.DerivativeError, match="VAE precision") as error:
         parse_request(request)
@@ -311,7 +311,7 @@ def _worker(
 ) -> tuple[Any, Any, MLRuntime, Path, dict[str, Any]]:
     torch, diffusers, make_pipeline = native
     pipeline = make_pipeline(opaque, True)
-    request = _request(root / "stage", opaque)
+    request = generation_request(root / "stage", opaque)
     config = root / "config"
     config.mkdir()
     (config / "model_index.json").write_bytes(b"verified tiny CPU loader fixture")

@@ -405,6 +405,9 @@ async function runCase(config: CaseConfig): Promise<void> {
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('Capacity fixture has no active LoRAs.')
             },
+            resolveVerifiedGenerationVaeForPlan: async () => {
+              throw new Error('Capacity fixture uses embedded VAE.')
+            },
           },
           prepared,
           ready,

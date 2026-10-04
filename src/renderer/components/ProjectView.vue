@@ -82,7 +82,7 @@ import {
   selectableVersion,
 } from './project-model-picker.js'
 import { projectPromptLoraSources } from './project-prompt-context.js'
-import { externalVaeGenerationReason } from './project-vae-picker.js'
+import { externalVaeGenerationReason, projectVaeDiagnostic } from './project-vae-picker.js'
 import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectDenoisingStrength from './ProjectDenoisingStrength.vue'
@@ -1132,7 +1132,14 @@ const generationBlockingReason = computed(() => {
   if (!selectedModel.value || modelStatus.value !== 'ready') {
     return 'Choose an installed model before generating.'
   }
-  const externalVaeReason = externalVaeGenerationReason(props.generationDraft.vae)
+  const externalVaeReason = props.generationDraft.vae
+    ? projectVaeDiagnostic(
+        props.generationDraft.vae,
+        props.modelCatalog,
+        props.modelCatalogLoaded && !props.modelCatalogError,
+        selectedModel.value.baseModelFamily,
+      )
+    : null
   if (externalVaeReason) {
     return externalVaeReason
   }
@@ -1163,6 +1170,10 @@ const generationBlockingReason = computed(() => {
     return denoisingReason
   }
   return (
+    externalVaeGenerationReason(
+      props.generationDraft.vae,
+      props.generationState.externalVaeSupported,
+    ) ??
     cfgRescaleGenerationCapabilityReason(
       props.generationDraft.cfgRescale,
       props.generationState.cfgRescaleSupported,
@@ -1742,6 +1753,7 @@ function applyFitBbox() {
                   :disabled="busy || reloadRequired"
                   :loading="modelCatalogLoading"
                   :modelFamily="selectedModel?.baseModelFamily ?? null"
+                  :runtimeSupported="generationState?.externalVaeSupported ?? null"
                   :saved="generationDraft.vae"
                   @manageModels="emit('manageModels', $event)"
                   @relink="emit('relinkVae')"

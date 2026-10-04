@@ -40,6 +40,11 @@ import type {
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
+import {
+  FrozenGenerationVaeSchema,
+  frozenVaeFieldsAgree,
+  IllustriousWorkerVaeSchema,
+} from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
@@ -164,6 +169,7 @@ const Txt2ImgFrozenContextSchema = v.strictObject({
     sha256: Sha256Schema,
     width: TargetSideSchema,
   }),
+  vae: v.optional(v.nullable(FrozenGenerationVaeSchema)),
   vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 const Txt2ImgWorkerJobSchema = v.strictObject({
@@ -190,6 +196,7 @@ const Txt2ImgWorkerJobSchema = v.strictObject({
     sha256: Sha256Schema,
     width: TargetSideSchema,
   }),
+  vae: v.optional(v.nullable(IllustriousWorkerVaeSchema)),
   vaePrecision: v.optional(v.picklist(['Auto', 'FP16', 'FP32'])),
 })
 const Txt2ImgSourceRequestSchema = v.strictObject({
@@ -1804,6 +1811,7 @@ function frozenPayload(
   ) {
     const job = {
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
+      ...(request.job.vae !== undefined ? { vae: request.job.vae } : {}),
       ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
@@ -1825,6 +1833,7 @@ function frozenPayload(
   ) {
     const job = {
       ...(request.job.loras !== undefined ? { loras: request.job.loras } : {}),
+      ...(request.job.vae !== undefined ? { vae: request.job.vae } : {}),
       ...(request.job.vaePrecision !== undefined ? { vaePrecision: request.job.vaePrecision } : {}),
       bbox: request.job.bbox,
       checkpoint: request.job.checkpoint,
@@ -1991,6 +2000,7 @@ function validateSnapshot(
         : 'generate-illustrious-txt2img') ||
     !denoisingFieldsAgree(context, request.job.sampling) ||
     !frozenLoraFieldsAgree(context, request.job.loras) ||
+    !frozenVaeFieldsAgree(context, request.job.vae) ||
     request.job.vaePrecision !== context.vaePrecision ||
     context.schemaVersion !== 1 ||
     request.protocolVersion !== '1' ||
@@ -2055,6 +2065,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
   return (
     denoisingFieldsAgree(context, workerJob.sampling) &&
     frozenLoraFieldsAgree(context, workerJob.loras) &&
+    frozenVaeFieldsAgree(context, workerJob.vae) &&
     workerJob.vaePrecision === context.vaePrecision &&
     path.isAbsolute(context.model.managedPath) &&
     path.resolve(context.model.managedPath) === context.model.managedPath &&

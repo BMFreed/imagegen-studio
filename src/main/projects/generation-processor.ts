@@ -7,6 +7,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
+  supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -28,6 +29,7 @@ import type {
 } from './illustrious-txt2img-job.js'
 
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
+import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 
 const PROTOCOL_VERSION = '1'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
@@ -303,6 +305,7 @@ export class GenerationProcessor {
       throw new Error('The exact checkpoint or prediction type changed after enqueue.')
     }
     await reverifyFrozenGenerationLoras(frozen.context, this.modelService)
+    await reverifyFrozenGenerationVae(frozen.context, this.modelService)
     const requestId = randomUUID()
     const request: IllustriousGenerationRequestV1 =
       frozen.kind === 'illustrious-img2img'
@@ -390,6 +393,12 @@ export class GenerationProcessor {
           throw new GenerationProcessorError(
             'INFERENCE_UNAVAILABLE',
             'The active worker has not qualified opaque Illustrious img2img.',
+          )
+        }
+        if (claimed.payload.context.vae && !supportsInferenceExternalVae(transport.ready)) {
+          throw new GenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified external Illustrious VAE loading.',
           )
         }
         if (

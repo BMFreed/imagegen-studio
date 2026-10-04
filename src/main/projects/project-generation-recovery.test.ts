@@ -174,6 +174,9 @@ async function fixture(hooks: GenerationStagingTestHooks = {}) {
     resolveVerifiedGenerationLoraForPlan: async () => {
       throw new Error('This fixture has no active LoRAs.')
     },
+    resolveVerifiedGenerationVaeForPlan: async () => {
+      throw new Error('This fixture does not select an external VAE.')
+    },
   }
   const prepared = (document: IgsProjectDocumentV1, seed: number): PreparedNormalTxt2Img => ({
     context: {

@@ -19,6 +19,10 @@ import { ModelInstallCoordinator } from './model-install-coordinator.js'
 import { ModelRepository, type VerifiedModelArtifact } from './model-repository.js'
 import { ModelService } from './model-service.js'
 import { publishIllustriousLoraFixture } from './test-fixtures/illustrious-lora.js'
+import {
+  illustriousVaeFixture,
+  publishIllustriousVaeFixture,
+} from './test-fixtures/illustrious-vae.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const MODEL_URL = 'https://civitai.com/models/42?modelVersionId=7'
@@ -2027,6 +2031,149 @@ test('generation LoRA planning verifies exact registry bytes, structure and fami
         (await service.resolveVerifiedGenerationLoraForPlan(neighbor)).managedPath,
         invalid.managedPath,
       )
+    },
+  )
+})
+
+// Production boundary: ModelService -> actual SQLite registry -> managed bytes -> header preflight.
+// Neighboring controls change one identity, file byte, shape or library Default at a time.
+test('generation VAE planning freezes exact standalone identity, bytes and copied metadata rather than library Default', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const first = await publishIllustriousVaeFixture(repository, root, 9100, 9101)
+      const second = await publishIllustriousVaeFixture(repository, root, 9100, 9102, 'diffusers')
+      const selected = await service.resolveGenerationVae(first.resourceId, first.versionId)
+      const saved = {
+        ...selected,
+        displayName: 'Copied VAE title',
+        versionName: 'Copied VAE version',
+      }
+      await service.setDefaultVersion(second.resourceId, second.versionId)
+      const planned = await service.resolveVerifiedGenerationVaeForPlan(saved)
+      assert.equal(planned.managedPath, first.managedPath)
+      assert.equal(planned.byteSize, first.bytes.length)
+      assert.deepEqual(planned.reference, saved)
+      assert.notEqual(planned.reference, saved)
+      saved.displayName = 'Edited after planning'
+      assert.equal(planned.reference.displayName, 'Copied VAE title')
+      for (const change of [
+        { civitaiFileId: 999 },
+        { civitaiVersionId: 999 },
+        { civitaiModelId: 999 },
+        { civitaiFileId: null },
+        { fileSha256: 'f'.repeat(64) },
+        { localVersionId: second.versionId },
+      ]) {
+        await assert.rejects(
+          service.resolveVerifiedGenerationVaeForPlan({ ...selected, ...change }),
+          {
+            code: 'MODEL_VERSION_MISMATCH',
+          },
+        )
+      }
+      for (const change of [
+        { kind: 'checkpoint' as const },
+        { baseModelFamily: 'anima' as const },
+        { baseModelFamily: null },
+        { predictionType: 'epsilon' as const },
+      ]) {
+        await assert.rejects(
+          service.resolveVerifiedGenerationVaeForPlan({ ...selected, ...change }),
+          {
+            code: 'MODEL_FAMILY_UNSUPPORTED',
+          },
+        )
+      }
+      const tampered = Buffer.from(first.bytes)
+      tampered[tampered.length - 1] = 1 // Same size and valid header: only exact byte hashing finds it.
+      await writeFile(first.managedPath, tampered)
+      await assert.rejects(service.resolveVerifiedGenerationVaeForPlan(selected), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await writeFile(first.managedPath, first.bytes)
+      assert.equal(
+        (await service.resolveVerifiedGenerationVaeForPlan(selected)).byteSize,
+        first.bytes.length,
+      )
+      await writeFile(first.managedPath, Buffer.concat([first.bytes, Buffer.from([0])]))
+      await assert.rejects(service.resolveVerifiedGenerationVaeForPlan(selected), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await rm(first.managedPath)
+      await assert.rejects(service.resolveVerifiedGenerationVaeForPlan(selected), {
+        code: 'MODEL_FILE_MISSING',
+      })
+      const invalid = await publishIllustriousVaeFixture(
+        repository,
+        root,
+        9200,
+        9201,
+        'ldm',
+        (header) => {
+          const quantizer = header['post_quant_conv.weight'] as { shape: number[] }
+          quantizer.shape = [8, 2, 1, 1] // Same payload length and registered digest, wrong latent profile.
+        },
+      )
+      const wrongShape = await service.resolveGenerationVae(invalid.resourceId, invalid.versionId)
+      await assert.rejects(service.resolveVerifiedGenerationVaeForPlan(wrongShape), {
+        code: 'MODEL_VAE_INCOMPATIBLE',
+      })
+      const accepted = await service.resolveGenerationVae(second.resourceId, second.versionId)
+      assert.equal(
+        (await service.resolveVerifiedGenerationVaeForPlan(accepted)).managedPath,
+        second.managedPath,
+      )
+    },
+  )
+})
+
+test('VAE install and exact repair enter generation preflight through the real coordinator and registry', async () => {
+  const bytes = illustriousVaeFixture('diffusers')
+  const digest = sha256(bytes)
+  let downloads = 0
+  const downloader = new ModelDownloader({
+    resolveAddresses: PUBLIC_ADDRESSES,
+    transport: async () => {
+      downloads++
+      return new Response(new Uint8Array(bytes), {
+        headers: { 'content-type': 'application/octet-stream' },
+      })
+    },
+  })
+  await withModelHarness(
+    civitaiApi({ fileHash: digest, fileSizeKB: bytes.length / 1024, requests: [], type: 'VAE' }),
+    downloader,
+    async ({ coordinator, repository, service }) => {
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const installed = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(installed.status, 'completed', installed.error?.message ?? 'VAE install failed')
+      const resource = (await repository.listInstalled())[0]
+      const version = resource.versions[0]
+      const saved = await service.resolveGenerationVae(resource.id, version.id)
+      assert.equal(
+        (await service.resolveVerifiedGenerationVaeForPlan(saved)).byteSize,
+        bytes.length,
+      )
+      const tampered = Buffer.from(bytes)
+      tampered[tampered.length - 1] = 1
+      await writeFile(version.file.managedPath, tampered)
+      await assert.rejects(service.resolveVerifiedGenerationVaeForPlan(saved), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      const repairPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const repaired = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(repairPreview.previewId, 701, false),
+      )
+      assert.equal(repaired.status, 'completed', repaired.error?.message ?? 'VAE repair failed')
+      const after = await service.resolveVerifiedGenerationVaeForPlan(saved)
+      assert.deepEqual(after.reference, saved)
+      assert.equal(after.byteSize, bytes.length)
+      assert.equal(sha256(await readFile(after.managedPath)), digest)
+      assert.equal(downloads, 2)
     },
   )
 })

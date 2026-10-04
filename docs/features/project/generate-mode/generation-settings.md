@@ -116,8 +116,8 @@ is available; structural qualification and Anima inference are still open.
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
 insertion is implemented. The later checkpoints below connect production
-denoising strength, VAE precision, CFG Rescale and external VAE authoring.
-External VAE inference and Smart Patch-owned draft controls remain open.
+denoising strength, VAE precision, CFG Rescale and external VAE authoring/inference.
+Smart Patch-owned draft controls remain open.
 User-selectable CLIP Skip is not applicable to the current Invoke-like Illustrious
 pipeline or to Anima's Qwen3/T5 encoders; a saved unsupported value is refused
 before enqueue.
@@ -206,8 +206,8 @@ Add stores the copied policy in immutable portable metadata, and comparison
 uses that record after Save/reopen. Historical results without precision remain
 Unavailable. FP16 non-finite tensors fail before a successful PNG can be published.
 FP32 uses more memory; this does not establish a supported maximum GPU resolution.
-External VAE inference remains unsupported; selection is connected by the
-authoring checkpoint below. CLIP Skip remains an explicitly refused input,
+The subsequent external VAE checkpoint below extends these precision policies
+to selected external components. CLIP Skip remains an explicitly refused input,
 not a pending user control for either MVP family.
 
 ## Production external VAE authoring checkpoint
@@ -228,11 +228,33 @@ exact version. Missing/corrupt resources retain their name/version and offer
 Model Manager; a unique exact portable match offers explicit relink, changing
 only local IDs. Delayed resolution rejects changes even after an edit/Undo cycle.
 
-Authoring does not qualify the external VAE for ML loading or record it in an
-accepted result. Project displays an explicit Generate restriction until the
-next frozen-worker checkpoint; main independently refuses external VAE before
-enqueue. Embedded VAE generation remains available with the existing precision
-policy. Legacy result comparison keeps an unrecorded VAE as Unavailable.
+Authoring alone does not qualify the external VAE for ML loading or record it in
+an accepted result. The subsequent frozen-worker checkpoint below opens the
+qualified path; old workers retain an explicit Generate restriction. Embedded
+VAE generation remains available with the existing precision policy. Legacy
+result comparison keeps an unrecorded VAE as Unavailable.
+
+## Production external Illustrious VAE inference checkpoint
+
+[External VAE inference](../../../engineering/phase-2c-external-vae-inference-research.md)
+connects the selected exact component to worker 0.9.0's
+`illustrious-external-vae` capability. Main verifies source identity, size/hash
+and bounded standalone LDM/native Diffusers header anchors at preparation,
+materialization, Retry and dispatch. The worker reads one immutable verified
+safetensors snapshot, checks every converted tensor/key/shape and finite value
+against the pinned native AutoencoderKL, then uses the public offline loader.
+Safetensors metadata cannot replace pinned SDXL scaling (`0.13025`). Shape
+compatibility does not prove SDXL training lineage; API applicability and this
+explicit execution configuration remain distinct evidence.
+
+Both txt2img decoding and opaque img2img encoding/decoding use that same selected
+module with the existing precision and finite-output policies. Queued attempts
+and Retry retain the original exact choice despite later Project edits or
+library Default changes. Unsupported structures, changed bytes and older worker
+capabilities refuse generation explicitly; resetting to Embedded affects future
+admissions. New portable accepted metadata records exact VAE or known Embedded;
+historical absence remains Unavailable. Anima's required companion remains
+pinned. This checkpoint does not complete the full MVP pipeline or release runtime.
 
 ## Vue Prototype Coverage
 

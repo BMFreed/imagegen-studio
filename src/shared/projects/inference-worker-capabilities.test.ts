@@ -6,6 +6,7 @@ import {
   supportsInferenceCandidateThumbnails,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -198,4 +199,58 @@ test('VAE Precision requires exact 0.8.0 and every retained pipeline capability'
     assert.equal(supportsInferenceVaePrecision({ ...current, workerVersion }), false)
   }
   assert.equal(supportsInferenceVaePrecision(null), false)
+})
+
+test('external VAE requires qualified 0.9.0 with every retained capability and rejects legacy or future advertising', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+  ]
+  const current = { ...legacyReady, capabilities, workerVersion: '0.9.0' }
+  for (const supports of [
+    isQualifiedInferenceWorkerReady,
+    supportsInferenceExternalVae,
+    supportsInferenceVaePrecision,
+    supportsInferenceLora,
+    supportsInferenceImg2Img,
+    supportsInferenceCFGRescale,
+    supportsInferenceCandidateThumbnails,
+    supportsInferenceDenoisingProgress,
+  ]) {
+    assert.equal(supports(current), true)
+  }
+  for (const removed of capabilities) {
+    const incomplete = {
+      ...current,
+      capabilities: capabilities.filter((entry) => entry !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false)
+    assert.equal(supportsInferenceExternalVae(incomplete), false)
+  }
+  for (const workerVersion of [
+    '0.2.0',
+    '0.3.0',
+    '0.4.0',
+    '0.5.0',
+    '0.6.0',
+    '0.7.0',
+    '0.8.0',
+    '0.9.1',
+    '0.10.0',
+  ]) {
+    assert.equal(supportsInferenceExternalVae({ ...current, workerVersion }), false)
+  }
+  for (const invalid of [
+    null,
+    { ...current, protocolVersion: '2' },
+    { ...current, runtimeProfile: 'cpu' },
+  ]) {
+    assert.equal(supportsInferenceExternalVae(invalid), false)
+  }
 })

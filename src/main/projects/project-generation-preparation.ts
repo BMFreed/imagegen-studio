@@ -12,6 +12,10 @@ import {
   type FrozenLoraStack,
   validAuthoredGenerationLoras,
 } from './illustrious-generation-loras.js'
+import {
+  type FrozenGenerationVae,
+  validAuthoredGenerationVae,
+} from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -53,6 +57,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
     sha256: string
     width: number
   }
+  /** Explicit Embedded null for new jobs; absence remains historical and unrecorded. */
+  vae?: FrozenGenerationVae | null
   /** Authored/default precision policy; historical preparations omit it. */
   vaePrecision?: 'Auto' | 'FP16' | 'FP32'
 }
@@ -139,10 +145,16 @@ export function validateNormalGenerationDraft(
       'Embedding references are not supported by this preparation.',
     )
   }
-  if (draft.vae || draft.clipSkip !== undefined) {
+  if (draft.clipSkip !== undefined) {
     throw new GenerationPreparationError(
       'GENERATION_ADVANCED_UNSUPPORTED',
-      'External VAE selection and CLIP Skip are not supported by this preparation.',
+      'CLIP Skip is not supported by this preparation.',
+    )
+  }
+  if (!validAuthoredGenerationVae(draft.vae)) {
+    throw new GenerationPreparationError(
+      'GENERATION_VAE_UNSUPPORTED',
+      'Choose an exact Illustrious-compatible external VAE or reset it to Embedded.',
     )
   }
   if (draft.vaePrecision !== undefined && !['Auto', 'FP16', 'FP32'].includes(draft.vaePrecision)) {
@@ -321,6 +333,9 @@ export async function prepareNormalGeneration(input: {
 
   // Main re-hashes the exact installed file; Default and same-model alternatives are irrelevant.
   const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(model)
+  const vae = draft.vae
+    ? await input.modelService.resolveVerifiedGenerationVaeForPlan(draft.vae)
+    : null
   const loras: FrozenGenerationLora[] = []
   for (const entry of draft.loras) {
     if (!entry.enabled) {
@@ -362,6 +377,7 @@ export async function prepareNormalGeneration(input: {
       sha256: composite.sha256,
       width: composite.width,
     },
+    vae: vae ? structuredClone(vae) : null,
     vaePrecision: draft.vaePrecision ?? 'Auto',
   }
   let context: FrozenNormalGenerationPreparationV1

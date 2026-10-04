@@ -94,6 +94,15 @@ export function compareRasterGenerationSettings(
     current,
   )
   const recordedLoras = baseline.loras
+  const recordedVae = baseline.vae
+  const currentVae = draft.model?.baseModelFamily === 'illustrious' ? draft.vae : undefined
+  const vaeAvailability =
+    recordedVae === undefined || currentVae === undefined
+      ? null
+      : resourceAvailability(
+          [...(recordedVae ? [recordedVae] : []), ...(currentVae ? [currentVae] : [])],
+          current,
+        )
   const loraAvailability =
     recordedLoras === undefined
       ? null
@@ -322,7 +331,33 @@ export function compareRasterGenerationSettings(
     {
       key: 'vae',
       label: 'VAE',
-      rows: [unrecordedRow('vae.resource', 'VAE', describeResource(draft.vae))],
+      rows: [
+        row(
+          'vae.resource',
+          'VAE',
+          recordedVae === undefined
+            ? undefined
+            : recordedVae
+              ? portableIdentity(recordedVae)
+              : null,
+          currentVae === undefined ? undefined : currentVae ? portableIdentity(currentVae) : null,
+          recordedVae === undefined
+            ? UNRECORDED
+            : recordedVae
+              ? describeResource(recordedVae)
+              : 'Embedded',
+          resourceAfter(
+            currentVae === undefined
+              ? 'Unavailable for the current model'
+              : currentVae
+                ? describeResource(currentVae)
+                : 'Embedded',
+            vaeAvailability,
+            current,
+          ),
+          vaeAvailability,
+        ),
+      ],
     },
     {
       key: 'vaePrecision',

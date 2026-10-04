@@ -1,7 +1,7 @@
 /**
  * Native external-VAE authoring: built renderer → preload → main-owned exact resource identity,
  * Project history and explicit .igs Save/reopen. Catalog bytes and the runtime peer are fixtures;
- * this checkpoint deliberately refuses external-VAE inference and makes no ML compatibility claim.
+ * this qualified 0.8 peer deliberately refuses external VAE and makes no ML compatibility claim.
  */
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -58,7 +58,7 @@ const report = {
     actual:
       'Built Electron renderer/main/preload, SQLite catalog/default, exact VAE resolution, Project Undo/Redo, explicit .igs Save/reopen, native import/relink, Generate refusal and Queue Manager projection.',
     fixtures:
-      'Catalog-only checkpoint/VAE bytes, an independently prepared copied .igs with foreign local VAE IDs, an app-owned ready JSONL executable, and development image derivatives. No CUDA or external-VAE inference is implemented or claimed.',
+      'Catalog-only checkpoint/VAE bytes, an independently prepared copied .igs with foreign local VAE IDs, an app-owned ready 0.8 JSONL executable, and development image derivatives. This older qualified peer refuses external VAE; no CUDA or external-VAE ML loading is exercised.',
     browser:
       'T3 preview_status was available on about:blank, but its HTTP browser cannot exercise native Electron preload/IPC/.igs. The existing checked-in _electron verification harness exercises the required production boundary.',
     input: 'Physical typing is blocked by the canonical native helper; CDP drives built controls.',
@@ -443,8 +443,11 @@ try {
     { key: fixture.project.key, documentId: reopened.documentId },
   )
   assert.equal(generation.ok, false)
-  assert.equal(generation.error.code, 'GENERATION_ADVANCED_UNSUPPORTED')
-  assert.match(generation.error.message, /external VAE/i)
+  assert.equal(generation.error.code, 'INFERENCE_UNAVAILABLE')
+  assert.equal(
+    generation.error.message,
+    'The active worker has not qualified external Illustrious VAE loading.',
+  )
   const queue = await api('getGenerationQueue')
   assert.equal(queue.items.length, 0)
   const requests = existsSync(peerRequests)
@@ -457,7 +460,7 @@ try {
   await expect(
     window
       .getByText(
-        'External VAE generation is not connected yet. Reset VAE to Embedded before generating.',
+        'This image engine does not support external VAE. Update it, or reset VAE to Embedded.',
         { exact: true },
       )
       .first(),
@@ -542,10 +545,12 @@ try {
   rmSync(fixture.first.managedPath)
   await window.getByRole('button', { name: 'Refresh models', exact: true }).click()
   await expect(
-    window.getByText(
-      'Exact VAE version unavailable. Restore it in Model Manager, or reset to Embedded.',
-      { exact: true },
-    ),
+    window
+      .getByRole('region', { name: 'VAE settings', exact: true })
+      .getByText(
+        'Exact VAE version unavailable. Restore it in Model Manager, or reset to Embedded.',
+        { exact: true },
+      ),
   ).toBeVisible()
   assert.deepEqual((await tab(imported.id)).generationDraft.vae, selected)
   assert.equal((await tab(imported.id)).dirty, false)

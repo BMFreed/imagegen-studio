@@ -39,6 +39,7 @@ function pendingState(): ProjectGenerationActionState {
     cfgRescaleSupported: false,
     documentId,
     error: null,
+    externalVaeSupported: false,
     img2imgSupported: false,
     jobs: [
       {
@@ -139,6 +140,18 @@ test('action state requires an explicit boolean VAE Precision capability', () =>
   }
   const legacy = { ...pendingState() } as Partial<ProjectGenerationActionState>
   delete legacy.vaePrecisionSupported
+  assert.equal(isProjectGenerationActionState(legacy), false)
+})
+
+test('action state requires an explicit boolean external VAE capability', () => {
+  for (const externalVaeSupported of [false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), externalVaeSupported }), true)
+  }
+  for (const externalVaeSupported of [undefined, null, 0, 'true']) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), externalVaeSupported }), false)
+  }
+  const legacy = { ...pendingState() } as Partial<ProjectGenerationActionState>
+  delete legacy.externalVaeSupported
   assert.equal(isProjectGenerationActionState(legacy), false)
 })
 

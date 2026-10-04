@@ -21,6 +21,7 @@ import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { illustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
+import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
@@ -84,6 +85,7 @@ test(
               modelService,
             )
             assert.equal(prepared.context.vaePrecision, precision ?? 'Auto')
+            assert.equal(prepared.context.vae, null)
             assert.equal(
               prepared.context.kind,
               raster ? 'normal-img2img-preparation' : 'normal-txt2img-preparation',
@@ -92,6 +94,77 @@ test(
             await service.discardAndClose(opened.tabId)
           })
         }
+      }
+    })
+  },
+)
+
+test(
+  'real Project preparation freezes external VAE identity and exact file before verification awaits in both modes',
+  { skip: !devRuntimeRoot() },
+  async (t) => {
+    await withService(async ({ dataRoot, modelRepository, modelService, service, worker }) => {
+      const checkpoint = await publishResource(modelRepository, dataRoot, {
+        bytes: Buffer.from('first exact Illustrious checkpoint'),
+        civitaiModelId: 904,
+        civitaiVersionId: 905,
+        kind: 'checkpoint',
+      })
+      const first = await publishIllustriousVaeFixture(modelRepository, dataRoot, 906, 907)
+      const second = await publishIllustriousVaeFixture(
+        modelRepository,
+        dataRoot,
+        906,
+        908,
+        'diffusers',
+      )
+      const selected = await modelService.resolveGenerationVae(first.resourceId, first.versionId)
+      const replacement = await modelService.resolveGenerationVae(
+        second.resourceId,
+        second.versionId,
+      )
+      for (const raster of [false, true]) {
+        await t.test(raster ? 'img2img' : 'txt2img', async () => {
+          const opened = await importProject(service, dataRoot, {
+            draft: {
+              sampling: {
+                cfgScale: 7.5,
+                denoisingStrength: raster ? 0.65 : null,
+                sampler: 'DPM++ 2M',
+                scheduler: 'Karras',
+                steps: 24,
+              },
+              vae: selected,
+            },
+            model: checkpoint.reference,
+            name: `external VAE freeze ${raster}`,
+            raster,
+          })
+          const prepared = await service.prepareNormalGenerationContext(opened.tabId, worker, {
+            resolveVerifiedGenerationCheckpointForPlan: async (reference) => {
+              await service.setGenerationVae(opened.tabId, async () => replacement)
+              await modelRepository.setDefaultVersion(second.resourceId, second.versionId)
+              return await modelService.resolveVerifiedGenerationCheckpointForPlan(reference)
+            },
+            resolveVerifiedGenerationLoraForPlan: async () => {
+              throw new Error('No LoRA selected in this VAE scenario.')
+            },
+            resolveVerifiedGenerationVaeForPlan: async (reference) =>
+              await modelService.resolveVerifiedGenerationVaeForPlan(reference),
+          })
+          assert.deepEqual(prepared.context.vae, {
+            byteSize: first.bytes.length,
+            managedPath: first.managedPath,
+            reference: selected,
+          })
+          assert.equal(
+            prepared.context.kind,
+            raster ? 'normal-img2img-preparation' : 'normal-txt2img-preparation',
+          )
+          assert.deepEqual(service.getOpenTabs()[0].generationDraft.vae, replacement)
+          assert.equal(prepared.context.vaePrecision, 'Auto')
+          await service.discardAndClose(opened.tabId)
+        })
       }
     })
   },
@@ -496,6 +569,9 @@ test(
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('This fixture has no active LoRAs.')
             },
+            resolveVerifiedGenerationVaeForPlan: async () => {
+              throw new Error('This fixture does not select an external VAE.')
+            },
           },
           randomUint32: () => 7,
           target: source,
@@ -560,6 +636,9 @@ test(
           },
           resolveVerifiedGenerationLoraForPlan: async () => {
             throw new Error('This fixture has no active LoRAs.')
+          },
+          resolveVerifiedGenerationVaeForPlan: async () => {
+            throw new Error('This fixture does not select an external VAE.')
           },
         },
         randomUint32: () => assert.fail('Reuse must not choose a random seed'),
@@ -643,9 +722,9 @@ test(
           name: 'embedding-ref',
         },
         {
-          code: 'GENERATION_ADVANCED_UNSUPPORTED',
-          draft: { vae: vae.reference },
-          name: 'vae-override',
+          code: 'GENERATION_VAE_UNSUPPORTED',
+          draft: { vae: { ...vae.reference, baseModelFamily: 'anima' } },
+          name: 'unsupported-family-vae-override',
         },
         {
           code: 'GENERATION_ADVANCED_UNSUPPORTED',
@@ -869,6 +948,9 @@ test(
               resolveVerifiedGenerationLoraForPlan: async () => {
                 throw new Error('This fixture has no active LoRAs.')
               },
+              resolveVerifiedGenerationVaeForPlan: async () => {
+                throw new Error('This fixture does not select an external VAE.')
+              },
             },
             prepared: nonneutral,
             ready,
@@ -927,6 +1009,9 @@ test(
             }),
             resolveVerifiedGenerationLoraForPlan: async () => {
               throw new Error('This fixture has no active LoRAs.')
+            },
+            resolveVerifiedGenerationVaeForPlan: async () => {
+              throw new Error('This fixture does not select an external VAE.')
             },
           },
           prepared,
@@ -1077,6 +1162,9 @@ test(
           },
           resolveVerifiedGenerationLoraForPlan: async () => {
             throw new Error('This fixture has no active LoRAs.')
+          },
+          resolveVerifiedGenerationVaeForPlan: async () => {
+            throw new Error('This fixture does not select an external VAE.')
           },
         },
         prepared,
@@ -1317,6 +1405,9 @@ test(
             })
           }
           return await modelService.resolveVerifiedGenerationLoraForPlan(saved)
+        },
+        resolveVerifiedGenerationVaeForPlan: async () => {
+          throw new Error('This fixture does not select an external VAE.')
         },
       })
       assert.equal(verified, 2)

@@ -408,6 +408,85 @@ test('accepted VAE Precision records frozen policies without inventing legacy or
   }
 })
 
+test('accepted VAE is copied from strict frozen context, with known Embedded distinct from legacy absence', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (entry: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-10-04T12:01:00.000Z',
+      candidate: entry,
+      imagePngBytes,
+    })
+  assert.equal(Object.hasOwn(map(candidate).generationConfiguration, 'vae'), false)
+  const embedded = structuredClone(candidate)
+  replacePayload(embedded, (payload) => {
+    Object.assign(payload.context as object, { vae: null })
+    Object.assign(payload.workerJob as object, { vae: null })
+  })
+  assert.equal(Object.hasOwn(map(embedded).generationConfiguration, 'vae'), true)
+  assert.equal(map(embedded).generationConfiguration.vae, null)
+  const external = structuredClone(candidate)
+  let reference: NonNullable<FrozenNormalTxt2ImgPreparationV1['vae']>['reference']
+  replacePayload(external, (payload) => {
+    const context = payload.context as FrozenNormalTxt2ImgPreparationV1
+    reference = {
+      ...context.model.reference,
+      civitaiFileId: 103,
+      civitaiModelId: 101,
+      civitaiVersionId: 102,
+      displayName: 'Frozen external VAE',
+      fileSha256: 'b'.repeat(64),
+      kind: 'vae',
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+      predictionType: null,
+      versionName: 'Exact v2',
+    }
+    context.vae = {
+      byteSize: 256,
+      managedPath: '/private/models/external-vae.safetensors',
+      reference,
+    }
+    Object.assign(payload.workerJob as object, {
+      vae: { byteSize: 256, path: context.vae.managedPath, sha256: reference.fileSha256 },
+    })
+  })
+  const provenance = map(external)
+  assert.deepEqual(provenance.generationConfiguration.vae, reference!)
+  assert.equal(JSON.stringify(provenance).includes('/private'), false)
+  replacePayload(external, (payload) => {
+    const context = payload.context as FrozenNormalTxt2ImgPreparationV1
+    context.vae!.reference.displayName = 'Later metadata'
+  })
+  assert.equal(provenance.generationConfiguration.vae?.displayName, 'Frozen external VAE')
+  for (const change of [
+    { byteSize: 257 },
+    { path: '/private/models/other.safetensors' },
+    { sha256: 'c'.repeat(64) },
+  ]) {
+    const crossed = structuredClone(external)
+    replacePayload(crossed, (payload) => {
+      Object.assign((payload.workerJob as { vae: object }).vae, change)
+    })
+    assert.throws(() => map(crossed), { code: 'PROVENANCE_INPUT_INVALID' }, JSON.stringify(change))
+  }
+  for (const wire of [null, undefined]) {
+    const crossed = structuredClone(external)
+    replacePayload(crossed, (payload) => {
+      Object.assign(payload.workerJob as object, { vae: wire })
+    })
+    assert.throws(() => map(crossed), { code: 'PROVENANCE_INPUT_INVALID' })
+  }
+  const img2img = structuredClone(external)
+  replacePayload(img2img, (payload) => {
+    payload.kind = 'illustrious-img2img'
+    const context = payload.context as Record<string, unknown>
+    context.kind = 'normal-img2img-preparation'
+    Object.assign(context.sampling as object, { denoisingStrength: 0 })
+    Object.assign((payload.workerJob as { sampling: object }).sampling, { denoisingStrength: 0 })
+  })
+  assert.equal(map(img2img).generationConfiguration.vae?.fileSha256, reference!.fileSha256)
+})
+
 test('img2img provenance records actual strength including zero and rejects crossed or missing durable values', async () => {
   const { candidate, imagePngBytes } = await fixture()
   const map = (entry: VerifiedGenerationCandidate) =>

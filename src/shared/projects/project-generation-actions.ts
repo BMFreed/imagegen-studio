@@ -18,6 +18,7 @@ export interface ProjectGenerationActionState {
   cfgRescaleSupported: boolean
   documentId: string
   error: { code: string; message: string } | null
+  externalVaeSupported: boolean
   img2imgSupported: boolean
   jobs: ProjectGenerationQueueJob[]
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
@@ -89,6 +90,7 @@ export function isProjectGenerationActionState(
       'cfgRescaleSupported',
       'documentId',
       'error',
+      'externalVaeSupported',
       'img2imgSupported',
       'jobs',
       'phase',
@@ -96,6 +98,7 @@ export function isProjectGenerationActionState(
       'vaePrecisionSupported',
     ]) ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
+    typeof value['externalVaeSupported'] !== 'boolean' ||
     typeof value['img2imgSupported'] !== 'boolean' ||
     typeof value['vaePrecisionSupported'] !== 'boolean' ||
     !isProjectDocumentId(value['documentId']) ||

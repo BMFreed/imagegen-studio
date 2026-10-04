@@ -41,10 +41,10 @@ if (process.env.FAKE_SPAWN_MARKER) {
 }
 const ready = {
   type:'ready', protocolVersion:mode === 'bad-protocol' ? '2' : '1',
-  workerVersion: mode.startsWith('precision-') ? '0.8.0' : mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
+  workerVersion: mode.startsWith('vae-') ? '0.9.0' : mode.startsWith('precision-') ? '0.8.0' : mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'precision-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'vae-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision', 'illustrious-external-vae'] : mode === 'vae-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -71,7 +71,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'vae-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -828,6 +828,108 @@ test('VAE Precision transport freezes both modes and strips Auto only from the d
       }),
       { code: 'WORKER_VERSION_MISMATCH' },
     )
+  })
+})
+
+test('external VAE JSONL freezes exact file DTO in both modes and adapts only Embedded for an older peer', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'vae-wire.json')
+    const filePath = path.join(fixture.root, 'selected-vae.safetensors')
+    await writeFile(filePath, 'verified VAE')
+    const file = { byteSize: 12, path: filePath, sha256: 'e'.repeat(64) }
+    for (const mode of ['vae-done', 'precision-done']) {
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: mode, FAKE_PAYLOAD_MARKER: marker },
+      })
+      try {
+        for (const opaque of [false, true]) {
+          for (const choice of [undefined, null, file]) {
+            const base = await requestFor(fixture)
+            const request = opaque
+              ? {
+                  ...base,
+                  job: { ...base.job, sampling: { ...base.job.sampling, denoisingStrength: 0.65 } },
+                  type: 'generate-illustrious-img2img' as const,
+                }
+              : base
+            if (choice !== undefined) {
+              request.job.vae = structuredClone(choice)
+            }
+            await rm(marker, { force: true })
+            if (mode === 'precision-done' && choice) {
+              await assert.rejects(client.generate(request), { code: 'WORKER_VERSION_MISMATCH' })
+              assert.equal(existsSync(marker), false)
+              continue
+            }
+            const pending = client.generate(request)
+            request.job.vae = null
+            await pending
+            const actual = JSON.parse(await readFile(marker, 'utf8'))
+            assert.equal(actual.type, request.type)
+            assert.deepEqual(actual.job.vae, mode === 'vae-done' ? choice : undefined)
+            assert.equal(
+              Object.hasOwn(actual.job, 'vae'),
+              mode === 'vae-done' && choice !== undefined,
+            )
+            assert.equal(request.job.vae, null)
+          }
+        }
+        for (const choice of [
+          false,
+          1,
+          {},
+          { ...file, unexpected: true },
+          { ...file, byteSize: 0 },
+          { ...file, sha256: 'invalid' },
+          { ...file, path: 'relative.safetensors' },
+        ]) {
+          const request = await requestFor(fixture)
+          Object.assign(request.job, { vae: choice })
+          await rm(marker, { force: true })
+          await assert.rejects(client.generate(request), { code: 'INVALID_REQUEST' })
+          assert.equal(existsSync(marker), false)
+        }
+      } finally {
+        await client.close()
+      }
+    }
+    await assert.rejects(
+      GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: 'vae-missing-capability' },
+      }),
+      { code: 'WORKER_VERSION_MISMATCH' },
+    )
+  })
+})
+
+test('external VAE transport refuses missing, changed-size and symlink files before writing a JSONL request', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'unsafe-vae-wire.json')
+    const filePath = path.join(fixture.root, 'vae.safetensors')
+    const aliasPath = path.join(fixture.root, 'alias-vae.safetensors')
+    await writeFile(filePath, 'VAE')
+    await symlink(filePath, aliasPath)
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'vae-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      for (const [vaePath, byteSize] of [
+        [filePath, 4],
+        [aliasPath, 3],
+        [path.join(fixture.root, 'missing.safetensors'), 3],
+      ] as const) {
+        const request = await requestFor(fixture)
+        request.job.vae = { byteSize, path: vaePath, sha256: 'e'.repeat(64) }
+        await assert.rejects(client.generate(request), { code: 'INVALID_PATH' })
+        assert.equal(existsSync(marker), false)
+      }
+      const neighbor = await requestFor(fixture)
+      neighbor.job.vae = { byteSize: 3, path: filePath, sha256: 'e'.repeat(64) }
+      await client.generate(neighbor)
+      assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')).job.vae, neighbor.job.vae)
+    } finally {
+      await client.close()
+    }
   })
 })
 

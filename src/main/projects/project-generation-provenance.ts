@@ -123,6 +123,9 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         queueItemId: candidate.queueItemId,
       },
       generationConfiguration: {
+        ...(context.vae !== undefined
+          ? { vae: context.vae === null ? null : { ...context.vae.reference } }
+          : {}),
         ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
         ...(context.loraStack !== undefined ? { loras: structuredClone(context.loraStack) } : {}),
         ...(context.sampling.cfgRescale !== undefined

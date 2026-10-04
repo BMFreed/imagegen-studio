@@ -149,12 +149,12 @@ test('portable VAE relink suggestion requires one exact installed source and has
   assert.equal(portableModelRelinkCandidate(foreign, list), null)
 })
 
-test('external VAE authoring never claims that current inference can apply it', () => {
+test('external VAE admission follows qualified capability without blocking embedded neighbors', () => {
   const draftVae: ProjectTab['generationDraft']['vae'] = saved()
-  assert.match(externalVaeGenerationReason(draftVae)!, /not connected yet.*Embedded/)
-  assert.equal(
-    externalVaeGenerationReason(null),
-    null,
-    'embedded VAE remains the supported neighboring path',
-  )
+  assert.match(externalVaeGenerationReason(draftVae, false)!, /does not support.*Update.*Embedded/)
+  assert.match(externalVaeGenerationReason(draftVae, null)!, /Checking/)
+  assert.equal(externalVaeGenerationReason(draftVae, true), null)
+  for (const capability of [true, false, null]) {
+    assert.equal(externalVaeGenerationReason(null, capability), null)
+  }
 })

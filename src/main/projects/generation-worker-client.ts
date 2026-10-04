@@ -7,6 +7,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -24,6 +25,7 @@ import type {
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
+import { validWorkerVae } from './illustrious-generation-vae.js'
 import {
   type ComposeTargetInput,
   type ComposeTargetResult,
@@ -367,6 +369,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         // Preserve durable metadata; old Python parsers receive only this disposable copy.
         delete frozen.job.vaePrecision
       }
+      if (!supportsInferenceExternalVae(this.readyMessage)) {
+        if (frozen.job.vae) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified external Illustrious VAE loading.',
+          )
+        }
+        // Embedded is neutral for old parsers; the frozen durable copy remains explicit null.
+        delete frozen.job.vae
+      }
       if (!supportsInferenceCFGRescale(this.readyMessage)) {
         if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
           throw new GenerationWorkerError(
@@ -639,6 +651,28 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   private async validateRequestPaths(request: IllustriousGenerationRequestV1): Promise<void> {
+    const vae = request.job.vae
+    if (vae) {
+      try {
+        const entry = await lstat(vae.path)
+        if (
+          !entry.isFile() ||
+          entry.isSymbolicLink() ||
+          entry.size !== vae.byteSize ||
+          (await realpath(vae.path)) !== vae.path
+        ) {
+          throw new GenerationWorkerError(
+            'INVALID_PATH',
+            'The generation VAE is unsafe or changed.',
+          )
+        }
+      } catch (error) {
+        if (error instanceof GenerationWorkerError) {
+          throw error
+        }
+        throw new GenerationWorkerError('INVALID_PATH', 'The generation VAE is unavailable.')
+      }
+    }
     for (const lora of request.job.loras ?? []) {
       try {
         const entry = await lstat(lora.path)
@@ -728,6 +762,7 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.denoisingStrength <= 1
       : !('denoisingStrength' in (request.job?.sampling ?? {}))) &&
     validWorkerLoras(request.job?.loras) &&
+    validWorkerVae(request.job?.vae) &&
     (request.job?.vaePrecision === undefined ||
       ['Auto', 'FP16', 'FP32'].includes(request.job.vaePrecision)) &&
     request.protocolVersion === PROTOCOL_VERSION &&

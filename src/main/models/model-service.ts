@@ -32,6 +32,7 @@ import {
 } from './anima-manifest.js'
 import { validateCivitaiToken } from './civitai-token-store.js'
 import { qualifyIllustriousLora } from './illustrious-lora-qualification.js'
+import { qualifyIllustriousVae } from './illustrious-vae-qualification.js'
 import {
   CHECKPOINT_COMPATIBILITY_MANIFEST,
   type CheckpointCompatibilityFingerprint,
@@ -656,6 +657,59 @@ export class ModelService {
         error instanceof Error
           ? `The installed LoRA is unsupported: ${error.message}`
           : 'The installed LoRA could not be structurally qualified.',
+      )
+    }
+    return {
+      byteSize: resolved.fileSizeBytes,
+      managedPath: resolved.managedPath,
+      reference: structuredClone(saved),
+    }
+  }
+
+  /** Reverify an exact standalone VAE; source applicability is not inferred from tensor shapes. */
+  async resolveVerifiedGenerationVaeForPlan(
+    inputSaved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
+  ): Promise<{ byteSize: number; managedPath: string; reference: typeof inputSaved }> {
+    const saved = structuredClone(inputSaved)
+    if (
+      saved.kind !== 'vae' ||
+      saved.baseModelFamily !== 'illustrious' ||
+      saved.predictionType !== null
+    ) {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'Generation requires an Illustrious-compatible VAE without a prediction type.',
+      )
+    }
+    const resolved = await this.resolveGenerationResourceWithFile(
+      saved.localModelId,
+      saved.localVersionId,
+      'vae',
+    )
+    const reference = resolved.reference
+    if (
+      saved.localModelId !== reference.localModelId ||
+      saved.localVersionId !== reference.localVersionId ||
+      saved.civitaiModelId !== reference.civitaiModelId ||
+      saved.civitaiVersionId !== reference.civitaiVersionId ||
+      saved.civitaiFileId !== reference.civitaiFileId ||
+      saved.fileSha256 !== reference.fileSha256 ||
+      saved.baseModelFamily !== reference.baseModelFamily ||
+      saved.predictionType !== reference.predictionType
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed VAE no longer matches this Project exact version.',
+      )
+    }
+    try {
+      await qualifyIllustriousVae(resolved.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_VAE_INCOMPATIBLE',
+        error instanceof Error
+          ? `The installed VAE is unsupported: ${error.message}`
+          : 'The installed VAE could not be structurally qualified.',
       )
     }
     return {

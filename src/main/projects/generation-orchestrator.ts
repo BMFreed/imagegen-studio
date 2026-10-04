@@ -29,6 +29,7 @@ import type { ProjectWorkerClient } from './worker-client.js'
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
+import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousGenerationRequest,
@@ -493,6 +494,7 @@ export class GenerationOrchestrator {
       )
     }
     await reverifyFrozenGenerationLoras(items[0].prepared.context, this.models)
+    await reverifyFrozenGenerationVae(items[0].prepared.context, this.models)
     this.assertGenerationOpen(tabId)
     const before = await this.indexedProject(tabId)
     this.requireBatchDocument(tabId, project.documentId, items)

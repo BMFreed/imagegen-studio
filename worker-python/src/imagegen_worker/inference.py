@@ -34,6 +34,7 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import png_embedded_color_metadata
 from imagegen_worker.inference_config import verify_pinned_config
+from imagegen_worker.inference_external_vae import load_generation_vae
 from imagegen_worker.inference_lora import finite_lora_outputs, load_generation_loras
 from imagegen_worker.inference_vae import configure_vae_precision, finite_vae_outputs
 from imagegen_worker.protocol import (
@@ -42,12 +43,13 @@ from imagegen_worker.protocol import (
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.8.0"
+INFERENCE_WORKER_VERSION = "0.9.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
 INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_VAE_PRECISION_CAPABILITY = "illustrious-vae-precision"
+INFERENCE_EXTERNAL_VAE_CAPABILITY = "illustrious-external-vae"
 INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
@@ -130,6 +132,7 @@ def qualify_ml_runtime() -> MLRuntime:
         importlib.import_module("peft")
         importlib.import_module("torchsde")
         for name in (
+            "AutoencoderKL",
             "StableDiffusionXLPipeline",
             "StableDiffusionXLImg2ImgPipeline",
             "DPMSolverMultistepScheduler",
@@ -798,11 +801,17 @@ def _generate_illustrious(
         if isinstance(command, GenerateIllustriousImg2ImgCommand)
         else diffusers.StableDiffusionXLPipeline
     )
+    selected_vae = (
+        load_generation_vae(command.vae, config_dir, diffusers, torch)
+        if command.vae is not None
+        else None
+    )
     pipeline = pipeline_class.from_single_file(
         str(command.checkpoint_path),
         config=str(config_dir),
         local_files_only=True,
         torch_dtype=torch.float16,
+        **({"vae": selected_vae} if selected_vae is not None else {}),
     )
     verify_pinned_config(str(config_dir))
     # The single-file loader reads the file after our preflight hash. Detect mutation during load.

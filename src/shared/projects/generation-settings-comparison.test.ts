@@ -24,6 +24,129 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const OTHER_MODEL_ID = '66bc54d0-a3b3-43bd-aab5-7c6809163915'
 const OTHER_VERSION_ID = '8286b94f-2f98-4225-8cd6-5f5b6b0d4481'
 
+test('VAE distinguishes known Embedded, legacy omission and frozen external identity without changing either input', () => {
+  const source = fixture()
+  assert.equal(result(source, 'vae.resource').status, 'Unavailable')
+  assert.equal(result(source, 'vae.resource').after, 'Embedded')
+  source.data.generationConfiguration!.vae = null
+  assert.ok(isRasterGenerationData(source.data))
+  assert.deepEqual(result(source, 'vae.resource'), {
+    after: 'Embedded',
+    before: 'Embedded',
+    key: 'vae.resource',
+    label: 'VAE',
+    status: 'Same',
+  })
+  const vae = {
+    ...source.data.generationConfiguration!.model,
+    civitaiFileId: 103,
+    civitaiModelId: 101,
+    civitaiVersionId: 102,
+    displayName: 'Exact external VAE',
+    fileSha256: 'b'.repeat(64),
+    kind: 'vae' as const,
+    localModelId: OTHER_MODEL_ID,
+    localVersionId: OTHER_VERSION_ID,
+    predictionType: null,
+  }
+  source.current.modelCatalog!.push(catalogItem(vae))
+  source.current.generationDraft.vae = structuredClone(vae)
+  assert.equal(result(source, 'vae.resource').status, 'Added')
+  source.data.generationConfiguration!.vae = structuredClone(vae)
+  assert.ok(isRasterGenerationData(source.data))
+  source.current.generationDraft.vae.displayName = 'Renamed current VAE'
+  const before = structuredClone(source)
+  assert.equal(result(source, 'vae.resource').status, 'Same')
+  assert.match(result(source, 'vae.resource').before, /Exact external VAE.*v1/)
+  assert.match(result(source, 'vae.resource').before, /SHA-256 b{64}/)
+  assert.deepEqual(source, before, 'comparison must not change either frozen or current values')
+  source.current.generationDraft.vae = null
+  assert.equal(result(source, 'vae.resource').status, 'Removed')
+  assert.equal(result(source, 'vae.resource').after, 'Embedded')
+  delete source.data.generationConfiguration!.vae
+  assert.equal(result(source, 'vae.resource').status, 'Unavailable')
+})
+
+test('external VAE comparison refuses equal status for missing, unknown, mismatched or unlinked bindings', () => {
+  const source = fixture()
+  const vae = {
+    ...source.data.generationConfiguration!.model,
+    kind: 'vae' as const,
+    localModelId: OTHER_MODEL_ID,
+    localVersionId: OTHER_VERSION_ID,
+    predictionType: null,
+  }
+  source.data.generationConfiguration!.vae = structuredClone(vae)
+  source.current.generationDraft.vae = structuredClone(vae)
+  assert.equal(result(source, 'vae.resource').status, 'Missing resource')
+  source.current.modelCatalog!.push(catalogItem(vae))
+  assert.equal(result(source, 'vae.resource').status, 'Same')
+  const known = structuredClone(source)
+  for (const change of [
+    { fileStatus: 'missing' as const },
+    { fileStatus: 'corrupt' as const },
+    { sha256: 'c'.repeat(64) },
+    { civitaiFileId: 999 },
+    { civitaiVersionId: 999 },
+    { baseModelFamily: 'anima' as const },
+  ]) {
+    const changed = structuredClone(known)
+    Object.assign(changed.current.modelCatalog![1].versions[0], change)
+    assert.equal(result(changed, 'vae.resource').status, 'Missing resource', JSON.stringify(change))
+  }
+  source.current.modelCatalog = null
+  assert.equal(result(source, 'vae.resource').status, 'Unavailable')
+  source.current.modelCatalog = known.current.modelCatalog
+  source.current.modelCatalogError = 'Library read failed'
+  assert.equal(result(source, 'vae.resource').status, 'Unavailable')
+  source.current.modelCatalogError = null
+  source.current.generationDraft.vae.localVersionId = VERSION_ID
+  assert.equal(
+    result(source, 'vae.resource').status,
+    'Missing resource',
+    'portable match is not a linked local version',
+  )
+  for (const family of ['anima', null] as const) {
+    source.current.generationDraft.model!.baseModelFamily = family
+    assert.equal(result(source, 'vae.resource').status, 'Unavailable')
+    assert.match(result(source, 'vae.resource').after, /Unavailable for the current model/)
+  }
+})
+
+test('portable applied VAE accepts both normal modes but rejects wrong kind, family, prediction and paths', () => {
+  const source = fixture()
+  const vae = {
+    ...source.data.generationConfiguration!.model,
+    kind: 'vae' as const,
+    predictionType: null,
+  }
+  source.data.generationConfiguration!.vae = vae
+  assert.ok(isRasterGenerationData(source.data))
+  for (const change of [
+    { kind: 'checkpoint' },
+    { baseModelFamily: 'anima' },
+    { baseModelFamily: null },
+    { predictionType: 'epsilon' },
+    { managedPath: '/private/vae.safetensors' },
+    { byteSize: 100 },
+    { fileSha256: 'invalid' },
+    { localVersionId: 'foreign' },
+  ]) {
+    const invalid = structuredClone(source.data)
+    Object.assign(invalid.generationConfiguration!.vae!, change)
+    assert.equal(isRasterGenerationData(invalid), false, JSON.stringify(change))
+  }
+  const configuration = source.data.generationConfiguration!
+  source.data.generationConfiguration = {
+    ...configuration,
+    mode: 'img2img',
+    sampling: { ...configuration.sampling, denoisingStrength: 0 },
+  }
+  assert.ok(isRasterGenerationData(source.data))
+  source.data.generationConfiguration.vae = null
+  assert.ok(isRasterGenerationData(source.data))
+})
+
 test('VAE Precision compares frozen applied values with family-scoped current Auto without inventing legacy values', () => {
   const source = fixture()
   const legacy = structuredClone(source)

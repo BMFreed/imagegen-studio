@@ -919,9 +919,24 @@ Exact selection, Reset to Embedded и portable relink проходят main veri
 Undo/shadow/Save/reopen. Смена Default не заменяет сохранённую версию; late
 select/relink проверяет монотонный document epoch, включая edit → Undo.
 Anima сохраняет закреплённый VAE. Installation integrity не является ML
-qualification: external VAE по-прежнему явно блокирует Generate до следующего
-frozen-worker checkpoint. Embeddings, Anima, полный pipeline и публичная
+qualification: на authoring checkpoint external VAE блокировал Generate;
+следующий frozen-worker checkpoint ниже подключает qualified path.
+Embeddings, Anima, полный pipeline и публичная
 готовность остаются открытыми.
+
+**External Illustrious VAE inference checkpoint (04.10.2026):**
+[Exact external VAE](../engineering/phase-2c-external-vae-inference-research.md)
+подключает txt2img decode и opaque img2img encode/decode к выбранному standalone
+LDM/native Diffusers VAE. Main-owned source/size/hash/header verification проходит
+Prepare, materialization, Retry и dispatch. Worker 0.9.0 проверяет полный набор
+тензоров и finite values, применяет pinned public offline AutoencoderKL/config,
+precision и non-finite guards. Форма весов не доказывает training lineage;
+scaling задаёт проверенная SDXL конфигурация. Поздняя смена Project/Default не
+меняет queued/Retry identity. Accepted v1 хранит exact VAE или explicit Embedded;
+legacy omission остаётся Unavailable в comparison. Older qualified peers
+сохраняют embedded путь и явно отклоняют внешний VAE. Anima, embeddings,
+остальные modes, Smart Patch, result-to-preset и release runtime остаются открытыми.
+Phase 2B/2C и публичные promises не объявляются завершёнными.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает
@@ -933,7 +948,7 @@ peers сохраняют Auto без потери durable поля; manual preci
 policy; явные precision управляют реальными encode/decode без изменения
 UNet/CLIP. Non-finite VAE не превращается в успешный чёрный PNG. Actual tiny
 CPU/NVIDIA и native Electron с controlled peer имеют раздельные evidence.
-External VAE inference, embeddings, Anima, остальные pipeline modes,
+External VAE подключён следующим checkpoint выше; embeddings, Anima, остальные pipeline modes,
 result-to-preset, Smart Patch и release runtime остаются открытыми; фазы
 2B/2C и публичные promises не объявляются завершёнными.
 
