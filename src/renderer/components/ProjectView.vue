@@ -82,6 +82,7 @@ import {
   selectableVersion,
 } from './project-model-picker.js'
 import { projectPromptLoraSources } from './project-prompt-context.js'
+import { externalVaeGenerationReason } from './project-vae-picker.js'
 import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
 import ProjectDenoisingStrength from './ProjectDenoisingStrength.vue'
@@ -90,6 +91,7 @@ import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
 import ProjectQueuePanel from './ProjectQueuePanel.vue'
+import ProjectVaePicker from './ProjectVaePicker.vue'
 import ResolutionControl from './ResolutionControl.vue'
 import { vaePrecisionGenerationReason } from './vae-precision-control.js'
 
@@ -155,12 +157,14 @@ const emit = defineEmits<{
   refreshModels: []
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
+  relinkVae: []
   removeLora: [identity: ProjectLoraIdentity]
   resultFocusHandled: [revision: number]
   save: []
   saveCandidateImage: [candidateId: string]
   sealPromptHistory: [historyGroupId: string]
   selectModel: [selection: { resourceId: string; versionId: string } | null]
+  selectVae: [selection: { resourceId: string; versionId: string } | null]
   undo: []
   updateDraft: [change: ProjectGenerationDraftChange, historyGroupId?: string]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
@@ -1128,6 +1132,10 @@ const generationBlockingReason = computed(() => {
   if (!selectedModel.value || modelStatus.value !== 'ready') {
     return 'Choose an installed model before generating.'
   }
+  const externalVaeReason = externalVaeGenerationReason(props.generationDraft.vae)
+  if (externalVaeReason) {
+    return externalVaeReason
+  }
   if (props.generationDraft.seed.policy === 'reuse' && lastActualSeed.value === null) {
     return 'Complete a generation before using Reuse.'
   }
@@ -1726,7 +1734,21 @@ function applyFitBbox() {
               @update:modelValue="emit('updateDraft', { kind: 'cfg-rescale', value: $event })"
               @update:vaePrecision="emit('updateDraft', { kind: 'vae-precision', value: $event })"
               @validity="advancedOptionsValid = $event"
-            />
+            >
+              <template v-slot:vae>
+                <ProjectVaePicker
+                  :catalog="modelCatalog"
+                  :catalogReady="modelCatalogLoaded && !modelCatalogError"
+                  :disabled="busy || reloadRequired"
+                  :loading="modelCatalogLoading"
+                  :modelFamily="selectedModel?.baseModelFamily ?? null"
+                  :saved="generationDraft.vae"
+                  @manageModels="emit('manageModels', $event)"
+                  @relink="emit('relinkVae')"
+                  @select="emit('selectVae', $event)"
+                />
+              </template>
+            </ProjectGenerationAdvancedOptions>
           </section>
           <section
             aria-label="Generation area"

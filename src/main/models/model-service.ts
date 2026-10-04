@@ -515,6 +515,14 @@ export class ModelService {
     return this.resolveGenerationResource(resourceId, versionId, 'lora')
   }
 
+  /** Select a verified managed component; this does not qualify it for inference. */
+  async resolveGenerationVae(
+    resourceId: string,
+    versionId: string,
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>> {
+    return this.resolveGenerationResource(resourceId, versionId, 'vae')
+  }
+
   /** Bind a portable Project reference to this installation only by its exact source/file identity. */
   async resolvePortableGenerationCheckpoint(
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
@@ -526,6 +534,12 @@ export class ModelService {
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
     return this.resolvePortableGenerationResource(saved, 'lora')
+  }
+
+  async resolvePortableGenerationVae(
+    saved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
+  ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>> {
+    return this.resolvePortableGenerationResource(saved, 'vae')
   }
 
   /**
@@ -910,7 +924,7 @@ export class ModelService {
   private async resolveGenerationResource(
     resourceId: string,
     versionId: string,
-    kind: 'checkpoint' | 'lora',
+    kind: 'checkpoint' | 'lora' | 'vae',
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
     return (await this.resolveGenerationResourceWithFile(resourceId, versionId, kind)).reference
   }
@@ -918,13 +932,13 @@ export class ModelService {
   private async resolveGenerationResourceWithFile(
     resourceId: string,
     versionId: string,
-    kind: 'checkpoint' | 'lora',
+    kind: 'checkpoint' | 'lora' | 'vae',
   ): Promise<{
     fileSizeBytes: number
     managedPath: string
     reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
   }> {
-    const label = kind === 'checkpoint' ? 'checkpoint' : 'LoRA'
+    const label = kind === 'checkpoint' ? 'checkpoint' : kind === 'lora' ? 'LoRA' : 'VAE'
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     if (!uuid.test(resourceId) || !uuid.test(versionId)) {
       throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
@@ -953,6 +967,15 @@ export class ModelService {
       throw new ModelServiceError(
         'MODEL_FAMILY_UNSUPPORTED',
         'This checkpoint does not have a supported model family.',
+      )
+    }
+    if (
+      kind === 'vae' &&
+      (version.baseModelFamily !== 'illustrious' || version.predictionType !== null)
+    ) {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'External VAE selection requires an Illustrious-compatible component without a prediction type.',
       )
     }
     const status = await this.actualFileStatus(version.file, true)
@@ -1019,14 +1042,16 @@ export class ModelService {
 
   private async resolvePortableGenerationResource(
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
-    kind: 'checkpoint' | 'lora',
+    kind: 'checkpoint' | 'lora' | 'vae',
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>> {
-    const label = kind === 'checkpoint' ? 'checkpoint' : 'LoRA'
+    const label = kind === 'checkpoint' ? 'checkpoint' : kind === 'lora' ? 'LoRA' : 'VAE'
     if (
       saved.kind !== kind ||
       saved.civitaiModelId === null ||
       saved.civitaiVersionId === null ||
       saved.civitaiFileId === null ||
+      (kind === 'vae' &&
+        (saved.baseModelFamily !== 'illustrious' || saved.predictionType !== null)) ||
       (kind === 'checkpoint' &&
         saved.baseModelFamily !== 'illustrious' &&
         saved.baseModelFamily !== 'anima')

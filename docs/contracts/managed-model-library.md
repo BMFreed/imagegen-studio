@@ -59,6 +59,14 @@ Illustrious или Anima с поддерживаемым `.safetensors`-файл
 включает checkpoint в поддерживаемый список. SDXL в названии loader'а и
 проверки весов обозначает архитектуру Illustrious, а не третье семейство.
 
+Для standalone VAE type-aware mapping принимает source label `Illustrious` или
+`SDXL 1.0` как применимость компонента к Illustrious pipeline. Исходный `baseModel`
+сохраняется в source metadata; это не утверждение о lineage VAE и не расширение
+семейств checkpoint/LoRA. Другие source labels внешнего VAE сейчас отвергаются;
+закреплённый Anima VAE сохраняет отдельную dependency identity. Проверенная
+целостность установленного VAE не доказывает его ML compatibility: она требует
+структурной проверки и actual loading следующим pipeline checkpoint.
+
 CivitAI metadata и форма весов не доказывают Illustrious/SDXL `predictionType`.
 Пользовательский override `epsilon` или `v_prediction` редактируется только в
 Model Manager и хранится для точных SHA-256 и размера файла отдельно от source
@@ -218,8 +226,12 @@ storage, ведёт SQLite-версии и очередь, восстанавл�
 не переписывает существующий Project; отсутствующая точная версия остаётся
 читаемой с предупреждением и не заменяется соседней. Интеграционные тесты
 проверяют SQLite, файловую систему и Project Save/reopen, а Electron smoke —
-пользовательский выбор версии. Загрузку весов ML worker, LoRA/VAE/embedding
-selectors, Preset handoff и accepted-result provenance это ещё не доказывает;
+пользовательский выбор версии. Последующие [LoRA](../engineering/phase-2c-lora-research.md)
+и [VAE authoring](../engineering/phase-2c-external-vae-authoring-research.md)
+checkpoints подключают свои exact selectors; внешний VAE проходит
+install/repair/clear/relink и Project Undo/shadow/Save/reopen, но пока явно
+блокирует Generate. Полную ML compatibility, embedding selectors, Preset handoff
+и full accepted-result provenance эти проверки ещё не доказывают;
 PP-004 остаётся неполным и публично не обещается как готовый flow.
 
 Для быстрого открытия каталога его статус файла проверяет metadata, путь и

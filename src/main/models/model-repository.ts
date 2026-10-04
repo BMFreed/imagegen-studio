@@ -1159,7 +1159,11 @@ function validateArtifact(artifact: VerifiedModelArtifact): void {
       throw new Error('Only Anima Qwen3 and VAE are supported dependencies')
     }
   } else if (
-    ['qwen3_encoder', 'vae'].includes(artifact.resource.type) ||
+    artifact.resource.type === 'qwen3_encoder' ||
+    (artifact.resource.type === 'vae' &&
+      (artifact.version.baseModelFamily !== 'illustrious' ||
+        (artifact.version.predictionType !== undefined &&
+          artifact.version.predictionType !== null))) ||
     (artifact.resource.type !== 'upscaler' && artifact.version.baseModelFamily === null)
   ) {
     throw new Error('CivitAI resource type or base model family is unsupported')

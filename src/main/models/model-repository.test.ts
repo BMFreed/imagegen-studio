@@ -43,7 +43,7 @@ function civitaiArtifact(
   modelId: number,
   versionId: number,
   fileId: number,
-  type: 'checkpoint' | 'lora' = 'checkpoint',
+  type: 'checkpoint' | 'lora' | 'vae' = 'checkpoint',
   family: 'anima' | 'illustrious' = 'illustrious',
 ): VerifiedModelArtifact {
   const file = createFile(root, `${modelId}-${versionId}-${fileId}.safetensors`)
@@ -137,6 +137,41 @@ test('verified installation survives reopen with exact CivitAI file identity and
     )
     sqlite.close()
   } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
+})
+
+test('standalone CivitAI VAE publication accepts only Illustrious applicability without a prediction type', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'igs-vae-repo-'))
+  const app = openAppDatabase(root, migrations)
+  try {
+    const repository = new ModelRepository(app.db)
+    const good = civitaiArtifact(root, 100, 200, 300, 'vae')
+    const published = await repository.publishVerifiedInstallation({ primary: good })
+    assert.equal((await repository.listInstalled())[0]?.type, 'vae')
+    assert.equal((await repository.listInstalled())[0]?.versions[0]?.id, published.versionId)
+    for (const version of [
+      { ...good.version, baseModelFamily: 'anima' as const },
+      { ...good.version, baseModelFamily: null },
+      { ...good.version, predictionType: 'epsilon' as const },
+    ]) {
+      await assert.rejects(
+        repository.publishVerifiedInstallation({ primary: { ...good, version } }),
+        {
+          message: 'CivitAI resource type or base model family is unsupported',
+        },
+      )
+      assert.equal((await repository.listInstalled()).length, 1)
+    }
+    const pinned = dependencyArtifact(root, 'vae', 'pinned')
+    const companion = await repository.publishVerifiedInstallation({ primary: pinned })
+    assert.equal(
+      (await repository.listInstalled()).find((item) => item.id === companion.resourceId)?.source
+        .kind,
+      'supported_dependency',
+    )
+  } finally {
+    await app.close()
     rmSync(root, { force: true, recursive: true })
   }
 })

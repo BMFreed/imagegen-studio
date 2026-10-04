@@ -85,6 +85,7 @@ function reset() {
 <template>
   <NCollapse class="advanced-options">
     <NCollapseItem name="advanced" title="Advanced Options">
+      <slot name="vae" />
       <div class="rescale-field">
         <LabeledControl label="CFG Rescale">
           <template v-slot="{ controlId }">

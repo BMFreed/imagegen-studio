@@ -1310,6 +1310,50 @@ if (!gotInstanceLock) {
           )
         },
       )
+      const runProjectDocumentAction = (tabId: string, action: () => Promise<ProjectTab>) =>
+        projectGenerationGate.run(tabId, async () => {
+          if (resolvingClose || generationAcceptance?.hasPendingHandoff(tabId)) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish the Project close or accepted-result recovery before changing the Project.',
+            )
+          }
+          return await action()
+        })
+      registerProjectHandler(
+        ipcChannels.projects.setGenerationVae,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectGenerationModelSelection(args[1]),
+        (tabId, selection) =>
+          runProjectDocumentAction(tabId as string, async () => {
+            const chosen = selection as ProjectGenerationModelSelection
+            if (chosen === null) {
+              return projectService.setGenerationVae(tabId as string, null)
+            }
+            if (!modelStorageAvailable) {
+              throw new ModelServiceError(
+                'MODEL_STORAGE_UNAVAILABLE',
+                'Managed model storage needs repair.',
+              )
+            }
+            return projectService.setGenerationVae(tabId as string, () =>
+              modelService.resolveGenerationVae(chosen.resourceId, chosen.versionId),
+            )
+          }),
+      )
+      registerProjectHandler(ipcChannels.projects.relinkGenerationVae, oneProjectId, (tabId) =>
+        runProjectDocumentAction(tabId as string, async () => {
+          if (!modelStorageAvailable) {
+            throw new ModelServiceError(
+              'MODEL_STORAGE_UNAVAILABLE',
+              'Managed model storage needs repair.',
+            )
+          }
+          return projectService.relinkGenerationVae(tabId as string, (saved) =>
+            modelService.resolvePortableGenerationVae(saved),
+          )
+        }),
+      )
       registerProjectHandler(
         ipcChannels.projects.setPrimaryBbox,
         (args) => args.length === 2 && isProjectId(args[0]) && isProjectRect(args[1]),
@@ -1349,24 +1393,14 @@ if (!gotInstanceLock) {
             ),
           ),
       )
-      const runProjectHistoryAction = (tabId: string, action: () => Promise<ProjectTab>) =>
-        projectGenerationGate.run(tabId, async () => {
-          if (resolvingClose || generationAcceptance?.hasPendingHandoff(tabId)) {
-            throw new ProjectGenerationAcceptanceError(
-              'ACCEPTANCE_HANDOFF_PENDING',
-              'Finish the Project close or accepted-result recovery before changing history.',
-            )
-          }
-          return await action()
-        })
       registerProjectHandler(ipcChannels.projects.undo, oneProjectId, (tabId) =>
-        runProjectHistoryAction(tabId as string, () => projectService.undo(tabId as string)),
+        runProjectDocumentAction(tabId as string, () => projectService.undo(tabId as string)),
       )
       registerProjectHandler(ipcChannels.projects.redo, oneProjectId, (tabId) =>
-        runProjectHistoryAction(tabId as string, () => projectService.redo(tabId as string)),
+        runProjectDocumentAction(tabId as string, () => projectService.redo(tabId as string)),
       )
       registerProjectHandler(ipcChannels.projects.clearHistory, oneProjectId, (tabId) =>
-        runProjectHistoryAction(tabId as string, () =>
+        runProjectDocumentAction(tabId as string, () =>
           projectService.clearHistory(tabId as string),
         ),
       )

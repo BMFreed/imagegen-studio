@@ -159,6 +159,8 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_RECOVERY_UNAVAILABLE'
       | 'PROJECT_SAVE_IN_PROGRESS'
       | 'PROJECT_TARGET_CHANGED'
+      | 'PROJECT_VAE_NOT_SELECTED'
+      | 'PROJECT_VAE_RELINK_MISMATCH'
       | 'PROJECT_WORKER_UNAVAILABLE',
     message: string,
   ) {
@@ -986,6 +988,72 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** Verify portable VAE identity, then replace only its local registry IDs. */
+  async relinkGenerationVae(
+    tabId: string,
+    resolve: (
+      saved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
+    ) => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>>,
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
+    const saved = document.generationDraft.vae
+    if (!saved) {
+      throw new ProjectServiceError(
+        'PROJECT_VAE_NOT_SELECTED',
+        'Choose an external VAE before linking an installed version.',
+      )
+    }
+    if (saved.kind !== 'vae' || saved.baseModelFamily !== 'illustrious') {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Only an Illustrious-compatible external VAE can be linked.',
+      )
+    }
+    const resolved = await resolve(structuredClone(saved))
+    if (
+      resolved.kind !== 'vae' ||
+      resolved.baseModelFamily !== 'illustrious' ||
+      resolved.civitaiModelId !== saved.civitaiModelId ||
+      resolved.civitaiVersionId !== saved.civitaiVersionId ||
+      resolved.civitaiFileId !== saved.civitaiFileId ||
+      resolved.fileSha256.toLowerCase() !== saved.fileSha256.toLowerCase()
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_VAE_RELINK_MISMATCH',
+        'The installed VAE does not match the exact Project reference.',
+      )
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.documentEpoch !== documentEpoch ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed while linking its VAE.')
+    }
+    const linked = {
+      ...saved,
+      localModelId: resolved.localModelId,
+      localVersionId: resolved.localVersionId,
+    }
+    if (
+      saved.localModelId === linked.localModelId &&
+      saved.localVersionId === linked.localVersionId
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: { ...document.generationDraft, vae: linked },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   async removeGenerationLora(tabId: string, identity: ProjectLoraIdentity): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
@@ -1184,6 +1252,53 @@ export class ProjectService {
       {
         ...document,
         generationDraft: { ...document.generationDraft, model },
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
+  /** Capture the Project before main verifies an ID-only external VAE selection. */
+  async setGenerationVae(
+    tabId: string,
+    resolve: (() => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>>) | null,
+  ): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
+    const previous = document.generationDraft.vae
+    const vae = resolve === null ? null : await resolve()
+    if (vae !== null && (vae.kind !== 'vae' || vae.baseModelFamily !== 'illustrious')) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Only an Illustrious-compatible external VAE can be selected.',
+      )
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.documentEpoch !== documentEpoch ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while selecting its VAE.',
+      )
+    }
+    if (
+      (previous === null && vae === null) ||
+      (previous !== null &&
+        vae !== null &&
+        previous.localModelId === vae.localModelId &&
+        previous.localVersionId === vae.localVersionId &&
+        previous.fileSha256 === vae.fileSha256)
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        generationDraft: { ...document.generationDraft, vae },
       },
       {},
       { expectedDocumentRevision: document.documentRevision },

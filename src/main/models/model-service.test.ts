@@ -44,7 +44,7 @@ function safeStorage(): SafeStorageAdapter {
 }
 
 function civitaiApi(options: {
-  family?: 'Anima' | 'Illustrious'
+  family?: 'Anima' | 'Illustrious' | 'SDXL 1.0'
   fileHash?: string
   fileSizeKB?: number | string | null
   fileUrl?: string
@@ -1105,6 +1105,210 @@ test('repairing a missing managed file preserves the exact CivitAI version and d
   )
 })
 
+// Boundary: actual import parser -> install/repair coordinator -> SQLite/managed bytes -> exact resolver.
+// Small integrity fixtures are deliberately not ML-loadable VAEs; no inference is exercised here.
+for (const family of ['Illustrious', 'SDXL 1.0'] as const) {
+  test(`standalone VAE ${family} install, side-by-side default and exact repair preserve source identity after reopen`, async () => {
+    const bytes = Buffer.from('external VAE integrity fixture version one')
+    const newerBytes = Buffer.from('external VAE integrity fixture version two')
+    const requests: { authorization: string | null; pathname: string }[] = []
+    let downloadCount = 0
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async (url) => {
+        downloadCount++
+        return new Response(String(url).includes('/models/8?') ? newerBytes : bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      },
+    })
+    await withModelHarness(
+      civitaiApi({
+        family,
+        fileHash: sha256(bytes),
+        fileSizeKB: bytes.length / 1024,
+        requests,
+        secondVersionHash: sha256(newerBytes),
+        type: 'VAE',
+      }),
+      downloader,
+      async ({ coordinator, repository, root, service }) => {
+        const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(preview.resourceType, 'vae')
+        assert.equal(preview.baseModel, family)
+        assert.equal(preview.baseModelFamily, 'illustrious')
+        assert.equal('companions' in preview, false)
+        assert.equal(preview.totalAdditionalBytes, bytes.length)
+        const job = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, 701, false),
+        )
+        assert.equal(job.status, 'completed', job.error?.message ?? '')
+        const before = (await repository.listInstalled())[0]
+        assert.ok(before)
+        const first = before.versions[0]
+        assert.ok(first)
+        assert.equal(before.type, 'vae')
+        assert.equal(first.baseModelFamily, 'illustrious')
+        assert.equal(first.sourceMetadata['baseModel'], family)
+        assert.equal(first.predictionType, null)
+        assert.deepEqual(await readFile(first.file.managedPath), bytes)
+        const reference = await service.resolveGenerationVae(before.id, first.id)
+        assert.equal(reference.kind, 'vae')
+        assert.equal(reference.fileSha256, sha256(bytes))
+        assert.equal(reference.predictionType, null)
+
+        const newerPreview = selectedFilePreview(
+          await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
+        )
+        const newerJob = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(newerPreview.previewId, 801, false),
+        )
+        assert.equal(newerJob.status, 'completed', newerJob.error?.message ?? '')
+        const afterVersion = (await repository.listInstalled())[0]
+        assert.ok(afterVersion)
+        const newer = afterVersion.versions.find((item) => item.civitaiVersionId === 8)
+        assert.ok(newer)
+        assert.equal(afterVersion.defaultVersionId, first.id)
+        await service.setDefaultVersion(before.id, newer.id)
+        assert.deepEqual(await service.resolveGenerationVae(before.id, first.id), reference)
+
+        await rm(first.file.managedPath)
+        await assert.rejects(service.resolveGenerationVae(before.id, first.id), {
+          code: 'MODEL_FILE_MISSING',
+        })
+        const repair = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(repair.files[0]?.needsRepair, true)
+        const repaired = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(repair.previewId, 701, false),
+        )
+        assert.equal(repaired.status, 'completed', repaired.error?.message ?? '')
+        assert.equal(downloadCount, 3)
+        assert.deepEqual(await service.resolveGenerationVae(before.id, first.id), reference)
+        const reopened = openAppDatabase(root, migrations)
+        try {
+          const [persisted] = await new ModelRepository(reopened.db).listInstalled()
+          assert.ok(persisted)
+          assert.equal(persisted.id, before.id)
+          assert.equal(persisted.defaultVersionId, newer.id)
+          assert.equal(persisted.versions.length, 2)
+          const restored = persisted.versions.find((item) => item.id === first.id)
+          assert.ok(restored)
+          assert.equal(restored.file.sha256, sha256(bytes))
+          assert.equal(restored.file.id, first.file.id)
+          assert.equal(restored.sourceMetadata['baseModel'], family)
+          assert.equal(restored.predictionType, null)
+          assert.deepEqual(await readFile(restored.file.managedPath), bytes)
+        } finally {
+          await reopened.close()
+        }
+      },
+    )
+  })
+}
+
+test('VAE exact selection rejects another resource kind, missing identity, unsupported catalog fields and tampered bytes', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const bytes = Buffer.from('standalone VAE reverified integrity fixture')
+  await withModelHarness(
+    civitaiApi({ fileHash: sha256(bytes), requests, type: 'VAE' }),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => new Response(bytes),
+    }),
+    async ({ coordinator, databaseFile, repository, root, service }) => {
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const job = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(job.status, 'completed', job.error?.message ?? '')
+      const [resource] = await repository.listInstalled()
+      assert.ok(resource)
+      const version = resource.versions[0]
+      assert.ok(version)
+      assert.equal((await service.resolveGenerationVae(resource.id, version.id)).kind, 'vae')
+      await assert.rejects(service.resolveGenerationCheckpoint(resource.id, version.id), {
+        code: 'MODEL_VERSION_UNAVAILABLE',
+      })
+      await assert.rejects(service.resolveGenerationLora(resource.id, version.id), {
+        code: 'MODEL_VERSION_UNAVAILABLE',
+      })
+      await assert.rejects(service.resolveGenerationVae(resource.id, randomUUID()), {
+        code: 'MODEL_VERSION_UNAVAILABLE',
+      })
+      await assert.rejects(service.resolveGenerationVae('invalid-resource-id', version.id), {
+        code: 'MODEL_INVALID_ID',
+      })
+      const sqlite = new Database(databaseFile)
+      try {
+        for (const fields of [
+          { family: 'anima', prediction: null },
+          { family: null, prediction: null },
+          { family: 'illustrious', prediction: 'epsilon' },
+        ]) {
+          sqlite
+            .prepare(
+              'UPDATE model_resource_version SET base_model_family = ?, prediction_type = ? WHERE id = ?',
+            )
+            .run(fields.family, fields.prediction, version.id)
+          await assert.rejects(service.resolveGenerationVae(resource.id, version.id), {
+            code: 'MODEL_FAMILY_UNSUPPORTED',
+          })
+        }
+        sqlite
+          .prepare(
+            "UPDATE model_resource_version SET base_model_family = 'illustrious', prediction_type = NULL WHERE id = ?",
+          )
+          .run(version.id)
+      } finally {
+        sqlite.close()
+      }
+      const dependencyPath = path.join(root, 'anima-pinned-vae.safetensors')
+      await writeFile(dependencyPath, bytes)
+      const dependency = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            ...version.file,
+            managedPath: dependencyPath,
+            originalFilename: 'anima-pinned-vae.safetensors',
+          },
+          resource: {
+            displayName: 'Pinned Anima VAE',
+            source: { key: 'anima/vae', kind: 'supported_dependency' },
+            sourceMetadata: {},
+            type: 'vae',
+          },
+          version: {
+            baseModelFamily: 'anima',
+            format: 'SafeTensor',
+            name: 'Pinned companion',
+            source: {
+              expectedSha256: sha256(bytes),
+              kind: 'supported_dependency',
+              revision: 'pinned',
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+      await assert.rejects(
+        service.resolveGenerationVae(dependency.resourceId, dependency.versionId),
+        {
+          code: 'MODEL_VERSION_UNAVAILABLE',
+        },
+      )
+      await writeFile(version.file.managedPath, Buffer.alloc(bytes.length, 0x78))
+      await assert.rejects(service.resolveGenerationVae(resource.id, version.id), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      assert.equal(
+        (await service.getCatalog()).find((item) => item.id === resource.id)?.versions[0]
+          ?.fileStatus,
+        'corrupt',
+      )
+    },
+  )
+})
+
 test('generation checkpoint resolution rejects wrong types, unknown versions, unsupported families and changed bytes', async () => {
   const requests: { authorization: string | null; pathname: string }[] = []
   await withModelHarness(
@@ -1259,7 +1463,7 @@ test('generation checkpoint resolution rejects wrong types, unknown versions, un
   )
 })
 
-for (const kind of ['checkpoint', 'lora'] as const) {
+for (const kind of ['checkpoint', 'lora', 'vae'] as const) {
   test(`portable ${kind} linking requires the same CivitAI file identity and bytes, then verifies the installed file`, async () => {
     const requests: { authorization: string | null; pathname: string }[] = []
     await withModelHarness(
@@ -1269,11 +1473,15 @@ for (const kind of ['checkpoint', 'lora'] as const) {
         const resolvePortable =
           kind === 'checkpoint'
             ? service.resolvePortableGenerationCheckpoint.bind(service)
-            : service.resolvePortableGenerationLora.bind(service)
+            : kind === 'lora'
+              ? service.resolvePortableGenerationLora.bind(service)
+              : service.resolvePortableGenerationVae.bind(service)
         const resolveSelected =
           kind === 'checkpoint'
             ? service.resolveGenerationCheckpoint.bind(service)
-            : service.resolveGenerationLora.bind(service)
+            : kind === 'lora'
+              ? service.resolveGenerationLora.bind(service)
+              : service.resolveGenerationVae.bind(service)
         const bytes = Buffer.from('portable illustrious checkpoint bytes')
         const managedPath = path.join(root, 'portable.safetensors')
         await writeFile(managedPath, bytes)
@@ -1297,7 +1505,7 @@ for (const kind of ['checkpoint', 'lora'] as const) {
               baseModelFamily: 'illustrious',
               format: 'SafeTensor',
               name: 'Destination version',
-              predictionType: 'v_prediction',
+              predictionType: kind === 'vae' ? null : 'v_prediction',
               source: {
                 expectedSha256: digest,
                 fileId: 882,
@@ -1327,11 +1535,26 @@ for (const kind of ['checkpoint', 'lora'] as const) {
           { ...portable, civitaiVersionId: 880 },
           { ...portable, civitaiFileId: 883 },
           { ...portable, fileSha256: 'f'.repeat(64) },
-          { ...portable, baseModelFamily: 'anima' as const },
         ]) {
           await assert.rejects(resolvePortable(mismatch), {
             code: 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
           })
+        }
+        await assert.rejects(resolvePortable({ ...portable, baseModelFamily: 'anima' }), {
+          code:
+            kind === 'vae'
+              ? 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE'
+              : 'MODEL_PORTABLE_MATCH_UNAVAILABLE',
+        })
+        if (kind === 'vae') {
+          for (const unsupported of [
+            { ...portable, baseModelFamily: null },
+            { ...portable, predictionType: 'epsilon' as const },
+          ]) {
+            await assert.rejects(resolvePortable(unsupported), {
+              code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',
+            })
+          }
         }
         await assert.rejects(resolvePortable({ ...portable, civitaiFileId: null }), {
           code: 'MODEL_PORTABLE_IDENTITY_UNAVAILABLE',

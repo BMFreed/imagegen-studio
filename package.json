@@ -12,7 +12,7 @@
     "app:build": "vite build --config vite.desktop.config.ts && node scripts/build-electron.mjs",
     "app:dev": "node scripts/dev-desktop.mjs",
     "app:start": "pnpm run app:build && env -u ELECTRON_RUN_AS_NODE electron .",
-    "app:smoke": "pnpm run app:build && tsx scripts/smoke-desktop.mjs && tsx scripts/smoke-generation-results.mjs && tsx scripts/smoke-generation-actions.mjs && tsx scripts/smoke-accepted-history.mjs && tsx scripts/smoke-generation-comparison.mjs",
+    "app:smoke": "pnpm run app:build && tsx scripts/smoke-desktop.mjs && tsx scripts/smoke-generation-results.mjs && tsx scripts/smoke-generation-actions.mjs && tsx scripts/smoke-accepted-history.mjs && tsx scripts/smoke-generation-comparison.mjs && tsx scripts/smoke-project-vae.mjs",
     "app:smoke:generation": "pnpm run app:build && tsx scripts/smoke-generation-actions.mjs",
     "app:smoke:results": "pnpm run app:build && tsx scripts/smoke-generation-results.mjs",
     "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/renderer/components/*.test.ts src/shared/projects/*.test.ts",
@@ -23,7 +23,8 @@
     "prototype:test": "playwright test --config docs/prototype-app/playwright.config.ts",
     "prototype:screenshots": "playwright test --config docs/prototype-app/playwright.config.ts",
     "app:smoke:accepted": "pnpm run app:build && tsx scripts/smoke-accepted-history.mjs",
-    "app:smoke:comparison": "pnpm run app:build && tsx scripts/smoke-generation-comparison.mjs"
+    "app:smoke:comparison": "pnpm run app:build && tsx scripts/smoke-generation-comparison.mjs",
+    "app:smoke:vae": "pnpm run app:build && tsx scripts/smoke-project-vae.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.3",

@@ -1057,6 +1057,17 @@ function relinkGenerationModel(tabId: string) {
   return runGenerationModelAction(tabId, () => projectApi().relinkGenerationModel(tabId))
 }
 
+function setGenerationVae(
+  tabId: string,
+  selection: { resourceId: string; versionId: string } | null,
+) {
+  return runGenerationModelAction(tabId, () => projectApi().setGenerationVae(tabId, selection))
+}
+
+function relinkGenerationVae(tabId: string) {
+  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationVae(tabId))
+}
+
 function setDraftValidity(tabId: string, valid: boolean) {
   draftValidity.value = { ...draftValidity.value, [tabId]: valid }
 }
@@ -2486,12 +2497,14 @@ onBeforeUnmount(() => {
           @refreshModels="refreshModelCatalog"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
+          @relinkVae="relinkGenerationVae(activeTab.id)"
           @removeLora="removeGenerationLora(activeTab.id, $event)"
           @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
           @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
+          @selectVae="setGenerationVae(activeTab.id, $event)"
           @undo="runProjectHistoryAction(activeTab.id, 'undo')"
           @updateDraft="updateActiveGenerationDraft"
           @updateLayer="updateActiveRasterLayer"

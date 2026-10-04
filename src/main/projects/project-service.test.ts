@@ -58,6 +58,459 @@ import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 
+async function publishExternalProjectVae(
+  repository: ModelRepository,
+  dataRoot: string,
+  options: {
+    bytes?: Buffer
+    displayName?: string
+    modelId?: number
+    versionId?: number
+  } = {},
+) {
+  const versionId = options.versionId ?? 7001
+  const bytes = options.bytes ?? Buffer.from(`exact authoring VAE ${versionId}`)
+  const managedPath = path.join(dataRoot, `external-vae-${versionId}.safetensors`)
+  await writeFile(managedPath, bytes)
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const ids = await repository.publishVerifiedInstallation({
+    primary: {
+      file: {
+        managedPath,
+        originalFilename: path.basename(managedPath),
+        sha256,
+        sizeBytes: bytes.length,
+        verifiedAt: new Date().toISOString(),
+      },
+      resource: {
+        displayName: options.displayName ?? 'External VAE',
+        source: { kind: 'civitai', modelId: options.modelId ?? 7000 },
+        sourceMetadata: { baseModel: 'SDXL 1.0' },
+        type: 'vae',
+      },
+      version: {
+        baseModelFamily: 'illustrious',
+        format: 'SafeTensor',
+        name: `${options.displayName ?? 'External VAE'} v${versionId}`,
+        predictionType: null,
+        source: {
+          expectedSha256: sha256,
+          fileId: versionId + 100,
+          kind: 'civitai',
+          versionId,
+        },
+        sourceMetadata: { baseModel: 'SDXL 1.0' },
+      },
+    },
+  })
+  return { ...ids, managedPath, sha256 }
+}
+
+test('external VAE selection preserves exact identity and unrelated settings through Undo, shadow recovery, Save and defaults', async () => {
+  await withService(
+    async ({ dataRoot, modelRepository, modelService, repository, service, shadow }) => {
+      const installed = await publishExternalProjectVae(modelRepository, dataRoot)
+      const newer = await publishExternalProjectVae(modelRepository, dataRoot, { versionId: 7002 })
+      const ref = await modelService.resolveGenerationVae(installed.resourceId, installed.versionId)
+      const created = await service.create({ height: 64, title: 'External VAE storage', width: 64 })
+      const neighbor = await service.create({ height: 64, title: 'Neighbor VAE', width: 64 })
+      const filePath = (await repository.getProject(created.id))!.canonicalPath
+      await service.updateGenerationDraft(created.id, { kind: 'positive-prompt', text: 'portrait' })
+      await service.updateGenerationDraft(created.id, { kind: 'seed', policy: 'fixed', value: 0 })
+      const baseline = await service.updateGenerationDraft(created.id, {
+        kind: 'vae-precision',
+        value: 'FP32',
+      })
+      await service.save(created.id)
+      const savedBytes = await readFile(filePath)
+      const selected = await service.setGenerationVae(created.id, () =>
+        modelService.resolveGenerationVae(installed.resourceId, installed.versionId),
+      )
+      assert.equal(selected.dirty, true)
+      assert.deepEqual(selected.generationDraft, { ...baseline.generationDraft, vae: ref })
+      assert.equal((await service.undo(created.id)).generationDraft.vae, null)
+      assert.equal(service.getOpenTabs().find((tab) => tab.id === created.id)?.dirty, false)
+      assert.deepEqual((await service.redo(created.id)).generationDraft.vae, ref)
+      await service.flushAutosave(created.id)
+      assert.deepEqual(await readFile(filePath), savedBytes)
+      const recovery = await shadow.inspect({
+        projectPath: filePath,
+        savedPackage: await readIgsPackage(filePath),
+      })
+      assert.equal(recovery.status, 'recoverable')
+      if (recovery.status !== 'recoverable') {
+        throw new Error('External VAE selection did not reach real recovery storage.')
+      }
+      assert.deepEqual(recovery.document.generationDraft.vae, ref)
+      const restarted = new ProjectService({
+        autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+        dataRoot,
+        repository,
+        roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+        shadow,
+      })
+      assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+      const recovered = await restarted.resolveRecovery(created.id, 'recover')
+      assert.deepEqual(recovered.generationDraft, selected.generationDraft)
+      await restarted.save(created.id)
+      assert.deepEqual((await readIgsPackage(filePath)).project.generationDraft.vae, ref)
+      await modelService.setDefaultVersion(newer.resourceId, newer.versionId)
+      await restarted.close(created.id)
+      const reopened = await restarted.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('Saved external VAE Project did not reopen.')
+      }
+      assert.deepEqual(reopened.tab.generationDraft.vae, ref)
+      const verifiedNoop = await restarted.setGenerationVae(created.id, async () => ({
+        ...(await modelService.resolveGenerationVae(installed.resourceId, installed.versionId)),
+        displayName: 'Refreshed library display metadata',
+        versionName: 'Refreshed library version metadata',
+      }))
+      assert.equal(verifiedNoop.dirty, false)
+      assert.equal(verifiedNoop.canUndo, false)
+      assert.deepEqual(verifiedNoop.generationDraft.vae, ref)
+      const checkpoint = await publishPortableResource(
+        modelRepository,
+        dataRoot,
+        Buffer.from('neighbor checkpoint'),
+        'Neighbor checkpoint',
+        'epsilon',
+      )
+      await restarted.setGenerationModel(
+        created.id,
+        await modelService.resolveGenerationCheckpoint(checkpoint.resourceId, checkpoint.versionId),
+      )
+      assert.deepEqual(restarted.getOpenTabs()[0].generationDraft.vae, ref)
+      assert.deepEqual(
+        (await restarted.setGenerationModel(created.id, null)).generationDraft.vae,
+        ref,
+      )
+      const cleared = await restarted.setGenerationVae(created.id, null)
+      assert.deepEqual(cleared.generationDraft, { ...baseline.generationDraft, vae: null })
+      assert.deepEqual((await restarted.undo(created.id)).generationDraft.vae, ref)
+      assert.equal((await restarted.redo(created.id)).generationDraft.vae, null)
+      await restarted.save(created.id)
+      await restarted.close(created.id)
+      const clearedReopened = await restarted.open(created.id)
+      assert.equal(clearedReopened.kind, 'opened')
+      if (clearedReopened.kind === 'opened') {
+        assert.equal(clearedReopened.tab.generationDraft.vae, null)
+        const clearNoop = await restarted.setGenerationVae(created.id, null)
+        assert.equal(clearNoop.dirty, false)
+        assert.equal(clearNoop.canUndo, false)
+        await restarted.close(created.id)
+      }
+      assert.equal(service.getOpenTabs().find((tab) => tab.id === neighbor.id)?.dirty, false)
+    },
+  )
+})
+
+test('external VAE selection refuses wrong kinds and families plus changed or missing managed bytes without rewriting the saved choice', async () => {
+  await withService(async ({ dataRoot, modelRepository, modelService, repository, service }) => {
+    const installed = await publishExternalProjectVae(modelRepository, dataRoot)
+    const created = await service.create({ height: 64, title: 'VAE refusal', width: 64 })
+    const filePath = (await repository.getProject(created.id))!.canonicalPath
+    const ref = await modelService.resolveGenerationVae(installed.resourceId, installed.versionId)
+    for (const invalid of [
+      { ...ref, kind: 'checkpoint' as const },
+      { ...ref, kind: 'lora' as const },
+      { ...ref, baseModelFamily: 'anima' as const },
+      { ...ref, baseModelFamily: null },
+    ]) {
+      await assert.rejects(
+        service.setGenerationVae(created.id, async () => invalid),
+        {
+          code: 'PROJECT_INVALID_INPUT',
+        },
+      )
+      assert.equal(service.getOpenTabs()[0].dirty, false)
+      assert.equal(service.getOpenTabs()[0].canUndo, false)
+      assert.equal(service.getOpenTabs()[0].generationDraft.vae, null)
+    }
+    await service.setGenerationVae(created.id, () =>
+      modelService.resolveGenerationVae(installed.resourceId, installed.versionId),
+    )
+    await service.save(created.id)
+    const savedBytes = await readFile(filePath)
+    await writeFile(installed.managedPath, Buffer.from('tampered external VAE bytes'))
+    await assert.rejects(
+      service.setGenerationVae(created.id, () =>
+        modelService.resolveGenerationVae(installed.resourceId, installed.versionId),
+      ),
+      { code: 'MODEL_FILE_CORRUPT' },
+    )
+    await assert.rejects(
+      service.relinkGenerationVae(created.id, (saved) =>
+        modelService.resolvePortableGenerationVae(saved),
+      ),
+      { code: 'MODEL_FILE_CORRUPT' },
+    )
+    assert.deepEqual(service.getOpenTabs()[0].generationDraft.vae, ref)
+    assert.equal(service.getOpenTabs()[0].dirty, false)
+    await service.close(created.id)
+    await rm(installed.managedPath)
+    const reopened = await service.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Missing VAE must not prevent Project authoring.')
+    }
+    assert.deepEqual(reopened.tab.generationDraft.vae, ref)
+    await assert.rejects(
+      service.setGenerationVae(created.id, () =>
+        modelService.resolveGenerationVae(installed.resourceId, installed.versionId),
+      ),
+      { code: 'MODEL_FILE_MISSING' },
+    )
+    await assert.rejects(
+      service.relinkGenerationVae(created.id, (saved) =>
+        modelService.resolvePortableGenerationVae(saved),
+      ),
+      { code: 'MODEL_FILE_MISSING' },
+    )
+    assert.deepEqual(await readFile(filePath), savedBytes)
+    const clear = await service.setGenerationVae(created.id, null)
+    assert.equal(clear.generationDraft.vae, null)
+    assert.equal(clear.dirty, true)
+    await service.save(created.id)
+    await service.close(created.id)
+  })
+})
+
+test('external VAE portable relink changes only local IDs through Undo, shadow, Save and reopen', async () => {
+  const bytes = Buffer.from('same exact VAE in two managed installations')
+  await withService(async (origin) => {
+    const original = await publishExternalProjectVae(origin.modelRepository, origin.dataRoot, {
+      bytes,
+      displayName: 'Original VAE',
+    })
+    const ref = await origin.modelService.resolveGenerationVae(
+      original.resourceId,
+      original.versionId,
+    )
+    const created = await origin.service.create({ height: 64, title: 'Portable VAE', width: 64 })
+    let resolvedWithoutSelection = false
+    await assert.rejects(
+      origin.service.relinkGenerationVae(created.id, async () => {
+        resolvedWithoutSelection = true
+        return ref
+      }),
+      { code: 'PROJECT_VAE_NOT_SELECTED' },
+    )
+    assert.equal(resolvedWithoutSelection, false)
+    await origin.service.setGenerationVae(created.id, () =>
+      origin.modelService.resolveGenerationVae(original.resourceId, original.versionId),
+    )
+    await origin.service.save(created.id)
+    const originPath = (await origin.repository.getProject(created.id))!.canonicalPath
+    const portableBytes = await readFile(originPath)
+    await origin.service.close(created.id)
+    await withService(async (destination) => {
+      const local = await publishExternalProjectVae(
+        destination.modelRepository,
+        destination.dataRoot,
+        {
+          bytes,
+          displayName: 'Different destination VAE',
+        },
+      )
+      assert.notEqual(local.resourceId, original.resourceId)
+      assert.notEqual(local.versionId, original.versionId)
+      const incomingPath = path.join(destination.dataRoot, 'portable-vae.igs')
+      await writeFile(incomingPath, portableBytes)
+      const selection = await destination.service.selectImport(incomingPath)
+      assert.equal(selection.kind, 'transfer-required')
+      if (selection.kind !== 'transfer-required') {
+        throw new Error('Expected a portable VAE import choice.')
+      }
+      const imported = await destination.service.finishImport(selection.importId, 'copy')
+      assert.equal(imported.result.kind, 'opened')
+      if (imported.result.kind !== 'opened') {
+        throw new Error('Expected the copied VAE Project to open.')
+      }
+      const tabId = imported.result.tab.id
+      const filePath = (await destination.repository.getProject(tabId))!.canonicalPath
+      const savedBytes = await readFile(filePath)
+      const resolved = await destination.modelService.resolvePortableGenerationVae(ref)
+      for (const patch of [
+        { kind: 'checkpoint' as const },
+        { baseModelFamily: 'anima' as const },
+        { civitaiModelId: ref.civitaiModelId! + 1 },
+        { civitaiVersionId: ref.civitaiVersionId! + 1 },
+        { civitaiFileId: ref.civitaiFileId! + 1 },
+        { fileSha256: 'f'.repeat(64) },
+      ]) {
+        await assert.rejects(
+          destination.service.relinkGenerationVae(tabId, async () => ({ ...resolved, ...patch })),
+          { code: 'PROJECT_VAE_RELINK_MISMATCH' },
+        )
+        assert.deepEqual(destination.service.getOpenTabs()[0].generationDraft.vae, ref)
+        assert.equal(destination.service.getOpenTabs()[0].dirty, false)
+      }
+      const linked = await destination.service.relinkGenerationVae(tabId, async (saved) => {
+        saved.displayName = 'Mutated resolver copy'
+        return {
+          ...(await destination.modelService.resolvePortableGenerationVae(saved)),
+          displayName: 'New destination metadata',
+          predictionType: 'v_prediction',
+          versionName: 'New destination version',
+        }
+      })
+      const expected = { ...ref, localModelId: local.resourceId, localVersionId: local.versionId }
+      assert.deepEqual(linked.generationDraft.vae, expected)
+      assert.equal(linked.dirty, true)
+      assert.deepEqual((await destination.service.undo(tabId)).generationDraft.vae, ref)
+      assert.deepEqual((await destination.service.redo(tabId)).generationDraft.vae, expected)
+      await destination.service.flushAutosave(tabId)
+      assert.deepEqual(await readFile(filePath), savedBytes)
+      const recovery = await destination.shadow.inspect({
+        projectPath: filePath,
+        savedPackage: await readIgsPackage(filePath),
+      })
+      assert.equal(recovery.status, 'recoverable')
+      if (recovery.status === 'recoverable') {
+        assert.deepEqual(recovery.document.generationDraft.vae, expected)
+      }
+      await destination.service.save(tabId)
+      assert.deepEqual((await readIgsPackage(filePath)).project.generationDraft.vae, expected)
+      await destination.service.close(tabId)
+      const reopened = await destination.service.open(tabId)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('Linked VAE Project did not reopen.')
+      }
+      assert.deepEqual(reopened.tab.generationDraft.vae, expected)
+      const noop = await destination.service.relinkGenerationVae(tabId, (saved) =>
+        destination.modelService.resolvePortableGenerationVae(saved),
+      )
+      assert.equal(noop.dirty, false)
+      assert.equal(noop.canUndo, false)
+      await destination.service.close(tabId)
+    })
+  })
+})
+
+test('external VAE authoring preserves unsupported saved families but refuses relink before resolving them', async () => {
+  for (const invalid of [{ baseModelFamily: 'anima' as const }, { baseModelFamily: null }]) {
+    await withService(async ({ dataRoot, modelRepository, modelService, repository, service }) => {
+      const installed = await publishExternalProjectVae(modelRepository, dataRoot)
+      const ref = await modelService.resolveGenerationVae(installed.resourceId, installed.versionId)
+      const savedRef = { ...ref, ...invalid }
+      const document = createEmptyProjectDocumentV1({ title: 'Unsupported saved VAE' })
+      document.generationDraft.vae = savedRef
+      const incomingPath = path.join(dataRoot, 'unsupported-vae.igs')
+      const placeholders = await readProjectPlaceholders(placeholdersDir, 'empty')
+      await saveIgsPackage(incomingPath, {
+        assets: {},
+        preview: { ...placeholders, rect: null, status: 'empty' },
+        project: document,
+      })
+      const selection = await service.selectImport(incomingPath)
+      assert.equal(selection.kind, 'transfer-required')
+      if (selection.kind !== 'transfer-required') {
+        throw new Error('Expected a saved unsupported VAE import choice.')
+      }
+      const imported = await service.finishImport(selection.importId, 'copy')
+      assert.equal(imported.result.kind, 'opened')
+      if (imported.result.kind !== 'opened') {
+        throw new Error('Unsupported VAE must not prevent opening a Project.')
+      }
+      const tabId = imported.result.tab.id
+      assert.deepEqual(imported.result.tab.generationDraft.vae, savedRef)
+      let resolverCalled = false
+      await assert.rejects(
+        service.relinkGenerationVae(tabId, async () => {
+          resolverCalled = true
+          return ref
+        }),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      assert.equal(resolverCalled, false)
+      assert.equal(service.getOpenTabs()[0].dirty, false)
+      assert.deepEqual(service.getOpenTabs()[0].generationDraft.vae, savedRef)
+      assert.equal((await service.setGenerationVae(tabId, null)).generationDraft.vae, null)
+      await service.save(tabId)
+      const filePath = (await repository.getProject(tabId))!.canonicalPath
+      assert.equal((await readIgsPackage(filePath)).project.generationDraft.vae, null)
+      await service.close(tabId)
+    })
+  }
+})
+
+for (const operation of ['select', 'relink'] as const) {
+  for (const change of ['edit', 'undo', 'close-reopen', 'newer-selection'] as const) {
+    test(`external VAE ${operation} rejects a late verified response after ${change}`, async () => {
+      await withService(
+        async ({ dataRoot, modelRepository, modelService, repository, service }) => {
+          const installed = await publishExternalProjectVae(modelRepository, dataRoot)
+          const ref = await modelService.resolveGenerationVae(
+            installed.resourceId,
+            installed.versionId,
+          )
+          const created = await service.create({ height: 64, title: 'Late VAE', width: 64 })
+          if (operation === 'relink' || change === 'edit' || change === 'close-reopen') {
+            await service.setGenerationVae(created.id, () =>
+              modelService.resolveGenerationVae(installed.resourceId, installed.versionId),
+            )
+            await service.save(created.id)
+          }
+          const filePath = (await repository.getProject(created.id))!.canonicalPath
+          const savedBytes = await readFile(filePath)
+          let release!: () => void
+          let signalStarted!: () => void
+          const gate = new Promise<void>((resolve) => {
+            release = resolve
+          })
+          const started = new Promise<void>((resolve) => {
+            signalStarted = resolve
+          })
+          const verify = async () => {
+            signalStarted()
+            await gate
+            return modelService.resolveGenerationVae(installed.resourceId, installed.versionId)
+          }
+          const pending =
+            operation === 'select'
+              ? service.setGenerationVae(created.id, verify)
+              : service.relinkGenerationVae(created.id, verify)
+          await started
+          if (change === 'edit' || change === 'undo') {
+            await service.updateGenerationDraft(created.id, {
+              kind: 'positive-prompt',
+              text: 'newer edit',
+            })
+            if (change === 'undo') {
+              await service.undo(created.id)
+            }
+          } else if (change === 'close-reopen') {
+            await service.close(created.id)
+            assert.equal((await service.open(created.id)).kind, 'opened')
+          } else {
+            const newer = await publishExternalProjectVae(modelRepository, dataRoot, {
+              modelId: 7100,
+              versionId: 7101,
+            })
+            await service.setGenerationVae(created.id, () =>
+              modelService.resolveGenerationVae(newer.resourceId, newer.versionId),
+            )
+          }
+          const newerTab = structuredClone(service.getOpenTabs()[0])
+          release()
+          await assert.rejects(pending, { code: 'EDIT_CONFLICT' })
+          assert.deepEqual(service.getOpenTabs()[0], newerTab)
+          assert.deepEqual(await readFile(filePath), savedBytes)
+          if (change === 'edit') {
+            assert.deepEqual(service.getOpenTabs()[0].generationDraft.vae, ref)
+            assert.equal(service.getOpenTabs()[0].generationDraft.positivePrompt.text, 'newer edit')
+          }
+          await service.save(created.id)
+          await service.close(created.id)
+        },
+      )
+    })
+  }
+}
+
 test('VAE Precision typed edits preserve explicit policy through real shadow recovery, Undo, Save and reopen', async () => {
   await withService(async ({ dataRoot, repository, service, shadow }) => {
     const created = await service.create({ height: 64, title: 'VAE precision storage', width: 64 })

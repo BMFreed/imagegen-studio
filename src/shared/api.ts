@@ -83,6 +83,7 @@ export const ipcChannels = {
     redo: 'projects:redo',
     relinkGenerationLora: 'projects:relink-generation-lora',
     relinkGenerationModel: 'projects:relink-generation-model',
+    relinkGenerationVae: 'projects:relink-generation-vae',
     removeGenerationLora: 'projects:remove-generation-lora',
     resolveRecovery: 'projects:resolve-recovery',
     retryGenerationJob: 'projects:retry-generation-job',
@@ -92,6 +93,7 @@ export const ipcChannels = {
     sealPromptHistory: 'projects:seal-prompt-history',
     selectImport: 'projects:select-import',
     setGenerationModel: 'projects:set-generation-model',
+    setGenerationVae: 'projects:set-generation-vae',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
     undo: 'projects:undo',
@@ -353,6 +355,7 @@ export interface ProjectApi {
     identity: ProjectLoraIdentity,
   ) => Promise<ApiResult<ProjectTab>>
   relinkGenerationModel: (tabId: string) => Promise<ApiResult<ProjectTab>>
+  relinkGenerationVae: (tabId: string) => Promise<ApiResult<ProjectTab>>
   removeGenerationLora: (
     tabId: string,
     identity: ProjectLoraIdentity,
@@ -371,6 +374,10 @@ export interface ProjectApi {
   sealPromptHistory: (tabId: string, historyGroupId?: string) => Promise<ApiResult<ProjectTab>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setGenerationModel: (
+    tabId: string,
+    selection: ProjectGenerationModelSelection,
+  ) => Promise<ApiResult<ProjectTab>>
+  setGenerationVae: (
     tabId: string,
     selection: ProjectGenerationModelSelection,
   ) => Promise<ApiResult<ProjectTab>>

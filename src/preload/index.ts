@@ -789,6 +789,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.relinkGenerationLora, [tabId, identity], isProjectTab),
     relinkGenerationModel: (tabId) =>
       invokeProject(ipcChannels.projects.relinkGenerationModel, [tabId], isProjectTab),
+    relinkGenerationVae: (tabId) =>
+      invokeProject(ipcChannels.projects.relinkGenerationVae, [tabId], isProjectTab),
     removeGenerationLora: (tabId, identity) =>
       invokeProject(ipcChannels.projects.removeGenerationLora, [tabId, identity], isProjectTab),
     resolveRecovery: (projectId, decision) =>
@@ -818,6 +820,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
     setGenerationModel: (tabId, selection) =>
       invokeProject(ipcChannels.projects.setGenerationModel, [tabId, selection], isProjectTab),
+    setGenerationVae: (tabId, selection) =>
+      invokeProject(ipcChannels.projects.setGenerationVae, [tabId, selection], isProjectTab),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
     undo: (tabId) => invokeProject(ipcChannels.projects.undo, [tabId], isProjectTab),

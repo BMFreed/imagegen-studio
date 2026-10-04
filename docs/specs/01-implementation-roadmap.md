@@ -861,7 +861,9 @@ LoRA для обеих семейств.
   как последний фактический completed seed данного Project. Добавить
   textual-inversion embeddings через текстовый prompt + sidecar refs и
   `clipSkip` согласно capability matrix: неподдерживаемая моделью опция
-  отвергается до enqueue, а не игнорируется.
+  отвергается до enqueue, а не игнорируется. Для текущего Invoke-like
+  Illustrious pipeline пользовательский CLIP Skip не применяется; для Anima
+  с Qwen3/T5 он также неприменим. Это проверка отказа, не недостающий селектор.
 - Для Anima реализовать отдельный loader и проверку rectified-flow структуры,
   точной совместимости Qwen3 encoder/VAE и family capabilities перед enqueue.
   Установка любого поддерживаемого CivitAI Anima `.safetensors` checkpoint с
@@ -899,14 +901,27 @@ LoRA для обеих семейств.
 combination отвергаются до worker. Seed `Reuse` и accepted provenance
 сохраняют точный фактический результат после reopen; comparison не предлагает
 Apply/Recall. Реальные jobs проверяют применимые `cfgRescale`, `vaePrecision`,
-`predictionType=v_prediction`, `clipSkip`, embeddings и batch expansion с
+`predictionType=v_prediction`, embeddings и batch expansion с
 фактическим seed scheduling; cursor `Reuse` переживает crash/reopen и не
-подменяется случайным seed. Anima weighting проходит actual editor → typed
+подменяется случайным seed. Сохранённый неподдерживаемый `clipSkip` явно
+отвергается до enqueue. Anima weighting проходит actual editor → typed
 compiler → real T5 tokenizer → conditioning/LLM Adapter → denoising: weight `1`
 эквивалентен plain text при том же seed, non-neutral attention влияет на
 conditioning/output. Проверить nested explicit weights, saved editor suffixes,
 Unicode offsets и isolated semantic mutations по supporting contract.
 Это завершает первый вертикальный срез, но не весь MVP.
+
+**External VAE resource/authoring checkpoint (04.10.2026):**
+[Managed external VAE](../engineering/phase-2c-external-vae-authoring-research.md)
+добавляет CivitAI `.safetensors` VAE с source label `Illustrious` или `SDXL 1.0`
+как компонент Illustrious. Это не расширяет список checkpoint/LoRA семейств.
+Exact selection, Reset to Embedded и portable relink проходят main verification,
+Undo/shadow/Save/reopen. Смена Default не заменяет сохранённую версию; late
+select/relink проверяет монотонный document epoch, включая edit → Undo.
+Anima сохраняет закреплённый VAE. Installation integrity не является ML
+qualification: external VAE по-прежнему явно блокирует Generate до следующего
+frozen-worker checkpoint. Embeddings, Anima, полный pipeline и публичная
+готовность остаются открытыми.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает
@@ -918,7 +933,7 @@ peers сохраняют Auto без потери durable поля; manual preci
 policy; явные precision управляют реальными encode/decode без изменения
 UNet/CLIP. Non-finite VAE не превращается в успешный чёрный PNG. Actual tiny
 CPU/NVIDIA и native Electron с controlled peer имеют раздельные evidence.
-External VAE, CLIP Skip, embeddings, Anima, остальные pipeline modes,
+External VAE inference, embeddings, Anima, остальные pipeline modes,
 result-to-preset, Smart Patch и release runtime остаются открытыми; фазы
 2B/2C и публичные promises не объявляются завершёнными.
 

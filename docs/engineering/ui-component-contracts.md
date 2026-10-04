@@ -126,6 +126,17 @@ while Generate independently refuses unsupported manual precision. Unsupported
 families disable the selector with an explanation; Reset remains reachable.
 [Evidence](./phase-2c-vae-precision-research.md).
 
+The `vae` slot contains production `ProjectVaePicker`: saved exact metadata is
+read-only input; `select` sends only IDs or null, `relink` requests main's exact
+portable check. It is a command adapter, not a writable metadata v-model.
+Public `NSelect` uses `renderLabel` for the existing rich resource option and
+`renderTag` for a compact selected name/version, with generated `inputProps`
+label id. Default badges never drive automatic selection. Reset uses the shared
+compact `IconButton` and remains available without a catalog or applicable
+family; Anima's pinned VAE is explained. Missing/corrupt/portable states provide
+diagnostics and Model Manager/relink. External VAE authoring explicitly keeps
+Generate disabled until ML qualification. [Evidence](./phase-2c-external-vae-authoring-research.md).
+
 ## Production Denoising Strength
 
 Production `ProjectDenoisingStrength` использует те же `LabeledControl`/`IconButton`

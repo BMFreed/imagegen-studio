@@ -115,9 +115,12 @@ is available; structural qualification and Anima inference are still open.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
-insertion is implemented. Production denoising-strength, external VAE,
-VAE precision, clip skip and Smart Patch-owned draft controls remain open.
-CFG Rescale is connected by the later checkpoint below.
+insertion is implemented. The later checkpoints below connect production
+denoising strength, VAE precision, CFG Rescale and external VAE authoring.
+External VAE inference and Smart Patch-owned draft controls remain open.
+User-selectable CLIP Skip is not applicable to the current Invoke-like Illustrious
+pipeline or to Anima's Qwen3/T5 encoders; a saved unsupported value is refused
+before enqueue.
 The chosen Seed policy is a request for a future job, not a completed seed.
 Main now reads the document-scoped operational last-actual-seed cursor before
 internal Prepare/enqueue, falling back to the saved `.igs` snapshot when no
@@ -203,7 +206,33 @@ Add stores the copied policy in immutable portable metadata, and comparison
 uses that record after Save/reopen. Historical results without precision remain
 Unavailable. FP16 non-finite tensors fail before a successful PNG can be published.
 FP32 uses more memory; this does not establish a supported maximum GPU resolution.
-External VAE selection and CLIP Skip remain unsupported production inputs.
+External VAE inference remains unsupported; selection is connected by the
+authoring checkpoint below. CLIP Skip remains an explicitly refused input,
+not a pending user control for either MVP family.
+
+## Production external VAE authoring checkpoint
+
+[External VAE authoring evidence](../../../engineering/phase-2c-external-vae-authoring-research.md)
+connects Model Manager's CivitAI VAE installation/repair to a compact exact-version
+selector inside `Generation > Advanced Options`. Eligible source labels are
+`Illustrious` and `SDXL 1.0`; the latter describes a component applicable to the
+Illustrious architecture, not a supported SDXL checkpoint family. The raw source
+label remains in library metadata. Anima continues to use its pinned companion
+VAE and does not offer an alternative selector at this checkpoint.
+
+The selector sends only resource/version IDs. Main verifies exact managed bytes
+before storing the reference. Reset stores null (`Embedded`), retaining precision
+and every other generation setting. Selection/reset/relink use Undo, recovery
+shadow and explicit Save/reopen. A library Default change never changes the saved
+exact version. Missing/corrupt resources retain their name/version and offer
+Model Manager; a unique exact portable match offers explicit relink, changing
+only local IDs. Delayed resolution rejects changes even after an edit/Undo cycle.
+
+Authoring does not qualify the external VAE for ML loading or record it in an
+accepted result. Project displays an explicit Generate restriction until the
+next frozen-worker checkpoint; main independently refuses external VAE before
+enqueue. Embedded VAE generation remains available with the existing precision
+policy. Legacy result comparison keeps an unrecorded VAE as Unavailable.
 
 ## Vue Prototype Coverage
 

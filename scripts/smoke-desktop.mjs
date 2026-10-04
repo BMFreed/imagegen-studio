@@ -1363,6 +1363,9 @@ try {
     const button = document.querySelector('button[aria-label="Hide Raster smoke layer"]')
     return button instanceof HTMLButtonElement && !button.disabled
   })
+  // The move reaches main before Naive's dropdown finishes leaving. Raw pointer input must
+  // wait for the overlay to disappear, otherwise it clicks Move down instead of the drag handle.
+  await recoveryWindow.getByRole('menu').waitFor({ state: 'hidden' })
   const sourceBox = await recoveryWindow
     .getByRole('button', { name: 'Select Raster smoke layer' })
     .boundingBox()

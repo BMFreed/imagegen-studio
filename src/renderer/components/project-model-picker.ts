@@ -86,7 +86,9 @@ export function portableModelRelinkCandidate(
     saved.civitaiModelId === null ||
     saved.civitaiVersionId === null ||
     saved.civitaiFileId === null ||
-    (saved.kind !== 'checkpoint' && saved.kind !== 'lora') ||
+    (saved.kind !== 'checkpoint' && saved.kind !== 'lora' && saved.kind !== 'vae') ||
+    (saved.kind === 'vae' &&
+      (saved.baseModelFamily !== 'illustrious' || saved.predictionType !== null)) ||
     (saved.kind === 'checkpoint' && saved.baseModelFamily === null)
   ) {
     return null
@@ -108,7 +110,7 @@ export function portableModelRelinkCandidate(
     )
   const match = matches.length === 1 ? matches[0]! : null
   return match &&
-    (saved.kind === 'lora'
+    (saved.kind === 'lora' || saved.kind === 'vae'
       ? match.version.fileStatus === 'ready'
       : selectableVersion(match.version)) &&
     (match.resource.id !== saved.localModelId || match.version.id !== saved.localVersionId)

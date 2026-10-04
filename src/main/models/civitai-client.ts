@@ -209,7 +209,8 @@ export class CivitaiClient {
     return {
       ...common,
       baseModel: version.output.baseModel ?? (type === 'upscaler' ? 'Any' : ''),
-      baseModelFamily: type === 'upscaler' ? null : baseModelFamily(version.output.baseModel ?? ''),
+      baseModelFamily:
+        type === 'upscaler' ? null : baseModelFamily(version.output.baseModel ?? '', type),
       description: model.output.description ?? null,
       files,
       kind: 'select-file',
@@ -323,7 +324,18 @@ function resourceType(input: string): ModelResourceType {
   return value
 }
 
-function baseModelFamily(input: string): BaseModelFamily {
+function baseModelFamily(input: string, type: ModelResourceType): BaseModelFamily {
+  // A standalone SDXL VAE is applicable to Illustrious; this never admits an SDXL checkpoint.
+  // Retain the raw source label in the preview and installed version metadata.
+  if (type === 'vae') {
+    if (input === 'Illustrious' || input === 'SDXL 1.0') {
+      return 'illustrious'
+    }
+    throw new CivitaiClientError(
+      'CIVITAI_UNSUPPORTED_FAMILY',
+      'Standalone VAE installation supports only Illustrious and SDXL 1.0 components. Anima uses its pinned VAE.',
+    )
+  }
   if (input === 'Illustrious') {
     return 'illustrious'
   }

@@ -238,6 +238,62 @@ test('checkpoint imports still exclude pickle files and unsupported model famili
   )
 })
 
+test('standalone VAE preview maps only Illustrious and SDXL 1.0 applicability while retaining source labels', async () => {
+  for (const baseModel of ['Illustrious', 'SDXL 1.0']) {
+    const { fetcher } = fixtureTransport({ ...version, baseModel }, { ...model, type: 'VAE' })
+    const preview = await new CivitaiClient(fetcher).previewImport(
+      'https://civitai.com/models/42?modelVersionId=7',
+      'token',
+    )
+    assert.equal(preview.kind, 'select-file')
+    if (preview.kind === 'select-file') {
+      assert.equal(preview.resourceType, 'vae')
+      assert.equal(preview.baseModelFamily, 'illustrious')
+      assert.equal(preview.baseModel, baseModel)
+      assert.deepEqual(
+        preview.files.map((file) => file.name),
+        ['full.safetensors', 'pruned.safetensors'],
+      )
+    }
+  }
+  for (const baseModel of ['Anima', 'SD 1.5', 'SDXL', 'Pony', 'Other', '', null]) {
+    const { fetcher } = fixtureTransport({ ...version, baseModel }, { ...model, type: 'VAE' })
+    await assert.rejects(
+      new CivitaiClient(fetcher).previewImport(
+        'https://civitai.com/models/42?modelVersionId=7',
+        'token',
+      ),
+      { code: 'CIVITAI_UNSUPPORTED_FAMILY' },
+      String(baseModel),
+    )
+  }
+})
+
+test('VAE applicability mapping never admits SDXL 1.0 checkpoints, LoRAs or embeddings', async () => {
+  for (const type of ['Checkpoint', 'LORA', 'TextualInversion']) {
+    const { fetcher } = fixtureTransport({ ...version, baseModel: 'SDXL 1.0' }, { ...model, type })
+    await assert.rejects(
+      new CivitaiClient(fetcher).previewImport(
+        'https://civitai.com/models/42?modelVersionId=7',
+        'token',
+      ),
+      { code: 'CIVITAI_UNSUPPORTED_FAMILY' },
+      type,
+    )
+  }
+  const { fetcher } = fixtureTransport(
+    { ...version, files: [{ ...version.files[0], name: 'pickle-vae.pt' }] },
+    { ...model, type: 'VAE' },
+  )
+  await assert.rejects(
+    new CivitaiClient(fetcher).previewImport(
+      'https://civitai.com/models/42?modelVersionId=7',
+      'token',
+    ),
+    { code: 'CIVITAI_NO_SUPPORTED_FILE' },
+  )
+})
+
 test('mismatched version or untrusted file URL fails before installation', async () => {
   const mismatch = fixtureTransport({ ...version, modelId: 99 })
   await assert.rejects(
