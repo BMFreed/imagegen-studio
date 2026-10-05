@@ -55,11 +55,25 @@ offsets to character weights, applying them once after the native adapter.
 Both signs, Unicode, special tokens, truncation and precision/finite guards
 have native tests and semantic mutations; a separate trained-weight CPU probe
 confirms conditioning behavior. Asset licenses/notice ship in the wheel.
-No Anima worker command/capability is advertised. Family-aware editor handoff,
-denoising/LoRA, queue/Retry/provenance, GPU output and release runtime remain open.
-The small native transformer-consumer test also needs torchvision; its qualified
-development environment is documented in the research note. That dependency
-still needs release qualification when the denoising path is implemented.
+No Anima worker command/capability is advertised. Internal default Euler execution
+follows below; family-aware editor handoff, LoRA, other schedulers/options,
+queue/Retry/provenance and release runtime remain open.
+
+The [Anima Euler foundation](../docs/engineering/phase-2c-anima-euler-research.md)
+adds `generate_anima_euler` in `anima_euler.py`, consuming TS's immutable
+`anima-euler-denoising-v1` plan. It performs the original raw-sigma Euler/CFG loop,
+native Wan posterior sampling and per-channel encode/decode normalization, with
+scoped pre-clamp finite guards and odd-latent zero padding/cropping. Source pixels
+normalize in F32 before casting. Independent CPU seed streams, including the
+versioned img2img posterior seed, preserve replay and strength-one txt2img noise.
+Strength zero uses only VAE encode/decode. The helper returns exact-size sRGB
+pixels; it does not publish a candidate, update a Project or expose a command.
+The optional inference extra now pins torchvision 0.22.1, needed by native Cosmos
+padding-mask resize, and the helper checks that version. Pillow-only defaults
+remain unchanged. Native tests and real trained RTX 4080 controls qualify
+256×256/three-step execution separately from UI/queue or release readiness.
+Other Anima schedulers, LoRA, advanced options, cache/tiling memory management
+and full output-size/release qualification remain pending before admission.
 
 `python -I -m imagegen_worker.inference_main` is a distinct JSON-lines process. It sends `ready` only after Linux, Python 3.12, NVIDIA CUDA, exact tested dependency versions and an **explicit, complete local** SDXL config pass startup qualification. Set `IGS_SDXL_CONFIG_DIR` to a directory containing the pinned component configuration from [`stabilityai/stable-diffusion-xl-base-1.0` revision `462165984030d82259a11f4367a4eed129e94a7b`](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/tree/462165984030d82259a11f4367a4eed129e94a7b). The worker checks the complete 17-file set and each SHA-256 before ready, again before every job and after single-file loading. Extra files, including tokenizer overrides, are rejected. These files are **not** bundled; the runtime installer must deliver them after the distribution/licensing decision. Missing/changed config, missing packages, incompatible versions or unavailable CUDA means exit code 78 without a `ready` message.
 

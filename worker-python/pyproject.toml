@@ -17,6 +17,7 @@ inference = [
   "peft==0.21.2",
   "safetensors==0.8.0",
   "torch==2.7.1",
+  "torchvision==0.22.1",
   "torchsde==0.2.6",
   "transformers==5.5.4",
 ]

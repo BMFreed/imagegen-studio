@@ -105,7 +105,10 @@ ANIMA_BASE_ARCHITECTURE = _AnimaArchitecture(
             "mlp_ratio": 4.0,
             "text_embed_dim": 1024,
             "adaln_lora_dim": 256,
-            "max_size": (1, 240, 240),
+            # Native Cosmos bounds its nonlearned RoPE sequence, unlike Invoke's
+            # dynamic arange. Cover the 2048px envelope / Wan compression 8;
+            # existing coordinate frequencies and every state tensor stay identical.
+            "max_size": (1, 256, 256),
             "patch_size": (1, 2, 2),
             "rope_scale": (1.0, 4.0, 4.0),
             "concat_padding_mask": True,

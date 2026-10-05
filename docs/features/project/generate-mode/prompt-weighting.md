@@ -20,9 +20,12 @@ The [05.10.2026 conditioning foundation](../../../engineering/phase-2c-anima-con
 now implements the typed TS compiler, strict Python compiled-input validation,
 bundled offline tokenizers and actual native Qwen3/AnimaTextConditioner path for
 both signs. Native tests and a separate trained-weight CPU probe verify weights
-once after adapter projection/norm. Anima Generate remains unavailable: editor
-handoff, frozen queue/Retry/provenance, denoising, LoRA, GPU output and release
-runtime qualification still need implementation.
+once after adapter projection/norm. The subsequent
+[Euler execution foundation](../../../engineering/phase-2c-anima-euler-research.md)
+verifies weighted native denoising through trained NVIDIA pixels for both signs,
+including plain/weight-one equality and fixed-seed replay at 256×256. Anima
+Generate remains unavailable: editor handoff, frozen queue/Retry/provenance,
+LoRA, other schedulers/options and release qualification still need implementation.
 
 Reference: [InvokeAI PR #9506](https://github.com/invoke-ai/InvokeAI/pull/9506),
 checked open/unmerged at head
@@ -151,4 +154,5 @@ PR source/status are retained in
 No ImageGen Studio Anima inference tests were executed at that checkpoint.
 The subsequent conditioning research note records executed compiler/native
 tests, isolated mutations, bundled-wheel verification and trained CPU evidence.
-These do not prove the required GPU generation or public promise readiness.
+The separate Euler foundation adds bounded real GPU output evidence; full
+Anima admission and public promise readiness remain open.

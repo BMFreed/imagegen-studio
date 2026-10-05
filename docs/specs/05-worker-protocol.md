@@ -318,7 +318,8 @@ type WorkerMessage =
   suffixes и nested explicit weights покрываются compatibility tests; отсутствие
   поддержки не допускает silent uniform weights. Внутренние compiler/tokenizer/
   conditioning helpers реализованы отдельным checkpoint ниже; Anima generation
-  request, frozen queue/Retry interpretation и denoising пока не подключены.
+  request и frozen queue/Retry interpretation пока не подключены. Internal
+  default Euler denoising имеет отдельный checkpoint ниже.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
 - Для raster import worker применяет EXIF Orientation, затем преобразует pixels
   из встроенного ICC в рабочее sRGB. Он возвращает исходные ICC bytes отдельно
@@ -367,8 +368,9 @@ bundle; Python independently verifies canonical no-follow snapshots, hashes,
 sizes, complete keys/shapes, supported finite tensors and strict loading.
 Compatible custom checkpoint hashes are not an allowlist. This adds no wire
 command, ready capability or generation route. The next conditioning foundation
-below implements weighting/tokenizers; denoising, LoRA and frozen Anima
-job/provenance remain open. Existing Anima refusal and worker 0.10.0 stay unchanged.
+below implements weighting/tokenizers; its following Euler foundation implements
+internal denoising. LoRA and frozen Anima job/provenance remain open. Existing
+Anima refusal and worker 0.10.0 stay unchanged.
 
 ## Original Anima compiled conditioning foundation
 
@@ -383,10 +385,30 @@ offsets and neutral special tokens. Weights apply once to post-adapter rows,
 preserving its zero-padded tail. Truncation is observable; invalid metadata,
 numeric precision loss or non-finite tensors fail explicitly.
 
-Native CPU and actual trained-weight conditioning evidence is separate from
-image generation. Family-aware editor adjustment, denoising/LoRA, durable
-queue/Retry/provenance and Linux/NVIDIA release qualification are mandatory
-before admission; ready capabilities and existing Anima refusal are unchanged.
+Native CPU and actual trained-weight conditioning evidence is separate from the
+following trained-image checkpoint. Family-aware editor adjustment, LoRA, other
+schedulers/options, durable queue/Retry/provenance and Linux/NVIDIA release
+qualification remain mandatory before admission.
+
+## Original Anima internal Euler execution
+
+The [Euler foundation](../engineering/phase-2c-anima-euler-research.md) consumes
+internal `anima-euler-denoising-v1` plans for txt2img or opaque img2img.
+TS captures fixed-shift-3 sigmas, exact strength clipping, total evaluations,
+seed and independent posteriorSeed. Python validates/captures the plan and both
+prompts/source pixels before native calls, preserves post-adapter weighting,
+runs raw-sigma direct-flow CFG and F32 Euler accumulation with per-step dtype
+restoration, and uses original Wan per-channel normalization and seeded sampling.
+Native Cosmos is explicitly zero-padded/cropped for odd latent dimensions;
+VAE hooks reject non-finite output before native clamp hides it. Progress reports
+only completed evaluations; strength zero emits none and traverses VAE only.
+
+The helper returns pixels without filesystem publication or queue/candidate
+side effects. Actual trained NVIDIA evidence covers 256×256/three-step controls,
+not full sizes, LoRA, other schedulers/options or release installation. Matching
+torchvision 0.22.1 is pinned in the inference extra and checked by this helper.
+No Anima command/capability, public admission, durable request/provenance field
+or worker version change is added by this internal checkpoint.
 
 ## Qualified Illustrious CFG Rescale checkpoint
 
