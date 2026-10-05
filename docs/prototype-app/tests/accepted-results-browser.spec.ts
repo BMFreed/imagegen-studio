@@ -15,8 +15,8 @@ test('saved accepted results keep 50-row list scrollable and page without losing
 }) => {
   await page.setViewportSize({ height: 900, width: 1440 })
   await page.goto('/?prototype=accepted-results')
-  const dialog = page.getByRole('dialog', { name: 'Saved accepted results' })
-  const list = dialog.getByRole('list', { name: 'Saved accepted results' })
+  const dialog = page.getByRole('dialog', { name: 'Saved generations' })
+  const list = dialog.getByRole('list', { name: 'Saved generations' })
   await expect(dialog).toBeVisible()
   await expect(list.getByRole('listitem')).toHaveCount(50)
   await expect(dialog.getByText('50 shown · 57 saved')).toBeVisible()
@@ -53,7 +53,7 @@ test('saved accepted results keep 50-row list scrollable and page without losing
 
   await dialog.getByRole('button', { name: 'Close' }).click()
   await expect(dialog).toBeHidden()
-  await page.getByRole('button', { name: 'Open saved accepted results' }).click()
+  await page.getByRole('button', { name: 'Open saved generations' }).click()
   await expect(dialog).toBeVisible()
   await expect(list.getByRole('listitem')).toHaveCount(50)
   await expect(dialog.getByText('50 shown · 57 saved')).toBeVisible()
@@ -78,9 +78,9 @@ test('compact saved-results browser keeps the footer reachable and the list cont
 }) => {
   await page.setViewportSize({ height: 800, width: 1280 })
   await page.goto('/?prototype=accepted-results')
-  const dialog = page.getByRole('dialog', { name: 'Saved accepted results' })
+  const dialog = page.getByRole('dialog', { name: 'Saved generations' })
   await expect(dialog).toBeVisible()
-  const list = dialog.getByRole('list', { name: 'Saved accepted results' })
+  const list = dialog.getByRole('list', { name: 'Saved generations' })
   await expect(list.getByRole('listitem')).toHaveCount(50)
   const boxes = await Promise.all([
     dialog.boundingBox(),
@@ -109,8 +109,8 @@ test('compact saved-results browser keeps the footer reachable and the list cont
 test('saved-results browser gives distinct empty and read-error states', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1440 })
   await page.goto('/?prototype=accepted-results&scenario=empty')
-  const dialog = page.getByRole('dialog', { name: 'Saved accepted results' })
-  await expect(dialog.getByText('No saved accepted results yet')).toBeVisible()
+  const dialog = page.getByRole('dialog', { name: 'Saved generations' })
+  await expect(dialog.getByText('No saved generations yet')).toBeVisible()
   await expect(dialog.getByText('0 shown · 0 saved')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Older results' })).toBeDisabled()
   await page.screenshot({
@@ -120,7 +120,7 @@ test('saved-results browser gives distinct empty and read-error states', async (
 
   await page.goto('/?prototype=accepted-results&scenario=error')
   await expect(
-    dialog.getByText('Saved accepted results could not be read. Try refreshing.'),
+    dialog.getByText('Saved generations could not be read. Try refreshing.'),
   ).toBeVisible()
   await expect(dialog.getByText('Results unavailable')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Older results' })).toBeDisabled()
@@ -135,11 +135,11 @@ for (const prototype of ['home', 'project'] as const) {
     page,
   }) => {
     await page.goto(`/?prototype=${prototype}`)
-    const dialog = page.getByRole('dialog', { name: 'Saved accepted results' })
+    const dialog = page.getByRole('dialog', { name: 'Saved generations' })
     await expect(dialog).toBeHidden()
-    await page.getByRole('button', { name: 'Open saved accepted results' }).click()
+    await page.getByRole('button', { name: 'Open saved generations' }).click()
     await expect(dialog).toBeVisible()
-    const list = dialog.getByRole('list', { name: 'Saved accepted results' })
+    const list = dialog.getByRole('list', { name: 'Saved generations' })
     await expect(list.getByRole('listitem')).toHaveCount(50)
     if (prototype === 'project') {
       await page.screenshot({

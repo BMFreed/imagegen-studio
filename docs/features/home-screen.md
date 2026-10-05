@@ -18,7 +18,7 @@ It lets the user:
 - open Model Manager;
 - open Preset Manager;
 - see compact generation/download activity indicators in the app chrome;
-- open the shared `Accepted results` modal and navigate to an owning saved layer
+- open the shared `Saved generations` modal and navigate to an owning saved layer
   in any indexed ready Project (see [Results](./project/generate-mode/generation-results.md#app-level-saved-accepted-result-history)).
 
 `Home` is not a marketing page, not an Invoke-like launchpad and not a reduced canvas. It is a document-management surface for a desktop creative tool.

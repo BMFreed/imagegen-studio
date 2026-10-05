@@ -2,6 +2,7 @@
 import logoUrl from '@docs-assets/brand/imagegen-studio-logo-horizontal-no-bg.svg'
 import {
   Download as DownloadIcon,
+  Photo as ImageIcon,
   ListDetails as ListDetailsIcon,
   Minus as MinusIcon,
   Settings as SettingsIcon,
@@ -133,12 +134,14 @@ function handleMenuSelect(key: string) {
     <div class="menu-right">
       <NButton
         v-if="acceptedResultsAvailable"
-        aria-label="Open saved accepted results"
+        aria-label="Open saved generations"
         quaternary
         size="small"
+        title="Generated images saved in your projects"
         @click="$emit('acceptedResults')"
       >
-        Accepted results
+        <template v-slot:icon><NIcon :component="ImageIcon" :size="18" /></template>
+        Saved generations
       </NButton>
       <IconButton
         :badge="{ value: queueBadge || undefined, dot: true }"

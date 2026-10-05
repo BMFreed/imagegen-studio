@@ -192,7 +192,7 @@ Boards/gallery не показываются как постоянная бок�
 - compact queue/download activity buttons в верхнем app chrome;
 - центральная рабочая область;
 - правая панель параметров для выбранного объекта внутри Project;
-- `Accepted results` в app chrome открывает отдельную общую модалку из Home и Project;
+- `Saved generations` в app chrome открывает отдельную общую модалку из Home и Project;
 - Project Layers toolbar сохраняет отдельный current-document список принятых результатов;
 - provenance/settings comparison остаётся contextual действием слоя.
 

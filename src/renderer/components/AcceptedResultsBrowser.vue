@@ -55,7 +55,7 @@ async function read(cursor: AcceptedResultHistoryCursor | null, refresh = false,
   } catch (cause) {
     if (!disposed && show.value && request === requestId) {
       readError.value =
-        cause instanceof Error ? cause.message : 'Accepted results could not be read.'
+        cause instanceof Error ? cause.message : 'Saved generations could not be read.'
     }
   } finally {
     if (request === requestId) {
@@ -100,18 +100,18 @@ function imageFailed(url: string) {
 <template>
   <NModal v-model:show="show" :maskClosable="false" @afterLeave="emit('closed')">
     <NCard
-      aria-label="Saved accepted results"
+      aria-label="Saved generations"
       class="history-modal"
       contentClass="history-card-body"
       role="dialog"
       size="small"
-      title="Accepted results"
+      title="Saved generations"
     >
       <template v-slot:header-extra>
         <NTooltip>
           <template v-slot:trigger>
             <NButton
-              aria-label="Refresh accepted results"
+              aria-label="Refresh saved generations"
               :disabled="busy || loading"
               quaternary
               size="small"
@@ -125,7 +125,7 @@ function imageFailed(url: string) {
       </template>
       <div class="history-content">
         <p class="history-description">
-          Saved results from your projects. Select a result to open its layer.
+          Generated images saved in your projects. Select an image to open its layer.
         </p>
         <NAlert v-if="navigationError" :showIcon="false" type="warning">
           {{ navigationError }}
@@ -139,7 +139,7 @@ function imageFailed(url: string) {
             v-else-if="page?.totalCount === 0"
             key="n-empty-1"
             class="history-empty"
-            description="No saved accepted results yet"
+            description="No saved generations yet"
             size="small"
           >
             <template v-slot:extra>
@@ -156,7 +156,7 @@ function imageFailed(url: string) {
           <div
             v-else
             :aria-busy="loading"
-            aria-label="Saved accepted results"
+            aria-label="Saved generations"
             class="history-list"
             role="list"
           >

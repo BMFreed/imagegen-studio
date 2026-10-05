@@ -567,7 +567,7 @@ async function openSavedAcceptedResult(reference: AcceptedResultHistoryReference
     }
     if (!available) {
       acceptedHistoryError.value =
-        'This saved result changed or is unavailable. Refresh accepted results.'
+        'This saved result changed or is unavailable. Refresh saved generations.'
       pendingAcceptedHistory = null
       return
     }

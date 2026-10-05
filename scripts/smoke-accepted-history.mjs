@@ -93,7 +93,7 @@ const report = {
 let application
 let window
 let fixtures
-const modal = () => window.getByRole('dialog', { name: 'Saved accepted results', exact: true })
+const modal = () => window.getByRole('dialog', { name: 'Saved generations', exact: true })
 const check = (name, evidence = {}) => report.checks.push({ name, ...evidence })
 async function screenshot(name) {
   const file = path.join(artifactRoot, `${name}.png`)
@@ -279,10 +279,10 @@ async function apiHistory(cursor = null) {
   return result.value
 }
 async function openModal() {
-  await window.getByRole('button', { name: 'Open saved accepted results', exact: true }).click()
+  await window.getByRole('button', { name: 'Open saved generations', exact: true }).click()
   await expect(modal()).toBeVisible()
   await expect(
-    modal().getByRole('list', { name: 'Saved accepted results', exact: true }),
+    modal().getByRole('list', { name: 'Saved generations', exact: true }),
   ).toHaveAttribute('aria-busy', 'false')
   return await apiHistory()
 }
@@ -529,12 +529,12 @@ try {
   )
   await screenshot('00-home-valid')
   const entrypointCount = await window
-    .getByRole('button', { name: 'Open saved accepted results', exact: true })
+    .getByRole('button', { name: 'Open saved generations', exact: true })
     .count()
   if (expectRed) {
     const cause = new Error(
       entrypointCount === 0
-        ? 'Feature RED: rendered Home has no Open saved accepted results entrypoint.'
+        ? 'Feature RED: rendered Home has no Open saved generations entrypoint.'
         : 'Expected feature RED was not observed: the saved accepted-results entrypoint already exists.',
     )
     cause.code =
@@ -880,7 +880,7 @@ try {
   await clickResult(fixtures.first)
   await expect(modal()).toBeVisible()
   await expect(
-    modal().getByText('This saved result changed or is unavailable. Refresh accepted results.', {
+    modal().getByText('This saved result changed or is unavailable. Refresh saved generations.', {
       exact: true,
     }),
   ).toBeVisible()
@@ -891,9 +891,9 @@ try {
   assert.deepEqual(await opened(fixtures.copy), copyBeforeStale)
   await screenshot('09-stale-closed-file-refused')
   writeFileSync(fixtures.first.path, fixtures.first.bytes)
-  await modal().getByRole('button', { name: 'Refresh accepted results', exact: true }).click()
+  await modal().getByRole('button', { name: 'Refresh saved generations', exact: true }).click()
   await expect(
-    modal().getByRole('list', { name: 'Saved accepted results', exact: true }),
+    modal().getByRole('list', { name: 'Saved generations', exact: true }),
   ).toHaveAttribute('aria-busy', 'false')
   assert.equal((await apiHistory()).totalCount, 96)
   await assertPreview(fixtures.first)

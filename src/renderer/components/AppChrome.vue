@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { NButton, NDropdown } from 'naive-ui'
+import { Photo as ImageIcon } from '@vicons/tabler'
+import { NButton, NDropdown, NIcon } from 'naive-ui'
 import { computed } from 'vue'
 
 import logoUrl from '../../../docs/assets/brand/imagegen-studio-logo-horizontal-no-bg.svg'
@@ -45,13 +46,15 @@ function selectEditAction(key: number | string) {
       </NButton>
     </NDropdown>
     <NButton
-      aria-label="Open saved accepted results"
+      aria-label="Open saved generations"
       class="chrome-menu history-button"
       quaternary
       size="small"
+      title="Generated images saved in your projects"
       @click="$emit('acceptedResults')"
     >
-      Accepted results
+      <template v-slot:icon><NIcon :component="ImageIcon" :size="18" /></template>
+      Saved generations
     </NButton>
     <NButton
       aria-label="Open Queue Manager"

@@ -176,7 +176,7 @@ async function readAcceptedResultsScenarioPage(
     return { items: [], nextCursor: null, totalCount: 0 }
   }
   if (requestedScenario === 'error') {
-    throw new Error('Saved accepted results could not be read. Try refreshing.')
+    throw new Error('Saved generations could not be read. Try refreshing.')
   }
   return readAcceptedResultsMockPage(cursor, refresh)
 }

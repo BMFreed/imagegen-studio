@@ -511,7 +511,7 @@ below. Smart Patch acceptance and full pipeline/release runtime remain open.
 
 ## App-level saved accepted-result history
 
-The app chrome `Accepted results` action opens one separate modal from both Home
+The app chrome `Saved generations` action opens one separate modal from both Home
 and Project. It lists saved generated Raster results across ready, non-trashed
 indexed Projects, newest first, with per-result preview, layer and Project names,
 copied model/version, actual seed and original generated size. Copies at different
