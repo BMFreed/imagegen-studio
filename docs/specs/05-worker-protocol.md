@@ -356,6 +356,19 @@ type WorkerMessage =
 
 Перед активацией нового environment runtime manager также запускает worker self-test без пользовательской модели. Он должен проверить imports/native extensions, выбранный device/runtime profile, минимальную tensor operation и тот же versioned handshake. Lifecycle установки, app-managed CPython и rollback описаны в [Python Runtime And Dependency Management](./07-python-runtime-management.md).
 
+## Original Anima offline loader foundation
+
+The separate [Anima loader foundation](../engineering/phase-2c-anima-qualification-research.md)
+qualifies offline loading for the original Anima Base 1.0 topology using pinned
+native CosmosTransformer3DModel, AnimaTextConditioner, Qwen3Model and
+AutoencoderKLWan. Main returns an internal exact checkpoint/linked companion
+bundle; Python independently verifies canonical no-follow snapshots, hashes,
+sizes, complete keys/shapes, supported finite tensors and strict loading.
+Compatible custom checkpoint hashes are not an allowlist. This adds no wire
+command, ready capability or generation route. Mandatory weighting, tokenizer
+qualification, conditioning/denoising, LoRA and frozen Anima job/provenance
+remain unimplemented; existing Anima refusal and worker 0.10.0 stay unchanged.
+
 ## Qualified Illustrious CFG Rescale checkpoint
 
 The narrow implemented txt2img request has optional

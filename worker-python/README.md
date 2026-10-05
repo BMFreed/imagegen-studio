@@ -35,6 +35,18 @@ The default parser also recognizes the versioned `generate-illustrious-txt2img` 
 
 ## Qualified inference development entrypoint
 
+The separate [Anima loader foundation](../docs/engineering/phase-2c-anima-qualification-research.md)
+in `inference_anima.py` loads the original Anima Base 1.0 checkpoint and exact
+pinned Qwen3/VAE companions offline. It uses native CosmosTransformer3DModel,
+AnimaTextConditioner, Qwen3Model and **AutoencoderKLWan**, explicit local configs,
+verified immutable safetensors snapshots and complete strict native state
+checks. Unknown model branches, unsafe paths, changed identities, non-finite
+weights or loading overflow fail. Small native CPU tests and a separate real
+trained-weight default-profile CPU load qualify this boundary only. No tokenizer,
+weighted conditioning, denoising, job request, ready capability or Generate route
+is added; Anima generation remains explicitly unavailable. InvokeAI source
+snapshot and exact evidence are recorded in the research note.
+
 `python -I -m imagegen_worker.inference_main` is a distinct JSON-lines process. It sends `ready` only after Linux, Python 3.12, NVIDIA CUDA, exact tested dependency versions and an **explicit, complete local** SDXL config pass startup qualification. Set `IGS_SDXL_CONFIG_DIR` to a directory containing the pinned component configuration from [`stabilityai/stable-diffusion-xl-base-1.0` revision `462165984030d82259a11f4367a4eed129e94a7b`](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/tree/462165984030d82259a11f4367a4eed129e94a7b). The worker checks the complete 17-file set and each SHA-256 before ready, again before every job and after single-file loading. Extra files, including tokenizer overrides, are rejected. These files are **not** bundled; the runtime installer must deliver them after the distribution/licensing decision. Missing/changed config, missing packages, incompatible versions or unavailable CUDA means exit code 78 without a `ready` message.
 
 The tested dependency gate is Torch `2.7.1` (CUDA build), Diffusers `0.40.0`, Transformers `5.5.4`, Accelerate `1.14.0`, safetensors `0.8.0`, torchsde `0.2.6`, Compel `2.4.0` and Pillow `12.2.0`. `uv.lock` pins an optional `inference` extra; the default derivative environment remains Pillow-only. Development inference uses `uv sync --locked --extra inference`. Release deployment still needs a verified app-owned Python/CUDA wheelhouse and exact installed-package check. The entrypoint forces Hugging Face and Transformers offline mode, supplies the verified local directory as `config=` to `StableDiffusionXLPipeline.from_single_file`, and passes `local_files_only=True`. This avoids Diffusers' possible network fallback when no explicit local config is supplied.

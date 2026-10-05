@@ -97,6 +97,16 @@ Anima использует отдельный rectified-flow pipeline и не п
 при неудаче показывает причину до enqueue. Проверка SHA-256 остаётся обязательной
 для точного файла и компонентов, но сама по себе не подтверждает совместимость.
 
+Текущий [Anima loader foundation](../engineering/phase-2c-anima-qualification-research.md)
+возвращает внутренний detached bundle из exact Project reference и linked
+dependency versions, проверяя реальные SHA/size до и после bounded complete
+header qualification. Поддерживается исходная Anima Base 1.0 topology, включая
+custom checkpoints, без checkpoint SHA allowlist; companions остаются pinned.
+Python отдельно проверяет exact snapshots и полный native state перед strict
+loading. Этот bundle ещё не является generation request и не подключён к
+Prepare/enqueue: weighting, conditioning, denoising и capability qualification
+остаются следующей работой. Anima Generate по-прежнему явно отвергается.
+
 Пользователь может управлять эксплуатационным поведением ресурса:
 
 - выбирать установленную версию для Project;

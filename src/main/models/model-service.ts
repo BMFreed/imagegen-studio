@@ -33,6 +33,7 @@ import type {
   ModelResourceType as StoredResourceType,
 } from './model-repository.js'
 
+import { qualifyAnimaCheckpoint } from './anima-checkpoint-qualification.js'
 import {
   ANIMA_BASE_1_0_CHECKPOINT,
   ANIMA_QWEN3_0_6B_ENCODER,
@@ -57,10 +58,40 @@ import {
 const PREVIEW_TTL_MS = 10 * 60_000
 const PUBLICATION_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
+/** Trusted main-process collaborators; this profile is never supplied by renderer or IPC input. */
+export interface AnimaGenerationQualificationProfile {
+  readonly checkpointQualifier: (managedPath: string) => Promise<void>
+  readonly qwen3Encoder: { readonly sha256: string; readonly sizeBytes: number }
+  readonly vae: { readonly sha256: string; readonly sizeBytes: number }
+}
+
+export interface VerifiedAnimaGenerationComponent {
+  byteSize: number
+  localModelId: string
+  localVersionId: string
+  managedPath: string
+  sha256: string
+}
+
+export interface VerifiedAnimaGenerationBundle {
+  architecture: 'anima-base-1.0'
+  checkpoint: { byteSize: number; managedPath: string; reference: ExactCheckpoint }
+  qwen3Encoder: VerifiedAnimaGenerationComponent
+  vae: VerifiedAnimaGenerationComponent
+}
+
 interface PreviewSession {
   expiresAt: number
   preview: Extract<CivitaiImportPreview, { kind: 'select-file' }>
 }
+
+type ExactCheckpoint = NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
+
+const ANIMA_GENERATION_QUALIFICATION_PROFILE: AnimaGenerationQualificationProfile = Object.freeze({
+  checkpointQualifier: qualifyAnimaCheckpoint,
+  qwen3Encoder: ANIMA_QWEN3_0_6B_ENCODER,
+  vae: ANIMA_QWEN_IMAGE_VAE,
+})
 
 export class ModelServiceError extends Error {
   constructor(
@@ -103,6 +134,7 @@ export class ModelService {
       managedPath: string,
     ) => Promise<void> = qualifySdxlCheckpoint,
     private readonly loraQualifier: (managedPath: string) => Promise<void> = qualifyIllustriousLora,
+    private readonly animaQualificationProfile: AnimaGenerationQualificationProfile = ANIMA_GENERATION_QUALIFICATION_PROFILE,
   ) {}
 
   /** Generate never silently binds a typed activation literal or guesses among exact versions. */
@@ -671,6 +703,154 @@ export class ModelService {
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>> {
     return this.resolvePortableGenerationResource(saved, 'vae')
+  }
+
+  /**
+   * Qualify one exact Anima bundle without admitting a generation job. The copied Project reference
+   * retains authored labels; dependency paths come only from its installed links.
+   */
+  async resolveVerifiedGenerationAnimaBundleForPlan(
+    inputSaved: ExactCheckpoint,
+  ): Promise<VerifiedAnimaGenerationBundle> {
+    const saved = structuredClone(inputSaved)
+    if (saved.kind !== 'checkpoint') {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The Project resource is not a checkpoint.',
+      )
+    }
+    if (saved.baseModelFamily !== 'anima') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'This qualification requires an Anima checkpoint.',
+      )
+    }
+    if (saved.predictionType !== null) {
+      throw new ModelServiceError(
+        'MODEL_PREDICTION_UNSUPPORTED',
+        'Anima does not use an SDXL prediction type.',
+      )
+    }
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuid.test(saved.localModelId) || !uuid.test(saved.localVersionId)) {
+      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
+    }
+    const installed = await this.repository.listInstalled()
+    const resource = installed.find((item) => item.id === saved.localModelId)
+    const version = resource?.versions.find((item) => item.id === saved.localVersionId)
+    if (
+      resource?.type !== 'checkpoint' ||
+      resource.source.kind !== 'civitai' ||
+      !version ||
+      version.civitaiFileId === null ||
+      version.civitaiVersionId === null
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_UNAVAILABLE',
+        'This Anima checkpoint version is not installed.',
+      )
+    }
+    if (version.baseModelFamily !== 'anima') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'The installed checkpoint is not Anima.',
+      )
+    }
+    if (version.predictionType !== null) {
+      throw new ModelServiceError(
+        'MODEL_PREDICTION_UNSUPPORTED',
+        'Anima does not use an SDXL prediction type.',
+      )
+    }
+    if (
+      saved.civitaiModelId !== resource.source.modelId ||
+      saved.civitaiVersionId !== version.civitaiVersionId ||
+      saved.civitaiFileId !== version.civitaiFileId ||
+      saved.fileSha256 !== version.file.sha256
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed Anima checkpoint no longer matches this Project exact version.',
+      )
+    }
+    const verifyCheckpoint = async (): Promise<void> => {
+      const status = await this.actualFileStatus(version.file, true)
+      if (status !== 'ready') {
+        throw new ModelServiceError(
+          status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
+          status === 'missing'
+            ? 'The selected Anima checkpoint file is missing.'
+            : 'The selected Anima checkpoint file failed verification.',
+        )
+      }
+    }
+    await verifyCheckpoint()
+    const components: Partial<Record<'qwen3_encoder' | 'vae', VerifiedAnimaGenerationComponent>> =
+      {}
+    const dependencyFiles = new Map<'qwen3_encoder' | 'vae', InstalledModelFile>()
+    for (const [role, expected] of [
+      ['qwen3_encoder', this.animaQualificationProfile.qwen3Encoder],
+      ['vae', this.animaQualificationProfile.vae],
+    ] as const) {
+      const dependencyId = version.dependencyVersionIds[role]
+      const dependencyResource = installed.find((item) =>
+        item.versions.some((candidate) => candidate.id === dependencyId),
+      )
+      const dependency = dependencyResource?.versions.find((item) => item.id === dependencyId)
+      if (
+        dependencyResource?.type !== role ||
+        dependencyResource.source.kind !== 'supported_dependency' ||
+        dependency?.baseModelFamily !== 'anima' ||
+        dependency.predictionType !== null ||
+        dependency.file.sha256 !== expected.sha256 ||
+        dependency.file.sizeBytes !== expected.sizeBytes ||
+        !(await this.isVerifiedFile(dependency.file))
+      ) {
+        throw new ModelServiceError(
+          'ANIMA_DEPENDENCY_UNAVAILABLE',
+          `The required pinned Anima ${role} is missing or failed verification.`,
+        )
+      }
+      components[role] = {
+        byteSize: dependency.file.sizeBytes,
+        localModelId: dependencyResource.id,
+        localVersionId: dependency.id,
+        managedPath: dependency.file.managedPath,
+        sha256: dependency.file.sha256,
+      }
+      dependencyFiles.set(role, dependency.file)
+    }
+    try {
+      await this.animaQualificationProfile.checkpointQualifier(version.file.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_CHECKPOINT_INCOMPATIBLE',
+        error instanceof Error
+          ? `The installed checkpoint is not a compatible Anima Base 1.0 checkpoint: ${error.message}`
+          : 'The installed checkpoint could not be structurally qualified for Anima.',
+      )
+    }
+    // Qualification awaits while another process may edit managed files. Later materialization
+    // and worker loading must independently reverify these exact identities as well.
+    await verifyCheckpoint()
+    for (const [role, file] of dependencyFiles) {
+      if (!(await this.isVerifiedFile(file))) {
+        throw new ModelServiceError(
+          'ANIMA_DEPENDENCY_UNAVAILABLE',
+          `The required pinned Anima ${role} changed during structural qualification.`,
+        )
+      }
+    }
+    return {
+      architecture: 'anima-base-1.0',
+      checkpoint: {
+        byteSize: version.file.sizeBytes,
+        managedPath: version.file.managedPath,
+        reference: saved,
+      },
+      qwen3Encoder: components.qwen3_encoder!,
+      vae: components.vae!,
+    }
   }
 
   /**
