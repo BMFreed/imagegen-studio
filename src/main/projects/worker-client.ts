@@ -208,7 +208,7 @@ export class ProjectWorkerError extends Error {
 
 export class ProjectWorkerClient {
   private static startupTail: Promise<void> = Promise.resolve()
-  private static readonly unconfirmedStartChildren = new Set<ProjectWorkerClient>()
+  private static readonly unconfirmedExitChildren = new Set<ProjectWorkerClient>()
 
   get ready(): WorkerReady {
     if (!this.readyMessage) {
@@ -287,10 +287,16 @@ export class ProjectWorkerClient {
       }
     }
   }
-  static hasUnconfirmedStartExit(): boolean {
-    return ProjectWorkerClient.unconfirmedStartChildren.size > 0
+  /** Established Main image children and failed starts share the same physical-exit fence. */
+  static hasUnconfirmedExit(): boolean {
+    return ProjectWorkerClient.unconfirmedExitChildren.size > 0
   }
-  static async retryUnconfirmedStartExit(): Promise<boolean> {
+
+  static hasUnconfirmedStartExit(): boolean {
+    return ProjectWorkerClient.hasUnconfirmedExit()
+  }
+
+  static async retryUnconfirmedExit(): Promise<boolean> {
     const preceding = ProjectWorkerClient.startupTail
     let release!: () => void
     ProjectWorkerClient.startupTail = new Promise<void>((resolve) => {
@@ -298,13 +304,17 @@ export class ProjectWorkerClient {
     })
     await preceding
     try {
-      await ProjectWorkerClient.confirmFailedStartExitsUnlocked()
+      await ProjectWorkerClient.confirmUnconfirmedExitsUnlocked()
       return true
     } catch {
       return false
     } finally {
       release()
     }
+  }
+
+  static async retryUnconfirmedStartExit(): Promise<boolean> {
+    return await ProjectWorkerClient.retryUnconfirmedExit()
   }
 
   static async start(
@@ -321,13 +331,22 @@ export class ProjectWorkerClient {
     })
     await preceding
     try {
-      await ProjectWorkerClient.confirmFailedStartExitsUnlocked()
+      await ProjectWorkerClient.confirmUnconfirmedExitsUnlocked()
       if (options.signal?.aborted) {
         throw new ProjectWorkerError('CLOSED', 'The image worker startup was canceled.')
       }
       const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
       const stagingBasePath = await canonicalDirectory(location.stagingBasePath, 'Staging base')
       const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
+      // An established image client may fail close while path inspection awaits. StartupTail
+      // serializes starts, not those established closes: confirm again at the actual spawn seam.
+      await ProjectWorkerClient.confirmUnconfirmedExitsUnlocked()
+      if (ProjectWorkerClient.hasUnconfirmedExit()) {
+        throw new ProjectWorkerError(
+          'WORKER_EXIT_UNCONFIRMED',
+          'The previous image worker has not confirmed exit.',
+        )
+      }
       if (options.signal?.aborted) {
         throw new ProjectWorkerError('CLOSED', 'The image worker startup was canceled.')
       }
@@ -350,7 +369,7 @@ export class ProjectWorkerClient {
           await client.close()
         } catch (closeError) {
           if (!client.exitObserved) {
-            ProjectWorkerClient.unconfirmedStartChildren.add(client)
+            ProjectWorkerClient.unconfirmedExitChildren.add(client)
           }
           throw closeError
         }
@@ -361,10 +380,10 @@ export class ProjectWorkerClient {
     }
   }
 
-  private static async confirmFailedStartExitsUnlocked(): Promise<void> {
-    for (const client of ProjectWorkerClient.unconfirmedStartChildren) {
+  private static async confirmUnconfirmedExitsUnlocked(): Promise<void> {
+    for (const client of ProjectWorkerClient.unconfirmedExitChildren) {
       await client.close()
-      ProjectWorkerClient.unconfirmedStartChildren.delete(client)
+      ProjectWorkerClient.unconfirmedExitChildren.delete(client)
     }
   }
 
@@ -373,6 +392,9 @@ export class ProjectWorkerClient {
       // An unconfirmed termination keeps the slot occupied; a later call can observe a delayed
       // exit or retry SIGKILL instead of inheriting a permanently rejected close promise.
       this.closePromise = null
+      if (!this.exitObserved) {
+        ProjectWorkerClient.unconfirmedExitChildren.add(this)
+      }
       throw error
     })
     await this.closePromise
@@ -630,6 +652,7 @@ export class ProjectWorkerClient {
   }
 
   private observeExit(): void {
+    ProjectWorkerClient.unconfirmedExitChildren.delete(this)
     if (this.abortListener) {
       this.abortSignal?.removeEventListener('abort', this.abortListener)
       this.abortListener = null

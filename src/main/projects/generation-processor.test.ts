@@ -487,7 +487,10 @@ test('app-owned dispatch closes the leased worker after a real queued completion
     }
     const coordinator = new GenerationDispatchCoordinator(
       runtime,
-      { runNext: async (active) => await fixture.processor.runOne(active) },
+      {
+        hasDispatchablePending: async () => await fixture.queue.hasDispatchablePending(),
+        runNext: async (active) => await fixture.processor.runOne(active),
+      },
       fixture.processor,
       path.join(fixture.root, 'scratch'),
     )
@@ -519,7 +522,10 @@ test('app-owned dispatch leaves a pending row untouched when the runtime is unav
     }
     const coordinator = new GenerationDispatchCoordinator(
       runtime,
-      { runNext: async () => assert.fail('An unavailable runtime cannot claim the queue.') },
+      {
+        hasDispatchablePending: async () => await fixture.queue.hasDispatchablePending(),
+        runNext: async () => assert.fail('An unavailable runtime cannot claim the queue.'),
+      },
       fixture.processor,
       path.join(fixture.root, 'scratch'),
     )
@@ -575,7 +581,10 @@ test('app-owned shutdown cancels its in-flight job and waits for confirmed worke
     }
     const coordinator = new GenerationDispatchCoordinator(
       runtime,
-      { runNext: async (active) => await fixture.processor.runOne(active) },
+      {
+        hasDispatchablePending: async () => await fixture.queue.hasDispatchablePending(),
+        runNext: async (active) => await fixture.processor.runOne(active),
+      },
       fixture.processor,
       path.join(fixture.root, 'scratch'),
     )

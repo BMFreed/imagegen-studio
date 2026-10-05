@@ -131,7 +131,7 @@ import {
   unavailableTemporaryRecovery,
 } from './projects/project-temporary-recovery.js'
 import { RasterImportError } from './projects/raster-import.js'
-import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
+import { ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
 const moduleDir = __dirname
@@ -285,8 +285,8 @@ if (!gotInstanceLock) {
         },
         shadow: new ProjectShadowStore(path.join(paths.dataRoot, 'autosave')),
       })
-      // The source-checkout worker handles import normalization and Project previews during
-      // development and smoke tests. A packaged release needs the Linux/NVIDIA runtime installer.
+      // Explicit development/test opt-in retains the derivatives source adapter. Production image
+      // operations resolve the installed app-owned worker independently of CUDA inference readiness.
       const developmentWorkerLocation = developmentImageWorkerLocation({
         isPackaged: app.isPackaged,
         mainDirectory: moduleDir,
@@ -294,23 +294,27 @@ if (!gotInstanceLock) {
         scratchDirectory: path.join(paths.dataRoot, 'scratch'),
         smokeOptIn: process.env.IMAGEGEN_TEST_IMAGE_WORKER,
       })
-      const targetInspectionOwner = new ProjectTargetInspectionOwner(developmentWorkerLocation)
+      const projectImageScratch = path.join(paths.dataRoot, 'scratch')
+      await mkdir(projectImageScratch, { recursive: true })
+      const resolveProjectImageWorker = async () =>
+        developmentWorkerLocation
+          ? {
+              environment: { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
+              location: developmentWorkerLocation,
+            }
+          : ((await generationRuntime?.resolveInstalledProjectWorker(projectImageScratch)) ?? null)
+      const targetInspectionOwner = new ProjectTargetInspectionOwner(resolveProjectImageWorker)
       const saveProjectWithPreview = async (tabId: string) => {
-        if (!developmentWorkerLocation) {
-          return await projectService.save(tabId)
+        const result = await targetInspectionOwner.useOptionalWorker((worker) =>
+          projectService.save(tabId, worker),
+        )
+        if (!result) {
+          throw new ProjectServiceError(
+            'PROJECT_WORKER_UNAVAILABLE',
+            'The application is closing. Save was not started.',
+          )
         }
-        let worker: ProjectWorkerClient
-        try {
-          worker = await ProjectWorkerClient.start(developmentWorkerLocation)
-        } catch {
-          console.warn('Project preview worker is unavailable; Save will use placeholders.')
-          return await projectService.save(tabId)
-        }
-        try {
-          return await projectService.save(tabId, worker)
-        } finally {
-          await worker.close().catch(() => undefined)
-        }
+        return result
       }
       const layerScratchRoot = path.join(paths.dataRoot, 'scratch', 'layer-responses')
       await mkdir(layerScratchRoot, { recursive: true })
@@ -1474,7 +1478,7 @@ if (!gotInstanceLock) {
               'Open the Project before importing an image.',
             )
           }
-          if (!developmentWorkerLocation) {
+          if (!(await resolveProjectImageWorker())) {
             throw new ProjectServiceError(
               'PROJECT_WORKER_UNAVAILABLE',
               'Set up the image runtime before importing a Raster Layer.',
@@ -1488,17 +1492,16 @@ if (!gotInstanceLock) {
           if (selection.canceled || selection.filePaths.length !== 1) {
             return null
           }
-          await mkdir(developmentWorkerLocation.stagingBasePath, { recursive: true })
-          const worker = await ProjectWorkerClient.start(developmentWorkerLocation)
-          try {
-            return await projectService.importRasterImage(
-              tabId as string,
-              selection.filePaths[0],
-              worker,
+          const result = await targetInspectionOwner.useWorker((worker) =>
+            projectService.importRasterImage(tabId as string, selection.filePaths[0], worker),
+          )
+          if (!result) {
+            throw new ProjectServiceError(
+              'PROJECT_WORKER_UNAVAILABLE',
+              'The image worker is unavailable. The Project was not changed.',
             )
-          } finally {
-            await worker.close()
           }
+          return result
         },
       )
       registerProjectHandler(ipcChannels.projects.save, oneProjectId, (tabId) =>
@@ -1508,26 +1511,26 @@ if (!gotInstanceLock) {
         ipcChannels.projects.rebuildPreview,
         oneProjectId,
         async (projectId) => {
-          if (!developmentWorkerLocation) {
-            throw new ProjectServiceError(
-              'PROJECT_WORKER_UNAVAILABLE',
-              'Set up the image runtime before rebuilding a Project preview.',
-            )
-          }
-          let worker: ProjectWorkerClient
           try {
-            worker = await ProjectWorkerClient.start(developmentWorkerLocation)
-          } catch {
+            const result = await targetInspectionOwner.useWorker((worker) =>
+              projectService.rebuildPreview(projectId as string, worker),
+            )
+            if (result) {
+              return result
+            }
+          } catch (error) {
+            if (!(error instanceof ProjectWorkerError)) {
+              throw error
+            }
             throw new ProjectServiceError(
               'PROJECT_WORKER_UNAVAILABLE',
               'The image worker could not start. The saved Project was not changed.',
             )
           }
-          try {
-            return await projectService.rebuildPreview(projectId as string, worker)
-          } finally {
-            await worker.close().catch(() => undefined)
-          }
+          throw new ProjectServiceError(
+            'PROJECT_WORKER_UNAVAILABLE',
+            'Set up the image runtime before rebuilding a Project preview.',
+          )
         },
       )
       registerProjectHandler(ipcChannels.projects.getCloseImpact, oneProjectId, (tabId) =>

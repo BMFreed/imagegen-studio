@@ -4,7 +4,7 @@ import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-sche
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, pbkdf2, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -48,6 +48,9 @@ async function fakeWorker(directory: string): Promise<string> {
   const script = String.raw`#!${process.execPath}
 const mode = process.env.FAKE_MODE
 if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker') process.exit(21)
+if (process.env.FAKE_SPAWN_MARKER) {
+  require('node:fs').appendFileSync(process.env.FAKE_SPAWN_MARKER, String(process.pid) + '\n')
+}
 const ready = {
   type: 'ready', protocolVersion: '1', workerVersion: mode === 'bad-version' ? '9.9.9' : '0.1.0',
   pythonVersion: '3.12.13', runtimeProfile: 'derivatives-only',
@@ -435,9 +438,13 @@ test(
       await mkdir(runtimeRoot)
       await mkdir(stagingBasePath)
       const pythonExecutable = await fakeWorker(runtimeRoot)
+      const spawnMarker = path.join(directory, 'spawns')
       const client = await ProjectWorkerClient.start(
         { pythonExecutable, runtimeRoot, stagingBasePath },
-        { environment: { FAKE_MODE: 'ignore-sigterm' } },
+        {
+          environment: { FAKE_MODE: 'ignore-sigterm', FAKE_SPAWN_MARKER: spawnMarker },
+          shutdownWaitMs: 25,
+        },
       )
       const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
       const originalKill = child.kill.bind(child)
@@ -451,16 +458,105 @@ test(
         await assert.rejects(client.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
         await activeRequest
         assert.equal(exitObserved, false)
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), true)
+        await assert.rejects(
+          ProjectWorkerClient.start(
+            { pythonExecutable, runtimeRoot, stagingBasePath },
+            { environment: { FAKE_SPAWN_MARKER: spawnMarker } },
+          ),
+          { code: 'WORKER_EXIT_UNCONFIRMED' },
+        )
+        assert.equal((await readFile(spawnMarker, 'utf8')).trim().split('\n').length, 1)
         child.kill = originalKill
         await client.close()
         assert.equal(exitObserved, true)
         assert.equal(child.signalCode, 'SIGKILL')
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+        const resumed = await ProjectWorkerClient.start(
+          { pythonExecutable, runtimeRoot, stagingBasePath },
+          { environment: { FAKE_SPAWN_MARKER: spawnMarker } },
+        )
+        await resumed.close()
+        assert.equal((await readFile(spawnMarker, 'utf8')).trim().split('\n').length, 2)
       } finally {
         child.kill = originalKill
         if (!exitObserved) {
           const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
           child.kill('SIGKILL')
           await exited
+        }
+      }
+    })
+  },
+)
+
+test(
+  'established close failure during real path inspection is fenced before the next image spawn',
+  { timeout: 10_000 },
+  async () => {
+    await withTemp(async (directory) => {
+      const runtimeRoot = path.join(directory, 'runtime')
+      const stagingBasePath = path.join(directory, 'staging')
+      await mkdir(runtimeRoot)
+      await mkdir(stagingBasePath)
+      const pythonExecutable = await fakeWorker(runtimeRoot)
+      const spawnMarker = path.join(directory, 'spawns')
+      const location = { pythonExecutable, runtimeRoot, stagingBasePath }
+      const client = await ProjectWorkerClient.start(location, {
+        environment: { FAKE_MODE: 'ignore-sigterm', FAKE_SPAWN_MARKER: spawnMarker },
+        shutdownWaitMs: 1,
+      })
+      const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
+      const originalKill = child.kill.bind(child)
+      child.kill = (signal) => (signal === 'SIGKILL' ? false : originalKill(signal))
+      // Queue real filesystem inspection behind CPU-only libuv work. Close's OS/timer path can
+      // fail while the new startup is awaiting canonical paths, after its initial global check.
+      const inspections = Array.from(
+        { length: Number(process.env.UV_THREADPOOL_SIZE ?? 4) },
+        () =>
+          new Promise<void>((resolve, reject) => {
+            pbkdf2('path-inspection-control', 'salt', 200_000, 32, 'sha256', (error) => {
+              if (error) {
+                reject(error)
+              } else {
+                resolve()
+              }
+            })
+          }),
+      )
+      let unexpected: ProjectWorkerClient | undefined
+      try {
+        const closing = assert.rejects(client.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+        assert.equal(
+          ProjectWorkerClient.hasUnconfirmedExit(),
+          false,
+          'the late fence is not yet set',
+        )
+        const next = await ProjectWorkerClient.start(location, {
+          environment: { FAKE_SPAWN_MARKER: spawnMarker },
+        }).then(
+          (value) => ({ client: value, error: undefined }),
+          (error: unknown) => ({ client: undefined, error }),
+        )
+        unexpected = next.client
+        if (unexpected) {
+          await unexpected.close()
+        }
+        await closing
+        assert.equal((await readFile(spawnMarker, 'utf8')).trim().split('\n').length, 1)
+        assert.ok(next.error instanceof ProjectWorkerError)
+        assert.equal(next.error.code, 'WORKER_EXIT_UNCONFIRMED')
+      } finally {
+        await Promise.all(inspections)
+        child.kill = originalKill
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          child.kill('SIGKILL')
+          await exited
+        }
+        await client.close()
+        if (unexpected) {
+          await unexpected.close()
         }
       }
     })

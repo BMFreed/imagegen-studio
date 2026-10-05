@@ -8,6 +8,7 @@ import * as path from 'node:path'
 
 import type { GenerationWorkerLocation } from '../projects/generation-worker-client.js'
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
+import type { ProjectWorkerLocation } from '../projects/worker-client.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient } from '../projects/worker-client.js'
@@ -41,6 +42,11 @@ export interface QualifiedGenerationWorker {
   environment: NodeJS.ProcessEnv
   location: GenerationWorkerLocation
   runtimeId: string
+}
+
+export interface InstalledProjectWorker {
+  environment: NodeJS.ProcessEnv
+  location: ProjectWorkerLocation
 }
 
 export interface GenerationPreparation {
@@ -197,7 +203,7 @@ export class RuntimeManager {
             !this.hasUnconfirmedGenerationExit() &&
             prepared?.key === preparation.key &&
             prepared.worker.runtimeId === preparation.runtimeId
-          : ProjectWorkerClient.hasUnconfirmedStartExit()
+          : ProjectWorkerClient.hasUnconfirmedExit()
             ? false
             : lease
               ? this.leaseIsAdvisoryReady(lease, prepared)
@@ -283,7 +289,7 @@ export class RuntimeManager {
       this.unconfirmedClient ||
       this.hasUnconfirmedGenerationExit() ||
       GenerationWorkerClient.hasUnconfirmedStartExit() ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
@@ -299,7 +305,7 @@ export class RuntimeManager {
         this.unconfirmedClient ||
         this.hasUnconfirmedGenerationExit() ||
         GenerationWorkerClient.hasUnconfirmedStartExit() ||
-        ProjectWorkerClient.hasUnconfirmedStartExit()
+        ProjectWorkerClient.hasUnconfirmedExit()
       ) {
         return null
       }
@@ -339,6 +345,75 @@ export class RuntimeManager {
   }
 
   /**
+   * Resolve the installed CPU image worker without probing CUDA or requiring ML configuration. The
+   * caller owns startup cancellation, requests and confirmed exit; this is not a lease.
+   */
+  async resolveInstalledProjectWorker(
+    scratchBasePath: string,
+  ): Promise<InstalledProjectWorker | null> {
+    if (!this.projectWorkerResolutionAllowed()) {
+      return null
+    }
+    try {
+      const pointer = await readPointer(this.roots)
+      if (
+        pointer.kind !== 'valid' ||
+        !this.projectWorkerResolutionAllowed(pointer.value.runtimeId)
+      ) {
+        return null
+      }
+      const [scratch, cache, runtime, appData] = await Promise.all([
+        fs.realpath(scratchBasePath),
+        fs.realpath(this.roots.cacheDir),
+        fs.realpath(this.roots.runtimeDir),
+        fs.realpath(this.roots.appDataDir),
+      ])
+      const entries = await Promise.all([fs.lstat(scratch), fs.lstat(cache), fs.lstat(runtime)])
+      if (
+        appData !== this.roots.appDataDir ||
+        scratch !== scratchBasePath ||
+        !isWithin(appData, scratch) ||
+        cache !== this.roots.cacheDir ||
+        !isWithin(appData, cache) ||
+        runtime !== this.roots.runtimeDir ||
+        !isWithin(appData, runtime) ||
+        entries.some((entry) => !entry.isDirectory() || entry.isSymbolicLink())
+      ) {
+        return null
+      }
+      // Re-read the pointer after asynchronous path inspection. A location is advisory until the
+      // owning client revalidates it and observes its own derivatives-only handshake.
+      const current = await readPointer(this.roots)
+      if (
+        current.kind !== 'valid' ||
+        current.value.runtimeId !== pointer.value.runtimeId ||
+        current.value.pythonExecutable !== pointer.value.pythonExecutable ||
+        !this.projectWorkerResolutionAllowed(pointer.value.runtimeId)
+      ) {
+        return null
+      }
+      return {
+        environment: {
+          CUDA_VISIBLE_DEVICES: '',
+          HF_DATASETS_OFFLINE: '1',
+          HF_HOME: cache,
+          HF_HUB_OFFLINE: '1',
+          LANG: 'C.UTF-8',
+          LC_ALL: 'C.UTF-8',
+          TRANSFORMERS_OFFLINE: '1',
+        },
+        location: {
+          pythonExecutable: current.value.pythonExecutable,
+          runtimeRoot: runtime,
+          stagingBasePath: scratch,
+        },
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Resolve a worker for one actual launch. This deliberately bypasses the status cache: a
    * qualified status is advisory, while the next job must observe its own live handshake. This
    * legacy location-only method is not a lifecycle lease; production dispatch uses
@@ -353,7 +428,7 @@ export class RuntimeManager {
       this.host.arch !== 'x64' ||
       this.generationLease ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
@@ -371,7 +446,7 @@ export class RuntimeManager {
         this.generationWorkPrevented ||
         this.generationLease ||
         this.preparationLease ||
-        ProjectWorkerClient.hasUnconfirmedStartExit()
+        ProjectWorkerClient.hasUnconfirmedExit()
       ) {
         return null
       }
@@ -381,7 +456,7 @@ export class RuntimeManager {
         return this.generationWorkPrevented ||
           this.generationLease ||
           this.preparationLease ||
-          ProjectWorkerClient.hasUnconfirmedStartExit()
+          ProjectWorkerClient.hasUnconfirmedExit()
           ? null
           : prepared.worker
       }
@@ -404,7 +479,7 @@ export class RuntimeManager {
       await preparation.startupSettled
       try {
         await preparation.client?.close()
-        if (!(await ProjectWorkerClient.retryUnconfirmedStartExit())) {
+        if (!(await ProjectWorkerClient.retryUnconfirmedExit())) {
           return false
         }
         if (this.preparationLease === preparation) {
@@ -414,7 +489,7 @@ export class RuntimeManager {
         preparation.phase = 'unconfirmed-exit'
         return false
       }
-    } else if (!(await ProjectWorkerClient.retryUnconfirmedStartExit())) {
+    } else if (!(await ProjectWorkerClient.retryUnconfirmedExit())) {
       return false
     }
     const lease = this.generationLease
@@ -469,7 +544,7 @@ export class RuntimeManager {
       this.host.platform !== 'linux' ||
       this.host.arch !== 'x64' ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
@@ -510,7 +585,7 @@ export class RuntimeManager {
       this.host.platform !== 'linux' ||
       this.host.arch !== 'x64' ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
@@ -602,7 +677,7 @@ export class RuntimeManager {
       }
     } finally {
       settleStart()
-      if (ProjectWorkerClient.hasUnconfirmedStartExit()) {
+      if (ProjectWorkerClient.hasUnconfirmedExit()) {
         preparation.phase = 'unconfirmed-exit'
       }
       if (preparation.phase !== 'unconfirmed-exit' && this.preparationLease === preparation) {
@@ -626,7 +701,7 @@ export class RuntimeManager {
       this.host.arch !== 'x64' ||
       this.generationLease ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
@@ -715,7 +790,9 @@ export class RuntimeManager {
   }
 
   private hasUnconfirmedGenerationExit(): boolean {
-    return this.generationLease?.phase === 'unconfirmed-exit'
+    return (
+      this.generationLease?.phase === 'unconfirmed-exit' || ProjectWorkerClient.hasUnconfirmedExit()
+    )
   }
 
   private leaseIsAdvisoryReady(
@@ -797,11 +874,30 @@ export class RuntimeManager {
     }
   }
 
+  private projectWorkerResolutionAllowed(runtimeId?: string): boolean {
+    if (
+      this.generationWorkPrevented ||
+      this.host.platform !== 'linux' ||
+      this.host.arch !== 'x64' ||
+      this.unconfirmedClient ||
+      GenerationWorkerClient.hasUnconfirmedStartExit() ||
+      ProjectWorkerClient.hasUnconfirmedExit()
+    ) {
+      return false
+    }
+    for (const lease of [this.generationLease, this.preparationLease]) {
+      if (lease && (lease.phase !== 'running' || (runtimeId && lease.runtimeId !== runtimeId))) {
+        return false
+      }
+    }
+    return true
+  }
+
   private async qualify(prepared: PreparedQualification, useCache: boolean): Promise<boolean> {
     if (
       this.generationWorkPrevented ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return false
     }
@@ -809,7 +905,7 @@ export class RuntimeManager {
       const cached = this.cachedQualification
       if (cached?.key === prepared.key && cached.expiresAt > Date.now()) {
         const ready = await cached.promise
-        return !this.generationWorkPrevented && ready
+        return !this.generationWorkPrevented && !ProjectWorkerClient.hasUnconfirmedExit() && ready
       }
     }
     const qualification = this.qualifyLive(prepared)
@@ -821,7 +917,7 @@ export class RuntimeManager {
       }
     }
     const succeeded = await qualification
-    if (this.generationWorkPrevented) {
+    if (this.generationWorkPrevented || ProjectWorkerClient.hasUnconfirmedExit()) {
       this.cachedQualification = null
       return false
     }
@@ -842,7 +938,7 @@ export class RuntimeManager {
       this.generationWorkPrevented ||
       this.generationLease ||
       this.preparationLease ||
-      ProjectWorkerClient.hasUnconfirmedStartExit()
+      ProjectWorkerClient.hasUnconfirmedExit()
         ? false
         : await this.qualifyLiveUnlocked(prepared),
     )
@@ -855,7 +951,7 @@ export class RuntimeManager {
       if (
         this.generationWorkPrevented ||
         this.preparationLease ||
-        ProjectWorkerClient.hasUnconfirmedStartExit() ||
+        ProjectWorkerClient.hasUnconfirmedExit() ||
         !(await this.confirmPreviousExit())
       ) {
         return false
@@ -871,7 +967,11 @@ export class RuntimeManager {
         before.value,
         prepared.worker.location.scratchBasePath,
       )
-      if (this.generationWorkPrevented || unchanged?.key !== prepared.key) {
+      if (
+        this.generationWorkPrevented ||
+        ProjectWorkerClient.hasUnconfirmedExit() ||
+        unchanged?.key !== prepared.key
+      ) {
         return false
       }
       const client = await this.startClient(prepared.worker.location, prepared.worker.environment)
@@ -898,7 +998,10 @@ export class RuntimeManager {
         pointer.value,
         prepared.worker.location.scratchBasePath,
       )
-      const qualified = !this.generationWorkPrevented && current?.key === prepared.key
+      const qualified =
+        !this.generationWorkPrevented &&
+        !ProjectWorkerClient.hasUnconfirmedExit() &&
+        current?.key === prepared.key
       if (qualified && ready) {
         this.lastQualifiedReady = {
           expiresAt: Date.now() + QUALIFICATION_CACHE_MS,

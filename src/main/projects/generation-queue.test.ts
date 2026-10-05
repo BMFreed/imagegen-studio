@@ -978,6 +978,189 @@ test('atomic batch unreadable commit outcomes retain inputs and fence admission/
   }
 })
 
+test('dispatch preflight reads only metadata without claiming or verifying frozen files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-dispatch-preflight-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    assert.equal(await queue.hasDispatchablePending(), false)
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    // Broken files are deliberately eligible metadata; the later real claim owns their refusal.
+    await rm(path.join(root, 'generation-inputs', pending.id), { recursive: true })
+    const before = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+    assert.equal(await queue.hasDispatchablePending(), true)
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      before,
+    )
+    const rejected = await queue.claimNextPending()
+    assert.equal(rejected, null)
+    assert.equal((await queue.getManagerEntry(pending.id)).status, 'failed')
+    assert.equal(await queue.hasDispatchablePending(), false)
+    const canceled = await enqueueFixture(root, queue, prepared, projectPath)
+    await queue.cancel(canceled.id, canceled.statusSequence)
+    const completed = await enqueueFixture(root, queue, prepared, projectPath)
+    // Terminal row is a precondition; candidate publication is outside this metadata boundary.
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ status: 'completed' })
+      .where('id', '=', completed.id)
+      .execute()
+    const terminal = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+    assert.equal(await queue.hasDispatchablePending(), false)
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      terminal,
+    )
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('dispatch preflight excludes fenced Projects and every global running row', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-dispatch-preflight-fences-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const first = await enqueueFixture(root, queue, prepared, projectPath)
+    queue.fenceProject(first.localProjectKey)
+    assert.equal(await queue.hasDispatchablePending(), false)
+    const otherPath = path.join(root, 'Other.igs')
+    await writeFile(otherPath, 'other queue fixture path')
+    const other = await enqueueFixture(root, queue, prepared, otherPath)
+    assert.equal(await queue.hasDispatchablePending(), true)
+    const running = await queue.claimNextPending()
+    assert.equal(running?.item.id, other.id)
+    assert.ok(running)
+    queue.releaseProjectFence(first.localProjectKey)
+    queue.fenceProject(other.localProjectKey)
+    assert.equal(await queue.hasDispatchablePending(), false)
+    const requested = await queue.cancel(other.id, running.item.statusSequence)
+    assert.equal(requested.status, 'running')
+    assert.equal(await queue.hasDispatchablePending(), false)
+    await queue.acknowledgeCanceledRunning(other.id, requested.statusSequence)
+    assert.equal(await queue.hasDispatchablePending(), true)
+    assert.equal((await queue.loadVerifiedInput(first.id)).item.status, 'pending')
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('dispatch preflight rechecks a Project fence after the actual SQLite metadata read', async (t) => {
+  for (const withNeighbor of [false, true]) {
+    await t.test(
+      withNeighbor ? 'another Project remains eligible' : 'only the fenced Project',
+      async () => {
+        const root = await mkdtemp(
+          path.join(os.tmpdir(), 'igs-queue-dispatch-preflight-late-fence-'),
+        )
+        const database = openAppDatabase(root, migrations)
+        let armed = false
+        let entered!: () => void
+        const reading = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        let release!: () => void
+        const held = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const plugin: KyselyPlugin = {
+          transformQuery: ({ node }) => node,
+          transformResult: async ({ result }) => {
+            if (
+              armed &&
+              result.rows.some((row) => Object.keys(row).length === 1 && 'local_project_key' in row)
+            ) {
+              armed = false
+              entered()
+              await held
+            }
+            return result
+          },
+        }
+        try {
+          const queue = new GenerationQueueRepository(database.db.withPlugin(plugin), root)
+          await queue.recoverAfterRestart()
+          const { prepared, projectPath } = await fixture(root)
+          const first = await enqueueFixture(root, queue, prepared, projectPath)
+          await database.db
+            .updateTable('generation_queue_item')
+            .set({ created_at: '2000-01-01T00:00:00.000Z' })
+            .where('id', '=', first.id)
+            .execute()
+          if (withNeighbor) {
+            const otherPath = path.join(root, 'Other.igs')
+            await writeFile(otherPath, 'other queue fixture path')
+            await enqueueFixture(root, queue, prepared, otherPath)
+          }
+          const before = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+          armed = true
+          const preflight = queue.hasDispatchablePending()
+          await reading
+          queue.fenceProject(first.localProjectKey)
+          release()
+          assert.equal(await preflight, withNeighbor)
+          assert.deepEqual(
+            await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+            before,
+          )
+        } finally {
+          release()
+          await database.close()
+          await rm(root, { force: true, recursive: true })
+        }
+      },
+    )
+  }
+})
+
+test('dispatch preflight refuses a metadata result invalidated by actual restart recovery', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-dispatch-preflight-recovery-'))
+  const database = openAppDatabase(root, migrations)
+  let armed = false
+  let restart: ReturnType<GenerationQueueRepository['recoverAfterRestart']> | undefined
+  let recover!: () => void
+  const plugin: KyselyPlugin = {
+    transformQuery: ({ node }) => node,
+    transformResult: async ({ result }) => {
+      if (
+        armed &&
+        result.rows.some((row) => Object.keys(row).length === 1 && 'local_project_key' in row)
+      ) {
+        armed = false
+        // Recovery revokes readiness synchronously before waiting for this serialized reader.
+        recover()
+      }
+      return result
+    },
+  }
+  try {
+    const queue = new GenerationQueueRepository(database.db.withPlugin(plugin), root)
+    recover = () => {
+      restart = queue.recoverAfterRestart()
+    }
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const pending = await enqueueFixture(root, queue, prepared, projectPath)
+    armed = true
+    await assert.rejects(queue.hasDispatchablePending(), { code: 'QUEUE_NOT_RECONCILED' })
+    assert.ok(restart)
+    assert.equal((await restart).canceledCount, 1)
+    assert.equal((await queue.getManagerEntry(pending.id)).status, 'canceled')
+    assert.equal(await queue.hasDispatchablePending(), false)
+  } finally {
+    await restart
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('claim verifies durable input before moving a pending row to running across reopen', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-generation-queue-claim-'))
   try {
@@ -1330,11 +1513,13 @@ test('dispatch readiness is revoked when startup recovery fails', async () => {
     const { projectPath } = await fixture(root)
     const projectKey = localProjectRecoveryKey(projectPath)
     assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+    await assert.rejects(queue.hasDispatchablePending(), { code: 'QUEUE_NOT_RECONCILED' })
     await assert.rejects(queue.listUnfinishedByProject(projectKey), {
       code: 'QUEUE_NOT_RECONCILED',
     })
     await queue.recoverAfterRestart()
     assert.doesNotThrow(() => queue.assertReadyForDispatch())
+    assert.equal(await queue.hasDispatchablePending(), false)
     assert.deepEqual(await queue.listUnfinishedByProject(projectKey), [])
 
     const inputRoot = path.join(root, 'generation-inputs')
@@ -1342,6 +1527,7 @@ test('dispatch readiness is revoked when startup recovery fails', async () => {
     await symlink(root, inputRoot, 'dir')
     await assert.rejects(queue.recoverAfterRestart(), { code: 'QUEUE_STORAGE_UNSAFE' })
     assert.throws(() => queue.assertReadyForDispatch(), { code: 'QUEUE_NOT_RECONCILED' })
+    await assert.rejects(queue.hasDispatchablePending(), { code: 'QUEUE_NOT_RECONCILED' })
     await assert.rejects(queue.listUnfinishedByProject(projectKey), {
       code: 'QUEUE_NOT_RECONCILED',
     })

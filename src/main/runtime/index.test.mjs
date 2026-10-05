@@ -8,8 +8,16 @@ import { crc32, deflateSync } from 'node:zlib'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient } from '../projects/worker-client.js'
+import { ProjectTargetInspectionOwner } from '../projects/project-target-inspection-owner.js'
+import { ProjectSession } from '../projects/project-session.js'
+import { readIgsPackage } from '../projects/igs-package.js'
 import { GenerationAppShutdown } from '../projects/generation-app-shutdown.js'
 import { openAppDatabase } from '../db/database.js'
+import { GenerationDispatchCoordinator } from '../projects/generation-dispatch-coordinator.js'
+import { GenerationOrchestrator } from '../projects/generation-orchestrator.js'
+import { GenerationProcessor } from '../projects/generation-processor.js'
+import { GenerationQueueRepository } from '../projects/generation-queue.js'
+import { GenerationStagingRepository } from '../projects/generation-staging.js'
 
 import { createRuntimeRoots, RuntimeManager } from './index.ts'
 
@@ -33,6 +41,19 @@ async function fixture() {
   const roots = await createRuntimeRoots(await temporaryRoot())
   const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
   return { roots, manager }
+}
+
+async function installAppOwnedProjectPointer(roots, runtimeId = 'derivatives-fixture') {
+  const environment = path.join(roots.environmentsDir, runtimeId)
+  const executable = path.join(environment, 'bin', 'python')
+  await fs.mkdir(path.dirname(executable), { recursive: true })
+  await fs.writeFile(executable, 'app-owned interpreter precondition, never executed by resolver')
+  await fs.chmod(executable, 0o700)
+  await fs.writeFile(
+    roots.pointerFile,
+    JSON.stringify({ schemaVersion: 1, runtimeId, pythonExecutable: executable }),
+  )
+  return { environment, executable }
 }
 
 async function installFakeInferenceRuntime(roots, runtimeId = 'worker-2-linux-nvidia') {
@@ -59,7 +80,7 @@ if (process.argv.slice(2).join(' ') === '-I -m imagegen_worker') {
   fs.appendFileSync(path.join(root, 'cpu-launches'), runtimeId + '\n')
   process.on('exit', () => fs.appendFileSync(path.join(root, 'cpu-exits'), runtimeId + '\n'))
   if (mode !== 'startup-hang' && mode !== 'request-hang') process.on('SIGTERM', () => process.exit(0))
-  if (mode === 'bad-version-keepalive' || mode === 'request-hang' || mode === 'startup-hang') setInterval(() => {}, 1000)
+  if (mode === 'bad-version-keepalive' || mode === 'request-hang' || mode === 'startup-hang' || mode === 'close-keepalive') setInterval(() => {}, 1000)
   const announce = () => {
     if (mode === 'startup-hang') return
     if (mode === 'replace-pointer') fs.writeFileSync(path.join(root, 'current-runtime.json'), '{}')
@@ -137,6 +158,39 @@ async function lines(file) {
   }
 }
 
+test('real empty dispatch does not qualify or spawn any installed inference worker', async () => {
+  // Boundary: actual SQLite queue → orchestrator → dispatcher → RuntimeManager → real subprocess.
+  // No Project/model is referenced in an empty queue; their unused dependencies are explicit.
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const database = openAppDatabase(roots.appDataDir, path.resolve('src/main/db/migrations'))
+  const queue = new GenerationQueueRepository(database.db, roots.appDataDir)
+  const staging = new GenerationStagingRepository(database.db, roots.appDataDir)
+  await queue.recoverAfterRestart()
+  await staging.recoverAfterRestart()
+  const processor = new GenerationProcessor(queue, staging, {}, scratch)
+  const orchestrator = new GenerationOrchestrator({}, {}, {}, queue, staging, processor, scratch)
+  const dispatch = new GenerationDispatchCoordinator(manager, orchestrator, processor, scratch)
+  try {
+    assert.deepEqual(await dispatch.runNext(), { kind: 'idle' })
+    assert.equal(
+      (await lines(path.join(roots.runtimeDir, 'launches'))).length,
+      0,
+      'an empty durable queue must not open a qualification or inference child',
+    )
+    assert.notEqual(
+      await manager.resolveInstalledProjectWorker(scratch),
+      null,
+      'healthy Save can resolve its installed CPU worker immediately after idle dispatch',
+    )
+  } finally {
+    await dispatch.shutdown()
+    await database.close()
+  }
+})
+
 test('creates app-owned roots and reports a missing runtime without probing system Python', async () => {
   const { roots, manager } = await fixture()
   for (const directory of [
@@ -159,6 +213,225 @@ test('creates app-owned roots and reports a missing runtime without probing syst
         'The Linux/NVIDIA runtime has not been installed. GPU compatibility is checked during setup.',
     },
   })
+})
+
+test('installed project worker resolves CPU-only offline paths without GPU qualification or ML config', async () => {
+  // Boundary: real pointer/filesystem resolver. Neighbor: absent pointer. Mutation: require CUDA
+  // qualification/config or inherit ambient environment before returning the CPU location.
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  let inferenceStarts = 0
+  const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' }, async () => {
+    inferenceStarts++
+    throw new Error('CPU derivatives must not qualify an inference process.')
+  })
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
+  const installed = await installAppOwnedProjectPointer(roots)
+  assert.deepEqual(await manager.resolveInstalledProjectWorker(scratch), {
+    environment: {
+      CUDA_VISIBLE_DEVICES: '',
+      HF_DATASETS_OFFLINE: '1',
+      HF_HOME: roots.cacheDir,
+      HF_HUB_OFFLINE: '1',
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8',
+      TRANSFORMERS_OFFLINE: '1',
+    },
+    location: {
+      pythonExecutable: installed.executable,
+      runtimeRoot: roots.runtimeDir,
+      stagingBasePath: scratch,
+    },
+  })
+  await fs.mkdir(path.join(installed.environment, 'resources', 'sdxl-config'), { recursive: true })
+  await fs.writeFile(
+    path.join(installed.environment, 'resources', 'sdxl-config', 'model_index.json'),
+    'broken ML configuration must not block Pillow derivatives',
+  )
+  assert.equal(
+    (await manager.resolveInstalledProjectWorker(scratch))?.location.stagingBasePath,
+    scratch,
+  )
+  assert.equal(inferenceStarts, 0)
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-launches')), [])
+})
+
+test('installed project worker rejects external interpreter pointers and pointer symlinks', async (t) => {
+  // Boundary: actual app-owned metadata and filesystem. Mutation: use the pointer path verbatim
+  // or resolve a system/development Python when an installed executable is unavailable.
+  for (const mode of [
+    'external-pointer',
+    'external-python-link',
+    'pointer-link',
+    'missing-python',
+  ]) {
+    await t.test(mode, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installAppOwnedProjectPointer(roots)
+      const outside = await temporaryRoot()
+      const externalPython = path.join(outside, 'python')
+      await fs.writeFile(externalPython, 'external interpreter')
+      if (mode === 'external-pointer') {
+        await fs.writeFile(
+          roots.pointerFile,
+          JSON.stringify({
+            schemaVersion: 1,
+            runtimeId: 'derivatives-fixture',
+            pythonExecutable: externalPython,
+          }),
+        )
+      } else if (mode === 'pointer-link') {
+        const externalPointer = path.join(outside, 'current-runtime.json')
+        await fs.rename(roots.pointerFile, externalPointer)
+        await fs.symlink(externalPointer, roots.pointerFile)
+      } else {
+        await fs.unlink(installed.executable)
+        if (mode === 'external-python-link') await fs.symlink(externalPython, installed.executable)
+      }
+      assert.equal(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+      assert.equal(await fs.readFile(externalPython, 'utf8'), 'external interpreter')
+    })
+  }
+})
+
+test('installed project worker requires canonical app-owned scratch, cache and runtime directories', async (t) => {
+  // Boundary: real paths. Neighbor: unchanged directories. Mutation: accept normalized or
+  // redirected paths and let a derivative client stage files outside the app-owned root.
+  for (const mode of [
+    'outside',
+    'missing',
+    'file',
+    'alias',
+    'traversal',
+    'cache-link',
+    'runtime-link',
+  ]) {
+    await t.test(mode, async () => {
+      const { roots, manager } = await fixture()
+      await installAppOwnedProjectPointer(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      assert.equal(
+        (await manager.resolveInstalledProjectWorker(scratch))?.location.stagingBasePath,
+        scratch,
+      )
+      let refusedScratch = scratch
+      if (mode === 'outside') refusedScratch = await temporaryRoot()
+      if (mode === 'missing') refusedScratch = path.join(scratch, 'missing')
+      if (mode === 'file') {
+        refusedScratch = path.join(scratch, 'file')
+        await fs.writeFile(refusedScratch, '')
+      }
+      if (mode === 'alias') {
+        refusedScratch = path.join(roots.appDataDir, 'scratch-link')
+        await fs.symlink(scratch, refusedScratch)
+      }
+      if (mode === 'traversal') refusedScratch = `${scratch}/../scratch`
+      if (mode === 'cache-link' || mode === 'runtime-link') {
+        const target = mode === 'cache-link' ? roots.cacheDir : roots.runtimeDir
+        const moved = `${target}-moved`
+        await fs.rename(target, moved)
+        await fs.symlink(moved, target)
+      }
+      assert.equal(await manager.resolveInstalledProjectWorker(refusedScratch), null)
+    })
+  }
+})
+
+test('installed project worker refuses unsupported hosts and shutdown during asynchronous resolution', async () => {
+  // Boundary: runtime shutdown fence during real async pointer inspection. Mutation: check only
+  // at entry and publish a late location after shutdown has stopped new worker startup.
+  const { roots, manager } = await fixture()
+  await installAppOwnedProjectPointer(roots)
+  for (const host of [
+    { platform: 'linux', arch: 'arm64' },
+    { platform: 'darwin', arch: 'x64' },
+  ]) {
+    assert.equal(
+      await new RuntimeManager(roots, host).resolveInstalledProjectWorker(roots.downloadsDir),
+      null,
+    )
+  }
+  assert.notEqual(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+  const resolving = manager.resolveInstalledProjectWorker(roots.downloadsDir)
+  manager.preventNewGenerationWork()
+  assert.equal(await resolving, null)
+  assert.equal(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+})
+
+test('installed project worker refuses an unconfirmed CPU startup owned outside RuntimeManager', async () => {
+  // Boundary: actual failed ProjectWorkerClient startup and global physical-exit fence, without
+  // a RuntimeManager preparation lease. Mutation: ignore failed starts owned by another client.
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'bad-version-keepalive')
+  const resolved = await manager.resolveInstalledProjectWorker(roots.downloadsDir)
+  assert.notEqual(resolved, null)
+  const actualKill = ChildProcess.prototype.kill
+  const blocked = new Set()
+  ChildProcess.prototype.kill = function (signal) {
+    if (this.spawnargs.includes('imagegen_worker')) {
+      blocked.add(this)
+      return true
+    }
+    return actualKill.call(this, signal)
+  }
+  try {
+    await assert.rejects(
+      ProjectWorkerClient.start(resolved.location, {
+        // The controlled peer checks this extra test resource; the production CPU worker has
+        // no ML config dependency. Its bad-version response and exit handling are real JSONL.
+        environment: { ...resolved.environment, IGS_SDXL_CONFIG_DIR: installed.config },
+        shutdownWaitMs: 25,
+      }),
+      { code: 'WORKER_EXIT_UNCONFIRMED' },
+    )
+    assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), true)
+    assert.equal(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+    assert.equal(await ProjectWorkerClient.retryUnconfirmedStartExit(), false)
+    ChildProcess.prototype.kill = actualKill
+    assert.equal(await ProjectWorkerClient.retryUnconfirmedStartExit(), true)
+    assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), false)
+    assert.notEqual(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
+  } finally {
+    ChildProcess.prototype.kill = actualKill
+    for (const child of blocked) {
+      if (child.exitCode === null && child.signalCode === null) actualKill.call(child, 'SIGKILL')
+    }
+    await ProjectWorkerClient.retryUnconfirmedStartExit()
+  }
+})
+
+test('installed project worker allows a live same-runtime GPU owner and refuses a replaced pointer', async () => {
+  // Boundary: actual runtime lease plus app-owned pointer replacement. The controlled peer is
+  // a lifecycle precondition, not trained CUDA evidence. Mutation: ignore the active runtime ID.
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await manager.withGenerationWorker(roots.downloadsDir, async (gpu) => {
+    assert.equal(
+      (await manager.resolveInstalledProjectWorker(roots.downloadsDir))?.environment
+        .CUDA_VISIBLE_DEVICES,
+      '',
+    )
+    const before = structuredClone(gpu.ready)
+    await installFakeInferenceRuntime(roots, 'replacement-runtime')
+    assert.equal(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
+    assert.deepEqual(gpu.ready, before)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-launches')), [])
+  })
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
+    'worker-2-linux-nvidia',
+    'worker-2-linux-nvidia',
+  ])
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), [
+    'worker-2-linux-nvidia',
+    'worker-2-linux-nvidia',
+  ])
+  assert.notEqual(await manager.resolveInstalledProjectWorker(roots.downloadsDir), null)
 })
 
 test('runtime qualification and active advisory readiness share the 0.3.0 progress capability gate', async () => {
@@ -458,11 +731,13 @@ test('an unconfirmed worker exit blocks every new qualification until its exit i
     ])
     assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
     assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+    assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
     assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
       'worker-2-linux-nvidia',
     ])
     blockClose = false
     assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.notEqual(await manager.resolveInstalledProjectWorker(scratch), null)
     assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
       'worker-2-linux-nvidia',
       'worker-2-linux-nvidia',
@@ -906,6 +1181,7 @@ test('metadata admission refuses a qualifying lease immediately and later admits
       ),
       null,
     )
+    assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
     assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
   } finally {
     resumeQualification()
@@ -1120,6 +1396,10 @@ test('new-generation preparation uses one CUDA-hidden target child while the act
   const scratch = path.join(roots.appDataDir, 'scratch')
   await fs.mkdir(scratch)
   await manager.withGenerationWorker(scratch, async (gpu) => {
+    assert.equal(
+      (await manager.resolveInstalledProjectWorker(scratch))?.environment.CUDA_VISIBLE_DEVICES,
+      '',
+    )
     const snapshot = structuredClone(gpu.ready)
     const preparation = manager.withGenerationPreparation(
       scratch,
@@ -1355,6 +1635,7 @@ test('unconfirmed CPU close retains its owner and excludes every preparation and
     })
     assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
     assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe GPU'), null)
+    assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
     assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
     assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
     assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
@@ -1363,6 +1644,7 @@ test('unconfirmed CPU close retains its owner and excludes every preparation and
     const [child] = blocked
     assert.equal(child.exitCode !== null || child.signalCode !== null, true)
     assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.notEqual(await manager.resolveInstalledProjectWorker(scratch), null)
   } finally {
     ChildProcess.prototype.kill = actualKill
     ProjectWorkerClient.start = start
@@ -1371,6 +1653,215 @@ test('unconfirmed CPU close retains its owner and excludes every preparation and
     await manager.retryUnconfirmedGenerationExit()
   }
 })
+
+test(
+  'established Main image-owner exit fences the runtime globally while preserving completed action and placeholder Save',
+  { timeout: 10_000 },
+  async () => {
+    // Boundary: actual image owner → established ProjectWorkerClient.close → global RuntimeManager.
+    // Only the protocol peer and OS termination refusal are controlled; no fake owner/global flags.
+    // Neighbor: restore real SIGKILL, observe physical exit, then qualify/admit again.
+    const { roots, manager } = await fixture()
+    const installed = await installFakeInferenceRuntime(roots)
+    await installCpuTarget(roots)
+    await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'close-keepalive')
+    const scratch = path.join(roots.appDataDir, 'scratch')
+    await fs.mkdir(scratch)
+    const initial = await manager.resolveInstalledProjectWorker(scratch)
+    assert.notEqual(initial, null)
+    const owner = new ProjectTargetInspectionOwner(async () => {
+      const selected = await manager.resolveInstalledProjectWorker(scratch)
+      return selected
+        ? {
+            ...selected,
+            environment: { ...selected.environment, IGS_SDXL_CONFIG_DIR: installed.config },
+          }
+        : null
+    })
+    const originalStart = ProjectWorkerClient.start
+    const actualKill = ChildProcess.prototype.kill
+    const blocked = new Set()
+    ProjectWorkerClient.start = async (location, options) =>
+      originalStart.call(ProjectWorkerClient, location, { ...options, shutdownWaitMs: 25 })
+    ChildProcess.prototype.kill = function (signal) {
+      if (this.spawnargs.includes('imagegen_worker')) {
+        blocked.add(this)
+        return false
+      }
+      return actualKill.call(this, signal)
+    }
+    try {
+      const completed = await owner.useWorker((worker) => composeCpuTarget(worker, scratch))
+      assert.equal(completed.mode, 'txt2img')
+      const [cpu] = blocked
+      assert.ok(cpu)
+      assert.equal(cpu.exitCode, null)
+      assert.equal(cpu.signalCode, null)
+      assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
+      assert.equal(await manager.readQualifiedInferenceReady(), null)
+      assert.equal(
+        await manager.withGenerationAdmission(scratch, async () =>
+          assert.fail('Unconfirmed image exit must fence admission'),
+        ),
+        null,
+      )
+      assert.equal(
+        await manager.withGenerationPreparation(scratch, async () =>
+          assert.fail('Unconfirmed image exit must fence preparation'),
+        ),
+        null,
+      )
+      assert.equal(
+        await manager.withGenerationWorker(scratch, async () =>
+          assert.fail('Unconfirmed image exit must fence CUDA'),
+        ),
+        null,
+      )
+      assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+      assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+      assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+      await assert.rejects(
+        ProjectWorkerClient.start(initial.location, {
+          environment: { ...initial.environment, IGS_SDXL_CONFIG_DIR: installed.config },
+        }),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+      const inferenceAttempt = await GenerationWorkerClient.start(
+        {
+          pythonExecutable: installed.executable,
+          runtimeRoot: roots.runtimeDir,
+          scratchBasePath: scratch,
+        },
+        { environment: { ...initial.environment, IGS_SDXL_CONFIG_DIR: installed.config } },
+      ).then(
+        (client) => ({ client, error: null }),
+        (error) => ({ client: null, error }),
+      )
+      // Close an incorrectly admitted peer before failing the observable launch-count invariant.
+      await inferenceAttempt.client?.close()
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 0)
+      assert.equal(inferenceAttempt.error?.code, 'WORKER_EXIT_UNCONFIRMED')
+      const session = await ProjectSession.create(
+        path.join(roots.appDataDir, 'fenced.igs'),
+        'Before',
+        { placeholdersDir: path.resolve('src/main/projects/placeholders'), scratchDir: scratch },
+      )
+      session.applyDocument({
+        ...session.document,
+        title: 'Saved with no worker during global exit fence',
+      })
+      const saved = await owner.useOptionalWorker(async (worker) => {
+        assert.equal(worker, undefined)
+        return await session.save()
+      })
+      assert.equal(saved.committed, true)
+      assert.equal(
+        (await readIgsPackage(session.filePath)).project.title,
+        'Saved with no worker during global exit fence',
+      )
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+      ChildProcess.prototype.kill = actualKill
+      assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+      assert.equal(cpu.exitCode !== null || cpu.signalCode !== null, true)
+      assert.notEqual(await manager.resolveInstalledProjectWorker(scratch), null)
+      assert.equal(await manager.withGenerationAdmission(scratch, async () => 'resumed'), 'resumed')
+      await owner.shutdown()
+    } finally {
+      ChildProcess.prototype.kill = actualKill
+      ProjectWorkerClient.start = originalStart
+      for (const child of blocked) {
+        if (child.exitCode === null && child.signalCode === null) actualKill.call(child, 'SIGKILL')
+      }
+      await owner.shutdown()
+      await manager.retryUnconfirmedGenerationExit()
+    }
+  },
+)
+
+test(
+  'running CPU preparation cannot mask an established Main image exit fence in advisory readiness',
+  { timeout: 10_000 },
+  async () => {
+    const { roots, manager } = await fixture()
+    const installed = await installFakeInferenceRuntime(roots)
+    await installCpuTarget(roots)
+    await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'close-keepalive')
+    const scratch = path.join(roots.appDataDir, 'scratch')
+    await fs.mkdir(scratch)
+    const selected = await manager.resolveInstalledProjectWorker(scratch)
+    assert.notEqual(selected, null)
+    const owner = new ProjectTargetInspectionOwner(async () => ({
+      ...selected,
+      environment: {
+        ...selected.environment,
+        IGS_SDXL_CONFIG_DIR: installed.config,
+        MAIN_IMAGE_CONTROL: '1',
+      },
+    }))
+    const originalStart = ProjectWorkerClient.start
+    const actualKill = ChildProcess.prototype.kill
+    const blocked = new Set()
+    ProjectWorkerClient.start = async (location, options) => {
+      const client = await originalStart.call(ProjectWorkerClient, location, {
+        ...options,
+        shutdownWaitMs: 25,
+      })
+      if (options.environment.MAIN_IMAGE_CONTROL === '1') blocked.add(client.child)
+      return client
+    }
+    ChildProcess.prototype.kill = function (signal) {
+      return blocked.has(this) ? false : actualKill.call(this, signal)
+    }
+    const gpuEntered = deferred(),
+      gpuFinish = deferred(),
+      cpuEntered = deferred(),
+      cpuFinish = deferred()
+    const generation = manager.withGenerationWorker(scratch, async () => {
+      gpuEntered.resolve()
+      await gpuFinish.promise
+    })
+    let preparation
+    try {
+      await gpuEntered.promise
+      preparation = manager.withGenerationPreparation(scratch, async ({ targetWorker }) => {
+        await composeCpuTarget(targetWorker, scratch)
+        cpuEntered.resolve()
+        await cpuFinish.promise
+      })
+      await cpuEntered.promise
+      assert.equal((await manager.getStatus()).value.kind, 'ready')
+      assert.equal(
+        (await owner.useWorker((worker) => composeCpuTarget(worker, scratch))).mode,
+        'txt2img',
+      )
+      const [mainChild] = blocked
+      assert.equal(mainChild.exitCode, null)
+      assert.equal(mainChild.signalCode, null)
+      assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+      assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
+      assert.equal(await manager.readQualifiedInferenceReady(), null)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 2)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+      ChildProcess.prototype.kill = actualKill
+      await owner.shutdown()
+      assert.equal(mainChild.exitCode !== null || mainChild.signalCode !== null, true)
+      assert.equal((await manager.getStatus()).value.kind, 'ready')
+    } finally {
+      ChildProcess.prototype.kill = actualKill
+      ProjectWorkerClient.start = originalStart
+      for (const child of blocked) {
+        if (child.exitCode === null && child.signalCode === null) actualKill.call(child, 'SIGKILL')
+      }
+      await owner.shutdown()
+      await manager.retryUnconfirmedGenerationExit()
+      cpuFinish.resolve()
+      await preparation
+      gpuFinish.resolve()
+      await generation
+    }
+  },
+)
 
 test('failed CPU startup remains owned and blocks new subprocesses until its physical exit is confirmed', async () => {
   const { roots, manager } = await fixture()
@@ -1397,6 +1888,7 @@ test('failed CPU startup remains owned and blocks new subprocesses until its phy
         { code: 'WORKER_EXIT_UNCONFIRMED' },
       )
       assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), true)
+      assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
       await assert.rejects(
         ProjectWorkerClient.start({
           pythonExecutable: installed.executable,
@@ -1414,6 +1906,7 @@ test('failed CPU startup remains owned and blocks new subprocesses until its phy
     ChildProcess.prototype.kill = actualKill
     assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
     assert.equal(ProjectWorkerClient.hasUnconfirmedStartExit(), false)
+    assert.notEqual(await manager.resolveInstalledProjectWorker(scratch), null)
     const [child] = blocked
     assert.equal(child.exitCode !== null || child.signalCode !== null, true)
   } finally {

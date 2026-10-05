@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [App-owned runtime and trained generation qualification](./phase-2c-installed-runtime-qualification-research.md) — opt-in developer provisioning, installed CPU derivatives ownership и границы проверки обычного Generate/Add/Save; signed release installer, repair и rollback остаются отдельными gates.
 - [Public Anima Generate and accepted provenance](./phase-2c-anima-public-generation-research.md) — captured public admission, strict portable native records, mixed Add/Undo/recovery/Save and family-aware read-only comparison; controlled inference evidence is distinct from trained-model/release qualification.
 - [Anima durable jobs, Retry and operational recovery](./phase-2c-anima-durable-jobs-research.md) — preceding internal queue/native dispatch and progress, exact Retry, verified local candidates/receipts/restart; public integration is recorded above.
 - [Anima Main preparation and concrete batches](./phase-2c-anima-main-preparation-research.md) — separate captured Project/bundle/seed preparation, concrete compiled native batches and qualified scoped requests. Public Generate, durable queue/Retry/dispatch and accepted provenance remain open.

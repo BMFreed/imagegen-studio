@@ -67,6 +67,7 @@ type Fixture = {
   dispatch: GenerationDispatchCoordinator
   documentId: string
   modelService: ModelService
+  orchestrator: GenerationOrchestrator
   packagePath: string
   processor: GenerationProcessor
   projects: ProjectService
@@ -429,6 +430,7 @@ async function withFixture(
       dispatch,
       documentId,
       modelService,
+      orchestrator,
       packagePath,
       processor,
       projects,
@@ -2216,6 +2218,130 @@ test('Retry admits its real frozen queue copy while a sibling worker is running 
   })
 })
 
+test('empty public dispatch and the final drain iteration never acquire a CUDA lease', async () => {
+  // Boundary: real Project/controller/orchestrator/SQLite dispatch. Only ML transport is controlled.
+  // Neighbor: four actual pending concrete jobs acquire four dispatch leases and publish pixels.
+  await withFixture(async (fixture) => {
+    assert.deepEqual(await fixture.dispatch.runNext(), { kind: 'idle' })
+    assert.equal(fixture.runtime.leaseCount, 0)
+    await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    await waitForState(
+      fixture.controller,
+      fixture.tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    assert.equal(fixture.runtime.generated.length, 4)
+    assert.equal(
+      fixture.runtime.leaseCount,
+      5,
+      'one preparation lease plus four concrete jobs, no idle GPU lease',
+    )
+    assert.equal(fixture.runtime.closedCount, 5)
+    assert.equal((await fixture.controller.getQueue()).counts.completed, 4)
+    assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 4)
+    const leases = fixture.runtime.leaseCount
+    fixture.runtime.available = false
+    assert.deepEqual(await fixture.dispatch.runNext(), { kind: 'idle' })
+    assert.equal(
+      fixture.runtime.leaseCount,
+      leases,
+      'idle work does not inspect an unavailable ML runtime either',
+    )
+  })
+})
+
+test('dispatch metadata preflight waits an admitted Project preparation before observing the real queue', async () => {
+  await withFixture(async (fixture) => {
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'positive-prompt',
+      text: 'portrait',
+    })
+    await fixture.projects.updateGenerationDraft(fixture.tabId, {
+      kind: 'negative-prompt',
+      text: 'blur',
+    })
+    const entered = signal()
+    const release = signal()
+    fixture.runtime.beforeCompose = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    const publishing = fixture.runtime.withGenerationWorker(
+      path.join(fixture.root, 'scratch'),
+      async (worker) => await fixture.orchestrator.enqueueOne(fixture.tabId, worker, worker),
+    )
+    let preflightSettled = false
+    try {
+      await entered.promise
+      const preflight = fixture.orchestrator.hasDispatchablePending().then((pending) => {
+        preflightSettled = true
+        return pending
+      })
+      // An independent actual SQLite metadata read proves queue progress while preparation is held.
+      assert.equal(await fixture.queue.hasDispatchablePending(), false)
+      assert.equal(
+        preflightSettled,
+        false,
+        'orchestrator must not mistake admitted-but-unpublished work for idle',
+      )
+      release.resolve()
+      const queued = await publishing
+      assert.ok(queued)
+      assert.equal(await preflight, true)
+      assert.equal((await fixture.queue.loadVerifiedInput(queued.id)).item.status, 'pending')
+      assert.equal((await fixture.dispatch.runNext()).kind, 'completed')
+      assert.equal(fixture.runtime.generated.length, 1)
+      assert.equal(fixture.runtime.leaseCount, 2)
+      assert.deepEqual(await fixture.dispatch.runNext(), { kind: 'idle' })
+      assert.equal(fixture.runtime.leaseCount, 2)
+    } finally {
+      release.resolve()
+      await publishing
+    }
+  })
+})
+
+test('shutdown while the real pending preflight awaits cannot acquire a CUDA lease or claim its jobs', async () => {
+  await withFixture(async (fixture) => {
+    const entered = signal()
+    const release = signal()
+    const preflight = fixture.orchestrator.hasDispatchablePending.bind(fixture.orchestrator)
+    fixture.orchestrator.hasDispatchablePending = async () => {
+      const pending = await preflight()
+      assert.equal(pending, true)
+      entered.resolve()
+      await release.promise
+      return pending
+    }
+    try {
+      await fixture.controller.generate(fixture.tabId, {
+        documentId: fixture.documentId,
+        iterations: 1,
+      })
+      await entered.promise
+      await assert.rejects(fixture.dispatch.runNext(), { code: 'BUSY' })
+      const closing = fixture.controller.shutdown()
+      release.resolve()
+      await closing
+      const page = await fixture.queue.listManagerPage()
+      assert.equal(
+        page.counts.pending,
+        4,
+        'shutdown must not claim rows behind the awaited preflight',
+      )
+      assert.equal(page.counts.running, 0)
+      assert.equal(fixture.runtime.generated.length, 0)
+      assert.equal(fixture.runtime.leaseCount, 1, 'only the completed preparation owned CUDA')
+      await assert.rejects(fixture.dispatch.runNext(), { code: 'CLOSED' })
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
 test('a successful Retry publication after actual dispatch observed idle wakes the finishing drain', async () => {
   await withFixture(async (fixture) => {
     const entered = signal()
@@ -2250,10 +2376,15 @@ test('a successful Retry publication after actual dispatch observed idle wakes t
       assert.equal((await fixture.controller.getQueue()).counts.pending, 1)
       assert.equal(fixture.runtime.generated.length, 4)
       release.resolve()
-      await waitForState(
+      const finished = await waitForState(
         fixture.controller,
         fixture.tabId,
-        (state) => state.phase === 'idle' && state.jobs.length === 0,
+        (state) => state.phase === 'idle',
+      )
+      assert.equal(
+        finished.jobs.length,
+        0,
+        'the finishing idle drain must not strand a successful Retry publication',
       )
       assert.equal(fixture.runtime.generated.length, 5)
       assert.equal((await fixture.controller.getQueue()).counts.completed, 4)

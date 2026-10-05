@@ -160,6 +160,72 @@ uv run pytest
 
 Зависимости меняются через `uv add` / `uv remove`, после чего обновлённый `uv.lock` проходит CI. Ручной `uv pip install` в project environment не является способом объявить постоянную зависимость: всё необходимое worker'у должно присутствовать в `pyproject.toml` и lock-файле.
 
+### Текущая реализация и developer qualification
+
+`RuntimeManager.install()` и `repair()` пока возвращают
+`RUNTIME_INSTALL_UNAVAILABLE`; изложенный ниже staged release lifecycle остаётся
+контрактом реализации. Проверка существующего app-owned pointer и запуск
+установленного worker уже доступны, но не заменяют verified installer.
+
+- `pnpm run app:qualify:provision` — явная подготовка нового изолированного
+  app-data root: копирование managed CPython 3.12.13, online `uv sync --locked`
+  с inference extra и `--no-editable`, проверка installed payload и offline
+  config, реальный Linux/NVIDIA startup и публикация pointer только с `--activate`.
+- `pnpm run app:qualify:generation` — отдельная опциональная проверка через
+  собранный Electron и fixture с существующими trained files: обычные UI/IPC,
+  Main qualification, queue/worker/staging, явный Add и Save/reopen. Подготовленный
+  model catalog является предусловием; CivitAI installation этим не проверяется.
+
+Запускать из корня checkout, заменив абсолютные placeholders ниже. `<fresh-root>` —
+новый изолированный canonical каталог вне обычных пользовательских app data;
+его `data/` нужно создать заранее. Путь `data/imagegen-studio`, runtime environment
+и provision report должны отсутствовать. Provisioner отказывается от существующих
+назначений, неканонических путей и symlink; он не ремонтирует обычную установку.
+
+```bash
+pnpm run app:qualify:provision \
+  --app-data '<fresh-root>/data/imagegen-studio' \
+  --runtime-id qualification-linux-nvidia-unique \
+  --managed-python '<canonical-managed-cpython-3.12.13-root>' \
+  --sdxl-config '<canonical-verified-offline-sdxl-config>' \
+  --uv '<canonical-absolute-uv-executable>' \
+  --report '<fresh-root>/provision-report.json' \
+  --activate
+
+pnpm run app:qualify:generation --fixture '<fresh-root>/fixture.json'
+```
+
+`fixture.json` содержит `schemaVersion: 1`, тот же абсолютный `appData`, отдельный
+`artifacts: '<fresh-root>/native-1'`, `side` и `steps`, а также записи `illustrious`,
+`anima`, `encoder`, `vae`, `illustriousLora`, `animaLora`. Каждая запись задаёт
+существующий read-only source file через абсолютный `path`, `name`, `family`,
+`type`, `sha256` и точный `byteSize`; Illustrious checkpoint также задаёт
+`predictionType`. Encoder/VAE должны совпадать с закреплёнными Anima identities.
+Harness проверяет source bytes и копирует их в изолированный managed catalog;
+это не разрешение писать в исходную model library. Декларированные family и
+prediction type — предусловия проверки, а не доказательство их автоматического
+определения.
+
+Для повторного прогона с тем же изолированным catalog указать новый
+`artifacts: '<fresh-root>/native-2'` в fixture и выполнить:
+
+```bash
+pnpm run app:qualify:generation --fixture '<fresh-root>/fixture.json' --resume
+```
+
+`--resume` переиспользует только проверенные model files/catalog, а не старый
+evidence report. Каждый прогон требует нового canonical evidence destination:
+`artifacts/report.json` резервируется эксклюзивно; существующий файл или symlink
+отклоняется без изменения прежних данных. Models/artifacts проверяются перед
+использованием, а их родители — до создания каталогов. Не удалять прежний report
+ради повторного запуска.
+
+Эти scripts не входят в обычный smoke suite и не реализуют release download,
+подписанный manifest, offline wheelhouse, repair или rollback. Их наличие и
+успешный startup не доказывают успешную trained generation. Фактические результаты
+и границы доказательства фиксируются в
+[installed runtime qualification research](../engineering/phase-2c-installed-runtime-qualification-research.md).
+
 ## Release artifacts
 
 Клиент не должен разрешать произвольные версии зависимостей из публичных package indexes.
@@ -315,6 +381,58 @@ Electron main process владеет:
 - cleanup policy и диагностическими логами.
 
 Python worker не обновляет сам себя. Renderer не запускает `uv`, Python или shell commands напрямую и получает только доменные status/progress/error DTO через typed preload API.
+
+### CPU derivatives из установленного runtime
+
+Main использует общий provider для previews, image import, target inspection и
+определения режима в settings comparison. В production
+`RuntimeManager.resolveInstalledProjectWorker(scratch)` читает активный app-owned
+pointer, проверяет interpreter и canonical runtime/cache/scratch paths и возвращает
+location с отдельным offline environment и `CUDA_VISIBLE_DEVICES=''`.
+Development adapter допускается только в явном development/test режиме.
+CPU здесь выполняет image operations; поддерживаемый inference profile остаётся
+Linux/NVIDIA.
+
+Provider не запускает worker и не владеет его transport: общий
+`ProjectTargetInspectionOwner` сериализует CPU actions/reads, передаёт startup
+abort signal и ждёт confirmed exit. GPU generation сохраняет отдельный runtime
+lease. CPU операции могут выполняться рядом с running inference того же runtime,
+без CUDA qualification и зависимости от исправного ML config. Unsafe/missing
+pointer, смена runtime при активном lease, незавершённый startup, unconfirmed exit
+и shutdown отклоняют новое разрешение/запуск.
+
+Failed startup и failed `close()` уже запущенного CPU child входят в общий
+physical-exit registry `ProjectWorkerClient`. Его наблюдают runtime status,
+installed provider, qualification/admission и фактические CPU/CUDA spawn boundaries,
+включая повторные проверки после asynchronous path/cache reads. Fence снимается
+только после подтверждённого OS exit или успешного explicit retry. Завершившийся
+Save/import сохраняет успешный результат; следующий placeholder Save не запускает
+новый child, пока прежний exit не подтверждён. Shutdown повторяет закрытие retained
+child до закрытия storage. Старые failed-start query/retry names — aliases общего
+fence, а не отдельная более узкая проверка.
+
+Если derivatives недоступны, Save сохраняет проект с documented placeholder
+preview. Повреждённый ML runtime не препятствует этой операции. Shutdown закрывает
+CPU owner до закрытия SQLite; startup, начатый после разрешения location, остаётся
+в его abort/exit barrier. Эта проводка не устанавливает trust полного release
+artifact: integrity/signature, staged install и rollback сохраняют свои отдельные
+release gates.
+
+### Idle queue и GPU dispatch
+
+`GenerationDispatchCoordinator` перед GPU qualification/reservation запрашивает
+metadata-only `hasDispatchablePending()`. Preflight ждёт enqueue publication
+barrier, проверяет queue/staging readiness, исключает fenced Projects и работу
+при существующей global running row; fence/readiness повторно проверяются после
+SQLite read. Пустая или полностью fenced очередь возвращает idle без нового CUDA
+child и не блокирует здоровые CPU derivatives.
+
+Это advisory read: frozen-input validation, verified claim и cross-instance
+SQLite CAS остаются окончательной authority. Если положительный preflight устарел
+из-за cancellation или чужого claim, он не даёт права выполнить job. Shutdown
+после await запрещает новый lease; существующий drain re-wake не теряет admission
+между idle и detach. Успешные controlled subprocess/SQLite tests и behavioral
+mutations проверяют эти границы отдельно от trained generation и release installer.
 
 ## Acceptance criteria
 

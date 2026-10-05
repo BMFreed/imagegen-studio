@@ -549,6 +549,14 @@ export class GenerationOrchestrator {
     await this.enqueueBarrier
   }
 
+  /** Advisory metadata preflight; the later verified queue claim remains the dispatch authority. */
+  async hasDispatchablePending(): Promise<boolean> {
+    await this.enqueueBarrier
+    this.queue.assertReadyForDispatch()
+    this.staging.assertReadyForPublication()
+    return await this.queue.hasDispatchablePending()
+  }
+
   /** Only valid before destructive Project-close cancellation has begun. */
   releaseProjectGenerationFence(tabId: string): void {
     if (this.batchCleanupUnconfirmed.has(tabId)) {

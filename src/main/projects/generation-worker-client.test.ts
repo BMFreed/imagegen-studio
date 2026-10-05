@@ -2,7 +2,7 @@ import type { GenerationDenoisingProgress } from '../../shared/projects/generati
 
 import assert from 'node:assert/strict'
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { pbkdf2, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +17,7 @@ import {
   GenerationWorkerError,
   type GenerationWorkerLocation,
 } from './generation-worker-client.js'
+import { ProjectWorkerClient } from './worker-client.js'
 
 type Fixture = {
   executable: string
@@ -243,6 +244,102 @@ function options(mode: string, more: Record<string, string> = {}) {
 function isCode(code: GenerationWorkerError['code']) {
   return (error: unknown): boolean => error instanceof GenerationWorkerError && error.code === code
 }
+
+test(
+  'an established image close failure during path inspection blocks the actual inference spawn until physical exit',
+  { timeout: 10_000 },
+  async () => {
+    await withFixture(async (fixture) => {
+      const cpuExecutable = path.join(fixture.location.runtimeRoot, 'cpu-python')
+      await writeFile(
+        cpuExecutable,
+        `#!${process.execPath}\nprocess.on('SIGTERM', () => {})\nsetInterval(() => {}, 1000)\nprocess.stdin.resume()\nprocess.stdout.write(JSON.stringify({type:'ready',protocolVersion:'1',workerVersion:'0.1.0',pythonVersion:'3.12.13',runtimeProfile:'derivatives-only',capabilities:['image-derivatives','import-normalization','self-test']})+'\\n')\n`,
+      )
+      await chmod(cpuExecutable, 0o700)
+      const cpu = await ProjectWorkerClient.start(
+        {
+          pythonExecutable: cpuExecutable,
+          runtimeRoot: fixture.location.runtimeRoot,
+          stagingBasePath: fixture.location.scratchBasePath,
+        },
+        { shutdownWaitMs: 1 },
+      )
+      const child = (cpu as unknown as { child: ChildProcessWithoutNullStreams }).child
+      const originalKill = child.kill.bind(child)
+      child.kill = (signal) => (signal === 'SIGKILL' ? false : originalKill(signal))
+      const spawnMarker = path.join(fixture.root, 'inference-spawns')
+      // Delay real async path inspection, while actual OS close/timer progress remains runnable.
+      const inspections = Array.from(
+        { length: Number(process.env.UV_THREADPOOL_SIZE ?? 4) },
+        () =>
+          new Promise<void>((resolve, reject) => {
+            pbkdf2('path-inspection-control', 'salt', 200_000, 32, 'sha256', (error) => {
+              if (error) {
+                reject(error)
+              } else {
+                resolve()
+              }
+            })
+          }),
+      )
+      let unexpected: GenerationWorkerClient | undefined
+      try {
+        const closing = assert.rejects(cpu.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+        assert.equal(
+          ProjectWorkerClient.hasUnconfirmedExit(),
+          false,
+          'the late fence is not yet set',
+        )
+        const attempt = await GenerationWorkerClient.start(
+          fixture.location,
+          options('done', {
+            FAKE_SPAWN_MARKER: spawnMarker,
+          }),
+        ).then(
+          (client) => ({ client, error: undefined }),
+          (error: unknown) => ({ client: undefined, error }),
+        )
+        unexpected = attempt.client
+        if (unexpected) {
+          await unexpected.close()
+        }
+        await closing
+        assert.equal(
+          existsSync(spawnMarker),
+          false,
+          'no inference child starts after the late CPU exit failure',
+        )
+        assert.ok(attempt.error instanceof GenerationWorkerError)
+        assert.equal(attempt.error.code, 'WORKER_EXIT_UNCONFIRMED')
+        child.kill = originalKill
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+        child.kill('SIGKILL')
+        await exited
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+        const resumed = await GenerationWorkerClient.start(
+          fixture.location,
+          options('done', {
+            FAKE_SPAWN_MARKER: spawnMarker,
+          }),
+        )
+        await resumed.close()
+        assert.equal((await readFile(spawnMarker, 'utf8')).trim().split('\n').length, 1)
+      } finally {
+        await Promise.all(inspections)
+        child.kill = originalKill
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          child.kill('SIGKILL')
+          await exited
+        }
+        await cpu.close()
+        if (unexpected) {
+          await unexpected.close()
+        }
+      }
+    })
+  },
+)
 
 test('real inference subprocess requires an exact ready and returns correlated actual seed', async () => {
   await withFixture(async (fixture) => {

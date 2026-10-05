@@ -25,8 +25,8 @@ export class GenerationDispatchError extends Error {
 
 /**
  * App-owned dispatch boundary. One recovered processor and one GPU lease handle one oldest pending
- * row at a time. The runtime lease owns confirmed worker exit on completion, failure, cancellation
- * and idle. This has no renderer entry point or automatic queue drain yet.
+ * row at a time. Empty or fenced work is checked before acquiring the GPU; the later verified claim
+ * still owns dispatch. The runtime lease owns confirmed exit after completion, failure or cancel.
  */
 export class GenerationDispatchCoordinator {
   private activeRun: Promise<GenerationProcessorResult> | null = null
@@ -35,7 +35,10 @@ export class GenerationDispatchCoordinator {
 
   constructor(
     private readonly runtime: GenerationWorkerLease,
-    private readonly orchestrator: Pick<GenerationOrchestrator, 'runNext'>,
+    private readonly orchestrator: Pick<
+      GenerationOrchestrator,
+      'hasDispatchablePending' | 'runNext'
+    >,
     private readonly processor: Pick<GenerationProcessor, 'stopAndCancelActive'>,
     private readonly scratchBasePath: string,
   ) {}
@@ -48,6 +51,9 @@ export class GenerationDispatchCoordinator {
       throw new GenerationDispatchError('BUSY', 'A generation job is already being processed.')
     }
     const operation = (async (): Promise<GenerationProcessorResult> => {
+      if (!(await this.orchestrator.hasDispatchablePending()) || this.closed) {
+        return { kind: 'idle' }
+      }
       const result = await this.runtime.withGenerationWorker(
         this.scratchBasePath,
         async (worker) => {

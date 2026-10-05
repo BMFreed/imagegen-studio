@@ -35,6 +35,7 @@ import {
   type ComposeTargetInput,
   type ComposeTargetResult,
   composeTargetWithTransport,
+  ProjectWorkerClient,
   ProjectWorkerError,
 } from './worker-client.js'
 
@@ -229,6 +230,14 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       const runtimeRoot = await canonicalDirectory(location.runtimeRoot, 'Runtime root')
       const scratchBasePath = await canonicalDirectory(location.scratchBasePath, 'Scratch base')
       const executable = await executableWithin(location.pythonExecutable, runtimeRoot)
+      // Runtime admission is advisory across startup/path awaits. An established CPU image child
+      // can lose confirmed exit meanwhile; the actual CUDA spawn must observe that global fence.
+      if (ProjectWorkerClient.hasUnconfirmedExit()) {
+        throw new GenerationWorkerError(
+          'WORKER_EXIT_UNCONFIRMED',
+          'The image worker has not confirmed exit.',
+        )
+      }
       const child = spawn(executable, ['-I', '-m', 'imagegen_worker.inference_main'], {
         cwd: runtimeRoot,
         env: {

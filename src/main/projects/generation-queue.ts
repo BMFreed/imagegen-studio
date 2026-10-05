@@ -1350,6 +1350,39 @@ export class GenerationQueueRepository {
     })
   }
 
+  /**
+   * Advisory metadata-only check before acquiring a runtime. Frozen input verification and the
+   * cross-instance running-slot CAS remain owned by claimNextPending().
+   */
+  async hasDispatchablePending(): Promise<boolean> {
+    return await this.serialize(async () => {
+      for (;;) {
+        this.assertReadyForDispatch()
+        let pendingQuery = this.db
+          .selectFrom('generation_queue_item')
+          .select('local_project_key')
+          .where('status', '=', 'pending')
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
+        this.assertReadyForDispatch()
+        // Project close can raise its synchronous fence while the metadata read awaits.
+        if (pending && this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+        return pending !== undefined
+      }
+    })
+  }
+
   /** App-wide history metadata. Neither target pixels nor checkpoint files are read. */
   async listManagerPage(cursor?: GenerationQueueCursor | null): Promise<GenerationQueuePage> {
     if (cursor !== undefined && cursor !== null && !isGenerationQueueCursor(cursor)) {
