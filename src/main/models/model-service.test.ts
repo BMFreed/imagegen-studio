@@ -4,7 +4,17 @@ import type { GenerationPrompt } from '../../shared/projects/prompt-embeddings.j
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -1214,6 +1224,171 @@ for (const family of ['Illustrious', 'SDXL 1.0'] as const) {
     )
   })
 }
+
+// Boundary: actual download/integrity, install coordinator, filesystem, SQLite and
+// exact selector. Only source bytes and the pre-commit observation timing are
+// controlled. Normal install versus repair is the neighboring case; restoring
+// staging cleanup after catalog/event publication must fail these assertions.
+for (const operation of ['install', 'repair'] as const) {
+  test(`${operation} finalizes only owned staging links before exact VAE catalog publication`, async () => {
+    const requests: { authorization: string | null; pathname: string }[] = []
+    const bytes = Buffer.from('VAE finalized staging publication fixture')
+    await withModelHarness(
+      civitaiApi({ fileHash: sha256(bytes), requests, type: 'VAE' }),
+      new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async () => new Response(bytes),
+      }),
+      async ({ coordinator, repository, root, service }) => {
+        let priorManagedPath: string | null = null
+        let priorVersionId: string | null = null
+        if (operation === 'repair') {
+          const first = selectedFilePreview(await service.previewImport(MODEL_URL))
+          const installed = await waitForTerminalJob(coordinator, () =>
+            coordinator.startInstall(first.previewId, 701, false),
+          )
+          assert.equal(installed.status, 'completed', installed.error?.message ?? '')
+          const version = (await repository.listInstalled())[0]?.versions[0]
+          assert.ok(version)
+          priorManagedPath = version.file.managedPath
+          priorVersionId = version.id
+          await writeFile(priorManagedPath, Buffer.from('corrupted existing VAE'))
+        }
+        const stagingDirectory = path.join(root, 'models', '.staging')
+        const neighbor = `${randomUUID()}.part`
+        const neighborBytes = Buffer.from('unrelated staging owner')
+        await writeFile(path.join(stagingDirectory, neighbor), neighborBytes)
+        const snapshots: {
+          installedPaths: string[]
+          jobStatus: string | undefined
+          links: bigint
+          managedPath: string
+          stagingNames: string[]
+        }[] = []
+        const observePublication = async (managedPath: string, jobId: string | undefined) => {
+          snapshots.push({
+            installedPaths: (await repository.listInstalled()).flatMap((resource) =>
+              resource.versions.map((version) => version.file.managedPath),
+            ),
+            jobStatus: (await coordinator.listJobs()).find((job) => job.id === jobId)?.status,
+            links: (await lstat(managedPath, { bigint: true })).nlink,
+            managedPath,
+            stagingNames: await readdir(stagingDirectory),
+          })
+        }
+        const publish = repository.publishVerifiedInstallation.bind(repository)
+        repository.publishVerifiedInstallation = async (input) => {
+          await observePublication(input.primary.file.managedPath, input.jobId)
+          return publish(input)
+        }
+        const repair = repository.repairVerifiedVersion.bind(repository)
+        repository.repairVerifiedVersion = async (input) => {
+          await observePublication(input.file.managedPath, input.jobId)
+          return repair(input)
+        }
+        const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(preview.files[0]?.needsRepair, operation === 'repair')
+        const job = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, 701, false),
+        )
+        assert.equal(job.status, 'completed', job.error?.message ?? '')
+        assert.equal(snapshots.length, 1)
+        const before = snapshots[0]
+        assert.ok(before)
+        assert.deepEqual(before.stagingNames, [neighbor])
+        assert.equal(before.links, 1n)
+        assert.equal(before.jobStatus, 'verifying')
+        assert.deepEqual(before.installedPaths, priorManagedPath ? [priorManagedPath] : [])
+        if (priorManagedPath) {
+          assert.notEqual(before.managedPath, priorManagedPath)
+        }
+        const [resource] = await repository.listInstalled()
+        const version = resource?.versions[0]
+        assert.ok(resource && version)
+        if (priorVersionId) {
+          assert.equal(version.id, priorVersionId)
+        }
+        const selected = await service.resolveGenerationVae(resource.id, version.id)
+        assert.equal(selected.fileSha256, sha256(bytes))
+        assert.equal(selected.kind, 'vae')
+        assert.deepEqual(await readFile(version.file.managedPath), bytes)
+        assert.equal((await lstat(version.file.managedPath, { bigint: true })).nlink, 1n)
+        assert.deepEqual(await readFile(path.join(stagingDirectory, neighbor)), neighborBytes)
+      },
+    )
+  })
+}
+
+test('cancel after managed-link preparation stays cancellable before catalog publication', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const bytes = Buffer.from('VAE final pre-publication cancel fixture')
+  await withModelHarness(
+    civitaiApi({ fileHash: sha256(bytes), requests, type: 'VAE' }),
+    new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => new Response(bytes),
+    }),
+    async ({ coordinator, repository, root, service }) => {
+      const update = repository.updateInstallJob.bind(repository)
+      let cancellationObserved = false
+      repository.updateInstallJob = async (jobId, input) => {
+        await update(jobId, input)
+        if (input.status === 'verifying') {
+          const managedPath = path.join(
+            root,
+            'models',
+            sha256(bytes).slice(0, 2),
+            `${sha256(bytes)}.safetensors`,
+          )
+          assert.equal((await lstat(managedPath, { bigint: true })).nlink, 2n)
+          assert.deepEqual(await repository.listInstalled(), [])
+          await coordinator.cancelInstall(jobId)
+          cancellationObserved = true
+        }
+      }
+      const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      const job = await waitForTerminalJob(coordinator, () =>
+        coordinator.startInstall(preview.previewId, 701, false),
+      )
+      assert.equal(cancellationObserved, true)
+      assert.equal(job.status, 'canceled')
+      assert.equal(job.error?.code, 'DOWNLOAD_CANCELED')
+      assert.deepEqual(await repository.listInstalled(), [])
+    },
+  )
+})
+
+test('own staging unlink failure refuses catalog publication through the existing failed-install path', async () => {
+  const requests: { authorization: string | null; pathname: string }[] = []
+  const bytes = Buffer.from('VAE actual staging unlink refusal fixture')
+  const downloader = new ModelDownloader({
+    resolveAddresses: PUBLIC_ADDRESSES,
+    transport: async () => new Response(bytes),
+  })
+  const download = downloader.download.bind(downloader)
+  downloader.download = async (input) => {
+    const verified = await download(input)
+    await chmod(input.stagingDirectory, 0o500)
+    return verified
+  }
+  await withModelHarness(
+    civitaiApi({ fileHash: sha256(bytes), requests, type: 'VAE' }),
+    downloader,
+    async ({ coordinator, repository, root, service }) => {
+      try {
+        const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        const job = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, 701, false),
+        )
+        assert.equal(job.status, 'failed')
+        assert.equal(job.error?.code, 'MODEL_INSTALL_FAILED')
+        assert.deepEqual(await repository.listInstalled(), [])
+      } finally {
+        await chmod(path.join(root, 'models', '.staging'), 0o700)
+      }
+    },
+  )
+})
 
 test('VAE exact selection rejects another resource kind, missing identity, unsupported catalog fields and tampered bytes', async () => {
   const requests: { authorization: string | null; pathname: string }[] = []

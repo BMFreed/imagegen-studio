@@ -786,6 +786,15 @@ export class ModelInstallCoordinator {
           }
         }
       }
+      if (staging.length > 0) {
+        // Finalize owned links before SQLite exposes the verified managed inode.
+        // A later staging unlink would change its ctime during exact selection.
+        for (const staged of staging) {
+          await unlink(staged)
+        }
+        await syncDirectory(this.stagingRoot)
+        staging.length = 0
+      }
       if (job.controller.signal.aborted) {
         throw new ModelDownloadError('DOWNLOAD_CANCELED', 'The download was canceled.')
       }
