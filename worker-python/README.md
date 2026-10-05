@@ -55,9 +55,10 @@ offsets to character weights, applying them once after the native adapter.
 Both signs, Unicode, special tokens, truncation and precision/finite guards
 have native tests and semantic mutations; a separate trained-weight CPU probe
 confirms conditioning behavior. Asset licenses/notice ship in the wheel.
-No Anima worker command/capability is advertised. Internal default Euler execution
-follows below; family-aware editor handoff, LoRA, other schedulers/options,
-queue/Retry/provenance and release runtime remain open.
+This conditioning checkpoint itself added no Anima worker command/capability.
+Subsequent Euler, LoRA and six-method foundations reach the qualified worker 0.11
+entrypoint below; family-aware editor handoff, queue/Retry/provenance and release
+runtime remain open.
 
 The [Anima Euler foundation](../docs/engineering/phase-2c-anima-euler-research.md)
 adds `generate_anima_euler` in `anima_euler.py`, consuming TS's immutable
@@ -87,7 +88,39 @@ Inference worker `0.9.0` advertises `illustrious-external-vae` in addition to th
 
 The JSONL loop explicitly collects unreachable Python cycles after a request processor returns and before publishing its terminal response. This prevents dead native pipelines from retaining GPU tensors across sequential requests in one child, while preserving live ownership and the CUDA allocator's reusable cache. This is a worker lifetime guarantee; it does not promise an application model cache, release packaging or a maximum supported GPU resolution.
 
-After qualification, `ready` has `workerVersion:"0.10.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings"]`, `protocolVersion:"1"` and `pythonVersion`. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img` and `compose-target` DTOs. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
+After qualification, `ready` has `workerVersion:"0.11.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting` and `anima-flow-sampling`; a false or failed BF16 probe withholds only those five capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-anima-txt2img`, `generate-anima-img2img` and `compose-target` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
+
+### Qualified original Anima commands (worker 0.11.0)
+
+[Worker entrypoint research](../docs/engineering/phase-2c-anima-worker-entrypoint-research.md)
+and the [typed TS assembler](../src/shared/projects/anima-worker-request.ts)
+define `generate-anima-txt2img` / `generate-anima-img2img` under protocol `1`.
+Their exact `job` has `schemaVersion:1`, `model`, `bbox`, `target`, `prompts`,
+`sampling`, `loras` and `output`. Model architecture is `anima-base-1.0`, with
+three distinct exact checkpoint/Qwen3/VAE path/hash/size refs. The target is
+pinned-sRGB RGBA PNG; fully transparent means txt2img, fully opaque means
+img2img, and mixed alpha refuses. Target/bbox/plan dimensions must agree.
+Target and result are distinct normalized direct `.png` children of the nominated
+staging root; every model/LoRA/image path is distinct. Extension-only basename
+`.png` is rejected; hidden names such as `.source.png` remain valid.
+
+TS compiles both concrete prompts to `anima-prompt-weighting-v1` and all six
+native methods to `anima-flow-denoising-v1`. The latter captures the full selected
+schedule, clipping, seed/posterior/step domains and actual evaluation count.
+Python validates/captures those compiled values, loads the exact original native
+bundle in CUDA BF16, applies ordered signed ordinary LoRAs and uses the existing
+weighted flow image boundary. Raw prompts or duplicate sampling values, SD-only
+advanced fields, embeddings and alternate VAE replacement are not wire fields.
+Each JSONL request remains within 64 KiB including the terminal LF. Anima
+progress uses the same message shape and captured actual plan evaluations, up to
+399 for Heun; strength zero produces no denoising progress.
+
+Source pixels come from one verified snapshot whose actual length and SHA-256
+must match the captured target. Both families use the same exclusive provisional
+PNG publisher and optional thumbnail policy. Success creates no SQLite job,
+accepted layer, `.igs` record or durable candidate. Project/Main admission,
+queue/Retry/dispatch, accepted provenance and release installation remain open;
+worker-only trained probes do not establish full product readiness or quality.
 
 The same inference child creates an optional candidate thumbnail from the exact sRGB RGB image written to the required PNG. It copies the image, keeps its aspect ratio without upscaling, limits each side to 256 pixels, and encodes WebP at quality 80 with LANCZOS resampling and the pinned sRGB ICC profile. The deterministic provisional path is `command.output_path + ".thumb.webp"` (for example, `result.png.thumb.webp`). After a complete file write, a byte check of at most 256 KiB, exclusive publication and directory sync, `generation-done` may include `thumbnail:{outputPath,sha256,byteSize,width,height}`. It never replaces an existing cache path. Thumbnail encoding, size or filesystem failure suppresses that metadata and removes the worker's partial cache while preserving the completed full PNG and its normal `generation-done`. Main still validates all supplied metadata and owns eventual cache publication/cleanup. The optional thumbnail does not change frozen requests, queue state, candidate acceptance, `.igs`, or actual-seed behavior; full candidate PNGs remain authoritative.
 

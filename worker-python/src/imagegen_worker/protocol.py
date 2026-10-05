@@ -8,7 +8,7 @@ import platform
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from PIL import Image, ImageCms
 from PIL import __version__ as pillow_version
@@ -35,6 +35,11 @@ from imagegen_worker.derivatives import (
     create_derivatives,
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
+
+if TYPE_CHECKING:
+    from imagegen_worker.anima_conditioning import CompiledAnimaPrompt
+    from imagegen_worker.anima_flow_sampling import AnimaFlowSamplingPlan
+    from imagegen_worker.inference_anima import AnimaModelBundle
 
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_GENERATION_PROMPT_BYTES = 16_384
@@ -135,6 +140,31 @@ class GenerateIllustriousImg2ImgCommand(GenerateIllustriousTxt2ImgCommand):
     """Opaque frozen target; strength is explicit and never inferred by the worker."""
 
     denoising_strength: float
+
+
+@dataclass(frozen=True)
+class GenerateAnimaTxt2ImgCommand:
+    """Original Anima's captured worker boundary, separate from Main admission and SDXL."""
+
+    request_id: str
+    bundle: AnimaModelBundle
+    target_path: Path
+    target_sha256: str
+    target_byte_size: int
+    width: int
+    height: int
+    bbox: PreviewRect
+    positive_prompt: CompiledAnimaPrompt
+    negative_prompt: CompiledAnimaPrompt
+    sampling: AnimaFlowSamplingPlan
+    loras: tuple[GenerationLora, ...]
+    staging_root: Path
+    output_path: Path
+
+
+@dataclass(frozen=True)
+class GenerateAnimaImg2ImgCommand(GenerateAnimaTxt2ImgCommand):
+    """A fully opaque frozen RGBA target and explicit captured strength."""
 
 
 def ready_message() -> dict[str, object]:
@@ -458,6 +488,141 @@ def _generate_illustrious_txt2img(
     return command
 
 
+def _anima_path(value: object, label: str) -> Path:
+    parsed = _absolute_path(value, label)
+    if value != str(parsed) or str(parsed).startswith("//"):
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a normalized path.")
+    try:
+        str(parsed).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be valid Unicode.") from error
+    return parsed
+
+
+def _anima_byte_size(value: object, label: str) -> int:
+    size = _positive_integer(value, label)
+    if size > 9_007_199_254_740_991:
+        raise DerivativeError("INVALID_REQUEST", f"{label} must be a safe integer.")
+    return size
+
+
+def _generate_anima(
+    value: object, request_id: str, *, img2img: bool
+) -> GenerateAnimaTxt2ImgCommand:
+    # Local imports avoid a cycle: the numerical helpers share GenerationLora above.
+    from imagegen_worker.anima_conditioning import validate_compiled_anima_prompt
+    from imagegen_worker.anima_flow_sampling import validate_anima_flow_sampling_plan
+    from imagegen_worker.inference_anima import AnimaModelBundle, AnimaModelFile
+
+    job = _object(
+        value,
+        "Anima generation job",
+        {"schemaVersion", "model", "target", "bbox", "prompts", "sampling", "loras", "output"},
+    )
+    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Anima job schema version is unsupported.")
+    model = _object(
+        job["model"], "Anima model", {"architecture", "checkpoint", "qwen3Encoder", "vae"}
+    )
+    if model["architecture"] != "anima-base-1.0":
+        raise DerivativeError("INVALID_REQUEST", "Anima architecture is unsupported.")
+
+    def file(value: object, label: str) -> AnimaModelFile:
+        fields = _object(value, label, {"path", "sha256", "byteSize"})
+        return AnimaModelFile(
+            _anima_path(fields["path"], label),
+            _sha256(fields["sha256"], label),
+            _anima_byte_size(fields["byteSize"], label),
+        )
+
+    bundle = AnimaModelBundle(
+        file(model["checkpoint"], "Anima checkpoint"),
+        file(model["qwen3Encoder"], "Anima Qwen3 encoder"),
+        file(model["vae"], "Anima VAE"),
+    )
+    if len({bundle.checkpoint.path, bundle.qwen3_encoder.path, bundle.vae.path}) != 3:
+        raise DerivativeError("INVALID_REQUEST", "Anima requires three distinct exact model files.")
+    sampling = validate_anima_flow_sampling_plan(job["sampling"])
+    if sampling.mode != ("img2img" if img2img else "txt2img"):
+        raise DerivativeError(
+            "INVALID_REQUEST", "Anima command mode differs from its sampling plan."
+        )
+    bbox = _target_bbox(job["bbox"])
+    target = _object(
+        job["target"],
+        "Anima target",
+        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
+    )
+    target_path = _anima_path(target["path"], "Anima target path")
+    target_size = _anima_byte_size(target["byteSize"], "Anima target byte size")
+    width = _positive_integer(target["width"], "Anima target width")
+    height = _positive_integer(target["height"], "Anima target height")
+    if (
+        _sha256(target["iccSha256"], "Anima target ICC") != PINNED_SRGB_ICC_SHA256
+        or target_size > MAX_GENERATION_TARGET_BYTES
+        or width != sampling.width
+        or height != sampling.height
+        or bbox["width"] != width
+        or bbox["height"] != height
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Anima target identity or dimensions are invalid.")
+    prompts = _object(job["prompts"], "Anima prompts", {"positive", "negative"})
+    positive = validate_compiled_anima_prompt(prompts["positive"])
+    negative = validate_compiled_anima_prompt(prompts["negative"])
+    lora_values = job["loras"]
+    if not isinstance(lora_values, list):
+        raise DerivativeError("INVALID_REQUEST", "Anima LoRAs must be an ordered array.")
+    loras: list[GenerationLora] = []
+    paths: set[Path] = set()
+    for value in cast(list[object], lora_values):
+        fields = _object(value, "Anima LoRA", {"path", "sha256", "byteSize", "weight"})
+        path = _anima_path(fields["path"], "Anima LoRA path")
+        if path in paths:
+            raise DerivativeError("INVALID_REQUEST", "Anima LoRAs must have distinct exact paths.")
+        paths.add(path)
+        loras.append(
+            GenerationLora(
+                path,
+                _sha256(fields["sha256"], "Anima LoRA SHA-256"),
+                _anima_byte_size(fields["byteSize"], "Anima LoRA byte size"),
+                _number(fields["weight"], "Anima LoRA weight"),
+            )
+        )
+    output = _object(job["output"], "Anima output", {"stagingRoot", "pngPath"})
+    staging_root = _anima_path(output["stagingRoot"], "Anima staging root")
+    output_path = _anima_path(output["pngPath"], "Anima output path")
+    if (
+        target_path.parent != staging_root
+        or target_path.suffix != ".png"
+        or output_path.parent != staging_root
+        or output_path.suffix != ".png"
+        or output_path == target_path
+    ):
+        raise DerivativeError(
+            "INVALID_REQUEST", "Anima target/output must be direct staging files."
+        )
+    model_paths = {bundle.checkpoint.path, bundle.qwen3_encoder.path, bundle.vae.path}
+    if paths & model_paths or {target_path, output_path} & (model_paths | paths):
+        raise DerivativeError("INVALID_REQUEST", "Anima models, LoRAs and images must be distinct.")
+    command_type = GenerateAnimaImg2ImgCommand if img2img else GenerateAnimaTxt2ImgCommand
+    return command_type(
+        request_id=request_id,
+        bundle=bundle,
+        target_path=target_path,
+        target_sha256=_sha256(target["sha256"], "Anima target SHA-256"),
+        target_byte_size=target_size,
+        width=width,
+        height=height,
+        bbox=bbox,
+        positive_prompt=positive,
+        negative_prompt=negative,
+        sampling=sampling,
+        loras=tuple(loras),
+        staging_root=staging_root,
+        output_path=output_path,
+    )
+
+
 def _preview_layer(value: object) -> PreviewLayer:
     fields = _object(
         value,
@@ -498,6 +663,7 @@ def parse_request(
     | ComposePreviewCommand
     | ComposeTargetCommand
     | GenerateIllustriousTxt2ImgCommand
+    | GenerateAnimaTxt2ImgCommand
 ):
     if not isinstance(value, dict):
         raise DerivativeError("INVALID_REQUEST", "Request must be an object.")
@@ -521,6 +687,11 @@ def parse_request(
         )
         return _generate_illustrious_txt2img(
             fields["job"], request_id, img2img=fields["type"] == "generate-illustrious-img2img"
+        )
+    if fields.get("type") in ("generate-anima-txt2img", "generate-anima-img2img"):
+        _object(fields, "Anima request", {"type", "requestId", "protocolVersion", "job"})
+        return _generate_anima(
+            fields["job"], request_id, img2img=fields["type"] == "generate-anima-img2img"
         )
     if fields.get("type") == "normalize-import":
         _object(
@@ -683,7 +854,7 @@ def process_request(value: object) -> dict[str, object]:
                 "runtimeProfile": RUNTIME_PROFILE,
                 "checks": _self_test(),
             }
-        if isinstance(command, GenerateIllustriousTxt2ImgCommand):
+        if isinstance(command, (GenerateIllustriousTxt2ImgCommand, GenerateAnimaTxt2ImgCommand)):
             return error_message(
                 command.request_id,
                 "INFERENCE_UNAVAILABLE",

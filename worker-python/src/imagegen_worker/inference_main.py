@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import BinaryIO
 
 from imagegen_worker import PROTOCOL_VERSION
+from imagegen_worker.anima_worker import generate_anima, supports_anima_compute
 from imagegen_worker.compositor import compose_target
 from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.inference import (
+    ANIMA_CAPABILITIES,
     INFERENCE_CAPABILITY,
     INFERENCE_CFG_RESCALE_CAPABILITY,
     INFERENCE_EMBEDDINGS_CAPABILITY,
@@ -36,6 +38,7 @@ from imagegen_worker.inference_config import configured_sdxl_path
 from imagegen_worker.protocol import (
     MAX_MESSAGE_BYTES,
     ComposeTargetCommand,
+    GenerateAnimaTxt2ImgCommand,
     GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
     error_message,
@@ -50,7 +53,7 @@ def _emit(message: dict[str, object], output: BinaryIO) -> None:
     output.flush()
 
 
-def inference_ready_message() -> dict[str, object]:
+def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, object]:
     import platform
 
     return {
@@ -70,6 +73,11 @@ def inference_ready_message() -> dict[str, object]:
             INFERENCE_VAE_PRECISION_CAPABILITY,
             INFERENCE_EXTERNAL_VAE_CAPABILITY,
             INFERENCE_EMBEDDINGS_CAPABILITY,
+            *(
+                ANIMA_CAPABILITIES
+                if runtime is not None and supports_anima_compute(runtime)
+                else ()
+            ),
         ],
     }
 
@@ -105,7 +113,9 @@ def process_inference_request(
                 "requestId": command.request_id,
                 **result,
             }
-        if not isinstance(command, GenerateIllustriousTxt2ImgCommand):
+        if not isinstance(
+            command, (GenerateIllustriousTxt2ImgCommand, GenerateAnimaTxt2ImgCommand)
+        ):
             raise DerivativeError(
                 "INVALID_REQUEST", "This worker accepts generation and target requests only."
             )
@@ -123,6 +133,12 @@ def process_inference_request(
                 )
 
         with contextlib.redirect_stdout(sys.stderr):
+            if isinstance(command, GenerateAnimaTxt2ImgCommand):
+                return generate_anima(
+                    command,
+                    runtime=runtime,
+                    on_progress=report_progress if on_progress is not None else None,
+                )
             if isinstance(command, GenerateIllustriousImg2ImgCommand):
                 return generate_illustrious_img2img(
                     command,
@@ -163,7 +179,7 @@ def main() -> int:
     except Exception:
         traceback.print_exc(file=sys.stderr)
         return 78
-    emit(inference_ready_message())
+    emit(inference_ready_message(runtime))
     while line := sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1):
         if len(line) > MAX_MESSAGE_BYTES:
             while line and not line.endswith(b"\n"):

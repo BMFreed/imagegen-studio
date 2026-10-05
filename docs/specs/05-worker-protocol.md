@@ -410,6 +410,37 @@ torchvision 0.22.1 is pinned in the inference extra and checked by this helper.
 No Anima command/capability, public admission, durable request/provenance field
 or worker version change is added by this internal checkpoint.
 
+## Qualified original Anima worker checkpoint (05.10.2026)
+
+The [worker entrypoint](../engineering/phase-2c-anima-worker-entrypoint-research.md)
+connects the earlier numerical/conditioning/LoRA foundations to the long-lived
+inference JSONL worker `0.11.0`. It preserves the full `0.10.0` Illustrious
+capability set and adds all five Anima advertisements only when the qualified
+runtime supports native CUDA BF16. Unsupported BF16 withholds Anima while
+preserving Illustrious; each Anima request checks compute support again.
+Older/unknown peers never acquire support from capability strings alone.
+
+`generate-anima-txt2img` and `generate-anima-img2img` use protocol `1`, request ID
+and exact `job.schemaVersion=1`. The authoritative
+[TS assembler](../../src/shared/projects/anima-worker-request.ts) captures
+three exact original-model refs, bbox and pinned-sRGB RGBA target, both compiled
+prompt-weighting values, full six-method sampling plan, ordered exact signed
+LoRAs and a distinct direct staging PNG path. Python's strict parser captures
+that interpretation before IO/native execution. Missing/extra advanced fields,
+mode/dimension/seed-domain drift, path aliases and mixed alpha refuse explicitly.
+No alternate VAE, embeddings, CLIP Skip, CFG Rescale or manual VAE precision are
+silently accepted for Anima.
+
+Native execution reaches correlated progress/done/error, exclusive provisional
+sRGB PNG and optional thumbnail. Shared target verification checks both hash and
+the actual captured snapshot length; shared output publication preserves existing
+Illustrious behavior. This wire does not expand Main admission, durable queue
+operations, Retry, accepted provenance or `.igs`. Family-aware editor and the
+complete frozen Project/Main integration remain the next checkpoints. Models
+remain request-owned here; cache/offload and Linux/NVIDIA runtime installation
+are still separate release work. Exact wire/limits are also documented in the
+[worker README](../../worker-python/README.md).
+
 ## Qualified Illustrious CFG Rescale checkpoint
 
 The narrow implemented txt2img request has optional

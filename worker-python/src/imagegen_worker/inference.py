@@ -10,29 +10,28 @@ import contextlib
 import hashlib
 import importlib
 import importlib.metadata
-import io
 import math
 import os
 import re
 import stat
-import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
-from imagegen_worker.candidate_thumbnail import create_candidate_thumbnail
+from imagegen_worker.anima_tokenizers import load_anima_tokenizers
 from imagegen_worker.derivatives import (
-    SRGB_ICC_PROFILE,
     DerivativeError,
     canonical_absolute_path,
-    read_snapshot,
-    write_temporary_image,
 )
-from imagegen_worker.imports import png_embedded_color_metadata
+from imagegen_worker.generation_artifacts import (
+    publish_generation_image,
+    validate_generation_paths,
+    validate_generation_target,
+)
 from imagegen_worker.inference_config import verify_pinned_config
 from imagegen_worker.inference_embeddings import (
     EmbeddingConditioningInputs,
@@ -49,7 +48,7 @@ from imagegen_worker.protocol import (
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.10.0"
+INFERENCE_WORKER_VERSION = "0.11.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
@@ -60,6 +59,13 @@ INFERENCE_EMBEDDINGS_CAPABILITY = "illustrious-embeddings"
 INFERENCE_CFG_RESCALE_CAPABILITY = "illustrious-cfg-rescale"
 INFERENCE_PROGRESS_CAPABILITY = "denoising-progress"
 INFERENCE_THUMBNAIL_CAPABILITY = "candidate-thumbnails"
+ANIMA_CAPABILITIES = (
+    "anima-txt2img",
+    "anima-img2img",
+    "anima-lora",
+    "anima-prompt-weighting",
+    "anima-flow-sampling",
+)
 
 DenoisingProgressSink = Callable[[int, int], None]
 
@@ -74,6 +80,8 @@ PINNED_ML_VERSIONS: dict[str, str] = {
     "compel": "2.4.0",
     "peft": "0.21.2",
     "pillow": "12.2.0",
+    "torchvision": "0.22.1",
+    "tokenizers": "0.22.2",
 }
 
 # Only verified embedding ranges become private tokens; unknown resource markup stays unsupported.
@@ -133,7 +141,7 @@ def qualify_ml_runtime() -> MLRuntime:
         torch = importlib.import_module("torch")
         diffusers = importlib.import_module("diffusers")
         compel = importlib.import_module("compel")
-        importlib.import_module("transformers")
+        transformers = importlib.import_module("transformers")
         importlib.import_module("accelerate")
         importlib.import_module("safetensors")
         importlib.import_module("peft")
@@ -145,8 +153,21 @@ def qualify_ml_runtime() -> MLRuntime:
             "DPMSolverMultistepScheduler",
             "DPMSolverSDEScheduler",
             "EulerAncestralDiscreteScheduler",
+            "CosmosTransformer3DModel",
+            "AnimaTextConditioner",
+            "AutoencoderKLWan",
+            "FlowMatchHeunDiscreteScheduler",
+            "FlowMatchLCMScheduler",
         ):
             getattr(diffusers, name)
+        for name in ("Qwen3Model", "Qwen3Config"):
+            getattr(transformers, name)
+        er = importlib.import_module("imagegen_worker.vendor.er_sde_scheduler")
+        for name in ("ERSDEScheduler",):
+            getattr(er, name)
+        # Exact bundled bytes and native tokenizer semantics are qualified before ready.
+        # No GPU BF16 gate is imposed on the existing Illustrious capability here.
+        load_anima_tokenizers()
         for name in ("Compel", "ReturnedEmbeddingsType", "SplitLongTextMode"):
             getattr(compel, name)
         if (
@@ -183,64 +204,20 @@ def _checkpoint_digest(path: Path) -> str:
 
 
 def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> Image.Image | None:
-    """Verify immutable input and retain decoded opaque pixels from the verified snapshot."""
-    root = canonical_absolute_path(command.staging_root, label="Staging root")
-    if not root.is_dir():
-        raise DerivativeError("INVALID_PATH", "Generation staging root is unavailable.")
-    root_stat = root.stat()
-    if root_stat.st_uid != os.getuid() or root_stat.st_mode & 0o022:
-        raise DerivativeError("INVALID_PATH", "Generation staging root is unsafe.")
-    target = canonical_absolute_path(command.target_path, label="Target")
-    output = canonical_absolute_path(command.output_path, label="Output")
-    if target.parent != root or output.parent != root or output == target:
-        raise DerivativeError("INVALID_PATH", "Generation files must be distinct staging children.")
-    if os.path.lexists(output):
-        raise DerivativeError("OUTPUT_UNAVAILABLE", "Generation output already exists.")
+    """Verify exact checkpoint and retain source pixels through the shared artifact boundary."""
+    validate_generation_paths(command.staging_root, command.target_path, command.output_path)
     if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed after enqueue.")
-    try:
-        target_size = target.stat().st_size
-    except OSError as error:
-        raise DerivativeError("GENERATION_INPUT_CHANGED", "Target is unavailable.") from error
-    if target_size != command.target_byte_size:
-        raise DerivativeError("GENERATION_INPUT_CHANGED", "Target changed after enqueue.")
-    snapshot = read_snapshot(target, command.target_sha256)
-    profile, non_srgb_chunks = png_embedded_color_metadata(snapshot)
-    if non_srgb_chunks or profile != SRGB_ICC_PROFILE:
-        raise DerivativeError("GENERATION_INPUT_CHANGED", "Target is not pinned sRGB PNG.")
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(snapshot)) as decoded:
-                if (
-                    decoded.format != "PNG"
-                    or getattr(decoded, "n_frames", 1) != 1
-                    or decoded.size != (command.width, command.height)
-                    or decoded.mode != "RGBA"
-                    or decoded.info.get("icc_profile") != SRGB_ICC_PROFILE
-                ):
-                    raise DerivativeError(
-                        "GENERATION_INPUT_CHANGED", "Target PNG metadata changed after enqueue."
-                    )
-                decoded.load()
-                opaque = isinstance(command, GenerateIllustriousImg2ImgCommand)
-                if decoded.getchannel("A").getextrema() != ((255, 255) if opaque else (0, 0)):
-                    raise DerivativeError(
-                        "GENERATION_TARGET_UNSUPPORTED",
-                        "Img2img target must be opaque."
-                        if opaque
-                        else "Txt2img target must be transparent.",
-                    )
-                if opaque:
-                    return decoded.convert("RGB")
-    except (
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-        UnidentifiedImageError,
-        OSError,
-    ) as error:
-        raise DerivativeError("GENERATION_INPUT_CHANGED", "Target PNG is invalid.") from error
-    return None
+    return validate_generation_target(
+        staging_root=command.staging_root,
+        target_path=command.target_path,
+        output_path=command.output_path,
+        target_sha256=command.target_sha256,
+        target_byte_size=command.target_byte_size,
+        width=command.width,
+        height=command.height,
+        img2img=isinstance(command, GenerateIllustriousImg2ImgCommand),
+    )
 
 
 def validate_compel_prompt(prompt: str, tokenizer: Any) -> None:
@@ -894,40 +871,12 @@ def _generate_illustrious(
                 else None
             ),
         )
-    image = result.images[0]
-    if not isinstance(image, Image.Image) or image.size != (command.width, command.height):
-        raise DerivativeError(
-            "GENERATION_WORKER_FAILED", "Inference did not return the expected image."
-        )
-    output_image = image.convert("RGB")
-    temporary = write_temporary_image(output_image, command.output_path, "PNG")
-    published = False
-    try:
-        os.link(temporary, command.output_path, follow_symlinks=False)
-        published = True
-        directory_fd = os.open(command.staging_root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    except FileExistsError as error:
-        raise DerivativeError("OUTPUT_UNAVAILABLE", "Generation output already exists.") from error
-    except OSError as error:
-        if published:
-            command.output_path.unlink(missing_ok=True)
-        raise DerivativeError(
-            "GENERATION_WORKER_FAILED", "Generation output could not be stored."
-        ) from error
-    finally:
-        temporary.unlink(missing_ok=True)
-    done: dict[str, object] = {
-        "type": "generation-done",
-        "protocolVersion": "1",
-        "requestId": command.request_id,
-        "outputPath": str(command.output_path),
-        "seed": command.seed,
-    }
-    thumbnail = create_candidate_thumbnail(output_image, command.output_path)
-    if thumbnail is not None:
-        done["thumbnail"] = thumbnail
-    return done
+    return publish_generation_image(
+        result.images[0],
+        staging_root=command.staging_root,
+        output_path=command.output_path,
+        width=command.width,
+        height=command.height,
+        request_id=command.request_id,
+        seed=command.seed,
+    )

@@ -109,9 +109,10 @@ keyed by SHA-256 and size. Electron smoke covers the library control and Project
 display. Main can prepare an unlisted Illustrious checkpoint with the current
 effective type or labeled `epsilon` fallback, regardless of an older `.igs`
 snapshot; a changed library setting invalidates a prepared request before
-materialization. The worker still reports
-`INFERENCE_UNAVAILABLE`. Custom CivitAI Anima installation with pinned Qwen3/VAE
-is available; structural qualification and Anima inference are still open.
+materialization. Model selection alone does not activate an inference runtime.
+Custom CivitAI Anima installation with pinned Qwen3/VAE is available; later
+checkpoints below qualify its internal bundle and worker execution. Public Anima
+Project admission and the full frozen pipeline remain open.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
@@ -425,3 +426,21 @@ public Anima settings, Generate, queue/Retry or accepted provenance. Flow LCM
 execution does not establish few-step Base quality, distilled acceleration or
 Anima Turbo support. Family-aware public handoff and release qualification remain
 open.
+
+## Internal qualified Anima worker (05.10.2026)
+
+[Worker entrypoint](../../../engineering/phase-2c-anima-worker-entrypoint-research.md)
+connects a strict typed TS request assembler to inference worker `0.11.0`.
+Both concrete prompts are compiled before the handoff; the complete six-method
+plan freezes all seed domains, clipping and actual evaluation count. Python
+validates/captures the wire and runs the existing native bundle, weighting,
+ordinary signed LoRAs and selected flow method before publishing a provisional
+sRGB PNG and optional thumbnail. Anima capabilities require native CUDA BF16;
+the qualified Illustrious path remains available without it.
+
+This is a worker checkpoint, not public Anima Generate. Family-aware Project
+controls, explicit attention editing, portable native-method representation and
+full frozen Main batch/admission/queue/Retry/accepted provenance remain open.
+SD-only CLIP Skip, CFG Rescale, manual VAE precision, external VAE replacement
+and embeddings are explicitly refused by this wire. Runtime installation,
+trained-model quality and Linux/NVIDIA release qualification remain separate.

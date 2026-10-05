@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceAnima,
   supportsInferenceCandidateThumbnails,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
@@ -300,10 +301,140 @@ test('dual-CLIP embeddings require exact 0.10.0 with all retained capabilities a
     '0.8.0',
     '0.9.0',
     '0.10.1',
-    '0.11.0',
+    '0.12.0',
   ]) {
     assert.equal(supportsInferenceEmbeddings({ ...current, workerVersion }), false)
   }
   assert.equal(supportsInferenceEmbeddings({ ...current, runtimeProfile: 'cpu' }), false)
   assert.equal(supportsInferenceEmbeddings({ ...current, protocolVersion: '2' }), false)
+})
+
+const currentCoreCapabilities = [
+  'illustrious-txt2img',
+  'denoising-progress',
+  'candidate-thumbnails',
+  'illustrious-cfg-rescale',
+  'illustrious-img2img',
+  'illustrious-lora',
+  'illustrious-vae-precision',
+  'illustrious-external-vae',
+  'illustrious-embeddings',
+]
+const animaCapabilities = [
+  'anima-txt2img',
+  'anima-img2img',
+  'anima-lora',
+  'anima-prompt-weighting',
+  'anima-flow-sampling',
+]
+const currentReady = {
+  ...legacyReady,
+  capabilities: [...currentCoreCapabilities, ...animaCapabilities],
+  workerVersion: '0.11.0',
+}
+const coreChecks = [
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceDenoisingProgress,
+  supportsInferenceCandidateThumbnails,
+  supportsInferenceCFGRescale,
+  supportsInferenceImg2Img,
+  supportsInferenceLora,
+  supportsInferenceVaePrecision,
+  supportsInferenceExternalVae,
+  supportsInferenceEmbeddings,
+]
+
+test('qualified 0.11.0 retains every Illustrious capability with or without Anima advertisements', () => {
+  for (const capabilities of [currentCoreCapabilities, currentReady.capabilities]) {
+    for (const check of coreChecks) {
+      assert.equal(check({ ...currentReady, capabilities }), true, check.name)
+    }
+  }
+  assert.equal(supportsInferenceAnima(currentReady), true)
+  assert.equal(
+    supportsInferenceAnima({ ...currentReady, capabilities: currentCoreCapabilities }),
+    false,
+  )
+})
+
+test('Anima requires all five new capabilities while missing advertisements preserve Illustrious 0.11.0', () => {
+  for (const removed of animaCapabilities) {
+    const incomplete = {
+      ...currentReady,
+      capabilities: currentReady.capabilities.filter((capability) => capability !== removed),
+    }
+    assert.equal(supportsInferenceAnima(incomplete), false, removed)
+    for (const check of coreChecks) {
+      assert.equal(check(incomplete), true, `${removed}: ${check.name}`)
+    }
+  }
+})
+
+test('Anima cannot qualify a 0.11.0 peer missing any retained Illustrious capability', () => {
+  for (const removed of currentCoreCapabilities) {
+    const incomplete = {
+      ...currentReady,
+      capabilities: currentReady.capabilities.filter((capability) => capability !== removed),
+    }
+    assert.equal(isQualifiedInferenceWorkerReady(incomplete), false, removed)
+    assert.equal(supportsInferenceAnima(incomplete), false, removed)
+  }
+})
+
+test('every known older or unknown future peer remains incapable of Anima despite complete advertisement', () => {
+  for (const workerVersion of [
+    '0.2.0',
+    '0.3.0',
+    '0.4.0',
+    '0.5.0',
+    '0.6.0',
+    '0.7.0',
+    '0.8.0',
+    '0.9.0',
+    '0.10.0',
+    '0.11.1',
+    '0.12.0',
+  ]) {
+    const peer = { ...currentReady, workerVersion }
+    assert.equal(supportsInferenceAnima(peer), false, workerVersion)
+    assert.equal(
+      isQualifiedInferenceWorkerReady(peer),
+      workerVersion !== '0.11.1' && workerVersion !== '0.12.0',
+      workerVersion,
+    )
+  }
+})
+
+test('wrong profile, protocol and malformed advertisements cannot grant Anima support', () => {
+  for (const peer of [
+    null,
+    undefined,
+    false,
+    1,
+    '0.11.0',
+    [],
+    { ...currentReady, runtimeProfile: 'cpu' },
+    { ...currentReady, runtimeProfile: 'linux-amd' },
+    { ...currentReady, protocolVersion: 1 },
+    { ...currentReady, protocolVersion: '2' },
+    { ...currentReady, capabilities: null },
+    { ...currentReady, capabilities: [...currentReady.capabilities, 1] },
+    { ...currentReady, capabilities: ['anima-txt2img'] },
+  ]) {
+    assert.equal(supportsInferenceAnima(peer), false)
+  }
+  assert.equal(
+    supportsInferenceAnima({
+      ...currentReady,
+      capabilities: [...currentCoreCapabilities, 'anima-all', 'unqualified-anima'],
+    }),
+    false,
+  )
+  assert.equal(
+    supportsInferenceAnima({
+      ...currentReady,
+      capabilities: [...currentReady.capabilities, 'unrecognized-extension'],
+    }),
+    true,
+  )
 })
