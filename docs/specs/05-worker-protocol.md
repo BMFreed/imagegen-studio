@@ -316,8 +316,9 @@ type WorkerMessage =
   conditioning/LLM Adapter в denoising для обоих prompt signs. Текст Project/
   preset/provenance не заменяется на stripped prompt. Current editor Compel
   suffixes и nested explicit weights покрываются compatibility tests; отсутствие
-  поддержки не допускает silent uniform weights. Anima generation request,
-  compiler и этот tensor path пока не реализованы.
+  поддержки не допускает silent uniform weights. Внутренние compiler/tokenizer/
+  conditioning helpers реализованы отдельным checkpoint ниже; Anima generation
+  request, frozen queue/Retry interpretation и denoising пока не подключены.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
 - Для raster import worker применяет EXIF Orientation, затем преобразует pixels
   из встроенного ICC в рабочее sRGB. Он возвращает исходные ICC bytes отдельно
@@ -365,9 +366,27 @@ AutoencoderKLWan. Main returns an internal exact checkpoint/linked companion
 bundle; Python independently verifies canonical no-follow snapshots, hashes,
 sizes, complete keys/shapes, supported finite tensors and strict loading.
 Compatible custom checkpoint hashes are not an allowlist. This adds no wire
-command, ready capability or generation route. Mandatory weighting, tokenizer
-qualification, conditioning/denoising, LoRA and frozen Anima job/provenance
-remain unimplemented; existing Anima refusal and worker 0.10.0 stay unchanged.
+command, ready capability or generation route. The next conditioning foundation
+below implements weighting/tokenizers; denoising, LoRA and frozen Anima
+job/provenance remain open. Existing Anima refusal and worker 0.10.0 stay unchanged.
+
+## Original Anima compiled conditioning foundation
+
+The [conditioning foundation](../engineering/phase-2c-anima-conditioning-research.md)
+adds internal TS `compileAnimaPromptWeighting` and Python
+`encode_anima_conditioning_pair`. It does not add a wire command or persisted job
+field. `anima-prompt-weighting-v1` supplies cleaned text and contiguous coalesced
+code-point spans; Python validates and captures both interpretations before
+native calls. Tokenizers use verified bundled resources, without Hub/cache
+discovery. Qwen3 receives direct cleaned text; one complete T5 call yields IDs,
+offsets and neutral special tokens. Weights apply once to post-adapter rows,
+preserving its zero-padded tail. Truncation is observable; invalid metadata,
+numeric precision loss or non-finite tensors fail explicitly.
+
+Native CPU and actual trained-weight conditioning evidence is separate from
+image generation. Family-aware editor adjustment, denoising/LoRA, durable
+queue/Retry/provenance and Linux/NVIDIA release qualification are mandatory
+before admission; ready capabilities and existing Anima refusal are unchanged.
 
 ## Qualified Illustrious CFG Rescale checkpoint
 

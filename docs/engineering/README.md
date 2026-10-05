@@ -6,7 +6,8 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
-- [Anima exact qualification and offline loaders](./phase-2c-anima-qualification-research.md) — exact Main bundle, pinned companions and full native strict loading, with real trained-weight CPU evidence. No Anima generation capability; mandatory weighting and pipeline integration remain subsequent work.
+- [Anima compiled prompt conditioning](./phase-2c-anima-conditioning-research.md) — typed attention grammar, Unicode spans, exact bundled tokenizers and native post-adapter weighting for both signs; trained CPU evidence and isolated mutations. Editor handoff, denoising/LoRA, queue/Retry/provenance and release gates remain open.
+- [Anima exact qualification and offline loaders](./phase-2c-anima-qualification-research.md) — exact Main bundle, pinned companions and full native strict loading, with real trained-weight CPU evidence. No Anima generation capability; conditioning follows in the checkpoint above and pipeline integration remains subsequent work.
 - [Illustrious embedding inference](./phase-2c-embedding-inference-research.md) — exact dual-CLIP snapshots, concrete dynamic subsets, frozen Retry/dispatch and accepted prompt refs; synthetic native ML and Electron evidence remain separate from trained-model quality and release packaging.
 - [Exact embedding authoring](./phase-2c-embedding-authoring-research.md) — plain-text autocomplete in both prompts, verified exact refs, atomic history/Save, portable relink and missing/collision diagnostics; inference evidence follows in the checkpoint above.
 - [Illustrious CFG Rescale](./phase-2c-cfg-rescale-research.md) — production Advanced Options, capability-gated frozen jobs, actual denoising, immutable portable record and legacy-unknown comparison.

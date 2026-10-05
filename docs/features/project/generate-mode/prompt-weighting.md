@@ -8,13 +8,21 @@ for both positive and global negative prompts. Regional text reuses the same
 compiler in Phase 4; Anima regional negative text retains its separate
 spatial-semantics gate.
 
-Checked on 02.10.2026 at ImageGen Studio `8f7d501`: checkpoint/Qwen3/VAE
+Historical check on 02.10.2026 at ImageGen Studio `8f7d501`: checkpoint/Qwen3/VAE
 installation exists, but Anima inference does not. Main rejects that family in
 `src/main/projects/project-generation-preparation.ts`; the worker advertises
 only `illustrious-txt2img` and its generation route is
 `generate-illustrious-txt2img`. Editor attention actions change authored text;
 they do not prove model-side weighting. Current Python Compel normalization
 and dual-CLIP conditioning belong to Illustrious only.
+
+The [05.10.2026 conditioning foundation](../../../engineering/phase-2c-anima-conditioning-research.md)
+now implements the typed TS compiler, strict Python compiled-input validation,
+bundled offline tokenizers and actual native Qwen3/AnimaTextConditioner path for
+both signs. Native tests and a separate trained-weight CPU probe verify weights
+once after adapter projection/norm. Anima Generate remains unavailable: editor
+handoff, frozen queue/Retry/provenance, denoising, LoRA, GPU output and release
+runtime qualification still need implementation.
 
 Reference: [InvokeAI PR #9506](https://github.com/invoke-ai/InvokeAI/pull/9506),
 checked open/unmerged at head
@@ -66,6 +74,21 @@ separate **1 MiB authored-text limit** in `.igs` `PromptTextSchema`. Establish
 bounded nesting and finite-weight validation within that generation limit when
 implementing the executable contract. Do not invent an unmeasured model-specific
 weight range here.
+
+The current compiler enforces a provisional 128-level nesting bound, finite
+weights and nonzero numeric-underflow refusal. Python also refuses weights that
+overflow or become zero in the native model dtype. Its versioned interpretation
+is `anima-prompt-weighting-v1`; spans are contiguous and coalesced over the
+cleaned text's code points. This is an internal preparation contract, not yet
+a durable job or worker command.
+
+**Mandatory editor handoff before Generate:** the existing shared attention
+helper is Compel-oriented, without a family-specific interpretation. For Anima,
+Increase on `(long hair)` currently yields `(long hair)+`; both compile to
+`1.1`, so the action does not increase attention. Adjusting `(word:2)` produces
+a conflicting suffix and correctly fails compilation. Implement family-aware
+adjustment with existing-group/nested/suffix round-trip tests before exposing
+Anima generation. Supporting saved syntax alone does not qualify this action.
 
 ## Owners and inference path
 
@@ -120,10 +143,12 @@ Before marking the capability ready:
    and deterministic output; non-neutral attention changes the intended
    conditioning/output. A reference PR's QA report is not our inference evidence.
 
-This checkpoint changes documentation only. Direct probes of the actual shared
+The historical 02.10.2026 checkpoint changed documentation only. Direct probes of the actual shared
 editor helper and the referenced PR parser confirmed suffix/nesting behavior;
 these were not tokenizer, conditioning or GPU tests. Results and the fetched
 PR source/status are retained in
 `/home/user/.codex/artifacts/imagegen-studio/anima-prompt-weighting-2026-10-02/`.
-No ImageGen Studio Anima inference tests were executed because that pipeline
-is not implemented. Public promise readiness is unchanged.
+No ImageGen Studio Anima inference tests were executed at that checkpoint.
+The subsequent conditioning research note records executed compiler/native
+tests, isolated mutations, bundled-wheel verification and trained CPU evidence.
+These do not prove the required GPU generation or public promise readiness.

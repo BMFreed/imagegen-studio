@@ -1,0 +1,23 @@
+Anima tokenizer assets for ImageGen Studio
+
+Qwen3 tokenizer data: Qwen/Qwen3-4B, cached upstream revision
+1cfa9a7208912126459214e8b04321603b3df60c, Apache License 2.0.
+Copyright 2024 Alibaba Cloud (original license reproduced alongside this notice).
+https://huggingface.co/Qwen/Qwen3-4B/tree/1cfa9a7208912126459214e8b04321603b3df60c
+The base BPE vocabulary and merge pairs were compared with Qwen/Qwen3-0.6B-Base
+revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd. The bundled Invoke config
+retains its additional special tokens and EOS token, and is not the Base config.
+Anima tokenizes text directly; it never executes the included chat template.
+
+T5 v1.1 XXL tokenizer data: Google Research, Apache License 2.0.
+https://huggingface.co/google/t5-v1_1-xxl
+https://github.com/google-research/text-to-text-transfer-transformer
+Only tokenizer data is included; no T5 encoder model weights are included.
+
+Both tokenizer sets are vendored from InvokeAI commit
+9e1540962bcca7f8fa668d7d8e02cf79d75fda3b, under Apache License 2.0.
+https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b/invokeai/backend/qwen3/tokenizer
+https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b/invokeai/backend/t5/tokenizer
+The Qwen3 gzip archive, tokenizer configs and special-token maps are unchanged.
+Packaging modification: the original T5 tokenizer JSON is gzip-compressed with
+mtime=0. Its decompressed JSON is unchanged.
