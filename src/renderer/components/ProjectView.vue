@@ -74,11 +74,12 @@ import {
   type AcceptedHistoryFocusRequest,
   acceptedHistoryLayerAvailable,
 } from './accepted-history-navigation.js'
+import { animaDraftGenerationReason, animaEngineReason } from './anima-generation-control.js'
 import {
   cfgRescaleGenerationCapabilityReason,
   cfgRescaleGenerationRangeReason,
 } from './cfg-rescale-control.js'
-import { denoisingGenerationReason } from './denoising-strength-control.js'
+import { denoisingGenerationReason, denoisingRuntimeSupport } from './denoising-strength-control.js'
 import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import { GenerationTargetReader } from './generation-target-reader.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
@@ -522,12 +523,17 @@ const illustriousSamplingUnavailable = computed(
 )
 const samplingFamilyNotice = computed(() => {
   if (selectedModel.value?.baseModelFamily === 'anima') {
-    return 'Anima generation is not available yet.'
+    return animaEngineReason(
+      props.generationState === null ? null : props.generationState.animaSupported,
+    )
   }
   return illustriousSamplingUnavailable.value
     ? 'These sampler/scheduler options require a model verified as Illustrious.'
     : null
 })
+const denoisingRuntimeSupported = computed(() =>
+  denoisingRuntimeSupport(selectedModel.value?.baseModelFamily ?? null, props.generationState),
+)
 const samplerOptions = computed(() => {
   const options = [...new Set(ILLUSTRIOUS_SCHEDULER_PAIRS.map((pair) => pair.sampler))].map(
     (value) => ({ label: value, value }),
@@ -1251,6 +1257,18 @@ const generationBlockingReason = computed(() => {
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
   }
+  if (selectedModel.value.baseModelFamily === 'anima') {
+    return (
+      animaEngineReason(props.generationState.animaSupported) ??
+      animaDraftGenerationReason(props.generationDraft) ??
+      denoisingGenerationReason(
+        targetState.value?.mode ?? null,
+        props.generationDraft.sampling.denoisingStrength,
+        denoisingRuntimeSupported.value === true,
+        'anima',
+      )
+    )
+  }
   if (
     (props.generationDraft.positivePrompt.embeddingRefs.length ||
       props.generationDraft.negativePrompt.embeddingRefs.length) &&
@@ -1798,7 +1816,7 @@ function applyFitBbox() {
               :modelFamily="selectedModel?.baseModelFamily ?? null"
               :modelValue="generationDraft.sampling.denoisingStrength"
               :runtimeUnavailableReason
-              :supported="generationState?.img2imgSupported ?? null"
+              :supported="denoisingRuntimeSupported"
               :target="targetState"
               :targetError
               @update:modelValue="

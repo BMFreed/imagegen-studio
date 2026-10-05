@@ -14,12 +14,15 @@ import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
 import {
   acceptedOutputPngFixture,
+  acceptedAnimaProvenanceFixture,
   acceptedRasterProvenanceFixture,
 } from '../src/main/projects/test-fixtures/accepted-provenance.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 const expectRed = process.argv.includes('--expect-red')
-assert.ok(process.argv.slice(2).every((arg) => arg === '--expect-red'))
+const nativeAnima = process.argv.includes('--anima')
+assert.ok(process.argv.slice(2).every((arg) => ['--expect-red', '--anima'].includes(arg)))
+assert.ok(!(expectRed && nativeAnima))
 const artifacts = path.resolve(
   process.env.IMAGEGEN_COMPARISON_ARTIFACTS ??
     mkdtempSync(path.join(os.tmpdir(), 'igs-comparison-evidence-')),
@@ -52,6 +55,7 @@ const report = {
   pageErrors: [],
   screenshots: [],
   mode: expectRed ? 'expect-red' : 'green',
+  family: nativeAnima ? 'anima' : 'illustrious',
   sourceSha256: hashes(sourceFiles),
   bundleSha256: hashes(bundleFiles),
   boundary: {
@@ -92,6 +96,47 @@ async function prepareFixture() {
   try {
     const repository = new ModelRepository(database.db)
     installed = await repository.publishVerifiedInstallation({
+      dependencies: nativeAnima
+        ? ['qwen3_encoder', 'vae'].map((role) => {
+            const bytes = Buffer.from(`Catalog-only ${role}; not pinned model weights.`)
+            const companionPath = path.join(
+              path.dirname(managedPath),
+              `comparison-${role}.safetensors`,
+            )
+            writeFileSync(companionPath, bytes, { mode: 0o600 })
+            return {
+              role,
+              artifact: {
+                file: {
+                  managedPath: companionPath,
+                  originalFilename: path.basename(companionPath),
+                  sha256: digest(bytes),
+                  sizeBytes: bytes.length,
+                  verifiedAt: new Date().toISOString(),
+                },
+                resource: {
+                  creator: 'Native comparison fixture',
+                  displayName: `Catalog-only ${role}`,
+                  source: { kind: 'supported_dependency', key: `anima/comparison-fixture-${role}` },
+                  sourceMetadata: { fixture: true },
+                  type: role,
+                },
+                version: {
+                  baseModelFamily: 'anima',
+                  format: 'safetensors',
+                  name: 'Unqualified fixture',
+                  predictionType: null,
+                  source: {
+                    kind: 'supported_dependency',
+                    revision: 'comparison-fixture',
+                    expectedSha256: digest(bytes),
+                  },
+                  sourceMetadata: { fixture: true },
+                },
+              },
+            }
+          })
+        : [],
       primary: {
         file: {
           managedPath,
@@ -108,10 +153,10 @@ async function prepareFixture() {
           type: 'checkpoint',
         },
         version: {
-          baseModelFamily: 'illustrious',
+          baseModelFamily: nativeAnima ? 'anima' : 'illustrious',
           format: 'safetensors',
           name: 'Fixture v1',
-          predictionType: 'epsilon',
+          predictionType: nativeAnima ? null : 'epsilon',
           source: {
             kind: 'civitai',
             fileId: 98003,
@@ -122,25 +167,30 @@ async function prepareFixture() {
         },
       },
     })
-    await repository.setPredictionOverride({
-      expectedSha256: digest(modelBytes),
-      expectedSizeBytes: modelBytes.length,
-      predictionType: 'v_prediction',
-      resourceId: installed.resourceId,
-      versionId: installed.versionId,
-    })
+    if (!nativeAnima)
+      await repository.setPredictionOverride({
+        expectedSha256: digest(modelBytes),
+        expectedSizeBytes: modelBytes.length,
+        predictionType: 'v_prediction',
+        resourceId: installed.resourceId,
+        versionId: installed.versionId,
+      })
   } finally {
     await database.close()
   }
-  const title = 'Native settings comparison'
+  const title = nativeAnima ? 'Native Anima settings comparison' : 'Native settings comparison'
   const session = await ProjectSession.create(path.join(projectRoot, `${title}.igs`), title, {
     placeholdersDir: path.resolve('dist/main/placeholders'),
     scratchDir: path.join(fixtureRoot, 'scratch'),
   })
-  const original = await acceptedOutputPngFixture(8, 8)
-  const current = await acceptedOutputPngFixture(16, 16)
-  const bbox = { height: 8, width: 8, x: 0, y: 0 }
-  const provenance = acceptedRasterProvenanceFixture(session.document, original, bbox)
+  const dimension = nativeAnima ? 64 : 8
+  const original = await acceptedOutputPngFixture(dimension, dimension)
+  const current = await acceptedOutputPngFixture(dimension * 2, dimension * 2)
+  const bbox = { height: dimension, width: dimension, x: 0, y: 0 }
+  const provenance = nativeAnima
+    ? acceptedAnimaProvenanceFixture(session.document, original, bbox)
+    : acceptedRasterProvenanceFixture(session.document, original, bbox)
+  if (nativeAnima) provenance.generationConfiguration.anima.checkpointByteSize = modelBytes.length
   Object.assign(provenance.generationConfiguration.model, {
     civitaiFileId: 98003,
     civitaiModelId: 98001,
@@ -159,10 +209,10 @@ async function prepareFixture() {
     return {
       asset: {
         bytes: current.length,
-        height: 16,
+        height: dimension * 2,
         path: `assets/layers/${id}.png`,
         sha256: digest(current),
-        width: 16,
+        width: dimension * 2,
       },
       blendMode: 'normal',
       ...(generated ? { generationProvenance: provenance } : {}),
@@ -185,13 +235,15 @@ async function prepareFixture() {
     generationDraft: {
       ...session.document.generationDraft,
       model: structuredClone(config.model),
+      ...(nativeAnima ? { cfgRescale: 0, vaePrecision: 'Auto' } : {}),
       negativePrompt: structuredClone(config.negativePrompt),
       positivePrompt: structuredClone(config.positivePrompt),
       sampling: {
         cfgScale: config.sampling.cfgScale,
         denoisingStrength: null,
-        sampler: config.sampling.sampler,
-        scheduler: config.sampling.scheduler,
+        sampler: nativeAnima ? 'DPM++ 2M' : config.sampling.sampler,
+        scheduler: nativeAnima ? 'Karras' : config.sampling.scheduler,
+        ...(nativeAnima ? { animaMethod: config.sampling.animaMethod } : {}),
         steps: config.sampling.steps,
       },
       seed: { policy: 'fixed', value: 0 },
@@ -422,25 +474,56 @@ try {
   await entry.click()
   await expect(dialog()).toBeVisible()
   await expect(dialog().locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
-  await expect(setting('model.predictionType')).toHaveAttribute('data-status', 'Changed')
-  await expect(setting('model.predictionType').locator('.comparison-values')).toHaveText(
-    /epsilon.*v_prediction/s,
-  )
+  if (nativeAnima) {
+    for (const key of [
+      'model.predictionType',
+      'sampling.sampler',
+      'sampling.scheduler',
+      'sampling.invokeScheduler',
+    ]) {
+      await expect(setting(key)).toHaveCount(0)
+    }
+    for (const key of ['anima.qwen3Encoder', 'anima.vae']) {
+      await expect(setting(key)).toHaveAttribute('data-status', 'Unavailable')
+      await expect(setting(key)).toContainText(
+        'The exact installed Anima companion bundle is unavailable',
+      )
+    }
+  } else {
+    await expect(setting('model.predictionType')).toHaveAttribute('data-status', 'Changed')
+    await expect(setting('model.predictionType').locator('.comparison-values')).toHaveText(
+      /epsilon.*v_prediction/s,
+    )
+  }
   await expect(setting('context.mode')).toHaveAttribute('data-status', 'Changed')
   await expect(setting('context.mode').locator('.comparison-values')).toHaveText(
     /txt2img.*img2img/s,
   )
-  await expect(setting('loras.stack')).toHaveAttribute('data-status', 'Unavailable')
+  if (!nativeAnima)
+    await expect(setting('loras.stack')).toHaveAttribute('data-status', 'Unavailable')
   await dialog().getByRole('checkbox', { name: 'Show unchanged settings' }).check()
   await expect(setting('guidance.steps')).toHaveAttribute('data-status', 'Same')
-  await expect(setting('size.dimensions').locator('.comparison-values')).toHaveText(/8 × 8.*8 × 8/s)
+  await expect(setting('size.dimensions').locator('.comparison-values')).toHaveText(
+    nativeAnima ? /64 × 64.*64 × 64/s : /8 × 8.*8 × 8/s,
+  )
   await expect(setting('seed.actual').locator('.comparison-values')).toHaveText(/0.*0/s)
+  if (nativeAnima) {
+    await expect(setting('sampling.animaMethod')).toHaveAttribute('data-status', 'Same')
+    await expect(setting('sampling.animaMethod').locator('.comparison-values')).toHaveText(
+      /Heun.*Heun/s,
+    )
+    await expect(setting('loras.stack')).toHaveAttribute('data-status', 'Same')
+    await expect(setting('prompt.text')).toHaveAttribute('data-status', 'Same')
+    await expect(setting('negativePrompt.text')).toHaveAttribute('data-status', 'Same')
+  }
   await screenshot('01-comparison-normal')
   assert.deepEqual(await opened(), baseline)
   assert.equal(await select.getAttribute('aria-pressed'), selectedBefore)
   assert.deepEqual(readFileSync(fixture.path), fixture.bytes)
   check(
-    'Locked result opens a read-only popover with frozen epsilon versus library v_prediction, actual pixel img2img, original bbox size and seed zero; no layer selection/document/history change',
+    nativeAnima
+      ? 'Saved native provenance traverses genuine preload/IPC into read-only comparison: Heun and weighted signs Same, missing pinned companions Unavailable, seed zero, no SD rows or document/history edits'
+      : 'Locked result opens a read-only popover with frozen epsilon versus library v_prediction, actual pixel img2img, original bbox size and seed zero; no layer selection/document/history change',
   )
 
   await application.evaluate(({ BrowserWindow }) =>
@@ -517,7 +600,9 @@ try {
   assert.equal(edited.dirty, true)
   await openComparison()
   await expect(setting('guidance.steps')).toHaveAttribute('data-status', 'Changed')
-  await expect(setting('guidance.steps').locator('.comparison-values')).toHaveText(/24.*31/s)
+  await expect(setting('guidance.steps').locator('.comparison-values')).toHaveText(
+    nativeAnima ? /4.*31/s : /24.*31/s,
+  )
   await screenshot('03-frozen-baseline-versus-current-steps')
   assert.deepEqual(await opened(), edited)
   assert.deepEqual(
@@ -534,6 +619,24 @@ try {
   await preloadProbe()
   assert.deepEqual(await opened(), edited)
   assert.deepEqual(readFileSync(fixture.path), fixture.bytes)
+  if (nativeAnima) {
+    await window.locator('[aria-label="Anima method"]').click()
+    await window.getByText('LCM', { exact: true }).click()
+    await expect.poll(async () => (await opened()).generationDraft.sampling.animaMethod).toBe('lcm')
+    const nativeEdited = await opened()
+    await openComparison()
+    await expect(setting('sampling.animaMethod')).toHaveAttribute('data-status', 'Changed')
+    await expect(setting('sampling.animaMethod').locator('.comparison-values')).toHaveText(
+      /Heun.*LCM/s,
+    )
+    await screenshot('04-frozen-native-method-versus-current')
+    assert.deepEqual(await opened(), nativeEdited)
+    assert.deepEqual(readFileSync(fixture.path), fixture.bytes)
+    await dialog().getByRole('button', { name: 'Close generation settings comparison' }).click()
+    check(
+      'A genuine Main native-method edit changes only current settings; saved Heun baseline and .igs bytes remain immutable',
+    )
+  }
   assert.deepEqual(hashes(sourceFiles), report.sourceSha256)
   assert.deepEqual(hashes(bundleFiles), report.bundleSha256)
   assert.equal(report.pageErrors.length, 0)

@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   denoisingControlReason,
   denoisingGenerationReason,
+  denoisingRuntimeSupport,
   parseDenoisingStrength,
 } from './denoising-strength-control.js'
 
@@ -33,7 +34,11 @@ test('denoising control and Generate require verified opaque pixels, supported m
     denoisingControlReason({ ...input, target: null, targetError: 'Pixel read failed' })!,
     /Pixel read failed/,
   )
-  assert.match(denoisingControlReason({ ...input, modelFamily: 'anima' })!, /only for Illustrious/)
+  assert.equal(denoisingControlReason({ ...input, modelFamily: 'anima' }), null)
+  assert.match(
+    denoisingControlReason({ ...input, modelFamily: 'unknown' })!,
+    /supported Illustrious or Anima/,
+  )
   assert.match(denoisingControlReason({ ...input, supported: false })!, /image engine/)
   assert.match(denoisingGenerationReason('img2img', null, true)!, /Set Denoising Strength/)
   assert.equal(denoisingGenerationReason('img2img', 0, true), null)
@@ -45,6 +50,31 @@ test('denoising control and Generate require verified opaque pixels, supported m
     null,
     'unknown advisory mode cannot invent an empty or opaque target',
   )
+})
+
+test('Anima denoising uses native qualification independently of the Illustrious image capability', () => {
+  assert.equal(denoisingRuntimeSupport('anima', null), null)
+  assert.equal(denoisingRuntimeSupport('anima', { img2imgSupported: true }), false)
+  assert.equal(
+    denoisingRuntimeSupport('anima', { animaSupported: false, img2imgSupported: true }),
+    false,
+  )
+  assert.equal(
+    denoisingRuntimeSupport('anima', { animaSupported: true, img2imgSupported: false }),
+    true,
+  )
+  assert.equal(
+    denoisingRuntimeSupport('illustrious', { animaSupported: true, img2imgSupported: false }),
+    false,
+  )
+  assert.equal(
+    denoisingRuntimeSupport('illustrious', { animaSupported: false, img2imgSupported: true }),
+    true,
+  )
+  assert.equal(denoisingGenerationReason('img2img', 0, true, 'anima'), null)
+  assert.match(denoisingGenerationReason('img2img', 0, false, 'anima')!, /for Anima/)
+  assert.match(denoisingGenerationReason('img2img', null, true, 'anima')!, /Set Denoising Strength/)
+  assert.match(denoisingGenerationReason('outpaint', 0.5, true, 'anima')!, /partly transparent/)
 })
 
 test('denoising raw input retains zero, one and unset while refusing nonfinite and out-of-range values', () => {

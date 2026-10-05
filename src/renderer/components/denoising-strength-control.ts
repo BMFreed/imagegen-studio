@@ -1,4 +1,15 @@
+import type { ProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from '../../shared/projects/project-generation-target-state.js'
+
+export function denoisingRuntimeSupport(
+  modelFamily: string | null,
+  state: Pick<ProjectGenerationActionState, 'animaSupported' | 'img2imgSupported'> | null,
+): boolean | null {
+  if (!state) {
+    return null
+  }
+  return modelFamily === 'anima' ? (state.animaSupported ?? false) : state.img2imgSupported
+}
 
 export function parseDenoisingStrength(
   text: string,
@@ -23,8 +34,8 @@ export function denoisingControlReason(input: {
   target: ProjectGenerationTargetState | null
   targetError: string | null
 }): string | null {
-  if (input.modelFamily !== 'illustrious') {
-    return 'Denoising Strength is currently available only for Illustrious.'
+  if (input.modelFamily !== 'illustrious' && input.modelFamily !== 'anima') {
+    return 'Denoising Strength requires a supported Illustrious or Anima model.'
   }
   if (input.runtimeUnavailableReason) {
     return input.runtimeUnavailableReason
@@ -45,7 +56,7 @@ export function denoisingControlReason(input: {
     return 'Checking image engine support for Denoising Strength.'
   }
   if (!input.supported) {
-    return 'The current image engine does not support image-based generation for Illustrious.'
+    return `The current image engine does not support image-based generation for ${input.modelFamily === 'anima' ? 'Anima' : 'Illustrious'}.`
   }
   return null
 }
@@ -54,6 +65,7 @@ export function denoisingGenerationReason(
   mode: ProjectGenerationTargetState['mode'],
   value: number | null,
   supported: boolean,
+  modelFamily: string | null = 'illustrious',
 ): string | null {
   if (mode === 'outpaint') {
     return 'The generation area is partly transparent. This generation path is not supported yet.'
@@ -66,5 +78,5 @@ export function denoisingGenerationReason(
   }
   return supported
     ? null
-    : 'The current image engine does not support image-based generation for Illustrious.'
+    : `The current image engine does not support image-based generation for ${modelFamily === 'anima' ? 'Anima' : 'Illustrious'}.`
 }

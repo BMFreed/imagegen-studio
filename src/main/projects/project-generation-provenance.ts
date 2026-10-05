@@ -61,12 +61,6 @@ export function provenanceFromVerifiedRasterCandidate(input: {
       'The frozen generation context is invalid.',
     )
   }
-  if (payload.kind !== 'illustrious-txt2img' && payload.kind !== 'illustrious-img2img') {
-    throw new ProjectGenerationProvenanceError(
-      'PROVENANCE_MODEL_UNSUPPORTED',
-      'Adding Anima results to the Project is not supported yet. The temporary result is preserved.',
-    )
-  }
   const { context } = payload
   let sourceKey: string
   try {
@@ -115,7 +109,7 @@ export function provenanceFromVerifiedRasterCandidate(input: {
   }
 
   try {
-    return parseRasterGenerationProvenanceV1({
+    const common = {
       executionResultContext: {
         acceptedAt: input.acceptedAt,
         candidateId: candidate.candidateId,
@@ -131,6 +125,62 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         },
         queueItemId: candidate.queueItemId,
       },
+      layerSourceContext: {
+        bbox: { ...candidate.bbox },
+        sourceDocumentId: candidate.documentId,
+        sourceDocumentRevision: candidate.documentRevision,
+        sourceTargetSha256: payload.context.target.sha256,
+      },
+      schemaVersion: 1,
+    }
+    if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+      const context = payload.context
+      const component = (snapshot: {
+        byteSize: number
+        localModelId: string
+        localVersionId: string
+        sha256: string
+      }) => ({
+        byteSize: snapshot.byteSize,
+        localModelId: snapshot.localModelId,
+        localVersionId: snapshot.localVersionId,
+        sha256: snapshot.sha256,
+      })
+      return parseRasterGenerationProvenanceV1({
+        ...common,
+        generationConfiguration: {
+          anima: {
+            architecture: context.model.architecture,
+            checkpointByteSize: context.model.checkpoint.byteSize,
+            qwen3Encoder: component(context.model.qwen3Encoder),
+            vae: component(context.model.vae),
+          },
+          ...(context.cfgRescale !== undefined ? { cfgRescale: context.cfgRescale } : {}),
+          ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
+          loras: structuredClone(context.loraStack),
+          mode: payload.kind === 'anima-img2img' ? 'img2img' : 'txt2img',
+          model: { ...context.model.checkpoint.reference },
+          negativePrompt: { embeddingRefs: [], text: context.prompts.negative },
+          positivePrompt: { embeddingRefs: [], text: context.prompts.positive },
+          sampling: {
+            ...(context.kind === 'anima-img2img-preparation'
+              ? { denoisingStrength: context.sampling.denoisingStrength }
+              : {}),
+            actualSeed: candidate.actualSeed,
+            animaMethod: context.sampling.animaMethod,
+            cfgScale: context.sampling.cfgScale,
+            requestedSeedPolicy: context.sampling.requestedSeedPolicy,
+            seedBehavior: context.sampling.seedBehavior,
+            steps: context.sampling.steps,
+          },
+          size: { height: context.bbox.height, width: context.bbox.width },
+        },
+        kind: payload.kind,
+      })
+    }
+    const context = payload.context
+    return parseRasterGenerationProvenanceV1({
+      ...common,
       generationConfiguration: {
         ...(context.vae !== undefined
           ? { vae: context.vae === null ? null : { ...context.vae.reference } }
@@ -175,13 +225,6 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         context.kind === 'normal-img2img-preparation'
           ? 'illustrious-img2img'
           : 'illustrious-txt2img',
-      layerSourceContext: {
-        bbox: { ...candidate.bbox },
-        sourceDocumentId: candidate.documentId,
-        sourceDocumentRevision: candidate.documentRevision,
-        sourceTargetSha256: context.target.sha256,
-      },
-      schemaVersion: 1,
     })
   } catch {
     throw new ProjectGenerationProvenanceError(

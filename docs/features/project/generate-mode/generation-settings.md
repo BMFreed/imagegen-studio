@@ -126,7 +126,8 @@ LCM availability describes the implemented solver, not a distilled Base-model
 quality promise. No separate Karras/Normal/Exponential scheduler applies.
 Prototype Project and the shared preset editor use explicit model-family
 metadata for the same control and preserve/explain inapplicable SD-only Advanced
-settings. Production preset storage and public Anima Generate stay open.
+settings. Production preset storage stays open; public generation is connected
+by the later integration below.
 
 The [Main preparation checkpoint](../../../engineering/phase-2c-anima-main-preparation-research.md)
 captures one Project snapshot, its document-scoped resolved seed and exact
@@ -142,7 +143,20 @@ The [durable jobs checkpoint](../../../engineering/phase-2c-anima-durable-jobs-r
 now stores concrete per-item text/native plans and supports exact frozen Retry,
 dispatch and operational recovery separately. Queue Manager shows the saved native
 method; neither Retry nor dispatch reads today's draft or chooses a new seed.
-Public Project Generate and accepted Anima configuration remain closed.
+The subsequent [public Anima integration](../../../engineering/phase-2c-anima-public-generation-research.md)
+connects that native capture to Project Generate and immutable accepted records.
+Renderer advice uses the native qualified-engine flag, independently of the
+Illustrious img2img flag; Main rechecks the actual peer and exact resources.
+Opaque raster input permits Denoising Strength including zero. Missing method,
+unsupported embeddings/external VAE/CLIP Skip/nonzero CFG Rescale/manual VAE
+precision and mixed-alpha outpaint refuse explicitly, without an SD fallback.
+Unset optional controls remain absent and do not block saving the authored
+Project. Six native methods and raw weighted signs compare against the accepted
+baseline; exact companion identity comes from the installed catalog's existing
+fast metadata/stat/cache status, not a new full-file hashing loop. Missing bundle
+metadata and unsupported current controls are Unavailable. Installed release
+runtime, trained-model quality, regions/outpaint, Smart Patch and presets remain
+separate work.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware

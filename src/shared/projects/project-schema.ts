@@ -236,9 +236,90 @@ const Img2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
     denoisingStrength: UnitIntervalSchema,
   }),
 })
-const RasterGenerationConfigurationV1Schema = v.variant('mode', [
+const IllustriousRasterGenerationConfigurationV1Schema = v.variant('mode', [
   Txt2ImgRasterGenerationConfigurationV1Schema,
   Img2ImgRasterGenerationConfigurationV1Schema,
+])
+
+const AnimaCheckpointRefSchema = v.strictObject({
+  ...PortableResourceRefSchema.entries,
+  baseModelFamily: v.literal('anima'),
+  kind: v.literal('checkpoint'),
+  predictionType: v.null(),
+})
+/** Registry bindings are advisory; bytes and SHA-256 carry the portable component identity. */
+const AnimaComponentSnapshotSchema = v.strictObject({
+  byteSize: PositiveIntegerSchema,
+  localModelId: UuidSchema,
+  localVersionId: UuidSchema,
+  sha256: Sha256Schema,
+})
+const AnimaRecordedLoraStackSchema = v.pipe(
+  v.array(
+    v.strictObject({
+      ...LoraSchema.entries,
+      resource: v.strictObject({ ...ExactResourceRefSchema.entries, kind: v.literal('lora') }),
+    }),
+  ),
+  v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+  v.check((stack) =>
+    stack.every(
+      (entry) =>
+        !entry.enabled ||
+        (entry.resource.baseModelFamily === 'anima' && entry.resource.predictionType === null),
+    ),
+  ),
+)
+const AnimaRecordedPromptSchema = v.strictObject({
+  embeddingRefs: v.pipe(v.array(ProvenanceEmbeddingRefSchema), v.maxLength(0)),
+  text: PromptTextSchema,
+})
+const AnimaRecordedSizeSchema = v.pipe(
+  v.strictObject({
+    height: v.pipe(GenerationDimensionSchema, v.minValue(64)),
+    width: v.pipe(GenerationDimensionSchema, v.minValue(64)),
+  }),
+  v.check(({ height, width }) => height * width <= 4_000_000),
+)
+const Txt2ImgAnimaRasterGenerationConfigurationV1Schema = v.strictObject({
+  anima: v.strictObject({
+    architecture: v.literal('anima-base-1.0'),
+    checkpointByteSize: PositiveIntegerSchema,
+    qwen3Encoder: AnimaComponentSnapshotSchema,
+    vae: AnimaComponentSnapshotSchema,
+  }),
+  cfgRescale: v.optional(v.literal(0)),
+  loras: AnimaRecordedLoraStackSchema,
+  mode: v.literal('txt2img'),
+  model: AnimaCheckpointRefSchema,
+  negativePrompt: AnimaRecordedPromptSchema,
+  positivePrompt: AnimaRecordedPromptSchema,
+  sampling: v.strictObject({
+    actualSeed: UInt32Schema,
+    animaMethod: v.picklist(ANIMA_SAMPLING_METHOD_KEYS),
+    cfgScale: v.pipe(FiniteNumberSchema, v.minValue(1), v.maxValue(30)),
+    requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
+    seedBehavior: v.picklist(['per-iteration', 'per-prompt']),
+    steps: v.pipe(PositiveIntegerSchema, v.maxValue(200)),
+  }),
+  size: AnimaRecordedSizeSchema,
+  vaePrecision: v.optional(v.literal('Auto')),
+})
+const Img2ImgAnimaRasterGenerationConfigurationV1Schema = v.strictObject({
+  ...Txt2ImgAnimaRasterGenerationConfigurationV1Schema.entries,
+  mode: v.literal('img2img'),
+  sampling: v.strictObject({
+    ...Txt2ImgAnimaRasterGenerationConfigurationV1Schema.entries.sampling.entries,
+    denoisingStrength: UnitIntervalSchema,
+  }),
+})
+const AnimaRasterGenerationConfigurationV1Schema = v.variant('mode', [
+  Txt2ImgAnimaRasterGenerationConfigurationV1Schema,
+  Img2ImgAnimaRasterGenerationConfigurationV1Schema,
+])
+const RasterGenerationConfigurationV1Schema = v.union([
+  IllustriousRasterGenerationConfigurationV1Schema,
+  AnimaRasterGenerationConfigurationV1Schema,
 ])
 
 /**
@@ -276,14 +357,27 @@ const Txt2ImgRasterGenerationProvenanceV1Schema = v.strictObject({
   }),
   schemaVersion: v.literal(1),
 })
+const Img2ImgRasterGenerationProvenanceV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
+  generationConfiguration: Img2ImgRasterGenerationConfigurationV1Schema,
+  kind: v.literal('illustrious-img2img'),
+})
+const Txt2ImgAnimaRasterGenerationProvenanceV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
+  generationConfiguration: Txt2ImgAnimaRasterGenerationConfigurationV1Schema,
+  kind: v.literal('anima-txt2img'),
+})
+const Img2ImgAnimaRasterGenerationProvenanceV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
+  generationConfiguration: Img2ImgAnimaRasterGenerationConfigurationV1Schema,
+  kind: v.literal('anima-img2img'),
+})
 const RasterGenerationProvenanceV1Schema = v.pipe(
   v.variant('kind', [
     Txt2ImgRasterGenerationProvenanceV1Schema,
-    v.strictObject({
-      ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
-      generationConfiguration: Img2ImgRasterGenerationConfigurationV1Schema,
-      kind: v.literal('illustrious-img2img'),
-    }),
+    Img2ImgRasterGenerationProvenanceV1Schema,
+    Txt2ImgAnimaRasterGenerationProvenanceV1Schema,
+    Img2ImgAnimaRasterGenerationProvenanceV1Schema,
   ]),
   v.check(
     ({ executionResultContext, generationConfiguration, layerSourceContext }) =>
@@ -380,6 +474,14 @@ export type IgsPreviewRectV1 = v.InferOutput<typeof PreviewRectSchema>
 export type IgsMemberRefV1 = v.InferOutput<typeof MemberRefSchema>
 export type IgsRasterGenerationProvenanceV1 = v.InferOutput<
   typeof RasterGenerationProvenanceV1Schema
+>
+export type IgsIllustriousRasterGenerationProvenanceV1 = Extract<
+  IgsRasterGenerationProvenanceV1,
+  { kind: 'illustrious-img2img' | 'illustrious-txt2img' }
+>
+export type IgsAnimaRasterGenerationProvenanceV1 = Extract<
+  IgsRasterGenerationProvenanceV1,
+  { kind: 'anima-img2img' | 'anima-txt2img' }
 >
 export type IgsProjectDocumentV1 = v.InferOutput<typeof ProjectDocumentV1Schema>
 export type IgsManifestV1 = v.InferOutput<typeof IgsManifestV1Schema>

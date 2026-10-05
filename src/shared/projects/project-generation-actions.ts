@@ -14,6 +14,8 @@ export interface ProjectGenerationQueueJob {
 }
 
 export interface ProjectGenerationActionState {
+  /** Absent in older responses; never treat absence as native Anima support. */
+  animaSupported?: boolean
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
   cfgRescaleSupported: boolean
   documentId: string
@@ -87,18 +89,23 @@ export function isProjectGenerationActionState(
 ): value is ProjectGenerationActionState {
   if (
     !isRecord(value) ||
-    !exactKeys(value, [
-      'cfgRescaleSupported',
-      'documentId',
-      'embeddingsSupported',
-      'error',
-      'externalVaeSupported',
-      'img2imgSupported',
-      'jobs',
-      'phase',
-      'runningJobId',
-      'vaePrecisionSupported',
-    ]) ||
+    !exactKeys(
+      value,
+      [
+        'cfgRescaleSupported',
+        'documentId',
+        'embeddingsSupported',
+        'error',
+        'externalVaeSupported',
+        'img2imgSupported',
+        'jobs',
+        'phase',
+        'runningJobId',
+        'vaePrecisionSupported',
+      ],
+      ['animaSupported'],
+    ) ||
+    (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
     typeof value['embeddingsSupported'] !== 'boolean' ||
     typeof value['externalVaeSupported'] !== 'boolean' ||

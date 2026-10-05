@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { ModelCatalogItem } from '../api.js'
-import type { IgsRasterGenerationProvenanceV1 } from './project-schema.js'
+import type { IgsIllustriousRasterGenerationProvenanceV1 } from './project-schema.js'
 
 import {
   compareRasterGenerationSettings,
@@ -28,7 +28,7 @@ test('VAE distinguishes known Embedded, legacy omission and frozen external iden
   const source = fixture()
   assert.equal(result(source, 'vae.resource').status, 'Unavailable')
   assert.equal(result(source, 'vae.resource').after, 'Embedded')
-  source.data.generationConfiguration!.vae = null
+  source.data.generationConfiguration.vae = null
   assert.ok(isRasterGenerationData(source.data))
   assert.deepEqual(result(source, 'vae.resource'), {
     after: 'Embedded',
@@ -38,7 +38,7 @@ test('VAE distinguishes known Embedded, legacy omission and frozen external iden
     status: 'Same',
   })
   const vae = {
-    ...source.data.generationConfiguration!.model,
+    ...source.data.generationConfiguration.model,
     civitaiFileId: 103,
     civitaiModelId: 101,
     civitaiVersionId: 102,
@@ -52,7 +52,7 @@ test('VAE distinguishes known Embedded, legacy omission and frozen external iden
   source.current.modelCatalog!.push(catalogItem(vae))
   source.current.generationDraft.vae = structuredClone(vae)
   assert.equal(result(source, 'vae.resource').status, 'Added')
-  source.data.generationConfiguration!.vae = structuredClone(vae)
+  source.data.generationConfiguration.vae = structuredClone(vae)
   assert.ok(isRasterGenerationData(source.data))
   source.current.generationDraft.vae.displayName = 'Renamed current VAE'
   const before = structuredClone(source)
@@ -63,20 +63,20 @@ test('VAE distinguishes known Embedded, legacy omission and frozen external iden
   source.current.generationDraft.vae = null
   assert.equal(result(source, 'vae.resource').status, 'Removed')
   assert.equal(result(source, 'vae.resource').after, 'Embedded')
-  delete source.data.generationConfiguration!.vae
+  delete source.data.generationConfiguration.vae
   assert.equal(result(source, 'vae.resource').status, 'Unavailable')
 })
 
 test('external VAE comparison refuses equal status for missing, unknown, mismatched or unlinked bindings', () => {
   const source = fixture()
   const vae = {
-    ...source.data.generationConfiguration!.model,
+    ...source.data.generationConfiguration.model,
     kind: 'vae' as const,
     localModelId: OTHER_MODEL_ID,
     localVersionId: OTHER_VERSION_ID,
     predictionType: null,
   }
-  source.data.generationConfiguration!.vae = structuredClone(vae)
+  source.data.generationConfiguration.vae = structuredClone(vae)
   source.current.generationDraft.vae = structuredClone(vae)
   assert.equal(result(source, 'vae.resource').status, 'Missing resource')
   source.current.modelCatalog!.push(catalogItem(vae))
@@ -116,11 +116,11 @@ test('external VAE comparison refuses equal status for missing, unknown, mismatc
 test('portable applied VAE accepts both normal modes but rejects wrong kind, family, prediction and paths', () => {
   const source = fixture()
   const vae = {
-    ...source.data.generationConfiguration!.model,
+    ...source.data.generationConfiguration.model,
     kind: 'vae' as const,
     predictionType: null,
   }
-  source.data.generationConfiguration!.vae = vae
+  source.data.generationConfiguration.vae = vae
   assert.ok(isRasterGenerationData(source.data))
   for (const change of [
     { kind: 'checkpoint' },
@@ -133,10 +133,10 @@ test('portable applied VAE accepts both normal modes but rejects wrong kind, fam
     { localVersionId: 'foreign' },
   ]) {
     const invalid = structuredClone(source.data)
-    Object.assign(invalid.generationConfiguration!.vae!, change)
+    Object.assign(invalid.generationConfiguration.vae!, change)
     assert.equal(isRasterGenerationData(invalid), false, JSON.stringify(change))
   }
-  const configuration = source.data.generationConfiguration!
+  const configuration = source.data.generationConfiguration
   source.data.generationConfiguration = {
     ...configuration,
     mode: 'img2img',
@@ -154,21 +154,21 @@ test('VAE Precision compares frozen applied values with family-scoped current Au
   assert.match(result(source, 'vaePrecision.value').before, /Unavailable in saved generation data/)
   assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
   assert.deepEqual(source, legacy, 'projecting the default never writes either input')
-  source.data.generationConfiguration!.vaePrecision = 'Auto'
+  source.data.generationConfiguration.vaePrecision = 'Auto'
   assert.ok(isRasterGenerationData(source.data))
   assert.equal('vaePrecision' in source.current.generationDraft, false)
   assert.equal(result(source, 'vaePrecision.value').status, 'Same')
   assert.equal(result(source, 'vaePrecision.value').before, 'Auto')
   assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
   for (const precision of ['Auto', 'FP16', 'FP32'] as const) {
-    source.data.generationConfiguration!.vaePrecision = precision
+    source.data.generationConfiguration.vaePrecision = precision
     source.current.generationDraft.vaePrecision = precision
     assert.ok(isRasterGenerationData(source.data))
     assert.equal(result(source, 'vaePrecision.value').status, 'Same', precision)
     assert.equal(result(source, 'vaePrecision.value').before, precision)
     assert.equal(result(source, 'vaePrecision.value').after, precision)
   }
-  source.data.generationConfiguration!.vaePrecision = 'FP32'
+  source.data.generationConfiguration.vaePrecision = 'FP32'
   source.current.generationDraft.vaePrecision = 'FP16'
   const frozen = structuredClone(source)
   assert.deepEqual(result(source, 'vaePrecision.value'), {
@@ -182,7 +182,7 @@ test('VAE Precision compares frozen applied values with family-scoped current Au
   delete source.current.generationDraft.vaePrecision
   assert.equal(result(source, 'vaePrecision.value').status, 'Changed')
   assert.equal(result(source, 'vaePrecision.value').after, 'Auto')
-  const old = source.data.generationConfiguration!
+  const old = source.data.generationConfiguration
   source.data.generationConfiguration = {
     ...old,
     mode: 'img2img',
@@ -195,7 +195,7 @@ test('VAE Precision compares frozen applied values with family-scoped current Au
 test('VAE Precision current default does not escape Illustrious and invalid recorded precision fails the strict DTO', () => {
   for (const family of ['anima', null] as const) {
     const source = fixture()
-    source.data.generationConfiguration!.vaePrecision = 'FP32'
+    source.data.generationConfiguration.vaePrecision = 'FP32'
     source.current.generationDraft.model!.baseModelFamily = family
     source.current.generationDraft.vaePrecision = 'FP32'
     assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
@@ -206,7 +206,7 @@ test('VAE Precision current default does not escape Illustrious and invalid reco
   }
   const source = fixture()
   source.current.generationDraft.model = null
-  source.data.generationConfiguration!.vaePrecision = 'FP16'
+  source.data.generationConfiguration.vaePrecision = 'FP16'
   assert.equal(result(source, 'vaePrecision.value').status, 'Unavailable')
   assert.notEqual(result(source, 'vaePrecision.value').after, 'Auto')
   for (const precision of ['auto', 'BF16', 'FP64', null, 16, { mode: 'FP16' }]) {
@@ -218,13 +218,13 @@ test('VAE Precision current default does not escape Illustrious and invalid reco
   }
   const legacy = fixture()
   assert.ok(isRasterGenerationData(legacy.data))
-  assert.equal('vaePrecision' in legacy.data.generationConfiguration!, false)
+  assert.equal('vaePrecision' in legacy.data.generationConfiguration, false)
 })
 
 test('recorded empty LoRA stack is Same while legacy absence stays Unavailable', () => {
   const source = fixture()
   assert.equal(result(source, 'loras.stack').status, 'Unavailable')
-  source.data.generationConfiguration!.loras = []
+  source.data.generationConfiguration.loras = []
   assert.ok(isRasterGenerationData(source.data))
   assert.equal(result(source, 'loras.stack').status, 'Same')
   assert.equal(result(source, 'loras.stack').before, 'None')
@@ -259,7 +259,7 @@ test('LoRA comparison preserves ordered frozen weight/enabled/exact portable ide
   }
   source.current.modelCatalog!.push(catalogItem(resource))
   source.current.generationDraft.loras = structuredClone([enabled, disabled])
-  source.data.generationConfiguration!.loras = structuredClone([enabled, disabled])
+  source.data.generationConfiguration.loras = structuredClone([enabled, disabled])
   assert.ok(
     isRasterGenerationData(source.data),
     'enabled zero and disabled unavailable references cross the actual IPC guard',
@@ -295,7 +295,7 @@ test('LoRA comparison preserves ordered frozen weight/enabled/exact portable ide
   source.current.modelCatalog = null
   assert.equal(result(source, 'loras.stack').status, 'Unavailable')
   source.current.generationDraft.loras = [disabled]
-  source.data.generationConfiguration!.loras = [disabled]
+  source.data.generationConfiguration.loras = [disabled]
   assert.equal(
     result(source, 'loras.stack').status,
     'Same',
@@ -314,7 +314,7 @@ test('LoRA comparison distinguishes exact portable settings while local rebindin
     predictionType: null,
   }
   const entry = { enabled: true, resource, weight: -0.35 }
-  source.data.generationConfiguration!.loras = [structuredClone(entry)]
+  source.data.generationConfiguration.loras = [structuredClone(entry)]
   source.current.generationDraft.loras = [structuredClone(entry)]
   source.current.modelCatalog!.push(catalogItem(resource))
   assert.ok(isRasterGenerationData(source.data))
@@ -363,16 +363,16 @@ test('LoRA comparison distinguishes exact portable settings while local rebindin
   source.current.modelCatalog = original.current.modelCatalog
   source.current.generationDraft.loras = []
   assert.equal(result(source, 'loras.stack').status, 'Removed')
-  source.data.generationConfiguration!.loras = []
+  source.data.generationConfiguration.loras = []
   source.current.generationDraft.loras = [structuredClone(entry)]
   assert.equal(result(source, 'loras.stack').status, 'Added')
-  source.data.generationConfiguration!.loras = [structuredClone(entry)]
+  source.data.generationConfiguration.loras = [structuredClone(entry)]
   source.current.generationDraft.loras[0].weight = 1e-10
   assert.equal(result(source, 'loras.stack').status, 'Changed')
   assert.match(result(source, 'loras.stack').after, /Weight 1e-10/)
   assert.deepEqual(
-    source.data.generationConfiguration!.loras,
-    original.data.generationConfiguration!.loras,
+    source.data.generationConfiguration.loras,
+    original.data.generationConfiguration.loras,
     'current edits never rewrite accepted settings',
   )
 })
@@ -385,7 +385,7 @@ test('Denoising Strength compares immutable applied img2img settings and ignores
     'Unavailable',
     'legacy/txt output never invents an applied strength',
   )
-  const old = source.data.generationConfiguration!
+  const old = source.data.generationConfiguration
   source.data.generationConfiguration = {
     ...old,
     mode: 'img2img',
@@ -408,14 +408,14 @@ test('Denoising Strength compares immutable applied img2img settings and ignores
   assert.match(result(source, 'denoisingStrength.value').after, /Not applied/)
   source.data.currentMode = 'outpaint'
   assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')
-  assert.equal(frozen.generationConfiguration!.mode, 'img2img')
+  assert.equal(frozen.generationConfiguration.mode, 'img2img')
   assert.equal('denoisingStrength' in old.sampling, false)
 })
 
 test('recorded CFG Rescale compares actual values and Illustrious default zero without rewriting legacy absence', () => {
   const source = fixture()
   assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
-  source.data.generationConfiguration!.cfgRescale = 0
+  source.data.generationConfiguration.cfgRescale = 0
   assert.equal('cfgRescale' in source.current.generationDraft, false)
   assert.equal(result(source, 'cfgRescale.value').status, 'Same')
   assert.equal(result(source, 'cfgRescale.value').before, '0')
@@ -423,20 +423,20 @@ test('recorded CFG Rescale compares actual values and Illustrious default zero w
   assert.equal('cfgRescale' in source.current.generationDraft, false)
   source.current.generationDraft.cfgRescale = 0.7
   assert.equal(result(source, 'cfgRescale.value').status, 'Changed')
-  source.data.generationConfiguration!.cfgRescale = 0.7
+  source.data.generationConfiguration.cfgRescale = 0.7
   assert.equal(result(source, 'cfgRescale.value').status, 'Same')
   source.current.generationDraft.model!.baseModelFamily = 'anima'
   assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
   assert.match(result(source, 'cfgRescale.value').after, /Anima/)
-  delete source.data.generationConfiguration!.cfgRescale
+  delete source.data.generationConfiguration.cfgRescale
   source.current.generationDraft.model!.baseModelFamily = 'illustrious'
   source.current.generationDraft.cfgRescale = 0
   assert.equal(result(source, 'cfgRescale.value').status, 'Unavailable')
-  assert.equal('cfgRescale' in source.data.generationConfiguration!, false)
+  assert.equal('cfgRescale' in source.data.generationConfiguration, false)
 })
 
-function generationConfiguration(): IgsRasterGenerationProvenanceV1['generationConfiguration'] {
-  const config: IgsRasterGenerationProvenanceV1['generationConfiguration'] = {
+function generationConfiguration(): IgsIllustriousRasterGenerationProvenanceV1['generationConfiguration'] {
+  const config: IgsIllustriousRasterGenerationProvenanceV1['generationConfiguration'] = {
     mode: 'txt2img',
     model: {
       baseModelFamily: 'illustrious',
@@ -505,7 +505,12 @@ function catalogItem(
   return resource
 }
 
-function fixture(): { current: GenerationSettingsComparisonCurrent; data: RasterGenerationData } {
+function fixture(): {
+  current: GenerationSettingsComparisonCurrent
+  data: Omit<RasterGenerationData, 'generationConfiguration'> & {
+    generationConfiguration: IgsIllustriousRasterGenerationProvenanceV1['generationConfiguration']
+  }
+} {
   const config = generationConfiguration()
   const document = createEmptyProjectDocumentV1({
     documentId: DOCUMENT_ID,
@@ -559,7 +564,7 @@ function result(source: ReturnType<typeof fixture>, key: string): GenerationSett
 
 test('strict portable DTO admits legacy optional seed behavior and imported layers, rejects private context', () => {
   const source = fixture()
-  delete source.data.generationConfiguration!.sampling.seedBehavior
+  delete source.data.generationConfiguration.sampling.seedBehavior
   assert.ok(isRasterGenerationData(source.data))
   assert.ok(isRasterGenerationData({ ...source.data, generationConfiguration: null }))
   assert.deepEqual(
@@ -584,14 +589,14 @@ test('strict portable DTO admits legacy optional seed behavior and imported laye
       ...source.data,
       generationConfiguration: {
         ...source.data.generationConfiguration,
-        sampling: { ...source.data.generationConfiguration!.sampling, workerPath: '/private' },
+        sampling: { ...source.data.generationConfiguration.sampling, workerPath: '/private' },
       },
     },
     {
       ...source.data,
       generationConfiguration: {
         ...source.data.generationConfiguration,
-        sampling: { ...source.data.generationConfiguration!.sampling, seedBehavior: 'unknown' },
+        sampling: { ...source.data.generationConfiguration.sampling, seedBehavior: 'unknown' },
       },
     },
   ]) {
@@ -752,8 +757,14 @@ test('Illustrious scheduler resolution is unavailable for Anima, unknown family 
     source.current.generationDraft.model!.baseModelFamily = family
     source.current.modelCatalog![0].versions[0].baseModelFamily = family
     assert.equal(result(source, 'sampling.invokeScheduler').status, 'Unavailable')
-    assert.equal(result(source, 'sampling.sampler').status, 'Same')
-    assert.equal(result(source, 'sampling.scheduler').status, 'Same')
+    assert.equal(
+      result(source, 'sampling.sampler').status,
+      family === 'anima' ? 'Unavailable' : 'Same',
+    )
+    assert.equal(
+      result(source, 'sampling.scheduler').status,
+      family === 'anima' ? 'Unavailable' : 'Same',
+    )
   }
   const source = fixture()
   source.current.generationDraft.model = null
@@ -773,7 +784,7 @@ test('Current prediction type comes from installed library override while actual
     label: 'Prediction type',
     status: 'Changed',
   })
-  assert.equal(source.data.generationConfiguration!.model.predictionType, 'epsilon')
+  assert.equal(source.data.generationConfiguration.model.predictionType, 'epsilon')
 })
 
 test('unknown catalog is Unavailable, known empty library is Missing resource, and prompts remain comparable', () => {
@@ -797,8 +808,8 @@ test('concrete dynamic output compares against authored syntax and embedding tok
   assert.equal(result(source, 'prompt.text').before, 'a red lantern')
   assert.equal(result(source, 'prompt.text').after, 'a {red|blue} lantern')
   assert.equal(result(source, 'negativePrompt.text').status, 'Changed')
-  const embedding = { ...source.data.generationConfiguration!.model, kind: 'embedding' as const }
-  source.data.generationConfiguration!.positivePrompt.embeddingRefs = [
+  const embedding = { ...source.data.generationConfiguration.model, kind: 'embedding' as const }
+  source.data.generationConfiguration.positivePrompt.embeddingRefs = [
     { resource: embedding, token: 'warm-light' },
   ]
   source.current.generationDraft.positivePrompt.embeddingRefs = [
@@ -806,9 +817,9 @@ test('concrete dynamic output compares against authored syntax and embedding tok
   ]
   source.current.modelCatalog!.push(catalogItem(embedding))
   assert.equal(result(source, 'prompt.embeddings').status, 'Same')
-  source.data.generationConfiguration!.positivePrompt.embeddingRefs = []
+  source.data.generationConfiguration.positivePrompt.embeddingRefs = []
   assert.equal(result(source, 'prompt.embeddings').status, 'Added')
-  source.data.generationConfiguration!.positivePrompt.embeddingRefs = [
+  source.data.generationConfiguration.positivePrompt.embeddingRefs = [
     { resource: embedding, token: 'warm-light' },
   ]
   source.current.generationDraft.positivePrompt.embeddingRefs = []
@@ -820,9 +831,9 @@ test('concrete dynamic output compares against authored syntax and embedding tok
   assert.equal(result(source, 'prompt.embeddings').status, 'Changed')
   source.current.modelCatalog!.pop()
   assert.equal(result(source, 'prompt.embeddings').status, 'Missing resource')
-  source.data.generationConfiguration!.negativePrompt.text = ''
+  source.data.generationConfiguration.negativePrompt.text = ''
   assert.equal(result(source, 'negativePrompt.text').status, 'Added')
-  source.data.generationConfiguration!.negativePrompt.text = 'blur, noise'
+  source.data.generationConfiguration.negativePrompt.text = 'blur, noise'
   source.current.generationDraft.negativePrompt.text = ''
   assert.equal(result(source, 'negativePrompt.text').status, 'Removed')
 })
@@ -830,7 +841,7 @@ test('concrete dynamic output compares against authored syntax and embedding tok
 test('effective embedding comparison preserves copied literals and exact per-polarity identity across library Default and display changes', () => {
   const source = fixture()
   const positive = {
-    ...source.data.generationConfiguration!.model,
+    ...source.data.generationConfiguration.model,
     fileSha256: 'b'.repeat(64),
     kind: 'embedding' as const,
     localModelId: '6e3b548d-6dc0-4c2e-bc5c-0b68971da010',
@@ -848,12 +859,12 @@ test('effective embedding comparison preserves copied literals and exact per-pol
     ['positive', positive],
     ['negative', negative],
   ] as const) {
-    source.data.generationConfiguration![`${polarity}Prompt`] = {
+    source.data.generationConfiguration[`${polarity}Prompt`] = {
       embeddingRefs: [{ resource: embedding, token: '<custom>' }],
       text: `literal <custom> ${polarity}`,
     }
     source.current.generationDraft[`${polarity}Prompt`] = structuredClone(
-      source.data.generationConfiguration![`${polarity}Prompt`],
+      source.data.generationConfiguration[`${polarity}Prompt`],
     )
     source.current.modelCatalog!.push(catalogItem(embedding))
   }
@@ -900,7 +911,7 @@ test('baseline actual seed zero, requested policy and seed behavior compare as d
   assert.equal(result(source, 'seed.actual').status, 'Unavailable')
   source.current.generationDraft.dynamicPrompt = { maxPrompts: 10, seedBehavior: 'per-prompt' }
   assert.equal(result(source, 'seed.behavior').status, 'Changed')
-  delete source.data.generationConfiguration!.sampling.seedBehavior
+  delete source.data.generationConfiguration.sampling.seedBehavior
   assert.equal(result(source, 'seed.behavior').status, 'Unavailable')
 })
 

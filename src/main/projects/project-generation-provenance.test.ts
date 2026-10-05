@@ -10,7 +10,7 @@ import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { FrozenNormalTxt2ImgPreparationV1 } from './project-generation-preparation.js'
 
 import { workerEmbeddings } from './illustrious-generation-embeddings.js'
-import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
+import { provenanceFromVerifiedRasterCandidate as mapVerifiedCandidate } from './project-generation-provenance.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
@@ -18,6 +18,13 @@ const PNG_PATH = path.resolve('src/main/projects/placeholders/empty.png')
 const PROJECT_PATH = '/private/projects/portrait.igs'
 const MODEL_PATH = '/private/models/illustrious.safetensors'
 const bbox = { height: 512, width: 512, x: -24, y: 48 }
+
+/** Legacy scenarios must retain the legacy family; narrowing is an asserted outcome. */
+function provenanceFromVerifiedRasterCandidate(input: Parameters<typeof mapVerifiedCandidate>[0]) {
+  const provenance = mapVerifiedCandidate(input)
+  assert.ok(provenance.kind === 'illustrious-txt2img' || provenance.kind === 'illustrious-img2img')
+  return provenance
+}
 
 function sha256(bytes: string | Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')

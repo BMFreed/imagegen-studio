@@ -11,6 +11,8 @@ import {
 
 import { randomUUID } from 'node:crypto'
 
+import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationProcessorResult } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
@@ -27,6 +29,7 @@ import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   effectiveGenerationEmbeddings,
@@ -56,6 +59,8 @@ export type GenerationPreparedBatchOptions = Pick<
 >
 
 export interface PreparedBatchAdmissionResult {
+  /** Native captured identity remains verifiable after request-lease cleanup awaits. */
+  assertCurrent?: () => Promise<void>
   items: QueuedGenerationItem[]
   plan: GenerationBatchPlan
 }
@@ -109,7 +114,7 @@ export class GenerationOrchestrator {
       'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'
     >,
     private readonly projectIndex: Pick<ProjectIndexRepository, 'getProject'>,
-    private readonly models: GenerationModelResolver,
+    private readonly models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>,
     private readonly queue: GenerationQueueRepository,
     private readonly staging: GenerationStagingRepository,
     private readonly processor: GenerationProcessor,
@@ -278,6 +283,133 @@ export class GenerationOrchestrator {
     const operation = this.enqueueBarrier.then(
       async () => await this.enqueueOneUnlocked(tabId, compositionWorker, inferenceWorker),
     )
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** Admit the complete captured native batch under the same Project/dispatch barrier. */
+  async enqueuePreparedAnimaBatch(
+    tabId: string,
+    prepared: PreparedAnimaGenerationBatch,
+    inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
+    beforePublication?: () => Promise<void>,
+  ): Promise<PreparedBatchAdmissionResult> {
+    this.assertGenerationOpen(tabId)
+    const preparedBatch: PreparedAnimaGenerationBatch = {
+      context: structuredClone(prepared.context),
+      items: structuredClone(prepared.items),
+      iterations: prepared.iterations,
+      targetPngBytes: Buffer.from(prepared.targetPngBytes),
+      truncated: prepared.truncated,
+    }
+    const ready = structuredClone(inferenceWorker.ready)
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      this.assertGenerationOpen(tabId)
+      const project = await this.indexedProject(tabId)
+      const assertDocument = () => {
+        this.assertGenerationOpen(tabId)
+        if (
+          this.projects.getOpenDocumentId(tabId) !== project.documentId ||
+          preparedBatch.context.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The captured Anima batch no longer belongs to the open Project document.',
+          )
+        }
+      }
+      const assertIdentity = async () => {
+        assertDocument()
+        const current = await this.indexedProject(tabId)
+        assertDocument()
+        if (
+          current.canonicalPath !== project.canonicalPath ||
+          current.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The indexed Project changed while the Anima batch was being prepared.',
+          )
+        }
+      }
+      assertDocument()
+      const models = this.models
+      const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+      const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
+      if (typeof resolveBundle !== 'function' || typeof resolveLora !== 'function') {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The exact Anima bundle and adapters cannot be verified.',
+        )
+      }
+      return await withAnimaGenerationBatchRequests({
+        modelService: {
+          resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
+          resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
+        },
+        prepared: preparedBatch,
+        ready,
+        scratchBasePath: this.scratchBasePath,
+        use: async (requests) => {
+          await assertIdentity()
+          await beforePublication?.()
+          const stagingSessionId = randomUUID()
+          const queued = await this.queue.enqueuePreparedAnimaGenerationBatch({
+            beforeCommit: async () => {
+              // This callback runs inside the queue's serialized SQL transaction. Reentering
+              // either queue reads or the database connection here would deadlock the owner.
+              // Tab/close identity is synchronous; index identity is checked after publication,
+              // with exact new-batch cancellation on a late refusal.
+              assertDocument()
+            },
+            preflight: async (entries) => {
+              await assertIdentity()
+              await this.staging.preflightBatchCapacity({
+                entries,
+                localProjectKey: tabId,
+                projectPath: project.canonicalPath,
+                stagingSessionId,
+              })
+              await assertIdentity()
+            },
+            preparedBatch,
+            projectPath: project.canonicalPath,
+            requests,
+            stagingSessionId,
+          })
+          try {
+            await assertIdentity()
+          } catch (error) {
+            try {
+              for (const item of queued) {
+                const stopped = await this.processor.cancelAndWait(item.id)
+                if (stopped.status !== 'canceled') {
+                  throw cancellationUncertain('A failed Anima batch job has not stopped.')
+                }
+              }
+            } catch {
+              this.batchCleanupUnconfirmed.add(tabId)
+              this.fencedProjects.add(tabId)
+              this.queue.fenceProject(tabId)
+              throw cancellationUncertain(
+                'The Project changed after Anima batch enqueue, and its cancellation needs recovery.',
+              )
+            }
+            throw error
+          }
+          return {
+            assertCurrent: assertIdentity,
+            items: queued,
+            plan: { items: preparedBatch.items, truncated: preparedBatch.truncated },
+          }
+        },
+      })
+    })
     this.enqueueBarrier = operation.then(
       () => undefined,
       () => undefined,

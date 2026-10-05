@@ -41,7 +41,13 @@ rows use the same reviewed action controller and Project identity/close gates.
 Their details show native method, seed, requested Steps, CFG and contextual strength;
 SD sampler/scheduler/prediction fields are absent. Runtime progress uses the native
 plan's actual total (including Heun/clipping/zero work), not requested Steps.
-Public Project Generate and portable Anima Add are subsequent work.
+[Public integration](../engineering/phase-2c-anima-public-generation-research.md)
+now freezes native jobs from the original Project Generate capture and accepts
+verified candidates through the shared Add owner. Native admission retains the
+same app-wide preparation lease, exact replacement review and Project/index/close
+gates. Unsupported authored settings and unqualified peers refuse before
+composition; a late identity change cancels only the newly published batch and
+preserves previous work. Anima accepted records are portable only after Add/Save.
 
 ## Scope
 

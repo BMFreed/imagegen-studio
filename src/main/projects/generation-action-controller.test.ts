@@ -37,6 +37,7 @@ import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { GenerationProcessor } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { readIgsPackage } from './igs-package.js'
 import { IllustriousJobError } from './illustrious-txt2img-job.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectGenerationClose } from './project-generation-close.js'
@@ -3134,6 +3135,67 @@ test('dynamic expansion cannot invent an unbound known embedding and refuses the
         .positivePrompt.text,
       '<{clean|ordinary}-style>',
     )
+  })
+})
+
+test('Generate retains the full verified embedding pool for a portable bound literal assembled by dynamic fragments', async () => {
+  await withFixture(async (fixture) => {
+    const selected = await embeddingPrompt(fixture, 730, 731, 'clean-style.safetensors')
+    const owner = fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!
+    // Ordinary UI reconciliation prunes an absent literal. A portable saved document can retain
+    // this explicit exact binding: the real writer/loader accept its schema without rewriting it.
+    // This is source preparation, not a fixture containing the result being tested.
+    await owner.applyDocument({
+      ...owner.document,
+      generationDraft: {
+        ...owner.document.generationDraft,
+        negativePrompt: { embeddingRefs: [], text: '' },
+        positivePrompt: {
+          embeddingRefs: selected.prompt.embeddingRefs,
+          text: 'portrait <{clean|ordinary}-style>',
+        },
+      },
+    })
+    await fixture.projects.save(fixture.tabId)
+    const saved = (await readIgsPackage(fixture.packagePath)).project
+    assert.equal(saved.generationDraft.positivePrompt.text, 'portrait <{clean|ordinary}-style>')
+    assert.deepEqual(
+      saved.generationDraft.positivePrompt.embeddingRefs,
+      selected.prompt.embeddingRefs,
+    )
+    fixture.runtime.ready = structuredClone(embeddingReady)
+    const result = await fixture.controller.generate(fixture.tabId, {
+      documentId: fixture.documentId,
+      iterations: 1,
+    })
+    assert.equal(result.kind, 'queued')
+    if (result.kind !== 'queued') {
+      throw new Error('Expected the explicit saved binding to qualify')
+    }
+    assert.equal(result.jobIds.length, 2)
+    await waitForState(fixture.controller, fixture.tabId, (state) => state.phase === 'idle')
+    assert.equal(fixture.runtime.generated.length, 2)
+    assert.equal((await fixture.staging.listVerifiedCandidates(fixture.tabId)).length, 2)
+    for (const id of result.jobIds) {
+      const input = await fixture.queue.loadVerifiedInput(id)
+      assert.ok(
+        input.payload.kind === 'illustrious-txt2img' ||
+          input.payload.kind === 'illustrious-img2img',
+      )
+      const { context, workerJob } = input.payload
+      assert.deepEqual(context.embeddingRefs!.positive, selected.prompt.embeddingRefs)
+      const activated = context.prompts.positive.includes('<clean-style>')
+      assert.equal(context.embeddings!.positive.length, activated ? 1 : 0)
+      assert.equal(workerJob.embeddings?.positive.length ?? 0, activated ? 1 : 0)
+      if (activated) {
+        assert.equal(workerJob.embeddings!.positive[0].path, selected.file.managedPath)
+        assert.equal(
+          workerJob.embeddings!.positive[0].sha256,
+          selected.prompt.embeddingRefs[0].resource.fileSha256,
+        )
+      }
+    }
+    assert.deepEqual((await readIgsPackage(fixture.packagePath)).project, saved)
   })
 })
 

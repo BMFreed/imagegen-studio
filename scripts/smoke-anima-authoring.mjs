@@ -4,7 +4,7 @@
  * JSONL peer advertises 0.11 capabilities but refuses every inference command.
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -25,6 +25,7 @@ import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
 import { ProjectShadowStore } from '../src/main/projects/project-shadow.ts'
+import { acceptedOutputPngFixture } from '../src/main/projects/test-fixtures/accepted-provenance.ts'
 import { createRuntimeRoots } from '../src/main/runtime/index.ts'
 import { compileAnimaPromptWeighting } from '../src/shared/projects/anima-prompt-weighting.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
@@ -92,7 +93,7 @@ const report = {
     actual:
       'Built Electron controls/CodeMirror, native preload/IPC/Main draft mutations, SQLite catalog, real Project Undo/Redo/shadow, explicit writer/loader Save and genuine close/reopen; authoritative public Anima Generate refusal.',
     fixtures:
-      'Already-saved exact Anima/Illustrious refs backed by catalog-only bytes, retained inactive advanced fields, and an app-owned ready 0.11 JSONL executable. No companion installation/model-selection qualification, CUDA, trained weights or inference is claimed.',
+      'Already-saved exact Anima/Illustrious refs backed by catalog-only bytes, retained inactive advanced fields, and an app-owned ready 0.11 JSONL executable with controlled opaque target composition. A response probe suppresses only the legacy img2img advisory for the Anima tab to test renderer routing; actual Main peer qualification is retained. No companion installation/model-selection qualification, CUDA, trained weights or inference is claimed.',
     browser:
       'T3 native preview is available for prototype inspection; its HTTP tab does not exercise production Electron preload/IPC/.igs. This existing _electron boundary uses the built production renderer, not a standalone browser fallback.',
     input: 'Canonical native helper blocks physical desktop typing; CDP drives real controls.',
@@ -336,9 +337,34 @@ async function prepareFixture() {
       placeholdersDir: path.resolve('dist/main/placeholders'),
       scratchDir: path.join(fixtureRoot, 'scratch'),
     })
+    const image =
+      model.portable.baseModelFamily === 'anima' ? await acceptedOutputPngFixture(64, 64) : null
+    const layerId = randomUUID()
+    const layerPath = `assets/layers/${layerId}.png`
     session.applyDocument({
       ...session.document,
       primaryBbox: { width: 64, height: 64, x: 0, y: 0 },
+      layers: image
+        ? [
+            {
+              asset: {
+                bytes: image.length,
+                height: 64,
+                path: layerPath,
+                sha256: digest(image),
+                width: 64,
+              },
+              blendMode: 'normal',
+              id: layerId,
+              kind: 'raster',
+              locked: false,
+              name: 'Opaque raster input fixture',
+              opacity: 1,
+              transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+              visible: true,
+            },
+          ]
+        : [],
       generationDraft: {
         ...session.document.generationDraft,
         ...advanced,
@@ -355,7 +381,7 @@ async function prepareFixture() {
         seed: { policy: 'fixed', value: 0 },
       },
     })
-    await session.save()
+    await session.save(image ? { assets: { [layerPath]: { bytes: image } } } : {})
     return {
       key: session.localRecoveryKey,
       path: session.filePath,
@@ -391,8 +417,9 @@ const ready=role==='inference'
 process.stdout.write(JSON.stringify(ready)+'\n')
 process.on('SIGTERM',()=>process.exit(0));process.stdin.on('end',()=>process.exit(0))
 function chunk(type,data){const h=Buffer.alloc(8);h.writeUInt32BE(data.length);h.write(type,4,'ascii');const c=Buffer.alloc(4);c.writeUInt32BE(zlib.crc32(Buffer.concat([Buffer.from(type),data])));return Buffer.concat([h,data,c])}
-function png(w,h){const i=Buffer.alloc(13);i.writeUInt32BE(w);i.writeUInt32BE(h,4);i[8]=8;i[9]=6;return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',i),chunk('iCCP',Buffer.concat([Buffer.from('srgb\0\0'),zlib.deflateSync(profile)])),chunk('IDAT',zlib.deflateSync(Buffer.alloc(h*(1+w*4)))),chunk('IEND',Buffer.alloc(0))])}
-let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',value=>{input+=value;while(input.includes('\n')){const end=input.indexOf('\n'),request=JSON.parse(input.slice(0,end));input=input.slice(end+1);fs.appendFileSync(log,JSON.stringify({role,request})+'\n');if(request.type==='compose-target'){const bytes=png(request.bbox.width,request.bbox.height);fs.writeFileSync(request.output.targetPngPath,bytes,{flag:'wx',mode:0o600});process.stdout.write(JSON.stringify({type:'target-done',protocolVersion:'1',requestId:request.requestId,mode:'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',width:request.bbox.width,height:request.bbox.height,sha256:crypto.createHash('sha256').update(bytes).digest('hex')}})+'\n')}else if(request.type==='self-test'){process.stdout.write(JSON.stringify({type:'self-test-result',protocolVersion:'1',requestId:request.requestId,runtimeProfile:'derivatives-only',checks:{pillowVersion:'12.2.0',imageCodecs:['PNG','WEBP'],colorConversion:'srgb'}})+'\n')}else process.exit(34)}})
+function png(w,h,opaque){const i=Buffer.alloc(13);i.writeUInt32BE(w);i.writeUInt32BE(h,4);i[8]=8;i[9]=6;return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',i),chunk('iCCP',Buffer.concat([Buffer.from('srgb\0\0'),zlib.deflateSync(profile)])),chunk('IDAT',zlib.deflateSync(scanlines(w,h,opaque))),chunk('IEND',Buffer.alloc(0))])}
+function scanlines(w,h,opaque){const b=Buffer.alloc(h*(1+w*4));if(opaque)for(let y=0;y<h;y++)for(let x=0;x<w;x++)b[y*(1+w*4)+1+x*4+3]=255;return b}
+let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',value=>{input+=value;while(input.includes('\n')){const end=input.indexOf('\n'),request=JSON.parse(input.slice(0,end));input=input.slice(end+1);fs.appendFileSync(log,JSON.stringify({role,request})+'\n');if(request.type==='compose-target'){const opaque=request.layers.length>0,bytes=png(request.bbox.width,request.bbox.height,opaque);fs.writeFileSync(request.output.targetPngPath,bytes,{flag:'wx',mode:0o600});process.stdout.write(JSON.stringify({type:'target-done',protocolVersion:'1',requestId:request.requestId,mode:opaque?'img2img':'txt2img',rect:request.bbox,composite:{byteSize:bytes.length,colorSpace:'srgb',width:request.bbox.width,height:request.bbox.height,sha256:crypto.createHash('sha256').update(bytes).digest('hex')}})+'\n')}else if(request.type==='self-test'){process.stdout.write(JSON.stringify({type:'self-test-result',protocolVersion:'1',requestId:request.requestId,runtimeProfile:'derivatives-only',checks:{pillowVersion:'12.2.0',imageCodecs:['PNG','WEBP'],colorConversion:'srgb'}})+'\n')}else process.exit(34)}})
 `
   writeFileSync(executable, script, { mode: 0o700 })
   writeFileSync(
@@ -415,6 +442,24 @@ try {
       return status.ok ? status.value.kind : status.error.code
     })
     .toBe('ready')
+  await application.evaluate(({ ipcMain }, nativeKey) => {
+    const channel = 'projects:get-generation-state'
+    const original = ipcMain._invokeHandlers.get(channel)
+    if (typeof original !== 'function') throw new Error('Real generation-state handler is missing.')
+    globalThis.igsAnimaLegacyCapabilityProbe = { original, observations: [] }
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, async (event, key) => {
+      const response = await original(event, key)
+      if (!response.ok || key !== nativeKey) return response
+      const state = structuredClone(response)
+      globalThis.igsAnimaLegacyCapabilityProbe.observations.push({
+        animaSupported: response.value.animaSupported,
+        img2imgSupported: response.value.img2imgSupported,
+      })
+      state.value.img2imgSupported = false
+      return state
+    })
+  }, fixture.anima.key)
   report.runtimeStatus = await window.evaluate(() => window.api.runtime.getStatus())
   await resize(1380, 900)
   await activate(fixture.anima)
@@ -724,8 +769,35 @@ try {
     { key: fixture.anima.key, documentId: (await tab()).documentId },
   )
   assert.equal(generation.ok, false)
-  assert.equal(generation.error.code, 'GENERATION_MODEL_UNSUPPORTED')
-  assert.match(generation.error.message, /Illustrious/)
+  assert.equal(generation.error.code, 'GENERATION_VAE_UNSUPPORTED')
+  assert.match(generation.error.message, /Anima requires its verified pinned companion VAE/)
+  const actionState = await window.evaluate(
+    (key) => window.api.projects.getGenerationState(key),
+    fixture.anima.key,
+  )
+  assert.equal(actionState.ok, true, JSON.stringify(actionState))
+  assert.equal(actionState.value.animaSupported, true)
+  assert.equal(actionState.value.img2imgSupported, false)
+  const genuineCapabilities = await application.evaluate(
+    () => globalThis.igsAnimaLegacyCapabilityProbe.observations,
+  )
+  assert.ok(
+    genuineCapabilities.some(
+      (state) => state.animaSupported === true && state.img2imgSupported === true,
+    ),
+  )
+  report.genuineCapabilities = genuineCapabilities
+  const strength = window.getByRole('textbox', { name: 'Denoising Strength', exact: true })
+  await expect(strength).toBeEnabled()
+  await strength.fill('0')
+  await strength.press('Enter')
+  await expect.poll(async () => (await tab()).generationDraft.sampling.denoisingStrength).toBe(0)
+  await screenshot('04-native-strength-zero', strength)
+  await window.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect.poll(async () => (await tab()).generationDraft.sampling.denoisingStrength).toBe(null)
+  check(
+    'A controlled IPC advisory probe suppresses legacy img2img while genuine Main qualifies Anima; native Denoising Strength stays editable and preserves zero/Undo',
+  )
   const queue = await api('getGenerationQueue')
   assert.equal(queue.items.length, 0)
   const requests = existsSync(peerRequests)
@@ -737,7 +809,7 @@ try {
   )
   await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
   check(
-    'Ready 0.11 fixture capabilities do not open public Anima Generate; real Main refuses before queue/inference',
+    'Ready 0.11 native capability reaches renderer/IPC; authoritative public Main refuses the retained external VAE before composition/queue/inference',
     { code: generation.error.code },
   )
 
@@ -819,6 +891,16 @@ try {
   }
   throw error
 } finally {
+  if (application)
+    await application
+      .evaluate(({ ipcMain }) => {
+        const probe = globalThis.igsAnimaLegacyCapabilityProbe
+        if (!probe) return
+        ipcMain.removeHandler('projects:get-generation-state')
+        ipcMain.handle('projects:get-generation-state', probe.original)
+        delete globalThis.igsAnimaLegacyCapabilityProbe
+      })
+      .catch(() => undefined)
   if (application) {
     // Close only this isolated test process; unsaved-fixture confirmation is outside the scenario.
     await application.evaluate(({ app }) => app.exit(0)).catch(() => undefined)

@@ -418,7 +418,25 @@ export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler'
 export type BaseModelFamily = 'anima' | 'illustrious'
 export type ModelFileStatus = 'corrupt' | 'missing' | 'ready'
 export type IllustriousPredictionType = 'epsilon' | 'v_prediction'
+/** Read-only identities of the app-pinned Anima companions; no filesystem paths cross IPC. */
+export interface AnimaModelBundleView {
+  architecture: 'anima-base-1.0'
+  checkpointByteSize: number
+  qwen3Encoder: {
+    byteSize: number
+    localModelId: string
+    localVersionId: string
+    sha256: string
+  }
+  vae: {
+    byteSize: number
+    localModelId: string
+    localVersionId: string
+    sha256: string
+  }
+}
 export interface ModelVersionView {
+  anima?: AnimaModelBundleView
   baseModelFamily: BaseModelFamily | null
   civitaiFileId: number | null
   civitaiVersionId: number | null

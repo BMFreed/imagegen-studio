@@ -1772,10 +1772,14 @@ test('external, Embedded and unrecorded VAE choices survive both normal modes, R
             )
             await owner.save()
             const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
-            const configuration =
-              saved.project.layers[0]?.generationProvenance?.generationConfiguration
+            const provenance = saved.project.layers[0]?.generationProvenance
+            assert.ok(
+              provenance?.kind === 'illustrious-txt2img' ||
+                provenance?.kind === 'illustrious-img2img',
+            )
+            const configuration = provenance.generationConfiguration
             assert.deepEqual(configuration?.vae, expected)
-            assert.equal(Object.hasOwn(configuration!, 'vae'), choice !== 'legacy')
+            assert.equal(Object.hasOwn(configuration, 'vae'), choice !== 'legacy')
             assert.deepEqual(saved.project.generationDraft.vae, selected)
             assert.equal(JSON.stringify(configuration).includes(file.managedPath), false)
           })

@@ -1124,12 +1124,33 @@ frozen Retry через action controller, dispatch/JSONL native progress и ver
 local candidates/restart. Каждая запись хранит concrete weighted signs, resolved
 seed, один full native plan и exact ordered ресурсы; capacity проверяется по
 actual serialized payload и escaped session manifest при прежних caps.
-Queue Manager отображает native method без выдуманных SD settings. Portable
-Anima Add явно закрыт до записи journal/изменения Project/отмены siblings.
-Следующий этап — immutable accepted Anima configuration, семейный comparison
-и public Project Generate/admission; затем installed Linux/NVIDIA runtime,
+Queue Manager отображает native method без выдуманных SD settings. На этом
+историческом checkpoint Anima Add был явно закрыт до побочных эффектов;
+следующая интеграция ниже подключает accepted configuration и public Generate.
+После неё остаются installed Linux/NVIDIA runtime,
 реальные модели/размеры и release qualification. Наличие controlled worker tests
 не означает CUDA/model-quality или release readiness.
+
+**Anima public Generate and portable acceptance checkpoint (05.10.2026):**
+[Public integration](../engineering/phase-2c-anima-public-generation-research.md)
+подключает original click snapshot к native batch через существующие runtime
+lease, queue barrier, exact replacement review и Project/index/close fences.
+Оба pixel modes и все шесть methods используют qualified peer и exact bundle;
+SD-only active inputs и outpaint отклоняются буквально. Renderer получает
+native capability и использует её для img2img strength вместо Illustrious flag.
+Strict portable v1 `anima-txt2img` / `anima-img2img` records сохраняют raw weighted
+signs, exact checkpoint/Qwen3/VAE identities+sizes, actual seed, native sampling,
+full configured LoRAs и explicit neutral policies без paths/regions/compiled arrays.
+Mixed Add, grouped Undo/Redo, acceptance interruption/reconcile, shadow Recover,
+Save/readback, portable copy/open и saved-result indexes сохраняют baseline.
+Read-only comparison показывает native method/bundle и явно сообщает unknown
+bindings/unsupported current inputs. Legacy Illustrious records остаются точными.
+Evidence использует реальные production owners и контролируемые qualification/
+inference collaborators; native Electron подтверждает IPC/UI и saved comparison,
+не trained CUDA inference. **Следующий этап:** installed Linux/NVIDIA runtime и
+сквозная qualification обеих моделей на реальных весах/размерах; затем остальные
+Phase 2C/3 features. Presets/result-to-preset, Smart Patch, regions/outpaint и
+полная release qualification не завершены; PP-004/005/007/008 не повышены.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

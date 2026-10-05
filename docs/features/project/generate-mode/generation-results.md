@@ -9,12 +9,16 @@ and [accepted-result provenance](./generation-provenance.md).
 
 ## Current Anima boundary
 
-[Internal Anima jobs](../../../engineering/phase-2c-anima-durable-jobs-research.md)
-use the shared local staging/receipts, validated PNG/optional thumbnails and
-restart/tombstone recovery. A candidate is still operational data. Anima Add,
-including a mixed selection with Illustrious, explicitly refuses before journal,
-Project edits, sibling cancellation or discard; all candidates remain available.
-Portable Anima acceptance and public Generate remain unconnected.
+[Public Anima generation](../../../engineering/phase-2c-anima-public-generation-research.md)
+uses the shared queue/staging/receipts and explicit Add owner. Generate freezes
+the original click's native draft, pixels, bundle and seed; success still creates
+only a temporary candidate. Add supports verified Anima txt2img/opaque img2img
+and mixed selections with Illustrious. Every selected output, native provenance
+and the prospective package must pass before journal, Project edits, sibling
+cancellation or discard. A bad second candidate or package overflow preserves
+the complete original selection. Grouped Undo/Redo, shadow Recover and explicit
+Save/reopen keep the same native records. Partial-alpha outpaint, regions and
+Smart Patch remain outside this implemented path.
 
 ## Feature
 

@@ -59,6 +59,20 @@ function pendingState(): ProjectGenerationActionState {
   }
 }
 
+test('action state validates native Anima support without breaking older advisory responses', () => {
+  assert.equal(isProjectGenerationActionState(pendingState()), true)
+  for (const animaSupported of [false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), animaSupported }), true)
+  }
+  for (const animaSupported of [null, 0, 'true', {}]) {
+    assert.equal(isProjectGenerationActionState({ ...pendingState(), animaSupported }), false)
+  }
+  assert.equal(
+    isProjectGenerationActionState({ ...pendingState(), animaModelPath: '/private' }),
+    false,
+  )
+})
+
 test('Generate wire accepts integer iterations and exact reviewed identities, never paths or duplicate loss sets', () => {
   for (const iterations of [1, 4, 100]) {
     assert.equal(isProjectGenerateOptions({ documentId, iterations }), true)

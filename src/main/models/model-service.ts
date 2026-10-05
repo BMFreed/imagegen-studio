@@ -1,4 +1,5 @@
 import type {
+  AnimaModelBundleView,
   CivitaiTokenStatus,
   ModelCatalogItem,
   ModelImportPreview,
@@ -283,6 +284,8 @@ export class ModelService {
                     null,
                 )
                 const dependencyIssues: string[] = []
+                const animaComponents: Partial<Pick<AnimaModelBundleView, 'qwen3Encoder' | 'vae'>> =
+                  {}
                 if (model.type === 'checkpoint' && version.baseModelFamily === 'anima') {
                   for (const role of ['qwen3_encoder', 'vae'] as const) {
                     const dependencyId = version.dependencyVersionIds[role]
@@ -290,23 +293,45 @@ export class ModelService {
                     const dependencyResource = installed.find((candidate) =>
                       candidate.versions.some((item) => item.id === dependencyId),
                     )
-                    const expectedSha =
+                    const expected =
                       role === 'qwen3_encoder'
-                        ? ANIMA_QWEN3_0_6B_ENCODER.sha256
-                        : ANIMA_QWEN_IMAGE_VAE.sha256
+                        ? this.animaQualificationProfile.qwen3Encoder
+                        : this.animaQualificationProfile.vae
                     if (
                       !dependency ||
                       dependencyResource?.type !== role ||
                       dependencyResource.source.kind !== 'supported_dependency' ||
                       dependency.baseModelFamily !== 'anima' ||
-                      dependency.file.sha256 !== expectedSha ||
+                      dependency.predictionType !== null ||
+                      dependency.file.sha256 !== expected.sha256 ||
+                      dependency.file.sizeBytes !== expected.sizeBytes ||
                       (await this.catalogFileStatus(dependency.file)) !== 'ready'
                     ) {
                       dependencyIssues.push(role)
+                    } else {
+                      animaComponents[role === 'qwen3_encoder' ? 'qwen3Encoder' : 'vae'] = {
+                        byteSize: dependency.file.sizeBytes,
+                        localModelId: dependencyResource.id,
+                        localVersionId: dependency.id,
+                        sha256: dependency.file.sha256,
+                      }
                     }
                   }
                 }
                 return {
+                  ...(primaryStatus === 'ready' &&
+                  dependencyIssues.length === 0 &&
+                  animaComponents.qwen3Encoder &&
+                  animaComponents.vae
+                    ? {
+                        anima: {
+                          architecture: 'anima-base-1.0' as const,
+                          checkpointByteSize: version.file.sizeBytes,
+                          qwen3Encoder: animaComponents.qwen3Encoder,
+                          vae: animaComponents.vae,
+                        },
+                      }
+                    : {}),
                   baseModelFamily: version.baseModelFamily,
                   civitaiFileId: version.civitaiFileId,
                   civitaiVersionId: version.civitaiVersionId,

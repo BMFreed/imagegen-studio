@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type {
+  IgsIllustriousRasterGenerationProvenanceV1,
   IgsManifestV1,
   IgsProjectDocumentV1,
-  IgsRasterGenerationProvenanceV1,
 } from './project-schema.js'
 
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
@@ -31,7 +31,7 @@ const SHA256 = 'a'.repeat(64)
 const SECOND_SHA256 = 'b'.repeat(64)
 const ASSET_PATH = `assets/layers/${LAYER_ID}.png`
 
-test('optional native method is portable draft data without defaults or accepted-result expansion', () => {
+test('optional native method is portable draft data without defaults or rewriting Illustrious accepted results', () => {
   const legacy = emptyDocument()
   assert.equal(
     Object.hasOwn(parseProjectDocumentV1(legacy).generationDraft.sampling, 'animaMethod'),
@@ -99,7 +99,7 @@ function exactResource(kind: 'checkpoint' | 'embedding' | 'lora' | 'vae') {
   }
 }
 
-function rasterGenerationProvenance(): IgsRasterGenerationProvenanceV1 {
+function rasterGenerationProvenance(): IgsIllustriousRasterGenerationProvenanceV1 {
   return {
     executionResultContext: {
       acceptedAt: '2026-09-29T12:01:00.000Z',
@@ -233,8 +233,7 @@ test('accepted provenance rejects unportable fields, invalid model/geometry and 
       })
     },
     (document) => {
-      document.layers[0].generationProvenance!.generationConfiguration.model.predictionType =
-        null as never
+      document.layers[0].generationProvenance!.generationConfiguration.model.predictionType = null
     },
     (document) => {
       document.layers[0].generationProvenance!.generationConfiguration.model.localModelId =

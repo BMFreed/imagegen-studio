@@ -1,5 +1,12 @@
+import { AnimaFlowSamplingPlanError } from '../../shared/projects/anima-flow-sampling-plan.js'
+import {
+  AnimaPromptWeightingError,
+  compileAnimaPromptWeighting,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import { AnimaWorkerRequestError } from '../../shared/projects/anima-worker-request.js'
+import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
 import { GenerationBatchPlanError } from '../../shared/projects/generation-batch-plan.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type {
   GenerationQueueCursor,
@@ -8,6 +15,7 @@ import type {
   GenerationQueueTerminalStatus,
 } from '../../shared/projects/generation-queue-manager.js'
 import {
+  supportsInferenceAnima,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceExternalVae,
@@ -23,6 +31,7 @@ import type {
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
+import type { PreparedAnimaGeneration } from './anima-generation-preparation.js'
 import type { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { GenerationProcessor } from './generation-processor.js'
@@ -30,9 +39,15 @@ import type { GenerationQueueRepository, QueuedGenerationItem } from './generati
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
+import type { PreparedNormalGeneration } from './project-generation-preparation.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { AnimaGenerationBatchError, prepareAnimaGenerationBatch } from './anima-generation-batch.js'
+import {
+  prepareAnimaGeneration,
+  validateAnimaGenerationDraft,
+} from './anima-generation-preparation.js'
 import { AnimaGenerationRequestError } from './anima-generation-request.js'
 import { AnimaQueuedGenerationError } from './anima-queued-generation.js'
 import { withQueuedAnimaGenerationRequest } from './anima-queued-request.js'
@@ -81,7 +96,8 @@ interface GenerationActionDependencies {
   dispatch: Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
   gate: ProjectGenerationOperationGate
   models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
-  orchestrator: Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
+  orchestrator: Partial<Pick<GenerationOrchestrator, 'enqueuePreparedAnimaBatch'>> &
+    Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
   processor: Pick<GenerationProcessor, 'cancelAndWait' | 'onChanged'>
   projects: CapturedProjectService
   queue: Pick<
@@ -308,6 +324,7 @@ export class ProjectGenerationActionController {
     }
     this.assertDocument(tabId, documentId)
     return {
+      animaSupported: !this.blocked && !this.closed && supportsInferenceAnima(ready),
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
       embeddingsSupported: !this.blocked && !this.closed && supportsInferenceEmbeddings(ready),
@@ -445,19 +462,72 @@ export class ProjectGenerationActionController {
       const hasEmbeddings =
         capture.document.generationDraft.positivePrompt.embeddingRefs.length > 0 ||
         capture.document.generationDraft.negativePrompt.embeddingRefs.length > 0
+      const anima = capture.document.generationDraft.model?.baseModelFamily === 'anima'
+      let animaModels: AnimaGenerationModelResolver | null = null
+      if (anima) {
+        const models = this.options.models
+        const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+        const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
+        if (
+          typeof resolveBundle !== 'function' ||
+          typeof resolveLora !== 'function' ||
+          typeof this.options.orchestrator.enqueuePreparedAnimaBatch !== 'function'
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_MODEL_UNAVAILABLE',
+            'The selected Anima resources cannot be verified for generation.',
+          )
+        }
+        animaModels = {
+          resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
+          resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
+        }
+        // Validate the complete authored envelope and concrete weighted prompt pairs without
+        // choosing Random or disguising unavailable Reuse. The real cursor is checked below.
+        validateAnimaGenerationDraft(capture.document.generationDraft, {
+          bbox: capture.document.primaryBbox,
+          lastActualSeed: capture.document.generationDraft.seed.policy === 'reuse' ? 0 : undefined,
+          lastActualSeedSnapshot: capture.document.lastActualSeedSnapshot,
+        })
+        const dynamic = getEffectiveDynamicPromptSettings(
+          capture.document.generationDraft.dynamicPrompt,
+        )
+        const preflight = planGenerationBatch({
+          baseSeed: 0,
+          iterations: request.iterations,
+          maxJobs: GENERATION_BATCH_JOB_LIMIT,
+          maxPrompts: dynamic.maxPrompts,
+          negativePrompt: capture.document.generationDraft.negativePrompt.text,
+          positivePrompt: capture.document.generationDraft.positivePrompt.text,
+          seedBehavior: dynamic.seedBehavior,
+        })
+        for (const item of preflight.items) {
+          compileAnimaPromptWeighting(item.prompts.positive)
+          compileAnimaPromptWeighting(item.prompts.negative)
+        }
+      }
       // Refuse known legacy peers before reserving a worker or composing target pixels.
-      const ready = hasEmbeddings ? await this.options.runtime.readQualifiedInferenceReady() : null
-      if (hasEmbeddings && ready && !supportsInferenceEmbeddings(ready)) {
+      const ready =
+        hasEmbeddings || anima ? await this.options.runtime.readQualifiedInferenceReady() : null
+      if (anima && ready && !supportsInferenceAnima(ready)) {
+        throw new AnimaGenerationRequestError(
+          'INFERENCE_UNAVAILABLE',
+          'The active image engine has not qualified the original Anima pipeline.',
+        )
+      }
+      if (!anima && hasEmbeddings && ready && !supportsInferenceEmbeddings(ready)) {
         throw new GenerationPreparationError(
           'GENERATION_EMBEDDING_UNSUPPORTED',
           'The active image engine has not qualified Illustrious prompt embeddings.',
         )
       }
-      await this.options.models.assertNoUnboundGenerationEmbeddings({
-        modelFamily: capture.document.generationDraft.model?.baseModelFamily ?? null,
-        negativePrompt: capture.document.generationDraft.negativePrompt,
-        positivePrompt: capture.document.generationDraft.positivePrompt,
-      })
+      if (!anima) {
+        await this.options.models.assertNoUnboundGenerationEmbeddings({
+          modelFamily: capture.document.generationDraft.model?.baseModelFamily ?? null,
+          negativePrompt: capture.document.generationDraft.negativePrompt,
+          positivePrompt: capture.document.generationDraft.positivePrompt,
+        })
+      }
       this.assertAdmissionOpen()
       const dynamic = getEffectiveDynamicPromptSettings(
         capture.document.generationDraft.dynamicPrompt,
@@ -466,13 +536,20 @@ export class ProjectGenerationActionController {
         this.options.scratchBasePath,
         async ({ inferenceReady, targetWorker }) => {
           this.assertAdmissionOpen()
-          if (hasEmbeddings && !supportsInferenceEmbeddings(inferenceReady)) {
+          if (anima && !supportsInferenceAnima(inferenceReady)) {
+            throw new AnimaGenerationRequestError(
+              'INFERENCE_UNAVAILABLE',
+              'The active image engine has not qualified the original Anima pipeline.',
+            )
+          }
+          if (!anima && hasEmbeddings && !supportsInferenceEmbeddings(inferenceReady)) {
             throw new GenerationPreparationError(
               'GENERATION_EMBEDDING_UNSUPPORTED',
               'The active image engine has not qualified Illustrious prompt embeddings.',
             )
           }
           if (
+            !anima &&
             capture.document.generationDraft.vae &&
             !supportsInferenceExternalVae(inferenceReady)
           ) {
@@ -482,6 +559,7 @@ export class ProjectGenerationActionController {
             )
           }
           if (
+            !anima &&
             capture.document.generationDraft.vaePrecision !== undefined &&
             capture.document.generationDraft.vaePrecision !== 'Auto' &&
             !supportsInferenceVaePrecision(inferenceReady)
@@ -492,6 +570,7 @@ export class ProjectGenerationActionController {
             )
           }
           if (
+            !anima &&
             (capture.document.generationDraft.cfgRescale ?? 0) !== 0 &&
             !supportsInferenceCFGRescale(inferenceReady)
           ) {
@@ -501,6 +580,7 @@ export class ProjectGenerationActionController {
             )
           }
           if (
+            !anima &&
             capture.document.generationDraft.loras.some((entry) => entry.enabled) &&
             !supportsInferenceLora(inferenceReady)
           ) {
@@ -511,7 +591,7 @@ export class ProjectGenerationActionController {
           }
           const target = await capture.composeTarget(targetWorker)
           this.assertAdmissionOpen()
-          if (target.mode === 'img2img' && !supportsInferenceImg2Img(inferenceReady)) {
+          if (!anima && target.mode === 'img2img' && !supportsInferenceImg2Img(inferenceReady)) {
             throw new IllustriousJobError(
               'INFERENCE_UNAVAILABLE',
               'The active worker has not qualified opaque Illustrious img2img.',
@@ -522,48 +602,66 @@ export class ProjectGenerationActionController {
             request.documentId,
           )
           this.assertAdmissionOpen()
-          const prepared = await prepareNormalGeneration({
-            lastActualSeed,
-            modelService: this.options.models,
-            target,
-          })
+          const prepared = anima
+            ? await prepareAnimaGeneration({ lastActualSeed, modelService: animaModels!, target })
+            : await prepareNormalGeneration({
+                lastActualSeed,
+                modelService: this.options.models,
+                target,
+              })
           this.assertAdmissionOpen()
           this.assertDocument(tabId, request.documentId)
-          const admitted = await this.options.orchestrator.enqueuePreparedBatch(
-            tabId,
-            prepared,
-            {
-              iterations: request.iterations,
-              maxPrompts: dynamic.maxPrompts,
-              seedBehavior: dynamic.seedBehavior,
-            },
-            { ready: inferenceReady },
-            async () => {
-              this.assertAdmissionOpen()
-              const current = await this.readImpact(tabId, request.documentId)
-              this.assertAdmissionOpen()
-              if (!confirmationMatches(current, request.confirmation)) {
-                throw new ConfirmationChanged(current)
-              }
-            },
-          )
+          const beforePublication = async () => {
+            this.assertAdmissionOpen()
+            const current = await this.readImpact(tabId, request.documentId)
+            this.assertAdmissionOpen()
+            if (!confirmationMatches(current, request.confirmation)) {
+              throw new ConfirmationChanged(current)
+            }
+          }
+          const admitted = isPreparedAnimaGeneration(prepared)
+            ? await this.options.orchestrator.enqueuePreparedAnimaBatch!(
+                tabId,
+                prepareAnimaGenerationBatch({
+                  iterations: request.iterations,
+                  prepared,
+                }),
+                { ready: inferenceReady },
+                beforePublication,
+              )
+            : await this.options.orchestrator.enqueuePreparedBatch(
+                tabId,
+                prepared,
+                {
+                  iterations: request.iterations,
+                  maxPrompts: dynamic.maxPrompts,
+                  seedBehavior: dynamic.seedBehavior,
+                },
+                { ready: inferenceReady },
+                beforePublication,
+              )
           // The new batch is durable before any reviewed old result is discarded. Dispatch is
           // still held by admission; a failure below cancels only these newly admitted job IDs.
           let oldCleanupStarted = false
           try {
             this.assertAdmissionOpen()
+            await admitted.assertCurrent?.()
             const current = await this.readImpact(
               tabId,
               request.documentId,
               admitted.items.map((item) => item.id),
             )
             this.assertAdmissionOpen()
+            await admitted.assertCurrent?.()
+            this.assertAdmissionOpen()
             if (!confirmationMatches(current, request.confirmation)) {
               throw new ConfirmationChanged(current)
             }
             if (request.confirmation && hasImpact(current)) {
-              oldCleanupStarted = true
               for (const item of current.unfinished) {
+                await admitted.assertCurrent?.()
+                this.assertAdmissionOpen()
+                oldCleanupStarted = true
                 const stopped = await this.options.processor.cancelAndWait(item.id)
                 if (stopped.status !== 'canceled') {
                   throw new ProjectGenerationActionError(
@@ -573,6 +671,9 @@ export class ProjectGenerationActionController {
                 }
               }
               this.assertAdmissionOpen()
+              await admitted.assertCurrent?.()
+              this.assertAdmissionOpen()
+              oldCleanupStarted = true
               await this.options.staging.discardSessions(tabId, current.sessions)
               this.emitChanged()
             }
@@ -839,6 +940,9 @@ export function toProjectGenerationActionApiError(error: unknown): {
       : 'GENERATION_FAILED'
   const knownLiteral =
     error instanceof GenerationBatchPlanError ||
+    error instanceof AnimaGenerationBatchError ||
+    error instanceof AnimaFlowSamplingPlanError ||
+    error instanceof AnimaPromptWeightingError ||
     error instanceof IllustriousJobError ||
     error instanceof AnimaGenerationRequestError ||
     error instanceof AnimaWorkerRequestError
@@ -871,6 +975,9 @@ function safeGenerationErrorMessage(error: unknown, code: string): string {
     error instanceof ProjectGenerationActionError ||
     error instanceof GenerationPreparationError ||
     error instanceof GenerationBatchPlanError ||
+    error instanceof AnimaGenerationBatchError ||
+    error instanceof AnimaFlowSamplingPlanError ||
+    error instanceof AnimaPromptWeightingError ||
     error instanceof IllustriousJobError ||
     error instanceof AnimaGenerationRequestError ||
     error instanceof AnimaWorkerRequestError ||
@@ -901,6 +1008,13 @@ function safeGenerationErrorMessage(error: unknown, code: string): string {
 
 function hasImpact(impact: Impact): boolean {
   return impact.candidateIds.length > 0 || impact.unfinishedJobIds.length > 0
+}
+
+/** Preserve each family's complete preparation, including the legacy dynamic embedding pool. */
+function isPreparedAnimaGeneration(
+  prepared: PreparedAnimaGeneration | PreparedNormalGeneration,
+): prepared is PreparedAnimaGeneration {
+  return prepared.context.kind === 'anima-generation-preparation'
 }
 
 function confirmationMatches(

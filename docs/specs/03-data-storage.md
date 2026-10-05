@@ -264,8 +264,17 @@ checkpoint/Qwen3/VAE and ordered effective/configured LoRAs; disposable paths an
 full batch templates are excluded. Existing payload/target/session ceilings apply
 to actual serialized and JSON-escaped bytes. Recovery retains candidates and
 updates the local Project/document seed cursor only for verified completion.
-Worker protocol and `.igs` accepted schema are unchanged: public Generate and
-portable Anima Add remain closed with an explicit side-effect-free refusal.
+That durable checkpoint did not change the worker protocol or accepted schema.
+The subsequent [public Anima integration](../engineering/phase-2c-anima-public-generation-research.md)
+adds strict portable v1 `anima-txt2img` / `anima-img2img` records after explicit
+Add. They store exact original bundle identities/sizes, concrete weighted signs,
+native sampling, actual seed, full configured LoRAs and explicit neutral policies;
+private paths, compiled arrays and regional data are excluded. Existing
+Illustrious shapes and package ceilings are unchanged. Add validates the actual
+prospective package before cancellation/journal/mutation. Undo/Redo, shadow
+Recover, Save/readback, portable copy/open and derived saved-result indexes
+preserve the same baseline. Temporary candidates still remain local outside
+`.igs`; old binaries cannot interpret newly authored native record kinds.
 
 ### Generation provenance
 

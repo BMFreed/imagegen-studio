@@ -100,7 +100,7 @@ async function publishIllustriousNeighbor(fixture: AnimaStagingFixture) {
   })
 }
 
-test('real Anima and mixed Add refuse before journal, document, sibling cancellation or staging mutations; consented Illustrious Add still works', async () => {
+test('real mixed Anima and Illustrious Add validates every selected candidate before journal, document or sibling cancellation and commits one grouped edit', async () => {
   await withAnimaStagingFixture(async (fixture) => {
     const illustrious = await publishIllustriousNeighbor(fixture)
     const first = await enqueueAnimaStagingBatch(fixture)
@@ -173,10 +173,13 @@ test('real Anima and mixed Add refuse before journal, document, sibling cancella
       // These jobs share a separate fresh session. They are not siblings of either staged
       // candidate and must never be canceled by acceptance of those previous sessions.
       const unrelatedJobIds = siblings.items.map((item) => item.id)
+      // Corrupt the second selected image on the real staging filesystem. A valid first result
+      // must not partially commit the grouped Add, cancel siblings, or destroy recovery data.
+      await writeFile(anima.assetPath, Buffer.from('corrupt second candidate'))
       for (const ids of [[anima.candidateId], [illustrious.candidateId, anima.candidateId]]) {
         await assert.rejects(
           acceptance.accept(key, ids, ids[0], availableIds, expectedSiblingIds),
-          { code: 'PROVENANCE_MODEL_UNSUPPORTED' },
+          { code: 'ACCEPTANCE_SELECTION_STALE' },
         )
         assert.deepEqual(owner.document, original)
         assert.equal(owner.dirty, false)
@@ -192,38 +195,42 @@ test('real Anima and mixed Add refuse before journal, document, sibling cancella
             .execute(),
           beforeRows,
         )
-        assert.deepEqual(await fixture.staging.listVerifiedCandidates(key), [illustrious, anima])
-        assert.deepEqual(await readFile(anima.assetPath), fixture.outputBytes)
+        assert.deepEqual(await fixture.staging.listVerifiedCandidates(key), [illustrious])
+        assert.deepEqual(await readFile(anima.assetPath), Buffer.from('corrupt second candidate'))
         assert.deepEqual(await readFile(illustrious.assetPath), fixture.outputBytes)
         assert.deepEqual(await readFile(fixture.projectPath), fixture.originalProjectBytes)
       }
-      assert.throws(
-        () =>
-          provenanceFromVerifiedRasterCandidate({
-            acceptedAt: '2026-10-05T12:00:00.000Z',
-            candidate: anima,
-            imagePngBytes: fixture.outputBytes,
-          }),
-        { code: 'PROVENANCE_MODEL_UNSUPPORTED' },
-      )
+      await writeFile(anima.assetPath, fixture.outputBytes)
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(key), [illustrious, anima])
+      const frozenAnima = provenanceFromVerifiedRasterCandidate({
+        acceptedAt: '2026-10-05T12:00:00.000Z',
+        candidate: anima,
+        imagePngBytes: fixture.outputBytes,
+      })
+      assert.equal(frozenAnima.kind, 'anima-txt2img')
       const accepted = await acceptance.accept(
         key,
-        [illustrious.candidateId],
-        illustrious.candidateId,
+        [illustrious.candidateId, anima.candidateId],
+        anima.candidateId,
         availableIds,
         expectedSiblingIds,
       )
       assert.equal(accepted.kind, 'accepted')
-      assert.equal(owner.document.layers.length, 1)
+      assert.equal(owner.document.layers.length, 2)
       assert.equal(owner.document.layers[0].generationProvenance?.kind, 'illustrious-txt2img')
       assert.equal(
         owner.document.layers[0].generationProvenance?.executionResultContext.candidateId,
         illustrious.candidateId,
       )
+      assert.deepEqual(owner.document.layers[1].generationProvenance, frozenAnima)
       assert.equal(owner.dirty, true)
       assert.equal(cancellations, 1)
       assert.equal(discards, 1)
       assert.equal(fenced, false)
+      await owner.undo()
+      assert.equal(owner.document.layers.length, 0, 'mixed Add owns one grouped Undo step')
+      await owner.redo()
+      assert.deepEqual(owner.document.layers[1].generationProvenance, frozenAnima)
       assert.deepEqual(
         (await fixture.queue.listUnfinishedByIds(unrelatedJobIds)).map((item) => item.id).sort(),
         unrelatedJobIds.sort(),

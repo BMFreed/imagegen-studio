@@ -1,7 +1,9 @@
+import type { AnimaSamplingMethod } from '../../../shared/projects/anima-sampling-method.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../../shared/projects/color-profile.js'
 import type {
+  IgsAnimaRasterGenerationProvenanceV1,
+  IgsIllustriousRasterGenerationProvenanceV1,
   IgsProjectDocumentV1,
-  IgsRasterGenerationProvenanceV1,
 } from '../../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -24,7 +26,7 @@ export function acceptedRasterProvenanceFixture(
   sourceDocument: IgsProjectDocumentV1,
   output: Buffer,
   bbox: { height: number; width: number; x: number; y: number },
-): IgsRasterGenerationProvenanceV1 {
+): IgsIllustriousRasterGenerationProvenanceV1 {
   const candidateId = randomUUID()
   return {
     executionResultContext: {
@@ -79,6 +81,73 @@ export function acceptedRasterProvenanceFixture(
     },
     schemaVersion: 1,
   }
+}
+
+/** Strict input metadata for real package/comparison boundaries, not ML qualification evidence. */
+export function acceptedAnimaProvenanceFixture(
+  sourceDocument: IgsProjectDocumentV1,
+  output: Buffer,
+  bbox: { height: number; width: number; x: number; y: number },
+  options: {
+    actualSeed?: number
+    animaMethod?: AnimaSamplingMethod
+    mode?: 'img2img' | 'txt2img'
+  } = {},
+): IgsAnimaRasterGenerationProvenanceV1 {
+  const legacy = acceptedRasterProvenanceFixture(sourceDocument, output, bbox)
+  const common = {
+    anima: {
+      architecture: 'anima-base-1.0' as const,
+      checkpointByteSize: 2048,
+      qwen3Encoder: {
+        byteSize: 1024,
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        sha256: 'c'.repeat(64),
+      },
+      vae: {
+        byteSize: 512,
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        sha256: 'd'.repeat(64),
+      },
+    },
+    cfgRescale: 0 as const,
+    loras: [],
+    model: {
+      ...legacy.generationConfiguration.model,
+      baseModelFamily: 'anima' as const,
+      displayName: 'Recorded Anima checkpoint',
+      predictionType: null,
+    },
+    negativePrompt: { embeddingRefs: [], text: '(blur:0.5), worse--' },
+    positivePrompt: { embeddingRefs: [], text: '(cat:2), dog++' },
+    sampling: {
+      actualSeed: options.actualSeed ?? 0,
+      animaMethod: options.animaMethod ?? 'heun',
+      cfgScale: 4.5,
+      requestedSeedPolicy: 'fixed' as const,
+      seedBehavior: 'per-iteration' as const,
+      steps: 4,
+    },
+    size: { height: bbox.height, width: bbox.width },
+    vaePrecision: 'Auto' as const,
+  }
+  return options.mode === 'img2img'
+    ? {
+        ...legacy,
+        generationConfiguration: {
+          ...common,
+          mode: 'img2img',
+          sampling: { ...common.sampling, denoisingStrength: 0 },
+        },
+        kind: 'anima-img2img',
+      }
+    : {
+        ...legacy,
+        generationConfiguration: { ...common, mode: 'txt2img' },
+        kind: 'anima-txt2img',
+      }
 }
 
 async function srgbRgbaPngFixture(width: number, height: number, alpha: 0 | 255): Promise<Buffer> {

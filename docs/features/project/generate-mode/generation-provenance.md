@@ -32,12 +32,28 @@ Provenance may be serialized as a separate referenced JSON object inside `.igs`,
 
 ## Current Anima boundary
 
-[Durable Anima jobs](../../../engineering/phase-2c-anima-durable-jobs-research.md)
-retain strict operational frozen settings in local queue/staging recovery. These
-are neither accepted Raster configuration nor portable `.igs` provenance.
-The accepted factory explicitly returns `PROVENANCE_MODEL_UNSUPPORTED` for an
-Anima result, including mixed Add, before acceptance side effects. Immutable
-Anima configuration/comparison and public Generate are the next integration.
+[Public Anima generation and acceptance](../../../engineering/phase-2c-anima-public-generation-research.md)
+connect the existing durable native jobs to Project Generate and explicit Add.
+Operational candidates remain local; only accepted Raster layers carry strict
+portable `anima-txt2img` / `anima-img2img` v1 provenance. Native configuration
+records the original architecture, exact checkpoint/Qwen3/VAE hashes and sizes,
+concrete raw weighted signs, native method, Steps/CFG, actual seed/policy/behavior,
+applied img2img strength and complete configured LoRA stack. Explicit neutral
+CFG Rescale 0 / VAE precision Auto remain distinct from omitted fields.
+SD sampler/scheduler/prediction type, compiled arrays, paths, raw dynamic
+templates and all regional data are absent. No unavailable runtime version is
+invented. Legacy Illustrious records retain their exact shape.
+
+Both native modes and mixed-family Add use the same all-selection preflight,
+journal, grouped Undo/Redo and shadow recovery owner. Explicit Save/readback,
+portable copy/open and saved-result indexes preserve the immutable baseline.
+Read-only comparison uses native rows, raw signs and exact portable bundle
+identity; availability still requires current installed bindings. Local IDs are
+advisory recorded bindings, not portable identity. Missing native catalog
+metadata or unsupported current controls never become Same. Catalog status is
+the existing fast metadata/stat/cache check; Generate requalifies actual bytes.
+Preset creation, Smart Patch, regions/outpaint and installed-runtime/trained-model
+release qualification remain separate roadmap work.
 
 ## Contents
 
