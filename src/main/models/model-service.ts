@@ -34,6 +34,7 @@ import type {
 } from './model-repository.js'
 
 import { qualifyAnimaCheckpoint } from './anima-checkpoint-qualification.js'
+import { qualifyAnimaLora } from './anima-lora-qualification.js'
 import {
   ANIMA_BASE_1_0_CHECKPOINT,
   ANIMA_QWEN3_0_6B_ENCODER,
@@ -135,6 +136,8 @@ export class ModelService {
     ) => Promise<void> = qualifySdxlCheckpoint,
     private readonly loraQualifier: (managedPath: string) => Promise<void> = qualifyIllustriousLora,
     private readonly animaQualificationProfile: AnimaGenerationQualificationProfile = ANIMA_GENERATION_QUALIFICATION_PROFILE,
+    /** Trusted Main collaborator, never configurable through IPC or Project inputs. */
+    private readonly animaLoraQualifier: (managedPath: string) => Promise<void> = qualifyAnimaLora,
   ) {}
 
   /** Generate never silently binds a typed activation literal or guesses among exact versions. */
@@ -703,6 +706,75 @@ export class ModelService {
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
   ): Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>> {
     return this.resolvePortableGenerationResource(saved, 'vae')
+  }
+
+  /** Qualify an exact Anima adapter independently of public generation admission. */
+  async resolveVerifiedAnimaGenerationLoraForPlan(
+    inputSaved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+  ): Promise<{ byteSize: number; managedPath: string; reference: typeof inputSaved }> {
+    const saved = structuredClone(inputSaved)
+    if (saved.kind !== 'lora' || saved.baseModelFamily !== 'anima') {
+      throw new ModelServiceError(
+        'MODEL_FAMILY_UNSUPPORTED',
+        'This qualification requires an Anima LoRA.',
+      )
+    }
+    const resolveExact = async () => {
+      const resolved = await this.resolveGenerationResourceWithFile(
+        saved.localModelId,
+        saved.localVersionId,
+        'lora',
+      )
+      const reference = resolved.reference
+      if (reference.baseModelFamily !== 'anima') {
+        throw new ModelServiceError('MODEL_FAMILY_UNSUPPORTED', 'The installed LoRA is not Anima.')
+      }
+      if (
+        saved.localModelId !== reference.localModelId ||
+        saved.localVersionId !== reference.localVersionId ||
+        saved.civitaiModelId !== reference.civitaiModelId ||
+        saved.civitaiVersionId !== reference.civitaiVersionId ||
+        saved.civitaiFileId !== reference.civitaiFileId ||
+        saved.fileSha256 !== reference.fileSha256 ||
+        saved.baseModelFamily !== reference.baseModelFamily
+      ) {
+        throw new ModelServiceError(
+          'MODEL_VERSION_MISMATCH',
+          'The installed Anima LoRA no longer matches this Project exact version.',
+        )
+      }
+      return resolved
+    }
+    const resolved = await resolveExact()
+    if (path.extname(resolved.managedPath).toLowerCase() !== '.safetensors') {
+      throw new ModelServiceError(
+        'MODEL_LORA_INCOMPATIBLE',
+        'Anima qualification requires a safetensors LoRA.',
+      )
+    }
+    try {
+      await this.animaLoraQualifier(resolved.managedPath)
+    } catch (error) {
+      throw new ModelServiceError(
+        'MODEL_LORA_INCOMPATIBLE',
+        error instanceof Error
+          ? `The installed Anima LoRA is unsupported: ${error.message}`
+          : 'The installed Anima LoRA could not be structurally qualified.',
+      )
+    }
+    // Rehash and reread registry identity after the qualifier awaited. A changed
+    // file, path, source or family must not escape in a successfully returned plan.
+    const current = await resolveExact()
+    if (
+      current.managedPath !== resolved.managedPath ||
+      current.fileSizeBytes !== resolved.fileSizeBytes
+    ) {
+      throw new ModelServiceError(
+        'MODEL_VERSION_MISMATCH',
+        'The installed Anima LoRA changed during qualification.',
+      )
+    }
+    return { byteSize: resolved.fileSizeBytes, managedPath: resolved.managedPath, reference: saved }
   }
 
   /**

@@ -99,10 +99,30 @@ be Illustrious. Unknown family, corrupt exact file, unsupported algorithm, mixed
 UNet naming, duplicate active resource/path or incompatible dimensions produces
 an explicit refusal. Install and authoring remain available for other stored
 formats; successful install alone does not establish inference compatibility.
-Anima and other adapter algorithms remain roadmap work.
+Public Anima admission and other adapter algorithms remain roadmap work. The
+internal ordinary Anima foundation is documented separately below.
 
 New accepted records store the whole frozen configured stack (including disabled
 entries) without managed paths. Old records without this field stay Unavailable;
 a newly recorded empty array means an empty stack. Read-only comparison uses
 ordered portable identities, enabled state and exact weights, and checks missing
 resources only for enabled entries. This does not implement result-to-preset.
+
+## Internal ordinary Anima LoRA foundation (05.10.2026)
+
+[Exact Anima qualification and scoped application](../../../engineering/phase-2c-anima-lora-research.md)
+adds a separate Main resolver for exact saved Anima versions and a shared
+generated profile of actual native Linear targets. It accepts complete ordinary
+Kohya up/down or PEFT A/B files, with optional finite scalar alpha. Missing alpha
+defaults to the target's own rank; generic training metadata is ignored. Unknown
+targets/algorithms, mixed suffix styles, duplicate aliases, named adapters,
+embeddings and VAE targets are refused rather than partially loaded.
+
+The internal Euler helper applies signed enabled adapters before encoding both
+prompts, including Qwen3 and the separate LLM Adapter/conditioner. Enabled zero
+still verifies exact bytes and tensor compatibility. Native loading and cleanup
+preserve the original model graph/weights, gradient flags and caller RNG; errors
+also remove adapters before the reused model is returned. Actual small native
+tests cover all three components; local trained NVIDIA probes cover backbone
+adapters. This does not enable Anima Generate, expand the public queue/wire or
+provenance contracts, or certify other adapter algorithms/release readiness.

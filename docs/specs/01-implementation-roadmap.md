@@ -1017,10 +1017,26 @@ Python сохраняет raw sigma/CFG/F32 update/cast-back, uses weighted cond
 сохраняет 8-aligned размеры, pre-clamp finite guards отказывают до pixels.
 Actual trained RTX 4080 probe проверил 256×256/три шага: neutral weight equality,
 изменение positive/negative, seed replay и strength 0/0.5/1. Это внутренний helper,
-не public Generate/queue/provenance readiness. Следующий этап — Anima LoRA и
-остальные scheduler/advanced paths, затем family-aware editor handoff и frozen
-admission/queue/Retry/provenance. Полные размеры, memory/cache/tiling и release
+не public Generate/queue/provenance readiness. Ordinary Anima LoRA добавлены
+следующим checkpoint. Следующий этап — остальные scheduler/advanced paths,
+затем family-aware editor handoff и frozen admission/queue/Retry/provenance. Полные размеры, memory/cache/tiling и release
 qualification остаются отдельными gates; Phase 2C и публичные promises не завершены.
+
+**Anima ordinary LoRA foundation (05.10.2026):**
+[Exact qualification and scoped native adapters](../engineering/phase-2c-anima-lora-research.md)
+добавляют отдельный Main resolver exact Anima refs и общий generated profile
+711 native Linear targets / 4977 aliases. Kohya up/down и PEFT A/B пары
+проверяются целиком, включая rank/shape, optional finite scalar alpha и неизвестные
+ключи. Python повторно проверяет точные bytes и native target/tensor/scaling,
+затем применяет подписанный стек до кодирования обеих полярностей prompt.
+Backbone, LLM Adapter и Qwen проверены на настоящих небольших native моделях;
+три локальные trained backbone LoRA отдельно проверены на RTX 4080 при 256×256/
+трёх шагах. Missing alpha → rank; generic training metadata не меняет config.
+После успеха и ошибки восстанавливаются исходные слои, weights, gradient flags и
+RNG; повторная загрузка проверяется на тех же моделях. Public Generate/capability,
+wire/`.igs` versions, queue/Retry/provenance и Illustrious admission не меняются.
+Остальные scheduler/options, family-aware editor и сквозная Linux/NVIDIA release
+qualification остаются открытыми; Phase 2C и PP-004/PP-005 не завершены.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

@@ -22,9 +22,11 @@ from imagegen_worker.anima_conditioning import (
     encode_anima_conditioning_pair,
     validate_compiled_anima_prompt,
 )
+from imagegen_worker.anima_lora import capture_anima_loras, scoped_anima_generation_loras
 from imagegen_worker.anima_tokenizers import AnimaTokenizers
 from imagegen_worker.derivatives import SRGB_ICC_PROFILE, DerivativeError
 from imagegen_worker.inference_anima import LoadedAnimaModels
+from imagegen_worker.protocol import GenerationLora
 
 PLAN_VERSION = "anima-euler-denoising-v1"
 _FIELDS = {
@@ -236,6 +238,7 @@ def generate_anima_euler(
     models: LoadedAnimaModels,
     *,
     source_image: Image.Image | None = None,
+    loras: tuple[GenerationLora, ...] = (),
     tokenizers: AnimaTokenizers | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> AnimaEulerResult:
@@ -243,6 +246,7 @@ def generate_anima_euler(
     captured = validate_anima_euler_plan(plan)
     positive_input, negative_input = _capture_prompt(positive), _capture_prompt(negative)
     source = _source_image(source_image, captured)
+    captured_loras = capture_anima_loras(loras)
     try:
         if importlib.metadata.version("torchvision").split("+", maxsplit=1)[0] != "0.22.1":
             raise DerivativeError(
@@ -274,82 +278,89 @@ def generate_anima_euler(
             raise DerivativeError(
                 "INFERENCE_UNAVAILABLE", "Anima requires the original latent topology."
             )
-        mean, std = _normalization(vae, torch, device, vae_parameter.dtype)
-        shape = (1, 16, 1, captured.height // 8, captured.width // 8)
-        noise_generator = torch.Generator(device="cpu").manual_seed(captured.seed)
-        conditioning = None
-        if captured.total_steps:
-            conditioning = encode_anima_conditioning_pair(
-                positive_input, negative_input, models, tokenizers=tokenizers
-            )
-            if any(
-                item.embeddings.device != device or item.embeddings.dtype != dtype
-                for item in (conditioning.positive, conditioning.negative)
-            ):
-                raise DerivativeError(
-                    "INFERENCE_UNAVAILABLE", "Anima conditioning placement differs."
-                )
-        with torch.inference_mode(), _vae_guard(vae, torch):
-            if source is not None:
-                pixels = torch.frombuffer(bytearray(source.tobytes()), dtype=torch.uint8)
-                pixels = pixels.reshape(captured.height, captured.width, 3).permute(2, 0, 1)
-                pixels = pixels.to(dtype=torch.float32).unsqueeze(0).unsqueeze(2)
-                pixels = (pixels / 127.5 - 1).to(device=device, dtype=vae_parameter.dtype)
-                posterior = vae.encode(pixels).latent_dist
-                generator = torch.Generator(device="cpu").manual_seed(captured.posterior_seed)
-                encoded = posterior.sample(generator=generator)
-                _finite(encoded, torch, "sampled VAE latent")
-                if tuple(encoded.shape) != shape:
-                    raise DerivativeError(
-                        "GENERATION_WORKER_FAILED", "Anima encoded shape differs."
-                    )
-                latents = ((encoded - mean) / std).to(dtype=dtype)
-                _finite(latents, torch, "normalized latent")
-            else:
-                latents = None
+        with scoped_anima_generation_loras(models, captured_loras, torch):
+            mean, std = _normalization(vae, torch, device, vae_parameter.dtype)
+            shape = (1, 16, 1, captured.height // 8, captured.width // 8)
+            noise_generator = torch.Generator(device="cpu").manual_seed(captured.seed)
+            conditioning = None
             if captured.total_steps:
-                noise = torch.randn(
-                    shape, device="cpu", dtype=torch.float32, generator=noise_generator
-                ).to(device=device, dtype=dtype)
-                sigma = captured.sigmas[0]
-                latents = noise if latents is None else sigma * noise + (1 - sigma) * latents
-                _finite(latents, torch, "initial latent")
-                assert conditioning is not None
-                for index, (current, following) in enumerate(
-                    zip(captured.sigmas[:-1], captured.sigmas[1:], strict=True), 1
+                conditioning = encode_anima_conditioning_pair(
+                    positive_input, negative_input, models, tokenizers=tokenizers
+                )
+                if any(
+                    item.embeddings.device != device or item.embeddings.dtype != dtype
+                    for item in (conditioning.positive, conditioning.negative)
                 ):
-                    conditional = _predict(
-                        transformer, latents, conditioning.positive.embeddings, current, torch
+                    raise DerivativeError(
+                        "INFERENCE_UNAVAILABLE", "Anima conditioning placement differs."
                     )
-                    if not math.isclose(captured.guidance_scale, 1.0):
-                        unconditional = _predict(
-                            transformer, latents, conditioning.negative.embeddings, current, torch
+            with torch.inference_mode(), _vae_guard(vae, torch):
+                if source is not None:
+                    pixels = torch.frombuffer(bytearray(source.tobytes()), dtype=torch.uint8)
+                    pixels = pixels.reshape(captured.height, captured.width, 3).permute(2, 0, 1)
+                    pixels = pixels.to(dtype=torch.float32).unsqueeze(0).unsqueeze(2)
+                    pixels = (pixels / 127.5 - 1).to(device=device, dtype=vae_parameter.dtype)
+                    posterior = vae.encode(pixels).latent_dist
+                    generator = torch.Generator(device="cpu").manual_seed(captured.posterior_seed)
+                    encoded = posterior.sample(generator=generator)
+                    _finite(encoded, torch, "sampled VAE latent")
+                    if tuple(encoded.shape) != shape:
+                        raise DerivativeError(
+                            "GENERATION_WORKER_FAILED", "Anima encoded shape differs."
                         )
-                        flow = unconditional + captured.guidance_scale * (
-                            conditional - unconditional
+                    latents = ((encoded - mean) / std).to(dtype=dtype)
+                    _finite(latents, torch, "normalized latent")
+                else:
+                    latents = None
+                if captured.total_steps:
+                    noise = torch.randn(
+                        shape, device="cpu", dtype=torch.float32, generator=noise_generator
+                    ).to(device=device, dtype=dtype)
+                    sigma = captured.sigmas[0]
+                    latents = noise if latents is None else sigma * noise + (1 - sigma) * latents
+                    _finite(latents, torch, "initial latent")
+                    assert conditioning is not None
+                    for index, (current, following) in enumerate(
+                        zip(captured.sigmas[:-1], captured.sigmas[1:], strict=True), 1
+                    ):
+                        conditional = _predict(
+                            transformer, latents, conditioning.positive.embeddings, current, torch
                         )
-                    else:
-                        flow = conditional
-                    _finite(flow, torch, "guided flow")
-                    latents = (latents.float() + (following - current) * flow).to(dtype=dtype)
-                    _finite(latents, torch, "Euler latent")
-                    if progress is not None:
-                        progress(index, captured.total_steps)
-            assert latents is not None
-            raw_latents = latents.to(dtype=vae_parameter.dtype) * std + mean
-            _finite(raw_latents, torch, "denormalized latent")
-            decoded = vae.decode(raw_latents).sample
-            _finite(decoded, torch, "decoded image")
-            if tuple(decoded.shape) != (1, 3, 1, captured.height, captured.width):
-                raise DerivativeError("GENERATION_WORKER_FAILED", "Anima decoded shape differs.")
-            pixels = (127.5 * (decoded[0, :, 0].float().clamp(-1, 1) + 1)).to(torch.uint8)
-            image = Image.frombytes(
-                "RGB",
-                (captured.width, captured.height),
-                pixels.permute(1, 2, 0).contiguous().cpu().numpy().tobytes(),
-            )
-            image.info["icc_profile"] = SRGB_ICC_PROFILE
-        return AnimaEulerResult(image, latents.detach().clone(), captured.total_steps)
+                        if not math.isclose(captured.guidance_scale, 1.0):
+                            unconditional = _predict(
+                                transformer,
+                                latents,
+                                conditioning.negative.embeddings,
+                                current,
+                                torch,
+                            )
+                            flow = unconditional + captured.guidance_scale * (
+                                conditional - unconditional
+                            )
+                        else:
+                            flow = conditional
+                        _finite(flow, torch, "guided flow")
+                        latents = (latents.float() + (following - current) * flow).to(dtype=dtype)
+                        _finite(latents, torch, "Euler latent")
+                        if progress is not None:
+                            progress(index, captured.total_steps)
+                assert latents is not None
+                raw_latents = latents.to(dtype=vae_parameter.dtype) * std + mean
+                _finite(raw_latents, torch, "denormalized latent")
+                decoded = vae.decode(raw_latents).sample
+                _finite(decoded, torch, "decoded image")
+                if tuple(decoded.shape) != (1, 3, 1, captured.height, captured.width):
+                    raise DerivativeError(
+                        "GENERATION_WORKER_FAILED", "Anima decoded shape differs."
+                    )
+                pixels = (127.5 * (decoded[0, :, 0].float().clamp(-1, 1) + 1)).to(torch.uint8)
+                image = Image.frombytes(
+                    "RGB",
+                    (captured.width, captured.height),
+                    pixels.permute(1, 2, 0).contiguous().cpu().numpy().tobytes(),
+                )
+                image.info["icc_profile"] = SRGB_ICC_PROFILE
+            return AnimaEulerResult(image, latents.detach().clone(), captured.total_steps)
     except DerivativeError:
         raise
     except Exception as error:
