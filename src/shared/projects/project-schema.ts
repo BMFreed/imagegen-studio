@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 
+import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
 import {
   GenerationDynamicPromptSettingsSchema,
@@ -303,6 +304,7 @@ const GenerationDraftSchema = v.strictObject({
   negativePrompt: PromptSchema,
   positivePrompt: PromptSchema,
   sampling: v.strictObject({
+    animaMethod: v.optional(v.picklist(ANIMA_SAMPLING_METHOD_KEYS)),
     cfgScale: v.nullable(v.pipe(FiniteNumberSchema, v.minValue(0))),
     denoisingStrength: v.nullable(UnitIntervalSchema),
     sampler: v.nullable(NonemptyTextSchema),

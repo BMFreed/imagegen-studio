@@ -112,6 +112,14 @@ test('coalescing keeps an intervening setting mutation in its original Project h
 function apply(tab: ProjectTab, change: ProjectGenerationDraftChange): ProjectTab {
   const next = structuredClone(tab)
   switch (change.kind) {
+    case 'anima-method': {
+      if (change.value === null) {
+        delete next.generationDraft.sampling.animaMethod
+      } else {
+        next.generationDraft.sampling.animaMethod = change.value
+      }
+      break
+    }
     case 'negative-prompt': {
       next.generationDraft.negativePrompt.text = change.text
 
@@ -296,6 +304,50 @@ test('sampler and scheduler edits stay paired through pending draft overlay and 
   ])
   assert.equal(saved.generationDraft.sampling.sampler, 'DPM++ 2M')
   assert.equal(saved.generationDraft.sampling.scheduler, 'Karras')
+  assert.equal(overlays.at(-1), null)
+})
+
+test('native overlay survives delayed acknowledgments, independent pair edits and clear flush', async () => {
+  let saved = projectTab()
+  const sent: ProjectGenerationDraftChange[] = []
+  const overlays: (ProjectTab['generationDraft'] | null)[] = []
+  let release!: () => void
+  const first = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (tab) => {
+      saved = tab
+    },
+    onError: () => assert.fail('Unexpected native draft error'),
+    onOverlay: (_id, draft) => overlays.push(draft),
+    send: async (_id, change) => {
+      sent.push(change)
+      if (sent.length === 1) {
+        await first
+      }
+      saved = apply(saved, change)
+      return saved
+    },
+  })
+  sync.change(saved, { kind: 'anima-method', value: 'heun' })
+  assert.equal(overlays.at(-1)?.sampling.animaMethod, 'heun')
+  sync.change(saved, { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Normal' })
+  sync.change(saved, { kind: 'anima-method', value: 'er_sde' })
+  assert.equal(overlays.at(-1)?.sampling.animaMethod, 'er_sde')
+  assert.equal(overlays.at(-1)?.sampling.sampler, 'Euler a')
+  sync.change(saved, { kind: 'anima-method', value: null })
+  assert.equal(Object.hasOwn(overlays.at(-1)!.sampling, 'animaMethod'), false)
+  const flush = sync.flush(saved.id)
+  release()
+  await flush
+  assert.deepEqual(sent, [
+    { kind: 'anima-method', value: 'heun' },
+    { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Normal' },
+    { kind: 'anima-method', value: null },
+  ])
+  assert.equal(Object.hasOwn(saved.generationDraft.sampling, 'animaMethod'), false)
+  assert.equal(saved.generationDraft.sampling.scheduler, 'Normal')
   assert.equal(overlays.at(-1), null)
 })
 

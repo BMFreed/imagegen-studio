@@ -96,7 +96,7 @@ class AnimaAttentionParser {
       throw new AnimaPromptWeightingError('The prompt has an unclosed attention group.')
     }
     this.position += 1
-    const suffix = this.readGroupSuffix()
+    const suffix = this.readGroupSuffix(depth)
     if (suffix !== null) {
       if (explicit) {
         throw new AnimaPromptWeightingError(
@@ -191,7 +191,7 @@ class AnimaAttentionParser {
     return parts
   }
 
-  private readGroupSuffix(): number | null {
+  private readGroupSuffix(depth: number): number | null {
     const first = this.points[this.position]
     if (first === undefined || !/[+\-\d.]/.test(first)) {
       return null
@@ -205,6 +205,10 @@ class AnimaAttentionParser {
       this.position < this.points.length &&
       !/[\s,()[\]{}<>\\]/.test(this.points[this.position])
     ) {
+      // Inside a parent group, its explicit colon belongs to that parent rather than this suffix.
+      if (depth > 1 && this.points[this.position] === ':') {
+        break
+      }
       this.position += 1
     }
     const raw = this.points.slice(start, this.position).join('')

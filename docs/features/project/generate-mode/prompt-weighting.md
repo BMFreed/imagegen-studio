@@ -24,8 +24,12 @@ once after adapter projection/norm. The subsequent
 [Euler execution foundation](../../../engineering/phase-2c-anima-euler-research.md)
 verifies weighted native denoising through trained NVIDIA pixels for both signs,
 including plain/weight-one equality and fixed-seed replay at 256×256. Anima
-Generate remains unavailable: editor handoff, frozen queue/Retry/provenance,
-LoRA, other schedulers/options and release qualification still need implementation.
+The subsequent ordinary LoRA, six-method sampling and
+[worker 0.11](../../../engineering/phase-2c-anima-worker-entrypoint-research.md)
+checkpoints connect weighted txt2img/opaque img2img through the actual native
+worker. Public Generate remains unavailable: authoring is covered by the
+checkpoint below, while Main admission, frozen queue/Retry/provenance and release
+qualification remain open.
 
 Reference: [InvokeAI PR #9506](https://github.com/invoke-ai/InvokeAI/pull/9506),
 checked open/unmerged at head
@@ -85,13 +89,18 @@ is `anima-prompt-weighting-v1`; spans are contiguous and coalesced over the
 cleaned text's code points. This is an internal preparation contract, not yet
 a durable job or worker command.
 
-**Mandatory editor handoff before Generate:** the existing shared attention
-helper is Compel-oriented, without a family-specific interpretation. For Anima,
-Increase on `(long hair)` currently yields `(long hair)+`; both compile to
-`1.1`, so the action does not increase attention. Adjusting `(word:2)` produces
-a conflicting suffix and correctly fails compilation. Implement family-aware
-adjustment with existing-group/nested/suffix round-trip tests before exposing
-Anima generation. Supporting saved syntax alone does not qualify this action.
+**Family-aware editor handoff before Generate:** the
+[Anima authoring checkpoint](../../../engineering/phase-2c-anima-authoring-research.md)
+addresses the old Compel-only helper: Increase on `(long hair)` formerly yielded
+`(long hair)+`, leaving the same `1.1` weight, while adjusting `(word:2)` created
+a conflicting suffix. For Anima, actions now change the existing outer operator,
+preserve nested markup, escapes and authored numeric precision, and read the
+current model family for both buttons and keyboard. Implicit groups start at one
+positive level; explicit scalars move by `0.1`. Ambiguous or malformed targets
+stay unchanged with advisory diagnostics. Illustrious/null/unknown retain their
+existing behavior. Authoring tests use actual compilation after real dynamic
+expansion; editing itself does not apply the smaller generation-text limit.
+This handoff does not qualify public generation admission or frozen provenance.
 
 ## Owners and inference path
 

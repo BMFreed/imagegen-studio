@@ -9,6 +9,10 @@ import type {
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
+import {
+  ANIMA_SAMPLING_METHOD_OPTIONS,
+  isAnimaSamplingMethod,
+} from '../../shared/projects/anima-sampling-method.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
 import { progressForJob } from '../../shared/projects/generation-progress.js'
@@ -518,7 +522,7 @@ const illustriousSamplingUnavailable = computed(
 )
 const samplingFamilyNotice = computed(() => {
   if (selectedModel.value?.baseModelFamily === 'anima') {
-    return 'These sampler/scheduler options are for Illustrious. Anima generation is not connected yet.'
+    return 'Anima generation is not available yet.'
   }
   return illustriousSamplingUnavailable.value
     ? 'These sampler/scheduler options require a model verified as Illustrious.'
@@ -544,6 +548,9 @@ const schedulerOptions = computed(() => {
     : options
 })
 const samplingPairDiagnostic = computed(() => {
+  if (selectedModel.value?.baseModelFamily === 'anima') {
+    return null
+  }
   const { sampler, scheduler } = props.generationDraft.sampling
   if (sampler === null && scheduler === null) {
     return null
@@ -553,6 +560,19 @@ const samplingPairDiagnostic = computed(() => {
   }
   return scheduler === null ? 'Choose a scheduler to complete this sampling pair.' : null
 })
+
+function updateAnimaMethod(value: string | null) {
+  if (
+    props.busy ||
+    props.reloadRequired ||
+    selectedModel.value?.baseModelFamily !== 'anima' ||
+    (value !== null && !isAnimaSamplingMethod(value)) ||
+    (props.generationDraft.sampling.animaMethod ?? null) === value
+  ) {
+    return
+  }
+  emit('updateDraft', { kind: 'anima-method', value })
+}
 
 function updateSampler(sampler: string | null) {
   if (props.busy || props.reloadRequired || illustriousSamplingUnavailable.value) {
@@ -1687,7 +1707,23 @@ function applyFitBbox() {
               @remove="emit('removeLora', $event)"
               @validity="lorasValid = $event"
             />
-            <div class="sampling-fields">
+            <NFormItem
+              v-if="selectedModel?.baseModelFamily === 'anima'"
+              label="Sampler"
+              :showFeedback="false"
+            >
+              <NSelect
+                aria-label="Anima method"
+                clearable
+                :disabled="busy || reloadRequired"
+                :options="ANIMA_SAMPLING_METHOD_OPTIONS"
+                placeholder="Choose method"
+                size="small"
+                :value="generationDraft.sampling.animaMethod ?? null"
+                @update:value="updateAnimaMethod"
+              />
+            </NFormItem>
+            <div v-else class="sampling-fields">
               <NFormItem label="Sampler" :showFeedback="false">
                 <NSelect
                   aria-label="Sampler"

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { InfoCircle as InfoIcon } from '@vicons/tabler'
+import {
+  ANIMA_SAMPLING_METHOD_OPTIONS,
+  isAnimaSamplingMethod,
+} from '../../../../../src/shared/projects/anima-sampling-method'
+
+import { InfoCircle as InfoIcon, RotateClockwise } from '@vicons/tabler'
 import { NButton, NCard, NCollapse, NIcon, NInputNumber, NSelect, NText, NTooltip } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import type {
   PresetEditorResources,
@@ -15,6 +20,7 @@ import { mockDanbooruTags } from '../../components/generation/generation.mock'
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
 import GenerationPromptEditor from '../../components/generation/GenerationPromptEditor.vue'
 import GenerationResourceSelect from '../../components/generation/GenerationResourceSelect.vue'
+import IconButton from '../../components/IconButton.vue'
 import PresetPayloadSection from './PresetPayloadSection.vue'
 import { clonePreset, sectionLabels } from './presets.utils'
 
@@ -31,6 +37,18 @@ const props = withDefaults(
 )
 
 const payload = defineModel<PresetPayload>({ required: true })
+// A detached native-only section stays in its editing context when cleared.
+const editingNativeOnlySampling = ref(false)
+watch(payload, () => {
+  editingNativeOnlySampling.value = false
+})
+const nativeSampling = computed(
+  () =>
+    payload.value.model?.baseModelFamily === 'anima' ||
+    (!payload.value.model &&
+      (editingNativeOnlySampling.value || payload.value.sampling?.animaMethod !== undefined)),
+)
+const animaModel = computed(() => payload.value.model?.baseModelFamily === 'anima')
 const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
   default: () => [],
 })
@@ -101,6 +119,19 @@ function updateVae(vaeId: string) {
     payload.value.vae = clonePreset(vae)
   }
 }
+
+function updateAnimaMethod(value: string | null) {
+  if (!nativeSampling.value || (value !== null && !isAnimaSamplingMethod(value))) {
+    return
+  }
+  editingNativeOnlySampling.value = true
+  payload.value.sampling ??= {}
+  if (value === null) {
+    delete payload.value.sampling.animaMethod
+  } else {
+    payload.value.sampling.animaMethod = value
+  }
+}
 </script>
 
 <template>
@@ -136,6 +167,7 @@ function updateVae(vaeId: string) {
           historyMode="local"
           :loras="payload.loras ?? []"
           :minimumLines="3"
+          :modelFamily="payload.model?.baseModelFamily ?? null"
           :modelValue="payload.prompt ?? createGenerationPrompt()"
           polarity="positive"
           @update:modelValue="payload.prompt = $event"
@@ -151,6 +183,7 @@ function updateVae(vaeId: string) {
           historyMode="local"
           :loras="payload.loras ?? []"
           :minimumLines="3"
+          :modelFamily="payload.model?.baseModelFamily ?? null"
           :modelValue="payload.negativePrompt ?? createGenerationPrompt()"
           polarity="negative"
           @update:modelValue="payload.negativePrompt = $event"
@@ -169,8 +202,8 @@ function updateVae(vaeId: string) {
           </label>
           <div class="model-compatibility">
             <NText depth="3">{{ payload.model.baseModel }}</NText>
-            <NText>{{ payload.model.predictionType }}</NText>
-            <NTooltip>
+            <NText v-if="!animaModel">{{ payload.model.predictionType }}</NText>
+            <NTooltip v-if="!animaModel">
               <template v-slot:trigger>
                 <NButton aria-label="About prediction type" circle quaternary size="tiny">
                   <template v-slot:icon><NIcon :component="InfoIcon" /></template>
@@ -212,6 +245,27 @@ function updateVae(vaeId: string) {
               @update:value="payload.size!.height = $event ?? 64"
             />
           </label>
+        </div>
+
+        <div
+          v-else-if="section === 'sampling' && payload.sampling && nativeSampling"
+          class="field-stack"
+        >
+          <label>
+            <NText depth="3">Sampler</NText>
+            <NSelect
+              aria-label="Anima method"
+              clearable
+              :disabled="sectionDisabled(section)"
+              :options="ANIMA_SAMPLING_METHOD_OPTIONS"
+              placeholder="Choose method"
+              :value="payload.sampling.animaMethod ?? null"
+              @update:value="updateAnimaMethod"
+            />
+          </label>
+          <NText v-if="payload.sampling.animaMethod === undefined" depth="3">
+            No Anima method is included. Apply keeps the current method.
+          </NText>
         </div>
 
         <div v-else-if="section === 'sampling' && payload.sampling" class="two-column-fields">
@@ -259,6 +313,38 @@ function updateVae(vaeId: string) {
               @update:value="payload.guidance!.cfgScale = $event ?? 0"
             />
           </label>
+        </div>
+
+        <div
+          v-else-if="animaModel && ['cfgRescale', 'vae', 'vaePrecision'].includes(section)"
+          class="field-stack"
+        >
+          <div class="unsupported-setting-row">
+            <NText>
+              {{
+                section === 'vae'
+                  ? payload.vae?.name
+                  : section === 'vaePrecision'
+                    ? payload.vaePrecision
+                    : payload.cfgRescale
+              }}
+            </NText>
+            <IconButton
+              compact
+              :disabled="sectionDisabled(section)"
+              :icon="RotateClockwise"
+              :label="`Reset unsupported ${sectionLabels[section]}`"
+              @click="delete payload[section]"
+            />
+          </div>
+          <NText depth="3">
+            {{
+              section === 'vae'
+                ? 'Anima uses its pinned companion VAE.'
+                : `${sectionLabels[section]} is not supported by Anima.`
+            }}
+            The saved value is preserved until Reset.
+          </NText>
         </div>
 
         <NInputNumber
@@ -346,6 +432,13 @@ function updateVae(vaeId: string) {
 
 .field-stack {
   gap: 12px;
+}
+
+.unsupported-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .two-column-fields {

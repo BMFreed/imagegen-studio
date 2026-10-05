@@ -236,6 +236,17 @@ the independent 32-job policy; `maxPrompts=100` is a prefix setting, not admissi
 for 100 jobs. Editing the draft never changes frozen jobs or accepted provenance.
 See [production preview evidence](../engineering/phase-2b-dynamic-preview-research.md).
 
+### Generation draft Anima sampling
+
+The authored v1 `generationDraft.sampling` accepts optional finite
+`animaMethod`: `euler`, `heun`, `dpmpp_2m`, `dpmpp_2m_sde`, `er_sde` or `lcm`.
+Absence means unset; loading legacy documents does not create Euler. The clear
+command deletes the member. Family switching retains both this choice and the
+inactive Illustrious sampler/scheduler pair. Ordinary Undo/shadow/explicit
+Save/reopen own the edit. This additive draft field does not expand frozen
+accepted Raster configuration, queue payloads or worker admission. See the
+[authoring checkpoint](../engineering/phase-2c-anima-authoring-research.md).
+
 ### Generation provenance
 
 Generation provenance — immutable metadata of an accepted Raster Layer or Smart Patch variant: recorded settings, resources, non-regional source context and runtime parameters associated with that persistent result. It is not a complete reconstruction recipe when Regional Guidance was used.
@@ -854,6 +865,12 @@ interface PresetApplicationDraft {
 - Section inclusion is represented by field presence. An absent field or group is not part of the preset and must not be applied. A second `includedSections` list is not stored, because it would duplicate the payload structure and could drift from it.
 - Temporary preset consumers may use an ephemeral `selectedSections` mask inside an in-memory application draft. Apply uses it to choose fields copied into the current project; New Project uses the same shape for the detached initialization payload. The mask is never serialized into `payload_json` or another preset column.
 - `sampling`, `guidance`, `size` и `seed` остаются отдельными смысловыми секциями, как в общем `PresetPayloadEditor`; storage не сворачивает их обратно в generic `params`.
+- Prototype sampling supports optional named `sampler`, `scheduler` and
+  `animaMethod` members. A native-only Anima section does not invent an SD pair.
+  Apply copies supplied members only; an omitted member leaves the destination
+  unchanged. Explicit declared model-family metadata chooses the controls;
+  display labels are not a compatibility API. This is mock authoring, not
+  implemented production preset storage.
 - `cfgRescale` and `vaePrecision` are independent typed optional payload fields
   and `PresetSectionKey` values; they are not a generic `advanced` section.
   Absence means Apply leaves the current Project value unchanged. Future

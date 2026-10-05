@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { ArrowsShuffle, ListCheck, Wand, X } from '@vicons/tabler'
+import {
+  ANIMA_SAMPLING_METHOD_OPTIONS,
+  isAnimaSamplingMethod,
+} from '../../../../../src/shared/projects/anima-sampling-method'
+
+import { ArrowsShuffle, ListCheck, RotateClockwise, Wand, X } from '@vicons/tabler'
 import {
   NAlert,
   NBadge,
@@ -25,6 +30,7 @@ import {
 } from '../../components/generation/generation-prompt.utils'
 import GenerationLoraStack from '../../components/generation/GenerationLoraStack.vue'
 import GenerationResourceSelect from '../../components/generation/GenerationResourceSelect.vue'
+import IconButton from '../../components/IconButton.vue'
 import { presetEditorResources } from '../presets/presets.mock'
 import DynamicPromptsModal from './DynamicPromptsModal.vue'
 import { commitProjectMutation } from './project-history'
@@ -56,6 +62,7 @@ const target = computed(() => {
   return entity && 'kind' in entity && entity.kind === 'smart-patch' ? entity : undefined
 })
 const payload = computed(() => activeDraft.value.payload)
+const animaModel = computed(() => payload.value.model?.baseModelFamily === 'anima')
 const seedPolicy = computed(() => payload.value.seed?.policy ?? 'random')
 const displayedSeed = computed(() =>
   seedPolicy.value === 'reuse'
@@ -144,6 +151,23 @@ function updateModel(id: string) {
   if (model) {
     updatePayload('Change model', (draft) => (draft.payload.model = structuredClone(model)))
   }
+}
+function updateAnimaMethod(value: string | null) {
+  if (
+    payload.value.model?.baseModelFamily !== 'anima' ||
+    (value !== null && !isAnimaSamplingMethod(value)) ||
+    (payload.value.sampling?.animaMethod ?? null) === value
+  ) {
+    return
+  }
+  updatePayload('Change Anima method', (draft) => {
+    draft.payload.sampling ??= {}
+    if (value === null) {
+      delete draft.payload.sampling.animaMethod
+    } else {
+      draft.payload.sampling.animaMethod = value
+    }
+  })
 }
 function updateLoras(value: GenerationLora[]) {
   updatePayload('Edit LoRAs', (draft) => {
@@ -284,7 +308,7 @@ function normalizeCount(value: number | null) {
             :value="payload.model?.id"
             @update:value="updateModel"
           />
-          <NText depth="3">
+          <NText v-if="payload.model?.baseModelFamily !== 'anima'" depth="3">
             {{ payload.model?.predictionType ?? 'Prediction type unavailable' }}
           </NText>
         </section>
@@ -325,7 +349,19 @@ function normalizeCount(value: number | null) {
             Choose an installed model before generating.
           </NAlert>
           <div class="field-stack">
-            <div class="two-fields">
+            <label v-if="payload.model?.baseModelFamily === 'anima'">
+              Sampler
+              <NSelect
+                aria-label="Anima method"
+                clearable
+                :options="ANIMA_SAMPLING_METHOD_OPTIONS"
+                placeholder="Choose method"
+                size="small"
+                :value="payload.sampling?.animaMethod ?? null"
+                @update:value="updateAnimaMethod"
+              />
+            </label>
+            <div v-else class="two-fields">
               <label>
                 Sampler
                 <NSelect
@@ -468,51 +504,108 @@ function normalizeCount(value: number | null) {
             <details>
               <summary>Advanced Options</summary>
               <div class="field-stack advanced">
-                <label>
-                  VAE
-                  <NSelect
-                    aria-label="VAE"
-                    :options="vaeOptions"
-                    size="small"
-                    :value="payload.vae?.id"
-                    @update:value="
-                      updatePayload('Change VAE', (draft) => {
-                        draft.payload.vae = presetEditorResources.vaes.find((v) => v.id === $event)
-                      })
-                    "
-                  />
-                </label>
-                <label>
-                  VAE precision
-                  <NSelect
-                    aria-label="VAE precision"
-                    :options="['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))"
-                    size="small"
-                    :value="payload.vaePrecision ?? 'Auto'"
-                    @update:value="
-                      updatePayload('Change VAE precision', (draft) => {
-                        draft.payload.vaePrecision = $event
-                      })
-                    "
-                  />
-                </label>
-                <label>
-                  CFG Rescale
-                  <NInputNumber
-                    aria-label="CFG Rescale"
-                    :max="0.99"
-                    :min="0"
-                    :precision="2"
-                    size="small"
-                    :step="0.05"
-                    :value="payload.cfgRescale ?? 0"
-                    @update:value="
-                      updatePayload('Change CFG Rescale', (draft) => {
-                        draft.payload.cfgRescale = $event ?? 0
-                      })
-                    "
-                  />
-                </label>
+                <div class="advanced-field">
+                  <div class="advanced-control-row">
+                    <label>
+                      VAE
+                      <NSelect
+                        aria-label="VAE"
+                        :disabled="animaModel"
+                        :options="vaeOptions"
+                        size="small"
+                        :value="payload.vae?.id"
+                        @update:value="
+                          updatePayload('Change VAE', (draft) => {
+                            draft.payload.vae = presetEditorResources.vaes.find(
+                              (v) => v.id === $event,
+                            )
+                          })
+                        "
+                      />
+                    </label>
+                    <IconButton
+                      v-if="animaModel && payload.vae !== undefined"
+                      compact
+                      :icon="RotateClockwise"
+                      label="Reset unsupported VAE"
+                      @click="
+                        updatePayload('Reset unsupported VAE', (draft) => delete draft.payload.vae)
+                      "
+                    />
+                  </div>
+                  <NText v-if="animaModel" depth="3">Anima uses its pinned companion VAE.</NText>
+                </div>
+                <div class="advanced-field">
+                  <div class="advanced-control-row">
+                    <label>
+                      VAE precision
+                      <NSelect
+                        aria-label="VAE precision"
+                        :disabled="animaModel"
+                        :options="
+                          ['Auto', 'FP16', 'FP32'].map((value) => ({ label: value, value }))
+                        "
+                        size="small"
+                        :value="payload.vaePrecision ?? (animaModel ? null : 'Auto')"
+                        @update:value="
+                          updatePayload('Change VAE precision', (draft) => {
+                            draft.payload.vaePrecision = $event
+                          })
+                        "
+                      />
+                    </label>
+                    <IconButton
+                      v-if="animaModel && payload.vaePrecision !== undefined"
+                      compact
+                      :icon="RotateClockwise"
+                      label="Reset unsupported VAE Precision"
+                      @click="
+                        updatePayload(
+                          'Reset unsupported VAE precision',
+                          (draft) => delete draft.payload.vaePrecision,
+                        )
+                      "
+                    />
+                  </div>
+                  <NText v-if="animaModel" depth="3">
+                    Manual VAE precision is not supported by Anima.
+                  </NText>
+                </div>
+                <div class="advanced-field">
+                  <div class="advanced-control-row">
+                    <label>
+                      CFG Rescale
+                      <NInputNumber
+                        aria-label="CFG Rescale"
+                        :disabled="animaModel"
+                        :max="0.99"
+                        :min="0"
+                        :precision="2"
+                        size="small"
+                        :step="0.05"
+                        :value="payload.cfgRescale ?? (animaModel ? null : 0)"
+                        @update:value="
+                          updatePayload('Change CFG Rescale', (draft) => {
+                            draft.payload.cfgRescale = $event ?? 0
+                          })
+                        "
+                      />
+                    </label>
+                    <IconButton
+                      v-if="animaModel && payload.cfgRescale !== undefined"
+                      compact
+                      :icon="RotateClockwise"
+                      label="Reset unsupported CFG Rescale"
+                      @click="
+                        updatePayload(
+                          'Reset unsupported CFG Rescale',
+                          (draft) => delete draft.payload.cfgRescale,
+                        )
+                      "
+                    />
+                  </div>
+                  <NText v-if="animaModel" depth="3">CFG Rescale is not supported by Anima.</NText>
+                </div>
               </div>
             </details>
           </div>
@@ -610,6 +703,20 @@ function normalizeCount(value: number | null) {
 }
 .advanced {
   margin-top: 6px;
+}
+.advanced-field {
+  display: grid;
+  gap: 3px;
+}
+.advanced-control-row {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  min-width: 0;
+}
+.advanced-control-row > label {
+  flex: 1;
+  min-width: 0;
 }
 summary {
   cursor: pointer;

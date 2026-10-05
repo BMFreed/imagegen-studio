@@ -197,6 +197,17 @@ export class ProjectDraftSync {
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {
+  if (change.kind === 'anima-method') {
+    if (draft.sampling.animaMethod === (change.value ?? undefined)) {
+      return false
+    }
+    if (change.value === null) {
+      delete draft.sampling.animaMethod
+    } else {
+      draft.sampling.animaMethod = change.value
+    }
+    return true
+  }
   if (change.kind === 'vae-precision') {
     if (draft.vaePrecision === (change.value ?? undefined)) {
       return false

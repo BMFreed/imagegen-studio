@@ -55,6 +55,181 @@ import {
 } from './test-fixtures/accepted-provenance.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
+test('native draft choices and clear cross Main history, real shadow recovery and explicit package Save', async () => {
+  await withService(async ({ dataRoot, modelService, repository, service, shadow }) => {
+    const created = await service.create({
+      height: 512,
+      title: 'Anima authored methods',
+      width: 512,
+    })
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const original = await readFile(savedPath)
+    assert.equal(Object.hasOwn(created.generationDraft.sampling, 'animaMethod'), false)
+    const baseline = structuredClone(created.generationDraft)
+    const model = {
+      baseModelFamily: 'illustrious' as const,
+      civitaiFileId: null,
+      civitaiModelId: null,
+      civitaiVersionId: null,
+      displayName: 'Saved authoring fixture',
+      fileSha256: 'a'.repeat(64),
+      kind: 'checkpoint' as const,
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+      predictionType: 'epsilon' as const,
+      versionName: 'Exact authoring snapshot',
+    }
+    await service.setGenerationModel(created.id, model)
+    const nativeModel = {
+      ...model,
+      baseModelFamily: 'anima' as const,
+      fileSha256: 'b'.repeat(64),
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+      predictionType: null,
+    }
+    await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-pair',
+      sampler: 'Euler a',
+      scheduler: 'Normal',
+    })
+    for (const value of ['euler', 'heun', 'dpmpp_2m', 'dpmpp_2m_sde', 'er_sde', 'lcm'] as const) {
+      const selected = await service.updateGenerationDraft(created.id, {
+        kind: 'anima-method',
+        value,
+      })
+      assert.equal(selected.generationDraft.sampling.animaMethod, value)
+      assert.equal(selected.generationDraft.sampling.sampler, 'Euler a')
+      assert.equal(selected.generationDraft.sampling.scheduler, 'Normal')
+      assert.deepEqual(selected.generationDraft.seed, baseline.seed)
+      assert.deepEqual(selected.generationDraft.positivePrompt, baseline.positivePrompt)
+      assert.deepEqual(
+        await service.updateGenerationDraft(created.id, { kind: 'anima-method', value }),
+        selected,
+      )
+    }
+    const cleared = await service.updateGenerationDraft(created.id, {
+      kind: 'anima-method',
+      value: null,
+    })
+    assert.equal(Object.hasOwn(cleared.generationDraft.sampling, 'animaMethod'), false)
+    assert.equal((await service.undo(created.id)).generationDraft.sampling.animaMethod, 'lcm')
+    assert.equal(
+      Object.hasOwn((await service.redo(created.id)).generationDraft.sampling, 'animaMethod'),
+      false,
+    )
+    const selected = await service.updateGenerationDraft(created.id, {
+      kind: 'anima-method',
+      value: 'er_sde',
+    })
+    for (const next of [nativeModel, null, model]) {
+      const switched = await service.setGenerationModel(created.id, next)
+      assert.deepEqual(switched.generationDraft.sampling, selected.generationDraft.sampling)
+    }
+    const authoredAnima = await service.setGenerationModel(created.id, nativeModel)
+    let targetCalls = 0
+    await assert.rejects(
+      service.prepareNormalGenerationContext(
+        created.id,
+        {
+          composeTarget: async () => {
+            targetCalls += 1
+            throw new Error('Anima must refuse before composition')
+          },
+        },
+        modelService,
+      ),
+      { code: 'GENERATION_MODEL_UNSUPPORTED' },
+    )
+    assert.equal(targetCalls, 0)
+    for (const value of ['Euler', 'euler_a', 'turbo', 1, undefined]) {
+      await assert.rejects(
+        service.updateGenerationDraft(created.id, {
+          kind: 'anima-method',
+          value,
+        } as unknown as ProjectGenerationDraftChange),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      assert.deepEqual(service.getOpenTabs()[0].generationDraft, authoredAnima.generationDraft)
+    }
+    await service.flushAutosave(created.id)
+    assert.deepEqual(await readFile(savedPath), original, 'shadow cannot rewrite the saved .igs')
+    const restarted = new ProjectService({
+      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+      shadow,
+    })
+    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+    const recovered = await restarted.resolveRecovery(created.id, 'recover')
+    assert.deepEqual(recovered.generationDraft, authoredAnima.generationDraft)
+    assert.deepEqual(await readFile(savedPath), original)
+    assert.equal((await restarted.save(created.id)).tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(savedPath)).project.generationDraft,
+      authoredAnima.generationDraft,
+    )
+    await restarted.close(created.id)
+    const reopened = await restarted.open(created.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Expected explicit Save reopen')
+    }
+    assert.deepEqual(reopened.tab.generationDraft, authoredAnima.generationDraft)
+    const noOp = await restarted.updateGenerationDraft(created.id, {
+      kind: 'anima-method',
+      value: 'er_sde',
+    })
+    assert.equal(noOp.dirty, false)
+    assert.equal(noOp.canUndo, false)
+    const promptGroup = randomUUID()
+    await restarted.updateGenerationDraft(
+      created.id,
+      { kind: 'positive-prompt', text: 'first grouped edit' },
+      promptGroup,
+    )
+    await restarted.updateGenerationDraft(created.id, { kind: 'anima-method', value: 'er_sde' })
+    await restarted.updateGenerationDraft(
+      created.id,
+      { kind: 'positive-prompt', text: 'second grouped edit' },
+      promptGroup,
+    )
+    const undonePrompt = await restarted.undo(created.id)
+    assert.equal(undonePrompt.generationDraft.positivePrompt.text, '')
+    assert.equal(undonePrompt.canUndo, false, 'a native no-op must not seal a grouped prompt edit')
+    assert.equal(undonePrompt.dirty, false)
+    const clearedSaved = await restarted.updateGenerationDraft(created.id, {
+      kind: 'anima-method',
+      value: null,
+    })
+    assert.equal(Object.hasOwn(clearedSaved.generationDraft.sampling, 'animaMethod'), false)
+    assert.equal(
+      Object.hasOwn(
+        (await restarted.updateGenerationDraft(created.id, { kind: 'anima-method', value: null }))
+          .generationDraft.sampling,
+        'animaMethod',
+      ),
+      false,
+    )
+    assert.equal(
+      (await restarted.undo(created.id)).generationDraft.sampling.animaMethod,
+      'er_sde',
+      'clear no-op must not insert a history step',
+    )
+    await restarted.redo(created.id)
+    await restarted.save(created.id)
+    await restarted.close(created.id)
+    const absent = await restarted.open(created.id)
+    assert.equal(absent.kind, 'opened')
+    if (absent.kind !== 'opened') {
+      throw new Error('Expected cleared saved Project')
+    }
+    assert.equal(Object.hasOwn(absent.tab.generationDraft.sampling, 'animaMethod'), false)
+    await restarted.close(created.id)
+  })
+})
+
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 

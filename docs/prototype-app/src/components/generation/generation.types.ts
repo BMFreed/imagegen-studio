@@ -1,3 +1,5 @@
+import type { AnimaSamplingMethod } from '../../../../../src/shared/projects/anima-sampling-method'
+
 export type SeedPolicy = 'fixed' | 'random' | 'reuse'
 export type GenerationVaePrecision = 'Auto' | 'FP16' | 'FP32'
 
@@ -40,7 +42,8 @@ export interface GenerationPromptSelection {
 
 export interface GenerationModelRef extends GenerationResourceRef {
   baseModel: string
-  predictionType: 'epsilon' | 'v-pred'
+  baseModelFamily?: 'anima' | 'illustrious' | null
+  predictionType?: 'epsilon' | 'v-pred'
 }
 
 export interface GenerationLora {
@@ -61,8 +64,9 @@ export interface GenerationPayload {
   negativePrompt?: GenerationPrompt
   prompt?: GenerationPrompt
   sampling?: {
-    sampler: string
-    scheduler: string
+    animaMethod?: AnimaSamplingMethod
+    sampler?: string
+    scheduler?: string
   }
   seed?: {
     policy: SeedPolicy

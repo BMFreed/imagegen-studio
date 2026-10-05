@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inspectPromptSyntax } from '../../../../../src/shared/projects/prompt-diagnostics'
+import type { PromptSyntaxReport } from '../../../../../src/shared/projects/prompt-diagnostics'
 
 import { autocompletion, completionKeymap, startCompletion } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
@@ -16,10 +17,14 @@ import type {
   GenerationPromptSelection,
 } from './generation.types'
 
-import { promptSyntaxExtensions } from '../../../../../src/renderer/components/prompt-diagnostics-codemirror'
+import {
+  promptModelFamily,
+  promptSyntaxExtensions,
+  promptSyntaxField,
+} from '../../../../../src/renderer/components/prompt-diagnostics-codemirror'
 import {
   applyPromptAttention,
-  promptAttentionKeymap,
+  createPromptAttentionKeymap,
 } from '../../../../../src/renderer/components/prompt-editing-codemirror'
 import PromptDiagnosticsIndicator from '../../../../../src/renderer/components/PromptDiagnosticsIndicator.vue'
 import {
@@ -51,12 +56,13 @@ const props = withDefaults(
     historyMode: PromptEditorHistoryMode
     loras: GenerationLora[]
     minimumLines?: number
+    modelFamily?: string | null
     polarity: GenerationPromptPolarity
     showSyntaxStatus?: boolean
   }>(),
-  { minimumLines: 4, showSyntaxStatus: true },
+  { minimumLines: 4, modelFamily: null, showSyntaxStatus: true },
 )
-const emit = defineEmits<{ blur: []; focus: [] }>()
+const emit = defineEmits<{ blur: []; focus: []; syntaxReport: [report: PromptSyntaxReport] }>()
 const prompt = defineModel<GenerationPrompt>({ required: true })
 const selection = defineModel<GenerationPromptSelection>('selection', {
   default: () => ({ anchor: 0, head: 0 }),
@@ -65,13 +71,14 @@ const host = ref<HTMLElement>()
 const readOnlyCompartment = new Compartment()
 const resourcesCompartment = new Compartment()
 const autocompleteCompartment = new Compartment()
+const familyCompartment = new Compartment()
 let view: EditorView | undefined
 let syncingExternal = false
 
 const matches = computed(() => getPromptEmbeddingMatches(prompt.value, props.embeddings))
 const missingMatches = computed(() => matches.value.filter((match) => match.ref?.resource.missing))
 const ambiguousMatches = computed(() => matches.value.filter((match) => match.ambiguous))
-const syntaxReport = computed(() => inspectPromptSyntax(prompt.value.text))
+const syntaxReport = ref(inspectPromptSyntax(prompt.value.text, props.modelFamily))
 
 const completionSource = createPromptCompletionSource({
   danbooruTags: () => props.danbooruTags,
@@ -126,6 +133,7 @@ function createView() {
         ),
         tripleClickPhraseSelection(),
         promptSyntaxExtensions,
+        familyCompartment.of(promptModelFamily.of(props.modelFamily)),
         promptTooltipParent(),
         readOnlyCompartment.of([
           EditorState.readOnly.of(Boolean(props.disabled)),
@@ -136,7 +144,7 @@ function createView() {
           autocompletion({ activateOnTyping: true, override: [completionSource] }),
         ),
         keymap.of([
-          ...promptAttentionKeymap,
+          ...createPromptAttentionKeymap(() => props.modelFamily),
           ...completionKeymap,
           ...(props.historyMode === 'local' ? historyKeymap : []),
           ...defaultKeymap,
@@ -151,6 +159,8 @@ function createView() {
           },
         }),
         EditorView.updateListener.of((update) => {
+          syntaxReport.value = update.state.field(promptSyntaxField)
+          emit('syntaxReport', syntaxReport.value)
           if (update.docChanged && !syncingExternal) {
             prompt.value = reconcileUpdate(
               update.state.doc.toString(),
@@ -177,7 +187,7 @@ function reconfigureResources() {
 }
 
 function applyAttention(direction: -1 | 1) {
-  return view ? applyPromptAttention(view, direction) : false
+  return view ? applyPromptAttention(view, direction, props.modelFamily) : false
 }
 
 function focus() {
@@ -192,6 +202,14 @@ function openAutocomplete() {
 }
 
 defineExpose<GenerationPromptEditorHandle>({ applyAttention, focus, openAutocomplete })
+
+watch(
+  () => props.modelFamily,
+  () =>
+    view?.dispatch({
+      effects: familyCompartment.reconfigure(promptModelFamily.of(props.modelFamily)),
+    }),
+)
 
 watch(
   () => prompt.value,

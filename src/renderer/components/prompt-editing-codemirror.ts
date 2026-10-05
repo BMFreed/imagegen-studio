@@ -12,13 +12,27 @@ import {
 } from '@codemirror/state'
 import { EditorView, type KeyBinding } from '@codemirror/view'
 
-export function attentionTransaction(state: EditorState, direction: -1 | 1): Transaction | null {
+import { promptAttentionAdvisory } from './prompt-diagnostics-codemirror.js'
+
+export function attentionTransaction(
+  state: EditorState,
+  direction: -1 | 1,
+  modelFamily: string | null = null,
+): Transaction | null {
   if (state.readOnly) {
     return null
   }
   const before = state.doc.toString()
   const main = state.selection.main
-  const result = adjustPromptAttention(before, { anchor: main.anchor, head: main.head }, direction)
+  const result = adjustPromptAttention(
+    before,
+    { anchor: main.anchor, head: main.head },
+    direction,
+    modelFamily,
+  )
+  if (result.advisory) {
+    return state.update({ effects: promptAttentionAdvisory.of(result.advisory) })
+  }
   if (result.text === before) {
     return null
   }
@@ -42,8 +56,12 @@ export function attentionTransaction(state: EditorState, direction: -1 | 1): Tra
   })
 }
 
-export function applyPromptAttention(view: EditorView, direction: -1 | 1): boolean {
-  const transaction = attentionTransaction(view.state, direction)
+export function applyPromptAttention(
+  view: EditorView,
+  direction: -1 | 1,
+  modelFamily: string | null = null,
+): boolean {
+  const transaction = attentionTransaction(view.state, direction, modelFamily)
   if (!transaction) {
     return false
   }
@@ -51,10 +69,16 @@ export function applyPromptAttention(view: EditorView, direction: -1 | 1): boole
   return true
 }
 
-export const promptAttentionKeymap: readonly KeyBinding[] = [
-  { key: 'Mod-ArrowUp', run: (view) => applyPromptAttention(view, 1) },
-  { key: 'Mod-ArrowDown', run: (view) => applyPromptAttention(view, -1) },
-]
+export function createPromptAttentionKeymap(
+  modelFamily: () => string | null,
+): readonly KeyBinding[] {
+  return [
+    { key: 'Mod-ArrowUp', run: (view) => applyPromptAttention(view, 1, modelFamily()) },
+    { key: 'Mod-ArrowDown', run: (view) => applyPromptAttention(view, -1, modelFamily()) },
+  ]
+}
+
+export const promptAttentionKeymap: readonly KeyBinding[] = createPromptAttentionKeymap(() => null)
 
 export function clearPromptTransaction(state: EditorState): Transaction | null {
   return state.readOnly || !state.doc.length

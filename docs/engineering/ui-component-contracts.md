@@ -244,6 +244,16 @@ focus-сессию общему [Project Undo/Redo](../features/project/undo-red
 [Проверки](./project-prompt-actions-research.md): реальные EditorState/history,
 Electron pointer/keyboard, clipboard, сохранённый `.igs`, prototype consumers.
 
+Both production and prototype editors accept the current declared `modelFamily`.
+Attention buttons and keyboard read it when invoked. Exact `anima` uses the
+shared family-aware authoring analyser; other families retain existing behavior.
+Do not infer family from displayed model names or cache the first mounted family.
+The analyser preserves inner markup/literals and can refuse an ambiguous target
+with an advisory. It does not own embedding refs or compile generation jobs.
+Native sampling likewise uses a finite optional draft member and one Anima
+selector, without defaulting an unset value or exposing an SD scheduler.
+See [authoring research](./phase-2c-anima-authoring-research.md).
+
 ## Диагностика синтаксиса prompt
 
 [`PromptDiagnosticsIndicator`](../../src/renderer/components/PromptDiagnosticsIndicator.vue)

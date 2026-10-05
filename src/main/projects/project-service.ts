@@ -1482,6 +1482,18 @@ export class ProjectService {
     const draft = document.generationDraft
     let nextDraft = draft
     switch (change.kind) {
+      case 'anima-method': {
+        if (draft.sampling.animaMethod === (change.value ?? undefined)) {
+          return toTab(tabId, coordinator)
+        }
+        nextDraft = { ...draft, sampling: { ...draft.sampling } }
+        if (change.value === null) {
+          delete nextDraft.sampling.animaMethod
+        } else {
+          nextDraft.sampling.animaMethod = change.value
+        }
+        break
+      }
       case 'cfg-rescale': {
         if (draft.cfgRescale === (change.value ?? undefined)) {
           return toTab(tabId, coordinator)

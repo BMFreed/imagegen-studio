@@ -320,6 +320,19 @@ advanced parameters (for example clip skip, tiling, refiner or noise multiplier)
 must likewise get named fields and sections when supported, not an
 `engineSpecific` bag.
 
+Sampling is family-aware. Illustrious edits its sampler/scheduler pair; Anima
+edits one optional native `animaMethod` from the six implemented flow methods.
+An absent native choice is not replaced by Euler. A sampling section can contain
+only the native member, and Apply copies only members present in that section:
+an older pair-only preset leaves the current native choice unchanged. Switching
+families retains inactive values. UI consumers use explicit declared family
+metadata, never display-name inference. Unsupported Anima VAE/precision/CFG
+rescale settings are explained and retained for deliberate Reset; they do not
+acquire inference support from the editor. CLIP Skip is not added by this slice.
+The [authoring checkpoint](../engineering/phase-2c-anima-authoring-research.md)
+verifies these prototype flows. They remain in-memory mocks and do not establish
+production preset storage, application or accepted-result mapping.
+
 ## Surface Ownership
 
 Preset surfaces split by ownership so the user always has the right context for the action:

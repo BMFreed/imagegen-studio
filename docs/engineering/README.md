@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Anima Project authoring](./phase-2c-anima-authoring-research.md) — optional native six-method draft choice and current-family prompt attention, ordinary history/shadow/explicit Save, and synchronized in-memory preset authoring. Public Main admission/queue/Retry/provenance and release remain open.
 - [Model install staging publication](./model-install-staging-publication-research.md) — owned staging hardlinks and directory sync finish before normal/repair SQLite publication; strict verification, cancellation and rollback remain enforced. Actual installer/SQLite controls and five semantic mutations verify the fix.
 - [Anima qualified worker entrypoint](./phase-2c-anima-worker-entrypoint-research.md) — exact TS compiled commands reach original native txt2img/opaque img2img through worker 0.11.0, with hardware-qualified capabilities and shared provisional PNG validation/publication. Project editor/admission/queue/Retry/provenance and release remain open.
 - [Anima stochastic and FlowMatch LCM sampling](./phase-2c-anima-flow-sampling-research.md) — complete internal six-method registry, request-owned step RNG, pinned ER-SDE source and explicit shift-3 LCM clipping correction. Family-aware editor/admission/queue/provenance, quality and release qualification remain open.

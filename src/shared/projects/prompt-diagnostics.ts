@@ -1,5 +1,13 @@
+import { inspectAnimaAttentionSyntax } from './anima-prompt-attention.js'
+
 export interface PromptSyntaxDiagnostic {
-  code: 'invalid-weight' | 'mismatched-close' | 'unclosed-bracket' | 'unexpected-close'
+  code:
+    | 'anima-attention'
+    | 'anima-selection'
+    | 'invalid-weight'
+    | 'mismatched-close'
+    | 'unclosed-bracket'
+    | 'unexpected-close'
   from: number
   message: string
   severity: 'error' | 'warning'
@@ -23,7 +31,10 @@ interface OpenGroup {
 }
 
 /** Conservative authoring hints, not a pipeline parser or a generation gate. */
-export function inspectPromptSyntax(text: string): PromptSyntaxReport {
+export function inspectPromptSyntax(
+  text: string,
+  modelFamily: string | null = null,
+): PromptSyntaxReport {
   const report: PromptSyntaxReport = { items: [], truncated: false }
   const stack: OpenGroup[] = []
   const add = (item: PromptSyntaxDiagnostic) => {
@@ -108,6 +119,13 @@ export function inspectPromptSyntax(text: string): PromptSyntaxReport {
       severity: 'error',
       to: group.from + 1,
     })
+  }
+  if (modelFamily === 'anima') {
+    for (const advisory of inspectAnimaAttentionSyntax(text, MAX_PROMPT_DIAGNOSTICS)) {
+      if (!report.items.some((item) => item.from === advisory.from && item.to === advisory.to)) {
+        add({ ...advisory, code: 'anima-attention', severity: 'warning' })
+      }
+    }
   }
   report.items.sort((a, b) => a.from - b.from || a.to - b.to)
   return report

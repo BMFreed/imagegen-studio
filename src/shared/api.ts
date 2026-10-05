@@ -3,6 +3,7 @@ import type {
   AcceptedResultHistoryPage,
   AcceptedResultHistoryReference,
 } from './projects/accepted-result-history.js'
+import type { AnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import type { GenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import type { GenerationProgressSnapshot } from './projects/generation-progress.js'
 import type {
@@ -21,6 +22,7 @@ import type { ProjectGenerationTargetState } from './projects/project-generation
 import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 
+import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
@@ -210,6 +212,7 @@ export type ProjectGenerationDraftChange =
       kind: 'negative-prompt' | 'positive-prompt'
       text: string
     }
+  | { kind: 'anima-method'; value: AnimaSamplingMethod | null }
   | { kind: 'cfg-rescale'; value: number | null }
   | { kind: 'denoising-strength'; value: number | null }
   | { kind: 'dynamic-prompt'; value: GenerationDynamicPromptSettings }
@@ -556,6 +559,14 @@ export function isProjectGenerationDraftChange(
   }
   const value = input as Record<string, unknown>
   const keys = Object.keys(value)
+  if (value['kind'] === 'anima-method') {
+    return (
+      keys.length === 2 &&
+      keys.includes('kind') &&
+      keys.includes('value') &&
+      (value['value'] === null || isAnimaSamplingMethod(value['value']))
+    )
+  }
   if (value['kind'] === 'vae-precision') {
     return (
       keys.length === 2 &&

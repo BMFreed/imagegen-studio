@@ -1,3 +1,9 @@
+import {
+  adjustAnimaAttentionFragment,
+  type AnimaAttentionAdvisory,
+  inspectAnimaAttentionSelection,
+} from './anima-prompt-attention.js'
+
 export interface PromptPhraseRange {
   from: number
   to: number
@@ -9,6 +15,7 @@ export interface PromptSelection {
 }
 
 export interface PromptAttentionResult {
+  advisory?: AnimaAttentionAdvisory
   selection: PromptSelection
   text: string
 }
@@ -37,6 +44,7 @@ export function adjustPromptAttention(
   text: string,
   selection: PromptSelection,
   direction: -1 | 1,
+  modelFamily: string | null = null,
 ): PromptAttentionResult {
   const selectionFrom = Math.min(selection.anchor, selection.head)
   const selectionTo = Math.max(selection.anchor, selection.head)
@@ -49,7 +57,42 @@ export function adjustPromptAttention(
   }
 
   const source = text.slice(target.from, target.to)
-  const replacement = adjustAttentionFragment(source, direction)
+  let replacement: string
+  if (modelFamily === 'anima') {
+    const cut = inspectAnimaAttentionSelection(text, target.from, target.to)
+    if (cut) {
+      return { advisory: cut, selection, text }
+    }
+    const after = text.charAt(target.to)
+    if (after === '+' || after === '-') {
+      return {
+        advisory: {
+          from: target.from,
+          message:
+            'Cannot adjust Anima attention: the selection cuts an attention operator or escape.',
+          to: target.to,
+        },
+        selection,
+        text,
+      }
+    }
+    const adjacentLiteral = Boolean(after && !/[\s,():[\]{}<>\\]/.test(after))
+    const result = adjustAnimaAttentionFragment(source, direction, adjacentLiteral)
+    if (result.advisory) {
+      return {
+        advisory: {
+          ...result.advisory,
+          from: target.from + result.advisory.from,
+          to: target.from + result.advisory.to,
+        },
+        selection,
+        text,
+      }
+    }
+    replacement = result.text
+  } else {
+    replacement = adjustAttentionFragment(source, direction)
+  }
   const nextText = text.slice(0, target.from) + replacement + text.slice(target.to)
   const forward = selection.anchor <= selection.head
   const nextSelection = forward

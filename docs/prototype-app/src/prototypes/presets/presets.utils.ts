@@ -1,3 +1,5 @@
+import { ANIMA_SAMPLING_METHOD_LABELS } from '../../../../../src/shared/projects/anima-sampling-method'
+
 import type {
   PresetApplicationDraft,
   PresetCreateIntent,
@@ -98,6 +100,7 @@ export function createPresetRecord(definition: PresetDefinition): PresetRecord {
 export function createDefaultSectionValue(
   section: PresetSectionKey,
   workflow: PresetWorkflow,
+  modelFamily: 'anima' | 'illustrious' | null = null,
 ): PresetPayload[PresetSectionKey] {
   switch (section) {
     case 'cfgRescale': {
@@ -115,6 +118,7 @@ export function createDefaultSectionValue(
     case 'model': {
       return {
         baseModel: 'Illustrious',
+        baseModelFamily: 'illustrious',
         id: 'illustrious-xl-v1-1',
         name: 'Illustrious XL',
         predictionType: 'v-pred',
@@ -126,7 +130,7 @@ export function createDefaultSectionValue(
       return createGenerationPrompt()
     }
     case 'sampling': {
-      return { sampler: 'DPM++ 2M', scheduler: 'Karras' }
+      return modelFamily === 'anima' ? {} : { sampler: 'DPM++ 2M', scheduler: 'Karras' }
     }
     case 'seed': {
       return { policy: 'random' }
@@ -154,7 +158,7 @@ export function setPresetSectionIncluded(
     return
   }
 
-  const value = createDefaultSectionValue(section, workflow)
+  const value = createDefaultSectionValue(section, workflow, payload.model?.baseModelFamily ?? null)
 
   if (value === undefined) {
     return
@@ -303,9 +307,21 @@ export function summarizePresetSection(payload: PresetPayload, section: PresetSe
       return serializeGenerationPrompt(payload.prompt) || 'Empty'
     }
     case 'sampling': {
-      return payload.sampling
-        ? `${payload.sampling.sampler} · ${payload.sampling.scheduler}`
-        : 'Not set'
+      if (!payload.sampling) {
+        return 'Not set'
+      }
+      if (
+        payload.model?.baseModelFamily === 'anima' ||
+        (!payload.model && payload.sampling.animaMethod !== undefined)
+      ) {
+        return payload.sampling.animaMethod === undefined
+          ? 'Anima method not included'
+          : `Anima · ${ANIMA_SAMPLING_METHOD_LABELS[payload.sampling.animaMethod]}`
+      }
+      if (Object.keys(payload.sampling).length === 0) {
+        return 'Sampling choices not included'
+      }
+      return `${payload.sampling.sampler ?? 'Not set'} · ${payload.sampling.scheduler ?? 'Not set'}`
     }
     case 'seed': {
       if (!payload.seed) {

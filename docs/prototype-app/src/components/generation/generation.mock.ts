@@ -10,6 +10,7 @@ import type {
 export const generationModels: GenerationModelRef[] = [
   {
     baseModel: 'Illustrious',
+    baseModelFamily: 'illustrious',
     id: 'illustrious-xl-v1-1',
     name: 'Illustrious XL',
     predictionType: 'v-pred',
@@ -17,6 +18,7 @@ export const generationModels: GenerationModelRef[] = [
   },
   {
     baseModel: 'Illustrious',
+    baseModelFamily: 'illustrious',
     id: 'illustrious-xl-v1-0',
     name: 'Illustrious XL',
     predictionType: 'v-pred',
@@ -24,10 +26,18 @@ export const generationModels: GenerationModelRef[] = [
   },
   {
     baseModel: 'NoobAI',
+    baseModelFamily: null,
     id: 'noobai-xl-v3',
     name: 'NoobAI XL',
     predictionType: 'epsilon',
     version: 'v3',
+  },
+  {
+    baseModel: 'Anima',
+    baseModelFamily: 'anima',
+    id: 'anima-base-v1',
+    name: 'Anima',
+    version: 'Base 1.0',
   },
 ]
 

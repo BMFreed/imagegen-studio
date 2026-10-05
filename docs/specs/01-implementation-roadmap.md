@@ -1071,10 +1071,10 @@ boundary. ER/LCM once-shifted grids имеют отдельную terminal-zero 
 LCM clipping исправляет известное Invoke rebuild/shift mismatch. Native
 reference/control, trained NVIDIA pixels и scoped interruption restoration
 проверены отдельно от model quality. Это завершает six-entry internal method
-registry, но не public Anima settings/Generate/capability/queue/Retry/provenance.
-Следующий этап — family-aware editor и frozen public pipeline integration с
-оставшимися применимыми options; затем runtime и полная Linux/NVIDIA release
-qualification. Base few-step LCM quality, Turbo и новые variants не обещаны;
+registry. Public settings подключает authoring checkpoint ниже; Generate/
+capability/queue/Retry/provenance требуют frozen public pipeline integration с
+оставшимися применимыми options. Затем следуют runtime installation и полная
+Linux/NVIDIA release qualification. Base few-step LCM quality, Turbo и новые variants не обещаны;
 Phase 2C и PP-004/PP-005 открыты.
 
 **Anima qualified worker checkpoint (05.10.2026):**
@@ -1085,11 +1085,25 @@ LoRA/six methods достигают provisional PNG, thumbnail и correlated pro
 Only native CUDA BF16 advertises Anima; existing qualified Illustrious support
 сохраняется. Exact wire, immutable capture, snapshot-size interleaving guard и
 exclusive output проверяются отдельно от model quality и release packaging.
-Project Generate пока закрыт: следующий этап — family-aware editor (включая
-explicit-weight adjustment и native method representation), затем frozen Main
+Project Generate пока закрыт. Family-aware editor и native method representation
+подключает authoring checkpoint ниже; следующие этапы — frozen Main
 batch/admission, queue/Retry/dispatch и immutable accepted provenance. Generic progress уже допускает 400 evaluations; Anima handoff должен
 связывать actual plan count (Heun до 399) с конкретным запросом. Runtime installation и полная
 Linux/NVIDIA qualification остаются открытыми; PP-004/PP-005 не завершены.
+
+**Anima Project authoring checkpoint (05.10.2026):**
+[Authoring](../engineering/phase-2c-anima-authoring-research.md) добавляет finite
+optional native method в mutable Project draft через typed IPC/Main, history,
+shadow и explicit `.igs` Save/reopen. Unset не превращается в Euler; model switch
+сохраняет inactive Illustrious pair и Anima choice. Shared attention actions
+используют current family, изменяют implicit/explicit/suffix weights, сохраняют
+escapes/precision/nested markup и дают advisory при неоднозначном target.
+Prototype Project/preset consumers имеют declared family, native-only sampling
+и supplied-member Apply; production preset storage этим не реализован.
+Public Anima Generate и frozen accepted Raster DTO не расширены. Следующий этап
+— exact Main batch/admission → durable queue/Retry/dispatch → immutable accepted
+Anima configuration, включая проверку выбранного native method и actual progress.
+Полная model quality и Linux/NVIDIA release qualification остаются открытыми.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

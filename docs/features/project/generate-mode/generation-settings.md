@@ -44,7 +44,7 @@ Product MVP controls:
   prediction type control;
 - separate LoRAs selector and selected LoRA stack;
 - unified prompt autocomplete for embeddings and active LoRA trigger phrases;
-- sampler/scheduler;
+- for Illustrious, sampler/scheduler; for Anima, one native sampling method;
 - steps;
 - guidance/CFG;
 - denoising strength, visible but disabled with a reason when the current target has no raster input or the selected model does not support it;
@@ -85,9 +85,11 @@ explicit unsigned 32-bit value; `Random` and `Reuse` store no draft value.
 The first Illustrious sampler/scheduler menu is an explicit finite pair list.
 The draft starts with both values unset; selecting a sampler does not invent a
 scheduler, and changing it clears an incompatible scheduler. The pair passes
-through typed IPC, document shadow, explicit Save and `.igs` reopen. This
-selector is disabled with an explanation when the selected model is Anima or
-lacks a verified Illustrious family. It does not itself make Generate available.
+through typed IPC, document shadow, explicit Save and `.igs` reopen. The
+Illustrious selectors are disabled with an explanation when the selected model
+lacks a verified Illustrious family. The Anima authoring checkpoint below adds
+its separate native control. Editing sampling does not itself make Generate
+available.
 Steps is a positive safe integer and CFG scale is a finite nonnegative number;
 both can remain unset in the draft. These controls do not infer a default or
 claim model-specific runtime compatibility before the inference pipeline is
@@ -113,6 +115,18 @@ materialization. Model selection alone does not activate an inference runtime.
 Custom CivitAI Anima installation with pinned Qwen3/VAE is available; later
 checkpoints below qualify its internal bundle and worker execution. Public Anima
 Project admission and the full frozen pipeline remain open.
+
+The [Anima authoring checkpoint](../../../engineering/phase-2c-anima-authoring-research.md)
+adds one native sampling-method selector: Euler, Heun, DPM++ 2M, DPM++ 2M SDE,
+ER-SDE and LCM. It writes optional `sampling.animaMethod` through typed draft
+IPC, history, recovery shadow and explicit `.igs` Save/reopen. Unset stays unset;
+clearing removes the field. Family switches retain the inactive Illustrious pair
+and native choice. The existing SD pair is not reinterpreted as Anima sampling.
+LCM availability describes the implemented solver, not a distilled Base-model
+quality promise. No separate Karras/Normal/Exponential scheduler applies.
+Prototype Project and the shared preset editor use explicit model-family
+metadata for the same control and preserve/explain inapplicable SD-only Advanced
+settings. Production preset storage and public Anima Generate stay open.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware

@@ -42,7 +42,10 @@ const value = computed(
 )
 const serialized = computed(() => serializeGenerationPrompt(value.value))
 const tokenCount = computed(() => countPromptTokens(serialized.value))
-const syntaxReport = computed(() => inspectPromptSyntax(serialized.value))
+const modelFamily = computed(
+  () => getActiveGenerationDraft(props.session).payload.model?.baseModelFamily ?? null,
+)
+const syntaxReport = ref(inspectPromptSyntax(serialized.value, modelFamily.value))
 const loras = computed(() => getActiveGenerationDraft(props.session).payload.loras ?? [])
 const transactionKey = computed(() => {
   const selected = props.session.ui.selection
@@ -118,11 +121,13 @@ function clear() {
       historyMode="external"
       :loras
       :minimumLines="field === 'prompt' ? 9 : 4"
+      :modelFamily
       :modelValue="value"
       :polarity="field === 'prompt' ? 'positive' : 'negative'"
       :showSyntaxStatus="false"
       @blur="handleBlur"
       @focus="handleFocus"
+      @syntaxReport="syntaxReport = $event"
       @update:modelValue="update($event)"
     />
     <PromptEditorActions

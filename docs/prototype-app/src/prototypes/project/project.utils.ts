@@ -192,7 +192,18 @@ export function applyPresetSections(
           // Legacy/partial presets cannot clear a setting they never stored.
           continue
         }
-        Reflect.set(target, section, clonePreset(value))
+        if (section === 'sampling' && payload.sampling) {
+          // Partial/legacy sampling cannot clear a member it never recorded.
+          const supplied = payload.sampling
+          target.sampling = {
+            ...clonePreset(target.sampling ?? {}),
+            ...(supplied.sampler !== undefined ? { sampler: supplied.sampler } : {}),
+            ...(supplied.scheduler !== undefined ? { scheduler: supplied.scheduler } : {}),
+            ...(supplied.animaMethod !== undefined ? { animaMethod: supplied.animaMethod } : {}),
+          }
+        } else {
+          Reflect.set(target, section, clonePreset(value))
+        }
         if (section === 'size' && payload.size) {
           session.document.canvas = clonePreset(payload.size)
           session.ui.aspectRatio = {

@@ -19,11 +19,15 @@ import { Compartment, EditorState, Transaction } from '@codemirror/state'
 import { EditorView, keymap, tooltips } from '@codemirror/view'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { promptSyntaxExtensions } from './prompt-diagnostics-codemirror.js'
+import {
+  promptModelFamily,
+  promptSyntaxExtensions,
+  promptSyntaxField,
+} from './prompt-diagnostics-codemirror.js'
 import {
   applyPromptAttention,
   clearPromptTransaction,
-  promptAttentionKeymap,
+  createPromptAttentionKeymap,
   tripleClickPhraseSelection,
 } from './prompt-editing-codemirror.js'
 import {
@@ -59,7 +63,7 @@ const host = ref<HTMLElement | null>(null)
 const focused = ref(false)
 const selection = ref({ anchor: 0, head: 0 })
 const copyStatus = ref('')
-const syntaxReport = computed(() => inspectPromptSyntax(text.value))
+const syntaxReport = ref(inspectPromptSyntax(text.value, props.modelFamily))
 const attentionAvailable = computed(() => {
   const selected = selection.value
   const range =
@@ -74,6 +78,7 @@ const attentionAvailable = computed(() => {
 const editable = new Compartment()
 const context = new Compartment()
 const completion = new Compartment()
+const family = new Compartment()
 let view: EditorView | null = null
 let syncingExternal = false
 
@@ -86,7 +91,7 @@ function focus() {
 function attention(direction: -1 | 1) {
   if (view && !props.disabled) {
     view.focus()
-    applyPromptAttention(view, direction)
+    applyPromptAttention(view, direction, props.modelFamily)
   }
 }
 function browse() {
@@ -156,6 +161,7 @@ onMounted(() => {
         EditorView.lineWrapping,
         tripleClickPhraseSelection(),
         promptSyntaxExtensions,
+        family.of(promptModelFamily.of(props.modelFamily)),
         tooltips({ parent: document.body, position: 'fixed' }),
         context.of(contextExtensions()),
         completion.of(completionExtensions()),
@@ -167,7 +173,11 @@ onMounted(() => {
           EditorState.readOnly.of(props.disabled),
           EditorView.editable.of(!props.disabled),
         ]),
-        keymap.of([...promptAttentionKeymap, ...completionKeymap, ...defaultKeymap]),
+        keymap.of([
+          ...createPromptAttentionKeymap(() => props.modelFamily),
+          ...completionKeymap,
+          ...defaultKeymap,
+        ]),
         EditorView.domEventHandlers({
           blur() {
             focused.value = false
@@ -179,6 +189,7 @@ onMounted(() => {
           },
         }),
         EditorView.updateListener.of((update) => {
+          syntaxReport.value = update.state.field(promptSyntaxField)
           if (update.selectionSet || update.docChanged) {
             const main = update.state.selection.main
             selection.value = { anchor: main.anchor, head: main.head }
@@ -235,6 +246,7 @@ watch(
         effects: [
           context.reconfigure(contextExtensions()),
           completion.reconfigure(completionExtensions()),
+          family.reconfigure(promptModelFamily.of(props.modelFamily)),
         ],
       })
     }

@@ -31,6 +31,40 @@ const SHA256 = 'a'.repeat(64)
 const SECOND_SHA256 = 'b'.repeat(64)
 const ASSET_PATH = `assets/layers/${LAYER_ID}.png`
 
+test('optional native method is portable draft data without defaults or accepted-result expansion', () => {
+  const legacy = emptyDocument()
+  assert.equal(
+    Object.hasOwn(parseProjectDocumentV1(legacy).generationDraft.sampling, 'animaMethod'),
+    false,
+  )
+  for (const animaMethod of [
+    'euler',
+    'heun',
+    'dpmpp_2m',
+    'dpmpp_2m_sde',
+    'er_sde',
+    'lcm',
+  ] as const) {
+    const document = emptyDocument()
+    document.generationDraft.sampling.animaMethod = animaMethod
+    assert.deepEqual(parseProjectDocumentV1(document), document)
+    assert.equal(document.generationDraft.sampling.sampler, null)
+    assert.equal(document.generationDraft.sampling.scheduler, null)
+  }
+  for (const animaMethod of [null, '', 'Euler', 'euler_a', 'turbo', 0, {}, []]) {
+    const document = emptyDocument()
+    Object.assign(document.generationDraft.sampling, { animaMethod })
+    assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
+  }
+  const accepted = rasterGenerationProvenance()
+  Object.assign(accepted.generationConfiguration.sampling, { animaMethod: 'euler' })
+  assert.equal(isRasterGenerationConfigurationV1(accepted.generationConfiguration), false)
+  assert.throws(
+    () => parseRasterGenerationProvenanceV1(accepted),
+    assertSchemaCode('INVALID_PROJECT'),
+  )
+})
+
 function emptyDocument(): IgsProjectDocumentV1 {
   return createEmptyProjectDocumentV1({
     documentId: DOCUMENT_ID,
