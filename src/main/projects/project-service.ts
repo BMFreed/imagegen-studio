@@ -22,8 +22,16 @@ import {
   type AcceptedResultHistoryReference,
   isAcceptedResultHistoryReference,
 } from '../../shared/projects/accepted-result-history.js'
+import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  type AnimaWorkerRequest,
+  AnimaWorkerRequestError,
+} from '../../shared/projects/anima-worker-request.js'
+import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type { RasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
+import { supportsInferenceAnima } from '../../shared/projects/inference-worker-capabilities.js'
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import {
   generationTargetSignature,
@@ -49,6 +57,8 @@ import { type BigIntStats, constants } from 'node:fs'
 import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { buildFrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectIndexRepository } from './project-index.js'
@@ -62,6 +72,15 @@ import {
   canPreviewSavedAcceptedResult,
   reviewSavedAcceptedResult,
 } from './accepted-history-resource.js'
+import {
+  prepareAnimaGenerationBatch,
+  validateAnimaBatchIterations,
+} from './anima-generation-batch.js'
+import {
+  prepareAnimaGeneration,
+  validateAnimaGenerationDraft,
+} from './anima-generation-preparation.js'
+import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 import { projectAcceptedResults } from './project-accepted-results.js'
 import {
@@ -1748,6 +1767,83 @@ export class ProjectService {
           document: structuredClone(composition.document),
         }),
     )
+  }
+
+  /**
+   * Internal Anima foundation: lease captured Project inputs through qualified ephemeral requests.
+   * The callback owns consumption; this boundary does not publish queue rows or accepted results.
+   */
+  async withPreparedAnimaGenerationBatch<T>(
+    tabId: string,
+    input: {
+      iterations: number
+      modelService: AnimaGenerationModelResolver
+      randomUint32?: () => number
+      ready: unknown
+      worker: Pick<ProjectWorkerClient, 'composeTarget'>
+    },
+    use: (input: {
+      preparedBatch: PreparedAnimaGenerationBatch
+      requests: readonly AnimaWorkerRequest[]
+    }) => Promise<T>,
+  ): Promise<T> {
+    // Capture caller-owned values before the raster lease, seed read or model qualification await.
+    const { iterations, modelService, randomUint32, worker } = input
+    const ready = structuredClone(input.ready)
+    if (!supportsInferenceAnima(ready)) {
+      throw new AnimaWorkerRequestError(
+        'INFERENCE_UNAVAILABLE',
+        'The worker has not qualified the original Anima pipeline.',
+      )
+    }
+    validateAnimaBatchIterations(iterations)
+    const document = this.requireTab(tabId).document
+    // A placeholder checks the known authoring envelope without choosing or masking a Reuse seed.
+    validateAnimaGenerationDraft(document.generationDraft, {
+      bbox: document.primaryBbox,
+      lastActualSeed: document.generationDraft.seed.policy === 'reuse' ? 0 : undefined,
+      lastActualSeedSnapshot: document.lastActualSeedSnapshot,
+    })
+    const dynamic = getEffectiveDynamicPromptSettings(document.generationDraft.dynamicPrompt)
+    const preflightBatch = planGenerationBatch({
+      baseSeed: 0,
+      iterations,
+      maxJobs: GENERATION_BATCH_JOB_LIMIT,
+      maxPrompts: dynamic.maxPrompts,
+      negativePrompt: document.generationDraft.negativePrompt.text,
+      positivePrompt: document.generationDraft.positivePrompt.text,
+      seedBehavior: dynamic.seedBehavior,
+    })
+    for (const item of preflightBatch.items) {
+      compileAnimaPromptWeighting(item.prompts.positive)
+      compileAnimaPromptWeighting(item.prompts.negative)
+    }
+    return await this.withCapturedNormalGenerationInput(tabId, async (capture) => {
+      const lastActualSeed =
+        capture.document.generationDraft.seed.policy === 'reuse'
+          ? await this.options.readLastActualSeed?.(tabId, capture.document.documentId)
+          : undefined
+      validateAnimaGenerationDraft(capture.document.generationDraft, {
+        bbox: capture.document.primaryBbox,
+        lastActualSeed,
+        lastActualSeedSnapshot: capture.document.lastActualSeedSnapshot,
+      })
+      const target = await capture.composeTarget(worker)
+      const prepared = await prepareAnimaGeneration({
+        lastActualSeed,
+        modelService,
+        randomUint32,
+        target,
+      })
+      const preparedBatch = prepareAnimaGenerationBatch({ iterations, prepared })
+      return await withAnimaGenerationBatchRequests({
+        modelService,
+        prepared: preparedBatch,
+        ready,
+        scratchBasePath: this.options.roots.scratchDir,
+        use: (requests) => use({ preparedBatch, requests }),
+      })
+    })
   }
 
   private async inspectTemporaryRecovery(

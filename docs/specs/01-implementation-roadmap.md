@@ -1105,6 +1105,21 @@ Public Anima Generate и frozen accepted Raster DTO не расширены. С�
 Anima configuration, включая проверку выбранного native method и actual progress.
 Полная model quality и Linux/NVIDIA release qualification остаются открытыми.
 
+**Anima Main preparation checkpoint (05.10.2026):**
+[Captured preparation and concrete requests](../engineering/phase-2c-anima-main-preparation-research.md)
+соединяют реальный Project snapshot/visible raster lease, document-scoped seed,
+exact linked bundle и ordered signed enabled LoRAs с bounded concrete batch.
+Оба prompt компилируются после dynamic expansion, каждый seed получает свой
+full native plan. Общая private target lease и distinct outputs проходят полную
+проверку всех request envelopes до callback; ошибки убирают только owned scratch.
+Unsupported active SD-only settings явно отклоняются; neutral/inactive authoring
+не превращается в новые Anima wire fields. Это отдельный Main контур подготовки:
+Generate, durable queue/Retry/dispatch и immutable accepted records не открыты.
+Следующий этап — family-specific durable jobs с frozen Retry/dispatch и actual
+progress, затем accepted Anima configuration и runtime/release qualification.
+Storage capacity для новых durable Anima payloads требует собственной проверки;
+prepared batch использует прежний cap32, без новой GPU capacity promise.
+
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает
 Auto/FP16/FP32 встроенного VAE в txt2img и opaque img2img. Typed draft,

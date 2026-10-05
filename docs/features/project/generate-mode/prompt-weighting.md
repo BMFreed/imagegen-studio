@@ -23,13 +23,21 @@ both signs. Native tests and a separate trained-weight CPU probe verify weights
 once after adapter projection/norm. The subsequent
 [Euler execution foundation](../../../engineering/phase-2c-anima-euler-research.md)
 verifies weighted native denoising through trained NVIDIA pixels for both signs,
-including plain/weight-one equality and fixed-seed replay at 256×256. Anima
+including plain/weight-one equality and fixed-seed replay at 256×256.
 The subsequent ordinary LoRA, six-method sampling and
 [worker 0.11](../../../engineering/phase-2c-anima-worker-entrypoint-research.md)
 checkpoints connect weighted txt2img/opaque img2img through the actual native
 worker. Public Generate remains unavailable: authoring is covered by the
 checkpoint below, while Main admission, frozen queue/Retry/provenance and release
 qualification remain open.
+
+[Main preparation](../../../engineering/phase-2c-anima-main-preparation-research.md)
+now applies the existing bounded dynamic planner before compiling both concrete
+signs and the native plan for each item. Source text stays authored text in the
+captured Project snapshot; the compiled interpretations are transient request
+inputs. A later invalid planned branch or oversized complete worker command
+refuses the whole batch before the consumer runs. This does not persist Anima
+queue/Retry or accepted provenance, or enable Project Generate.
 
 Reference: [InvokeAI PR #9506](https://github.com/invoke-ai/InvokeAI/pull/9506),
 checked open/unmerged at head

@@ -128,6 +128,17 @@ Prototype Project and the shared preset editor use explicit model-family
 metadata for the same control and preserve/explain inapplicable SD-only Advanced
 settings. Production preset storage and public Anima Generate stay open.
 
+The [Main preparation checkpoint](../../../engineering/phase-2c-anima-main-preparation-research.md)
+captures one Project snapshot, its document-scoped resolved seed and exact
+checkpoint/Qwen/VAE/ordered enabled LoRAs. It expands the captured dynamic policy
+into concrete positive/negative prompts and one native plan per item, then
+materializes a complete qualified ephemeral batch. Inactive SD sampling and
+disabled rows remain authored data. Neutral CFG Rescale `0` and precision `Auto`
+add no Anima wire fields; nonneutral/manual policies, external VAE, CLIP Skip and
+embedding refs refuse explicitly. This preparation does not enqueue, update the
+seed cursor or document, or publish accepted results. Public Generate and frozen
+queue/Retry/accepted integration remain subsequent work.
+
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware
 insertion is implemented. The later checkpoints below connect production

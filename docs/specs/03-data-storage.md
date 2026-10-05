@@ -247,6 +247,15 @@ Save/reopen own the edit. This additive draft field does not expand frozen
 accepted Raster configuration, queue payloads or worker admission. See the
 [authoring checkpoint](../engineering/phase-2c-anima-authoring-research.md).
 
+The separate [Main preparation checkpoint](../engineering/phase-2c-anima-main-preparation-research.md)
+copies draft/resource identities, document ID/revision, actual target bytes and
+resolved seed into ephemeral Anima contexts and concrete compiled requests.
+Reuse reads the operational cursor for the captured local Project/document,
+then the saved snapshot; Fixed/Random do not read that cursor. Preparation does
+not advance it, save the document, publish queue rows or create candidates.
+These internal contexts are not new `.igs` accepted configuration or a durable
+Anima queue format; those serializers remain separate pending checkpoints.
+
 ### Generation provenance
 
 Generation provenance — immutable metadata of an accepted Raster Layer or Smart Patch variant: recorded settings, resources, non-regional source context and runtime parameters associated with that persistent result. It is not a complete reconstruction recipe when Regional Guidance was used.
