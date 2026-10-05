@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Anima deterministic sampling](./phase-2c-anima-sampling-research.md) — immutable Euler/Heun/DPM++ 2M plans, fresh native solver history, selected-schedule img2img initialization and actual evaluation progress. Stochastic/LCM methods, editor/admission/queue/provenance and release remain open.
 - [Anima ordinary LoRA foundation](./phase-2c-anima-lora-research.md) — shared native Linear target profile, exact Main/file qualification and scoped Kohya/PEFT adapters before Qwen/conditioner encoding; signed stacks, cleanup and actual local NVIDIA adapters. Public admission, other schedulers/options, editor, queue/Retry/provenance and release remain open.
 - [Anima default Euler execution](./phase-2c-anima-euler-research.md) — immutable TS schedule, native weighted Cosmos/Wan txt2img and opaque img2img, seed replay and finite/padding guards; real trained NVIDIA controls at 256×256. Ordinary LoRA follows above; other integration/release gates remain open.
 - [Anima compiled prompt conditioning](./phase-2c-anima-conditioning-research.md) — typed attention grammar, Unicode spans, exact bundled tokenizers and native post-adapter weighting for both signs; trained CPU evidence and isolated mutations. Internal Euler execution follows above; remaining integration/release gates stay open.

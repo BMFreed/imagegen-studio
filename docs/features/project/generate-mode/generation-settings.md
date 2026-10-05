@@ -383,3 +383,24 @@ Anima embedding authoring is unsupported. This checkpoint does not load weights
 or add generated embedding provenance: stored refs and known unbound installed
 tokens still block Generate with an explanation before enqueue. Full inference
 and Preset resource integration remain open.
+
+## Internal Anima deterministic sampling (05.10.2026)
+
+[Versioned plans and native execution](../../../engineering/phase-2c-anima-sampling-research.md)
+add an internal explicit `euler` / `heun` / `dpmpp_2m` choice. It is separate from
+the public Illustrious sampler/scheduler pair list. TS freezes the selected
+schedule, exact strength clipping, native begin index and actual evaluation
+count. Python verifies those arrays against a fresh pinned native solver and
+preserves weighted conditioning, signed LoRAs and the original model dtype.
+
+Interior img2img starts from the selected solver's noise level, correcting
+Invoke's acknowledged Euler-preblend mismatch. Strength zero stays VAE-only;
+full strength stays pure noise and matches txt2img at the same seed. Heun progress
+counts both evaluations, following the existing application progress contract.
+
+This is internal execution evidence. Public Anima sampling/denoising controls,
+queue/Retry and immutable provenance remain unconnected. Stochastic methods,
+LCM and release qualification remain open. Original Invoke's Anima path does not
+expose CLIP Skip, CFG Rescale or ordinary VAE precision controls; the conditional
+Advanced scope does not require inventing those algorithms for Anima. The accepted
+exact pinned-companion VAE contract is unchanged.

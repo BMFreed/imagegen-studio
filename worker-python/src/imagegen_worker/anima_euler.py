@@ -19,6 +19,7 @@ from PIL import Image
 
 from imagegen_worker.anima_conditioning import (
     COMPILED_PROMPT_VERSION,
+    AnimaConditioningPair,
     encode_anima_conditioning_pair,
     validate_compiled_anima_prompt,
 )
@@ -68,6 +69,12 @@ class AnimaEulerResult:
     total_steps: int
 
 
+AnimaDenoiser = Callable[
+    [Any, Any, AnimaConditioningPair, Any, Callable[[int, int], None] | None], Any
+]
+AnimaDenoiserFactory = Callable[[Any, Any], AnimaDenoiser]
+
+
 def _invalid(message: str) -> DerivativeError:
     return DerivativeError("INVALID_REQUEST", message)
 
@@ -78,7 +85,7 @@ def _integer(value: object, minimum: int, maximum: int) -> int:
     return value
 
 
-def _number(value: object, minimum: float, maximum: float) -> float:
+def validate_anima_number(value: object, minimum: float, maximum: float) -> float:
     if type(value) not in (int, float):
         raise _invalid("Anima Euler plan has an invalid finite number.")
     try:
@@ -104,8 +111,8 @@ def validate_anima_euler_plan(value: object) -> AnimaEulerPlan:
     if width % 8 or height % 8 or width * height > 4_000_000:
         raise _invalid("Anima Euler dimensions exceed the existing generation envelope.")
     steps, seed = _integer(data["steps"], 1, 200), _integer(data["seed"], 0, 0xFFFFFFFF)
-    guidance = _number(data["guidanceScale"], 1, 30)
-    strength = None if data["strength"] is None else _number(data["strength"], 0, 1)
+    guidance = validate_anima_number(data["guidanceScale"], 1, 30)
+    strength = None if data["strength"] is None else validate_anima_number(data["strength"], 0, 1)
     posterior = data["posteriorSeed"]
     if (mode == "txt2img" and (strength is not None or posterior is not None)) or (
         mode == "img2img"
@@ -120,7 +127,7 @@ def validate_anima_euler_plan(value: object) -> AnimaEulerPlan:
     raw = data["sigmas"]
     if not isinstance(raw, list) or len(cast(list[object], raw)) != steps - start + 1:
         raise _invalid("Anima Euler sigma count is inconsistent.")
-    sigmas = tuple(_number(item, 0, 1) for item in cast(list[object], raw))
+    sigmas = tuple(validate_anima_number(item, 0, 1) for item in cast(list[object], raw))
     canonical: list[float] = []
     for index, sigma in enumerate(sigmas, start):
         t = 1 - index / steps
@@ -173,7 +180,7 @@ def _source_image(source: Image.Image | None, plan: AnimaEulerPlan) -> Image.Ima
     return captured.convert("RGB")
 
 
-def _finite(tensor: Any, torch: Any, label: str) -> None:
+def require_finite_anima_tensor(tensor: Any, torch: Any, label: str) -> None:
     if not torch.is_tensor(tensor) or not bool(torch.isfinite(tensor).all().item()):
         raise DerivativeError("GENERATION_WORKER_FAILED", f"Anima {label} is non-finite.")
 
@@ -182,7 +189,7 @@ def _finite(tensor: Any, torch: Any, label: str) -> None:
 def _vae_guard(vae: Any, torch: Any) -> Generator[None]:
     # Wan clamps inside decode; observe raw native outputs before Inf becomes +/-1.
     def check(_module: Any, _args: Any, output: Any) -> None:
-        _finite(output, torch, "raw VAE output")
+        require_finite_anima_tensor(output, torch, "raw VAE output")
 
     handles: list[Any] = []
     tiled = vae.use_tiling
@@ -210,14 +217,16 @@ def _normalization(vae: Any, torch: Any, device: Any, dtype: Any) -> tuple[Any, 
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Anima Wan normalization is invalid.")
     mean = torch.tensor(means, device=device, dtype=dtype).view(1, 16, 1, 1, 1)
     std = torch.tensor(stds, device=device, dtype=dtype).view(1, 16, 1, 1, 1)
-    _finite(mean, torch, "VAE normalization mean")
-    _finite(std, torch, "VAE normalization std")
+    require_finite_anima_tensor(mean, torch, "VAE normalization mean")
+    require_finite_anima_tensor(std, torch, "VAE normalization std")
     if bool((std <= 0).any().item()):
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Anima Wan std underflowed.")
     return mean, std
 
 
-def _predict(transformer: Any, latents: Any, embeddings: Any, sigma: float, torch: Any) -> Any:
+def predict_anima_flow(
+    transformer: Any, latents: Any, embeddings: Any, sigma: float, torch: Any
+) -> Any:
     height, width = latents.shape[-2:]
     padded = torch.nn.functional.pad(latents, (0, width % 2, 0, height % 2))
     mask = torch.zeros((1, 1, *padded.shape[-2:]), device=latents.device, dtype=latents.dtype)
@@ -227,7 +236,7 @@ def _predict(transformer: Any, latents: Any, embeddings: Any, sigma: float, torc
     ).sample
     if tuple(prediction.shape) != tuple(padded.shape):
         raise DerivativeError("GENERATION_WORKER_FAILED", "Anima flow shape is invalid.")
-    _finite(prediction, torch, "flow prediction")
+    require_finite_anima_tensor(prediction, torch, "flow prediction")
     return prediction[..., :height, :width].float()
 
 
@@ -244,6 +253,32 @@ def generate_anima_euler(
 ) -> AnimaEulerResult:
     """Return exact-size sRGB pixels; no command, output path or candidate publication."""
     captured = validate_anima_euler_plan(plan)
+    return execute_captured_anima_plan(
+        captured,
+        positive,
+        negative,
+        models,
+        source_image=source_image,
+        loras=loras,
+        tokenizers=tokenizers,
+        progress=progress,
+    )
+
+
+def execute_captured_anima_plan(
+    captured: AnimaEulerPlan,
+    positive: object,
+    negative: object,
+    models: LoadedAnimaModels,
+    *,
+    source_image: Image.Image | None = None,
+    loras: tuple[GenerationLora, ...] = (),
+    tokenizers: AnimaTokenizers | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    denoiser_factory: AnimaDenoiserFactory | None = None,
+    initial_sigma: float | None = None,
+) -> AnimaEulerResult:
+    """Shared internal image boundary; collaborators come only from trusted Python code."""
     positive_input, negative_input = _capture_prompt(positive), _capture_prompt(negative)
     source = _source_image(source_image, captured)
     captured_loras = capture_anima_loras(loras)
@@ -278,6 +313,11 @@ def generate_anima_euler(
             raise DerivativeError(
                 "INFERENCE_UNAVAILABLE", "Anima requires the original latent topology."
             )
+        denoise = (
+            denoiser_factory(torch, device)
+            if captured.total_steps and denoiser_factory is not None
+            else None
+        )
         with scoped_anima_generation_loras(models, captured_loras, torch):
             mean, std = _normalization(vae, torch, device, vae_parameter.dtype)
             shape = (1, 16, 1, captured.height // 8, captured.width // 8)
@@ -303,31 +343,34 @@ def generate_anima_euler(
                     posterior = vae.encode(pixels).latent_dist
                     generator = torch.Generator(device="cpu").manual_seed(captured.posterior_seed)
                     encoded = posterior.sample(generator=generator)
-                    _finite(encoded, torch, "sampled VAE latent")
+                    require_finite_anima_tensor(encoded, torch, "sampled VAE latent")
                     if tuple(encoded.shape) != shape:
                         raise DerivativeError(
                             "GENERATION_WORKER_FAILED", "Anima encoded shape differs."
                         )
                     latents = ((encoded - mean) / std).to(dtype=dtype)
-                    _finite(latents, torch, "normalized latent")
+                    require_finite_anima_tensor(latents, torch, "normalized latent")
                 else:
                     latents = None
                 if captured.total_steps:
                     noise = torch.randn(
                         shape, device="cpu", dtype=torch.float32, generator=noise_generator
                     ).to(device=device, dtype=dtype)
-                    sigma = captured.sigmas[0]
+                    sigma = captured.sigmas[0] if initial_sigma is None else initial_sigma
                     latents = noise if latents is None else sigma * noise + (1 - sigma) * latents
-                    _finite(latents, torch, "initial latent")
+                    require_finite_anima_tensor(latents, torch, "initial latent")
                     assert conditioning is not None
-                    for index, (current, following) in enumerate(
-                        zip(captured.sigmas[:-1], captured.sigmas[1:], strict=True), 1
-                    ):
-                        conditional = _predict(
+                    iterations = (
+                        zip(captured.sigmas[:-1], captured.sigmas[1:], strict=True)
+                        if denoise is None
+                        else ()
+                    )
+                    for index, (current, following) in enumerate(iterations, 1):
+                        conditional = predict_anima_flow(
                             transformer, latents, conditioning.positive.embeddings, current, torch
                         )
                         if not math.isclose(captured.guidance_scale, 1.0):
-                            unconditional = _predict(
+                            unconditional = predict_anima_flow(
                                 transformer,
                                 latents,
                                 conditioning.negative.embeddings,
@@ -339,16 +382,18 @@ def generate_anima_euler(
                             )
                         else:
                             flow = conditional
-                        _finite(flow, torch, "guided flow")
+                        require_finite_anima_tensor(flow, torch, "guided flow")
                         latents = (latents.float() + (following - current) * flow).to(dtype=dtype)
-                        _finite(latents, torch, "Euler latent")
+                        require_finite_anima_tensor(latents, torch, "Euler latent")
                         if progress is not None:
                             progress(index, captured.total_steps)
+                    if denoise is not None:
+                        latents = denoise(transformer, latents, conditioning, dtype, progress)
                 assert latents is not None
                 raw_latents = latents.to(dtype=vae_parameter.dtype) * std + mean
-                _finite(raw_latents, torch, "denormalized latent")
+                require_finite_anima_tensor(raw_latents, torch, "denormalized latent")
                 decoded = vae.decode(raw_latents).sample
-                _finite(decoded, torch, "decoded image")
+                require_finite_anima_tensor(decoded, torch, "decoded image")
                 if tuple(decoded.shape) != (1, 3, 1, captured.height, captured.width):
                     raise DerivativeError(
                         "GENERATION_WORKER_FAILED", "Anima decoded shape differs."

@@ -864,3 +864,10 @@ def test_qwen_native_in_place_tensor_change_cannot_mutate_captured_verification_
             "Native Qwen tensor corruption aliased the captured reference and reached the body"
         )
     _clean(native, before)
+
+
+# Other native pipeline tests reuse these fixture operations, not LoRA execution.
+clean_native_loras = _clean
+create_native_lora_file = _file
+snapshot_native_models = _snapshot
+native_lora_state = _state
