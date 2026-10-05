@@ -328,6 +328,13 @@ Project entry задаёт категорию независимо от exact re
 handoff и локальные thumbnails остаются открытыми; embedding authoring и
 отдельные Illustrious LoRA/VAE worker paths описаны checkpoints выше.
 
+[Model Manager presentation reads](../engineering/phase-2c-model-manager-read-research.md)
+отдельно проверяют запоздавшие catalog/jobs/storage/token ответы и ошибки после
+нового открытия, ownership loading и сохранение observed job updates вместе с
+нетронутыми строками полного списка. Эти renderer guards не отменяют команды
+установки и не заменяют их Main-owned lifecycle. Native read-ordering fixture
+не доказывает download, repair или secret-storage mutation.
+
 Успешное восстановление зависит от доступности exact file у источника и прав
 доступа: если файл удалён или доступ закрыт, приложение объясняет отказ и не
 подменяет версию другой. Metadata остаётся доступной в сохранённых references.

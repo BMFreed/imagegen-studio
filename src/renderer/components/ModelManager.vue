@@ -43,9 +43,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ModelManagerFocus } from './model-manager-focus.js'
 
+import { mergeModelManagerJobSnapshot } from './model-manager-job-snapshot.js'
+import { ModelManagerReadGuard } from './model-manager-read-guard.js'
+
 const show = defineModel<boolean>('show', { required: true })
 const props = defineProps<{ focus: ModelManagerFocus | null }>()
 const focusedResource = computed(() => props.focus?.resource ?? null)
+const readGuard = new ModelManagerReadGuard(() => show.value)
 // Naive's active color is available through its theme API, not an app-shell token.
 const themeVars = useThemeVars()
 const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }))
@@ -117,6 +121,10 @@ const acceptedAnimaLicense = ref(false)
 const updates = ref<Record<string, { id: number; name: string }[]>>({})
 const checkedUpdates = ref<Set<string>>(new Set())
 let unsubscribeInstall: (() => void) | undefined
+let pendingJobsRead: {
+  isCurrent: () => boolean
+  observed: Map<string, ModelInstallJobView>
+} | null = null
 
 const modelApi = () => globalThis.window.api?.models
 const isConnected = computed(() => tokenStatus.value?.kind === 'connected')
@@ -193,9 +201,13 @@ async function runApi<T>(
   action: () => Promise<ApiResult<T>>,
   onSuccess: (value: T) => void,
   target: 'general' | 'import' = 'general',
+  isCurrent: () => boolean = () => true,
 ): Promise<boolean> {
   try {
     const result = await action()
+    if (!isCurrent()) {
+      return false
+    }
     if (!result.ok) {
       if (target === 'import') {
         importError.value = result.error.message
@@ -207,6 +219,9 @@ async function runApi<T>(
     onSuccess(result.value)
     return true
   } catch (cause) {
+    if (!isCurrent()) {
+      return false
+    }
     if (target === 'import') {
       importError.value = failureMessage(cause)
     } else {
@@ -475,16 +490,31 @@ async function loadCatalog() {
         selectedId.value = null
       }
     },
+    'general',
+    readGuard.begin('catalog'),
   )
 }
 
 async function loadJobs() {
-  await runApi(
-    () => requireApi().getInstallJobs(),
-    (nextJobs) => {
-      jobs.value = nextJobs
-    },
-  )
+  const read = {
+    isCurrent: readGuard.begin('jobs'),
+    observed: new Map<string, ModelInstallJobView>(),
+  }
+  pendingJobsRead = read
+  try {
+    await runApi(
+      () => requireApi().getInstallJobs(),
+      (nextJobs) => {
+        jobs.value = mergeModelManagerJobSnapshot(nextJobs, read.observed)
+      },
+      'general',
+      read.isCurrent,
+    )
+  } finally {
+    if (pendingJobsRead === read) {
+      pendingJobsRead = null
+    }
+  }
 }
 
 async function loadStorageSummary() {
@@ -493,6 +523,8 @@ async function loadStorageSummary() {
     (summary) => {
       storageBytes.value = summary.totalBytes
     },
+    'general',
+    readGuard.begin('storage'),
   )
 }
 
@@ -509,17 +541,21 @@ async function loadTokenStatus() {
     (nextStatus) => {
       tokenStatus.value = nextStatus
     },
+    'general',
+    readGuard.begin('token'),
   )
 }
 
-async function loadAll() {
+async function loadAll(isCurrent = readGuard.begin('refresh')) {
   loading.value = true
   error.value = null
   try {
     void loadTokenStatus()
     await Promise.all([loadCatalog(), loadJobs(), loadStorageSummary()])
   } finally {
-    loading.value = false
+    if (isCurrent()) {
+      loading.value = false
+    }
   }
 }
 
@@ -534,6 +570,7 @@ async function saveToken() {
   const saved = await runApi(
     () => requireApi().saveToken(token),
     (nextStatus) => {
+      readGuard.invalidate('token')
       tokenStatus.value = nextStatus
       tokenInput.value = ''
       tokenPopoverOpen.value = false
@@ -556,6 +593,7 @@ async function removeToken() {
   await runApi(
     () => requireApi().removeToken(),
     (nextStatus) => {
+      readGuard.invalidate('token')
       tokenStatus.value = nextStatus
       tokenInput.value = ''
       tokenPopoverOpen.value = false
@@ -652,6 +690,9 @@ async function startInstall() {
 }
 
 function upsertJob(job: ModelInstallJobView) {
+  if (pendingJobsRead?.isCurrent()) {
+    pendingJobsRead.observed.set(job.id, job)
+  }
   const index = jobs.value.findIndex((existing) => existing.id === job.id)
   jobs.value =
     index < 0
@@ -800,17 +841,22 @@ function jobCancelable(job: ModelInstallJobView): boolean {
 }
 
 watch(show, (visible) => {
+  readGuard.invalidateAll()
   if (visible) {
     if (props.focus) {
       resetFilters()
       typeFilter.value = props.focus.resourceType
       selectedId.value = focusedResource.value?.resourceId ?? null
     }
-    void loadAll().then(async () => {
-      if (!show.value || !props.focus) {
+    const isCurrent = readGuard.begin('refresh')
+    void loadAll(isCurrent).then(async () => {
+      if (!isCurrent() || !props.focus) {
         return
       }
       await nextTick()
+      if (!isCurrent()) {
+        return
+      }
       managerShell.value
         ?.querySelector('.resource-row--selected')
         ?.scrollIntoView({ block: 'nearest' })
@@ -819,6 +865,7 @@ watch(show, (visible) => {
         ?.scrollIntoView({ block: 'nearest' })
     })
   } else {
+    loading.value = false
     importOpen.value = false
     tokenPopoverOpen.value = false
     tokenInput.value = ''
@@ -860,6 +907,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  readGuard.dispose()
   unsubscribeInstall?.()
   tokenInput.value = ''
 })

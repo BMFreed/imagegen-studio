@@ -144,6 +144,16 @@ Project entries reset incompatible search, family and status filters to the requ
 
 As demonstrated from Home, Model Manager opens as a native Naive modal overlay with restrained enter/leave transitions. The document surface underneath is inert while it is open. The explicit close action and `Esc` both close the manager; `Esc` is temporarily owned by a nested import dialog while that dialog is open.
 
+Presentation reads belong to their modal opening and request: older catalog,
+jobs, storage or token responses and errors cannot replace a newer opening's
+state. An older refresh cannot clear a newer loading indicator or scroll the
+current selection. A pending jobs list retains Main's untouched rows while
+preserving row updates observed during that read. Successful token Save/Remove
+invalidates older status reads. Closing does not cancel installations or other
+Main commands. [Read-ordering evidence](../engineering/phase-2c-model-manager-read-research.md)
+qualifies these presentation boundaries separately from installation and secret
+storage.
+
 ## Information Architecture
 
 Use an app-level overlay with a three-column operational layout:

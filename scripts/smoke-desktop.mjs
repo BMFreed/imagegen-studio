@@ -32,6 +32,7 @@ import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
 import { checkDynamicPromptPreview } from './desktop-dynamic-prompt-checks.mjs'
 import { checkModelResourceHandoff } from './desktop-model-handoff-checks.mjs'
+import { checkModelCatalogRace } from './desktop-model-catalog-race-checks.mjs'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 const untaggedRasterPng = Buffer.from(
@@ -422,15 +423,22 @@ try {
   assert.ok(statSync(packagePath).size > 0)
   assert.equal(readFileSync(packagePath).subarray(0, 2).toString('ascii'), 'PK')
 
-  if (process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY) {
-    await checkModelResourceHandoff({
+  if (
+    process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY ||
+    process.env.IMAGEGEN_SMOKE_MODEL_CATALOG_ONLY
+  ) {
+    const resourceCheckOptions = {
       application,
       checkpointVersions,
       packagePath,
       projectId,
       projectTitle,
       window,
-    })
+    }
+    if (process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY) {
+      await checkModelResourceHandoff(resourceCheckOptions)
+    }
+    await checkModelCatalogRace(resourceCheckOptions)
     application.process().kill('SIGKILL')
     rmSync(dataRoot, { force: true, recursive: true })
     process.exit(0)

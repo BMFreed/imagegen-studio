@@ -912,8 +912,10 @@ LoRA для обеих семейств.
   checkpoint/LoRA/VAE/embedding entry, exact version против Default и возврат
   с refresh каталога проверяются [resource handoff checkpoint](../engineering/phase-2c-resource-handoff-research.md) ниже.
   Локальные thumbnails installed resources и Preset handoff остаются открытыми.
-  Отдельно квалифицировать delayed responses существующего catalog loader
-  Model Manager: этот native handoff checkpoint не проверяет его async fencing.
+  Delayed presentation responses Model Manager отдельно квалифицированы
+  [read-ordering checkpoint](../engineering/phase-2c-model-manager-read-research.md):
+  opening/request guards и observed job merge сохраняют соседние строки.
+  Это не квалификация download/repair или всех async command flows.
 
 **Выходная проверка:** реальные Illustrious и Anima `txt2img`/`img2img` jobs
 с LoRA проходят от Project UI через queue/worker до staging и явного Add.
@@ -1225,8 +1227,10 @@ checkpoint содержит 36 исполненных semantic mutations раз�
 filesystem, queue и dispatch boundaries с поведенческими kills и зелёными
 восстановленными controls; одни только сообщения об ошибках не засчитаны.
 
-**Следующий шаг:** завершить resource handoff и installed model/options
-qualification фазы 2C, затем operational alpha-derived outpaint conditioning.
+**Следующий шаг:** installed model/options qualification фазы 2C; ближайший
+срез — CFG Rescale через Advanced Options → installed trained worker → Add →
+Save/reopen, с same-seed unset/zero/nonzero txt2img и nonzero opaque img2img.
+Затем operational alpha-derived outpaint conditioning.
 Полные authored masks/Regional Guidance/Smart Patch относятся к фазе 4; их
 owned document assets не появляются от подключения normal img2img. Применимые
 Advanced Options уже имеют production data/worker paths, но ещё требуют
@@ -1248,6 +1252,19 @@ exact files; это не проверка CivitAI repair/download или inferen
 thumbnails, Preset handoff и полный выход фазы 2C остаются открытыми.
 Итоговые проверки этого среза: 1595/1595 app tests, typecheck/lint, 24 native
 handoff assertions и вся цепочка `pnpm run app:smoke` с 11 invocations прошли.
+
+**Model Manager presentation read checkpoint (06.10.2026):**
+[Read ordering](../engineering/phase-2c-model-manager-read-research.md) привязывает
+catalog/jobs/storage/token responses и ошибки к открытию модалки и конкретному
+запросу. Старый refresh не завершает новую загрузку и не выполняет старый scroll.
+Full-list jobs merge сохраняет updates, наблюдавшиеся во время запроса, и
+нетронутые строки Main. Команды установки и App-owned Project return refresh
+сохраняют прежних владельцев. Native harness задерживает настоящие Main replies
+и повторно доставляет genuine job DTO; он не доказывает actual download или
+secret-storage mutation. Фаза 2C и PP-004 не объявляются завершёнными.
+Итог: 1608/1608 app tests, typecheck/lint, 11/11 native read checks и полная
+цепочка `app:smoke` с 11 invocations прошли; шесть isolated helper mutations
+обнаружены поведенческими assertions.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

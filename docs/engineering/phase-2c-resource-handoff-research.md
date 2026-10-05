@@ -171,6 +171,12 @@ new synchronous category/focus request and App’s guarded return catalog refres
 are separate owners. Preset entry/Apply, installed thumbnails and full Phase 2C
 pipeline/release qualification remain open.
 
+Follow-up: [Model Manager read ordering](./phase-2c-model-manager-read-research.md)
+now qualifies the loader's separate presentation-read boundary with real
+delayed Main replies, errors, loading ownership and observed job/list merging.
+The historical counts and evidence above remain those of the handoff slice;
+missing version IDs and the other named gaps remain open.
+
 ## Remaining conditioning split
 
 Normal alpha-derived outpaint can build on the current frozen RGBA target and

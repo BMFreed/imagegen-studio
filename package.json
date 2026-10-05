@@ -14,6 +14,7 @@
     "app:start": "pnpm run app:build && env -u ELECTRON_RUN_AS_NODE electron .",
     "app:smoke": "pnpm run app:build && tsx scripts/smoke-desktop.mjs && env IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY=1 tsx scripts/smoke-desktop.mjs && tsx scripts/smoke-generation-results.mjs && tsx scripts/smoke-generation-actions.mjs && tsx scripts/smoke-accepted-history.mjs && tsx scripts/smoke-generation-comparison.mjs && tsx scripts/smoke-generation-comparison.mjs --anima && tsx scripts/smoke-project-vae.mjs && tsx scripts/smoke-project-embeddings.mjs && tsx scripts/smoke-anima-authoring.mjs && tsx scripts/smoke-anima-queue.mjs",
     "app:smoke:handoff": "pnpm run app:build && env IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY=1 tsx scripts/smoke-desktop.mjs",
+    "app:smoke:catalog": "pnpm run app:build && env IMAGEGEN_SMOKE_MODEL_CATALOG_ONLY=1 tsx scripts/smoke-desktop.mjs",
     "app:smoke:anima-queue": "pnpm run app:build && tsx scripts/smoke-anima-queue.mjs",
     "app:smoke:anima-authoring": "pnpm run app:build && tsx scripts/smoke-anima-authoring.mjs",
     "app:smoke:generation": "pnpm run app:build && tsx scripts/smoke-generation-actions.mjs",

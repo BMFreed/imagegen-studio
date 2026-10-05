@@ -116,6 +116,15 @@ Manage actions remain mounted during catalog checking so the modal can restore
 focus to the same trigger; resolved diagnostics may disappear after repair.
 [Evidence](./phase-2c-resource-handoff-research.md).
 
+Model Manager presentation reads share `ModelManagerReadGuard`, with one opening
+epoch and separate catalog/jobs/storage/token/refresh request owners. Check
+currentness before applying success/error and after `nextTick` before scrolling;
+only the owning refresh clears loading. `mergeModelManagerJobSnapshot` overlays
+updates observed during the pending list without dropping untouched Main rows.
+Successful token commands invalidate older status reads. This is presentation
+ownership, not cancellation of Main commands or global event ordering.
+[Evidence](./phase-2c-model-manager-read-research.md).
+
 ## Production Advanced Options
 
 `ProjectGenerationAdvancedOptions` — production-адаптер текущего Generation
