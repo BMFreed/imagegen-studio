@@ -39,6 +39,8 @@ packages = ["src/imagegen_worker"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+# Preserve the byte-exact third-party solver; application wrappers remain checked.
+extend-exclude = ["src/imagegen_worker/vendor/er_sde_scheduler.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -46,4 +48,5 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.basedpyright]
 typeCheckingMode = "strict"
 include = ["src", "tests"]
+exclude = ["src/imagegen_worker/vendor/er_sde_scheduler.py"]
 reportMissingTypeStubs = false

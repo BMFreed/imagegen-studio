@@ -1,0 +1,25 @@
+InvokeAI ER-SDE scheduler
+
+This directory contains an unmodified copy of
+invokeai/backend/rectified_flow/er_sde_scheduler.py from InvokeAI commit
+9e1540962bcca7f8fa668d7d8e02cf79d75fda3b:
+https://github.com/invoke-ai/InvokeAI/blob/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b/invokeai/backend/rectified_flow/er_sde_scheduler.py
+
+Source SHA-256:
+3c18bd6a847fcf0ecf0a6b67c37744546dc4dfbb88a0595915fe2391d437fbd7
+
+Attribution: InvokeAI contributors. Distributed under Apache License 2.0;
+the upstream license is included as LICENSE-InvokeAI.txt.
+
+The original module retains its ER-SDE paper and reference implementation
+attribution:
+https://arxiv.org/abs/2309.06169
+https://github.com/QinpengCui/ER-SDE-Solver
+The reference repository's MIT notice is included as LICENSE-ER-SDE-Solver.txt.
+
+Only ImageGen Studio's typed Anima flow wrapper selects the admitted configuration.
+Third-party VP-SDE modes are not public ImageGen Studio model-family support.
+The vendor file is excluded narrowly from local style/type rewriting to preserve
+its exact upstream bytes. Application policy and integration wrappers remain
+under the project's normal checks. Independent numerical tests load the pinned
+external Invoke source and compare actual execution, not this copy as its oracle.

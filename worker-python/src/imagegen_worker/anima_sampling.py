@@ -65,12 +65,21 @@ def _f32(value: float) -> float:
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def _canonical_schedule(
+def canonical_anima_schedule(
     scheduler: str, base: AnimaEulerPlan
 ) -> tuple[tuple[float, ...], tuple[float, ...], int]:
     """Validate TS policy without optional imports; native arrays are checked again."""
+    if scheduler not in ("euler", "heun", "dpmpp_2m", "dpmpp_2m_sde", "er_sde", "lcm"):
+        raise _invalid("Anima scheduler is unsupported.")
     if scheduler == "euler":
         return base.sigmas, tuple(sigma * 1000 for sigma in base.sigmas[:-1]), base.start_step
+    if scheduler in ("er_sde", "lcm"):
+        flow_sigmas = tuple(_f32(sigma) for sigma in base.sigmas)
+        return (
+            flow_sigmas,
+            tuple(_f32(sigma * 1000) for sigma in flow_sigmas[:-1]),
+            base.start_step,
+        )
     begin = base.start_step * (2 if scheduler == "heun" else 1)
     if base.total_steps == 0:
         return (0.0,), (), begin
@@ -114,6 +123,12 @@ def validate_anima_sampling_plan(value: object) -> AnimaSamplingPlan:
         or scheduler not in ("euler", "heun", "dpmpp_2m")
     ):
         raise _invalid("Anima sampling plan fields, version or scheduler are unsupported.")
+    base = capture_anima_sampling_base(data)
+    return capture_anima_sampling_schedule(data, base)
+
+
+def capture_anima_sampling_base(data: dict[str, object]) -> AnimaEulerPlan:
+    """Share scalar/seed validation after the caller captures its exact envelope."""
     # Reuse the original scalar/seed/strength envelope, not its Euler trajectory.
     steps = data["steps"]
     strength = data["strength"]
@@ -127,7 +142,7 @@ def validate_anima_sampling_plan(value: object) -> AnimaSamplingPlan:
     euler_sigmas = tuple(
         3 * (1 - index / steps) / (1 + 2 * (1 - index / steps)) for index in range(start, steps + 1)
     )
-    base = validate_anima_euler_plan(
+    return validate_anima_euler_plan(
         {
             key: data[key]
             for key in (
@@ -149,7 +164,14 @@ def validate_anima_sampling_plan(value: object) -> AnimaSamplingPlan:
             "sigmas": list(euler_sigmas),
         }
     )
-    sigmas, timesteps, begin = _canonical_schedule(cast(str, scheduler), base)
+
+
+def capture_anima_sampling_schedule(
+    data: dict[str, object], base: AnimaEulerPlan
+) -> AnimaSamplingPlan:
+    """Verify immutable schedule fields under the caller's finite version policy."""
+    scheduler = cast(str, data["scheduler"])
+    sigmas, timesteps, begin = canonical_anima_schedule(scheduler, base)
     initial = (
         0.0 if not timesteps else 1.0 if base.mode == "txt2img" or base.strength == 1 else sigmas[0]
     )
@@ -182,38 +204,69 @@ def validate_anima_sampling_plan(value: object) -> AnimaSamplingPlan:
         base.start_step,
         len(timesteps),
         sigmas,
-        cast(str, scheduler),
+        scheduler,
         begin,
         timesteps,
         initial,
     )
 
 
-def _native_denoiser(plan: AnimaSamplingPlan, torch: Any, device: Any) -> AnimaDenoiser:
+def create_anima_native_denoiser(
+    plan: AnimaSamplingPlan, torch: Any, device: Any, *, step_seed: int | None = None
+) -> AnimaDenoiser:
     if importlib.metadata.version("diffusers") != "0.40.0":
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Pinned Anima scheduler runtime differs.")
     diffusers = cast(Any, importlib.import_module("diffusers"))
     if plan.scheduler == "heun":
         scheduler = diffusers.FlowMatchHeunDiscreteScheduler(num_train_timesteps=1000, shift=3.0)
-    else:
+    elif plan.scheduler in ("dpmpp_2m", "dpmpp_2m_sde"):
         scheduler = diffusers.DPMSolverMultistepScheduler(
             num_train_timesteps=1000,
             prediction_type="flow_prediction",
             use_flow_sigmas=True,
             flow_shift=3.0,
             solver_order=2,
-            algorithm_type="dpmsolver++",
+            algorithm_type=(
+                "sde-dpmsolver++" if plan.scheduler == "dpmpp_2m_sde" else "dpmsolver++"
+            ),
             solver_type="midpoint",
             lower_order_final=True,
             final_sigmas_type="zero",
         )
-    scheduler.set_timesteps(num_inference_steps=plan.steps, device=device)
+    elif plan.scheduler == "er_sde":
+        er_module = cast(Any, importlib.import_module("imagegen_worker.vendor.er_sde_scheduler"))
+        scheduler = er_module.ERSDEScheduler(
+            num_train_timesteps=1000,
+            prediction_type="flow_prediction",
+            use_flow_sigmas=True,
+            flow_shift=3.0,
+            solver_order=3,
+            stochastic=True,
+        )
+    elif plan.scheduler == "lcm":
+        scheduler = diffusers.FlowMatchLCMScheduler(num_train_timesteps=1000, shift=1.0)
+    else:
+        raise _invalid("Anima native scheduler is unsupported.")
+    if plan.scheduler in ("er_sde", "lcm"):
+        # Both consume the authored once-shifted grid. ER expects terminal zero;
+        # Flow LCM appends it itself. Public setup/begin-index preserve native history.
+        full_sigmas = [
+            3 * (1 - index / plan.steps) / (1 + 2 * (1 - index / plan.steps))
+            for index in range(plan.steps + 1)
+        ]
+        scheduler.set_timesteps(
+            sigmas=full_sigmas if plan.scheduler == "er_sde" else full_sigmas[:-1], device=device
+        )
+    else:
+        scheduler.set_timesteps(num_inference_steps=plan.steps, device=device)
     scheduler.set_begin_index(plan.begin_index)
     actual_times = tuple(scheduler.timesteps[plan.begin_index :].detach().cpu().tolist())
     actual_sigmas = tuple(scheduler.sigmas[plan.begin_index :].detach().cpu().tolist())
     if actual_times != plan.timesteps or actual_sigmas != plan.sigmas:
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Native Anima scheduler arrays differ.")
-    generator = torch.Generator(device=device).manual_seed(plan.seed)
+    generator = torch.Generator(device=device).manual_seed(
+        plan.seed if step_seed is None else step_seed
+    )
 
     def denoise(
         transformer: Any,
@@ -280,6 +333,6 @@ def generate_anima_sampling(
         denoiser_factory=(
             None
             if captured.scheduler == "euler"
-            else lambda torch, device: _native_denoiser(captured, torch, device)
+            else lambda torch, device: create_anima_native_denoiser(captured, torch, device)
         ),
     )

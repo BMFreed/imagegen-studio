@@ -404,3 +404,24 @@ LCM and release qualification remain open. Original Invoke's Anima path does not
 expose CLIP Skip, CFG Rescale or ordinary VAE precision controls; the conditional
 Advanced scope does not require inventing those algorithms for Anima. The accepted
 exact pinned-companion VAE contract is unchanged.
+
+## Internal six-method Anima flow sampling (05.10.2026)
+
+[Stochastic and FlowMatch LCM execution](../../../engineering/phase-2c-anima-flow-sampling-research.md)
+adds explicit internal `dpmpp_2m_sde`, `er_sde` and `lcm` choices. The new
+versioned TS plan freezes the step seed beside the generation/posterior seeds;
+the step generator is a separate request-owned stream. Existing Euler and
+deterministic envelopes retain their original finite policy and outputs.
+
+All methods retain the full authored schedule before clipping. ER-SDE and
+FlowMatch LCM receive an explicit once-shifted Euler grid, with terminal zero
+included only for ER setup. This corrects Invoke's LCM unshifted/rebuilt-step
+branch; interior img2img uses the selected clipped sigma. Fresh solver history,
+weighted conditioning, signed LoRAs, finite/BF16 guards and cleanup remain shared.
+
+This completes numerical execution of the six-entry internal Anima registry,
+including actual stochastic replay and restoration controls. It does not connect
+public Anima settings, Generate, queue/Retry or accepted provenance. Flow LCM
+execution does not establish few-step Base quality, distilled acceleration or
+Anima Turbo support. Family-aware public handoff and release qualification remain
+open.
