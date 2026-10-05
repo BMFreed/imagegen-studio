@@ -6,6 +6,7 @@ import type {
   ProjectGenerationResultView,
   ProjectTab,
 } from '../../shared/api.js'
+import { ANIMA_SAMPLING_METHOD_LABELS } from '../../shared/projects/anima-sampling-method.js'
 import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
 import { progressForJob } from '../../shared/projects/generation-progress.js'
 import type {
@@ -885,18 +886,26 @@ onBeforeUnmount(() => {
                     <dt>Size</dt>
                     <dd>{{ selected.details.size.width }} × {{ selected.details.size.height }}</dd>
                   </div>
-                  <div>
-                    <dt>Sampler</dt>
-                    <dd>{{ selected.details.sampling.sampler }}</dd>
+                  <div v-if="selected.details.sampling.animaMethod !== undefined">
+                    <dt>Anima method</dt>
+                    <dd>
+                      {{ ANIMA_SAMPLING_METHOD_LABELS[selected.details.sampling.animaMethod] }}
+                    </dd>
                   </div>
-                  <div>
-                    <dt>Scheduler</dt>
-                    <dd>{{ selected.details.sampling.scheduler }}</dd>
-                  </div>
-                  <div>
-                    <dt>Prediction</dt>
-                    <dd>{{ selected.details.sampling.predictionType }}</dd>
-                  </div>
+                  <template v-else>
+                    <div>
+                      <dt>Sampler</dt>
+                      <dd>{{ selected.details.sampling.sampler }}</dd>
+                    </div>
+                    <div>
+                      <dt>Scheduler</dt>
+                      <dd>{{ selected.details.sampling.scheduler }}</dd>
+                    </div>
+                    <div>
+                      <dt>Prediction</dt>
+                      <dd>{{ selected.details.sampling.predictionType }}</dd>
+                    </div>
+                  </template>
                 </dl>
               </section>
               <section class="detail-section">

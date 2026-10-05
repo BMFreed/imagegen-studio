@@ -57,20 +57,20 @@ const INPUT_FIELDS = [
  */
 export function compileAnimaSamplingPlan(input: unknown): AnimaSamplingPlan {
   const fields = captureFields(input)
-  const scheduler = fields.scheduler
+  const scheduler = fields['scheduler']
   if (scheduler !== 'euler' && scheduler !== 'heun' && scheduler !== 'dpmpp_2m') {
     throw new AnimaSamplingPlanError('Anima deterministic scheduler is unsupported.')
   }
   let base
   try {
     base = compileAnimaEulerDenoisingPlan({
-      guidanceScale: fields.guidanceScale,
-      height: fields.height,
-      mode: fields.mode,
-      seed: fields.seed,
-      steps: fields.steps,
-      strength: fields.strength,
-      width: fields.width,
+      guidanceScale: fields['guidanceScale'],
+      height: fields['height'],
+      mode: fields['mode'],
+      seed: fields['seed'],
+      steps: fields['steps'],
+      strength: fields['strength'],
+      width: fields['width'],
     })
   } catch (error) {
     if (error instanceof AnimaEulerDenoisingPlanError) {
@@ -101,8 +101,9 @@ export function compileAnimaSamplingPlan(input: unknown): AnimaSamplingPlan {
         ? full.timesteps
         : full.timesteps.slice(beginIndex)
   const totalSteps = timesteps.length
+  // Every nonempty clipped native schedule retains a leading sigma and terminal zero.
   const initialSigma =
-    totalSteps === 0 ? 0 : base.mode === 'txt2img' || base.strength === 1 ? 1 : sigmas[0]
+    totalSteps === 0 ? 0 : base.mode === 'txt2img' || base.strength === 1 ? 1 : sigmas.at(0)!
   return Object.freeze({
     ...base,
     beginIndex,
@@ -138,7 +139,8 @@ function nativeSchedule(scheduler: 'dpmpp_2m' | 'heun', steps: number) {
   } else {
     const alphas = linspace(1, 0.001, steps + 1)
     for (let index = steps; index > 0; index -= 1) {
-      const timestep = 1 - alphas[index]
+      // linspace above has steps + 1 entries; this positive index is always present.
+      const timestep = 1 - alphas.at(index)!
       const sigma = (3 * timestep) / (1 + 2 * timestep)
       sigmas.push(Math.fround(sigma))
       // Native converts to int64 before casting sigmas to float32.

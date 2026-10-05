@@ -8,6 +8,7 @@ import {
   type CompiledAnimaPromptWeighting,
 } from './anima-prompt-weighting.js'
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
+import { GENERATION_BATCH_PROMPT_MAX_BYTES } from './generation-batch-plan.js'
 import { supportsInferenceAnima } from './inference-worker-capabilities.js'
 
 export interface AnimaWorkerFile {
@@ -107,6 +108,92 @@ const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_COORDINATE = 2_147_483_647
 const REQUEST_ID = /^[A-Z0-9][\w.-]{0,127}$/i
 const SHA256 = /^[a-f0-9]{64}$/
+
+/**
+ * Capture an already compiled command without interpreting cleaned text as authored attention. The
+ * native scalar policy is recompiled; cleaned Unicode spans retain their actual weights.
+ * Managed-file integrity and native model qualification remain Main/worker responsibilities.
+ */
+export function captureCompiledAnimaWorkerRequest(
+  input: unknown,
+  ready: unknown,
+): AnimaWorkerRequest {
+  const envelope = capture(input, ['protocolVersion', 'requestId', 'type', 'job'])
+  if (
+    envelope.protocolVersion !== '1' ||
+    (envelope.type !== 'generate-anima-txt2img' && envelope.type !== 'generate-anima-img2img')
+  ) {
+    invalid('Anima compiled command envelope is unsupported.')
+  }
+  const job = capture(envelope.job, [
+    'bbox',
+    'loras',
+    'model',
+    'output',
+    'prompts',
+    'sampling',
+    'schemaVersion',
+    'target',
+  ])
+  if (job.schemaVersion !== 1) {
+    invalid('Anima compiled job version is unsupported.')
+  }
+  const plan = capture(job.sampling, [
+    'beginIndex',
+    'guidanceScale',
+    'height',
+    'initialSigma',
+    'mode',
+    'posteriorSeed',
+    'scheduler',
+    'seed',
+    'sigmas',
+    'startStep',
+    'stepSeed',
+    'steps',
+    'strength',
+    'timesteps',
+    'totalSteps',
+    'version',
+    'width',
+  ])
+  const prompts = capture(job.prompts, ['positive', 'negative'])
+  const compiled = Object.freeze({
+    negative: captureCompiledPrompt(prompts.negative),
+    positive: captureCompiledPrompt(prompts.positive),
+  })
+  const base = buildAnimaWorkerRequest(
+    {
+      bbox: job.bbox,
+      loras: job.loras,
+      mode: envelope.type === 'generate-anima-txt2img' ? 'txt2img' : 'img2img',
+      model: job.model,
+      output: job.output,
+      prompts: { negative: '', positive: '' },
+      requestId: envelope.requestId,
+      sampling: {
+        guidanceScale: plan.guidanceScale,
+        scheduler: plan.scheduler,
+        seed: plan.seed,
+        steps: plan.steps,
+        strength: plan.strength,
+      },
+      target: job.target,
+    },
+    ready,
+  )
+  if (!sameCompiledValue(plan, base.job.sampling)) {
+    invalid('Anima compiled command differs from its native sampling policy.')
+  }
+  const request: AnimaWorkerRequest =
+    base.type === 'generate-anima-txt2img'
+      ? Object.freeze({ ...base, job: Object.freeze({ ...base.job, prompts: compiled }) })
+      : Object.freeze({ ...base, job: Object.freeze({ ...base.job, prompts: compiled }) })
+  if (new TextEncoder().encode(`${JSON.stringify(request)}\n`).length > MAX_MESSAGE_BYTES) {
+    invalid('Anima request exceeds the 64 KiB worker line limit.')
+  }
+  return request
+}
 
 /**
  * Capture one worker command using the authoritative weighting and six-method plan compilers. This
@@ -248,6 +335,64 @@ export function buildAnimaWorkerRequest(input: unknown, ready: unknown): AnimaWo
     invalid('Anima request exceeds the 64 KiB worker line limit.')
   }
   return request
+}
+
+function captureCompiledPrompt(input: unknown): CompiledAnimaPromptWeighting {
+  const fields = capture(input, ['version', 'cleanedText', 'spans'])
+  if (fields.version !== 'anima-prompt-weighting-v1' || typeof fields.cleanedText !== 'string') {
+    invalid('Anima compiled prompt version or text is invalid.')
+  }
+  const text = fields.cleanedText
+  const points = Array.from(text)
+  if (
+    new TextEncoder().encode(text).length > GENERATION_BATCH_PROMPT_MAX_BYTES ||
+    points.some((point) => {
+      const code = point.codePointAt(0)!
+      return code >= 0xd8_00 && code <= 0xdf_ff
+    })
+  ) {
+    invalid('Anima compiled prompt must be bounded valid Unicode.')
+  }
+  const entries = captureArray(fields.spans)
+  if (entries.length > points.length) {
+    invalid('Anima compiled spans exceed the cleaned text.')
+  }
+  let cursor = 0
+  let previousWeight: number | undefined
+  const spans = entries.map((entry) => {
+    const span = capture(entry, ['start', 'end', 'weight'])
+    const start = integer(span.start, 0, points.length)
+    const end = integer(span.end, 1, points.length)
+    const weight = finite(span.weight)
+    if (start !== cursor || end <= start || previousWeight === weight) {
+      invalid('Anima spans require complete canonical Unicode coverage.')
+    }
+    cursor = end
+    previousWeight = weight
+    return Object.freeze({ end, start, weight })
+  })
+  if (cursor !== points.length) {
+    invalid('Anima spans do not cover the complete cleaned text.')
+  }
+  return Object.freeze({ cleanedText: text, spans: Object.freeze(spans), version: fields.version })
+}
+
+function sameCompiledValue(value: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    const actual = captureArray(value)
+    return (
+      actual.length === expected.length &&
+      actual.every((entry, index) => sameCompiledValue(entry, expected[index]))
+    )
+  }
+  if (expected !== null && typeof expected === 'object') {
+    const keys = Object.keys(expected)
+    const actual = capture(value, keys)
+    return keys.every((key) =>
+      sameCompiledValue(actual[key], (expected as Record<string, unknown>)[key]),
+    )
+  }
+  return Object.is(value, expected)
 }
 
 function capture(input: unknown, keys: readonly string[]): Record<string, unknown> {

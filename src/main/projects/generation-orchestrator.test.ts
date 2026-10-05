@@ -269,6 +269,10 @@ function inferenceTransport(
   return {
     close: async () => undefined,
     generate: async (request) => {
+      assert.ok(
+        request.type === 'generate-illustrious-txt2img' ||
+          request.type === 'generate-illustrious-img2img',
+      )
       await onRequest?.(request)
       await writeFile(request.job.output.pngPath, outputBytes, { flag: 'wx', mode: 0o600 })
       return {

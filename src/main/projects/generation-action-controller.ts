@@ -1,3 +1,4 @@
+import { AnimaWorkerRequestError } from '../../shared/projects/anima-worker-request.js'
 import { GenerationBatchPlanError } from '../../shared/projects/generation-batch-plan.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type {
@@ -21,6 +22,7 @@ import type {
 } from '../../shared/projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { GenerationProcessor } from './generation-processor.js'
@@ -31,6 +33,9 @@ import type { ProjectGenerationOperationGate } from './project-generation-operat
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { AnimaGenerationRequestError } from './anima-generation-request.js'
+import { AnimaQueuedGenerationError } from './anima-queued-generation.js'
+import { withQueuedAnimaGenerationRequest } from './anima-queued-request.js'
 import {
   IllustriousJobError,
   type InferenceWorkerReady,
@@ -75,7 +80,7 @@ interface GenerationActionRuntime {
 interface GenerationActionDependencies {
   dispatch: Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
   gate: ProjectGenerationOperationGate
-  models: GenerationModelResolver
+  models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
   orchestrator: Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
   processor: Pick<GenerationProcessor, 'cancelAndWait' | 'onChanged'>
   projects: CapturedProjectService
@@ -122,6 +127,7 @@ export class ProjectGenerationActionError extends Error {
       | 'GENERATION_CLOSED'
       | 'GENERATION_DOCUMENT_CHANGED'
       | 'GENERATION_INVALID_REQUEST'
+      | 'GENERATION_MODEL_UNAVAILABLE'
       | 'GENERATION_NO_CURRENT_JOB'
       | 'GENERATION_REPLACEMENT_UNCERTAIN'
       | 'GENERATION_RUNTIME_UNAVAILABLE'
@@ -678,54 +684,77 @@ export class ProjectGenerationActionController {
         )
       }
       this.assertDocument(tabId, frozen.payload.context.documentId)
-      const prepared = {
-        context: frozen.payload.context,
-        targetPngBytes: frozen.targetPngBytes,
-      }
       const admitted = await this.options.runtime.withGenerationAdmission(
         this.options.scratchBasePath,
         async (ready) => {
           this.assertAdmissionOpen()
           this.assertDocument(tabId, documentId)
-          await withIllustriousGenerationRequest({
-            modelService: this.options.models,
-            prepared,
-            ready,
-            scratchBasePath: this.options.scratchBasePath,
-            use: async () => {
-              this.assertAdmissionOpen()
-              this.assertDocument(tabId, documentId)
-              const queued = await this.options.queue.retryTerminal(
-                review.id,
-                review.statusSequence,
-                async (input) => {
-                  this.assertAdmissionOpen()
-                  this.assertDocument(tabId, documentId)
-                  await this.options.staging.preflightBatchCapacity({
-                    entries: [
-                      {
-                        frozenPayloadJson: input.frozenPayloadJson,
-                        queueItemId: input.queueItemId,
-                      },
-                    ],
-                    localProjectKey: tabId,
-                    projectPath: input.source.projectPath,
-                    stagingSessionId: input.stagingSessionId,
-                  })
-                  this.assertAdmissionOpen()
-                  this.assertDocument(tabId, documentId)
-                },
-              )
-              try {
+          const publish = async () => {
+            this.assertAdmissionOpen()
+            this.assertDocument(tabId, documentId)
+            const queued = await this.options.queue.retryTerminal(
+              review.id,
+              review.statusSequence,
+              async (input) => {
                 this.assertAdmissionOpen()
                 this.assertDocument(tabId, documentId)
-              } catch (error) {
-                // A late identity/shutdown refusal cannot leave this newly published retry live.
-                await this.options.processor.cancelAndWait(queued.id)
-                throw error
-              }
-            },
-          })
+                await this.options.staging.preflightBatchCapacity({
+                  entries: [
+                    {
+                      frozenPayloadJson: input.frozenPayloadJson,
+                      queueItemId: input.queueItemId,
+                    },
+                  ],
+                  localProjectKey: tabId,
+                  projectPath: input.source.projectPath,
+                  stagingSessionId: input.stagingSessionId,
+                })
+                this.assertAdmissionOpen()
+                this.assertDocument(tabId, documentId)
+              },
+            )
+            try {
+              this.assertAdmissionOpen()
+              this.assertDocument(tabId, documentId)
+            } catch (error) {
+              // A late identity/shutdown refusal cannot leave this newly published retry live.
+              await this.options.processor.cancelAndWait(queued.id)
+              throw error
+            }
+          }
+          if (frozen.payload.kind === 'anima-txt2img' || frozen.payload.kind === 'anima-img2img') {
+            const { models } = this.options
+            const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+            const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
+            if (typeof resolveBundle !== 'function' || typeof resolveLora !== 'function') {
+              throw new ProjectGenerationActionError(
+                'GENERATION_MODEL_UNAVAILABLE',
+                'The saved Anima resources cannot be verified. The original queue item was kept.',
+              )
+            }
+            await withQueuedAnimaGenerationRequest({
+              modelService: {
+                resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
+                resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
+              },
+              payload: frozen.payload,
+              ready,
+              scratchBasePath: this.options.scratchBasePath,
+              targetPngBytes: frozen.targetPngBytes,
+              use: publish,
+            })
+          } else {
+            await withIllustriousGenerationRequest({
+              modelService: this.options.models,
+              prepared: {
+                context: frozen.payload.context,
+                targetPngBytes: frozen.targetPngBytes,
+              },
+              ready,
+              scratchBasePath: this.options.scratchBasePath,
+              use: publish,
+            })
+          }
           return true
         },
       )
@@ -809,7 +838,10 @@ export function toProjectGenerationActionApiError(error: unknown): {
       ? error.code
       : 'GENERATION_FAILED'
   const knownLiteral =
-    error instanceof GenerationBatchPlanError || error instanceof IllustriousJobError
+    error instanceof GenerationBatchPlanError ||
+    error instanceof IllustriousJobError ||
+    error instanceof AnimaGenerationRequestError ||
+    error instanceof AnimaWorkerRequestError
   const code =
     /^[A-Z][A-Z0-9_]{0,127}$/.test(rawCode) && (knownLiteral || isGenerationErrorCode(rawCode))
       ? rawCode
@@ -839,7 +871,10 @@ function safeGenerationErrorMessage(error: unknown, code: string): string {
     error instanceof ProjectGenerationActionError ||
     error instanceof GenerationPreparationError ||
     error instanceof GenerationBatchPlanError ||
-    error instanceof IllustriousJobError
+    error instanceof IllustriousJobError ||
+    error instanceof AnimaGenerationRequestError ||
+    error instanceof AnimaWorkerRequestError ||
+    error instanceof AnimaQueuedGenerationError
   ) {
     return error.message.slice(0, 512)
   }

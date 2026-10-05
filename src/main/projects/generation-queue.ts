@@ -1,3 +1,4 @@
+import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   GENERATION_QUEUE_PAGE_SIZE,
@@ -24,6 +25,11 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { DB, GenerationQueueItem } from '../db/database.types.js'
+import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
+import type {
+  FrozenQueuedAnimaGenerationContextV1,
+  FrozenQueuedAnimaGenerationV1,
+} from './anima-queued-generation.js'
 import type {
   IllustriousGenerationRequestV1,
   IllustriousImg2ImgRequestV1,
@@ -37,6 +43,12 @@ import type {
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
+import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
+import {
+  buildFrozenQueuedAnimaGenerationV1,
+  FrozenQueuedAnimaGenerationSchema,
+  parseFrozenQueuedAnimaGenerationV1,
+} from './anima-queued-generation.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import {
@@ -295,6 +307,15 @@ export interface FrozenQueuedIllustriousImg2ImgV1 extends Omit<
 export type FrozenQueuedIllustriousGenerationV1 =
   FrozenQueuedIllustriousImg2ImgV1 | FrozenQueuedIllustriousTxt2ImgV1
 
+export type FrozenQueuedGenerationV1 =
+  FrozenQueuedAnimaGenerationV1 | FrozenQueuedIllustriousGenerationV1
+
+/** Internal operational schemas; accepted portable provenance remains separately restricted. */
+export const FrozenGenerationPayloadSchema = v.variant('kind', [
+  ...FrozenIllustriousPayloadSchema.options,
+  ...FrozenQueuedAnimaGenerationSchema.options,
+])
+
 export interface QueuedGenerationItem {
   batchId: string
   cancelRequested: boolean
@@ -322,7 +343,7 @@ export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
 
 export interface VerifiedQueuedInput {
   item: QueuedGenerationItem
-  payload: FrozenQueuedIllustriousGenerationV1
+  payload: FrozenQueuedGenerationV1
   targetPath: string
 }
 
@@ -1057,6 +1078,205 @@ export class GenerationQueueRepository {
     return await this.enqueueIllustriousGenerationBatch(input)
   }
 
+  /** Admit one complete qualified Anima batch using the existing files-first/atomic-SQL protocol. */
+  async enqueuePreparedAnimaGenerationBatch(input: {
+    beforeCommit?: () => Promise<void>
+    preflight: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    preparedBatch: PreparedAnimaGenerationBatch
+    projectPath: string
+    requests: readonly AnimaWorkerRequest[]
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    const preflight = input.preflight
+    const beforeCommit = input.beforeCommit
+    if (
+      !Buffer.isBuffer(input.preparedBatch?.targetPngBytes) ||
+      typeof preflight !== 'function' ||
+      (beforeCommit !== undefined && typeof beforeCommit !== 'function') ||
+      !v.is(UuidSchema, stagingSessionId) ||
+      !Array.isArray(input.requests)
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The qualified Anima batch is invalid.')
+    }
+    // Capture all mutable metadata and the single shared Buffer before serialized storage awaits.
+    const targetBytes = Buffer.from(input.preparedBatch.targetPngBytes)
+    const supplied = structuredClone({
+      context: input.preparedBatch.context,
+      items: input.preparedBatch.items,
+      iterations: input.preparedBatch.iterations,
+      truncated: input.preparedBatch.truncated,
+    })
+    const requests = structuredClone(input.requests)
+    let payloads: FrozenQueuedAnimaGenerationV1[]
+    try {
+      const rebuilt = prepareAnimaGenerationBatch({
+        iterations: supplied.iterations,
+        prepared: { context: supplied.context, targetPngBytes: targetBytes },
+      })
+      if (
+        !isDeepStrictEqual(rebuilt.items, supplied.items) ||
+        rebuilt.truncated !== supplied.truncated ||
+        requests.length !== rebuilt.items.length ||
+        new Set(requests.map((request) => request.requestId)).size !== requests.length ||
+        new Set(requests.map((request) => request.job.target.path)).size !== 1 ||
+        new Set(requests.map((request) => request.job.output.pngPath)).size !== requests.length
+      ) {
+        throw new Error('The supplied batch differs from its complete captured plan.')
+      }
+      payloads = rebuilt.items.map((item, index) =>
+        buildFrozenQueuedAnimaGenerationV1({
+          context: rebuilt.context,
+          item,
+          request: requests[index],
+        }),
+      )
+    } catch {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The qualified Anima batch is invalid.')
+    }
+    const payloadJsons = payloads.map((payload) => JSON.stringify(payload))
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
+      for (const request of requests) {
+        const bytes = await readStableFile(
+          request.job.target.path,
+          targetBytes.length,
+          sha256(targetBytes),
+        )
+        if (!bytes.equals(targetBytes)) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The qualified Anima target changed.',
+          )
+        }
+      }
+      await validateTargetPng(targetBytes, payloads[0].context)
+      const batchId = randomUUID()
+      // IDs remain opaque random UUIDs. Canonical assignment to plan slots preserves supplied
+      // order through the existing created_at/id query without synthetic timestamps or migration.
+      const ids = payloads.map(() => randomUUID()).sort()
+      const now = new Date().toISOString()
+      const rows: Selectable<GenerationQueueItem>[] = payloads.map((payload, index) => ({
+        batch_id: batchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: payload.context.documentId,
+        document_revision: payload.context.documentRevision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: payloadJsons[index],
+        id: ids[index],
+        local_project_key: localProjectKey,
+        operation: payload.kind,
+        staging_session_id: stagingSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }))
+      await preflight(
+        Object.freeze(
+          rows.map((row) =>
+            Object.freeze({
+              frozenPayloadJson: row.frozen_payload_json,
+              queueItemId: row.id,
+            }),
+          ),
+        ),
+      )
+      this.assertProjectCanEnqueue(localProjectKey)
+      const root = await this.ensureRoot()
+      const directories: { path: string; published: boolean }[] = []
+      try {
+        for (const row of rows) {
+          const temporary = await mkdtemp(path.join(root, '.tmp-'))
+          const directory = { path: temporary, published: false }
+          directories.push(directory)
+          const manifest: InputManifestV1 = {
+            payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
+            queueInputVersion: QUEUE_INPUT_VERSION,
+            queueItemId: row.id,
+            targetByteSize: targetBytes.length,
+            targetFile: 'target.png',
+            targetSha256: sha256(targetBytes),
+          }
+          await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          await writeDurableFile(
+            path.join(temporary, 'manifest.json'),
+            Buffer.from(JSON.stringify(manifest), 'utf8'),
+          )
+          await syncDirectory(temporary)
+          const published = path.join(root, row.id)
+          await rename(temporary, published)
+          directory.path = published
+          directory.published = true
+          await syncDirectory(root)
+          await this.testHooks.afterInputPublish?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
+          for (const row of rows) {
+            await transaction.insertInto('generation_queue_item').values(row).execute()
+            this.assertProjectCanEnqueue(localProjectKey)
+          }
+          await this.testHooks.beforeBatchCommit?.()
+          await beforeCommit?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return rows.map(toItem)
+      } catch (error) {
+        if (!directories.some((directory) => directory.published)) {
+          await removeUnregisteredBatchDirectories(
+            directories.map((directory) => directory.path),
+            root,
+          )
+          throw error
+        }
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', 'in', ids)
+            .execute()
+        } catch {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        if (batchRowsMatch(committed, rows)) {
+          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
+        }
+        if (committed.length !== 0) {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        await removeUnregisteredBatchDirectories(
+          directories.map((directory) => directory.path),
+          root,
+        )
+        throw error
+      }
+    })
+  }
+
   /** A worker failure is accepted only for the exact running revision it was started for. */
   async failRunning(
     id: string,
@@ -1261,7 +1481,8 @@ export class GenerationQueueRepository {
           payload.kind !== row.operation ||
           payload.context.documentId !== row.document_id ||
           payload.context.documentRevision !== row.document_revision ||
-          payload.workerJob.prompts.positive !== payload.context.prompts.positive ||
+          ((payload.kind === 'illustrious-txt2img' || payload.kind === 'illustrious-img2img') &&
+            payload.workerJob.prompts.positive !== payload.context.prompts.positive) ||
           payload.workerJob.sampling.seed !== payload.context.sampling.seed ||
           (item.status !== 'pending' && item.status !== 'running')
         ) {
@@ -1790,6 +2011,32 @@ export class GenerationQueueRepository {
   }
 }
 
+/** Strict operational parser shared by queue reload and candidate recovery. */
+export function parseFrozenGenerationPayloadV1(json: string): FrozenQueuedGenerationV1 {
+  if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+  }
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    (value.kind === 'anima-txt2img' || value.kind === 'anima-img2img')
+  ) {
+    try {
+      return parseFrozenQueuedAnimaGenerationV1(json)
+    } catch {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
+    }
+  }
+  return parseIllustriousPayload(json)
+}
+
 function validateQueueId(id: string): void {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
@@ -1829,7 +2076,6 @@ function batchEmbeddingFilesAgree(
   }
   return true
 }
-
 function frozenPayload(
   context: FrozenNormalGenerationPreparationV1,
   request: IllustriousGenerationRequestV1,
@@ -1889,6 +2135,7 @@ function frozenPayload(
   }
   throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The context and worker operation differ.')
 }
+
 function denoisingFieldsAgree(
   context: FrozenNormalGenerationPreparationV1,
   sampling: IllustriousGenerationRequestV1['job']['sampling'],
@@ -2080,8 +2327,9 @@ function validateSnapshot(
     )
   }
 }
+const parsePayload = parseFrozenGenerationPayloadV1
 
-function parsePayload(json: string): FrozenQueuedIllustriousGenerationV1 {
+function parseIllustriousPayload(json: string): FrozenQueuedIllustriousGenerationV1 {
   let value: unknown
   try {
     value = JSON.parse(json)
@@ -2132,7 +2380,7 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
 
 async function validateTargetPng(
   bytes: Buffer,
-  context: FrozenNormalGenerationPreparationV1,
+  context: FrozenNormalGenerationPreparationV1 | FrozenQueuedAnimaGenerationContextV1,
 ): Promise<void> {
   let actualMode: ReturnType<typeof classifyTargetPngAlpha>
   try {
@@ -2156,7 +2404,10 @@ async function validateTargetPng(
     bytes.readUInt32BE(20) !== context.bbox.height ||
     bytes[25] !== 6 ||
     !hasIccProfile(bytes) ||
-    actualMode !== (context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img')
+    actualMode !==
+      (context.kind === 'normal-img2img-preparation' || context.kind === 'anima-img2img-preparation'
+        ? 'img2img'
+        : 'txt2img')
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued target has wrong PNG pixels.')
   }
@@ -2271,7 +2522,9 @@ function toManagerEntry(
 ): GenerationQueueEntry {
   const item = toItem(row)
   if (
-    (row.operation !== 'illustrious-txt2img' && row.operation !== 'illustrious-img2img') ||
+    !['anima-img2img', 'anima-txt2img', 'illustrious-img2img', 'illustrious-txt2img'].includes(
+      row.operation,
+    ) ||
     !v.is(UuidSchema, row.document_id)
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue identity is invalid.')
@@ -2286,7 +2539,7 @@ function toManagerEntry(
     error: managerError(row),
     finishedAt: row.finished_at,
     id: item.id,
-    operation: row.operation,
+    operation: row.operation as GenerationQueueEntry['operation'],
     projectKey: item.localProjectKey,
     projectName:
       indexedName ??
@@ -2308,11 +2561,35 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
     if (Buffer.byteLength(row.frozen_payload_json, 'utf8') > MAX_PAYLOAD_BYTES) {
       return null
     }
-    const { context, kind } = parsePayload(row.frozen_payload_json)
+    const payload = parsePayload(row.frozen_payload_json)
     if (
-      kind !== row.operation ||
-      context.documentId !== row.document_id ||
-      context.documentRevision !== row.document_revision ||
+      payload.kind !== row.operation ||
+      payload.context.documentId !== row.document_id ||
+      payload.context.documentRevision !== row.document_revision
+    ) {
+      return null
+    }
+    if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+      const { context } = payload
+      return {
+        modelName: context.model.checkpoint.reference.displayName,
+        modelVersion: context.model.checkpoint.reference.versionName,
+        negativePrompt: context.prompts.negative,
+        prompt: context.prompts.positive,
+        sampling: {
+          animaMethod: context.sampling.animaMethod,
+          cfgScale: context.sampling.cfgScale,
+          ...(context.kind === 'anima-img2img-preparation'
+            ? { denoisingStrength: context.sampling.denoisingStrength }
+            : {}),
+          seed: context.sampling.seed,
+          steps: context.sampling.steps,
+        },
+        size: { height: context.bbox.height, width: context.bbox.width },
+      }
+    }
+    const { context } = payload
+    if (
       context.sampling.sampler === null ||
       context.sampling.scheduler === null ||
       context.model.reference.predictionType === null

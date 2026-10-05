@@ -32,6 +32,17 @@ ImageGen Studio is not graph-centric in MVP. Queue items should not expose Invok
 
 The Queue Manager is in MVP scope as an architectural baseline. Even if the first UI is compact, the worker protocol and main process should be designed around a persistent job queue rather than a single ad-hoc active job.
 
+## Current Anima boundary
+
+The [durable Anima checkpoint](../engineering/phase-2c-anima-durable-jobs-research.md)
+adds internal complete-batch admission, exact frozen Retry/dispatch and verified
+local candidates/recovery for txt2img and opaque img2img. Failed/canceled Anima
+rows use the same reviewed action controller and Project identity/close gates.
+Their details show native method, seed, requested Steps, CFG and contextual strength;
+SD sampler/scheduler/prediction fields are absent. Runtime progress uses the native
+plan's actual total (including Heun/clipping/zero work), not requested Steps.
+Public Project Generate and portable Anima Add are subsequent work.
+
 ## Scope
 
 MVP:

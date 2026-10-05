@@ -16,11 +16,9 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/database.types.js'
+import type { FrozenQueuedGenerationV1 } from './generation-queue.js'
 
-import {
-  FrozenIllustriousPayloadSchema as FrozenPayloadSchema,
-  GenerationQueueRepository,
-} from './generation-queue.js'
+import { GenerationQueueRepository, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
@@ -121,9 +119,18 @@ export interface GenerationStagingBatchCapacityInput {
   projectPath: string
   stagingSessionId: string
 }
-export type FrozenGenerationCandidatePayloadV1 = v.InferOutput<typeof FrozenPayloadSchema>
+export type FrozenGenerationCandidatePayloadV1 = FrozenQueuedGenerationV1
+export interface GenerationCandidatePublicationInput {
+  actualSeed: number
+  expectedProvisionalRoot: string
+  expectedStatusSequence: number
+  provisionalOutputPath: string
+  queueItemId: string
+  thumbnail?: unknown
+}
 type CandidateEntry = v.InferOutput<typeof CandidateEntrySchema>
 type FrozenPayload = FrozenGenerationCandidatePayloadV1
+
 type SessionManifest = v.InferOutput<typeof SessionManifestSchema>
 
 export class GenerationStagingError extends Error {
@@ -485,100 +492,17 @@ export class GenerationStagingRepository {
    * Publish only a completed worker output for an exact running attempt. The provisional PNG must
    * be result.png in the main-owned scratch request directory, not an arbitrary path.
    */
-  async publishIllustriousTxt2Img(input: {
-    actualSeed: number
-    expectedProvisionalRoot: string
-    expectedStatusSequence: number
-    provisionalOutputPath: string
-    queueItemId: string
-    thumbnail?: unknown
-  }): Promise<VerifiedGenerationCandidate> {
-    assertUuid(input.queueItemId)
-    if (!isUint32(input.actualSeed) || !isSafeUInt(input.expectedStatusSequence)) {
-      throw new GenerationStagingError(
-        'STAGING_INPUT_INVALID',
-        'The completion metadata is invalid.',
-      )
-    }
-    return await this.serialize(async () => {
-      this.requireReconciled()
-      const queue = new GenerationQueueRepository(this.db, this.dataRoot)
-      const verified = await queue.loadVerifiedInput(input.queueItemId)
-      if (
-        verified.item.status !== 'running' ||
-        verified.item.statusSequence !== input.expectedStatusSequence
-      ) {
-        throw new GenerationStagingError('STAGING_STATUS_CONFLICT', 'The job is no longer running.')
-      }
-      const row = await this.db
-        .selectFrom('generation_queue_item')
-        .selectAll()
-        .where('id', '=', input.queueItemId)
-        .executeTakeFirstOrThrow()
-      if (row.error_code !== null) {
-        throw new GenerationStagingError('STAGING_STATUS_CONFLICT', 'The job was canceled.')
-      }
-      const frozenPayloadJson = row.frozen_payload_json
-      if (
-        Buffer.byteLength(frozenPayloadJson, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES ||
-        !isDeepStrictEqual(parseFrozenPayload(frozenPayloadJson), verified.payload)
-      ) {
-        throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The frozen job changed.')
-      }
-      const outputPath = await this.verifiedProvisionalPath(
-        input.expectedProvisionalRoot,
-        input.provisionalOutputPath,
-      )
-      const outputBytes = await readStableFile(outputPath, MAX_IMAGE_BYTES)
-      await validateOutputPng(outputBytes, verified.payload.context.bbox)
-      const outputSha256 = sha256(outputBytes)
-      const payloadSha256 = sha256(Buffer.from(frozenPayloadJson, 'utf8'))
-      const receipt = await this.reserveReceipt({
-        actualSeed: input.actualSeed,
-        canonicalProjectPath: row.canonical_project_path,
-        expectedStatusSequence: input.expectedStatusSequence,
-        imageByteSize: outputBytes.length,
-        imageSha256: outputSha256,
-        localProjectKey: row.local_project_key,
-        payloadSha256,
-        queueItemId: input.queueItemId,
-        stagingSessionId: row.staging_session_id,
-      })
-      const entry: CandidateEntry = {
-        actualSeed: input.actualSeed,
-        candidateId: input.queueItemId,
-        completedAt: receipt.reserved_at,
-        completionOrder: receipt.completion_order!,
-        documentId: row.document_id,
-        documentRevision: row.document_revision,
-        expectedStatusSequence: input.expectedStatusSequence,
-        frozenPayloadJson,
-        frozenPayloadSha256: payloadSha256,
-        image: {
-          byteSize: outputBytes.length,
-          height: verified.payload.context.bbox.height,
-          iccSha256: IGS_SRGB_ICC_SHA256,
-          relativePath: `assets/${input.queueItemId}.png`,
-          sha256: outputSha256,
-          width: verified.payload.context.bbox.width,
-        },
-        localProjectKey: row.local_project_key,
-        projectPath: row.canonical_project_path,
-        queueItemId: input.queueItemId,
-        stagingSessionId: row.staging_session_id,
-      }
-      const sessionPath = await this.publishFiles(entry, outputBytes)
-      await this.testHooks.afterManifestPublish?.()
-      await this.commitCompletion(entry, 'live')
-      // A derivative failure cannot turn a durable, validated PNG completion into a failed job.
-      // This stays under the session gate, so discard cannot race publication and leave a cache.
-      await this.publishThumbnailCache(entry, sessionPath, outputPath, input.thumbnail).catch(
-        () => undefined,
-      )
-      const candidate = toVerifiedCandidate(entry, sessionPath)
-      const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
-      return cache ? { ...candidate, thumbnail: cache.metadata } : candidate
-    })
+  async publishGenerationCandidate(
+    input: GenerationCandidatePublicationInput,
+  ): Promise<VerifiedGenerationCandidate> {
+    return await this.publishCandidate({ ...input })
+  }
+
+  /** Legacy Illustrious publication remains family restricted. */
+  async publishIllustriousTxt2Img(
+    input: GenerationCandidatePublicationInput,
+  ): Promise<VerifiedGenerationCandidate> {
+    return await this.publishCandidate({ ...input }, 'illustrious')
   }
 
   async readLastActualSeed(localProjectKey: string, documentId: string): Promise<number | null> {
@@ -928,6 +852,109 @@ export class GenerationStagingRepository {
       }
     }
     return candidates.sort((a, b) => a.completionOrder - b.completionOrder)
+  }
+
+  private async publishCandidate(
+    input: GenerationCandidatePublicationInput,
+    requiredFamily?: 'illustrious',
+  ): Promise<VerifiedGenerationCandidate> {
+    assertUuid(input.queueItemId)
+    if (!isUint32(input.actualSeed) || !isSafeUInt(input.expectedStatusSequence)) {
+      throw new GenerationStagingError(
+        'STAGING_INPUT_INVALID',
+        'The completion metadata is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.requireReconciled()
+      const queue = new GenerationQueueRepository(this.db, this.dataRoot)
+      const verified = await queue.loadVerifiedInput(input.queueItemId)
+      if (
+        requiredFamily === 'illustrious' &&
+        verified.payload.kind !== 'illustrious-txt2img' &&
+        verified.payload.kind !== 'illustrious-img2img'
+      ) {
+        throw new GenerationStagingError(
+          'STAGING_INPUT_INVALID',
+          'Illustrious publication cannot consume a different model family.',
+        )
+      }
+      if (
+        verified.item.status !== 'running' ||
+        verified.item.statusSequence !== input.expectedStatusSequence
+      ) {
+        throw new GenerationStagingError('STAGING_STATUS_CONFLICT', 'The job is no longer running.')
+      }
+      const row = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', input.queueItemId)
+        .executeTakeFirstOrThrow()
+      if (row.error_code !== null) {
+        throw new GenerationStagingError('STAGING_STATUS_CONFLICT', 'The job was canceled.')
+      }
+      const frozenPayloadJson = row.frozen_payload_json
+      if (
+        Buffer.byteLength(frozenPayloadJson, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES ||
+        !isDeepStrictEqual(parseFrozenPayload(frozenPayloadJson), verified.payload)
+      ) {
+        throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The frozen job changed.')
+      }
+      const outputPath = await this.verifiedProvisionalPath(
+        input.expectedProvisionalRoot,
+        input.provisionalOutputPath,
+        verified.payload.kind,
+      )
+      const outputBytes = await readStableFile(outputPath, MAX_IMAGE_BYTES)
+      await validateOutputPng(outputBytes, verified.payload.context.bbox)
+      const outputSha256 = sha256(outputBytes)
+      const payloadSha256 = sha256(Buffer.from(frozenPayloadJson, 'utf8'))
+      const receipt = await this.reserveReceipt({
+        actualSeed: input.actualSeed,
+        canonicalProjectPath: row.canonical_project_path,
+        expectedStatusSequence: input.expectedStatusSequence,
+        imageByteSize: outputBytes.length,
+        imageSha256: outputSha256,
+        localProjectKey: row.local_project_key,
+        payloadSha256,
+        queueItemId: input.queueItemId,
+        stagingSessionId: row.staging_session_id,
+      })
+      const entry: CandidateEntry = {
+        actualSeed: input.actualSeed,
+        candidateId: input.queueItemId,
+        completedAt: receipt.reserved_at,
+        completionOrder: receipt.completion_order!,
+        documentId: row.document_id,
+        documentRevision: row.document_revision,
+        expectedStatusSequence: input.expectedStatusSequence,
+        frozenPayloadJson,
+        frozenPayloadSha256: payloadSha256,
+        image: {
+          byteSize: outputBytes.length,
+          height: verified.payload.context.bbox.height,
+          iccSha256: IGS_SRGB_ICC_SHA256,
+          relativePath: `assets/${input.queueItemId}.png`,
+          sha256: outputSha256,
+          width: verified.payload.context.bbox.width,
+        },
+        localProjectKey: row.local_project_key,
+        projectPath: row.canonical_project_path,
+        queueItemId: input.queueItemId,
+        stagingSessionId: row.staging_session_id,
+      }
+      const sessionPath = await this.publishFiles(entry, outputBytes)
+      await this.testHooks.afterManifestPublish?.()
+      await this.commitCompletion(entry, 'live')
+      // A derivative failure cannot turn a durable, validated PNG completion into a failed job.
+      // This stays under the session gate, so discard cannot race publication and leave a cache.
+      await this.publishThumbnailCache(entry, sessionPath, outputPath, input.thumbnail).catch(
+        () => undefined,
+      )
+      const candidate = toVerifiedCandidate(entry, sessionPath)
+      const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
+      return cache ? { ...candidate, thumbnail: cache.metadata } : candidate
+    })
   }
 
   private async publishFiles(entry: CandidateEntry, outputBytes: Buffer): Promise<string> {
@@ -1305,6 +1332,7 @@ export class GenerationStagingRepository {
   private async verifiedProvisionalPath(
     expectedProvisionalRoot: string,
     provisionalOutputPath: string,
+    operation: FrozenPayload['kind'],
   ): Promise<string> {
     if (
       !path.isAbsolute(expectedProvisionalRoot) ||
@@ -1320,10 +1348,14 @@ export class GenerationStagingRepository {
     const scratch = path.join(dataRoot, 'scratch')
     await ensurePrivateDirectory(scratch)
     const canonicalStage = await realpath(expectedProvisionalRoot).catch(() => null)
+    const expectedPrefix =
+      operation === 'anima-txt2img' || operation === 'anima-img2img'
+        ? 'anima-request-'
+        : 'illustrious-request-'
     if (
       canonicalStage !== expectedProvisionalRoot ||
       !isStrictChild(scratch, canonicalStage) ||
-      !path.basename(canonicalStage).startsWith('illustrious-request-')
+      !path.basename(canonicalStage).startsWith(expectedPrefix)
     ) {
       throw new GenerationStagingError(
         'STAGING_OUTPUT_INVALID',
@@ -1375,23 +1407,18 @@ function parseFrozenPayload(json: string): FrozenPayload {
       'The frozen candidate context is too large.',
     )
   }
-  let value: unknown
+  let payload: FrozenPayload
   try {
-    value = JSON.parse(json) as unknown
+    payload = parseFrozenGenerationPayloadV1(json)
   } catch {
     throw new GenerationStagingError(
       'STAGING_INPUT_INVALID',
       'The frozen candidate context is invalid.',
     )
   }
-  const parsed = v.safeParse(FrozenPayloadSchema, value)
-  if (!parsed.success) {
-    throw new GenerationStagingError(
-      'STAGING_INPUT_INVALID',
-      'The frozen candidate context is invalid.',
-    )
+  if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+    return payload
   }
-  const payload = parsed.output
   const { context, workerJob } = payload
   if (
     (context.kind === 'normal-img2img-preparation' &&

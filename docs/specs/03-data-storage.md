@@ -254,7 +254,18 @@ Reuse reads the operational cursor for the captured local Project/document,
 then the saved snapshot; Fixed/Random do not read that cursor. Preparation does
 not advance it, save the document, publish queue rows or create candidates.
 These internal contexts are not new `.igs` accepted configuration or a durable
-Anima queue format; those serializers remain separate pending checkpoints.
+Anima queue format.
+
+The [durable Anima checkpoint](../engineering/phase-2c-anima-durable-jobs-research.md)
+adds a separate strict per-item operational v1 union for `anima-txt2img` and
+`anima-img2img`. Migration 0014 preserves existing attempts, indexes and independent
+receipts. Each item stores concrete raw/compiled signs, its native plan, exact
+checkpoint/Qwen3/VAE and ordered effective/configured LoRAs; disposable paths and
+full batch templates are excluded. Existing payload/target/session ceilings apply
+to actual serialized and JSON-escaped bytes. Recovery retains candidates and
+updates the local Project/document seed cursor only for verified completion.
+Worker protocol and `.igs` accepted schema are unchanged: public Generate and
+portable Anima Add remain closed with an explicit side-effect-free refusal.
 
 ### Generation provenance
 

@@ -79,7 +79,7 @@ export async function withAnimaGenerationBatchRequests<T>(input: {
     Math.max(context.bbox.width, context.bbox.height),
   )
   await reverifyFrozenAnimaGeneration(context, modelService)
-  const base = await canonicalScratchBase(scratchBasePath)
+  const base = await canonicalAnimaScratchBase(scratchBasePath)
   const stage = await mkdtemp(path.join(base, 'anima-request-'))
   try {
     const targetPath = path.join(stage, 'target.png')
@@ -87,7 +87,7 @@ export async function withAnimaGenerationBatchRequests<T>(input: {
     // Files and registry links may change while writing the target; use captured identities only.
     await reverifyFrozenAnimaGeneration(context, modelService)
     // Verify after the final model await too; a replaced target cannot escape into the consumer.
-    await verifyMaterializedTarget(targetPath, context.target.byteSize, context.target.sha256)
+    await verifyMaterializedAnimaTarget(targetPath, context.target.byteSize, context.target.sha256)
     const { model } = context
     const requests = batch.items.map((item, index) => {
       const request = buildAnimaWorkerRequest(
@@ -156,7 +156,7 @@ export async function withAnimaGenerationBatchRequests<T>(input: {
   }
 }
 
-async function verifyMaterializedTarget(
+export async function verifyMaterializedAnimaTarget(
   filePath: string,
   byteSize: number,
   sha256: string,
@@ -213,7 +213,7 @@ async function verifyMaterializedTarget(
   }
 }
 
-async function canonicalScratchBase(basePath: string): Promise<string> {
+export async function canonicalAnimaScratchBase(basePath: string): Promise<string> {
   if (!path.isAbsolute(basePath) || path.resolve(basePath) !== basePath) {
     throw new AnimaGenerationRequestError(
       'INVALID_STAGING_ROOT',

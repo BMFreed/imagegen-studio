@@ -15,7 +15,10 @@ import { localProjectRecoveryKey } from './project-identity.js'
 export class ProjectGenerationProvenanceError extends Error {
   constructor(
     readonly code:
-      'PROVENANCE_INPUT_INVALID' | 'PROVENANCE_OUTPUT_CHANGED' | 'PROVENANCE_SOURCE_CHANGED',
+      | 'PROVENANCE_INPUT_INVALID'
+      | 'PROVENANCE_MODEL_UNSUPPORTED'
+      | 'PROVENANCE_OUTPUT_CHANGED'
+      | 'PROVENANCE_SOURCE_CHANGED',
     message: string,
   ) {
     super(message)
@@ -56,6 +59,12 @@ export function provenanceFromVerifiedRasterCandidate(input: {
     throw new ProjectGenerationProvenanceError(
       'PROVENANCE_INPUT_INVALID',
       'The frozen generation context is invalid.',
+    )
+  }
+  if (payload.kind !== 'illustrious-txt2img' && payload.kind !== 'illustrious-img2img') {
+    throw new ProjectGenerationProvenanceError(
+      'PROVENANCE_MODEL_UNSUPPORTED',
+      'Adding Anima results to the Project is not supported yet. The temporary result is preserved.',
     )
   }
   const { context } = payload

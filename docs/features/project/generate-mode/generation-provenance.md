@@ -30,6 +30,15 @@ Discarded candidates do not create project-local provenance or global history en
 
 Provenance may be serialized as a separate referenced JSON object inside `.igs`, but in the domain model it belongs to the accepted result rather than to a standalone snapshot catalog.
 
+## Current Anima boundary
+
+[Durable Anima jobs](../../../engineering/phase-2c-anima-durable-jobs-research.md)
+retain strict operational frozen settings in local queue/staging recovery. These
+are neither accepted Raster configuration nor portable `.igs` provenance.
+The accepted factory explicitly returns `PROVENANCE_MODEL_UNSUPPORTED` for an
+Anima result, including mixed Add, before acceptance side effects. Immutable
+Anima configuration/comparison and public Generate are the next integration.
+
 ## Contents
 
 Provenance deliberately contains three data groups with different product roles.

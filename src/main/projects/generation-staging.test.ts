@@ -356,6 +356,7 @@ test('real staging publication and recovered payload preserve concrete embedding
       localProjectRecoveryKey(source.projectPath),
     )
     const payload = parseFrozenGenerationCandidatePayloadV1(published.frozenPayloadJson)
+    assert.ok(payload.kind === 'illustrious-txt2img' || payload.kind === 'illustrious-img2img')
     assert.deepEqual(payload.context.embeddingRefs, captured.embeddingRefs)
     assert.deepEqual(payload.context.embeddings, captured.embeddings)
     assert.deepEqual(payload.workerJob.embeddings, workerEmbeddings(captured))

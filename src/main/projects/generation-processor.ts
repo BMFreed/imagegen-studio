@@ -1,3 +1,4 @@
+import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import type {
   GenerationDenoisingProgress,
   GenerationProgressSnapshot,
@@ -5,6 +6,7 @@ import type {
 import { isGenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceAnima,
   supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
   supportsInferenceExternalVae,
@@ -18,6 +20,7 @@ import { constants } from 'node:fs'
 import { lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { QueuedGenerationItem, VerifiedQueuedInput } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
@@ -28,6 +31,11 @@ import type {
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
+import { buildQueuedAnimaWorkerRequest } from './anima-generation-dispatch.js'
+import {
+  type FrozenQueuedAnimaGenerationV1,
+  reverifyFrozenQueuedAnimaGeneration,
+} from './anima-queued-generation.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
@@ -36,11 +44,15 @@ const PROTOCOL_VERSION = '1'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 
+export type GenerationWorkerRequest = AnimaWorkerRequest | IllustriousGenerationRequestV1
+export type GenerationDispatchModelResolver = GenerationModelResolver &
+  Partial<AnimaGenerationModelResolver>
+
 /** A qualified, long-lived worker borrowed for one job. close() must resolve only after exit. */
 export interface GenerationWorkerTransport {
   close: () => Promise<void>
   generate: (
-    request: IllustriousGenerationRequestV1,
+    request: GenerationWorkerRequest,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ) => Promise<unknown>
   readonly ready: InferenceWorkerReady
@@ -98,7 +110,7 @@ export class GenerationProcessor {
   constructor(
     private readonly queue: GenerationQueueRepository,
     private readonly staging: GenerationStagingRepository,
-    private readonly modelService: GenerationModelResolver,
+    private readonly modelService: GenerationDispatchModelResolver,
     private readonly scratchBasePath: string,
   ) {}
 
@@ -292,8 +304,28 @@ export class GenerationProcessor {
     targetPath: string,
     outputPath: string,
     provisionalRoot: string,
-  ): Promise<IllustriousGenerationRequestV1> {
+    ready: InferenceWorkerReady,
+  ): Promise<GenerationWorkerRequest> {
     const frozen = claimed.payload
+    if (isAnimaPayload(frozen)) {
+      const bundle = this.modelService.resolveVerifiedGenerationAnimaBundleForPlan
+      const lora = this.modelService.resolveVerifiedAnimaGenerationLoraForPlan
+      if (typeof bundle !== 'function' || typeof lora !== 'function') {
+        throw new TypeError('Anima generation resource qualification is unavailable.')
+      }
+      await reverifyFrozenQueuedAnimaGeneration(frozen, {
+        resolveVerifiedAnimaGenerationLoraForPlan: lora.bind(this.modelService),
+        resolveVerifiedGenerationAnimaBundleForPlan: bundle.bind(this.modelService),
+      })
+      return buildQueuedAnimaWorkerRequest({
+        outputPath,
+        payload: frozen,
+        provisionalRoot,
+        ready,
+        requestId: randomUUID(),
+        targetPath,
+      })
+    }
     const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
       frozen.context.model.reference,
     )
@@ -388,6 +420,12 @@ export class GenerationProcessor {
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
+        if (isAnimaPayload(claimed.payload) && !supportsInferenceAnima(transport.ready)) {
+          throw new GenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified the original Anima pipeline.',
+          )
+        }
         if (
           claimed.payload.kind === 'illustrious-img2img' &&
           !supportsInferenceImg2Img(transport.ready)
@@ -397,13 +435,18 @@ export class GenerationProcessor {
             'The active worker has not qualified opaque Illustrious img2img.',
           )
         }
-        if (claimed.payload.context.vae && !supportsInferenceExternalVae(transport.ready)) {
+        if (
+          !isAnimaPayload(claimed.payload) &&
+          claimed.payload.context.vae &&
+          !supportsInferenceExternalVae(transport.ready)
+        ) {
           throw new GenerationProcessorError(
             'INFERENCE_UNAVAILABLE',
             'The active worker has not qualified external Illustrious VAE loading.',
           )
         }
         if (
+          !isAnimaPayload(claimed.payload) &&
           claimed.payload.context.vaePrecision !== undefined &&
           claimed.payload.context.vaePrecision !== 'Auto' &&
           !supportsInferenceVaePrecision(transport.ready)
@@ -413,10 +456,17 @@ export class GenerationProcessor {
             'The active worker has not qualified manual Illustrious VAE Precision.',
           )
         }
-        if (claimed.payload.context.loras?.length && !supportsInferenceLora(transport.ready)) {
+        if (
+          !isAnimaPayload(claimed.payload) &&
+          claimed.payload.context.loras?.length &&
+          !supportsInferenceLora(transport.ready)
+        ) {
           throw new Error('The active worker has not qualified Illustrious LoRA.')
         }
-        const provisionalRoot = await createProvisionalRoot(this.scratchBasePath)
+        const provisionalRoot = await createProvisionalRoot(
+          this.scratchBasePath,
+          isAnimaPayload(claimed.payload) ? 'anima' : 'illustrious',
+        )
         active.provisionalRoot = provisionalRoot
         const targetPath = path.join(provisionalRoot, 'target.png')
         const outputPath = path.join(provisionalRoot, 'result.png')
@@ -425,10 +475,19 @@ export class GenerationProcessor {
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
-        const request = await this.requestForClaim(claimed, targetPath, outputPath, provisionalRoot)
+        const request = await this.requestForClaim(
+          claimed,
+          targetPath,
+          outputPath,
+          provisionalRoot,
+          transport.ready,
+        )
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
+        // Resource qualification and queue ownership reads awaited after target materialization.
+        // Recheck the owned copy too before handing its pathname to the worker.
+        await readStableTarget({ ...claimed, targetPath })
         dispatched = true
         const capturedActive = active
         active.receivingProgress = true
@@ -441,7 +500,9 @@ export class GenerationProcessor {
             this.stopping ||
             !supportsInferenceDenoisingProgress(transport.ready) ||
             !isGenerationDenoisingProgress(progress) ||
-            progress.totalSteps > 2 * request.job.sampling.steps
+            (isAnimaRequest(request)
+              ? progress.totalSteps !== request.job.sampling.totalSteps
+              : progress.totalSteps > 2 * request.job.sampling.steps)
           ) {
             return
           }
@@ -478,7 +539,7 @@ export class GenerationProcessor {
         }
         const { actualSeed, thumbnail } = requireCorrelatedDone(outcome.response, request)
         publishing = true
-        const candidate = await this.staging.publishIllustriousTxt2Img({
+        const candidate = await this.staging.publishGenerationCandidate({
           actualSeed,
           expectedProvisionalRoot: provisionalRoot,
           expectedStatusSequence: claimed.item.statusSequence,
@@ -604,7 +665,7 @@ function requireInferenceReady(ready: InferenceWorkerReady): void {
 
 function requireCorrelatedDone(
   response: unknown,
-  request: IllustriousGenerationRequestV1,
+  request: GenerationWorkerRequest,
 ): { actualSeed: number; thumbnail: unknown } {
   if (typeof response !== 'object' || response === null) {
     throw new Error('The generation worker response is invalid.')
@@ -624,7 +685,20 @@ function requireCorrelatedDone(
   return { actualSeed: done.seed as number, thumbnail: done.thumbnail }
 }
 
-async function createProvisionalRoot(scratchBasePath: string): Promise<string> {
+function isAnimaPayload(
+  payload: VerifiedQueuedInput['payload'],
+): payload is FrozenQueuedAnimaGenerationV1 {
+  return payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img'
+}
+
+function isAnimaRequest(request: GenerationWorkerRequest): request is AnimaWorkerRequest {
+  return request.type === 'generate-anima-txt2img' || request.type === 'generate-anima-img2img'
+}
+
+async function createProvisionalRoot(
+  scratchBasePath: string,
+  family: 'anima' | 'illustrious',
+): Promise<string> {
   if (!path.isAbsolute(scratchBasePath) || path.resolve(scratchBasePath) !== scratchBasePath) {
     throw new Error('The generation scratch directory is invalid.')
   }
@@ -637,7 +711,7 @@ async function createProvisionalRoot(scratchBasePath: string): Promise<string> {
   ) {
     throw new Error('The generation scratch directory is unsafe.')
   }
-  return await mkdtemp(path.join(scratchBasePath, 'illustrious-request-'))
+  return await mkdtemp(path.join(scratchBasePath, `${family}-request-`))
 }
 
 async function readStableTarget(claimed: VerifiedQueuedInput): Promise<Buffer> {

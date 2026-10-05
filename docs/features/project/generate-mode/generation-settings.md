@@ -137,7 +137,12 @@ disabled rows remain authored data. Neutral CFG Rescale `0` and precision `Auto`
 add no Anima wire fields; nonneutral/manual policies, external VAE, CLIP Skip and
 embedding refs refuse explicitly. This preparation does not enqueue, update the
 seed cursor or document, or publish accepted results. Public Generate and frozen
-queue/Retry/accepted integration remain subsequent work.
+accepted integration remain subsequent work for that preparation boundary.
+The [durable jobs checkpoint](../../../engineering/phase-2c-anima-durable-jobs-research.md)
+now stores concrete per-item text/native plans and supports exact frozen Retry,
+dispatch and operational recovery separately. Queue Manager shows the saved native
+method; neither Retry nor dispatch reads today's draft or chooses a new seed.
+Public Project Generate and accepted Anima configuration remain closed.
 
 If a text edit removes an existing embedding activation token, main prunes its
 sidecar ref; retyping the token does not restore the ref until resource-aware

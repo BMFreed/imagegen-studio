@@ -40,24 +40,24 @@ const INPUT_FIELDS = ['mode', 'width', 'height', 'steps', 'seed', 'guidanceScale
  */
 export function compileAnimaEulerDenoisingPlan(input: unknown): AnimaEulerDenoisingPlan {
   const fields = captureFields(input)
-  const mode = fields.mode
+  const mode = fields['mode']
   if (mode !== 'txt2img' && mode !== 'img2img') {
     throw new AnimaEulerDenoisingPlanError('Anima Euler mode is unsupported.')
   }
-  const width = boundedInteger(fields.width, 'width', 64, 2048)
-  const height = boundedInteger(fields.height, 'height', 64, 2048)
+  const width = boundedInteger(fields['width'], 'width', 64, 2048)
+  const height = boundedInteger(fields['height'], 'height', 64, 2048)
   if (width % 8 !== 0 || height % 8 !== 0 || width * height > 4_000_000) {
     throw new AnimaEulerDenoisingPlanError(
       'Anima Euler dimensions exceed the aligned pixel envelope.',
     )
   }
-  const steps = boundedInteger(fields.steps, 'steps', 1, 200)
-  const seed = boundedInteger(fields.seed, 'seed', 0, 0xff_ff_ff_ff)
-  const guidanceScale = boundedNumber(fields.guidanceScale, 'guidance scale', 1, 30)
-  if (mode === 'txt2img' && fields.strength !== null) {
+  const steps = boundedInteger(fields['steps'], 'steps', 1, 200)
+  const seed = boundedInteger(fields['seed'], 'seed', 0, 0xff_ff_ff_ff)
+  const guidanceScale = boundedNumber(fields['guidanceScale'], 'guidance scale', 1, 30)
+  if (mode === 'txt2img' && fields['strength'] !== null) {
     throw new AnimaEulerDenoisingPlanError('Anima Euler txt2img strength must be null.')
   }
-  const strength = mode === 'img2img' ? boundedNumber(fields.strength, 'strength', 0, 1) : null
+  const strength = mode === 'img2img' ? boundedNumber(fields['strength'], 'strength', 0, 1) : null
   // Preserve Invoke's IEEE-754 clipping expression: do not round boundary values.
   // Strength 0 intentionally extends its invocation with the Project no-denoise case.
   const startStep = strength === null ? 0 : Math.floor((1 - strength) * steps)

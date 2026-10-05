@@ -505,6 +505,14 @@ test('atomic concrete embedding branches preserve original refs and per-polarity
         ),
       embeddingReady,
     )
+    assert.ok(
+      originals[0].payload.kind === 'illustrious-txt2img' ||
+        originals[0].payload.kind === 'illustrious-img2img',
+    )
+    assert.ok(
+      originals[1].payload.kind === 'illustrious-txt2img' ||
+        originals[1].payload.kind === 'illustrious-img2img',
+    )
     assert.deepEqual(originals[0].payload.context.embeddingRefs, capturedBefore.embeddingRefs)
     assert.equal(originals[0].payload.context.embeddings!.positive.length, 1)
     assert.equal(originals[1].payload.context.embeddings!.positive.length, 0)
@@ -2268,6 +2276,10 @@ test('CFG Rescale is frozen through SQLite publication, restart and retry; misma
     )
     prepared.context.sampling.cfgRescale = 0.9
     const original = await queue.loadVerifiedInput(queued.id)
+    assert.ok(
+      original.payload.kind === 'illustrious-txt2img' ||
+        original.payload.kind === 'illustrious-img2img',
+    )
     assert.equal(original.payload.context.sampling.cfgRescale, 0.3)
     assert.equal(original.payload.workerJob.sampling.cfgRescale, 0.3)
     await database.close()
@@ -2278,6 +2290,10 @@ test('CFG Rescale is frozen through SQLite publication, restart and retry; misma
     assert.equal(terminal.item.status, 'canceled')
     const retried = await queue.retryTerminal(queued.id, terminal.item.statusSequence)
     const frozen = await queue.loadVerifiedInput(retried.id)
+    assert.ok(
+      frozen.payload.kind === 'illustrious-txt2img' ||
+        frozen.payload.kind === 'illustrious-img2img',
+    )
     assert.deepEqual(frozen.payload, original.payload)
     assert.equal(frozen.payload.context.sampling.cfgRescale, 0.3)
     const corrupted = structuredClone(frozen.payload)
@@ -2292,6 +2308,10 @@ test('CFG Rescale is frozen through SQLite publication, restart and retry; misma
     legacy.prepared.context.sampling.cfgRescale = 0
     const neutral = await enqueueFixture(root, queue, legacy.prepared, legacy.projectPath)
     const savedNeutral = await queue.loadVerifiedInput(neutral.id)
+    assert.ok(
+      savedNeutral.payload.kind === 'illustrious-txt2img' ||
+        savedNeutral.payload.kind === 'illustrious-img2img',
+    )
     assert.equal(savedNeutral.payload.context.sampling.cfgRescale, 0)
     assert.equal(Object.hasOwn(savedNeutral.payload.workerJob.sampling, 'cfgRescale'), false)
   } finally {

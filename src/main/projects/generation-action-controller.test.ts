@@ -200,6 +200,10 @@ class ControlledRuntime {
       },
       composeTarget: (input) => this.composeTarget(input),
       generate: async (request) => {
+        assert.ok(
+          request.type === 'generate-illustrious-txt2img' ||
+            request.type === 'generate-illustrious-img2img',
+        )
         this.generated.push(request)
         await this.beforeGenerate?.()
         await writeFile(request.job.output.pngPath, this.output, { flag: 'wx', mode: 0o600 })
@@ -677,6 +681,10 @@ test('busy Generate publishes a sibling frozen Project before the held inference
       }
       assert.equal(queued.jobIds.length, 1)
       const frozen = await fixture.queue.loadVerifiedInput(queued.jobIds[0])
+      assert.ok(
+        frozen.payload.kind === 'illustrious-txt2img' ||
+          frozen.payload.kind === 'illustrious-img2img',
+      )
       assert.equal(frozen.item.status, 'pending')
       assert.equal(frozen.payload.context.documentId, sibling.documentId)
       assert.equal(frozen.payload.context.prompts.positive, 'captured sibling prompt')
@@ -797,6 +805,10 @@ test('Generate gates external VAE before composition and freezes its exact versi
       await waitForState(controller, tabId, (state) => state.phase === 'idle')
       for (const id of result.jobIds) {
         const input = await queue.loadVerifiedInput(id)
+        assert.ok(
+          input.payload.kind === 'illustrious-txt2img' ||
+            input.payload.kind === 'illustrious-img2img',
+        )
         assert.equal(input.item.status, 'completed')
         assert.deepEqual(input.payload.context.vae?.reference, selected)
         assert.deepEqual(input.payload.workerJob.vae, {
@@ -966,6 +978,10 @@ test('Generate gates manual VAE Precision before composition and freezes one cap
       await waitForState(controller, tabId, (state) => state.phase === 'idle')
       for (const id of result.jobIds) {
         const item = await queue.loadVerifiedInput(id)
+        assert.ok(
+          item.payload.kind === 'illustrious-txt2img' ||
+            item.payload.kind === 'illustrious-img2img',
+        )
         assert.equal(item.item.status, 'completed')
         assert.equal(item.payload.context.vaePrecision, 'FP32')
         assert.equal(item.payload.workerJob.vaePrecision, 'FP32')
@@ -1061,6 +1077,10 @@ test('Generate gates CFG Rescale before composition and freezes the supported va
       }
       await waitForState(controller, tabId, (state) => state.phase === 'idle')
       const frozen = await queue.loadVerifiedInput(queued.jobIds[0])
+      assert.ok(
+        frozen.payload.kind === 'illustrious-txt2img' ||
+          frozen.payload.kind === 'illustrious-img2img',
+      )
       assert.equal(frozen.item.status, 'completed')
       assert.equal(frozen.payload.context.sampling.cfgRescale, 0.3)
       assert.equal(frozen.payload.workerJob.sampling.cfgRescale, 0.3)
@@ -1258,6 +1278,10 @@ test('busy Generate preparation refusals retain old work, candidate bytes and th
       await withFixture(async (fixture) => {
         const { release, review: failed } = await holdRunningSibling(fixture)
         const source = await fixture.queue.loadVerifiedInput(failed.id)
+        assert.ok(
+          source.payload.kind === 'illustrious-txt2img' ||
+            source.payload.kind === 'illustrious-img2img',
+        )
         const checkpoint = await readFile(source.payload.context.model.managedPath)
         try {
           const page = await fixture.controller.getQueue()
@@ -1654,6 +1678,13 @@ test('Generate freezes expanded pairs, drains real queue to staging, and does no
       ['red lantern', 'red lantern', 'blue lantern', 'blue lantern'],
     )
     const frozen = await Promise.all(result.jobIds.map((id) => fixture.queue.loadVerifiedInput(id)))
+    assert.ok(
+      frozen.every(
+        (item) =>
+          item.payload.kind === 'illustrious-txt2img' ||
+          item.payload.kind === 'illustrious-img2img',
+      ),
+    )
     assert.deepEqual(
       frozen.map((item) => item.payload.context.prompts.negative),
       ['blur', 'noise', 'blur', 'noise'],
@@ -1864,6 +1895,13 @@ test('Project edits during a paused runtime lease cannot replace the captured dr
     }
     assert.equal(result.jobIds.length, 4, 'the captured dynamic settings remain effective')
     const frozen = await Promise.all(result.jobIds.map((id) => fixture.queue.loadVerifiedInput(id)))
+    assert.ok(
+      frozen.every(
+        (item) =>
+          item.payload.kind === 'illustrious-txt2img' ||
+          item.payload.kind === 'illustrious-img2img',
+      ),
+    )
     assert.deepEqual(
       frozen.map((item) => item.payload.context.prompts.positive),
       ['red lantern', 'red lantern', 'blue lantern', 'blue lantern'],
@@ -1901,6 +1939,10 @@ test('Project input is captured before an asynchronous replacement-impact read',
       return
     }
     const frozen = await fixture.queue.loadVerifiedInput(result.jobIds[0])
+    assert.ok(
+      frozen.payload.kind === 'illustrious-txt2img' ||
+        frozen.payload.kind === 'illustrious-img2img',
+    )
     assert.equal(frozen.payload.context.prompts.positive, 'red lantern')
   })
 })
@@ -2098,6 +2140,10 @@ test('Retry admits its real frozen queue copy while a sibling worker is running 
     const { release, review } = await holdRunningSibling(fixture)
     try {
       const source = await fixture.queue.loadVerifiedInput(review.id)
+      assert.ok(
+        source.payload.kind === 'illustrious-txt2img' ||
+          source.payload.kind === 'illustrious-img2img',
+      )
       const originalRows = (await fixture.controller.getQueue()).items.map((item) => item.id)
       const saved = await readFile(fixture.packagePath)
       const candidates = await fixture.staging.listVerifiedCandidates(fixture.tabId)
@@ -2123,6 +2169,10 @@ test('Retry admits its real frozen queue copy while a sibling worker is running 
       assert.equal(fixture.runtime.generated.length, 2, 'the current worker alone owns inference')
       assert.equal(fixture.runtime.leaseCount, leases, 'metadata admission starts no CUDA child')
       const copied = await fixture.queue.loadVerifiedInput(retry.id)
+      assert.ok(
+        copied.payload.kind === 'illustrious-txt2img' ||
+          copied.payload.kind === 'illustrious-img2img',
+      )
       assert.deepEqual(copied.payload, source.payload)
       assert.deepEqual(await readFile(copied.targetPath), await readFile(source.targetPath))
       assert.notEqual(retry.stagingSessionId, source.item.stagingSessionId)
@@ -2254,6 +2304,10 @@ test('busy Retry runtime and checkpoint refusals preserve the reviewed source an
       await withFixture(async (fixture) => {
         const { release, review } = await holdRunningSibling(fixture)
         const source = await fixture.queue.loadVerifiedInput(review.id)
+        assert.ok(
+          source.payload.kind === 'illustrious-txt2img' ||
+            source.payload.kind === 'illustrious-img2img',
+        )
         const checkpoint = await readFile(source.payload.context.model.managedPath)
         try {
           const before = await fixture.controller.getQueue()
@@ -2715,6 +2769,10 @@ test('Retry verifies installed checkpoint again before consuming the reviewed so
   await withFixture(async (fixture) => {
     const review = await makeFailedSource(fixture)
     const source = await fixture.queue.loadVerifiedInput(review.id)
+    assert.ok(
+      source.payload.kind === 'illustrious-txt2img' ||
+        source.payload.kind === 'illustrious-img2img',
+    )
     const before = await fixture.controller.getQueue()
     await writeFile(source.payload.context.model.managedPath, 'corrupted replacement weights')
     await assert.rejects(fixture.controller.retryJob(review))
@@ -2851,6 +2909,10 @@ test('Generate refuses active LoRA before composition on an older peer and freez
     }
     await waitForState(controller, tabId, (state) => state.phase === 'idle')
     const frozen = await fixture.queue.loadVerifiedInput(queued.jobIds[0])
+    assert.ok(
+      frozen.payload.kind === 'illustrious-txt2img' ||
+        frozen.payload.kind === 'illustrious-img2img',
+    )
     assert.equal(frozen.item.status, 'completed')
     assert.deepEqual(frozen.payload.context.loraStack, [
       { enabled: true, resource: reference, weight: -0.5 },
@@ -2882,6 +2944,10 @@ test('actual Retry controller requires native adapter capability and reverified 
     const source = (await controller.getQueue()).items[0]
     assert.equal(source.status, 'failed')
     const frozen = await fixture.queue.loadVerifiedInput(source.id)
+    assert.ok(
+      frozen.payload.kind === 'illustrious-txt2img' ||
+        frozen.payload.kind === 'illustrious-img2img',
+    )
     const loraPath = frozen.payload.context.loras![0].managedPath
     const bytes = await readFile(loraPath)
     await projects.updateGenerationDraft(tabId, {
@@ -2997,6 +3063,10 @@ test('Generate freezes distinct per-polarity exact embeddings for every concrete
     assert.equal(candidates.length, 4)
     for (const id of result.jobIds) {
       const loaded = await fixture.queue.loadVerifiedInput(id)
+      assert.ok(
+        loaded.payload.kind === 'illustrious-txt2img' ||
+          loaded.payload.kind === 'illustrious-img2img',
+      )
       const { context, workerJob } = loaded.payload
       assert.deepEqual(context.embeddingRefs, { negative: negativeRefs, positive: positiveRefs })
       const selected = context.prompts.positive.includes('<other-style>') ? other : positive

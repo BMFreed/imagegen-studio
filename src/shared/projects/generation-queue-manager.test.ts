@@ -62,14 +62,15 @@ test('Queue Manager wire guard accepts all actual statuses, seed/sequence zero a
     assert.equal(isGenerationQueuePage(page([{ ...row, details: null }])), true)
   }
   const row = entry()
+  assert.ok(row.details && row.details.sampling.animaMethod === undefined)
   assert.equal(
     isGenerationQueuePage(
       page([
         {
           ...row,
           details: {
-            ...row.details!,
-            sampling: { ...row.details!.sampling, predictionType: 'sample' },
+            ...row.details,
+            sampling: { ...row.details.sampling, predictionType: 'sample' },
           },
         },
       ]),
@@ -141,4 +142,71 @@ test('Queue Manager reviewed commands and cursors enforce exact shape before mai
     isGenerationQueueCursor({ createdAt: row.createdAt, id: row.id, path: '/private' }),
     false,
   )
+})
+
+test('Queue Manager Anima details expose native methods and reject fake SD fields or operation/mode disagreement', () => {
+  const legacy = entry()
+  const row: GenerationQueueEntry = {
+    ...legacy,
+    details: {
+      ...legacy.details!,
+      sampling: { animaMethod: 'heun', cfgScale: 4, seed: 0, steps: 200 },
+    },
+    operation: 'anima-txt2img',
+  }
+  assert.equal(isGenerationQueuePage(page([row])), true)
+  assert.equal(isGenerationQueuePage(page([{ ...row, details: null }])), true)
+  for (const animaMethod of [
+    'euler',
+    'heun',
+    'dpmpp_2m',
+    'dpmpp_2m_sde',
+    'er_sde',
+    'lcm',
+  ] as const) {
+    assert.equal(
+      isGenerationQueuePage(
+        page([
+          {
+            ...row,
+            details: {
+              ...row.details!,
+              sampling: { animaMethod, cfgScale: 4, seed: 0, steps: 200 },
+            },
+          },
+        ]),
+      ),
+      true,
+    )
+  }
+  const img: GenerationQueueEntry = {
+    ...row,
+    details: {
+      ...row.details!,
+      sampling: { animaMethod: 'heun', cfgScale: 4, denoisingStrength: 0, seed: 0, steps: 200 },
+    },
+    operation: 'anima-img2img',
+  }
+  assert.equal(isGenerationQueuePage(page([img])), true)
+  for (const sampling of [
+    { ...row.details!.sampling, sampler: 'Euler' },
+    { ...row.details!.sampling, scheduler: 'Normal' },
+    { ...row.details!.sampling, predictionType: 'epsilon' },
+    { ...row.details!.sampling, cfgRescale: 0 },
+    { ...row.details!.sampling, denoisingStrength: 0.5 },
+    { ...row.details!.sampling, animaMethod: 'DDIM' },
+    { ...row.details!.sampling, cfgScale: 0 },
+    { ...row.details!.sampling, steps: 201 },
+  ]) {
+    assert.equal(
+      isGenerationQueuePage({
+        ...page([row]),
+        items: [{ ...row, details: { ...row.details!, sampling } }],
+      }),
+      false,
+    )
+  }
+  assert.equal(isGenerationQueuePage(page([{ ...img, details: row.details }])), false)
+  assert.equal(isGenerationQueuePage(page([{ ...row, operation: 'illustrious-txt2img' }])), false)
+  assert.equal(isGenerationQueuePage(page([{ ...legacy, operation: 'anima-txt2img' }])), false)
 })

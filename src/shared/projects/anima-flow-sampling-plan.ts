@@ -54,7 +54,7 @@ const INPUT_FIELDS = [
  */
 export function compileAnimaFlowSamplingPlan(input: unknown): AnimaFlowSamplingPlan {
   const fields = captureFields(input)
-  const scheduler = fields.scheduler
+  const scheduler = fields['scheduler']
   if (
     scheduler !== 'euler' &&
     scheduler !== 'heun' &&
@@ -99,8 +99,9 @@ export function compileAnimaFlowSamplingPlan(input: unknown): AnimaFlowSamplingP
   }).sigmas.map((sigma) => Math.fround(sigma))
   const sigmas = base.totalSteps === 0 ? [0] : full.slice(base.startStep)
   const timesteps = sigmas.slice(0, -1).map((sigma) => Math.fround(sigma * 1000))
+  // A nonempty clipped timestep grid retains its leading sigma and terminal zero.
   const initialSigma =
-    timesteps.length === 0 ? 0 : base.mode === 'txt2img' || base.strength === 1 ? 1 : sigmas[0]
+    timesteps.length === 0 ? 0 : base.mode === 'txt2img' || base.strength === 1 ? 1 : sigmas.at(0)!
   return Object.freeze({
     ...base,
     ...identity,

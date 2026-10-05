@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Anima durable jobs, Retry and operational recovery](./phase-2c-anima-durable-jobs-research.md) — internal concrete queue/native dispatch and progress, exact Retry, verified local candidates/receipts/restart; public Generate and portable Anima Add remain closed.
 - [Anima Main preparation and concrete batches](./phase-2c-anima-main-preparation-research.md) — separate captured Project/bundle/seed preparation, concrete compiled native batches and qualified scoped requests. Public Generate, durable queue/Retry/dispatch and accepted provenance remain open.
 - [Anima Project authoring](./phase-2c-anima-authoring-research.md) — optional native six-method draft choice and current-family prompt attention, ordinary history/shadow/explicit Save, and synchronized in-memory preset authoring. Public Main admission/queue/Retry/provenance and release remain open.
 - [Model install staging publication](./model-install-staging-publication-research.md) — owned staging hardlinks and directory sync finish before normal/repair SQLite publication; strict verification, cancellation and rollback remain enforced. Actual installer/SQLite controls and five semantic mutations verify the fix.

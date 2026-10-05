@@ -7,6 +7,15 @@ Related contracts: [frozen queue jobs](../../queue-manager.md#frozen-job-rule),
 [Project Undo/Redo](../undo-redo.md), [document lifecycle](../document-lifecycle.md)
 and [accepted-result provenance](./generation-provenance.md).
 
+## Current Anima boundary
+
+[Internal Anima jobs](../../../engineering/phase-2c-anima-durable-jobs-research.md)
+use the shared local staging/receipts, validated PNG/optional thumbnails and
+restart/tombstone recovery. A candidate is still operational data. Anima Add,
+including a mixed selection with Illustrious, explicitly refuses before journal,
+Project edits, sibling cancellation or discard; all candidates remain available.
+Portable Anima acceptance and public Generate remain unconnected.
+
 ## Feature
 
 `GenerationResults` is the canvas-adjacent staging surface for pending, running and completed generation candidates.

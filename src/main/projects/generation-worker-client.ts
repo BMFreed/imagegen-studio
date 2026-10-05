@@ -1,10 +1,15 @@
 import {
+  type AnimaWorkerRequest,
+  captureCompiledAnimaWorkerRequest,
+} from '../../shared/projects/anima-worker-request.js'
+import {
   type GenerationDenoisingProgress,
   isGenerationDenoisingProgress,
   MAX_DENOISING_STEPS,
 } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceAnima,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
   supportsInferenceExternalVae,
@@ -19,7 +24,7 @@ import { constants } from 'node:fs'
 import { access, lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { GenerationWorkerTransport } from './generation-processor.js'
+import type { GenerationWorkerRequest, GenerationWorkerTransport } from './generation-processor.js'
 import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
@@ -64,6 +69,7 @@ type PendingGeneration = {
   completionType: 'generation-done' | 'target-done'
   outputPath: string
   progress: {
+    expectedTotalSteps: number | null
     lastStep: number
     maxSteps: number
     onProgress?: (progress: GenerationDenoisingProgress) => void
@@ -128,7 +134,11 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private readonly scratchBasePath: string
   // The worker executes synchronous requests serially. Retain the previous generation's ID to
   // discard its trailing progress without accepting unknown/crossed request IDs.
-  private settledGeneration: { maxSteps: number; requestId: string } | null = null
+  private settledGeneration: {
+    expectedTotalSteps: number | null
+    maxSteps: number
+    requestId: string
+  } | null = null
   private readonly shutdownWaitMs: number
   private readonly startupPromise: Promise<GenerationWorkerReady>
   private startupReject!: (error: GenerationWorkerError) => void
@@ -320,7 +330,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   async generate(
-    request: IllustriousGenerationRequestV1,
+    request: GenerationWorkerRequest,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ): Promise<unknown> {
     if (this.closed) {
@@ -332,63 +342,86 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     this.busy = true
     try {
       // Snapshot before any asynchronous path validation: the caller may still own mutable state.
-      let frozen: IllustriousGenerationRequestV1
+      let frozen: GenerationWorkerRequest
       try {
         frozen = structuredClone(request)
       } catch {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
       }
-      if (!validRequestShape(frozen)) {
-        throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
-      }
-      if (
-        frozen.type === 'generate-illustrious-img2img' &&
-        !supportsInferenceImg2Img(this.readyMessage)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified opaque Illustrious img2img.',
-        )
-      }
-      if (!supportsInferenceLora(this.readyMessage)) {
-        if (frozen.job.loras?.length) {
+      if (isAnimaRequest(frozen)) {
+        if (!supportsInferenceAnima(this.readyMessage)) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
-            'The active worker has not qualified Illustrious LoRA.',
+            'The active worker has not qualified the original Anima pipeline.',
           )
         }
-        delete frozen.job.loras
-      }
-      if (!supportsInferenceVaePrecision(this.readyMessage)) {
-        if (frozen.job.vaePrecision !== undefined && frozen.job.vaePrecision !== 'Auto') {
+        try {
+          frozen = captureCompiledAnimaWorkerRequest(frozen, this.readyMessage)
+        } catch {
+          throw new GenerationWorkerError(
+            'INVALID_REQUEST',
+            'The compiled Anima generation request is invalid.',
+          )
+        }
+        if (!UUID_PATTERN.test(frozen.requestId)) {
+          throw new GenerationWorkerError(
+            'INVALID_REQUEST',
+            'The generation request identity is invalid.',
+          )
+        }
+      } else {
+        if (!validRequestShape(frozen)) {
+          throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
+        }
+        if (
+          frozen.type === 'generate-illustrious-img2img' &&
+          !supportsInferenceImg2Img(this.readyMessage)
+        ) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
-            'The active worker has not qualified manual Illustrious VAE Precision.',
+            'The active worker has not qualified opaque Illustrious img2img.',
           )
         }
-        // Preserve durable metadata; old Python parsers receive only this disposable copy.
-        delete frozen.job.vaePrecision
-      }
-      if (!supportsInferenceExternalVae(this.readyMessage)) {
-        if (frozen.job.vae) {
-          throw new GenerationWorkerError(
-            'WORKER_VERSION_MISMATCH',
-            'The active worker has not qualified external Illustrious VAE loading.',
-          )
+        if (!supportsInferenceLora(this.readyMessage)) {
+          if (frozen.job.loras?.length) {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The active worker has not qualified Illustrious LoRA.',
+            )
+          }
+          delete frozen.job.loras
         }
-        // Embedded is neutral for old parsers; the frozen durable copy remains explicit null.
-        delete frozen.job.vae
-      }
-      if (!supportsInferenceCFGRescale(this.readyMessage)) {
-        if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
-          throw new GenerationWorkerError(
-            'WORKER_VERSION_MISMATCH',
-            'The active worker has not qualified Illustrious CFG Rescale.',
-          )
+        if (!supportsInferenceVaePrecision(this.readyMessage)) {
+          if (frozen.job.vaePrecision !== undefined && frozen.job.vaePrecision !== 'Auto') {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The active worker has not qualified manual Illustrious VAE Precision.',
+            )
+          }
+          // Preserve durable metadata; old Python parsers receive only this disposable copy.
+          delete frozen.job.vaePrecision
         }
-        // Old Python parsers reject unknown fields. Adapt only the disposable wire copy; the
-        // durable preparation still distinguishes recorded neutral 0 from historical absence.
-        delete frozen.job.sampling.cfgRescale
+        if (!supportsInferenceExternalVae(this.readyMessage)) {
+          if (frozen.job.vae) {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The active worker has not qualified external Illustrious VAE loading.',
+            )
+          }
+          // Embedded is neutral for old parsers; the frozen durable copy remains explicit null.
+          delete frozen.job.vae
+        }
+        if (!supportsInferenceCFGRescale(this.readyMessage)) {
+          if ((frozen.job.sampling.cfgRescale ?? 0) !== 0) {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The active worker has not qualified Illustrious CFG Rescale.',
+            )
+          }
+          // Old Python parsers reject unknown fields. Adapt only the disposable wire copy; the
+          // durable preparation still distinguishes recorded neutral 0 from historical absence.
+          delete frozen.job.sampling.cfgRescale
+        }
       }
       let line: Buffer
       try {
@@ -405,7 +438,11 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         frozen.requestId,
         frozen.job.output.pngPath,
         'generation-done',
-        { maxSteps: 2 * frozen.job.sampling.steps, onProgress },
+        {
+          expectedTotalSteps: isAnimaRequest(frozen) ? frozen.job.sampling.totalSteps : null,
+          maxSteps: 2 * frozen.job.sampling.steps,
+          onProgress,
+        },
       )
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -441,7 +478,11 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     requestId: string,
     outputPath: string,
     completionType: PendingGeneration['completionType'],
-    progress?: { maxSteps: number; onProgress?: (progress: GenerationDenoisingProgress) => void },
+    progress?: {
+      expectedTotalSteps: number | null
+      maxSteps: number
+      onProgress?: (progress: GenerationDenoisingProgress) => void
+    },
   ): Promise<Record<string, unknown>> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -563,6 +604,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     this.active = null
     if (active.progress) {
       this.settledGeneration = {
+        expectedTotalSteps: active.progress.expectedTotalSteps,
         maxSteps: active.progress.maxSteps,
         requestId: active.requestId,
       }
@@ -586,7 +628,9 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     if (!active || input.requestId !== active.requestId) {
       if (
         this.settledGeneration?.requestId === input.requestId &&
-        progress.totalSteps <= this.settledGeneration.maxSteps
+        (this.settledGeneration.expectedTotalSteps === null
+          ? progress.totalSteps <= this.settledGeneration.maxSteps
+          : progress.totalSteps === this.settledGeneration.expectedTotalSteps)
       ) {
         return
       }
@@ -597,6 +641,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     if (
       !owner ||
       progress.totalSteps > owner.maxSteps ||
+      (owner.expectedTotalSteps !== null && progress.totalSteps !== owner.expectedTotalSteps) ||
       (owner.totalSteps !== null && progress.totalSteps !== owner.totalSteps)
     ) {
       this.fail(new GenerationWorkerError('PROTOCOL_ERROR', 'Inconsistent worker progress.'))
@@ -650,8 +695,38 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     }
   }
 
-  private async validateRequestPaths(request: IllustriousGenerationRequestV1): Promise<void> {
-    const vae = request.job.vae
+  private async validateRequestPaths(request: GenerationWorkerRequest): Promise<void> {
+    if (isAnimaRequest(request)) {
+      for (const file of [
+        request.job.model.checkpoint,
+        request.job.model.qwen3Encoder,
+        request.job.model.vae,
+      ]) {
+        try {
+          const entry = await lstat(file.path)
+          if (
+            !entry.isFile() ||
+            entry.isSymbolicLink() ||
+            entry.size !== file.byteSize ||
+            (await realpath(file.path)) !== file.path
+          ) {
+            throw new GenerationWorkerError(
+              'INVALID_PATH',
+              'An Anima generation model is unsafe or changed.',
+            )
+          }
+        } catch (error) {
+          if (error instanceof GenerationWorkerError) {
+            throw error
+          }
+          throw new GenerationWorkerError(
+            'INVALID_PATH',
+            'An Anima generation model is unavailable.',
+          )
+        }
+      }
+    }
+    const vae = isAnimaRequest(request) ? null : request.job.vae
     if (vae) {
       try {
         const entry = await lstat(vae.path)
@@ -704,7 +779,9 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       path.dirname(targetPath) !== stagingRoot ||
       path.basename(targetPath) !== 'target.png' ||
       path.dirname(outputPath) !== stagingRoot ||
-      path.basename(outputPath) !== 'result.png' ||
+      (isAnimaRequest(request)
+        ? !path.basename(outputPath).endsWith('.png') || path.basename(outputPath) === '.png'
+        : path.basename(outputPath) !== 'result.png') ||
       targetPath === outputPath
     ) {
       throw new GenerationWorkerError('INVALID_PATH', 'The generation paths are invalid.')
@@ -779,6 +856,10 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.cfgRescale >= 0 &&
         request.job.sampling.cfgRescale <= 0.99))
   )
+}
+
+function isAnimaRequest(request: GenerationWorkerRequest): request is AnimaWorkerRequest {
+  return request?.type === 'generate-anima-txt2img' || request?.type === 'generate-anima-img2img'
 }
 
 function validWorkerLoras(value: unknown): boolean {

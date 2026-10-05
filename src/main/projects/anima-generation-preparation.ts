@@ -267,8 +267,18 @@ export function assertFrozenAnimaGeneration(
   targetPngBytes: Buffer,
 ): void {
   assertFrozenContext(context)
-  const actualMode = assertTarget(context.target, context.bbox, targetPngBytes)
-  if (actualMode !== context.mode) {
+  assertAnimaGenerationTarget(context.target, context.bbox, targetPngBytes, context.mode)
+}
+
+/** Shared pixel proof for captured preparation and durable per-item Retry; no Project reads. */
+export function assertAnimaGenerationTarget(
+  target: FrozenAnimaGenerationPreparationV1['target'],
+  bbox: IgsRectV1,
+  targetPngBytes: Buffer,
+  mode: 'img2img' | 'txt2img',
+): void {
+  const actualMode = assertTarget(target, bbox, targetPngBytes)
+  if (actualMode !== mode) {
     refuse('GENERATION_TARGET_CHANGED', 'The frozen Anima mode differs from its captured pixels.')
   }
 }

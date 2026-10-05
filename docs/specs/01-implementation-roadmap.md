@@ -1115,10 +1115,21 @@ full native plan. Общая private target lease и distinct outputs прохо
 Unsupported active SD-only settings явно отклоняются; neutral/inactive authoring
 не превращается в новые Anima wire fields. Это отдельный Main контур подготовки:
 Generate, durable queue/Retry/dispatch и immutable accepted records не открыты.
-Следующий этап — family-specific durable jobs с frozen Retry/dispatch и actual
-progress, затем accepted Anima configuration и runtime/release qualification.
-Storage capacity для новых durable Anima payloads требует собственной проверки;
-prepared batch использует прежний cap32, без новой GPU capacity promise.
+Этот preparation checkpoint использует прежний cap32, без новой GPU capacity promise.
+
+**Anima durable jobs checkpoint (05.10.2026):**
+[Concrete attempts, Retry and recovery](../engineering/phase-2c-anima-durable-jobs-research.md)
+добавляют внутреннее durable admission полного qualified batch, миграцию 0014,
+frozen Retry через action controller, dispatch/JSONL native progress и verified
+local candidates/restart. Каждая запись хранит concrete weighted signs, resolved
+seed, один full native plan и exact ordered ресурсы; capacity проверяется по
+actual serialized payload и escaped session manifest при прежних caps.
+Queue Manager отображает native method без выдуманных SD settings. Portable
+Anima Add явно закрыт до записи journal/изменения Project/отмены siblings.
+Следующий этап — immutable accepted Anima configuration, семейный comparison
+и public Project Generate/admission; затем installed Linux/NVIDIA runtime,
+реальные модели/размеры и release qualification. Наличие controlled worker tests
+не означает CUDA/model-quality или release readiness.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

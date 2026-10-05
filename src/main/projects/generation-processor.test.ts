@@ -14,8 +14,11 @@ import { crc32, deflateSync } from 'node:zlib'
 
 import type { AppDatabase } from '../db/database.js'
 import type { GenerationWorkerLease } from './generation-dispatch-coordinator.js'
-import type { GenerationWorkerTransport } from './generation-processor.js'
-import type { FrozenQueuedIllustriousGenerationV1 } from './generation-queue.js'
+import type { GenerationWorkerRequest, GenerationWorkerTransport } from './generation-processor.js'
+import type {
+  FrozenQueuedIllustriousGenerationV1,
+  VerifiedQueuedInput,
+} from './generation-queue.js'
 import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
@@ -255,14 +258,35 @@ function transport(
   ready = qualifiedReady,
   close: () => Promise<void> = async () => undefined,
 ): GenerationWorkerTransport {
-  return { close, generate, ready }
+  return {
+    close,
+    generate: async (request) => {
+      assert.ok(
+        request.type === 'generate-illustrious-txt2img' ||
+          request.type === 'generate-illustrious-img2img',
+      )
+      return await generate(request)
+    },
+    ready,
+  }
 }
 
-async function writeDone(
-  request: IllustriousGenerationRequestV1,
-  outputBytes: Buffer,
-  actualSeed = 42,
-) {
+function illustriousInput<T extends VerifiedQueuedInput>(
+  input: T,
+): T & { payload: FrozenQueuedIllustriousGenerationV1 } {
+  assertIllustriousInput(input)
+  return input
+}
+
+function assertIllustriousInput<T extends VerifiedQueuedInput>(
+  input: T,
+): asserts input is T & { payload: FrozenQueuedIllustriousGenerationV1 } {
+  assert.ok(
+    input.payload.kind === 'illustrious-txt2img' || input.payload.kind === 'illustrious-img2img',
+  )
+}
+
+async function writeDone(request: GenerationWorkerRequest, outputBytes: Buffer, actualSeed = 42) {
   await writeFile(request.job.output.pngPath, outputBytes, { flag: 'wx', mode: 0o600 })
   return {
     outputPath: request.job.output.pngPath,
@@ -1392,7 +1416,7 @@ test('opaque img2img keeps frozen strength through Retry, restart, Add and porta
         }
         assert.equal(recovered.payload.context.sampling.denoisingStrength, strength)
         retry = await fixture.queue.retryTerminal(retry.id, recovered.item.statusSequence)
-        const frozen = await fixture.queue.loadVerifiedInput(retry.id)
+        const frozen = illustriousInput(await fixture.queue.loadVerifiedInput(retry.id))
         assert.equal(frozen.payload.kind, 'illustrious-img2img')
         if (frozen.payload.kind !== 'illustrious-img2img') {
           assert.fail('wrong durable operation')
@@ -1680,7 +1704,7 @@ test('external, Embedded and unrecorded VAE choices survive both normal modes, R
           const savedBefore = await readFile(path.join(fixture.root, 'Project.igs'))
           const canceled = await fixture.queue.cancel(original.id)
           await fixture.queue.recoverAfterRestart()
-          const frozen = await fixture.queue.loadVerifiedRetryInput(original.id)
+          const frozen = illustriousInput(await fixture.queue.loadVerifiedRetryInput(original.id))
           const checkRetry = async (ready: InferenceWorkerReady) =>
             await withIllustriousGenerationRequest({
               modelService: fixture.modelService,
@@ -1709,7 +1733,7 @@ test('external, Embedded and unrecorded VAE choices survive both normal modes, R
             canceled.statusSequence,
             async () => await checkRetry(externalVaeReady),
           )
-          const copied = await fixture.queue.loadVerifiedInput(retried.id)
+          const copied = illustriousInput(await fixture.queue.loadVerifiedInput(retried.id))
           assert.deepEqual(copied.payload.context.vae, frozen.payload.context.vae)
           assert.deepEqual(copied.payload.workerJob.vae, frozen.payload.workerJob.vae)
           const completed = await fixture.processor.runOne(
@@ -1723,7 +1747,7 @@ test('external, Embedded and unrecorded VAE choices survive both normal modes, R
             }, externalVaeReady),
           )
           assert.equal(completed.kind, 'completed')
-          const finished = await fixture.queue.loadVerifiedInput(retried.id)
+          const finished = illustriousInput(await fixture.queue.loadVerifiedInput(retried.id))
           await fixture.queue.deleteTerminal(retried.id, finished.item.statusSequence)
           await fixture.staging.recoverAfterRestart()
           const candidates = await fixture.staging.listVerifiedCandidates(retried.localProjectKey)
@@ -1938,7 +1962,7 @@ test('durable VAE contexts refuse crossed file identity and dropped choices with
             stagingSessionId: randomUUID(),
           }),
       })
-      const input = await fixture.queue.loadVerifiedInput(item.id)
+      const input = illustriousInput(await fixture.queue.loadVerifiedInput(item.id))
       const payload = structuredClone(input.payload)
       mutate(payload)
       const changed = JSON.stringify(payload)
@@ -2035,7 +2059,7 @@ test('VAE Precision policies survive both modes, Retry, recovery, Add and explic
           const savedBefore = await readFile(path.join(fixture.root, 'Project.igs'))
           const canceled = await fixture.queue.cancel(original.id)
           await fixture.queue.recoverAfterRestart()
-          const frozen = await fixture.queue.loadVerifiedRetryInput(original.id)
+          const frozen = illustriousInput(await fixture.queue.loadVerifiedRetryInput(original.id))
           const checkRetry = async (ready: InferenceWorkerReady) => {
             await withIllustriousGenerationRequest({
               modelService: fixture.modelService,
@@ -2068,7 +2092,7 @@ test('VAE Precision policies survive both modes, Retry, recovery, Add and explic
               await checkRetry(precisionReady)
             },
           )
-          const copied = await fixture.queue.loadVerifiedInput(retried.id)
+          const copied = illustriousInput(await fixture.queue.loadVerifiedInput(retried.id))
           assert.equal(copied.payload.context.vaePrecision, precision)
           assert.equal(copied.payload.workerJob.vaePrecision, precision)
           const completed = await fixture.processor.runOne(
@@ -2082,7 +2106,7 @@ test('VAE Precision policies survive both modes, Retry, recovery, Add and explic
             }, precisionReady),
           )
           assert.equal(completed.kind, 'completed')
-          const finished = await fixture.queue.loadVerifiedInput(retried.id)
+          const finished = illustriousInput(await fixture.queue.loadVerifiedInput(retried.id))
           await fixture.queue.deleteTerminal(retried.id, finished.item.statusSequence)
           await fixture.staging.recoverAfterRestart()
           const candidates = await fixture.staging.listVerifiedCandidates(retried.localProjectKey)
@@ -2150,7 +2174,7 @@ test('manual VAE Precision is refused again at dispatch with old capabilities wh
       if (manual) {
         const row = (await fixture.queue.listManagerPage()).items[0]
         assert.equal(row.error?.code, 'GENERATION_INPUT_CHANGED')
-        const input = await fixture.queue.loadVerifiedInput(row.id)
+        const input = illustriousInput(await fixture.queue.loadVerifiedInput(row.id))
         assert.deepEqual(
           await fixture.staging.listVerifiedCandidates(input.item.localProjectKey),
           [],
@@ -2191,7 +2215,7 @@ test('durable VAE Precision reads refuse hash-consistent crossed and dropped pol
             stagingSessionId: randomUUID(),
           }),
       })
-      const input = await fixture.queue.loadVerifiedInput(item.id)
+      const input = illustriousInput(await fixture.queue.loadVerifiedInput(item.id))
       const payload = structuredClone(input.payload)
       mutate(payload)
       const changed = JSON.stringify(payload)
@@ -2287,7 +2311,9 @@ test('LoRA signed/zero/tiny stack survives Retry, restart, dispatch, staging rec
         prepared.context.loras[0].weight = 0.9
         const canceled = await fixture.queue.cancel(original.id)
         await fixture.queue.recoverAfterRestart()
-        const beforeRetry = await fixture.queue.loadVerifiedRetryInput(original.id)
+        const beforeRetry = illustriousInput(
+          await fixture.queue.loadVerifiedRetryInput(original.id),
+        )
         const retry = await fixture.queue.retryTerminal(
           original.id,
           canceled.statusSequence,
@@ -2308,7 +2334,7 @@ test('LoRA signed/zero/tiny stack survives Retry, restart, dispatch, staging rec
           },
         )
         assert.deepEqual(beforeRetry.payload.context.loraStack, stack)
-        const copied = await fixture.queue.loadVerifiedInput(retry.id)
+        const copied = illustriousInput(await fixture.queue.loadVerifiedInput(retry.id))
         assert.deepEqual(copied.payload.context.loraStack, stack)
         assert.deepEqual(copied.payload.workerJob.loras, expectedWire)
         const result = await fixture.processor.runOne(
@@ -2384,7 +2410,7 @@ test('LoRA materialization, Retry preflight and dispatch refuse old capabilities
         }),
     })
     const canceled = await fixture.queue.cancel(queued.id)
-    const retryInput = await fixture.queue.loadVerifiedRetryInput(queued.id)
+    const retryInput = illustriousInput(await fixture.queue.loadVerifiedRetryInput(queued.id))
     const retry = (ready: InferenceWorkerReady) =>
       fixture.queue.retryTerminal(queued.id, canceled.statusSequence, async (input) => {
         assert.deepEqual(
