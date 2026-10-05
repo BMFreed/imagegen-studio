@@ -908,10 +908,12 @@ LoRA для обеих семейств.
   ту же проекцию после фазы 4;
   mask/bbox/source context не подменяет settings. Подготовить проекцию для
   `Save Preset from Result` без преждевременного создания самого пресета.
-- Довести реальное взаимодействие Model Manager и Project picker: Project →
-  Manager focus точных checkpoint/версии уже проверен в Electron; остаются
-  обратный переход, другие resource selectors, локальные thumbnails installed
-  resources и version/default references.
+- Довести реальное взаимодействие Model Manager и Project picker: typed
+  checkpoint/LoRA/VAE/embedding entry, exact version против Default и возврат
+  с refresh каталога проверяются [resource handoff checkpoint](../engineering/phase-2c-resource-handoff-research.md) ниже.
+  Локальные thumbnails installed resources и Preset handoff остаются открытыми.
+  Отдельно квалифицировать delayed responses существующего catalog loader
+  Model Manager: этот native handoff checkpoint не проверяет его async fencing.
 
 **Выходная проверка:** реальные Illustrious и Anima `txt2img`/`img2img` jobs
 с LoRA проходят от Project UI через queue/worker до staging и явного Add.
@@ -1223,11 +1225,29 @@ checkpoint содержит 36 исполненных semantic mutations раз�
 filesystem, queue и dispatch boundaries с поведенческими kills и зелёными
 восстановленными controls; одни только сообщения об ошибках не засчитаны.
 
-**Следующий шаг:** оставшийся Invoke-like conditioning, маски/regions/inpaint/
-outpaint, применимые Advanced Options и model/resource qualification фазы 2C.
+**Следующий шаг:** завершить resource handoff и installed model/options
+qualification фазы 2C, затем operational alpha-derived outpaint conditioning.
+Полные authored masks/Regional Guidance/Smart Patch относятся к фазе 4; их
+owned document assets не появляются от подключения normal img2img. Применимые
+Advanced Options уже имеют production data/worker paths, но ещё требуют
+расширенного installed trained-model прогона по выходной проверке выше.
 Presets и result-to-preset остаются фазой 3. Release artifact, встроенный
 Install/Repair, rollback/update и clean-install/upgrade проверки остаются
 открытыми. Фаза 2C и PP-004/005/007/008 не объявляются завершёнными.
+
+**Project resource handoff checkpoint (06.10.2026):**
+[Project ↔ Model Manager](../engineering/phase-2c-resource-handoff-research.md)
+использует renderer-only category request и optional exact saved IDs. Пустой
+checkpoint открывает Checkpoints, Embedded VAE — VAE, LoRA header — LoRA;
+каждая LoRA row открывает свою точную версию. Existing embedding diagnostics
+используют тот же запрос и сохраняют trigger во время catalog checking.
+Library Default не меняет Project selection; Close/Escape обновляет каталог
+через существующий Main API. Native evidence отдельно проверяет реальные
+Project authoring/history/Save/readback и контролируемое исчезновение/возврат
+exact files; это не проверка CivitAI repair/download или inference. Installed
+thumbnails, Preset handoff и полный выход фазы 2C остаются открытыми.
+Итоговые проверки этого среза: 1595/1595 app tests, typecheck/lint, 24 native
+handoff assertions и вся цепочка `pnpm run app:smoke` с 11 invocations прошли.
 
 **Illustrious VAE precision checkpoint (04.10.2026):**
 [VAE precision](../engineering/phase-2c-vae-precision-research.md) подключает

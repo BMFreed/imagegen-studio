@@ -103,6 +103,19 @@ Vue-прототипа, а не готовность production UI.
   `value` находится вне label. Клик по подписи фокусирует поле, не меняя его
   значение; несколько экземпляров получают разные id.
 
+## Production resource navigation
+
+`ModelManagerFocus` is renderer-only browse intent: `resourceType` plus nullable
+exact `resource` IDs/names. `modelManagerFocusFor()` projects saved references
+without modifying them. Checkpoint, LoRA, VAE and embedding command adapters
+emit this request; App owns the modal and existing catalog refresh on close.
+Model Manager resets incompatible filters, but browsing and library Default
+never call a Project selection setter. LoRA uses a text header action for the
+category and the shared compact `IconButton` for an exact row. Saved embedding
+Manage actions remain mounted during catalog checking so the modal can restore
+focus to the same trigger; resolved diagnostics may disappear after repair.
+[Evidence](./phase-2c-resource-handoff-research.md).
+
 ## Production Advanced Options
 
 `ProjectGenerationAdvancedOptions` — production-адаптер текущего Generation

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { ProjectGenerationDraftChange, ProjectTab } from '../../shared/api.js'
 
-import { Trash as TrashIcon } from '@vicons/tabler'
-import { NButton, NIcon, NInput, NSwitch } from 'naive-ui'
+import { Stack2 as ModelsIcon, Trash as TrashIcon } from '@vicons/tabler'
+import { NButton, NInput, NSwitch } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
+
+import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 
 const props = defineProps<{
   canRelink: boolean
@@ -13,6 +15,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   change: [change: ProjectGenerationDraftChange]
+  manage: []
   relink: []
   remove: []
   validity: [valid: boolean]
@@ -71,16 +74,20 @@ function blurWeight() {
         <strong :title="lora.resource.displayName">{{ lora.resource.displayName }}</strong>
         <span :title="lora.resource.versionName">{{ lora.resource.versionName }}</span>
       </div>
-      <NButton
-        :aria-label="`Remove ${lora.resource.displayName}`"
-        circle
+      <IconButton
+        compact
         :disabled
-        quaternary
-        size="tiny"
+        :icon="ModelsIcon"
+        :label="`Open ${lora.resource.displayName} in Models`"
+        @click="emit('manage')"
+      />
+      <IconButton
+        compact
+        :disabled
+        :icon="TrashIcon"
+        :label="`Remove ${lora.resource.displayName}`"
         @click="emit('remove')"
-      >
-        <template v-slot:icon><NIcon :component="TrashIcon" :size="18" /></template>
-      </NButton>
+      />
     </div>
     <label class="lora-weight">
       <span>Weight</span>
@@ -122,7 +129,7 @@ function blurWeight() {
 }
 .lora-controls {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 24px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
 }

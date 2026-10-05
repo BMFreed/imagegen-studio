@@ -45,6 +45,7 @@ import type { ModelManagerFocus } from './model-manager-focus.js'
 
 const show = defineModel<boolean>('show', { required: true })
 const props = defineProps<{ focus: ModelManagerFocus | null }>()
+const focusedResource = computed(() => props.focus?.resource ?? null)
 // Naive's active color is available through its theme API, not an app-shell token.
 const themeVars = useThemeVars()
 const accentStyle = computed(() => ({ '--resource-accent': themeVars.value.primaryColor }))
@@ -364,7 +365,7 @@ const selectedResource = computed(() => {
     return selected
   }
   if (
-    props.focus?.resourceId === selectedId.value &&
+    focusedResource.value?.resourceId === selectedId.value &&
     !catalog.value.some((resource) => resource.id === selectedId.value)
   ) {
     return null
@@ -376,24 +377,28 @@ const detailVersion = computed(() => {
   if (!resource) {
     return null
   }
-  if (props.focus?.resourceId === resource.id) {
-    return resource.versions.find((version) => version.id === props.focus?.versionId) ?? null
+  if (focusedResource.value?.resourceId === resource.id) {
+    return (
+      resource.versions.find((version) => version.id === focusedResource.value?.versionId) ?? null
+    )
   }
   return versionFor(resource)
 })
 const focusedModelMissing = computed(
   () =>
-    props.focus !== null &&
-    selectedId.value === props.focus.resourceId &&
+    focusedResource.value !== null &&
+    selectedId.value === focusedResource.value.resourceId &&
     !loading.value &&
     !error.value &&
-    !catalog.value.some((resource) => resource.id === props.focus?.resourceId),
+    !catalog.value.some((resource) => resource.id === focusedResource.value?.resourceId),
 )
 const focusedVersionMissing = computed(
   () =>
-    props.focus !== null &&
-    selectedResource.value?.id === props.focus.resourceId &&
-    !selectedResource.value.versions.some((version) => version.id === props.focus?.versionId),
+    focusedResource.value !== null &&
+    selectedResource.value?.id === focusedResource.value.resourceId &&
+    !selectedResource.value.versions.some(
+      (version) => version.id === focusedResource.value?.versionId,
+    ),
 )
 const duplicateResource = computed(() => {
   const selection = filePreview.value
@@ -464,7 +469,7 @@ async function loadCatalog() {
       catalog.value = nextCatalog
       if (
         selectedId.value &&
-        selectedId.value !== props.focus?.resourceId &&
+        selectedId.value !== focusedResource.value?.resourceId &&
         !nextCatalog.some((resource) => resource.id === selectedId.value)
       ) {
         selectedId.value = null
@@ -798,7 +803,8 @@ watch(show, (visible) => {
   if (visible) {
     if (props.focus) {
       resetFilters()
-      selectedId.value = props.focus.resourceId
+      typeFilter.value = props.focus.resourceType
+      selectedId.value = focusedResource.value?.resourceId ?? null
     }
     void loadAll().then(async () => {
       if (!show.value || !props.focus) {
@@ -978,7 +984,7 @@ onBeforeUnmount(() => {
           title="Project model unavailable"
           type="warning"
         >
-          {{ focus?.resourceName }} is not in this model library. The Project selection is
+          {{ focusedResource?.resourceName }} is not in this model library. The Project selection is
           unchanged.
         </NAlert>
         <NAlert
@@ -987,8 +993,8 @@ onBeforeUnmount(() => {
           title="Project version unavailable"
           type="warning"
         >
-          {{ focus?.versionName }} is not installed for {{ focus?.resourceName }}. The Project
-          selection is unchanged.
+          {{ focusedResource?.versionName }} is not installed for
+          {{ focusedResource?.resourceName }}. The Project selection is unchanged.
         </NAlert>
       </div>
 
@@ -1279,8 +1285,8 @@ onBeforeUnmount(() => {
                           class="version-row"
                           :class="{
                             'version-row--project':
-                              focus?.resourceId === selectedResource.id &&
-                              focus.versionId === version.id,
+                              focusedResource?.resourceId === selectedResource.id &&
+                              focusedResource.versionId === version.id,
                           }"
                         >
                           <div class="version-main">
@@ -1317,8 +1323,8 @@ onBeforeUnmount(() => {
                           <div class="version-actions">
                             <NTag
                               v-if="
-                                focus?.resourceId === selectedResource.id &&
-                                focus.versionId === version.id
+                                focusedResource?.resourceId === selectedResource.id &&
+                                focusedResource.versionId === version.id
                               "
                               key="selected-in-project"
                               size="small"

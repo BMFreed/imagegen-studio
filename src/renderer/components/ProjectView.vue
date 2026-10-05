@@ -67,7 +67,6 @@ import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vu
 
 import type { CandidateExportFeedback } from './candidate-export-feedback.js'
 import type { GenerationResultFocusRequest } from './generation-queue-result.js'
-import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { ResolutionSize } from './resolution-control'
 
 import {
@@ -84,6 +83,7 @@ import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import { GenerationTargetReader } from './generation-target-reader.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 import GenerationSettingsComparison from './GenerationSettingsComparison.vue'
+import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-focus.js'
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import {
@@ -262,17 +262,7 @@ function updatePrompt(
 }
 
 function openEmbeddingManager(reference: PromptEmbeddingRef | undefined) {
-  emit(
-    'manageModels',
-    reference
-      ? {
-          resourceId: reference.resource.localModelId,
-          resourceName: reference.resource.displayName,
-          versionId: reference.resource.localVersionId,
-          versionName: reference.resource.versionName,
-        }
-      : null,
-  )
+  emit('manageModels', modelManagerFocusFor('embedding', reference?.resource ?? null))
 }
 
 function relinkEmbedding(polarity: PromptPolarity, reference: PromptEmbeddingRef) {
@@ -334,18 +324,7 @@ const selectedModelVersion = computed(() =>
     ?.versions.find((version) => version.id === selectedModel.value?.localVersionId),
 )
 function openModelManager() {
-  const model = selectedModel.value
-  emit(
-    'manageModels',
-    model
-      ? {
-          resourceId: model.localModelId,
-          resourceName: model.displayName,
-          versionId: model.localVersionId,
-          versionName: model.versionName,
-        }
-      : null,
-  )
+  emit('manageModels', modelManagerFocusFor('checkpoint', selectedModel.value))
 }
 const stagedResourceId = ref<string | null>(null)
 const pickerResourceId = computed(
@@ -1721,6 +1700,7 @@ function applyFitBbox() {
               :loading="modelCatalogLoading"
               @add="emit('addLora', $event)"
               @change="emit('updateDraft', $event)"
+              @manageModels="emit('manageModels', $event)"
               @relink="emit('relinkLora', $event)"
               @remove="emit('removeLora', $event)"
               @validity="lorasValid = $event"

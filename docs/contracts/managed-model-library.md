@@ -318,10 +318,15 @@ generation worker и Project references.
 версии, даже если Default другой.
 
 Отсутствующий локальный ID объясняется предупреждением, без подстановки другой
-модели. Desktop smoke проходит через Project UI и реальный каталог SQLite и
-проверяет, что переход не меняет Project reference или dirty state. Обратный
-переход из менеджера и прочие resource handoff ещё не завершены; embedding
-authoring и отдельные Illustrious LoRA/VAE worker paths описаны checkpoints выше.
+модели. [Resource handoff](../engineering/phase-2c-resource-handoff-research.md) расширяет
+этот flow на пустые и выбранные checkpoint/LoRA/VAE controls и embedding diagnostics.
+Project entry задаёт категорию независимо от exact reference; закрытие обновляет
+реальный каталог без автоматического выбора новой версии. Native checks отдельно
+проверяют точную версию против Default, сохранение Project/`.igs`, возврат фокуса
+и появление восстановленного exact файла. Восстановление bytes в fixture —
+управляемый collaborator, не доказательство CivitAI repair/download. Preset
+handoff и локальные thumbnails остаются открытыми; embedding authoring и
+отдельные Illustrious LoRA/VAE worker paths описаны checkpoints выше.
 
 Успешное восстановление зависит от доступности exact file у источника и прав
 доступа: если файл удалён или доступ закрыт, приложение объясняет отказ и не

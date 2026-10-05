@@ -7,9 +7,10 @@ import type {
 } from '../../shared/api.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 
-import { NSelect, type SelectOption } from 'naive-ui'
+import { NButton, NSelect, type SelectOption } from 'naive-ui'
 import { computed, h, ref, watch } from 'vue'
 
+import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-focus.js'
 import { portableModelRelinkCandidate, savedModelAvailability } from './project-model-picker.js'
 import ProjectLoraRow from './ProjectLoraRow.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
@@ -24,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   add: [identity: ProjectLoraIdentity]
   change: [change: ProjectGenerationDraftChange]
+  manageModels: [focus: ModelManagerFocus]
   relink: [identity: ProjectLoraIdentity]
   remove: [identity: ProjectLoraIdentity]
   validity: [valid: boolean]
@@ -167,7 +169,18 @@ function validity(key: string, valid: boolean) {
 
 <template>
   <section aria-label="LoRAs" class="lora-stack">
-    <span class="field-label">LoRAs</span>
+    <div class="lora-heading">
+      <span class="field-label">LoRAs</span>
+      <NButton
+        aria-label="Manage LoRAs"
+        :disabled
+        size="tiny"
+        text
+        @click="emit('manageModels', modelManagerFocusFor('lora', null))"
+      >
+        Manage LoRAs
+      </NButton>
+    </div>
     <NSelect
       aria-label="Add LoRA"
       :disabled="disabled || !catalogReady"
@@ -193,6 +206,7 @@ function validity(key: string, valid: boolean) {
       :lora="row.lora"
       :warning="warning(row.lora)"
       @change="emit('change', $event)"
+      @manage="emit('manageModels', modelManagerFocusFor('lora', row.lora.resource))"
       @relink="emit('relink', row.identity)"
       @remove="emit('remove', row.identity)"
       @validity="validity(row.key, $event)"
@@ -209,6 +223,12 @@ function validity(key: string, valid: boolean) {
 .field-label {
   font-size: var(--app-font-size);
   font-weight: 600;
+}
+.lora-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .lora-empty {
   margin: 0;

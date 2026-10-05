@@ -47,7 +47,7 @@ const warnings = computed(() =>
           Link installed version
         </NButton>
         <NButton
-          v-if="match.status !== 'checking'"
+          v-if="match.status !== 'checking' || match.ref"
           key="n-button-2"
           :aria-label="`Manage embedding ${match.token}`"
           :disabled

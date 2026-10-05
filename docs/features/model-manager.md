@@ -133,11 +133,14 @@ Required entry points:
 - `Manage Models` in the Home sidebar Tools area: opens Model Manager over the mounted Home surface.
 - `Project` top menu/context menu: opens Model Manager.
 - Generate `Model` selector: `Manage Models` opens Model Manager focused on checkpoints.
-- Generate `LoRAs` selector: `Manage Models` opens Model Manager focused on LoRAs.
+- Generate `LoRAs` section: `Manage LoRAs` opens the LoRA category; each selected row has an `Open <name> in Models` action focused on its exact version.
+- Generate `VAE` control: `Open in Models` opens the VAE category, focused on the exact external version when present; Embedded still opens VAE browsing. Anima keeps its pinned VAE.
 - An embedding token or unified prompt autocomplete action can open Model Manager focused on embeddings.
 - Missing resource warning from a preset/accepted result: opens Model Manager filtered to the missing resource identity where possible.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
+
+Project entries reset incompatible search, family and status filters to the requested category, even when no resource is selected. Exact saved version focus is separate from library Default; missing IDs remain diagnostics. Closing with the close button or Escape refreshes the Project catalog and returns focus to the existing trigger. A saved embedding Manage action stays mounted while the catalog is checking; a resolved diagnostic can disappear after repair. Catalog refresh does not select new resources or write Project settings. [Production evidence](../engineering/phase-2c-resource-handoff-research.md).
 
 As demonstrated from Home, Model Manager opens as a native Naive modal overlay with restrained enter/leave transitions. The document surface underneath is inert while it is open. The explicit close action and `Esc` both close the manager; `Esc` is temporarily owned by a nested import dialog while that dialog is open.
 

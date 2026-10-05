@@ -31,6 +31,7 @@ import {
 import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
 import { checkDynamicPromptPreview } from './desktop-dynamic-prompt-checks.mjs'
+import { checkModelResourceHandoff } from './desktop-model-handoff-checks.mjs'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 const untaggedRasterPng = Buffer.from(
@@ -178,6 +179,36 @@ async function seedInstalledCheckpointVersions() {
     await repository.setDefaultVersion(alternate.resourceId, unavailableDefault.versionId)
     const lora = await publish(905, 9_005, null, 90_003, 'Smoke Detail LoRA', 'lora')
     const loraSecond = await publish(906, 9_006, null, 90_003, 'Smoke Detail LoRA', 'lora')
+    const handoffResources = {}
+    if (process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY) {
+      handoffResources.vae = await publish(907, 9_007, null, 90_004, 'Smoke External VAE', 'vae')
+      handoffResources.vaeSecond = await publish(
+        908,
+        9_008,
+        null,
+        90_004,
+        'Smoke External VAE',
+        'vae',
+      )
+      handoffResources.embedding = await publish(
+        909,
+        9_009,
+        null,
+        90_005,
+        'Smoke Prompt Embedding',
+        'embedding',
+      )
+      handoffResources.embeddingSecond = await publish(
+        910,
+        9_010,
+        null,
+        90_005,
+        'Smoke Prompt Embedding',
+        'embedding',
+      )
+      handoffResources.vaePath = path.join(modelRoot, 'smoke-checkpoint-v907.safetensors')
+      handoffResources.embeddingPath = path.join(modelRoot, 'smoke-checkpoint-v909.safetensors')
+    }
     return {
       alternate,
       lora,
@@ -188,6 +219,7 @@ async function seedInstalledCheckpointVersions() {
       second,
       secondPath: path.join(modelRoot, 'smoke-checkpoint-v902.safetensors'),
       unavailableDefaultPath: path.join(modelRoot, 'smoke-checkpoint-v904.safetensors'),
+      ...handoffResources,
     }
   } finally {
     await database.close()
@@ -389,6 +421,20 @@ try {
   const packagePath = path.join(projectDir, projectPackages[0])
   assert.ok(statSync(packagePath).size > 0)
   assert.equal(readFileSync(packagePath).subarray(0, 2).toString('ascii'), 'PK')
+
+  if (process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY) {
+    await checkModelResourceHandoff({
+      application,
+      checkpointVersions,
+      packagePath,
+      projectId,
+      projectTitle,
+      window,
+    })
+    application.process().kill('SIGKILL')
+    rmSync(dataRoot, { force: true, recursive: true })
+    process.exit(0)
+  }
 
   const invalidProjectRequest = await window.evaluate(
     (id) => window.api.projects.setPrimaryBbox(id, { x: 0, y: 0, width: 0, height: 512 }),

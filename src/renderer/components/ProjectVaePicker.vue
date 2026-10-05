@@ -5,10 +5,9 @@ import { RotateClockwise as ResetIcon } from '@vicons/tabler'
 import { NButton, NSelect, type SelectOption } from 'naive-ui'
 import { computed, h } from 'vue'
 
-import type { ModelManagerFocus } from './model-manager-focus.js'
-
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import LabeledControl from '../../../docs/prototype-app/src/components/LabeledControl.vue'
+import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-focus.js'
 import { portableModelRelinkCandidate } from './project-model-picker.js'
 import {
   EMBEDDED_VAE_OPTION,
@@ -93,17 +92,7 @@ function select(value: string) {
   }
 }
 function openModels() {
-  emit(
-    'manageModels',
-    props.saved
-      ? {
-          resourceId: props.saved.localModelId,
-          resourceName: props.saved.displayName,
-          versionId: props.saved.localVersionId,
-          versionName: props.saved.versionName,
-        }
-      : null,
-  )
+  emit('manageModels', modelManagerFocusFor('vae', props.saved))
 }
 </script>
 
