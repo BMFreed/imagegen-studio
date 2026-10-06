@@ -32,14 +32,25 @@ async function fixture(use) {
   await fs.writeFile(path.join(appData, 'runtime/current-runtime.json'), pointer)
   const input = { schemaVersion: 1, appData, artifacts, side: 65, steps: 2 }
   const fixturePath = path.join(root, 'fixture.json')
-  async function run() {
+  async function run(options = {}) {
     await fs.writeFile(fixturePath, JSON.stringify(input))
     let refusal
     await assert.rejects(
-      exec(process.execPath, ['--import', 'tsx', script, '--fixture', fixturePath], {
-        cwd: repository,
-        timeout: 15_000,
-      }),
+      exec(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          script,
+          '--fixture',
+          fixturePath,
+          ...(options.resume ? ['--resume'] : []),
+        ],
+        {
+          cwd: repository,
+          timeout: 15_000,
+        },
+      ),
       (error) => {
         assert.equal(error.code, 1)
         refusal = error
@@ -81,10 +92,10 @@ test('fresh canonical destinations reserve a failed preflight report without sta
   })
 })
 
-test('omitted, CFG Rescale and outpaint profiles reach the neighboring size refusal without starting a worker', async () => {
+test('omitted, CFG Rescale, outpaint and VAE Precision profiles reach the neighboring size refusal without starting a worker', async () => {
   // Boundary: real CLI fixture admission. The invalid image side is a controlled stop after
   // profile validation, so accepting a profile does not launch Electron or inference.
-  for (const profile of [undefined, 'cfg-rescale', 'outpaint']) {
+  for (const profile of [undefined, 'cfg-rescale', 'outpaint', 'vae-precision']) {
     await fixture(async ({ artifacts, input, run }) => {
       if (profile !== undefined) input.profile = profile
       input.steps = 3
@@ -102,15 +113,26 @@ test('omitted, CFG Rescale and outpaint profiles reach the neighboring size refu
 })
 
 test('unknown or malformed explicit profiles refuse before catalog and worker setup', async () => {
-  // Neighbor: accepted omitted/cfg-rescale profiles above. Mutation: ignore the explicit profile
+  // Neighbor: accepted finite profiles above. Mutation: ignore the explicit profile
   // or coerce it, silently launching the default suite instead of the requested finite scenario.
-  for (const profile of [null, true, 0, '', 'default', 'cfg_rescale', {}, ['cfg-rescale']]) {
+  for (const profile of [
+    null,
+    true,
+    0,
+    '',
+    'default',
+    'cfg_rescale',
+    'vae_precision',
+    'VAE-Precision',
+    {},
+    ['cfg-rescale'],
+  ]) {
     await fixture(async ({ artifacts, input, run }) => {
       input.profile = profile
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale or outpaint/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint or vae-precision/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
@@ -135,6 +157,94 @@ test('CFG Rescale profile refuses a changed step control before preparing any mo
     assert.equal(report.status, 'failed')
     assert.deepEqual(report.models, [])
     assert.deepEqual(report.generations, [])
+    await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+  })
+})
+
+test('VAE Precision profile refuses changed geometry, steps and malformed numeric controls before catalog or worker setup', async () => {
+  // Boundary: actual CLI finite-profile admission. Neighbor: exact 256/3 controls below reach
+  // the selected-model preflight. Mutations: silently run the default suite, widen this profile
+  // or coerce boolean/null/string parameters into the declared trained qualification controls.
+  for (const [change, message] of [
+    [{ side: 128 }, /VAE Precision qualification requires exactly 256 pixels/],
+    [{ side: 512 }, /VAE Precision qualification requires exactly 256 pixels/],
+    [{ steps: 2 }, /VAE Precision qualification requires exactly 3 authored steps/],
+    [{ steps: 4 }, /VAE Precision qualification requires exactly 3 authored steps/],
+    [{ side: true }, /Qualification image side must be/],
+    [{ side: null }, /Qualification image side must be/],
+    [{ side: '256' }, /Qualification image side must be/],
+    [{ steps: true }, /AssertionError/],
+    [{ steps: null }, /AssertionError/],
+    [{ steps: '3' }, /AssertionError/],
+  ]) {
+    await fixture(async ({ appData, artifacts, input, run }) => {
+      Object.assign(input, { profile: 'vae-precision', side: 256, steps: 3 }, change)
+      const refusal = await run()
+      assert.match(refusal.stderr, message)
+      assert.doesNotMatch(refusal.stderr, /Qualification profile must be/)
+      assert.doesNotMatch(refusal.stderr, /checkpoint|requires one real LoRA/)
+      const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+      assert.equal(report.status, 'failed')
+      assert.equal(report.profile, 'vae-precision')
+      assert.deepEqual(report.models, [])
+      assert.deepEqual(report.generations, [])
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+      await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
+      await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+    })
+  }
+})
+
+test('VAE Precision exact 256/3 controls without new fixture fields reach the selected Illustrious model refusal', async () => {
+  // The real CLI passes profile and numeric validation, then stops at its intentionally absent
+  // checkpoint. This proves admission without copying substitute weights or starting Electron.
+  await fixture(async ({ appData, artifacts, input, run }) => {
+    Object.assign(input, { profile: 'vae-precision', side: 256, steps: 3 })
+    const refusal = await run({ resume: true })
+    assert.match(refusal.stderr, /checkpoint/)
+    assert.doesNotMatch(
+      refusal.stderr,
+      /Qualification profile must be|Qualification image side must be|VAE Precision qualification requires/,
+    )
+    const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+    assert.equal(report.status, 'failed')
+    assert.equal(report.profile, 'vae-precision')
+    assert.deepEqual(report.models, [])
+    assert.deepEqual(report.generations, [])
+    assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
+    await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+  })
+})
+
+test('VAE Precision selected Illustrious resources require resume before catalog, source or worker setup', async () => {
+  // Boundary: actual CLI operational gate, after valid profile/selected-family controls. These
+  // incomplete model descriptors deliberately stop before any real source path or worker use.
+  // Mutation: admit fresh catalogs and copy resources while claiming the six-resource reuse run.
+  await fixture(async ({ appData, artifacts, input, run }) => {
+    Object.assign(input, {
+      profile: 'vae-precision',
+      side: 256,
+      steps: 3,
+      illustrious: { type: 'checkpoint', family: 'illustrious' },
+      illustriousLora: { type: 'lora', family: 'illustrious' },
+    })
+    const refusal = await run()
+    assert.match(
+      refusal.stderr,
+      /VAE Precision qualification must resume the same six-resource catalog/,
+    )
+    assert.doesNotMatch(
+      refusal.stderr,
+      /Qualification profile must be|VAE Precision qualification requires/,
+    )
+    const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+    assert.equal(report.status, 'failed')
+    assert.equal(report.profile, 'vae-precision')
+    assert.deepEqual(report.models, [])
+    assert.deepEqual(report.generations, [])
+    assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
     await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
   })
 })

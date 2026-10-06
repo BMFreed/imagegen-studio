@@ -48,6 +48,7 @@ import {
   reverifyFrozenQueuedAnimaGeneration,
 } from './anima-queued-generation.js'
 import { isQueuedOutpaint, reverifyFrozenQueuedOutpaintGeneration } from './generation-queue.js'
+import { GenerationWorkerError } from './generation-worker-client.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
@@ -663,17 +664,26 @@ export class GenerationProcessor {
           }
         }
         try {
+          const vaeNonFinite =
+            dispatched &&
+            !isAnimaPayload(claimed.payload) &&
+            error instanceof GenerationWorkerError &&
+            error.code === 'WORKER_REQUEST_FAILED' &&
+            error.workerCode === 'GENERATION_WORKER_FAILED' &&
+            error.failureReason === 'vae-non-finite'
           await this.queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
-            code:
-              !dispatched && isQueuedOutpaint(claimed.payload)
+            code: vaeNonFinite
+              ? 'GENERATION_VAE_NON_FINITE'
+              : !dispatched && isQueuedOutpaint(claimed.payload)
                 ? 'GENERATION_OUTPAINT_UNAVAILABLE'
                 : dispatched
                   ? 'GENERATION_WORKER_FAILED'
                   : 'GENERATION_INPUT_CHANGED',
-            message:
-              !dispatched &&
-              isQueuedOutpaint(claimed.payload) &&
-              error instanceof GenerationProcessorError
+            message: vaeNonFinite
+              ? 'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.'
+              : !dispatched &&
+                  isQueuedOutpaint(claimed.payload) &&
+                  error instanceof GenerationProcessorError
                 ? error.message
                 : dispatched
                   ? 'The generation worker did not return a valid completed result.'

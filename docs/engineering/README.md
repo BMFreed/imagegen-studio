@@ -15,7 +15,8 @@
 - [Project resource controls ↔ Model Manager](./phase-2c-resource-handoff-research.md) — typed category/exact-version navigation and native return/catalog refresh; Project resource choice remains explicit, with catalog-only fixtures separate from install/inference.
 - [Model Manager presentation read ordering](./phase-2c-model-manager-read-research.md) — modal/request ownership for catalog, jobs, storage, token, errors and loading; observed job updates preserve untouched Main list rows. Native timing/error collaborators are separate from real download and secret storage.
 - [App-owned runtime and trained generation qualification](./phase-2c-installed-runtime-qualification-research.md) — opt-in developer provisioning, installed CPU derivatives ownership и границы проверки обычного Generate/Add/Save; signed release installer, repair и rollback остаются отдельными gates.
-- [Installed Illustrious CFG Rescale qualification](./phase-2c-installed-cfg-rescale-research.md) — actual Advanced Options → installed trained CUDA worker → Add → Save/reopen/comparison; matched unset/zero/nonzero txt2img pixels and nonzero opaque img2img wiring, with isolated Main/installed-worker semantic mutations. Remaining options and release lifecycle stay open.
+- [Installed embedded VAE precision qualification](./phase-2c-installed-vae-precision-research.md) — actual Auto/FP32/FP16 control → trained installed worker → explicit Add/Save/reopen/comparison; six policy/mode cases (6 finite completions, 0 exact refusals), actual Cancel/frozen FP32 Retry and safe public diagnosis. Matched txt2img and img2img wiring evidence are separate; external VAE and release stay open.
+- [Installed Illustrious CFG Rescale qualification](./phase-2c-installed-cfg-rescale-research.md) — actual Advanced Options → installed trained CUDA worker → Add → Save/reopen/comparison; matched unset/zero/nonzero txt2img pixels and nonzero opaque img2img wiring, with isolated Main/installed-worker semantic mutations. Remaining installed model/options qualification and release lifecycle stay open.
 - [Public Anima Generate and accepted provenance](./phase-2c-anima-public-generation-research.md) — captured public admission, strict portable native records, mixed Add/Undo/recovery/Save and family-aware read-only comparison; controlled inference evidence is distinct from trained-model/release qualification.
 - [Anima durable jobs, Retry and operational recovery](./phase-2c-anima-durable-jobs-research.md) — preceding internal queue/native dispatch and progress, exact Retry, verified local candidates/receipts/restart; public integration is recorded above.
 - [Anima Main preparation and concrete batches](./phase-2c-anima-main-preparation-research.md) — separate captured Project/bundle/seed preparation, concrete compiled native batches and qualified scoped requests. Public Generate, durable queue/Retry/dispatch and accepted provenance remain open.
@@ -154,4 +155,6 @@ branch review, запускать существующие проверки и �
 - [Phase 2C VAE precision](./phase-2c-vae-precision-research.md): embedded
   Illustrious VAE Auto/FP16/FP32 in both normal modes, frozen queue/Retry,
   portable acceptance/comparison and finite-output refusal. Actual native ML and
-  controlled Electron evidence are separate; external VAE/Anima remain open.
+  controlled Electron evidence were separate at this historical checkpoint;
+  newer installed precision qualification is linked above, and external VAE/Anima
+  production paths have their own subsequent checkpoints.

@@ -2847,6 +2847,74 @@ test('manager pages real SQLite history by newest stable keys without reading fr
   }
 })
 
+test('manager projects the VAE refusal from its Main code without exposing stored worker diagnostics', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-vae-error-'))
+  const database = openAppDatabase(root, migrations)
+  try {
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    await inQualifiedBatchLeases(
+      root,
+      prepared,
+      3,
+      async (items) =>
+        await queue.enqueueIllustriousTxt2ImgBatch({
+          items,
+          preflight: async () => undefined,
+          projectPath,
+          stagingSessionId: randomUUID(),
+        }),
+    )
+    const expected = [
+      {
+        code: 'GENERATION_VAE_NON_FINITE',
+        message:
+          'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.',
+      },
+      {
+        code: 'GENERATION_WORKER_FAILED',
+        message: 'The generation worker did not return a valid completed result.',
+      },
+      {
+        code: 'UNKNOWN_WORKER_FAILURE',
+        message: 'The generation job could not be completed.',
+      },
+    ]
+    const ids: string[] = []
+    for (const error of expected) {
+      const claimed = await queue.claimNextPending()
+      assert.ok(claimed)
+      await queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
+        code: error.code,
+        message: '/private/model.safetensors: VAE inference produced non-finite values.',
+      })
+      ids.push(claimed.item.id)
+      assert.deepEqual((await queue.getManagerEntry(claimed.item.id)).error, error)
+    }
+    const page = await queue.listManagerPage()
+    assert.ok(isGenerationQueuePage(page))
+    for (const [index, id] of ids.entries()) {
+      assert.deepEqual(page.items.find((entry) => entry.id === id)?.error, expected[index])
+    }
+    assert.ok(!JSON.stringify(page).includes('/private/'))
+    assert.ok(!JSON.stringify(page).includes('VAE inference produced'))
+    // Corrupt legacy codes still receive the existing generic code and safe literal.
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ error_code: '/private/invalid-code' })
+      .where('id', '=', ids[2])
+      .execute()
+    assert.deepEqual((await queue.getManagerEntry(ids[2])).error, {
+      code: 'GENERATION_FAILED',
+      message: 'The generation job could not be completed.',
+    })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('manager entries retain separate staging sessions for attempts of one document after terminal deletion', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-sessions-'))
   const database = openAppDatabase(root, migrations)

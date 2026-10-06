@@ -57,6 +57,8 @@ assert.ok(path.isAbsolute(process.argv[3]))
 const fixture = JSON.parse(await readFile(process.argv[3], 'utf8'))
 const cfgRescaleProfile = fixture.profile === 'cfg-rescale'
 const outpaintProfile = fixture.profile === 'outpaint'
+const vaePrecisionProfile = fixture.profile === 'vae-precision'
+const illustriousOnlyProfile = cfgRescaleProfile || vaePrecisionProfile
 assert.equal(fixture.schemaVersion, 1)
 for (const value of [fixture.appData, fixture.artifacts]) {
   assert.equal(typeof value, 'string')
@@ -110,19 +112,23 @@ const report = {
   models: [],
   checks: [],
   generations: [],
+  failures: [],
   pageErrors: [],
   screenshots: [],
   stages: [],
   boundary: {
     actual:
       'Built Electron renderer/preload/Main, production model qualification and runtime leases, noneditable installed Python worker, trained CUDA models, SQLite queue/receipts, PNG staging, explicit UI Add, .igs writer/loader and close/reopen.',
-    preconditions:
-      'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
+    preconditions: vaePrecisionProfile
+      ? 'The same six-resource isolated catalog and installed runtime are resumed without new weight or runtime copies; only exact Illustrious checkpoint and signed LoRA are used. Embedded VAE, source family and prediction type are declared qualification preconditions.'
+      : 'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
     limits: outpaintProfile
       ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
-      : cfgRescaleProfile
-        ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
-        : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
+      : vaePrecisionProfile
+        ? 'Installed development worker 0.12 with genuine trained Illustrious embedded VAE, 256 pixels and 3 steps. Same-input txt2img Auto/FP32/FP16 policy comparison and opaque img2img wiring, actual Cancel/frozen FP32 Retry, explicit Add/Save/reopen and recorded comparison. FP16 qualifies only by finite publication or exact native VAE non-finite refusal with no candidate, PNG, acceptance or seed mutation. Img2img inputs may differ and do not establish numerical equivalence. No signed release lifecycle, external VAE, maximum geometry/VRAM, image quality or whole-MVP claim.'
+        : cfgRescaleProfile
+          ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
+          : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
     browser:
       'Existing native _electron system harness exercises genuine Electron IPC and the installed CUDA child. HTTP preview availability is outside this qualification.',
   },
@@ -344,6 +350,11 @@ async function installArtifact(repository, value, id, dependencies) {
     report.models.push({ ...value, managedPath: managed, reusedQualificationPrecondition: true })
     return { resourceId: existing.resourceId, versionId: existing.versionId }
   }
+  assert.equal(
+    vaePrecisionProfile,
+    false,
+    'VAE Precision qualification must reuse existing exact managed resources without copies.',
+  )
   await copyFile(value.path, managed, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
   assert.equal(await hashFile(managed), value.sha256)
   const sourceAfter = await lstat(value.path)
@@ -475,6 +486,91 @@ async function setCfgRescale(project, value) {
     await expect.poll(async () => (await tab(project)).generationDraft.cfgRescale).toBe(value)
     assert.ok(Object.hasOwn((await tab(project)).generationDraft, 'cfgRescale'))
   }
+}
+async function setVaePrecision(project, value) {
+  assert.ok(['Auto', 'FP32', 'FP16'].includes(value))
+  // Selecting the already displayed default may not emit an authored edit. Move through a real
+  // manual choice first so the Auto case explicitly records Auto rather than relying on absence.
+  if (value === 'Auto' && (await tab(project)).generationDraft.vaePrecision === undefined) {
+    await setVaePrecision(project, 'FP32')
+  }
+  const input = window.locator('input[aria-label="VAE precision"]')
+  if (!(await input.isVisible())) {
+    await window.getByText('Advanced Options', { exact: true }).click()
+  }
+  await expect(input).toBeEnabled({ timeout: 180_000 })
+  await input.scrollIntoViewIfNeeded()
+  await input.click()
+  await window.getByText(value, { exact: true }).last().click()
+  await expect.poll(async () => (await tab(project)).generationDraft.vaePrecision).toBe(value)
+  await expect(
+    input.locator(
+      'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " n-base-selection ")]',
+    ),
+  ).toContainText(value)
+}
+async function compareVaePrecision(project, layer, captured, current, caseName) {
+  const before = await tab(project)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    const row = comparison.locator('[data-setting="vaePrecision.value"]')
+    await expect(row).toHaveAttribute('data-status', 'Changed')
+    await expect(row.locator('.comparison-values p')).toHaveText([captured, current])
+    const after = await tab(project)
+    assert.deepEqual(after.layers, before.layers)
+    assert.deepEqual(after.generationDraft, before.generationDraft)
+    assert.deepEqual(after.primaryBbox, before.primaryBbox)
+    assert.equal(after.documentId, before.documentId)
+    assert.equal(after.dirty, before.dirty)
+    assert.equal(after.canUndo, before.canUndo)
+    assert.equal(after.canRedo, before.canRedo)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { captured, current, status: 'Changed', screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+  }
+}
+async function liveInstalledInferenceChildren() {
+  const children = []
+  for (const name of await readdir('/proc')) {
+    if (!/^\d+$/.test(name)) continue
+    try {
+      const directory = path.join('/proc', name)
+      const status = await readFile(path.join(directory, 'status'), 'utf8')
+      if (Number(status.match(/^PPid:\s+(\d+)$/m)?.[1]) !== report.nativeProcessPid) continue
+      const argv = (await readFile(path.join(directory, 'cmdline'), 'utf8')).split('\0')
+      if (argv.includes('imagegen_worker.inference_main')) children.push(Number(name))
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error
+    }
+  }
+  return children.sort((left, right) => left - right)
+}
+async function pngFiles(directory) {
+  const files = []
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
+  for (const entry of entries) {
+    assert.equal(entry.isSymbolicLink(), false)
+    const file = path.join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...(await pngFiles(file)))
+    else if (entry.name.endsWith('.png')) files.push(file)
+  }
+  return files
 }
 async function compareCfgRescale(project, layer, captured, caseName) {
   const before = await tab(project)
@@ -733,14 +829,29 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await setInput('Images per click', 1)
   await expect(window.locator('input[aria-label="Images per click"]')).toHaveValue('1')
   const before = await tab(project)
+  const precisionQualification = qualification?.kind === 'vae-precision'
+  const cfgQualification = qualification !== null && !precisionQualification
   const capturedCfgRescale = qualification?.cfgRescale ?? 0
-  if (qualification) {
+  const capturedVaePrecision = precisionQualification ? qualification.vaePrecision : null
+  const currentVaePrecision = precisionQualification ? qualification.currentVaePrecision : null
+  if (cfgQualification) {
     assert.equal(family, 'illustrious')
     assert.equal(
       Object.hasOwn(before.generationDraft, 'cfgRescale'),
       qualification.cfgRescale !== null,
     )
     assert.equal(before.generationDraft.cfgRescale, qualification.cfgRescale ?? undefined)
+    if (mode === 'txt2img') assert.deepEqual(before.layers, [])
+  }
+  if (precisionQualification) {
+    assert.equal(family, 'illustrious')
+    assert.equal(before.generationDraft.vaePrecision, capturedVaePrecision)
+    assert.notEqual(capturedVaePrecision, currentVaePrecision)
+    assert.equal(
+      before.generationDraft.vae,
+      null,
+      'This profile qualifies explicit Embedded VAE only.',
+    )
     if (mode === 'txt2img') assert.deepEqual(before.layers, [])
   }
   const existingLayers = await layerSnapshot(before.layers)
@@ -758,6 +869,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const previousAcceptedLayers = (await readIgsPackage(beforePackagePath)).project.layers
   const beforePackageSha256 = await hashFile(beforePackagePath)
   const previousRows = await queueRows(project)
+  const previousSeedCursor = precisionQualification
+    ? await database.db
+        .selectFrom('generation_seed_cursor')
+        .selectAll()
+        .where('local_project_key', '=', project.id)
+        .executeTakeFirst()
+    : null
+  const previousLastActualSeed = precisionQualification
+    ? (await api('listGenerationResults', project.id)).lastActualSeed
+    : null
   const existingJobIds = new Set(previousRows.map(({ id }) => id))
   const started = Date.now()
   const button = window.getByRole('button', { name: 'Generate', exact: true })
@@ -793,9 +914,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(frozen.context.sampling.steps, fixture.steps)
   assert.equal(frozen.context.sampling.cfgScale, 4)
   assert.deepEqual(frozen.context.loraStack, before.generationDraft.loras)
-  if (qualification) {
+  if (cfgQualification) {
     assert.equal(frozen.context.sampling.cfgRescale, capturedCfgRescale)
     assert.equal(frozen.workerJob.sampling.cfgRescale, capturedCfgRescale)
+  }
+  if (precisionQualification) {
+    assert.equal(frozen.context.vaePrecision, capturedVaePrecision)
+    assert.equal(frozen.workerJob.vaePrecision, capturedVaePrecision)
+    assert.equal(frozen.context.vae, null, 'The frozen context must use Embedded VAE.')
+    assert.equal(frozen.workerJob.vae, null, 'The actual worker must use Embedded VAE.')
   }
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   assert.equal(frozen.context.loras.length, 1)
@@ -887,7 +1014,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       (generation) =>
         generation.projectKey === project.id &&
         generation.family === family &&
-        generation.mode === 'txt2img',
+        (precisionQualification || generation.mode === 'txt2img'),
     )
     assert.ok(previous)
     assert.equal(target.pixelSha256, previous.dimensions.pixelSha256)
@@ -900,7 +1027,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .toBe(changedPrompt)
   let retry = null
   if (retryCase) {
-    assert.equal(mode, 'outpaint')
+    assert.ok(mode === 'outpaint' || (precisionQualification && mode === 'img2img'))
     const original = admitted
     // Cancel the actual admitted worker through the public UI. There is no controlled peer,
     // manufactured terminal row or completion-to-canceled rewrite in this qualification.
@@ -915,10 +1042,33 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     const canceled = (await queueRows(project)).find(({ id }) => id === original.id)
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
-    await setInput('Denoising Strength', 0.25)
-    await expect
-      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
-      .toBe(0.25)
+    if (precisionQualification) {
+      assert.deepEqual(
+        await database.db
+          .selectFrom('generation_candidate_receipt')
+          .selectAll()
+          .where('queue_item_id', '=', original.id)
+          .execute(),
+        [],
+      )
+      assert.deepEqual(
+        await database.db
+          .selectFrom('generation_seed_cursor')
+          .selectAll()
+          .where('local_project_key', '=', project.id)
+          .executeTakeFirst(),
+        previousSeedCursor,
+      )
+      await expect.poll(liveInstalledInferenceChildren).toEqual([])
+      assert.equal(capturedVaePrecision, 'FP32')
+      assert.equal(currentVaePrecision, 'FP16')
+      await setVaePrecision(project, currentVaePrecision)
+    } else {
+      await setInput('Denoising Strength', 0.25)
+      await expect
+        .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+        .toBe(0.25)
+    }
     await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
     const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
     const retryButton = manager
@@ -950,25 +1100,51 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       (await readFile(copiedTargetPath)).equals(targetBytes),
       'Retry must retain exact target bytes',
     )
-    retry = { originalQueueItemId: original.id, retryQueueItemId: admitted.id, copiedTargetPath }
+    retry = {
+      originalQueueItemId: original.id,
+      retryQueueItemId: admitted.id,
+      copiedTargetPath,
+      ...(precisionQualification
+        ? {
+            capturedVaePrecision,
+            currentVaePrecision: (await tab(project)).generationDraft.vaePrecision,
+            canceledStatusSequence: canceled.status_sequence,
+            consumedSourceStatusSequence: source.status_sequence,
+          }
+        : {}),
+    }
     await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
   }
   let normalizedInputs = null
   if (qualification) {
     normalizedInputs = structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
-    // Different owned Projects require distinct identities; CFG is the sole inference ablation.
+    // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
-    delete normalizedInputs.context.sampling.cfgRescale
-    delete normalizedInputs.workerJob.sampling.cfgRescale
-    await setCfgRescale(project, 0.2)
+    if (precisionQualification) {
+      delete normalizedInputs.context.vaePrecision
+      delete normalizedInputs.workerJob.vaePrecision
+      if (!retryCase) await setVaePrecision(project, currentVaePrecision)
+    } else {
+      delete normalizedInputs.context.sampling.cfgRescale
+      delete normalizedInputs.workerJob.sampling.cfgRescale
+      await setCfgRescale(project, 0.2)
+    }
     const editedRow = (await queueRows(project)).find(({ id }) => id === admitted.id)
     assert.equal(editedRow.frozen_payload_json, admitted.frozen_payload_json)
   }
+  const failureBaseline = precisionQualification ? await tab(project) : null
+  let terminalFailure = null
   await expect
     .poll(
       async () => {
         const rows = await queueRows(project)
+        const current = rows.find(({ id }) => id === admitted.id)
+        if (precisionQualification && current?.status === 'failed') {
+          assert.equal(capturedVaePrecision, 'FP16', 'Auto and FP32 must actually complete.')
+          terminalFailure = current
+          return 1
+        }
         assert.ok(
           rows.every((row) => row.status !== 'failed'),
           JSON.stringify(rows.map((row) => ({ status: row.status, error: row.error_message }))),
@@ -978,6 +1154,29 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       { timeout: 600_000, intervals: [1000, 2000, 5000] },
     )
     .toBe(1)
+  if (terminalFailure) {
+    return await qualifyVaeNonFiniteRefusal({
+      project,
+      family,
+      mode,
+      qualification,
+      admitted,
+      terminalFailure,
+      frozen,
+      normalizedInputs,
+      target,
+      targetPath,
+      targetBytes,
+      beforePackagePath,
+      beforePackageSha256,
+      existingLayers,
+      previousAcceptedLayers,
+      previousSeedCursor,
+      previousLastActualSeed,
+      failureBaseline,
+      started,
+    })
+  }
   const results = await api('listGenerationResults', project.id)
   const candidate = results.candidates[0]
   assert.equal(candidate.queueItemId, admitted.id)
@@ -991,7 +1190,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   )
   assert.deepEqual(completedTab.primaryBbox, before.primaryBbox)
   assert.equal(completedTab.generationDraft.positivePrompt.text, changedPrompt)
-  if (qualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
+  if (cfgQualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
+  if (precisionQualification)
+    assert.equal(completedTab.generationDraft.vaePrecision, currentVaePrecision)
   const receipt = await database.db
     .selectFrom('generation_candidate_receipt')
     .selectAll()
@@ -1008,6 +1209,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .executeTakeFirstOrThrow()
   assert.equal(row.status, 'completed')
   assert.equal(row.frozen_payload_json, admitted.frozen_payload_json)
+  if (precisionQualification) {
+    assert.ok(
+      (await readFile(targetPath)).equals(targetBytes),
+      'Completion must retain the exact captured source.',
+    )
+    if (retry) assert.ok((await readFile(retry.copiedTargetPath)).equals(targetBytes))
+  }
   const progress = await window.evaluate(
     (jobId) =>
       window.__installedQualificationProgress.filter(({ current }) => current.jobId === jobId),
@@ -1040,6 +1248,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, fixture.side)
   assert.equal(pixels.height, fixture.side)
+  if (precisionQualification) assert.equal(pixels.opaquePixels, fixture.side * fixture.side)
   let contributionAlpha8 = null
   if (mode === 'outpaint') {
     const outputBytes = Buffer.from(
@@ -1078,9 +1287,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     requestedSeedPolicy,
   )
   assert.equal(acceptedData.generationConfiguration.model.baseModelFamily, family)
-  if (qualification) {
+  if (cfgQualification) {
     assert.equal(acceptedData.generationConfiguration.cfgRescale, capturedCfgRescale)
     assert.equal(accepted.generationDraft.cfgRescale, 0.2)
+  }
+  if (precisionQualification) {
+    assert.equal(acceptedData.generationConfiguration.vaePrecision, capturedVaePrecision)
+    assert.equal(accepted.generationDraft.vaePrecision, currentVaePrecision)
   }
   assert.equal(
     acceptedData.generationConfiguration.positivePrompt.text,
@@ -1154,6 +1367,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
         frozen.context.conditioning[field],
       )
     }
+  }
+  if (mode === 'outpaint' || precisionQualification) {
     assert.deepEqual(await layerSnapshot(accepted.layers.slice(1)), existingLayers)
     assert.deepEqual(saved.project.layers.slice(1), previousAcceptedLayers)
   }
@@ -1188,9 +1403,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.ok(previewThumbnail.bytes > 0 && previewThumbnail.width > 0 && previewThumbnail.height > 0)
   assert.equal(saved.project.lastActualSeedSnapshot, 0)
   assert.equal(saved.project.generationDraft.positivePrompt.text, changedPrompt)
-  if (qualification) {
+  if (cfgQualification) {
     assert.equal(provenance.generationConfiguration.cfgRescale, capturedCfgRescale)
     assert.equal(saved.project.generationDraft.cfgRescale, 0.2)
+  }
+  if (precisionQualification) {
+    assert.equal(provenance.generationConfiguration.vaePrecision, capturedVaePrecision)
+    assert.equal(saved.project.generationDraft.vaePrecision, currentVaePrecision)
   }
   await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
@@ -1198,7 +1417,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
   const reopened = await tab(project)
   assert.equal(reopened.generationDraft.positivePrompt.text, changedPrompt)
-  if (qualification) assert.equal(reopened.generationDraft.cfgRescale, 0.2)
+  if (cfgQualification) assert.equal(reopened.generationDraft.cfgRescale, 0.2)
+  if (precisionQualification)
+    assert.equal(reopened.generationDraft.vaePrecision, currentVaePrecision)
   assert.deepEqual(
     (await api('getRasterGenerationData', project.id, reopened.documentId, layer.id))
       .generationConfiguration,
@@ -1213,33 +1434,51 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     sha256(await reopenedPackage.readMember(savedLayer.asset.path)),
     receipt.image_sha256,
   )
-  if (qualification) {
+  if (cfgQualification) {
     const input = window.locator('input[aria-label="CFG Rescale"]')
     if (!(await input.isVisible())) {
       await window.getByText('Advanced Options', { exact: true }).click()
     }
     await expect(input).toHaveValue('0.2')
   }
+  if (precisionQualification) {
+    const input = window.locator('input[aria-label="VAE precision"]')
+    if (!(await input.isVisible()))
+      await window.getByText('Advanced Options', { exact: true }).click()
+    await expect(
+      input.locator(
+        'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " n-base-selection ")]',
+      ),
+    ).toContainText(currentVaePrecision)
+  }
   const caseName = qualification?.caseName ?? `${family}-${mode}${retryCase ? '-retry' : ''}`
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = qualification
-    ? await compareCfgRescale(
+  const comparison = precisionQualification
+    ? await compareVaePrecision(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        capturedCfgRescale,
+        capturedVaePrecision,
+        currentVaePrecision,
         caseName,
       )
-    : mode === 'outpaint'
-      ? await compareOutpaint(
+    : cfgQualification
+      ? await compareCfgRescale(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          retryCase,
+          capturedCfgRescale,
           caseName,
         )
-      : null
-  report.generations.push({
+      : mode === 'outpaint'
+        ? await compareOutpaint(
+            project,
+            reopened.layers.find(({ id }) => id === layer.id),
+            retryCase,
+            caseName,
+          )
+        : null
+  const generation = {
     family,
     mode,
     projectKey: project.id,
@@ -1263,21 +1502,189 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     provenance,
     packagePath,
     previewState: saved.manifest.preview,
-    qualification: qualification
+    qualification: precisionQualification
       ? {
+          kind: 'vae-precision',
           caseName,
-          authoredCfgRescale: qualification.cfgRescale,
-          capturedCfgRescale,
-          currentCfgRescale: reopened.generationDraft.cfgRescale,
+          outcome: 'completed-finite',
+          authoredVaePrecision: capturedVaePrecision,
+          capturedVaePrecision,
+          workerVaePrecision: frozen.workerJob.vaePrecision,
+          currentVaePrecision: reopened.generationDraft.vaePrecision,
+          frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
+          retainedTargetUnchanged: true,
           normalizedInputs,
           comparison,
         }
-      : null,
-  })
+      : cfgQualification
+        ? {
+            caseName,
+            authoredCfgRescale: qualification.cfgRescale,
+            capturedCfgRescale,
+            currentCfgRescale: reopened.generationDraft.cfgRescale,
+            normalizedInputs,
+            comparison,
+          }
+        : null,
+  }
+  report.generations.push(generation)
   await check(
     `${qualification?.caseName ?? `${family} ${mode}`}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen${qualification ? '/comparison' : ''}`,
     { queueItemId: row.id },
   )
+  return generation
+}
+async function qualifyVaeNonFiniteRefusal(input) {
+  const {
+    project,
+    family,
+    mode,
+    qualification,
+    admitted,
+    terminalFailure,
+    frozen,
+    normalizedInputs,
+    target,
+    targetPath,
+    targetBytes,
+    beforePackagePath,
+    beforePackageSha256,
+    existingLayers,
+    previousAcceptedLayers,
+    previousSeedCursor,
+    previousLastActualSeed,
+    failureBaseline,
+    started,
+  } = input
+  assert.equal(qualification.kind, 'vae-precision')
+  assert.equal(qualification.vaePrecision, 'FP16')
+  assert.equal(terminalFailure.error_code, 'GENERATION_VAE_NON_FINITE')
+  const message =
+    'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.'
+  assert.equal(terminalFailure.error_message, message)
+  assert.equal(terminalFailure.frozen_payload_json, admitted.frozen_payload_json)
+  await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
+  await expect.poll(liveInstalledInferenceChildren).toEqual([])
+  const results = await api('listGenerationResults', project.id)
+  assert.deepEqual(results.candidates, [])
+  assert.equal(results.lastActualSeed, previousLastActualSeed)
+  assert.equal(await window.getByRole('button', { name: 'Add 1 as Layer', exact: true }).count(), 0)
+  const receipt = await database.db
+    .selectFrom('generation_candidate_receipt')
+    .selectAll()
+    .where('queue_item_id', '=', admitted.id)
+    .execute()
+  assert.deepEqual(receipt, [])
+  assert.deepEqual(
+    await database.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .where('local_project_key', '=', project.id)
+      .executeTakeFirst(),
+    previousSeedCursor,
+  )
+  const after = await tab(project)
+  for (const key of [
+    'documentId',
+    'generationDraft',
+    'primaryBbox',
+    'layers',
+    'lastActualSeedSnapshot',
+    'dirty',
+    'canUndo',
+    'canRedo',
+  ]) {
+    assert.deepEqual(after[key], failureBaseline[key], `A refused worker must preserve ${key}.`)
+  }
+  assert.deepEqual(await layerSnapshot(after.layers), existingLayers)
+  assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
+  assert.deepEqual((await readIgsPackage(beforePackagePath)).project.layers, previousAcceptedLayers)
+  assert.ok(
+    (await readFile(targetPath)).equals(targetBytes),
+    'Refusal must retain the exact Retry source.',
+  )
+  const stagingPngs = await pngFiles(
+    path.join(
+      fixture.appData,
+      'recovery/generation-staging',
+      project.id,
+      admitted.staging_session_id,
+    ),
+  )
+  assert.deepEqual(stagingPngs, [])
+  const scratchPngs = []
+  for (const name of await readdir(path.join(fixture.appData, 'scratch'))) {
+    if (name.startsWith('illustrious-request-')) {
+      scratchPngs.push(...(await pngFiles(path.join(fixture.appData, 'scratch', name))))
+    }
+  }
+  assert.deepEqual(scratchPngs, [])
+  await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  const managerRow = manager.locator(`[data-testid="queue-job-row"][data-job-id="${admitted.id}"]`)
+  await expect(managerRow).toHaveAttribute('data-status', 'failed')
+  await managerRow.getByRole('button', { name: 'Show job details', exact: true }).click()
+  await expect(manager).toContainText('GENERATION_VAE_NON_FINITE')
+  await expect(manager.locator('.error-message')).toHaveText(message)
+  const screenshot = path.join(
+    fixture.artifacts,
+    `${qualification.caseName}-non-finite-refused.png`,
+  )
+  await captureScreenshot(screenshot, manager)
+  report.screenshots.push(screenshot)
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  const failure = {
+    family,
+    mode,
+    projectKey: project.id,
+    queueItemId: admitted.id,
+    outcome: 'qualified-non-finite-refused',
+    errorCode: terminalFailure.error_code,
+    errorMessage: terminalFailure.error_message,
+    elapsedMs: Date.now() - started,
+    target: { ...target, path: targetPath },
+    frozenPayloadSha256: sha256(Buffer.from(admitted.frozen_payload_json)),
+    frozenPayload: frozen,
+    qualification: {
+      kind: 'vae-precision',
+      caseName: qualification.caseName,
+      authoredVaePrecision: qualification.vaePrecision,
+      capturedVaePrecision: frozen.context.vaePrecision,
+      workerVaePrecision: frozen.workerJob.vaePrecision,
+      currentVaePrecision: after.generationDraft.vaePrecision,
+      normalizedInputs,
+    },
+    refusalEvidence: {
+      inferenceChildExited: true,
+      liveInferenceChildren: [],
+      candidateCount: 0,
+      receiptCount: 0,
+      stagingPngs,
+      scratchPngs,
+      explicitAddCount: 0,
+      seedCursorUnchanged: true,
+      lastActualSeedUnchanged: true,
+      documentUnchangedAfterAuthoring: true,
+      savedPackageUnchanged: true,
+      retainedTargetUnchanged: true,
+      screenshot,
+    },
+  }
+  report.failures.push(failure)
+  await check(
+    `${qualification.caseName}: actual native VAE non-finite refusal preserves Project, pixels, receipt and accepted seed`,
+    failure.refusalEvidence,
+  )
+  // Only now save the deliberately edited authoring draft; this is not worker publication or Add.
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(project)).dirty).toBe(false)
+  const saved = await readIgsPackage(beforePackagePath)
+  assert.deepEqual(saved.project.layers, previousAcceptedLayers)
+  assert.equal(saved.project.generationDraft.vaePrecision, qualification.currentVaePrecision)
+  assert.equal(saved.project.lastActualSeedSnapshot, previousLastActualSeed ?? null)
+  failure.authoredDraftSavedAfterRefusal = true
+  await checkpointEvidence()
+  return failure
 }
 async function prepareImg2Img(project) {
   await stage('Prepare image-based input: manual seed', { projectKey: project.id })
@@ -1406,6 +1813,143 @@ async function qualifyCfgRescale() {
   assert.equal(report.generations.length, 4)
   report.cfgRescaleBoundary =
     'Trained installed same-input txt2img CFG ablation plus opaque img2img nonzero frozen input, Add, Save/reopen and comparison. The img2img case establishes wiring/provenance, not an independent numerical ablation or release-runtime readiness.'
+}
+async function qualifyVaePrecision() {
+  const projects = new Map()
+  const txtCases = []
+  for (const vaePrecision of ['Auto', 'FP32', 'FP16']) {
+    const caseName = `illustrious-txt2img-vae-${vaePrecision.toLowerCase()}`
+    await stage('Installed VAE Precision txt2img case', { caseName, vaePrecision })
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    projects.set(vaePrecision, project)
+    await expect
+      .poll(async () => (await api('getGenerationState', project.id)).vaePrecisionSupported)
+      .toBe(true)
+    await setVaePrecision(project, vaePrecision)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-authored.png`)
+    await captureScreenshot(screenshot)
+    report.screenshots.push(screenshot)
+    txtCases.push(
+      await generateAndAccept(project, 'illustrious', 'txt2img', {
+        kind: 'vae-precision',
+        caseName,
+        vaePrecision,
+        currentVaePrecision: vaePrecision === 'FP32' ? 'FP16' : 'FP32',
+      }),
+    )
+  }
+  const [auto, fp32, fp16] = txtCases
+  for (const generation of [fp32, fp16]) {
+    assert.deepEqual(generation.qualification.normalizedInputs, auto.qualification.normalizedInputs)
+    assert.equal(generation.target.pixelSha256, auto.target.pixelSha256)
+  }
+  assert.equal(auto.qualification.outcome, 'completed-finite')
+  assert.equal(fp32.qualification.outcome, 'completed-finite')
+  assert.equal(
+    auto.dimensions.pixelSha256,
+    fp32.dimensions.pixelSha256,
+    'Pinned native Auto and explicit FP32 must produce equal decoded RGBA for matched frozen inputs.',
+  )
+  const fp16Refused = fp16.outcome === 'qualified-non-finite-refused'
+  if (!fp16Refused) {
+    assert.equal(fp16.qualification.outcome, 'completed-finite')
+    assert.notEqual(
+      fp16.dimensions.pixelSha256,
+      fp32.dimensions.pixelSha256,
+      'Actual FP16 must change decoded RGBA or refuse exact native VAE non-finite output.',
+    )
+  }
+  report.vaePrecisionNumerics = {
+    scope: 'Matched trained txt2img inputs except authored/frozen VAE precision policy.',
+    normalizedInputs: auto.qualification.normalizedInputs,
+    targetPixelSha256: auto.target.pixelSha256,
+    autoPixelSha256: auto.dimensions.pixelSha256,
+    fp32PixelSha256: fp32.dimensions.pixelSha256,
+    fp16PixelSha256: fp16Refused ? null : fp16.dimensions.pixelSha256,
+    autoEqualsFp32: true,
+    fp16ChangesPixelsOrRefusesNonFinite: fp16Refused
+      ? 'refused-native-vae-non-finite'
+      : 'changed-finite-pixels',
+  }
+  await check(
+    'Matched installed txt2img Auto equals FP32; actual FP16 changes pixels or refuses native VAE non-finite output',
+    report.vaePrecisionNumerics,
+  )
+  const imgCases = []
+  for (const vaePrecision of ['Auto', 'FP32', 'FP16']) {
+    const project = projects.get(vaePrecision === 'FP16' && fp16Refused ? 'Auto' : vaePrecision)
+    await window.getByRole('tab', { name: project.title, exact: true }).click()
+    await prepareImg2Img(project)
+    await setVaePrecision(project, vaePrecision)
+    const caseName = `illustrious-img2img-vae-${vaePrecision.toLowerCase()}${vaePrecision === 'FP32' ? '-retry' : ''}`
+    await stage('Installed VAE Precision opaque img2img case', {
+      caseName,
+      vaePrecision,
+      projectKey: project.id,
+    })
+    const screenshot = path.join(fixture.artifacts, `${caseName}-authored.png`)
+    await captureScreenshot(screenshot)
+    report.screenshots.push(screenshot)
+    imgCases.push(
+      await generateAndAccept(
+        project,
+        'illustrious',
+        'img2img',
+        {
+          kind: 'vae-precision',
+          caseName,
+          vaePrecision,
+          currentVaePrecision: vaePrecision === 'FP32' ? 'FP16' : 'FP32',
+        },
+        vaePrecision === 'FP32',
+      ),
+    )
+  }
+  const cases = [...txtCases, ...imgCases]
+  assert.equal(cases.length, 6)
+  assert.equal(report.generations.length + report.failures.length, 6)
+  assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 1)
+  assert.equal(report.generations.find(({ retry }) => retry !== null).mode, 'img2img')
+  let actualAdmissions = 0
+  for (const project of projects.values()) actualAdmissions += (await queueRows(project)).length
+  assert.equal(
+    actualAdmissions,
+    7,
+    'Six base cases plus one genuine canceled FP32 source admission.',
+  )
+  report.vaePrecisionCases = cases.map((result) => ({
+    caseName: result.qualification.caseName,
+    mode: result.mode,
+    outcome: result.outcome ?? result.qualification.outcome,
+    queueItemId: result.queueItemId,
+    projectKey: result.projectKey,
+    targetPixelSha256: result.target.pixelSha256,
+    authoredVaePrecision: result.qualification.authoredVaePrecision,
+    capturedVaePrecision: result.qualification.capturedVaePrecision,
+    workerVaePrecision: result.qualification.workerVaePrecision,
+    currentVaePrecision: result.qualification.currentVaePrecision,
+    normalizedInputs: result.qualification.normalizedInputs,
+  }))
+  report.vaePrecisionSummary = {
+    baseCases: 6,
+    actualAdmissions,
+    canceledOriginals: 1,
+    completedFinite: report.generations.length,
+    qualifiedNonFiniteRefusals: report.failures.length,
+    img2imgScope:
+      'Opaque encode/decode policy wiring and frozen Retry/provenance; source targets differ and are not matched numerical ablations.',
+    img2imgTargets: imgCases.map(({ qualification, target }) => ({
+      caseName: qualification.caseName,
+      pixelSha256: target.pixelSha256,
+    })),
+    fp16ImgSource: fp16Refused
+      ? 'Latest accepted Auto project layer after txt2img FP16 refusal'
+      : 'Accepted FP16 txt2img layer',
+  }
+  await check(
+    'Six genuine installed VAE policy cases and actual Cancel/frozen FP32 Retry have distinct terminal evidence',
+    report.vaePrecisionSummary,
+  )
 }
 async function qualifyMissingRuntimeSaveAndRebuild(project) {
   const latest = report.generations.at(-1)
@@ -1564,8 +2108,11 @@ async function qualifyInstalledImport(project) {
 }
 try {
   assert.ok(
-    !Object.hasOwn(fixture, 'profile') || fixture.profile === 'cfg-rescale' || outpaintProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale or outpaint.',
+    !Object.hasOwn(fixture, 'profile') ||
+      cfgRescaleProfile ||
+      outpaintProfile ||
+      vaePrecisionProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint or vae-precision.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -1578,6 +2125,14 @@ try {
   if (cfgRescaleProfile) {
     assert.equal(fixture.steps, 3, 'CFG Rescale qualification requires exactly 3 authored steps.')
   }
+  if (vaePrecisionProfile) {
+    assert.equal(
+      fixture.side,
+      256,
+      'VAE Precision qualification requires exactly 256 pixels per side.',
+    )
+    assert.equal(fixture.steps, 3, 'VAE Precision qualification requires exactly 3 authored steps.')
+  }
   if (outpaintProfile) {
     validateOutpaintFixture()
     // Qualify the declared local file before model copying, catalog writes or Electron startup.
@@ -1587,15 +2142,33 @@ try {
       sha256: fixture.lama.sha256,
     })
   }
-  const families = cfgRescaleProfile ? ['illustrious'] : ['illustrious', 'anima']
+  const families = illustriousOnlyProfile ? ['illustrious'] : ['illustrious', 'anima']
   const allModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
-  const modelKeys = cfgRescaleProfile ? ['illustrious', 'illustriousLora'] : allModelKeys
+  const modelKeys = illustriousOnlyProfile ? ['illustrious', 'illustriousLora'] : allModelKeys
   for (const family of families) {
     assert.equal(fixture[family]?.type, 'checkpoint')
     assert.equal(fixture[family]?.family, family)
     const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
     assert.equal(lora?.type, 'lora', 'this qualification requires one real LoRA for each family')
     assert.equal(lora.family, family)
+  }
+  if (vaePrecisionProfile) {
+    assert.equal(
+      resume,
+      true,
+      'VAE Precision qualification must resume the same six-resource catalog.',
+    )
+    const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
+    assert.equal(
+      ready.workerVersion,
+      '0.12.0',
+      'VAE Precision qualification requires an installed 0.12 worker.',
+    )
+    assert.ok(ready.capabilities.includes('illustrious-vae-precision'))
+    assert.ok(ready.capabilities.includes('illustrious-txt2img'))
+    assert.ok(ready.capabilities.includes('illustrious-img2img'))
+    assert.ok(ready.capabilities.includes('illustrious-lora'))
+    report.installedReady = ready
   }
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
@@ -1618,7 +2191,7 @@ try {
   const catalog = await repository.listInstalled()
   if (!resume) assert.equal(catalog.length, 0, 'qualification catalog must initially be empty')
   else {
-    // A CFG fixture may declare the previous six-resource qualification catalog while executing
+    // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
     const hashes = new Set(
       allModelKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
@@ -1627,8 +2200,30 @@ try {
       catalog.every((model) => model.versions.every((version) => hashes.has(version.file.sha256))),
       'resume may only reuse the same isolated qualification catalog',
     )
+    if (vaePrecisionProfile) {
+      assert.equal(
+        hashes.size,
+        6,
+        'VAE Precision qualification must declare the same six resource identities.',
+      )
+      assert.equal(
+        catalog.length,
+        6,
+        'VAE Precision qualification must resume the same six-resource catalog.',
+      )
+      assert.ok(
+        catalog.every(
+          (model) => model.versions.length === 1 && model.versions[0].file.status === 'ready',
+        ),
+      )
+      report.catalogReuse = {
+        resourceCount: catalog.length,
+        declaredIdentityCount: hashes.size,
+        copiedResources: 0,
+      }
+    }
   }
-  if (!cfgRescaleProfile) {
+  if (!illustriousOnlyProfile) {
     for (const [key, pin] of [
       ['encoder', ANIMA_QWEN3_0_6B_ENCODER],
       ['vae', ANIMA_QWEN_IMAGE_VAE],
@@ -1653,7 +2248,11 @@ try {
     if (modelKeys.includes(key) && fixture[key])
       fixture[key].installed = await installArtifact(repository, fixture[key], id)
   }
-  await check('Real exact model files copied, verified and cataloged; source weights unchanged')
+  await check(
+    vaePrecisionProfile
+      ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
+      : 'Real exact model files copied, verified and cataloged; source weights unchanged',
+  )
   if (outpaintProfile) await installQualificationLama()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
   report.nativeProcessPid = application.process().pid
@@ -1715,6 +2314,8 @@ try {
       assert.ok(ready.capabilities.includes(capability))
     report.installedReady = ready
     await qualifyOutpaint()
+  } else if (vaePrecisionProfile) {
+    await qualifyVaePrecision()
   } else if (cfgRescaleProfile) {
     await qualifyCfgRescale()
   } else {

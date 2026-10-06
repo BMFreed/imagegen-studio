@@ -264,6 +264,23 @@ The subsequent external VAE checkpoint below extends these precision policies
 to selected external components. CLIP Skip remains an explicitly refused input,
 not a pending user control for either MVP family.
 
+[Installed embedded precision qualification](../../../engineering/phase-2c-installed-vae-precision-research.md)
+connects the actual Auto/FP32/FP16 control to trained installed worker 0.12.0,
+staging, explicit Add, Save/reopen and comparison. Six 256×256/three-step cases
+produced 6 finite completions and 0 exact native VAE refusals, with
+one genuine canceled original followed by frozen FP32 Retry after a current
+FP16 edit. Matched txt2img Auto/FP32 decoded pixels agree; opaque img2img
+establishes encode/decode wiring, not numerical equivalence. External VAE,
+arbitrary models/GPUs and signed release lifecycle remain separate.
+The trained fixture produced no non-finite refusal; that error path is qualified separately by controlled JSONL through actual Main/SQLite.
+
+Only the exact correlated Illustrious VAE non-finite error receives the public
+Main-owned `GENERATION_VAE_NON_FINITE` diagnostic: choose FP32 for a **new**
+generation; Retry preserves the failed attempt's original precision.
+Other errors, Anima and composition never acquire that remedy. Raw worker
+messages/paths are not displayed, and refusal changes no accepted source,
+receipt, completed-seed cursor or saved `.igs`.
+
 ## Production external VAE authoring checkpoint
 
 [External VAE authoring evidence](../../../engineering/phase-2c-external-vae-authoring-research.md)
@@ -324,7 +341,7 @@ The current Project settings stack implements:
 - images-per-click as an integer input from 1 through 100 in the fixed Generate bar;
 - an `Advanced Options` disclosure containing VAE, VAE precision and CFG Rescale controls.
 
-VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. The prototype Seed row uses the same Random, Shuffle and separate Reuse controls described above. `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. The prototype still uses fixture models rather than the production Model Manager registry; explicit advance-seed and clip skip remain gaps. Generation and seeds are simulated; no inference is performed.
+VAE, precision and CFG Rescale update the active generation payload and participate in Project undo. CFG Rescale uses the Invoke-like 0–0.99 range for the current mock model; production must gate it by actual model/pipeline capability. Model and exact version selectors are placed above the prompts. The prototype Seed row uses the same Random, Shuffle and separate Reuse controls described above. `Reuse` uses the last actual seed from a completed output in this Project, or disables Generate with a reason when none exists. The last-actual-seed cursor changes only on completed output and is outside document dirty/undo state. Its production recovery and explicit-Save `.igs` snapshot are specified in [Dynamic Prompting](./dynamic-prompting.md#seed-behavior), but not implemented by the prototype. The prototype still uses fixture models rather than the production Model Manager registry; explicit advance-seed remains a gap; user-selectable CLIP Skip is inapplicable to both MVP pipelines. Generation and seeds are simulated; no inference is performed.
 
 Selecting a Smart Patch binds the visible settings to its layer-owned draft. Denoising stays visible and is disabled with an explanation when the effective target has no raster input. The prototype uses deterministic layer coverage metadata for this decision because it has no pixel compositor.
 

@@ -17,6 +17,7 @@ import {
   GenerationWorkerError,
   type GenerationWorkerLocation,
 } from './generation-worker-client.js'
+import { withAnimaDispatchClientFixture } from './test-fixtures/anima-dispatch.js'
 import { ProjectWorkerClient } from './worker-client.js'
 
 type Fixture = {
@@ -45,8 +46,9 @@ const ready = {
   workerVersion: mode.startsWith('vae-') ? '0.9.0' : mode.startsWith('precision-') ? '0.8.0' : mode.startsWith('lora-') ? '0.7.0' : mode.startsWith('img2img-') ? '0.6.0' : mode.startsWith('rescale-') ? '0.5.0' : mode === 'thumbnail-done' || mode === 'thumbnail-missing-capability' ? '0.4.0' : mode === 'bad-version' ? '0.1.0' : mode === 'future-version' ? '0.5.0' : mode.startsWith('progress-') || mode === 'new-missing-progress' ? '0.3.0' : '0.2.0',
   runtimeProfile:mode === 'bad-profile' ? 'derivatives-only' : 'linux-nvidia',
   pythonVersion:'3.12.13',
-  capabilities: mode === 'vae-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision', 'illustrious-external-vae'] : mode === 'vae-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
+  capabilities: mode === 'vae-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision', 'illustrious-external-vae'] : mode === 'vae-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : (mode === 'precision-done' || mode === 'precision-error') ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
+if (mode === 'precision-error') ready.capabilities.push('target-composition')
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
     if (mode === 'delayed-sigterm') setTimeout(() => process.exit(0), 70)
@@ -72,7 +74,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'vae-done') && request.type === 'generate-illustrious-img2img')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'precision-error' || mode === 'vae-done') && request.type === 'generate-illustrious-img2img') && !(mode === 'precision-error' && request.type === 'compose-target')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -81,6 +83,15 @@ else {
       if (mode === 'oversized-response') { process.stdout.write('a'.repeat(65537)); continue }
       if (mode === 'worker-error') {
         process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'MODEL_LOAD_FAILED',message:'Safe error.'})+'\n')
+        continue
+      }
+      if (mode === 'precision-error') {
+        process.stdout.write(JSON.stringify({
+          type:'error', protocolVersion:process.env.FAKE_ERROR_PROTOCOL || '1',
+          requestId:process.env.FAKE_ERROR_ID || request.requestId,
+          code:process.env.FAKE_ERROR_CODE || 'GENERATION_WORKER_FAILED',
+          message:process.env.FAKE_ERROR_MESSAGE || 'VAE inference produced non-finite values.'
+        })+'\n')
         continue
       }
       const response = {
@@ -244,6 +255,149 @@ function options(mode: string, more: Record<string, string> = {}) {
 function isCode(code: GenerationWorkerError['code']) {
   return (error: unknown): boolean => error instanceof GenerationWorkerError && error.code === code
 }
+
+test('validated native Illustrious JSONL VAE non-finite errors retain only a typed private reason', async () => {
+  await withFixture(async (fixture) => {
+    for (const mode of ['txt2img', 'img2img'] as const) {
+      const client = await GenerationWorkerClient.start(
+        fixture.location,
+        options('precision-error'),
+      )
+      try {
+        const original = await requestFor(fixture)
+        const request =
+          mode === 'txt2img'
+            ? original
+            : {
+                ...original,
+                job: {
+                  ...original.job,
+                  sampling: { ...original.job.sampling, denoisingStrength: 0.5 },
+                },
+                type: 'generate-illustrious-img2img' as const,
+              }
+        request.job.vaePrecision = 'FP16'
+        await assert.rejects(client.generate(request), (error) => {
+          assert.ok(error instanceof GenerationWorkerError)
+          assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+          assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+          assert.equal(error.failureReason, 'vae-non-finite')
+          assert.equal(error.message, 'The generation worker rejected the request.')
+          assert.ok(!JSON.stringify(error).includes('VAE inference produced'))
+          return true
+        })
+        assert.equal(existsSync(request.job.output.pngPath), false)
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('other or malformed JSONL errors cannot acquire the VAE non-finite classification', async () => {
+  await withFixture(async (fixture) => {
+    for (const [environment, code] of [
+      [
+        { FAKE_ERROR_MESSAGE: 'Resource conditioning produced non-finite values.' },
+        'WORKER_REQUEST_FAILED',
+      ],
+      [
+        {
+          FAKE_ERROR_MESSAGE:
+            'VAE inference produced non-finite values. /private/worker-model.safetensors',
+        },
+        'WORKER_REQUEST_FAILED',
+      ],
+      [{ FAKE_ERROR_CODE: 'MODEL_LOAD_FAILED' }, 'WORKER_REQUEST_FAILED'],
+      [{ FAKE_ERROR_CODE: 'malformed_code' }, 'PROTOCOL_ERROR'],
+      [{ FAKE_ERROR_MESSAGE: 'x'.repeat(513) }, 'PROTOCOL_ERROR'],
+      [{ FAKE_ERROR_ID: randomUUID() }, 'PROTOCOL_ERROR'],
+      [{ FAKE_ERROR_PROTOCOL: '2' }, 'WORKER_VERSION_MISMATCH'],
+    ] as const) {
+      const client = await GenerationWorkerClient.start(
+        fixture.location,
+        options('precision-error', environment),
+      )
+      try {
+        await assert.rejects(client.generate(await requestFor(fixture)), (error) => {
+          assert.ok(error instanceof GenerationWorkerError)
+          assert.equal(error.code, code)
+          assert.equal(error.failureReason, undefined)
+          assert.ok(!JSON.stringify(error).includes('/private/'))
+          assert.ok(!error.message.includes('VAE inference'))
+          return true
+        })
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('target composition JSONL errors never acquire a native generation failure reason', async () => {
+  await withFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, options('precision-error'))
+    try {
+      const stagingRoot = await mkdtemp(
+        path.join(fixture.location.scratchBasePath, 'target-error-'),
+      )
+      await assert.rejects(
+        client.composeTarget({
+          bbox: { height: 64, width: 64, x: 0, y: 0 },
+          layers: [],
+          stagingRoot,
+          targetPngPath: path.join(stagingRoot, 'target.png'),
+        }),
+        (error) => {
+          assert.ok(error instanceof GenerationWorkerError)
+          assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+          assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+          assert.equal(error.failureReason, undefined)
+          return true
+        },
+      )
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+test('native Anima JSONL errors with the same code and message stay unclassified', async () => {
+  await withAnimaDispatchClientFixture(async (fixture) => {
+    const executable = fixture.location.pythonExecutable
+    const source = await readFile(executable, 'utf8')
+    const anchor = 'const total = request.job.sampling.totalSteps'
+    assert.equal(source.split(anchor).length, 2)
+    await writeFile(
+      executable,
+      source.replace(
+        anchor,
+        String.raw`process.stdout.write(JSON.stringify({
+      type:'error', protocolVersion:'1', requestId:request.requestId,
+      code:'GENERATION_WORKER_FAILED', message:'VAE inference produced non-finite values.'
+    })+'\n')
+    continue
+    const total = request.job.sampling.totalSteps`,
+      ),
+    )
+    for (const strength of [null, 0.5]) {
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        environment: { MARKER: fixture.marker },
+      })
+      try {
+        await assert.rejects(client.generate(await fixture.request('euler', strength)), (error) => {
+          assert.ok(error instanceof GenerationWorkerError)
+          assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+          assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+          assert.equal(error.failureReason, undefined)
+          return true
+        })
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
 
 test(
   'an established image close failure during path inspection blocks the actual inference spawn until physical exit',

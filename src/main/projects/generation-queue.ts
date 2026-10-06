@@ -3293,6 +3293,8 @@ function managerError(row: Selectable<GenerationQueueItem>): GenerationQueueEntr
     GENERATION_INPUT_CHANGED: 'The frozen generation input could not be verified.',
     GENERATION_OUTPAINT_UNAVAILABLE:
       'The active runtime or local infill resource is unavailable for outpaint.',
+    GENERATION_VAE_NON_FINITE:
+      'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.',
     GENERATION_WORKER_FAILED: 'The generation worker did not return a valid completed result.',
     QUEUE_INPUT_INVALID: 'The frozen queue input is invalid.',
     USER_CANCELED: row.status === 'running' ? 'Cancellation requested.' : 'The job was canceled.',

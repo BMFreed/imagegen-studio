@@ -76,6 +76,7 @@ export interface GenerationWorkerReady extends InferenceWorkerReady {
 
 type PendingGeneration = {
   completionType: 'generation-done' | 'target-done'
+  generationType: GenerationWorkerRequest['type'] | null
   outputPath: string
   progress: {
     expectedTotalSteps: number | null
@@ -108,6 +109,7 @@ export class GenerationWorkerError extends Error {
       | 'WORKER_VERSION_MISMATCH',
     message: string,
     readonly workerCode?: string,
+    readonly failureReason?: 'vae-non-finite',
   ) {
     super(message)
     this.name = 'GenerationWorkerError'
@@ -485,6 +487,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           maxSteps: 2 * frozen.job.sampling.steps,
           onProgress,
         },
+        frozen.type,
       )
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -525,6 +528,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       maxSteps: number
       onProgress?: (progress: GenerationDenoisingProgress) => void
     },
+    generationType?: GenerationWorkerRequest['type'],
   ): Promise<Record<string, unknown>> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
@@ -535,6 +539,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       }, this.requestTimeoutMs)
       this.active = {
         completionType,
+        generationType: generationType ?? null,
         outputPath,
         progress: progress ? { ...progress, lastStep: 0, totalSteps: null } : null,
         reject,
@@ -627,6 +632,14 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'WORKER_REQUEST_FAILED',
           'The generation worker rejected the request.',
           input.code,
+          active.completionType === 'generation-done' &&
+            (active.generationType === 'generate-illustrious-txt2img' ||
+              active.generationType === 'generate-illustrious-img2img' ||
+              active.generationType === 'generate-illustrious-outpaint') &&
+            input.code === 'GENERATION_WORKER_FAILED' &&
+            input.message === 'VAE inference produced non-finite values.'
+            ? 'vae-non-finite'
+            : undefined,
         ),
       )
       return

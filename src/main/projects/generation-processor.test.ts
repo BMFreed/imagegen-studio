@@ -6,7 +6,7 @@ import type {
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -14,7 +14,11 @@ import { crc32, deflateSync } from 'node:zlib'
 
 import type { AppDatabase } from '../db/database.js'
 import type { GenerationWorkerLease } from './generation-dispatch-coordinator.js'
-import type { GenerationWorkerRequest, GenerationWorkerTransport } from './generation-processor.js'
+import type {
+  GenerationDispatchModelResolver,
+  GenerationWorkerRequest,
+  GenerationWorkerTransport,
+} from './generation-processor.js'
 import type {
   FrozenQueuedIllustriousGenerationV1,
   VerifiedQueuedInput,
@@ -32,6 +36,8 @@ import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
 import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
+import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
+import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import {
   GenerationDispatchCoordinator,
@@ -40,6 +46,7 @@ import {
 import { GenerationProcessor, GenerationProcessorError } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { GenerationWorkerClient, GenerationWorkerError } from './generation-worker-client.js'
 import { readIgsPackage } from './igs-package.js'
 import { workerLoras } from './illustrious-generation-loras.js'
 import { workerVae } from './illustrious-generation-vae.js'
@@ -50,8 +57,10 @@ import {
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
+import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { ANIMA_BATCH_READY, withAnimaBatchFixture } from './test-fixtures/anima-batch.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -419,6 +428,338 @@ test('completed candidates keep the actual worker seed through Add and portable 
         })
       })
     })
+  }
+})
+
+test('native JSONL VAE refusal reaches a safe public error without changing accepted source, receipt or seed', async (t) => {
+  const safeVaeMessage =
+    'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.'
+  const genericMessage = 'The generation worker did not return a valid completed result.'
+  for (const [workerCode, workerMessage, publicCode] of [
+    [
+      'GENERATION_WORKER_FAILED',
+      'VAE inference produced non-finite values.',
+      'GENERATION_VAE_NON_FINITE',
+    ],
+    [
+      'GENERATION_WORKER_FAILED',
+      'VAE inference produced non-finite values. /private/model.safetensors',
+      'GENERATION_WORKER_FAILED',
+    ],
+    [
+      'GENERATION_WORKER_FAILED',
+      'Resource conditioning produced non-finite values.',
+      'GENERATION_WORKER_FAILED',
+    ],
+    ['MODEL_LOAD_FAILED', 'VAE inference produced non-finite values.', 'GENERATION_WORKER_FAILED'],
+  ] as const) {
+    await t.test(`${workerMessage} / ${workerCode}`, async () => {
+      await withFixture(async (fixture) => {
+        const sourceId = await enqueue(fixture)
+        assert.equal(
+          (
+            await fixture.processor.runOne(
+              transport(async (request) => await writeDone(request, fixture.outputBytes, 65_535)),
+            )
+          ).kind,
+          'completed',
+        )
+        const source = await fixture.queue.loadVerifiedInput(sourceId)
+        const candidate = (
+          await fixture.staging.listVerifiedCandidates(source.item.localProjectKey)
+        )[0]
+        await withAcceptance(fixture, source.item.localProjectKey, async (owner, acceptance) => {
+          assert.equal(
+            (
+              await acceptance.accept(
+                source.item.localProjectKey,
+                [candidate.candidateId],
+                candidate.candidateId,
+                [candidate.candidateId],
+              )
+            ).kind,
+            'accepted',
+          )
+          await owner.save({ lastActualSeedSnapshot: 65_535 })
+          const documentBefore = structuredClone(owner.document)
+          const historyBefore = [owner.canUndo, owner.canRedo, owner.dirty]
+          const packageBefore = await readFile(candidate.projectPath)
+          const acceptedAsset = owner.document.layers[0].asset.path
+          const originalPreparation = await opaquePreparation(fixture, 0.5)
+          const prepared = {
+            ...originalPreparation,
+            context: {
+              ...originalPreparation.context,
+              documentRevision: owner.document.documentRevision,
+              vaePrecision: 'FP16' as const,
+            },
+          }
+          const ready: InferenceWorkerReady = {
+            ...img2imgReady,
+            capabilities: [
+              ...img2imgReady.capabilities,
+              'illustrious-lora',
+              'illustrious-vae-precision',
+            ],
+            workerVersion: '0.8.0',
+          }
+          const failed = await withIllustriousGenerationRequest({
+            modelService: fixture.modelService,
+            prepared,
+            ready,
+            scratchBasePath: path.join(fixture.root, 'scratch'),
+            use: async (request) =>
+              await fixture.queue.enqueueIllustriousGeneration({
+                prepared,
+                projectPath: candidate.projectPath,
+                request,
+                stagingSessionId: randomUUID(),
+              }),
+          })
+          const frozenBefore = await fixture.queue.loadVerifiedInput(failed.id)
+          const payloadBefore = structuredClone(frozenBefore.payload)
+          // The accepted open Project owns its pending asset directory. The admission lease has
+          // already closed; only a new processor scratch directory must disappear after refusal.
+          const scratchPath = path.join(fixture.root, 'scratch')
+          const scratchBefore = (await readdir(scratchPath)).sort()
+          assert.ok(scratchBefore.every((name) => !name.startsWith('illustrious-request-')))
+          const runtimeRoot = path.join(fixture.root, 'native-error-runtime')
+          await mkdir(runtimeRoot)
+          const executable = path.join(runtimeRoot, 'python')
+          await writeFile(
+            executable,
+            String.raw`#!${process.execPath}
+const ready = ${JSON.stringify({ ...ready, pythonVersion: '3.12.13', type: 'ready' })}
+process.stdout.write(JSON.stringify(ready) + '\n')
+let buffer = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', chunk => {
+  buffer += chunk
+  while (buffer.includes('\n')) {
+    const newline = buffer.indexOf('\n')
+    const request = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    process.stdout.write(JSON.stringify({
+      type: 'error', protocolVersion: '1', requestId: request.requestId,
+      code: ${JSON.stringify(workerCode)}, message: ${JSON.stringify(workerMessage)}
+    }) + '\n')
+  }
+})
+`,
+          )
+          await chmod(executable, 0o700)
+          const client = await GenerationWorkerClient.start({
+            pythonExecutable: executable,
+            runtimeRoot,
+            scratchBasePath: path.join(fixture.root, 'scratch'),
+          })
+          let outputPath: string | null = null
+          try {
+            const result = await fixture.processor.runOne({
+              close: async () => await client.close(),
+              generate: async (request) => {
+                assert.ok(request.type === 'generate-illustrious-img2img')
+                assert.equal(request.job.vaePrecision, 'FP16')
+                assert.deepEqual(await readFile(request.job.target.path), fixture.outputBytes)
+                outputPath = request.job.output.pngPath
+                return await client.generate(request)
+              },
+              ready: client.ready,
+            })
+            assert.deepEqual(result, { kind: 'failed', queueItemId: failed.id })
+            const after = await fixture.queue.loadVerifiedInput(failed.id)
+            assert.equal(after.item.status, 'failed')
+            assert.deepEqual(after.payload, payloadBefore)
+            assert.deepEqual(await readFile(after.targetPath), prepared.targetPngBytes)
+            const publicError = {
+              code: publicCode,
+              message: publicCode === 'GENERATION_VAE_NON_FINITE' ? safeVaeMessage : genericMessage,
+            }
+            assert.deepEqual((await fixture.queue.getManagerEntry(failed.id)).error, publicError)
+            const page = await fixture.queue.listManagerPage()
+            assert.deepEqual(page.items.find((entry) => entry.id === failed.id)?.error, publicError)
+            assert.ok(!JSON.stringify(page).includes('/private/'))
+            assert.ok(!JSON.stringify(page).includes('VAE inference produced'))
+            const stored = await fixture.database.db
+              .selectFrom('generation_queue_item')
+              .select(['error_code', 'error_message'])
+              .where('id', '=', failed.id)
+              .executeTakeFirstOrThrow()
+            assert.deepEqual(stored, {
+              error_code: publicError.code,
+              error_message: publicError.message,
+            })
+            assert.equal(await fixture.staging.hasPublicationReceipt(failed.id), false)
+            assert.deepEqual(
+              await fixture.staging.listVerifiedCandidates(failed.localProjectKey),
+              [],
+            )
+            assert.equal(
+              await fixture.staging.readLastActualSeed(
+                failed.localProjectKey,
+                owner.document.documentId,
+              ),
+              65_535,
+            )
+            assert.deepEqual(owner.document, documentBefore)
+            assert.deepEqual([owner.canUndo, owner.canRedo, owner.dirty], historyBefore)
+            assert.deepEqual(await readFile(candidate.projectPath), packageBefore)
+            const saved = await readIgsPackage(candidate.projectPath)
+            assert.deepEqual(await saved.readMember(acceptedAsset), fixture.outputBytes)
+            assert.ok(outputPath)
+            await assert.rejects(readFile(outputPath), { code: 'ENOENT' })
+            assert.deepEqual((await readdir(scratchPath)).sort(), scratchBefore)
+          } finally {
+            await client.close()
+          }
+        })
+      })
+    })
+  }
+})
+
+test('untyped or unrelated typed worker failures cannot masquerade as a VAE non-finite refusal', async () => {
+  for (const error of [
+    Object.assign(new Error('/private/untrusted-worker-error'), {
+      code: 'WORKER_REQUEST_FAILED',
+      failureReason: 'vae-non-finite',
+      workerCode: 'GENERATION_WORKER_FAILED',
+    }),
+    new GenerationWorkerError(
+      'PROTOCOL_ERROR',
+      '/private/protocol-error',
+      'GENERATION_WORKER_FAILED',
+      'vae-non-finite',
+    ),
+    new GenerationWorkerError(
+      'WORKER_REQUEST_FAILED',
+      '/private/other-worker-error',
+      'MODEL_LOAD_FAILED',
+      'vae-non-finite',
+    ),
+  ]) {
+    await withFixture(async (fixture) => {
+      const id = await enqueue(fixture)
+      assert.deepEqual(
+        await fixture.processor.runOne(
+          transport(async () => {
+            throw error
+          }),
+        ),
+        {
+          kind: 'failed',
+          queueItemId: id,
+        },
+      )
+      const row = await fixture.queue.getManagerEntry(id)
+      assert.equal(row.error?.code, 'GENERATION_WORKER_FAILED')
+      assert.equal(
+        row.error?.message,
+        'The generation worker did not return a valid completed result.',
+      )
+      assert.ok(!JSON.stringify(row).includes('/private/'))
+      assert.equal(await fixture.staging.hasPublicationReceipt(id), false)
+      assert.deepEqual(await fixture.staging.listVerifiedCandidates(row.projectKey), [])
+    })
+  }
+})
+
+test('an Anima job cannot project the Illustrious precision remedy even from a typed transport failure', async () => {
+  for (const opaque of [false, true]) {
+    await withAnimaBatchFixture(
+      async (source) => {
+        const database = openAppDatabase(source.root, migrations)
+        try {
+          const projectPath = path.join(source.root, 'Project.igs')
+          const project = await ProjectSession.create(
+            projectPath,
+            'Anima failure fixture',
+            {
+              placeholdersDir: placeholders,
+              scratchDir: source.scratch,
+            },
+            source.prepared.context.bbox,
+          )
+          source.prepared.context.documentId = project.document.documentId
+          source.prepared.context.documentRevision = project.document.documentRevision
+          const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared: source.prepared })
+          const queue = new GenerationQueueRepository(database.db, source.root)
+          const staging = new GenerationStagingRepository(database.db, source.root)
+          await queue.recoverAfterRestart()
+          await staging.recoverAfterRestart()
+          const unsupported = async () => {
+            throw new Error('The Anima dispatcher must not resolve Illustrious resources.')
+          }
+          const models: GenerationDispatchModelResolver = {
+            ...source.modelService,
+            assertNoUnboundGenerationEmbeddings: unsupported,
+            resolveVerifiedGenerationCheckpointForPlan: unsupported,
+            resolveVerifiedGenerationEmbeddingForPlan: unsupported,
+            resolveVerifiedGenerationLoraForPlan: unsupported,
+            resolveVerifiedGenerationVaeForPlan: unsupported,
+          }
+          const session = randomUUID()
+          const [queued] = await withAnimaGenerationBatchRequests({
+            modelService: source.modelService,
+            prepared: batch,
+            ready: ANIMA_BATCH_READY,
+            scratchBasePath: source.scratch,
+            use: async (requests) =>
+              await queue.enqueuePreparedAnimaGenerationBatch({
+                preflight: async (entries) =>
+                  await staging.preflightBatchCapacity({
+                    entries,
+                    localProjectKey: localProjectRecoveryKey(projectPath),
+                    projectPath,
+                    stagingSessionId: session,
+                  }),
+                preparedBatch: batch,
+                projectPath,
+                requests,
+                stagingSessionId: session,
+              }),
+          })
+          const processor = new GenerationProcessor(queue, staging, models, source.scratch)
+          const before = structuredClone(project.document)
+          const result = await processor.runOne({
+            close: async () => undefined,
+            generate: async (request) => {
+              assert.equal(
+                request.type,
+                opaque ? 'generate-anima-img2img' : 'generate-anima-txt2img',
+              )
+              throw new GenerationWorkerError(
+                'WORKER_REQUEST_FAILED',
+                '/private/untrusted-anima-diagnostic',
+                'GENERATION_WORKER_FAILED',
+                'vae-non-finite',
+              )
+            },
+            ready: ANIMA_BATCH_READY,
+          })
+          assert.deepEqual(result, { kind: 'failed', queueItemId: queued.id })
+          assert.deepEqual((await queue.getManagerEntry(queued.id)).error, {
+            code: 'GENERATION_WORKER_FAILED',
+            message: 'The generation worker did not return a valid completed result.',
+          })
+          assert.ok(!JSON.stringify(await queue.listManagerPage()).includes('/private/'))
+          assert.equal(await staging.hasPublicationReceipt(queued.id), false)
+          assert.deepEqual(await staging.listVerifiedCandidates(queued.localProjectKey), [])
+          assert.equal(
+            await staging.readLastActualSeed(
+              queued.localProjectKey,
+              source.prepared.context.documentId,
+            ),
+            null,
+          )
+          assert.deepEqual(project.document, before)
+          assert.deepEqual(await readdir(source.scratch), [])
+        } finally {
+          await database.close()
+        }
+      },
+      { opaque },
+    )
   }
 })
 

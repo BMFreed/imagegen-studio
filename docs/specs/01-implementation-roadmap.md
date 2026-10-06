@@ -1259,6 +1259,20 @@ filesystem, queue и dispatch boundaries с поведенческими kills �
 параметр и конкретные trained weights, без обещания качества, independent
 img2img pixel ablation, остальных options или готового release runtime.
 
+**Installed embedded VAE precision checkpoint (07.10.2026):**
+[Actual Advanced Options → installed worker](../engineering/phase-2c-installed-vae-precision-research.md)
+прошли шесть Illustrious Auto/FP32/FP16 × txt2img/opaque img2img случаев:
+6 finite completions, 0 точных VAE non-finite refusals и один
+actual canceled original перед frozen FP32 Retry после текущей правки на FP16.
+Matched txt2img Auto/FP32 дают одинаковые pixels; FP16 меняет txt2img pixels; completion/refusal outcome указан отдельно выше.
+GPU отказ в этом fixture не наблюдался; путь ошибки отдельно проверен controlled JSONL → actual Main/SQLite. Main сохраняет понятную фиксированную
+диагностику без raw worker paths. Явный Add/Save/reopen/comparison сохраняет
+precision; opaque случаи доказывают wiring, а не numerical ablation.
+Worker 0.12.0/six-resource catalog reused, 256×256/three steps,
+без новых тяжёлых копий моделей или signed release/maximum GPU claims.
+External VAE, embeddings, installed v_prediction и batch qualification
+остаются открытыми. Counts/checks/mutations и resource limits — в research note.
+
 **Normal outpaint conditioning foundation (06.10.2026):**
 [Alpha/coherence/LaMa contract](../engineering/phase-2c-outpaint-conditioning-research.md)
 и внутренние production helpers фиксируют detached Main target/soft-alpha mask,
@@ -1334,9 +1348,15 @@ Main installer с заменой только transport/DNS локальным �
 подтверждённо завершился. Это development Linux/NVIDIA evidence, без public
 network/setup, signed release, all-model/all-GPU или всей фазы 2C claims.
 
-**Следующий шаг:** продолжить оставшиеся Advanced Options и installed model/options
-qualification. First-setup integration остаётся зависимостью release/runtime
-installer; вес LaMa обязан входить в общий preview.
+**Следующий шаг:** installed qualification существующего exact внешнего VAE
+в обоих Illustrious normal modes. Применимые именованные Advanced controls
+(VAE, precision, CFG Rescale) уже имеют production paths; CLIP Skip явно
+неприменим к обоим MVP pipelines, нового selector не требуется.
+Далее остаются trained embeddings, installed `v_prediction`, concrete
+multi-job dynamic batches/actual seed scheduling и crash/reopen `Reuse`,
+расширенная installed Anima method/weighting qualification по выходным критериям.
+First-setup integration остаётся зависимостью release/runtime installer;
+вес LaMa обязан входить в общий preview.
 Общие вспомогательные веса LaMa устанавливаются вместе с первой установкой
 движка с предварительным показом полного объёма загрузки; Main владеет download,
 cache и exact identity verification, worker получает готовый локальный путь.
