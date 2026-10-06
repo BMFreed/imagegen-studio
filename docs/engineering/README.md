@@ -6,7 +6,8 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
-- [Normal outpaint conditioning](./phase-2c-outpaint-conditioning-research.md) — frozen Main alpha/policy/LaMa identity, exact Invoke CPU masks and local TorchScript infill; family denoising, durable RGBA publication and public activation remain open.
+- [Normal outpaint conditioning](./phase-2c-outpaint-conditioning-research.md) — frozen Main alpha/policy/LaMa identity, exact Invoke CPU masks and local TorchScript infill; durable RGBA publication and public activation remain open.
+- [Internal Illustrious masked denoising](./phase-2c-illustrious-outpaint-research.md) — native img2img loop with same protected latents for UNet/scheduler, exact external Invoke oracle and trained CUDA controls; Anima masked execution, durable integration and public activation remain open.
 - [Project resource controls ↔ Model Manager](./phase-2c-resource-handoff-research.md) — typed category/exact-version navigation and native return/catalog refresh; Project resource choice remains explicit, with catalog-only fixtures separate from install/inference.
 - [Model Manager presentation read ordering](./phase-2c-model-manager-read-research.md) — modal/request ownership for catalog, jobs, storage, token, errors and loading; observed job updates preserve untouched Main list rows. Native timing/error collaborators are separate from real download and secret storage.
 - [App-owned runtime and trained generation qualification](./phase-2c-installed-runtime-qualification-research.md) — opt-in developer provisioning, installed CPU derivatives ownership и границы проверки обычного Generate/Add/Save; signed release installer, repair и rollback остаются отдельными gates.

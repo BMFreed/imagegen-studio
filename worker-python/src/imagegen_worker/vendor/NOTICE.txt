@@ -45,3 +45,21 @@ owned by Main; family denoising/public outpaint are not enabled by these modules
 LaMa weights are not bundled in this worker package. The separately pinned
 Sanster/models TorchScript release is a Main-owned future engine resource;
 this source adaptation notice does not change its separate weight attribution.
+
+InvokeAI masked Illustrious denoising
+
+ImageGen Studio's ../sdxl_outpaint.py adapts AddsMaskGuidance from:
+invokeai/backend/stable_diffusion/diffusers_pipeline.py
+SHA-256: 23299704c36e969e0b39ac30c469f6c0587605df58ff62573d1c6d83b7784d24
+and its mask preparation in invokeai/app/invocations/denoise_latents.py
+SHA-256: 0359372b59aee6b1be1ca792e0bab394cc57b915b924cad3ff0e512270863639
+Both from InvokeAI commit 9e1540962bcca7f8fa668d7d8e02cf79d75fda3b,
+https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b
+Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
+
+Modifications: native Diffusers img2img subclass captures one call's source,
+schedule and frozen CPU noise; preceding callbacks restore protected latents
+before the next evaluation and before final VAE decode. Source mask polarity,
+strict threshold and F32-inversion-before-dtype-conversion are preserved.
+Copied inputs, finite/shape checks and finally cleanup bound internal execution.
+This adaptation does not enable public outpaint or introduce another backend.

@@ -8,7 +8,14 @@ Gaussian weighted maximum/fade masks consume copied RGBA and explicit Main
 policy; a hash-bound local TorchScript loader performs LaMa infill without
 downloads. OpenCV headless5.0.0.93 is pinned only in the inference extra.
 The helpers do not add a worker command/capability or lift mixed-alpha Generate
-refusal. Family masked denoising and mode-aware RGBA publication remain open.
+refusal. The [internal Illustrious masked adapter](../docs/engineering/phase-2c-illustrious-outpaint-research.md)
+adds `sdxl_outpaint`: the existing native img2img loop captures original latents,
+one CPU noise draw and the selected schedule. Mandatory callbacks restore
+protected source before each subsequent model/scheduler evaluation and before
+final decode, even without a progress listener. Five schedulers and both
+prediction types have native CPU oracle tests; a separate trained CUDA script
+checks the internal path. Anima masked denoising, mode-aware RGBA publication
+and public activation remain open; this module adds no handshake capability.
 
 Run locally with the app-managed development Python selected by `.python-version`:
 

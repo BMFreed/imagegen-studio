@@ -597,8 +597,9 @@ def run_sdxl_pipeline(
     cfg_rescale: float = 0.0,
     image: Image.Image | None = None,
     denoising_strength: float | None = None,
+    on_denoising_step: Callable[[Any, int, Any, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> Any:
-    """Mask only the final positive/negative padding through a scoped UNet hook.
+    """Apply final conditioning padding and an optional scoped latent callback.
 
     The pinned Diffusers SDXL pipeline accepts prompt embeddings but does not
     forward an encoder attention mask to its UNet. PyTorch's public pre-hook
@@ -623,7 +624,7 @@ def run_sdxl_pipeline(
     def report_step(
         callback_pipeline: Any,
         step_index: int,
-        _timestep: Any,
+        timestep: Any,
         callback_kwargs: dict[str, Any],
     ) -> dict[str, Any]:
         nonlocal completed_step, total_steps
@@ -654,9 +655,14 @@ def run_sdxl_pipeline(
             )
         total_steps = actual_total
         completed_step = step_index + 1
+        if on_denoising_step is not None:
+            callback_kwargs = on_denoising_step(
+                callback_pipeline, step_index, timestep, callback_kwargs
+            )
         if on_progress is not None:
             on_progress(completed_step, actual_total)
-        # Request no tensors and preserve the callback payload; progress cannot alter inference.
+        # Progress alone requests no tensors; only an explicit internal denoising
+        # callback owns latent updates. Progress cannot alter the callback payload.
         return callback_kwargs
 
     def call_pipeline() -> Any:
@@ -684,12 +690,14 @@ def run_sdxl_pipeline(
             guidance_scale=cfg_scale,
             guidance_rescale=cfg_rescale,
             generator=generator,
-            callback_on_step_end=report_step if on_progress is not None else None,
-            callback_on_step_end_tensor_inputs=[],
+            callback_on_step_end=(
+                report_step if on_progress is not None or on_denoising_step is not None else None
+            ),
+            callback_on_step_end_tensor_inputs=["latents"] if on_denoising_step is not None else [],
         )
         no_denoising = image is not None and pipeline.num_timesteps == 0
         if (
-            on_progress is not None
+            (on_progress is not None or on_denoising_step is not None)
             and not no_denoising
             and (total_steps is None or completed_step != total_steps)
         ):

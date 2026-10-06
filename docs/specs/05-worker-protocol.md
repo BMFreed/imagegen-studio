@@ -278,7 +278,12 @@ verified local TorchScript execution. Normal inference dimensions use the /8 gri
 
 These are internal helpers, not a new command, handshake capability or durable
 job/provenance union. Public mixed-alpha Generate still refuses both families.
-Family masked denoising, Main auxiliary install/materialization, capability
+The [internal Illustrious adapter](../engineering/phase-2c-illustrious-outpaint-research.md)
+now executes the native four-channel img2img loop with protected source/noise
+restoration for both UNet and scheduler at actual selected timesteps, including
+SDE intermediate evaluations and final protected VAE input. This is not a
+command or advertised capability. Anima masked denoising remains open.
+Main auxiliary install/materialization, capability
 admission, Retry, RGBA publication/staging and portable accepted settings must
 be implemented and qualified together before activation. The default installed
 runtime contract is not changed by a development dependency or a research weight

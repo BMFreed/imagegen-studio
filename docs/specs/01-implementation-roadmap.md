@@ -1244,8 +1244,18 @@ transparent RGBA contribution и hash-bound local TorchScript infill. Источ
 Canvas не перезаписывается; seam может перекрываться отдельным слоем. Это ещё
 не исполняемый durable outpaint job или public capability.
 
-**Следующий шаг:** Illustrious family-specific masked denoising на подготовленном
-source/coherence, затем Anima с её linear-time/shifted-sigma semantics. До снятия
+**Illustrious masked denoising checkpoint (06.10.2026):**
+[Internal native execution](../engineering/phase-2c-illustrious-outpaint-research.md)
+захватывает original latents/один noise/selected schedule и подаёт одинаковое
+восстановление protected source в UNet и scheduler. Сохранены actual Invoke
+generation-mask thresholds, F32 inversion перед FP16 и final restore перед VAE.
+57 native CPU tests охватывают пять методов, epsilon/v_prediction и strength,
+а отдельный trained CUDA прогон проверяет Main snapshot → LaMa → masked loop
+и RGBA contribution, replay/neutral/seed controls. Это внутренний adapter,
+не новый public worker command или уже доступный durable outpaint job.
+
+**Следующий шаг:** Anima family-specific masked denoising с её
+linear-time/shifted-sigma semantics и шестью admitted methods. До снятия
 mixed-alpha отказа согласовать queue/resource materialization/Retry, worker
 capability, RGBA publication/staging и immutable portable provenance/comparison,
 а затем проверить installed trained Generate/Add/Save/reopen. Installed

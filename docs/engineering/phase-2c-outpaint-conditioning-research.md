@@ -79,12 +79,15 @@ portable provenance support four txt2img/opaque img2img kinds; the current
 publisher converts output to RGB. Removing the preparation refusal alone
 would fail admission or destroy contribution alpha. Infilling is insufficient.
 
-Next: Illustrious masked denoising with original infilled latents, one noise
-tensor, protected noised-source restoration at the correct scheduler timestep
-before model evaluation, progressive gradient thresholds and final restoration
-of fully protected latents. Invoke's old/modular extensions have opposite mask
-polarity; use the selected pipeline's semantics, not a generic post-step callback.
-Anima follows: shifted sigma for source/noise mixture, inverse-shifted linear
+The subsequent [Illustrious masked checkpoint](./phase-2c-illustrious-outpaint-research.md)
+implements native execution with original infilled latents, one noise tensor,
+protected noised-source restoration before both model and scheduler evaluation,
+progressive generation-mask thresholds and final protected restoration before
+VAE. Its callbacks prepare the next actual timestep and preserve the default
+old Invoke mask polarity, including FP16 arithmetic ordering. That checkpoint
+has separate CPU oracle and trained CUDA evidence; this foundation's evidence
+table below still describes conditioning only.
+Next is Anima: shifted sigma for source/noise mixture, inverse-shifted linear
 time for thresholds, merge after a completed user step including Heun. Qualify
 each of the six admitted methods independently.
 
