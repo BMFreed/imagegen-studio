@@ -573,3 +573,12 @@ confirmed shutdown retry/restart, even if observed physical exit already clears
 the global registry. Neither permits unconfirmed concurrent workers or discards
 a successfully saved document. Release lifecycle and the untested pipeline
 areas listed above remain subsequent work.
+
+## Follow-up: installed CFG Rescale (06.10.2026)
+
+[Installed CFG qualification](./phase-2c-installed-cfg-rescale-research.md)
+separately connects actual Advanced Options, a noneditable installed trained
+worker, matched unset/zero/nonzero txt2img decoded pixels and nonzero opaque
+img2img wiring to Add/Save/reopen/comparison. The execution counts and limits
+above remain historical evidence from this checkpoint; they are not retroactively
+attributed to the new profile. Remaining options and release gates stay open.

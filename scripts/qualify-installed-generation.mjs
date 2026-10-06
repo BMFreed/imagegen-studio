@@ -43,6 +43,7 @@ const expect = baseExpect.configure({ timeout: 120_000 })
 const runId = Date.now().toString(36)
 assert.ok(path.isAbsolute(process.argv[3]))
 const fixture = JSON.parse(await readFile(process.argv[3], 'utf8'))
+const cfgRescaleProfile = fixture.profile === 'cfg-rescale'
 assert.equal(fixture.schemaVersion, 1)
 for (const value of [fixture.appData, fixture.artifacts]) {
   assert.equal(typeof value, 'string')
@@ -92,6 +93,7 @@ const report = {
   workingTree: execFileSync('git', ['status', '--short'], { encoding: 'utf8' }),
   appData: fixture.appData,
   runtimeId: pointer.runtimeId,
+  profile: fixture.profile ?? 'default',
   models: [],
   checks: [],
   generations: [],
@@ -102,10 +104,11 @@ const report = {
       'Built Electron renderer/preload/Main, production model qualification and runtime leases, noneditable installed Python worker, trained CUDA models, SQLite queue/receipts, PNG staging, explicit UI Add, .igs writer/loader and close/reopen.',
     preconditions:
       'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
-    limits:
-      'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
+    limits: cfgRescaleProfile
+      ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
+      : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
     browser:
-      'T3 preview is available for HTTP inspection. Existing native _electron system harness is required for genuine Electron IPC and installed CUDA child; this is not a standalone browser fallback.',
+      'Existing native _electron system harness exercises genuine Electron IPC and the installed CUDA child. HTTP preview availability is outside this qualification.',
   },
 }
 async function hashFile(file) {
@@ -241,6 +244,89 @@ async function setInput(label, value) {
   await input.fill(String(value))
   await input.press('Tab')
 }
+async function captureScreenshot(file, surface = null) {
+  // Naive popovers/collapse panels can be visible while their finite entrance transition runs.
+  // Observe actual completion and painted frames; leave infinite loading animations in place.
+  await window.evaluate(async () => {
+    const animations = document
+      .getAnimations()
+      .filter(
+        (animation) =>
+          (animation.playState === 'running' || animation.pending) &&
+          Number.isFinite(animation.effect?.getComputedTiming().endTime),
+      )
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)))
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  if (surface) {
+    await expect
+      .poll(async () =>
+        surface.evaluate((element) => {
+          for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+            if (Number(getComputedStyle(ancestor).opacity) !== 1) return false
+          }
+          return true
+        }),
+      )
+      .toBe(true)
+  }
+  await window.screenshot({ path: file })
+}
+async function setCfgRescale(project, value) {
+  const input = window.locator('input[aria-label="CFG Rescale"]')
+  if (!(await input.isVisible())) {
+    await window.getByText('Advanced Options', { exact: true }).click()
+  }
+  await expect(input).toBeEnabled({ timeout: 180_000 })
+  if (value === null) {
+    // Exercise the actual Reset action and distinguish absent draft data from displayed zero.
+    await setInput('CFG Rescale', 0.3)
+    await expect.poll(async () => (await tab(project)).generationDraft.cfgRescale).toBe(0.3)
+    await window.getByRole('button', { name: 'Reset CFG Rescale', exact: true }).click()
+    await expect
+      .poll(async () => Object.hasOwn((await tab(project)).generationDraft, 'cfgRescale'))
+      .toBe(false)
+    await expect(input).toHaveValue('0')
+  } else {
+    await input.fill('')
+    await setInput('CFG Rescale', value)
+    await expect.poll(async () => (await tab(project)).generationDraft.cfgRescale).toBe(value)
+    assert.ok(Object.hasOwn((await tab(project)).generationDraft, 'cfgRescale'))
+  }
+}
+async function compareCfgRescale(project, layer, captured, caseName) {
+  const before = await tab(project)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    const row = comparison.locator('[data-setting="cfgRescale.value"]')
+    await expect(row).toHaveAttribute('data-status', 'Changed')
+    await expect(row.locator('.comparison-values p')).toHaveText([String(captured), '0.2'])
+    const after = await tab(project)
+    assert.equal(after.documentId, before.documentId)
+    assert.equal(after.canUndo, before.canUndo)
+    assert.equal(after.canRedo, before.canRedo)
+    assert.deepEqual(after.primaryBbox, before.primaryBbox)
+    assert.deepEqual(after.generationDraft, before.generationDraft)
+    assert.deepEqual(after.layers, before.layers)
+    assert.equal(after.dirty, before.dirty)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { captured, current: 0.2, status: 'Changed', screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+  }
+}
 async function queueRows(project) {
   return await database.db
     .selectFrom('generation_queue_item')
@@ -366,11 +452,11 @@ function assertNativePrompt(compiled, raw, weightedText, weight) {
     version: 'anima-prompt-weighting-v1',
   })
 }
-async function createProject(model, lora) {
+async function createProject(model, lora, caseName = '') {
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: 'New Project', exact: true }).first().click()
   const dialog = window.getByRole('dialog', { name: 'New Project', exact: true })
-  const title = `Installed ${model.family} qualification ${runId}`
+  const title = `Installed ${model.family} qualification ${runId}${caseName ? ` ${caseName}` : ''}`
   await dialog.locator('input[aria-label="Project name"]').fill(title)
   await dialog.locator('input[aria-label="Project width"]').fill(String(fixture.side))
   await dialog.locator('input[aria-label="Project height"]').fill(String(fixture.side))
@@ -422,12 +508,22 @@ async function createProject(model, lora) {
     .toBe(fixture.steps)
   return project
 }
-async function generateAndAccept(project, family, mode) {
+async function generateAndAccept(project, family, mode, qualification = null) {
   // Images-per-click is transient UI state and resets when this script closes/reopens a tab.
   // Set the declared single-job qualification input for every click, including img2img.
   await setInput('Images per click', 1)
   await expect(window.locator('input[aria-label="Images per click"]')).toHaveValue('1')
   const before = await tab(project)
+  const capturedCfgRescale = qualification?.cfgRescale ?? 0
+  if (qualification) {
+    assert.equal(family, 'illustrious')
+    assert.equal(
+      Object.hasOwn(before.generationDraft, 'cfgRescale'),
+      qualification.cfgRescale !== null,
+    )
+    assert.equal(before.generationDraft.cfgRescale, qualification.cfgRescale ?? undefined)
+    if (mode === 'txt2img') assert.deepEqual(before.layers, [])
+  }
   const existingLayers = await layerSnapshot(before.layers)
   const workspaceDirectory = path.join(fixture.appData, 'workspaces/Uncategorized')
   let beforePackagePath
@@ -477,6 +573,10 @@ async function generateAndAccept(project, family, mode) {
   assert.equal(frozen.context.sampling.steps, fixture.steps)
   assert.equal(frozen.context.sampling.cfgScale, 4)
   assert.deepEqual(frozen.context.loraStack, before.generationDraft.loras)
+  if (qualification) {
+    assert.equal(frozen.context.sampling.cfgRescale, capturedCfgRescale)
+    assert.equal(frozen.workerJob.sampling.cfgRescale, capturedCfgRescale)
+  }
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   assert.equal(frozen.context.loras.length, 1)
   assert.equal(frozen.context.loras[0].reference.fileSha256, lora.sha256)
@@ -547,8 +647,11 @@ async function generateAndAccept(project, family, mode) {
     fixture.side * fixture.side,
   )
   if (mode === 'img2img') {
-    const previous = report.generations.find(
-      (generation) => generation.family === family && generation.mode === 'txt2img',
+    const previous = report.generations.findLast(
+      (generation) =>
+        generation.projectKey === project.id &&
+        generation.family === family &&
+        generation.mode === 'txt2img',
     )
     assert.ok(previous)
     assert.equal(target.pixelSha256, previous.dimensions.pixelSha256)
@@ -559,6 +662,18 @@ async function generateAndAccept(project, family, mode) {
   await expect
     .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
     .toBe(changedPrompt)
+  let normalizedInputs = null
+  if (qualification) {
+    normalizedInputs = structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
+    // Different owned Projects require distinct identities; CFG is the sole inference ablation.
+    delete normalizedInputs.context.documentId
+    delete normalizedInputs.context.documentRevision
+    delete normalizedInputs.context.sampling.cfgRescale
+    delete normalizedInputs.workerJob.sampling.cfgRescale
+    await setCfgRescale(project, 0.2)
+    const editedRow = (await queueRows(project)).find(({ id }) => id === admitted.id)
+    assert.equal(editedRow.frozen_payload_json, admitted.frozen_payload_json)
+  }
   await expect
     .poll(
       async () => {
@@ -585,6 +700,7 @@ async function generateAndAccept(project, family, mode) {
   )
   assert.deepEqual(completedTab.primaryBbox, before.primaryBbox)
   assert.equal(completedTab.generationDraft.positivePrompt.text, changedPrompt)
+  if (qualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
   const receipt = await database.db
     .selectFrom('generation_candidate_receipt')
     .selectAll()
@@ -655,6 +771,10 @@ async function generateAndAccept(project, family, mode) {
     requestedSeedPolicy,
   )
   assert.equal(acceptedData.generationConfiguration.model.baseModelFamily, family)
+  if (qualification) {
+    assert.equal(acceptedData.generationConfiguration.cfgRescale, capturedCfgRescale)
+    assert.equal(accepted.generationDraft.cfgRescale, 0.2)
+  }
   assert.equal(
     acceptedData.generationConfiguration.positivePrompt.text,
     before.generationDraft.positivePrompt.text,
@@ -733,12 +853,17 @@ async function generateAndAccept(project, family, mode) {
   assert.ok(previewThumbnail.bytes > 0 && previewThumbnail.width > 0 && previewThumbnail.height > 0)
   assert.equal(saved.project.lastActualSeedSnapshot, 0)
   assert.equal(saved.project.generationDraft.positivePrompt.text, changedPrompt)
+  if (qualification) {
+    assert.equal(provenance.generationConfiguration.cfgRescale, capturedCfgRescale)
+    assert.equal(saved.project.generationDraft.cfgRescale, 0.2)
+  }
   await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
   const reopened = await tab(project)
   assert.equal(reopened.generationDraft.positivePrompt.text, changedPrompt)
+  if (qualification) assert.equal(reopened.generationDraft.cfgRescale, 0.2)
   assert.deepEqual(
     (await api('getRasterGenerationData', project.id, reopened.documentId, layer.id))
       .generationConfiguration,
@@ -753,12 +878,29 @@ async function generateAndAccept(project, family, mode) {
     sha256(await reopenedPackage.readMember(savedLayer.asset.path)),
     receipt.image_sha256,
   )
-  const screenshot = path.join(fixture.artifacts, `${family}-${mode}.png`)
-  await window.screenshot({ path: screenshot })
+  if (qualification) {
+    const input = window.locator('input[aria-label="CFG Rescale"]')
+    if (!(await input.isVisible())) {
+      await window.getByText('Advanced Options', { exact: true }).click()
+    }
+    await expect(input).toHaveValue('0.2')
+  }
+  const caseName = qualification?.caseName ?? `${family}-${mode}`
+  const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
+  await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
+  const comparison = qualification
+    ? await compareCfgRescale(
+        project,
+        reopened.layers.find(({ id }) => id === layer.id),
+        capturedCfgRescale,
+        caseName,
+      )
+    : null
   report.generations.push({
     family,
     mode,
+    projectKey: project.id,
     queueItemId: row.id,
     candidateId: candidate.candidateId,
     elapsedMs: Date.now() - started,
@@ -776,11 +918,90 @@ async function generateAndAccept(project, family, mode) {
     provenance,
     packagePath,
     previewState: saved.manifest.preview,
+    qualification: qualification
+      ? {
+          caseName,
+          authoredCfgRescale: qualification.cfgRescale,
+          capturedCfgRescale,
+          currentCfgRescale: reopened.generationDraft.cfgRescale,
+          normalizedInputs,
+          comparison,
+        }
+      : null,
   })
   await check(
-    `${family} ${mode}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen`,
+    `${qualification?.caseName ?? `${family} ${mode}`}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen${qualification ? '/comparison' : ''}`,
     { queueItemId: row.id },
   )
+}
+async function prepareImg2Img(project) {
+  // Make the previous manual value observably different from the actual completed seed.
+  await setInput('Generation seed', 123)
+  await expect.poll(async () => (await tab(project)).generationDraft.seed.value).toBe(123)
+  await window.getByRole('button', { name: 'Reuse last seed', exact: true }).click()
+  await expect.poll(async () => (await tab(project)).generationDraft.seed.policy).toBe('reuse')
+  await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('0')
+  await expect(window.locator('input[aria-label="Denoising Strength"]')).toBeVisible({
+    timeout: 90_000,
+  })
+  await setInput('Denoising Strength', 0.5)
+  await expect
+    .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+    .toBe(0.5)
+}
+async function qualifyCfgRescale() {
+  let nonneutralProject
+  for (const [caseName, cfgRescale] of [
+    ['illustrious-txt2img-cfg-unset', null],
+    ['illustrious-txt2img-cfg-zero', 0],
+    ['illustrious-txt2img-cfg-nonneutral', 0.7],
+  ]) {
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    await setCfgRescale(project, cfgRescale)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-authored.png`)
+    await captureScreenshot(screenshot)
+    report.screenshots.push(screenshot)
+    await generateAndAccept(project, 'illustrious', 'txt2img', { caseName, cfgRescale })
+    if (cfgRescale === 0.7) nonneutralProject = project
+  }
+  const [unset, zero, nonneutral] = report.generations
+  for (const generation of [zero, nonneutral]) {
+    assert.deepEqual(
+      generation.qualification.normalizedInputs,
+      unset.qualification.normalizedInputs,
+    )
+    assert.equal(generation.target.pixelSha256, unset.target.pixelSha256)
+  }
+  assert.equal(
+    zero.dimensions.pixelSha256,
+    unset.dimensions.pixelSha256,
+    'Unset and explicit zero must produce identical decoded RGBA for the same frozen inputs.',
+  )
+  assert.notEqual(
+    nonneutral.dimensions.pixelSha256,
+    zero.dimensions.pixelSha256,
+    'CFG Rescale 0.7 must change decoded RGBA relative to zero for the same frozen inputs.',
+  )
+  await check(
+    'Same-input trained txt2img decoded RGBA: unset equals zero; CFG Rescale 0.7 changes pixels',
+    {
+      inputs: unset.qualification.normalizedInputs,
+      targetPixelSha256: unset.target.pixelSha256,
+      unsetPixelSha256: unset.dimensions.pixelSha256,
+      zeroPixelSha256: zero.dimensions.pixelSha256,
+      nonneutralPixelSha256: nonneutral.dimensions.pixelSha256,
+    },
+  )
+  assert.ok(nonneutralProject)
+  await setCfgRescale(nonneutralProject, 0.7)
+  await prepareImg2Img(nonneutralProject)
+  await generateAndAccept(nonneutralProject, 'illustrious', 'img2img', {
+    caseName: 'illustrious-img2img-cfg-nonneutral',
+    cfgRescale: 0.7,
+  })
+  assert.equal(report.generations.length, 4)
+  report.cfgRescaleBoundary =
+    'Trained installed same-input txt2img CFG ablation plus opaque img2img nonzero frozen input, Add, Save/reopen and comparison. The img2img case establishes wiring/provenance, not an independent numerical ablation or release-runtime readiness.'
 }
 async function qualifyMissingRuntimeSaveAndRebuild(project) {
   const latest = report.generations.at(-1)
@@ -872,7 +1093,7 @@ async function qualifyMissingRuntimeSaveAndRebuild(project) {
   const merged = await decodedImage(`data:image/png;base64,${mergedBytes.toString('base64')}`)
   assert.equal(merged.pixelSha256, latest.dimensions.pixelSha256)
   const screenshot = path.join(fixture.artifacts, 'installed-runtime-preview-rebuild.png')
-  await window.screenshot({ path: screenshot })
+  await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
   await check('Restored installed runtime: actual Home Rebuild Preview changes derivatives only', {
     documentId: before.documentId,
@@ -939,13 +1160,24 @@ async function qualifyInstalledImport(project) {
 }
 try {
   assert.ok(
+    !Object.hasOwn(fixture, 'profile') || fixture.profile === 'cfg-rescale',
+    'Qualification profile must be omitted or exactly cfg-rescale.',
+  )
+  assert.ok(
     Number.isInteger(fixture.side) &&
       fixture.side >= 64 &&
       fixture.side <= 2048 &&
       fixture.side % 8 === 0,
+    'Qualification image side must be an integer multiple of 8 from 64 to 2048.',
   )
   assert.ok(Number.isInteger(fixture.steps) && fixture.steps >= 1 && fixture.steps <= 200)
-  for (const family of ['illustrious', 'anima']) {
+  if (cfgRescaleProfile) {
+    assert.equal(fixture.steps, 3, 'CFG Rescale qualification requires exactly 3 authored steps.')
+  }
+  const families = cfgRescaleProfile ? ['illustrious'] : ['illustrious', 'anima']
+  const allModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
+  const modelKeys = cfgRescaleProfile ? ['illustrious', 'illustriousLora'] : allModelKeys
+  for (const family of families) {
     assert.equal(fixture[family]?.type, 'checkpoint')
     assert.equal(fixture[family]?.family, family)
     const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
@@ -973,37 +1205,40 @@ try {
   const catalog = await repository.listInstalled()
   if (!resume) assert.equal(catalog.length, 0, 'qualification catalog must initially be empty')
   else {
+    // A CFG fixture may declare the previous six-resource qualification catalog while executing
+    // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
     const hashes = new Set(
-      ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora'].map(
-        (key) => fixture[key].sha256,
-      ),
+      allModelKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
     )
     assert.ok(
       catalog.every((model) => model.versions.every((version) => hashes.has(version.file.sha256))),
       'resume may only reuse the same isolated qualification catalog',
     )
   }
-  for (const [key, pin] of [
-    ['encoder', ANIMA_QWEN3_0_6B_ENCODER],
-    ['vae', ANIMA_QWEN_IMAGE_VAE],
-  ]) {
-    assert.equal(fixture[key].sha256, pin.sha256)
-    assert.equal(fixture[key].byteSize, pin.sizeBytes)
+  if (!cfgRescaleProfile) {
+    for (const [key, pin] of [
+      ['encoder', ANIMA_QWEN3_0_6B_ENCODER],
+      ['vae', ANIMA_QWEN_IMAGE_VAE],
+    ]) {
+      assert.equal(fixture[key].sha256, pin.sha256)
+      assert.equal(fixture[key].byteSize, pin.sizeBytes)
+    }
+    const encoder = await installArtifact(repository, fixture.encoder, 700_010)
+    const vae = await installArtifact(repository, fixture.vae, 700_020)
+    fixture.encoder.installed = encoder
+    fixture.vae.installed = vae
+    fixture.anima.installed = await installArtifact(repository, fixture.anima, 700_030, [
+      { role: 'qwen3_encoder', existingVersionId: encoder.versionId },
+      { role: 'vae', existingVersionId: vae.versionId },
+    ])
   }
-  const encoder = await installArtifact(repository, fixture.encoder, 700_010)
-  const vae = await installArtifact(repository, fixture.vae, 700_020)
-  fixture.encoder.installed = encoder
-  fixture.vae.installed = vae
-  fixture.anima.installed = await installArtifact(repository, fixture.anima, 700_030, [
-    { role: 'qwen3_encoder', existingVersionId: encoder.versionId },
-    { role: 'vae', existingVersionId: vae.versionId },
-  ])
   fixture.illustrious.installed = await installArtifact(repository, fixture.illustrious, 700_040)
   for (const [key, id] of [
     ['animaLora', 700_050],
     ['illustriousLora', 700_060],
   ]) {
-    if (fixture[key]) fixture[key].installed = await installArtifact(repository, fixture[key], id)
+    if (modelKeys.includes(key) && fixture[key])
+      fixture[key].installed = await installArtifact(repository, fixture[key], id)
   }
   await check('Real exact model files copied, verified and cataloged; source weights unchanged')
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
@@ -1054,31 +1289,23 @@ try {
   await check('Unmodified production Main qualifies activated real Linux/NVIDIA runtime', {
     runtime: runtime.value,
   })
-  let lastProject
-  for (const [family, loraKey] of [
-    ['illustrious', 'illustriousLora'],
-    ['anima', 'animaLora'],
-  ]) {
-    const project = await createProject(fixture[family], fixture[loraKey])
-    lastProject = project
-    await generateAndAccept(project, family, 'txt2img')
-    // Make the previous manual value observably different from the actual completed seed.
-    await setInput('Generation seed', 123)
-    await expect.poll(async () => (await tab(project)).generationDraft.seed.value).toBe(123)
-    await window.getByRole('button', { name: 'Reuse last seed', exact: true }).click()
-    await expect.poll(async () => (await tab(project)).generationDraft.seed.policy).toBe('reuse')
-    await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('0')
-    await expect(window.locator('input[aria-label="Denoising Strength"]')).toBeVisible({
-      timeout: 90_000,
-    })
-    await setInput('Denoising Strength', 0.5)
-    await expect
-      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
-      .toBe(0.5)
-    await generateAndAccept(project, family, 'img2img')
+  if (cfgRescaleProfile) {
+    await qualifyCfgRescale()
+  } else {
+    let lastProject
+    for (const [family, loraKey] of [
+      ['illustrious', 'illustriousLora'],
+      ['anima', 'animaLora'],
+    ]) {
+      const project = await createProject(fixture[family], fixture[loraKey])
+      lastProject = project
+      await generateAndAccept(project, family, 'txt2img')
+      await prepareImg2Img(project)
+      await generateAndAccept(project, family, 'img2img')
+    }
+    await qualifyMissingRuntimeSaveAndRebuild(lastProject)
+    await qualifyInstalledImport(lastProject)
   }
-  await qualifyMissingRuntimeSaveAndRebuild(lastProject)
-  await qualifyInstalledImport(lastProject)
   assert.deepEqual(report.pageErrors, [])
   // Observational closure only: neither source files nor the active runtime is rewritten.
   for (const model of report.models) assert.equal(await hashFile(model.managedPath), model.sha256)

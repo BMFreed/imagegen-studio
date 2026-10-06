@@ -79,6 +79,61 @@ test('fresh canonical destinations reserve a failed preflight report without sta
   })
 })
 
+test('omitted and CFG Rescale profiles reach the neighboring size refusal without starting a worker', async () => {
+  // Boundary: real CLI fixture admission. The invalid image side is a controlled stop after
+  // profile validation, so accepting a profile does not launch Electron or inference.
+  for (const profile of [undefined, 'cfg-rescale']) {
+    await fixture(async ({ artifacts, input, run }) => {
+      if (profile !== undefined) input.profile = profile
+      input.steps = 3
+      const refusal = await run()
+      assert.match(refusal.stderr, /Qualification image side must be/)
+      assert.doesNotMatch(refusal.stderr, /Qualification profile must be/)
+      const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+      assert.equal(report.status, 'failed')
+      assert.equal(report.profile, profile ?? 'default')
+      assert.deepEqual(report.models, [])
+      assert.deepEqual(report.generations, [])
+      await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+    })
+  }
+})
+
+test('unknown or malformed explicit profiles refuse before catalog and worker setup', async () => {
+  // Neighbor: accepted omitted/cfg-rescale profiles above. Mutation: ignore the explicit profile
+  // or coerce it, silently launching the default suite instead of the requested finite scenario.
+  for (const profile of [null, true, 0, '', 'default', 'cfg_rescale', {}, ['cfg-rescale']]) {
+    await fixture(async ({ artifacts, input, run }) => {
+      input.profile = profile
+      const refusal = await run()
+      assert.match(refusal.stderr, /Qualification profile must be omitted or exactly cfg-rescale/)
+      assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
+      const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+      assert.equal(report.status, 'failed')
+      assert.deepEqual(report.models, [])
+      assert.deepEqual(report.generations, [])
+      await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+    })
+  }
+})
+
+test('CFG Rescale profile refuses a changed step control before preparing any model', async () => {
+  // Boundary: fixed ablation conditions in the actual CLI. Mutation: accept another step count
+  // and report it as the declared three-step qualification. Missing models remain a later stop.
+  await fixture(async ({ artifacts, input, run }) => {
+    input.profile = 'cfg-rescale'
+    input.side = 64
+    input.steps = 2
+    const refusal = await run()
+    assert.match(refusal.stderr, /CFG Rescale qualification requires exactly 3 authored steps/)
+    const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+    assert.equal(report.status, 'failed')
+    assert.deepEqual(report.models, [])
+    assert.deepEqual(report.generations, [])
+    await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+  })
+})
+
 test('a redirected models destination refuses before reserving or writing any report', async () => {
   // Mutation: omit the canonical models guard and publish a report for an unsafe destination.
   await fixture(async ({ root, appData, artifacts, run }) => {

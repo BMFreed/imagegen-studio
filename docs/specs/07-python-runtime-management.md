@@ -130,6 +130,18 @@ Runtime, модели и пользовательские проекты име�
 - checkpoints, LoRA, VAE и embeddings не входят в Python environment;
 - `.igs` и workspaces не зависят от расположения runtime.
 
+### Общие вспомогательные веса для outpaint
+
+Решение 06.10.2026: LaMa устанавливается вместе с первой установкой движка.
+Встроенный setup заранее показывает полный объём загрузки, включая эти веса.
+LaMa — общий вспомогательный ресурс Invoke-like outpaint для Illustrious и
+Anima; он не привязан к выбранному checkpoint и не входит в `.igs` или Python
+environment. Main владеет загрузкой, cache, проверкой закреплённых identity/hash
+и выдачей проверенного локального пути. Worker выполняет infill без скачивания
+или выбора альтернативного ресурса. Конкретный release manifest и реализация
+этой доставки остаются задачами outpaint/runtime packaging; решение об установке
+не означает, что LaMa уже поставляется текущим development runtime.
+
 Portable mode может позже использовать каталог рядом с приложением только как явный режим и только после проверки прав записи. Это не default production layout.
 
 ## Development environment

@@ -312,6 +312,15 @@ Full pipeline provenance, Smart Patch comparison and
 result-to-preset remain separate roadmap work. This checkpoint does not complete
 PP-005 or prove release runtime/inference readiness.
 
+[Installed CFG qualification](../../../engineering/phase-2c-installed-cfg-rescale-research.md)
+separately records the genuine UI/installed-worker path: captured effective
+zero/0.7 stays in accepted provenance and the actual saved/reopened package
+after the current draft is independently changed to 0.2. Visible comparison
+shows Recorded zero/0.7, Current 0.2 and Changed without editing the document.
+The txt2img same-input decoded-pixel control checks numerical effect; the
+nonzero opaque img2img case checks wiring/provenance. Historical missing values
+and the remaining public readiness boundaries retain their rules above.
+
 ## Production opaque img2img provenance
 
 The [opaque img2img checkpoint](../../../engineering/phase-2c-img2img-research.md)

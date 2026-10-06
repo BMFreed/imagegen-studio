@@ -194,8 +194,9 @@ value means effective zero without dirtying the document merely by viewing it.
 Existing v1 drafts containing `1` remain loadable, but this pipeline rejects
 them until edited or reset.
 
-Nonneutral values require qualified worker 0.5.0 or 0.6.0 with
-`illustrious-cfg-rescale`; unsupported/unavailable runtimes disable the numeric
+Nonneutral values require a qualified worker advertising
+`illustrious-cfg-rescale` (introduced in 0.5.0 and retained by the currently
+qualified 0.11.0 worker); unsupported/unavailable runtimes disable the numeric
 control with a reason. Reset remains available for an editable draft. Main
 independently checks capability before enqueue and again at dispatch. Neutral
 zero can use older qualified workers through their previous wire schema.
@@ -206,6 +207,14 @@ edits and Retry cannot change that record. Old results with no recorded value
 stay unknown in comparison. This checkpoint supports Illustrious txt2img only;
 Anima and the remaining advanced controls are still open. The following checkpoint
 extends supported generation to opaque img2img.
+
+[Installed CFG qualification](../../../engineering/phase-2c-installed-cfg-rescale-research.md)
+now connects the actual Advanced Options control to the installed trained CUDA
+worker, explicit Add, rendered Save/reopen and visible comparison. At otherwise
+identical frozen inputs, unset and explicit zero txt2img produce equal decoded
+RGBA pixels; 0.7 changes them. A nonzero opaque img2img case separately verifies
+wiring and provenance, without claiming an independent img2img pixel ablation,
+image quality, other options or release-runtime readiness.
 
 ## Production opaque img2img checkpoint
 
