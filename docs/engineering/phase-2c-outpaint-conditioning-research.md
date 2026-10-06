@@ -87,9 +87,11 @@ VAE. Its callbacks prepare the next actual timestep and preserve the default
 old Invoke mask polarity, including FP16 arithmetic ordering. That checkpoint
 has separate CPU oracle and trained CUDA evidence; this foundation's evidence
 table below still describes conditioning only.
-Next is Anima: shifted sigma for source/noise mixture, inverse-shifted linear
-time for thresholds, merge after a completed user step including Heun. Qualify
-each of the six admitted methods independently.
+The subsequent [Anima masked checkpoint](./phase-2c-anima-outpaint-research.md)
+implements shifted sigma for source/noise mixture, inverse-shifted linear time
+for thresholds and merge after a completed user step including Heun. Its
+six-method numerical and trained evidence is recorded separately; this
+foundation's evidence does not prove denoising or public integration.
 
 Before activation, extend frozen/durable jobs, auxiliary materialization/Retry,
 worker capability/transport, RGBA publication/staging and portable provenance/

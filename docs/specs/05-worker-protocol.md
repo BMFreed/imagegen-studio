@@ -282,7 +282,11 @@ The [internal Illustrious adapter](../engineering/phase-2c-illustrious-outpaint-
 now executes the native four-channel img2img loop with protected source/noise
 restoration for both UNet and scheduler at actual selected timesteps, including
 SDE intermediate evaluations and final protected VAE input. This is not a
-command or advertised capability. Anima masked denoising remains open.
+command or advertised capability. The [internal Anima adapter](../engineering/phase-2c-anima-outpaint-research.md)
+uses the existing six-method flow execution with copied original/noise/mask,
+inverse-shift thresholds and shifted source mixing after completed user steps.
+Heun predictors keep the native solver intermediate; terminal restoration precedes
+VAE. These helpers still add no public protocol variant or accepted record.
 Main auxiliary install/materialization, capability
 admission, Retry, RGBA publication/staging and portable accepted settings must
 be implemented and qualified together before activation. The default installed

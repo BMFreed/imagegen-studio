@@ -63,3 +63,24 @@ before the next evaluation and before final VAE decode. Source mask polarity,
 strict threshold and F32-inversion-before-dtype-conversion are preserved.
 Copied inputs, finite/shape checks and finally cleanup bound internal execution.
 This adaptation does not enable public outpaint or introduce another backend.
+
+InvokeAI masked Anima denoising
+
+ImageGen Studio's ../anima_outpaint.py and the optional after-step hooks in
+../anima_euler.py / ../anima_sampling.py adapt:
+invokeai/app/invocations/anima_denoise.py (AnimaInpaintExtension / inverse shift)
+SHA-256: cb92470f4b329677b303fe02ab189dd1d16b6400261fdb61042f789620b37c08
+invokeai/backend/rectified_flow/rectified_flow_inpaint_extension.py
+SHA-256: a7a77d7ac6433b5ad930716bf21852a97a81960688e8670a8120e8d26f94e721
+invokeai/backend/anima/scheduler_driver.py (completed user-step detection)
+SHA-256: 3d2f9e3531607e2e9a42e160aefd25e8fc3aec15dab40551e04dca691408a32d
+All from InvokeAI commit 9e1540962bcca7f8fa668d7d8e02cf79d75fda3b,
+https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b
+Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
+
+Modifications: copied caller-owned RGB/keep-mask inputs, request-local captured
+normalized original/noise, shared native six-method loop hooks and finite/shape
+guards. Inverse-shift threshold, shifted noise mixture, low-precision operation
+ordering and Heun completion gating are preserved. Existing IGS authored/clipped
+LCM schedules and zero-strength VAE-only execution remain intentional differences.
+No public command, auxiliary download or persistent model mask state is added.

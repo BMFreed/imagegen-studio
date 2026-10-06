@@ -1254,9 +1254,17 @@ generation-mask thresholds, F32 inversion перед FP16 и final restore пе�
 и RGBA contribution, replay/neutral/seed controls. Это внутренний adapter,
 не новый public worker command или уже доступный durable outpaint job.
 
-**Следующий шаг:** Anima family-specific masked denoising с её
-linear-time/shifted-sigma semantics и шестью admitted methods. До снятия
-mixed-alpha отказа согласовать queue/resource materialization/Retry, worker
+**Anima masked denoising checkpoint (06.10.2026):**
+[Internal six-method execution](../engineering/phase-2c-anima-outpaint-research.md)
+передаёт source/noise/mask как per-call collaborator существующих Euler/native
+циклов. Порог использует inverse-shifted linear time, protected source — shifted
+sigma; восстановление идёт после completed user step, пропуская Heun predictors.
+Сохраняются weighted prompts, LoRA, independent RNG и обычные unmasked API;
+публичные protocol/queue/provenance unions не расширены.
+
+**Следующий шаг:** согласовать immutable outpaint job и resource ownership для
+обоих семейств. До снятия mixed-alpha отказа расширить
+queue/resource materialization/Retry, worker
 capability, RGBA publication/staging и immutable portable provenance/comparison,
 а затем проверить installed trained Generate/Add/Save/reopen. Installed
 model/options qualification продолжается; прочие Advanced Options остаются открытыми.

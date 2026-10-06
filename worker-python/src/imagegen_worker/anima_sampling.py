@@ -17,6 +17,7 @@ from imagegen_worker.anima_euler import (
     AnimaDenoiser,
     AnimaEulerPlan,
     AnimaEulerResult,
+    AnimaLatentTransform,
     execute_captured_anima_plan,
     predict_anima_flow,
     require_finite_anima_tensor,
@@ -274,9 +275,11 @@ def create_anima_native_denoiser(
         pair: AnimaConditioningPair,
         dtype: Any,
         progress: Callable[[int, int], None] | None,
+        latent_transform: AnimaLatentTransform | None = None,
     ) -> Any:
         for index in range(plan.total_steps):
             timestep = scheduler.timesteps[plan.begin_index + index]
+            in_first_order = scheduler.state_in_first_order if plan.scheduler == "heun" else True
             sigma = timestep.item() / 1000
             conditional = predict_anima_flow(
                 transformer, latents, pair.positive.embeddings, sigma, torch
@@ -300,6 +303,10 @@ def create_anima_native_denoiser(
             require_finite_anima_tensor(updated, torch, "native scheduler latent")
             latents = updated.to(dtype=dtype)
             require_finite_anima_tensor(latents, torch, "native scheduler cast latent")
+            if latent_transform is not None:
+                following = plan.sigmas[index + 1]
+                completes = plan.scheduler != "heun" or not in_first_order or following == 0
+                latents = latent_transform(latents, following, completes)
             if progress is not None:
                 progress(index + 1, plan.total_steps)
         return latents

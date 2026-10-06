@@ -134,9 +134,11 @@ chunk-size warning remain warnings; executed checks completed successfully.
 
 ## Next boundaries
 
-Implement Anima masked denoising next, with its shifted sigma mixture and
-inverse-shifted linear-time thresholds, checking all six admitted methods and
-completed user-step semantics including Heun. Then extend frozen/durable jobs,
+The subsequent [Anima masked checkpoint](./phase-2c-anima-outpaint-research.md)
+implements its shifted sigma mixture and inverse-shifted linear-time thresholds,
+with six admitted methods and completed user-step semantics including Heun.
+That checkpoint has separate numerical/trained evidence; this note's results
+describe Illustrious only. Next extend frozen/durable jobs,
 Main auxiliary materialization/Retry, worker capability/transport, RGBA publisher/
 staging and portable provenance/comparison together. Preserve temporary-only
 completion, explicit Add, original layers/bbox, recovery and Save/reopen before

@@ -69,10 +69,25 @@ class AnimaEulerResult:
     total_steps: int
 
 
+AnimaLatentTransform = Callable[[Any, float, bool], Any]
+AnimaLatentTransformFactory = Callable[[Any, Any, Any], AnimaLatentTransform]
+
+
 AnimaDenoiser = Callable[
     [Any, Any, AnimaConditioningPair, Any, Callable[[int, int], None] | None], Any
 ]
-AnimaDenoiserFactory = Callable[[Any, Any], AnimaDenoiser]
+AnimaMaskedDenoiser = Callable[
+    [
+        Any,
+        Any,
+        AnimaConditioningPair,
+        Any,
+        Callable[[int, int], None] | None,
+        AnimaLatentTransform,
+    ],
+    Any,
+]
+AnimaDenoiserFactory = Callable[[Any, Any], AnimaDenoiser | AnimaMaskedDenoiser]
 
 
 def _invalid(message: str) -> DerivativeError:
@@ -277,6 +292,7 @@ def execute_captured_anima_plan(
     progress: Callable[[int, int], None] | None = None,
     denoiser_factory: AnimaDenoiserFactory | None = None,
     initial_sigma: float | None = None,
+    latent_transform_factory: AnimaLatentTransformFactory | None = None,
 ) -> AnimaEulerResult:
     """Shared internal image boundary; collaborators come only from trusted Python code."""
     positive_input, negative_input = _capture_prompt(positive), _capture_prompt(negative)
@@ -356,6 +372,11 @@ def execute_captured_anima_plan(
                     noise = torch.randn(
                         shape, device="cpu", dtype=torch.float32, generator=noise_generator
                     ).to(device=device, dtype=dtype)
+                    latent_transform = None
+                    if latent_transform_factory is not None:
+                        if latents is None:
+                            raise _invalid("Anima latent masking requires source latents.")
+                        latent_transform = latent_transform_factory(torch, latents, noise)
                     sigma = captured.sigmas[0] if initial_sigma is None else initial_sigma
                     latents = noise if latents is None else sigma * noise + (1 - sigma) * latents
                     require_finite_anima_tensor(latents, torch, "initial latent")
@@ -385,10 +406,25 @@ def execute_captured_anima_plan(
                         require_finite_anima_tensor(flow, torch, "guided flow")
                         latents = (latents.float() + (following - current) * flow).to(dtype=dtype)
                         require_finite_anima_tensor(latents, torch, "Euler latent")
+                        if latent_transform is not None:
+                            latents = latent_transform(latents, following, True)
                         if progress is not None:
                             progress(index, captured.total_steps)
                     if denoise is not None:
-                        latents = denoise(transformer, latents, conditioning, dtype, progress)
+                        latents = (
+                            cast(AnimaDenoiser, denoise)(
+                                transformer, latents, conditioning, dtype, progress
+                            )
+                            if latent_transform is None
+                            else cast(AnimaMaskedDenoiser, denoise)(
+                                transformer,
+                                latents,
+                                conditioning,
+                                dtype,
+                                progress,
+                                latent_transform,
+                            )
+                        )
                 assert latents is not None
                 raw_latents = latents.to(dtype=vae_parameter.dtype) * std + mean
                 require_finite_anima_tensor(raw_latents, torch, "denormalized latent")

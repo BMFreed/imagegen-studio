@@ -14,8 +14,13 @@ one CPU noise draw and the selected schedule. Mandatory callbacks restore
 protected source before each subsequent model/scheduler evaluation and before
 final decode, even without a progress listener. Five schedulers and both
 prediction types have native CPU oracle tests; a separate trained CUDA script
-checks the internal path. Anima masked denoising, mode-aware RGBA publication
-and public activation remain open; this module adds no handshake capability.
+checks the internal path. The [internal Anima adapter](../docs/engineering/phase-2c-anima-outpaint-research.md)
+adds `generate_anima_outpaint` through the existing six-method flow executor,
+with a request-local original/noise/mask closure. The threshold uses inverse-shifted
+linear time; protected source uses shifted sigma. Restoration follows completed
+user steps, skipping Heun predictors. Weighted prompts, LoRA and seeded streams
+use the shared path. Mode-aware RGBA publication and public activation remain
+open; neither adapter adds a handshake capability or enables mixed-alpha jobs.
 
 Run locally with the app-managed development Python selected by `.python-version`:
 
