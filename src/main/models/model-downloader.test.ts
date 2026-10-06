@@ -1,3 +1,5 @@
+import type { ServerResponse } from 'node:http'
+
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -8,8 +10,14 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import { ANIMA_QWEN3_0_6B_ENCODER } from './anima-manifest.js'
-import { ModelDownloader, ModelDownloadError, requestPinnedHttps } from './model-downloader.js'
+import {
+  ModelDownloader,
+  ModelDownloadError,
+  type ModelDownloadInput,
+  requestPinnedHttps,
+} from './model-downloader.js'
 
 const FILE_URL = 'https://civitai.com/api/download/models/7?fileId=701'
 const PUBLIC_ADDRESSES = async () => ['1.1.1.1']
@@ -27,6 +35,10 @@ async function withStaging(run: (directory: string) => Promise<void>): Promise<v
 async function withLocalHttps(
   run: (url: URL, caPath: string) => Promise<void>,
   bindAddress = '127.0.0.2',
+  respond: (response: ServerResponse) => void = (response) => {
+    response.writeHead(200, { 'content-type': 'application/octet-stream' })
+    response.end('verified bytes')
+  },
 ): Promise<void> {
   // These checked-in certificates belong only to this loopback test server.
   const [cert, key] = await Promise.all(
@@ -35,8 +47,7 @@ async function withLocalHttps(
     ),
   )
   const server = createServer({ cert, key }, (_request, response) => {
-    response.writeHead(200, { 'content-type': 'application/octet-stream' })
-    response.end('verified bytes')
+    respond(response)
   })
   try {
     await new Promise<void>((resolve, reject) => {
@@ -91,17 +102,106 @@ async function trustedRequest(
   return JSON.parse(stdout) as unknown
 }
 
+async function unreadTrustedRequest(
+  url: URL,
+  caPath: string,
+  beforeConsuming: () => Promise<void>,
+): Promise<unknown> {
+  const harnessPath = fileURLToPath(
+    new URL('./test-fixtures/pinned-https-child.ts', import.meta.url),
+  )
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', harnessPath, url.href, '127.0.0.2', 'true', 'unread'],
+    {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: caPath },
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      timeout: 10_000,
+    },
+  )
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk
+  })
+  child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk
+  })
+  const exited = new Promise<number | null>((resolve) => {
+    child.once('close', resolve)
+  })
+  const ready = new Promise<unknown>((resolve, reject) => {
+    child.once('message', resolve)
+    child.once('error', reject)
+    child.once('close', (code) => {
+      reject(new Error(`HTTPS child exited before unread handshake (${code}): ${stderr}`))
+    })
+  })
+  try {
+    assert.deepEqual(await ready, { kind: 'response-unread', status: 200 })
+    await beforeConsuming()
+    await new Promise<void>((resolve, reject) => {
+      child.send({ kind: 'consume' }, (error) => (error ? reject(error) : resolve()))
+    })
+    assert.equal(await exited, 0, stderr)
+    return JSON.parse(stdout) as unknown
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM')
+    }
+    await exited
+  }
+}
+
 function fileResponse(content: string, length = Buffer.byteLength(content)): Response {
   return new Response(content, {
     headers: { 'content-length': String(length), 'content-type': 'application/octet-stream' },
   })
 }
 
+function lamaDownload(stagingDirectory: string): ModelDownloadInput {
+  return {
+    expectedBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    expectedSha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+    source: 'invoke-lama',
+    stagingDirectory,
+    url: LAMA_OUTPAINT_ARTIFACT.url,
+  }
+}
+
+/** Network substitute only: actual downloader hashes/writes bounded synthetic chunks. */
+function syntheticBinaryResponse(byteSize: number, contentLength?: number): Response {
+  const chunk = new Uint8Array(64 * 1024)
+  let remaining = byteSize
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(stream) {
+        if (remaining === 0) {
+          stream.close()
+          return
+        }
+        const length = Math.min(remaining, chunk.byteLength)
+        stream.enqueue(chunk.subarray(0, length))
+        remaining -= length
+      },
+    }),
+    {
+      headers: {
+        ...(contentLength === undefined ? {} : { 'content-length': String(contentLength) }),
+        'content-type': 'application/octet-stream',
+      },
+    },
+  )
+}
+
 async function expectDownloadError(promise: Promise<unknown>, code: string): Promise<void> {
   await assert.rejects(promise, (error: unknown) => {
     assert.ok(error instanceof ModelDownloadError)
     assert.equal(error.code, code)
-    assert.doesNotMatch(error.message, /civitai\.com|huggingface\.co|secret-token|signed-query/)
+    assert.doesNotMatch(
+      error.message,
+      /civitai\.com|huggingface\.co|github\.com|githubusercontent\.com|secret-token|signed-query/,
+    )
     return true
   })
 }
@@ -154,6 +254,97 @@ test('real pinned HTTPS transport handles an IPv6 checked address', async () => 
       status: 200,
     })
   }, '::1')
+})
+
+test('native pinned HTTPS applies byte backpressure before an unread consumer then delivers exact bytes', async () => {
+  const totalBytes = 16 * 1024 * 1024
+  const chunk = Buffer.alloc(64 * 1024, 0x5a)
+  const expectedDigest = createHash('sha256')
+  for (let offset = 0; offset < totalBytes; offset += chunk.byteLength) {
+    expectedDigest.update(chunk)
+  }
+  let writtenBytes = 0
+  let waitingForDrain = false
+  let serverEnded = false
+  let serverActivity = () => {}
+  let activeResponse: ServerResponse | undefined
+  await withLocalHttps(
+    async (url, caPath) => {
+      try {
+        const result = await unreadTrustedRequest(url, caPath, async () => {
+          // Observe a stable native write/drain stall while the child is explicitly forbidden
+          // to acquire a body reader. A full-file Web queue lets the server finish instead.
+          await new Promise<void>((resolve, reject) => {
+            let stableTimer: ReturnType<typeof setTimeout> | undefined
+            const cleanup = () => {
+              clearTimeout(stableTimer)
+              clearTimeout(deadline)
+              serverActivity = () => {}
+            }
+            const finish = () => {
+              cleanup()
+              resolve()
+            }
+            const deadline = setTimeout(() => {
+              cleanup()
+              reject(new Error('Native HTTPS sender did not reach a stable backpressure state'))
+            }, 4000)
+            serverActivity = () => {
+              clearTimeout(stableTimer)
+              if (serverEnded) {
+                finish()
+              } else if (waitingForDrain) {
+                stableTimer = setTimeout(finish, 750)
+              }
+            }
+            serverActivity()
+          })
+          assert.ok(
+            waitingForDrain,
+            `Sender completed before consumer approval at ${writtenBytes} bytes`,
+          )
+          assert.ok(!serverEnded, 'Unread native transport buffered the complete artifact')
+          assert.ok(writtenBytes > 0 && writtenBytes < totalBytes)
+        })
+        assert.deepEqual(result, {
+          byteSize: totalBytes,
+          ok: true,
+          sha256: expectedDigest.digest('hex'),
+          status: 200,
+        })
+        assert.equal(writtenBytes, totalBytes)
+        assert.equal(serverEnded, true)
+      } finally {
+        activeResponse?.destroy()
+      }
+    },
+    '127.0.0.2',
+    (response) => {
+      activeResponse = response
+      response.writeHead(200, {
+        'content-length': String(totalBytes),
+        'content-type': 'application/octet-stream',
+      })
+      const pump = () => {
+        while (writtenBytes < totalBytes) {
+          writtenBytes += chunk.byteLength
+          if (!response.write(chunk)) {
+            waitingForDrain = true
+            response.once('drain', () => {
+              waitingForDrain = false
+              pump()
+            })
+            serverActivity()
+            return
+          }
+        }
+        serverEnded = true
+        response.end()
+        serverActivity()
+      }
+      pump()
+    },
+  )
 })
 
 test('streams and hashes the selected file, sending Bearer only to CivitAI before a CDN redirect', async () => {
@@ -327,6 +518,310 @@ test('a pinned Anima URL downloads without CivitAI authorization; arbitrary HF p
       }),
       'DOWNLOAD_INVALID_SOURCE',
     )
+  })
+})
+
+test('LaMa source and exact identity are admitted before any storage, DNS or transport work', async (t) => {
+  const invalidInputs: { name: string; override: Partial<ModelDownloadInput> }[] = [
+    { name: 'CivitAI URL', override: { url: FILE_URL } },
+    { name: 'Anima URL', override: { url: ANIMA_QWEN3_0_6B_ENCODER.url } },
+    {
+      name: 'different GitHub artifact',
+      override: { url: LAMA_OUTPAINT_ARTIFACT.url.replace('big-lama.pt', 'different.pt') },
+    },
+    { name: 'added query', override: { url: `${LAMA_OUTPAINT_ARTIFACT.url}?download=1` } },
+    { name: 'added fragment', override: { url: `${LAMA_OUTPAINT_ARTIFACT.url}#weights` } },
+    { name: 'absent size', override: { expectedBytes: undefined } },
+    { name: 'null size', override: { expectedBytes: null } },
+    { name: 'different size', override: { expectedBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes - 1 } },
+    { name: 'absent SHA', override: { expectedSha256: undefined } },
+    { name: 'null SHA', override: { expectedSha256: null } },
+    { name: 'different SHA', override: { expectedSha256: '0'.repeat(64) } },
+    { name: 'CivitAI Bearer', override: { bearerToken: 'secret-token' } },
+    { name: 'empty Bearer', override: { bearerToken: '' } },
+    { name: 'CivitAI source', override: { bearerToken: 'secret-token', source: 'civitai' } },
+    { name: 'Anima source', override: { source: 'anima-huggingface' } },
+  ]
+  for (const scenario of invalidInputs) {
+    await t.test(scenario.name, async () => {
+      await withStaging(async (stagingDirectory) => {
+        let resolutions = 0
+        let requests = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async () => {
+            resolutions++
+            return await PUBLIC_ADDRESSES()
+          },
+          transport: async () => {
+            requests++
+            return fileResponse('abc')
+          },
+        })
+        const unopenedDirectory = join(stagingDirectory, 'not-created')
+        await expectDownloadError(
+          downloader.download({ ...lamaDownload(unopenedDirectory), ...scenario.override }),
+          'DOWNLOAD_INVALID_SOURCE',
+        )
+        assert.equal(resolutions, 0)
+        assert.equal(requests, 0)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+})
+
+test('LaMa follows only GitHub release hosts without authorization and checks the streamed exact size', async () => {
+  await withStaging(async (stagingDirectory) => {
+    const requests: {
+      authorization: string | null
+      credentials: string | undefined
+      url: string
+    }[] = []
+    const resolvedHosts: string[] = []
+    const redirects = [
+      `${LAMA_OUTPAINT_ARTIFACT.url}?download=1`,
+      'https://release-assets.githubusercontent.com/github-production-release-asset/1/big-lama.pt?sig=signed-query',
+    ]
+    const downloader = new ModelDownloader({
+      resolveAddresses: async (hostname) => {
+        resolvedHosts.push(hostname)
+        return await PUBLIC_ADDRESSES()
+      },
+      transport: async (url, options) => {
+        requests.push({
+          authorization: new Headers(options?.headers).get('Authorization'),
+          credentials: options?.credentials,
+          url: String(url),
+        })
+        const location = redirects[requests.length - 1]
+        return location
+          ? new Response(null, { headers: { location }, status: 302 })
+          : fileResponse('abc', LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+      },
+    })
+    let progress: { downloadedBytes: number; totalBytes: number | null } | undefined
+    await expectDownloadError(
+      downloader.download({
+        ...lamaDownload(stagingDirectory),
+        onProgress: (value) => {
+          progress = value
+        },
+      }),
+      'DOWNLOAD_SIZE_MISMATCH',
+    )
+    assert.deepEqual(
+      requests,
+      [LAMA_OUTPAINT_ARTIFACT.url, ...redirects].map((url) => ({
+        authorization: null,
+        credentials: 'omit',
+        url,
+      })),
+    )
+    assert.deepEqual(resolvedHosts, [
+      'github.com',
+      'github.com',
+      'release-assets.githubusercontent.com',
+    ])
+    assert.deepEqual(progress, { downloadedBytes: 3, totalBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes })
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('LaMa refuses unlisted, credentialed and unsafe redirects before another request', async (t) => {
+  const redirects = [
+    { code: 'DOWNLOAD_UNSAFE_DESTINATION', location: 'https://cdn.example.com/big-lama.pt' },
+    {
+      code: 'DOWNLOAD_UNSAFE_DESTINATION',
+      location: 'https://objects.githubusercontent.com/big-lama.pt',
+    },
+    {
+      code: 'DOWNLOAD_UNSAFE_DESTINATION',
+      location: 'https://release-assets.githubusercontent.com.evil.example/file',
+    },
+    { code: 'DOWNLOAD_UNSAFE_DESTINATION', location: 'https://github.com.evil.example/file' },
+    { code: 'DOWNLOAD_UNSAFE_DESTINATION', location: 'https://127.0.0.1/big-lama.pt' },
+    { code: 'DOWNLOAD_UNSAFE_DESTINATION', location: 'https://github.com./big-lama.pt' },
+    {
+      code: 'DOWNLOAD_INVALID_URL',
+      location: 'http://release-assets.githubusercontent.com/big-lama.pt',
+    },
+    { code: 'DOWNLOAD_INVALID_URL', location: 'https://secret-token@github.com/big-lama.pt' },
+    { code: 'DOWNLOAD_INVALID_URL', location: 'https://github.com:8443/big-lama.pt' },
+  ]
+  for (const scenario of redirects) {
+    await t.test(scenario.location, async () => {
+      await withStaging(async (stagingDirectory) => {
+        let requests = 0
+        let resolutions = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async () => {
+            resolutions++
+            return await PUBLIC_ADDRESSES()
+          },
+          transport: async () => {
+            requests++
+            return new Response(null, { headers: { location: scenario.location }, status: 302 })
+          },
+        })
+        await expectDownloadError(
+          downloader.download(lamaDownload(stagingDirectory)),
+          scenario.code,
+        )
+        assert.equal(requests, 1)
+        assert.equal(resolutions, 1)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+})
+
+test('an allowed LaMa release host still requires exclusively public resolved addresses', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let requests = 0
+    const downloader = new ModelDownloader({
+      resolveAddresses: async (hostname) =>
+        hostname === 'github.com' ? await PUBLIC_ADDRESSES() : ['1.1.1.1', '192.168.1.20'],
+      transport: async () => {
+        requests++
+        return new Response(null, {
+          headers: { location: 'https://release-assets.githubusercontent.com/big-lama.pt' },
+          status: 302,
+        })
+      },
+    })
+    await expectDownloadError(
+      downloader.download(lamaDownload(stagingDirectory)),
+      'DOWNLOAD_UNSAFE_DESTINATION',
+    )
+    assert.equal(requests, 1)
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('LaMa exact-size synthetic streamed bytes cannot substitute for the pinned weights', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let downloadedBytes = 0
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () =>
+        syntheticBinaryResponse(LAMA_OUTPAINT_ARTIFACT.sizeBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes),
+    })
+    await expectDownloadError(
+      downloader.download({
+        ...lamaDownload(stagingDirectory),
+        onProgress: (progress) => {
+          assert.ok(progress.downloadedBytes > downloadedBytes)
+          assert.equal(progress.totalBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+          downloadedBytes = progress.downloadedBytes
+        },
+      }),
+      'DOWNLOAD_HASH_MISMATCH',
+    )
+    assert.equal(downloadedBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('LaMa bounds an unadvertised streamed body by the exact manifest size and cleans partial bytes', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let downloadedBytes = 0
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => syntheticBinaryResponse(LAMA_OUTPAINT_ARTIFACT.sizeBytes + 1),
+    })
+    await expectDownloadError(
+      downloader.download({
+        ...lamaDownload(stagingDirectory),
+        onProgress: (progress) => {
+          downloadedBytes = progress.downloadedBytes
+        },
+      }),
+      'DOWNLOAD_TOO_LARGE',
+    )
+    assert.ok(downloadedBytes > 0 && downloadedBytes <= LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('LaMa header size mismatch is refused before reading or writing body bytes', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let progressCalls = 0
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => fileResponse('abc', LAMA_OUTPAINT_ARTIFACT.sizeBytes + 1),
+    })
+    await expectDownloadError(
+      downloader.download({
+        ...lamaDownload(stagingDirectory),
+        onProgress: () => {
+          progressCalls++
+        },
+      }),
+      'DOWNLOAD_SIZE_MISMATCH',
+    )
+    assert.equal(progressCalls, 0)
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('LaMa transport failure and cancellation clean private partial files without exposing source details', async (t) => {
+  await t.test('transport error', async () => {
+    await withStaging(async (stagingDirectory) => {
+      const downloader = new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async () => {
+          throw new Error(`secret-token at ${LAMA_OUTPAINT_ARTIFACT.url}`)
+        },
+      })
+      await expectDownloadError(
+        downloader.download(lamaDownload(stagingDirectory)),
+        'DOWNLOAD_FAILED',
+      )
+      assert.deepEqual(await readdir(stagingDirectory), [])
+    })
+  })
+  await t.test('cancel after first written chunk', async () => {
+    await withStaging(async (stagingDirectory) => {
+      const controller = new AbortController()
+      let progressCalls = 0
+      const downloader = new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async () => syntheticBinaryResponse(LAMA_OUTPAINT_ARTIFACT.sizeBytes),
+      })
+      await expectDownloadError(
+        downloader.download({
+          ...lamaDownload(stagingDirectory),
+          onProgress: () => {
+            progressCalls++
+            controller.abort()
+          },
+          signal: controller.signal,
+        }),
+        'DOWNLOAD_CANCELED',
+      )
+      assert.equal(progressCalls, 1)
+      assert.deepEqual(await readdir(stagingDirectory), [])
+    })
+  })
+  await t.test('DNS failure', async () => {
+    await withStaging(async (stagingDirectory) => {
+      let requests = 0
+      const downloader = new ModelDownloader({
+        resolveAddresses: async () => {
+          throw new Error('secret-token DNS failed')
+        },
+        transport: async () => {
+          requests++
+          return fileResponse('abc')
+        },
+      })
+      await expectDownloadError(
+        downloader.download(lamaDownload(stagingDirectory)),
+        'DOWNLOAD_NETWORK_ERROR',
+      )
+      assert.equal(requests, 0)
+      assert.deepEqual(await readdir(stagingDirectory), [])
+    })
   })
 })
 

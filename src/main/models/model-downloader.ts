@@ -6,6 +6,7 @@ import { BlockList, isIP } from 'node:net'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
+import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import {
   ANIMA_BASE_1_0_CHECKPOINT,
   ANIMA_QWEN3_0_6B_ENCODER,
@@ -24,6 +25,7 @@ const ANIMA_SOURCE_URLS = new Set([
   ANIMA_QWEN3_0_6B_ENCODER.url,
   ANIMA_QWEN_IMAGE_VAE.url,
 ])
+const LAMA_REDIRECT_HOSTS = new Set(['github.com', 'release-assets.githubusercontent.com'])
 
 const BLOCKED_IPV4 = new BlockList()
 for (const [address, prefix] of [
@@ -51,7 +53,7 @@ const BLOCKED_IPV6 = new BlockList()
 BLOCKED_IPV6.addSubnet('2001:db8::', 32, 'ipv6')
 BLOCKED_IPV6.addSubnet('2001:10::', 28, 'ipv6')
 
-export type ModelDownloadSource = 'anima-huggingface' | 'civitai'
+export type ModelDownloadSource = 'anima-huggingface' | 'civitai' | 'invoke-lama'
 
 export interface ModelDownloadInput {
   /** Main-process token. Never pass this object through renderer IPC or a log. */
@@ -62,9 +64,9 @@ export interface ModelDownloadInput {
   readonly onProgress?: (progress: { downloadedBytes: number; totalBytes: number | null }) => void
   readonly signal?: AbortSignal
   readonly source: ModelDownloadSource
-  /** App-owned private staging directory on the managed models filesystem. */
+  /** App-owned private staging directory; the caller owns the final artifact destination. */
   readonly stagingDirectory: string
-  /** A CivitAI file-specific URL or a pinned Anima manifest artifact URL. */
+  /** A CivitAI file-specific URL or an exact pinned Anima/LaMa manifest artifact URL. */
   readonly url: string
 }
 
@@ -202,6 +204,12 @@ export class ModelDownloader {
           )
         }
         const nextUrl = parseSafeUrl(location, currentUrl)
+        if (input.source === 'invoke-lama' && !LAMA_REDIRECT_HOSTS.has(nextUrl.hostname)) {
+          throw new ModelDownloadError(
+            'DOWNLOAD_UNSAFE_DESTINATION',
+            'The auxiliary resource redirect is unsupported.',
+          )
+        }
         await response.body?.cancel().catch(() => undefined)
         currentUrl = nextUrl
       }
@@ -422,8 +430,18 @@ export function requestPinnedHttps(
             }
           }
           const noBody = [204, 205, 304].includes(incoming.statusCode)
+          // Node's default Web strategy counts chunks, whereas IncomingMessage's HWM is bytes.
+          // Keeping the same byte budget prevents an unread/slow consumer buffering a full model.
+          const body = noBody
+            ? null
+            : (Readable.toWeb(incoming, {
+                strategy: {
+                  highWaterMark: incoming.readableHighWaterMark,
+                  size: (chunk: Uint8Array) => chunk.byteLength,
+                },
+              }) as ReadableStream<Uint8Array>)
           resolve(
-            new Response(noBody ? null : (Readable.toWeb(incoming) as ReadableStream<Uint8Array>), {
+            new Response(body, {
               headers,
               status: incoming.statusCode,
             }),
@@ -454,25 +472,51 @@ function requestHeaders(input: ModelDownloadInput, url: URL): HeadersInit {
 
 function validateInitialUrl(input: ModelDownloadInput): URL {
   const url = parseSafeUrl(input.url)
-  if (input.source === 'civitai') {
-    if (
-      url.origin !== 'https://civitai.com' ||
-      !/^\/api\/download\/models\/\d+$/.test(url.pathname) ||
-      [...url.searchParams.keys()].some((key) => key.toLowerCase().includes('token')) ||
-      !input.bearerToken?.trim()
-    ) {
-      throw new ModelDownloadError('DOWNLOAD_INVALID_SOURCE', 'The CivitAI file source is invalid.')
+  switch (input.source) {
+    case 'anima-huggingface': {
+      if (
+        url.origin !== 'https://huggingface.co' ||
+        !ANIMA_SOURCE_URLS.has(url.toString()) ||
+        input.bearerToken
+      ) {
+        throw new ModelDownloadError('DOWNLOAD_INVALID_SOURCE', 'The Anima file source is invalid.')
+      }
+
+      break
     }
-  } else if (input.source === 'anima-huggingface') {
-    if (
-      url.origin !== 'https://huggingface.co' ||
-      !ANIMA_SOURCE_URLS.has(url.toString()) ||
-      input.bearerToken
-    ) {
-      throw new ModelDownloadError('DOWNLOAD_INVALID_SOURCE', 'The Anima file source is invalid.')
+    case 'civitai': {
+      if (
+        url.origin !== 'https://civitai.com' ||
+        !/^\/api\/download\/models\/\d+$/.test(url.pathname) ||
+        [...url.searchParams.keys()].some((key) => key.toLowerCase().includes('token')) ||
+        !input.bearerToken?.trim()
+      ) {
+        throw new ModelDownloadError(
+          'DOWNLOAD_INVALID_SOURCE',
+          'The CivitAI file source is invalid.',
+        )
+      }
+
+      break
     }
-  } else {
-    throw new ModelDownloadError('DOWNLOAD_INVALID_SOURCE', 'The model file source is invalid.')
+    case 'invoke-lama': {
+      if (
+        input.url !== LAMA_OUTPAINT_ARTIFACT.url ||
+        input.expectedBytes !== LAMA_OUTPAINT_ARTIFACT.sizeBytes ||
+        input.expectedSha256 !== LAMA_OUTPAINT_ARTIFACT.sha256 ||
+        input.bearerToken !== undefined
+      ) {
+        throw new ModelDownloadError(
+          'DOWNLOAD_INVALID_SOURCE',
+          'The auxiliary resource source or identity is invalid.',
+        )
+      }
+
+      break
+    }
+    default: {
+      throw new ModelDownloadError('DOWNLOAD_INVALID_SOURCE', 'The model file source is invalid.')
+    }
   }
   return url
 }

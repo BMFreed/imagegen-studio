@@ -138,9 +138,21 @@ LaMa — общий вспомогательный ресурс Invoke-like outp
 Anima; он не привязан к выбранному checkpoint и не входит в `.igs` или Python
 environment. Main владеет загрузкой, cache, проверкой закреплённых identity/hash
 и выдачей проверенного локального пути. Worker выполняет infill без скачивания
-или выбора альтернативного ресурса. Конкретный release manifest и реализация
-этой доставки остаются задачами outpaint/runtime packaging; решение об установке
-не означает, что LaMa уже поставляется текущим development runtime.
+или выбора альтернативного ресурса.
+
+[Main-owned LaMa delivery checkpoint](../engineering/phase-2c-lama-install-research.md)
+реализует внутренние exact download/install/reuse в `appData/inference-resources`
+и byte planner по trusted полному runtime manifest с обязательной LaMa. План
+повторного использования заново проверяет файл; увеличение показанного объёма
+требует нового preview. Auxiliary preview считает только веса и явно обозначает
+свой scope, а не весь движок. Download staging bytes не означают достаточный
+disk-space peak: publisher copy, unpack scratch и old slots учитываются будущим
+установщиком отдельно. Installed size остаётся unknown при неизвестном footprint.
+
+Конкретный trusted release manifest, runtime installer, aggregate preview IPC/UI
+и подключение к Set up/Install/Repair остаются задачами runtime packaging.
+Текущий development runtime не получает LaMa автоматически от этого checkpoint;
+worker не скачивает недостающие веса.
 
 Portable mode может позже использовать каталог рядом с приложением только как явный режим и только после проверки прав записи. Это не default production layout.
 

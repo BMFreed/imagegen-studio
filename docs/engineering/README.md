@@ -60,6 +60,10 @@
   изолированных агентах: влияние справок об API и композиции, результаты и ограничения.
 - [PP-006 prototype baseline](./pp-006-prototype-baseline.md) — проверенный на mocks Project Apply flow, red/green semantic mutation и границы evidence перед следующим пилотом.
 
+- [Main-owned LaMa delivery](./phase-2c-lama-install-research.md) — pinned download,
+  exact durable auxiliary publication/reuse and full-artifact engine byte accounting.
+  Renderer Set up/Install/Repair, release manifests and public outpaint remain open.
+
 ## Источник и адаптация
 
 Подход изучен по локальному репозиторию work project (`work-project`):
