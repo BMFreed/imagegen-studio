@@ -15,9 +15,14 @@ import type {
   AnimaGenerationModelResolver,
   FrozenAnimaGenerationLora,
   FrozenAnimaGenerationPreparationV1,
+  FrozenAnimaOutpaintPreparationV1,
 } from './anima-generation-preparation.js'
 
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
+import {
+  FrozenAlphaOutpaintConditioningSchema,
+  type FrozenAlphaOutpaintConditioningV1,
+} from './outpaint-conditioning.js'
 
 export type FrozenQueuedAnimaGenerationContextV1 = Fields &
   (
@@ -39,6 +44,20 @@ export type FrozenQueuedAnimaGenerationV1 = {
       workerJob: WorkerJob & { sampling: Extract<AnimaJob['sampling'], { mode: 'txt2img' }> }
     }
 )
+export type FrozenQueuedAnimaOutpaintContextV1 = Omit<
+  Extract<FrozenQueuedAnimaGenerationContextV1, { kind: 'anima-img2img-preparation' }>,
+  'kind'
+> & {
+  conditioning: FrozenAlphaOutpaintConditioningV1
+  kind: 'anima-outpaint-preparation'
+}
+export interface FrozenQueuedAnimaOutpaintV1 {
+  context: FrozenQueuedAnimaOutpaintContextV1
+  kind: 'anima-outpaint'
+  originRequestId: string
+  schemaVersion: 1
+  workerJob: Extract<FrozenQueuedAnimaGenerationV1, { kind: 'anima-img2img' }>['workerJob']
+}
 type Draft = IgsProjectDocumentV1['generationDraft']
 type AnimaJob = AnimaWorkerRequest['job']
 type Fields = {
@@ -260,6 +279,130 @@ export const FrozenQueuedAnimaGenerationSchema = v.variant('kind', [
   }),
 ])
 
+export const FrozenQueuedAnimaOutpaintSchema = v.strictObject({
+  ...payloadFields,
+  context: v.strictObject({
+    ...imgContext.entries,
+    conditioning: FrozenAlphaOutpaintConditioningSchema,
+    kind: v.literal('anima-outpaint-preparation'),
+  }),
+  kind: v.literal('anima-outpaint'),
+  workerJob: v.strictObject({ ...workerFields, sampling: imgPlan }),
+})
+
+export function parseFrozenQueuedAnimaOutpaintV1(json: string): FrozenQueuedAnimaOutpaintV1 {
+  if (Buffer.byteLength(json, 'utf8') > GENERATION_STAGING_LIMITS.frozenPayloadBytes) {
+    invalid()
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    invalid()
+  }
+  const parsed = v.safeParse(FrozenQueuedAnimaOutpaintSchema, value)
+  if (!parsed.success) {
+    invalid()
+  }
+  assertAgreement(parsed.output)
+  assertOutpaintAgreement(parsed.output.context)
+  return parsed.output
+}
+
+/** Concrete numeric request data only; this creates no public wire command or output pathname. */
+export function buildFrozenQueuedAnimaOutpaintV1(
+  context: FrozenAnimaOutpaintPreparationV1,
+  originRequestId: string,
+): FrozenQueuedAnimaOutpaintV1 {
+  const { colorSpace: _space, format: _format, ...target } = context.target
+  const scalarSampling = { ...context.sampling, seedBehavior: context.dynamic.seedBehavior }
+  const model = context.model
+  return parseFrozenQueuedAnimaOutpaintV1(
+    JSON.stringify({
+      context: {
+        bbox: context.bbox,
+        conditioning: context.conditioning,
+        ...(context.generationDraft.cfgRescale !== undefined
+          ? { cfgRescale: context.generationDraft.cfgRescale }
+          : {}),
+        documentId: context.documentId,
+        documentRevision: context.documentRevision,
+        kind: 'anima-outpaint-preparation',
+        loras: context.loras,
+        loraStack: context.generationDraft.loras,
+        model,
+        prompts: context.prompts,
+        sampling: scalarSampling,
+        schemaVersion: 1,
+        target: context.target,
+        ...(context.generationDraft.vaePrecision !== undefined
+          ? { vaePrecision: context.generationDraft.vaePrecision }
+          : {}),
+      },
+      kind: 'anima-outpaint',
+      originRequestId,
+      schemaVersion: 1,
+      workerJob: {
+        bbox: context.bbox,
+        loras: context.loras.map((entry) => ({
+          byteSize: entry.byteSize,
+          path: entry.managedPath,
+          sha256: entry.reference.fileSha256,
+          weight: entry.weight,
+        })),
+        model: {
+          architecture: model.architecture,
+          checkpoint: {
+            byteSize: model.checkpoint.byteSize,
+            path: model.checkpoint.managedPath,
+            sha256: model.checkpoint.reference.fileSha256,
+          },
+          qwen3Encoder: {
+            byteSize: model.qwen3Encoder.byteSize,
+            path: model.qwen3Encoder.managedPath,
+            sha256: model.qwen3Encoder.sha256,
+          },
+          vae: {
+            byteSize: model.vae.byteSize,
+            path: model.vae.managedPath,
+            sha256: model.vae.sha256,
+          },
+        },
+        prompts: {
+          negative: compileAnimaPromptWeighting(context.prompts.negative),
+          positive: compileAnimaPromptWeighting(context.prompts.positive),
+        },
+        sampling: compileAnimaFlowSamplingPlan({
+          guidanceScale: context.sampling.cfgScale,
+          height: context.bbox.height,
+          mode: 'img2img',
+          scheduler: context.sampling.animaMethod,
+          seed: context.sampling.seed,
+          steps: context.sampling.steps,
+          strength: context.sampling.denoisingStrength,
+          width: context.bbox.width,
+        }),
+        schemaVersion: 1,
+        target,
+      },
+    }),
+  )
+}
+
+function assertOutpaintAgreement(context: FrozenQueuedAnimaOutpaintContextV1): void {
+  const source = context.conditioning.sourceTarget
+  if (
+    !isDeepStrictEqual(context.conditioning.bbox, context.bbox) ||
+    source.sha256 !== context.target.sha256 ||
+    source.byteSize !== context.target.byteSize ||
+    source.width !== context.target.width ||
+    source.height !== context.target.height ||
+    source.iccSha256 !== context.target.iccSha256
+  ) {
+    invalid()
+  }
+}
+
 const sourceFields = {
   ...workerFields,
   output: v.strictObject({ pngPath: canonicalPath, stagingRoot: canonicalPath }),
@@ -432,7 +575,9 @@ function invalid(): never {
   throw new AnimaQueuedGenerationError('The frozen Anima generation input is invalid.')
 }
 
-function assertAgreement(payload: FrozenQueuedAnimaGenerationV1): void {
+function assertAgreement(
+  payload: FrozenQueuedAnimaGenerationV1 | FrozenQueuedAnimaOutpaintV1,
+): void {
   const { context, workerJob } = payload
   const actualPrompts = {
     negative: compileAnimaPromptWeighting(context.prompts.negative),
@@ -441,12 +586,12 @@ function assertAgreement(payload: FrozenQueuedAnimaGenerationV1): void {
   const actualPlan = compileAnimaFlowSamplingPlan({
     guidanceScale: context.sampling.cfgScale,
     height: context.bbox.height,
-    mode: payload.kind === 'anima-img2img' ? 'img2img' : 'txt2img',
+    mode: payload.kind === 'anima-txt2img' ? 'txt2img' : 'img2img',
     scheduler: context.sampling.animaMethod,
     seed: context.sampling.seed,
     steps: context.sampling.steps,
     strength:
-      context.kind === 'anima-img2img-preparation' ? context.sampling.denoisingStrength : null,
+      context.kind === 'anima-txt2img-preparation' ? null : context.sampling.denoisingStrength,
     width: context.bbox.width,
   })
   const { loras, loraStack, model } = context

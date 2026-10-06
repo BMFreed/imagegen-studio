@@ -9,7 +9,10 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 
-import { parseFrozenGenerationCandidatePayloadV1 } from './generation-staging.js'
+import {
+  GenerationStagingError,
+  parseFrozenGenerationCandidatePayloadV1,
+} from './generation-staging.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
 export class ProjectGenerationProvenanceError extends Error {
@@ -55,7 +58,13 @@ export function provenanceFromVerifiedRasterCandidate(input: {
   let payload: ReturnType<typeof parseFrozenGenerationCandidatePayloadV1>
   try {
     payload = parseFrozenGenerationCandidatePayloadV1(candidate.frozenPayloadJson)
-  } catch {
+  } catch (error) {
+    if (error instanceof GenerationStagingError && error.code === 'STAGING_OUTPAINT_UNAVAILABLE') {
+      throw new ProjectGenerationProvenanceError(
+        'PROVENANCE_MODEL_UNSUPPORTED',
+        'Normal outpaint accepted RGBA provenance is not integrated yet.',
+      )
+    }
     throw new ProjectGenerationProvenanceError(
       'PROVENANCE_INPUT_INVALID',
       'The frozen generation context is invalid.',

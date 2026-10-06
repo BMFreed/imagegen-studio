@@ -157,3 +157,9 @@ from `worker-python` preserves that exclusion. Strict checks also caught the
 new smoke's import ordering, whitespace and untyped external-device/JIT seam;
 these were corrected without weakening checks or altering numerical assertions.
 Existing TorchSDE float-boundary warnings in the full suite remain warnings.
+
+The subsequent [internal frozen jobs checkpoint](./phase-2c-outpaint-jobs-research.md)
+adds durable mixed-alpha inputs, internal atomic admission/Retry and Main's pinned
+shared LaMa resolver. Public dispatch, RGBA publication/portable provenance and
+auxiliary installation remain open; this does not change the earlier numerical
+evidence or public readiness.

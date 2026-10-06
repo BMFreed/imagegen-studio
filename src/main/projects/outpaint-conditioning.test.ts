@@ -1,3 +1,4 @@
+import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
@@ -6,10 +7,15 @@ import {
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
 
-import { freezeAlphaOutpaintConditioning } from './outpaint-conditioning.js'
+import {
+  assertFrozenAlphaOutpaintConditioning,
+  freezeAlphaOutpaintConditioning,
+  parseFrozenAlphaOutpaintConditioningV1,
+} from './outpaint-conditioning.js'
 import { classifyTargetPngAlpha, decodeTargetPngAlpha } from './target-png-mode.js'
 
 const EXPECTED_ALPHA = Buffer.from([0, 128, 255, 1, 64, 254])
@@ -93,6 +99,7 @@ test('actual outpaint factory preserves raw keep coverage and freezes exact Invo
       byteSize: targetPngBytes.length,
       format: 'png',
       height: 8,
+      iccSha256: IGS_SRGB_ICC_SHA256,
       sha256: sourceTargetSha256,
       width: 8,
     },
@@ -344,7 +351,247 @@ test('decoded alpha is detached from original PNG and other decoder calls', () =
   assert.deepEqual(second, EXPECTED_ALPHA)
 })
 
-function filteredPng(rows: readonly (readonly number[])[], filter: number): Buffer {
+test('frozen conditioning parser detaches nested metadata and rejects mismatched exact identities', async (t) => {
+  const bytes = filteredPng(OUTPAINT_ROWS, 0)
+  const valid = freezeAlphaOutpaintConditioning({
+    bbox: BBOX,
+    sourceTargetSha256: sha256(bytes),
+    targetPngBytes: bytes,
+  }).context
+  const caller = structuredClone(valid)
+  const parsed = parseFrozenAlphaOutpaintConditioningV1(caller)
+  Reflect.set(caller.bbox, 'x', 100)
+  assert.equal(parsed.bbox.x, BBOX.x)
+  assert.equal(Object.isFrozen(parsed.keepMask), true)
+  for (const [name, mutate] of [
+    [
+      'extra top-level field',
+      (value: typeof caller) => {
+        Reflect.set(value, 'path', '/untrusted')
+      },
+    ],
+    [
+      'wrong bbox cross-field width',
+      (value: typeof caller) => {
+        Reflect.set(value.bbox, 'width', 16)
+      },
+    ],
+    [
+      'mask byte size',
+      (value: typeof caller) => {
+        Reflect.set(value.keepMask, 'byteSize', 63)
+      },
+    ],
+    [
+      'mask geometry',
+      (value: typeof caller) => {
+        Reflect.set(value.keepMask, 'height', 16)
+      },
+    ],
+    [
+      'source geometry',
+      (value: typeof caller) => {
+        Reflect.set(value.sourceTarget, 'width', 16)
+      },
+    ],
+    [
+      'source ICC',
+      (value: typeof caller) => {
+        Reflect.set(value.sourceTarget, 'iccSha256', '0'.repeat(64))
+      },
+    ],
+    [
+      'resource SHA',
+      (value: typeof caller) => {
+        Reflect.set(value.infillResource, 'sha256', '0'.repeat(64))
+      },
+    ],
+    [
+      'resource bytes',
+      (value: typeof caller) => {
+        Reflect.set(value.infillResource, 'byteSize', value.infillResource.byteSize - 1)
+      },
+    ],
+    [
+      'resource role',
+      (value: typeof caller) => {
+        Reflect.set(value, 'infillResource', { ...valid.infillResource, role: 'checkpoint' })
+      },
+    ],
+    [
+      'policy radius',
+      (value: typeof caller) => {
+        Reflect.set(value, 'policy', { ...valid.policy, edgeRadius: 0 })
+      },
+    ],
+    [
+      'policy output mode',
+      (value: typeof caller) => {
+        Reflect.set(value, 'policy', { ...valid.policy, outputMode: 'full' })
+      },
+    ],
+    [
+      'policy extra field',
+      (value: typeof caller) => {
+        Reflect.set(value, 'policy', { ...valid.policy, autoNegative: true })
+      },
+    ],
+    [
+      'uppercase source SHA',
+      (value: typeof caller) => {
+        Reflect.set(value.sourceTarget, 'sha256', value.sourceTarget.sha256.toUpperCase())
+      },
+    ],
+    [
+      'schema version',
+      (value: typeof caller) => {
+        Reflect.set(value, 'schemaVersion', 2)
+      },
+    ],
+    [
+      'fractional coordinates',
+      (value: typeof caller) => {
+        Reflect.set(value.bbox, 'x', 0.1)
+      },
+    ],
+    [
+      'source byte ceiling',
+      (value: typeof caller) => {
+        Reflect.set(value.sourceTarget, 'byteSize', IGS_GENERATION_PNG_MAX_BYTES + 1)
+      },
+    ],
+    [
+      'aligned side beyond maximum',
+      (value: typeof caller) => {
+        Reflect.set(value.bbox, 'width', 2056)
+        Reflect.set(value.keepMask, 'width', 2056)
+        Reflect.set(value.keepMask, 'byteSize', 2056 * 8)
+        Reflect.set(value.sourceTarget, 'width', 2056)
+      },
+    ],
+    [
+      'aligned pixel ceiling',
+      (value: typeof caller) => {
+        for (const rectangle of [value.bbox, value.keepMask, value.sourceTarget]) {
+          Reflect.set(rectangle, 'width', 2048)
+          Reflect.set(rectangle, 'height', 2048)
+        }
+        Reflect.set(value.keepMask, 'byteSize', 2048 * 2048)
+      },
+    ],
+  ] as const) {
+    await t.test(name, () => {
+      const changed = structuredClone(valid)
+      mutate(changed)
+      assert.throws(
+        () => parseFrozenAlphaOutpaintConditioningV1(changed),
+        /conditioning identity is invalid/,
+      )
+    })
+  }
+})
+
+test('frozen conditioning assertion rederives actual PNG alpha, preserves soft coverage and requires real sRGB', async (t) => {
+  const png = withSrgbIcc(filteredPng(OUTPAINT_ROWS, 0))
+  const prepared = freezeAlphaOutpaintConditioning({
+    bbox: BBOX,
+    sourceTargetSha256: sha256(png),
+    targetPngBytes: png,
+  })
+  await assertFrozenAlphaOutpaintConditioning(prepared.context, png)
+  await t.test('forged alternate mask identity refuses unchanged real pixels', async () => {
+    const changed = structuredClone(prepared.context)
+    Reflect.set(changed.keepMask, 'sha256', sha256(Buffer.alloc(64, 255)))
+    await assert.rejects(
+      assertFrozenAlphaOutpaintConditioning(changed, png),
+      /differs from its source pixels/,
+    )
+  })
+  await t.test('source RGB mutation refuses even when alpha is unchanged', async () => {
+    const changed = withSrgbIcc(filteredPng(OUTPAINT_ROWS, 0, 17))
+    assert.deepEqual(decodeTargetPngAlpha(changed, 8, 8), prepared.keepMaskBytes)
+    await assert.rejects(
+      assertFrozenAlphaOutpaintConditioning(prepared.context, changed),
+      /identity or bbox is invalid/,
+    )
+  })
+  await t.test('missing actual ICC refuses coherent factory record', async () => {
+    const bytes = filteredPng(OUTPAINT_ROWS, 0)
+    const context = freezeAlphaOutpaintConditioning({
+      bbox: BBOX,
+      sourceTargetSha256: sha256(bytes),
+      targetPngBytes: bytes,
+    }).context
+    await assert.rejects(
+      assertFrozenAlphaOutpaintConditioning(context, bytes),
+      /no pinned sRGB ICC/,
+    )
+  })
+  await t.test('non-sRGB actual ICC refuses a correctly hashed PNG', async () => {
+    const bytes = withSrgbIcc(filteredPng(OUTPAINT_ROWS, 0), Buffer.from('not the sRGB profile'))
+    const context = freezeAlphaOutpaintConditioning({
+      bbox: BBOX,
+      sourceTargetSha256: sha256(bytes),
+      targetPngBytes: bytes,
+    }).context
+    await assert.rejects(assertFrozenAlphaOutpaintConditioning(context, bytes), /non-sRGB ICC/)
+  })
+  await t.test('CRC corruption refuses coherent PNG/hash/mask metadata', async () => {
+    const bytes = Buffer.from(png)
+    bytes[29] ^= 1
+    const context = freezeAlphaOutpaintConditioning({
+      bbox: BBOX,
+      sourceTargetSha256: sha256(bytes),
+      targetPngBytes: bytes,
+    }).context
+    await assert.rejects(assertFrozenAlphaOutpaintConditioning(context, bytes), /checksum/)
+  })
+  await t.test(
+    'caller mutation after async invocation does not rewrite captured source or context',
+    async () => {
+      const bytes = Buffer.from(png)
+      const context = structuredClone(prepared.context)
+      const checking = assertFrozenAlphaOutpaintConditioning(context, bytes)
+      bytes.fill(0)
+      Reflect.set(context.keepMask, 'sha256', '0'.repeat(64))
+      Reflect.set(context.bbox, 'x', 999)
+      await checking
+    },
+  )
+  await t.test('normal alpha neighbors refuse a coherent outpaint record', async () => {
+    for (const alpha of [0, 255]) {
+      const bytes = withSrgbIcc(
+        filteredPng(
+          Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => alpha)),
+          0,
+        ),
+      )
+      const context = structuredClone(prepared.context)
+      Reflect.set(context.sourceTarget, 'sha256', sha256(bytes))
+      Reflect.set(context.sourceTarget, 'byteSize', bytes.length)
+      Reflect.set(context.keepMask, 'sha256', sha256(Buffer.alloc(64, alpha)))
+      await assert.rejects(
+        assertFrozenAlphaOutpaintConditioning(context, bytes),
+        /partially transparent target/,
+      )
+    }
+  })
+})
+
+function withSrgbIcc(
+  png: Buffer,
+  profile = readFileSync(
+    new URL('../../../worker-python/src/imagegen_worker/srgb.icc', import.meta.url),
+  ),
+): Buffer {
+  return Buffer.concat([
+    png.subarray(0, 33),
+    chunk('iCCP', Buffer.concat([Buffer.from('sRGB\0\0'), deflateSync(profile)])),
+    png.subarray(33),
+  ])
+}
+
+function filteredPng(rows: readonly (readonly number[])[], filter: number, red = 0): Buffer {
   const width = rows[0].length
   const rowSize = width * 4 + 1
   const filtered = Buffer.alloc(rowSize * rows.length)
@@ -353,6 +600,7 @@ function filteredPng(rows: readonly (readonly number[])[], filter: number): Buff
     const offset = row * rowSize
     filtered[offset] = filter
     for (const [column, value] of values.entries()) {
+      filtered[offset + 1 + column * 4] = red
       filtered[offset + 1 + column * 4 + 3] = value
     }
   }

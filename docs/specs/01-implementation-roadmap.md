@@ -1262,11 +1262,19 @@ sigma; восстановление идёт после completed user step, п�
 Сохраняются weighted prompts, LoRA, independent RNG и обычные unmasked API;
 публичные protocol/queue/provenance unions не расширены.
 
-**Следующий шаг:** согласовать immutable outpaint job и resource ownership для
-обоих семейств. До снятия mixed-alpha отказа расширить
-queue/resource materialization/Retry, worker
-capability, RGBA publication/staging и immutable portable provenance/comparison,
-а затем проверить installed trained Generate/Add/Save/reopen. Installed
+**Internal frozen outpaint jobs checkpoint (06.10.2026):**
+[Durable input ownership](../engineering/phase-2c-outpaint-jobs-research.md)
+добавляет два explicit internal queue kinds, strict PNG/soft-alpha/policy/LaMa
+snapshots, сохраняющую старые строки SQLite migration, whole-batch preflight и
+проверяемый internal Retry/restart. Main resolver закрепляет общий LaMa в
+`appData/inference-resources` вне Python environments/cache; installer пока не
+подключён. Public dispatch/Retry/publication/provenance явно отклоняют эти
+операции до следующего согласованного checkpoint.
+
+**Следующий шаг:** подключить exact resource materialization к family worker
+commands/capability, RGBA publication/staging и immutable portable
+provenance/comparison. После этого снять mixed-alpha отказ и проверить
+installed trained Generate/Add/Save/reopen. Installed
 model/options qualification продолжается; прочие Advanced Options остаются открытыми.
 Общие вспомогательные веса LaMa устанавливаются вместе с первой установкой
 движка с предварительным показом полного объёма загрузки; Main владеет download,

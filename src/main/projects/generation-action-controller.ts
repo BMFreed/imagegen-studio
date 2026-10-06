@@ -51,6 +51,7 @@ import {
 import { AnimaGenerationRequestError } from './anima-generation-request.js'
 import { AnimaQueuedGenerationError } from './anima-queued-generation.js'
 import { withQueuedAnimaGenerationRequest } from './anima-queued-request.js'
+import { isQueuedOutpaint } from './generation-queue.js'
 import {
   IllustriousJobError,
   type InferenceWorkerReady,
@@ -785,6 +786,13 @@ export class ProjectGenerationActionController {
         )
       }
       this.assertDocument(tabId, frozen.payload.context.documentId)
+      if (isQueuedOutpaint(frozen.payload)) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_RUNTIME_UNAVAILABLE',
+          'Normal outpaint Retry is not integrated yet. The original queue item and temporary results were kept.',
+        )
+      }
+      const payload = frozen.payload
       const admitted = await this.options.runtime.withGenerationAdmission(
         this.options.scratchBasePath,
         async (ready) => {
@@ -823,7 +831,7 @@ export class ProjectGenerationActionController {
               throw error
             }
           }
-          if (frozen.payload.kind === 'anima-txt2img' || frozen.payload.kind === 'anima-img2img') {
+          if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
             const { models } = this.options
             const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
             const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
@@ -838,23 +846,31 @@ export class ProjectGenerationActionController {
                 resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
                 resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
               },
-              payload: frozen.payload,
+              payload,
               ready,
               scratchBasePath: this.options.scratchBasePath,
               targetPngBytes: frozen.targetPngBytes,
               use: publish,
             })
-          } else {
+          } else if (
+            payload.kind === 'illustrious-txt2img' ||
+            payload.kind === 'illustrious-img2img'
+          ) {
             await withIllustriousGenerationRequest({
               modelService: this.options.models,
               prepared: {
-                context: frozen.payload.context,
+                context: payload.context,
                 targetPngBytes: frozen.targetPngBytes,
               },
               ready,
               scratchBasePath: this.options.scratchBasePath,
               use: publish,
             })
+          } else {
+            throw new ProjectGenerationActionError(
+              'GENERATION_INVALID_REQUEST',
+              'The frozen generation operation is unsupported.',
+            )
           }
           return true
         },

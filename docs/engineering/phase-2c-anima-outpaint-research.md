@@ -173,3 +173,9 @@ after alpha downsampling is an explicit integration case. LaMa remains a
 first-engine resource with upfront total size and Main-owned download/cache/hash;
 no auxiliary installer or release delivery is implemented in this slice.
 PP-005/007/008 public readiness and phase2C completion remain unchanged.
+
+The subsequent [internal frozen jobs checkpoint](./phase-2c-outpaint-jobs-research.md)
+adds durable mixed-alpha inputs, internal atomic admission/Retry and Main's pinned
+shared LaMa resolver. Public dispatch, RGBA publication/portable provenance and
+auxiliary installation remain open; this does not change the earlier numerical
+evidence or public readiness.

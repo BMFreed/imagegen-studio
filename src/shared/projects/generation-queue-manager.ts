@@ -41,7 +41,13 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   documentId: string
   error: { code: string; message: string } | null
   finishedAt: string | null
-  operation: 'anima-img2img' | 'anima-txt2img' | 'illustrious-img2img' | 'illustrious-txt2img'
+  operation:
+    | 'anima-img2img'
+    | 'anima-outpaint'
+    | 'anima-txt2img'
+    | 'illustrious-img2img'
+    | 'illustrious-outpaint'
+    | 'illustrious-txt2img'
   projectKey: string
   projectName: string
   publicationPending: boolean
@@ -151,8 +157,10 @@ const EntrySchema = v.pipe(
     operation: v.picklist([
       'illustrious-txt2img',
       'illustrious-img2img',
+      'illustrious-outpaint',
       'anima-txt2img',
       'anima-img2img',
+      'anima-outpaint',
     ]),
     projectKey: v.pipe(v.string(), v.regex(/^project-v1-[a-f0-9]{64}$/)),
     projectName: text,
@@ -166,15 +174,20 @@ const EntrySchema = v.pipe(
     if (!entry.details) {
       return true
     }
-    const isAnima = entry.operation === 'anima-txt2img' || entry.operation === 'anima-img2img'
+    const isAnima =
+      entry.operation === 'anima-txt2img' ||
+      entry.operation === 'anima-img2img' ||
+      entry.operation === 'anima-outpaint'
     if (isAnima !== 'animaMethod' in entry.details.sampling) {
       return false
     }
     if (isAnima) {
-      const isImg = entry.operation === 'anima-img2img'
+      const isImg = entry.operation === 'anima-img2img' || entry.operation === 'anima-outpaint'
       return isImg === 'denoisingStrength' in entry.details.sampling
     }
-    return true
+    return (
+      entry.operation !== 'illustrious-outpaint' || 'denoisingStrength' in entry.details.sampling
+    )
   }),
 )
 const PageSchema = v.strictObject({

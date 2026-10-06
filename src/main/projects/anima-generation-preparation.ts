@@ -19,6 +19,11 @@ import type { ModelService, VerifiedAnimaGenerationBundle } from '../models/mode
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 
 import { validateSrgbPngStream } from './igs-package.js'
+import {
+  assertFrozenAlphaOutpaintConditioning,
+  freezeAlphaOutpaintConditioning,
+  type FrozenAlphaOutpaintConditioningV1,
+} from './outpaint-conditioning.js'
 import { GenerationPreparationError } from './project-generation-preparation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -42,6 +47,18 @@ export type FrozenAnimaGenerationPreparationV1 = FrozenAnimaGenerationFields &
 
 export interface PreparedAnimaGeneration {
   context: FrozenAnimaGenerationPreparationV1
+  targetPngBytes: Buffer
+}
+
+/** Internal alpha-derived preparation; the public constructor retains its mixed-alpha refusal. */
+export type FrozenAnimaOutpaintPreparationV1 = Omit<FrozenAnimaGenerationFields, 'kind'> & {
+  conditioning: FrozenAlphaOutpaintConditioningV1
+  kind: 'anima-outpaint-preparation'
+  mode: 'outpaint'
+  sampling: FrozenAnimaSampling & { denoisingStrength: number }
+}
+export interface PreparedAnimaOutpaintGeneration {
+  context: FrozenAnimaOutpaintPreparationV1
   targetPngBytes: Buffer
 }
 
@@ -176,6 +193,89 @@ export async function prepareAnimaGeneration(input: {
   randomUint32?: () => number
   target: FrozenGenerationTarget
 }): Promise<PreparedAnimaGeneration> {
+  const prepared = await prepareAnimaGenerationInternal(input, false)
+  if (prepared.context.kind === 'anima-outpaint-preparation') {
+    refuse('GENERATION_MODE_UNSUPPORTED', 'Outpaint is internal only.')
+  }
+  return { ...prepared, context: prepared.context }
+}
+
+export async function prepareAnimaOutpaintGeneration(
+  input: Parameters<typeof prepareAnimaGeneration>[0],
+): Promise<PreparedAnimaOutpaintGeneration> {
+  const prepared = await prepareAnimaGenerationInternal(input, true)
+  if (prepared.context.kind !== 'anima-outpaint-preparation') {
+    refuse('GENERATION_MODE_UNSUPPORTED', 'Expected an outpaint target.')
+  }
+  return { ...prepared, context: prepared.context }
+}
+
+export async function assertFrozenAnimaOutpaintGeneration(
+  inputContext: FrozenAnimaOutpaintPreparationV1,
+  inputTargetPngBytes: Buffer,
+): Promise<void> {
+  const context = structuredClone(inputContext)
+  const targetPngBytes = Buffer.from(inputTargetPngBytes)
+  assertFrozenContext(context)
+  if (assertTarget(context.target, context.bbox, targetPngBytes) !== 'outpaint') {
+    refuse('GENERATION_TARGET_CHANGED', 'The frozen outpaint source is not mixed alpha.')
+  }
+  await assertFrozenAlphaOutpaintConditioning(context.conditioning, targetPngBytes)
+  if (
+    !isDeepStrictEqual(context.conditioning.bbox, context.bbox) ||
+    context.conditioning.sourceTarget.sha256 !== context.target.sha256
+  ) {
+    refuse('GENERATION_TARGET_CHANGED', 'The frozen outpaint conditioning differs from its source.')
+  }
+}
+
+/** Validate the captured Main snapshot before pure batch expansion or ephemeral materialization. */
+export function assertFrozenAnimaGeneration(
+  context: FrozenAnimaGenerationPreparationV1,
+  targetPngBytes: Buffer,
+): void {
+  assertFrozenContext(context)
+  assertAnimaGenerationTarget(context.target, context.bbox, targetPngBytes, context.mode)
+}
+
+/** Shared pixel proof for captured preparation and durable per-item Retry; no Project reads. */
+export function assertAnimaGenerationTarget(
+  target: FrozenAnimaGenerationPreparationV1['target'],
+  bbox: IgsRectV1,
+  targetPngBytes: Buffer,
+  mode: 'img2img' | 'txt2img',
+): void {
+  const actualMode = assertTarget(target, bbox, targetPngBytes)
+  if (actualMode !== mode) {
+    refuse('GENERATION_TARGET_CHANGED', 'The frozen Anima mode differs from its captured pixels.')
+  }
+}
+
+/** Requalify the frozen exact identities independently of the current Project or library Default. */
+export async function reverifyFrozenAnimaGeneration(
+  inputContext: FrozenAnimaGenerationPreparationV1,
+  modelService: AnimaGenerationModelResolver,
+): Promise<void> {
+  const context = structuredClone(inputContext)
+  assertFrozenContext(context)
+  const model = await modelService.resolveVerifiedGenerationAnimaBundleForPlan(
+    context.model.checkpoint.reference,
+  )
+  if (!isDeepStrictEqual(model, context.model)) {
+    refuse('GENERATION_RESOURCE_CHANGED', 'The exact Anima bundle changed after preparation.')
+  }
+  for (const entry of context.loras) {
+    const verified = await modelService.resolveVerifiedAnimaGenerationLoraForPlan(entry.reference)
+    if (!isDeepStrictEqual({ ...verified, weight: entry.weight }, entry)) {
+      refuse('GENERATION_RESOURCE_CHANGED', 'An exact Anima LoRA changed after preparation.')
+    }
+  }
+}
+
+async function prepareAnimaGenerationInternal(
+  input: Parameters<typeof prepareAnimaGeneration>[0],
+  outpaint: boolean,
+): Promise<PreparedAnimaGeneration | PreparedAnimaOutpaintGeneration> {
   const draft = structuredClone(input.target.generationDraft)
   const bbox = { ...input.target.bbox }
   const composite = { ...input.target.composite, bytes: Buffer.from(input.target.composite.bytes) }
@@ -186,14 +286,17 @@ export async function prepareAnimaGeneration(input: {
   if (actualMode !== mode) {
     refuse('GENERATION_TARGET_CHANGED', 'The captured Anima mode differs from the target pixels.')
   }
-  if (actualMode === 'outpaint') {
+  if (actualMode === 'outpaint' && !outpaint) {
     refuse(
       'GENERATION_MODE_UNSUPPORTED',
       'Anima preparation does not support partially transparent areas.',
     )
   }
-  const strength = actualMode === 'img2img' ? draft.sampling.denoisingStrength : null
-  if (actualMode === 'img2img' && strength === null) {
+  if (outpaint && actualMode !== 'outpaint') {
+    refuse('GENERATION_MODE_UNSUPPORTED', 'Expected a partially transparent target.')
+  }
+  const strength = actualMode !== 'txt2img' ? draft.sampling.denoisingStrength : null
+  if (actualMode !== 'txt2img' && strength === null) {
     refuse('GENERATION_SAMPLING_REQUIRED', 'Set Denoising Strength for the captured Anima image.')
   }
   const seed =
@@ -253,6 +356,24 @@ export async function prepareAnimaGeneration(input: {
     seed,
     steps: draft.sampling.steps!,
   }
+  if (actualMode === 'outpaint') {
+    const frozen = freezeAlphaOutpaintConditioning({
+      bbox,
+      sourceTargetSha256: composite.sha256,
+      targetPngBytes: composite.bytes,
+    })
+    await assertFrozenAlphaOutpaintConditioning(frozen.context, composite.bytes)
+    const { kind: _kind, ...fields } = common
+    const context: FrozenAnimaOutpaintPreparationV1 = {
+      ...fields,
+      conditioning: frozen.context,
+      kind: 'anima-outpaint-preparation',
+      mode: 'outpaint',
+      sampling: { ...sampling, denoisingStrength: strength! },
+    }
+    assertFrozenContext(context)
+    return { context, targetPngBytes: composite.bytes }
+  }
   const context: FrozenAnimaGenerationPreparationV1 =
     actualMode === 'txt2img'
       ? { ...common, mode: 'txt2img', sampling: { ...sampling, denoisingStrength: null } }
@@ -261,56 +382,17 @@ export async function prepareAnimaGeneration(input: {
   return { context, targetPngBytes: composite.bytes }
 }
 
-/** Validate the captured Main snapshot before pure batch expansion or ephemeral materialization. */
-export function assertFrozenAnimaGeneration(
-  context: FrozenAnimaGenerationPreparationV1,
-  targetPngBytes: Buffer,
+function assertFrozenContext(
+  context: FrozenAnimaGenerationPreparationV1 | FrozenAnimaOutpaintPreparationV1,
 ): void {
-  assertFrozenContext(context)
-  assertAnimaGenerationTarget(context.target, context.bbox, targetPngBytes, context.mode)
-}
-
-/** Shared pixel proof for captured preparation and durable per-item Retry; no Project reads. */
-export function assertAnimaGenerationTarget(
-  target: FrozenAnimaGenerationPreparationV1['target'],
-  bbox: IgsRectV1,
-  targetPngBytes: Buffer,
-  mode: 'img2img' | 'txt2img',
-): void {
-  const actualMode = assertTarget(target, bbox, targetPngBytes)
-  if (actualMode !== mode) {
-    refuse('GENERATION_TARGET_CHANGED', 'The frozen Anima mode differs from its captured pixels.')
-  }
-}
-
-/** Requalify the frozen exact identities independently of the current Project or library Default. */
-export async function reverifyFrozenAnimaGeneration(
-  inputContext: FrozenAnimaGenerationPreparationV1,
-  modelService: AnimaGenerationModelResolver,
-): Promise<void> {
-  const context = structuredClone(inputContext)
-  assertFrozenContext(context)
-  const model = await modelService.resolveVerifiedGenerationAnimaBundleForPlan(
-    context.model.checkpoint.reference,
-  )
-  if (!isDeepStrictEqual(model, context.model)) {
-    refuse('GENERATION_RESOURCE_CHANGED', 'The exact Anima bundle changed after preparation.')
-  }
-  for (const entry of context.loras) {
-    const verified = await modelService.resolveVerifiedAnimaGenerationLoraForPlan(entry.reference)
-    if (!isDeepStrictEqual({ ...verified, weight: entry.weight }, entry)) {
-      refuse('GENERATION_RESOURCE_CHANGED', 'An exact Anima LoRA changed after preparation.')
-    }
-  }
-}
-
-function assertFrozenContext(context: FrozenAnimaGenerationPreparationV1): void {
   if (
-    context.kind !== 'anima-generation-preparation' ||
+    (context.mode === 'outpaint'
+      ? context.kind !== 'anima-outpaint-preparation'
+      : context.kind !== 'anima-generation-preparation') ||
     context.schemaVersion !== 1 ||
     !context.documentId ||
     !context.documentRevision ||
-    (context.mode !== 'txt2img' && context.mode !== 'img2img')
+    (context.mode !== 'txt2img' && context.mode !== 'img2img' && context.mode !== 'outpaint')
   ) {
     refuse('GENERATION_PARAMETER_UNSUPPORTED', 'The frozen Anima context is invalid.')
   }
@@ -330,7 +412,7 @@ function assertFrozenContext(context: FrozenAnimaGenerationPreparationV1): void 
     context.prompts.negative !== draft.negativePrompt.text ||
     context.prompts.positive !== draft.positivePrompt.text ||
     !isDeepStrictEqual(context.dynamic, getEffectiveDynamicPromptSettings(draft.dynamicPrompt)) ||
-    (context.mode === 'img2img' &&
+    (context.mode !== 'txt2img' &&
       sampling.denoisingStrength !== draft.sampling.denoisingStrength) ||
     (context.mode === 'txt2img' && sampling.denoisingStrength !== null)
   ) {
@@ -342,7 +424,7 @@ function assertFrozenContext(context: FrozenAnimaGenerationPreparationV1): void 
   compileAnimaFlowSamplingPlan({
     guidanceScale: sampling.cfgScale,
     height: context.bbox.height,
-    mode: context.mode,
+    mode: context.mode === 'outpaint' ? 'img2img' : context.mode,
     scheduler: sampling.animaMethod,
     seed: sampling.seed,
     steps: sampling.steps,

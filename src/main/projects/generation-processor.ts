@@ -36,6 +36,7 @@ import {
   type FrozenQueuedAnimaGenerationV1,
   reverifyFrozenQueuedAnimaGeneration,
 } from './anima-queued-generation.js'
+import { isQueuedOutpaint } from './generation-queue.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
@@ -307,6 +308,12 @@ export class GenerationProcessor {
     ready: InferenceWorkerReady,
   ): Promise<GenerationWorkerRequest> {
     const frozen = claimed.payload
+    if (isQueuedOutpaint(frozen)) {
+      throw new GenerationProcessorError(
+        'INFERENCE_UNAVAILABLE',
+        'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
+      )
+    }
     if (isAnimaPayload(frozen)) {
       const bundle = this.modelService.resolveVerifiedGenerationAnimaBundleForPlan
       const lora = this.modelService.resolveVerifiedAnimaGenerationLoraForPlan
@@ -325,6 +332,9 @@ export class GenerationProcessor {
         requestId: randomUUID(),
         targetPath,
       })
+    }
+    if (frozen.kind !== 'illustrious-txt2img' && frozen.kind !== 'illustrious-img2img') {
+      throw new TypeError('The frozen generation operation is unsupported.')
     }
     const verified = await this.modelService.resolveVerifiedGenerationCheckpointForPlan(
       frozen.context.model.reference,
@@ -419,6 +429,14 @@ export class GenerationProcessor {
         }
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
+        }
+        // Internal durable jobs must never fall through to ordinary RGB inference. Refuse before
+        // resource resolution, scratch materialization or the first worker generate request.
+        if (isQueuedOutpaint(claimed.payload)) {
+          throw new GenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
+          )
         }
         if (isAnimaPayload(claimed.payload) && !supportsInferenceAnima(transport.ready)) {
           throw new GenerationProcessorError(
@@ -548,7 +566,7 @@ export class GenerationProcessor {
           ...(supportsInferenceCandidateThumbnails(transport.ready) ? { thumbnail } : {}),
         })
         return { candidate, kind: 'completed', queueItemId: claimed.item.id }
-      } catch {
+      } catch (error) {
         this.clearProgress(active)
         if (active.cancelPromise) {
           await active.cancelPromise
@@ -590,10 +608,20 @@ export class GenerationProcessor {
         }
         try {
           await this.queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
-            code: dispatched ? 'GENERATION_WORKER_FAILED' : 'GENERATION_INPUT_CHANGED',
-            message: dispatched
-              ? 'The generation worker did not return a valid completed result.'
-              : 'The frozen generation input could not be verified.',
+            code:
+              !dispatched && isQueuedOutpaint(claimed.payload)
+                ? 'GENERATION_OUTPAINT_UNAVAILABLE'
+                : dispatched
+                  ? 'GENERATION_WORKER_FAILED'
+                  : 'GENERATION_INPUT_CHANGED',
+            message:
+              !dispatched &&
+              isQueuedOutpaint(claimed.payload) &&
+              error instanceof GenerationProcessorError
+                ? error.message
+                : dispatched
+                  ? 'The generation worker did not return a valid completed result.'
+                  : 'The frozen generation input could not be verified.',
           })
         } catch (failure) {
           if (active.cancelPromise) {

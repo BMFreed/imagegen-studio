@@ -23,6 +23,7 @@ import type { IgsAssetSource } from './igs-package.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { ProjectShadowCommit } from './project-shadow.js'
 
+import { isQueuedOutpaint, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { DEFAULT_IGS_PACKAGE_LIMITS, readIgsPackage } from './igs-package.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 
@@ -97,6 +98,7 @@ export class ProjectGenerationAcceptanceError extends Error {
       | 'ACCEPTANCE_HANDOFF_PENDING'
       | 'ACCEPTANCE_INPUT_INVALID'
       | 'ACCEPTANCE_LAYER_LIMIT'
+      | 'ACCEPTANCE_OUTPAINT_UNAVAILABLE'
       | 'ACCEPTANCE_PACKAGE_LIMIT'
       | 'ACCEPTANCE_RECOVERY_REQUIRED'
       | 'ACCEPTANCE_SELECTION_STALE'
@@ -157,6 +159,21 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
+        // Outpaint candidates cannot yet prove the RGBA contribution or portable provenance.
+        // Check every owned result before pending-cancellation/journal recovery can discard it.
+        const beforeHandoff = await this.options.staging.listVerifiedCandidates(tabId)
+        for (const candidate of beforeHandoff) {
+          if (
+            candidate.documentId === owner.document.documentId &&
+            candidate.projectPath === owner.filePath &&
+            isQueuedOutpaint(parseFrozenGenerationPayloadV1(candidate.frozenPayloadJson))
+          ) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_OUTPAINT_UNAVAILABLE',
+              'Normal outpaint Raster acceptance is not integrated yet. Temporary results were kept.',
+            )
+          }
+        }
         if (this.pendingCancellations.has(tabId)) {
           retainFence = true
           await this.finishPendingCancellation(tabId, owner)

@@ -58,7 +58,7 @@ test('SQLite bootstrap applies strict migrations and persists data across reopen
     const sqlite = new Database(first.filePath)
     assert.equal(sqlite.pragma('foreign_keys', { simple: true }), 1)
     assert.equal(sqlite.pragma('journal_mode', { simple: true }), 'wal')
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 14)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 15)
     assert.equal(statSync(root).mode & 0o777, 0o700)
     assert.equal(statSync(path.join(root, 'database')).mode & 0o777, 0o700)
     assert.equal(statSync(first.filePath).mode & 0o777, 0o600)
@@ -423,7 +423,7 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
       0,
     )
-    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 14)
+    assert.equal(countRows(sqlite, 'SELECT count(*) AS count FROM schema_migrations'), 15)
     sqlite.close()
   } finally {
     rmSync(root, { force: true, recursive: true })
@@ -499,9 +499,11 @@ test('img2img migration preserves all old queue rows and expands only the operat
   cpSync(sourceMigrations, legacyMigrations, { recursive: true })
   rmSync(path.join(legacyMigrations, '0013_illustrious_img2img_queue.sql'))
   rmSync(path.join(legacyMigrations, '0014_anima_generation_queue.sql'))
+  rmSync(path.join(legacyMigrations, '0015_outpaint_generation_queue.sql'))
   const img2imgMigrations = path.join(root, 'img2img-migrations')
   cpSync(sourceMigrations, img2imgMigrations, { recursive: true })
   rmSync(path.join(img2imgMigrations, '0014_anima_generation_queue.sql'))
+  rmSync(path.join(img2imgMigrations, '0015_outpaint_generation_queue.sql'))
   try {
     const before = openAppDatabase(root, legacyMigrations)
     const rows = ['pending', 'running', 'completed', 'failed', 'canceled'].map((status, index) => ({

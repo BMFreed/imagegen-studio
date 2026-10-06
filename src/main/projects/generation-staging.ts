@@ -18,7 +18,11 @@ import * as v from 'valibot'
 import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/database.types.js'
 import type { FrozenQueuedGenerationV1 } from './generation-queue.js'
 
-import { GenerationQueueRepository, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
+import {
+  GenerationQueueRepository,
+  isQueuedOutpaint,
+  parseFrozenGenerationPayloadV1,
+} from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
@@ -119,7 +123,10 @@ export interface GenerationStagingBatchCapacityInput {
   projectPath: string
   stagingSessionId: string
 }
-export type FrozenGenerationCandidatePayloadV1 = FrozenQueuedGenerationV1
+export type FrozenGenerationCandidatePayloadV1 = Exclude<
+  FrozenQueuedGenerationV1,
+  { kind: 'anima-outpaint' | 'illustrious-outpaint' }
+>
 export interface GenerationCandidatePublicationInput {
   actualSeed: number
   expectedProvisionalRoot: string
@@ -138,6 +145,7 @@ export class GenerationStagingError extends Error {
     readonly code:
       | 'STAGING_INPUT_INVALID'
       | 'STAGING_NOT_RECONCILED'
+      | 'STAGING_OUTPAINT_UNAVAILABLE'
       | 'STAGING_OUTPUT_INVALID'
       | 'STAGING_STATUS_CONFLICT'
       | 'STAGING_STORAGE_UNSAFE',
@@ -341,151 +349,14 @@ export class GenerationStagingRepository {
    * and identities; only their unknown metadata is represented at its largest serialized size.
    */
   async preflightBatchCapacity(input: GenerationStagingBatchCapacityInput): Promise<void> {
-    this.requireReconciled()
-    if (
-      !Array.isArray(input.entries) ||
-      input.entries.length < 1 ||
-      input.entries.length > GENERATION_STAGING_LIMITS.candidates ||
-      typeof input.localProjectKey !== 'string' ||
-      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
-      typeof input.projectPath !== 'string' ||
-      !path.isAbsolute(input.projectPath) ||
-      path.resolve(input.projectPath) !== input.projectPath ||
-      localProjectRecoveryKey(input.projectPath) !== input.localProjectKey ||
-      typeof input.stagingSessionId !== 'string' ||
-      !UUID_PATTERN.test(input.stagingSessionId) ||
-      input.entries.some(
-        (entry) =>
-          typeof entry?.queueItemId !== 'string' ||
-          !UUID_PATTERN.test(entry.queueItemId) ||
-          typeof entry.frozenPayloadJson !== 'string',
-      ) ||
-      new Set(input.entries.map((entry) => entry.queueItemId)).size !== input.entries.length
-    ) {
-      throw new GenerationStagingError(
-        'STAGING_INPUT_INVALID',
-        'The batch staging input is invalid.',
-      )
-    }
-    // Preserve the admission decision even if a caller retains and changes the input array while
-    // serialized storage work is waiting. Payload strings themselves are immutable primitives.
-    const planned = {
-      entries: input.entries.map((entry) => ({ ...entry })),
-      localProjectKey: input.localProjectKey,
-      projectPath: input.projectPath,
-      stagingSessionId: input.stagingSessionId,
-    }
-    return await this.serialize(async () => {
-      this.requireReconciled()
-      if ((await realpath(planned.projectPath).catch(() => null)) !== planned.projectPath) {
-        throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The batch Project path changed.')
-      }
-      const candidates: CandidateEntry[] = planned.entries.map((entry) => {
-        const payload = parseFrozenPayload(entry.frozenPayloadJson)
-        const candidate: CandidateEntry = {
-          actualSeed: 0xff_ff_ff_ff,
-          candidateId: entry.queueItemId,
-          // ECMAScript Date supports signed six-digit years: its longest ISO output is 27 bytes.
-          completedAt: new Date(8_640_000_000_000_000).toISOString(),
-          completionOrder: Number.MAX_SAFE_INTEGER,
-          documentId: payload.context.documentId,
-          documentRevision: payload.context.documentRevision,
-          expectedStatusSequence: Number.MAX_SAFE_INTEGER,
-          frozenPayloadJson: entry.frozenPayloadJson,
-          frozenPayloadSha256: sha256(Buffer.from(entry.frozenPayloadJson, 'utf8')),
-          image: {
-            byteSize: MAX_IMAGE_BYTES,
-            height: payload.context.bbox.height,
-            iccSha256: IGS_SRGB_ICC_SHA256,
-            relativePath: `assets/${entry.queueItemId}.png`,
-            sha256: 'f'.repeat(64),
-            width: payload.context.bbox.width,
-          },
-          localProjectKey: planned.localProjectKey,
-          projectPath: planned.projectPath,
-          queueItemId: entry.queueItemId,
-          stagingSessionId: planned.stagingSessionId,
-        }
-        validateEntry(candidate)
-        return candidate
-      })
-      const manifest: SessionManifest = {
-        candidates,
-        localProjectKey: planned.localProjectKey,
-        schemaVersion: 1,
-        stagingSessionId: planned.stagingSessionId,
-      }
-      if (
-        Buffer.byteLength(JSON.stringify(manifest), 'utf8') > MAX_MANIFEST_BYTES ||
-        !v.safeParse(SessionManifestSchema, manifest).success
-      ) {
-        throw new GenerationStagingError(
-          'STAGING_INPUT_INVALID',
-          'The batch staging manifest is too large.',
-        )
-      }
+    return await this.preflightCapacity(input, false)
+  }
 
-      const ids = planned.entries.map((entry) => entry.queueItemId)
-      const [queued, receipt, discarded] = await Promise.all([
-        this.db
-          .selectFrom('generation_queue_item')
-          .select('id')
-          .where((eb) =>
-            eb.or([eb('staging_session_id', '=', planned.stagingSessionId), eb('id', 'in', ids)]),
-          )
-          .executeTakeFirst(),
-        this.db
-          .selectFrom('generation_candidate_receipt')
-          .select('candidate_id')
-          .where((eb) =>
-            eb.or([
-              eb('staging_session_id', '=', planned.stagingSessionId),
-              eb('candidate_id', 'in', ids),
-              eb('queue_item_id', 'in', ids),
-            ]),
-          )
-          .executeTakeFirst(),
-        this.db
-          .selectFrom('generation_staging_discarded_session')
-          .select('staging_session_id')
-          .where('staging_session_id', '=', planned.stagingSessionId)
-          .executeTakeFirst(),
-      ])
-      if (queued || receipt || discarded) {
-        throw new GenerationStagingError(
-          'STAGING_INPUT_INVALID',
-          'The batch staging session or job identity was already used.',
-        )
-      }
-
-      const recoveryRoot = path.join(await this.canonicalDataRoot(false), 'recovery')
-      const stagingRoot = path.join(recoveryRoot, 'generation-staging')
-      await checkPrivateDirectory(recoveryRoot, false)
-      await checkPrivateDirectory(stagingRoot, false)
-      const projectRoot = path.join(stagingRoot, planned.localProjectKey)
-      const existingProjectRoot = await lstat(projectRoot).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') {
-          return null
-        }
-        throw error
-      })
-      if (existingProjectRoot) {
-        await checkPrivateDirectory(projectRoot, false)
-        const sessionRoot = path.join(projectRoot, planned.stagingSessionId)
-        const existingSession = await lstat(sessionRoot).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === 'ENOENT') {
-            return null
-          }
-          throw error
-        })
-        if (existingSession) {
-          throw new GenerationStagingError(
-            'STAGING_INPUT_INVALID',
-            'The batch staging session path already exists.',
-          )
-        }
-      }
-    })
+  /** Internal metadata sizing only; this does not qualify outpaint publication or recovery. */
+  async preflightInternalOutpaintBatchCapacity(
+    input: GenerationStagingBatchCapacityInput,
+  ): Promise<void> {
+    return await this.preflightCapacity(input, true)
   }
 
   /**
@@ -854,6 +725,171 @@ export class GenerationStagingRepository {
     return candidates.sort((a, b) => a.completionOrder - b.completionOrder)
   }
 
+  private async preflightCapacity(
+    input: GenerationStagingBatchCapacityInput,
+    internalOutpaint: boolean,
+  ): Promise<void> {
+    this.requireReconciled()
+    if (
+      !Array.isArray(input.entries) ||
+      input.entries.length < 1 ||
+      input.entries.length > GENERATION_STAGING_LIMITS.candidates ||
+      typeof input.localProjectKey !== 'string' ||
+      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
+      typeof input.projectPath !== 'string' ||
+      !path.isAbsolute(input.projectPath) ||
+      path.resolve(input.projectPath) !== input.projectPath ||
+      localProjectRecoveryKey(input.projectPath) !== input.localProjectKey ||
+      typeof input.stagingSessionId !== 'string' ||
+      !UUID_PATTERN.test(input.stagingSessionId) ||
+      input.entries.some(
+        (entry) =>
+          typeof entry?.queueItemId !== 'string' ||
+          !UUID_PATTERN.test(entry.queueItemId) ||
+          typeof entry.frozenPayloadJson !== 'string',
+      ) ||
+      new Set(input.entries.map((entry) => entry.queueItemId)).size !== input.entries.length
+    ) {
+      throw new GenerationStagingError(
+        'STAGING_INPUT_INVALID',
+        'The batch staging input is invalid.',
+      )
+    }
+    // Preserve the admission decision even if a caller retains and changes the input array while
+    // serialized storage work is waiting. Payload strings themselves are immutable primitives.
+    const planned = {
+      entries: input.entries.map((entry) => ({ ...entry })),
+      localProjectKey: input.localProjectKey,
+      projectPath: input.projectPath,
+      stagingSessionId: input.stagingSessionId,
+    }
+    return await this.serialize(async () => {
+      this.requireReconciled()
+      if ((await realpath(planned.projectPath).catch(() => null)) !== planned.projectPath) {
+        throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The batch Project path changed.')
+      }
+      const candidates: CandidateEntry[] = planned.entries.map((entry) => {
+        if (Buffer.byteLength(entry.frozenPayloadJson, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES) {
+          throw new GenerationStagingError(
+            'STAGING_INPUT_INVALID',
+            'The frozen context is too large.',
+          )
+        }
+        const payload = internalOutpaint
+          ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
+          : parseFrozenPayload(entry.frozenPayloadJson)
+        if (internalOutpaint && !isQueuedOutpaint(payload)) {
+          throw new GenerationStagingError(
+            'STAGING_INPUT_INVALID',
+            'Internal outpaint capacity preflight requires only frozen outpaint operations.',
+          )
+        }
+        const candidate: CandidateEntry = {
+          actualSeed: 0xff_ff_ff_ff,
+          candidateId: entry.queueItemId,
+          // ECMAScript Date supports signed six-digit years: its longest ISO output is 27 bytes.
+          completedAt: new Date(8_640_000_000_000_000).toISOString(),
+          completionOrder: Number.MAX_SAFE_INTEGER,
+          documentId: payload.context.documentId,
+          documentRevision: payload.context.documentRevision,
+          expectedStatusSequence: Number.MAX_SAFE_INTEGER,
+          frozenPayloadJson: entry.frozenPayloadJson,
+          frozenPayloadSha256: sha256(Buffer.from(entry.frozenPayloadJson, 'utf8')),
+          image: {
+            byteSize: MAX_IMAGE_BYTES,
+            height: payload.context.bbox.height,
+            iccSha256: IGS_SRGB_ICC_SHA256,
+            relativePath: `assets/${entry.queueItemId}.png`,
+            sha256: 'f'.repeat(64),
+            width: payload.context.bbox.width,
+          },
+          localProjectKey: planned.localProjectKey,
+          projectPath: planned.projectPath,
+          queueItemId: entry.queueItemId,
+          stagingSessionId: planned.stagingSessionId,
+        }
+        validateEntry(candidate, internalOutpaint)
+        return candidate
+      })
+      const manifest: SessionManifest = {
+        candidates,
+        localProjectKey: planned.localProjectKey,
+        schemaVersion: 1,
+        stagingSessionId: planned.stagingSessionId,
+      }
+      if (
+        Buffer.byteLength(JSON.stringify(manifest), 'utf8') > MAX_MANIFEST_BYTES ||
+        !v.safeParse(SessionManifestSchema, manifest).success
+      ) {
+        throw new GenerationStagingError(
+          'STAGING_INPUT_INVALID',
+          'The batch staging manifest is too large.',
+        )
+      }
+
+      const ids = planned.entries.map((entry) => entry.queueItemId)
+      const [queued, receipt, discarded] = await Promise.all([
+        this.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .where((eb) =>
+            eb.or([eb('staging_session_id', '=', planned.stagingSessionId), eb('id', 'in', ids)]),
+          )
+          .executeTakeFirst(),
+        this.db
+          .selectFrom('generation_candidate_receipt')
+          .select('candidate_id')
+          .where((eb) =>
+            eb.or([
+              eb('staging_session_id', '=', planned.stagingSessionId),
+              eb('candidate_id', 'in', ids),
+              eb('queue_item_id', 'in', ids),
+            ]),
+          )
+          .executeTakeFirst(),
+        this.db
+          .selectFrom('generation_staging_discarded_session')
+          .select('staging_session_id')
+          .where('staging_session_id', '=', planned.stagingSessionId)
+          .executeTakeFirst(),
+      ])
+      if (queued || receipt || discarded) {
+        throw new GenerationStagingError(
+          'STAGING_INPUT_INVALID',
+          'The batch staging session or job identity was already used.',
+        )
+      }
+
+      const recoveryRoot = path.join(await this.canonicalDataRoot(false), 'recovery')
+      const stagingRoot = path.join(recoveryRoot, 'generation-staging')
+      await checkPrivateDirectory(recoveryRoot, false)
+      await checkPrivateDirectory(stagingRoot, false)
+      const projectRoot = path.join(stagingRoot, planned.localProjectKey)
+      const existingProjectRoot = await lstat(projectRoot).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          return null
+        }
+        throw error
+      })
+      if (existingProjectRoot) {
+        await checkPrivateDirectory(projectRoot, false)
+        const sessionRoot = path.join(projectRoot, planned.stagingSessionId)
+        const existingSession = await lstat(sessionRoot).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') {
+            return null
+          }
+          throw error
+        })
+        if (existingSession) {
+          throw new GenerationStagingError(
+            'STAGING_INPUT_INVALID',
+            'The batch staging session path already exists.',
+          )
+        }
+      }
+    })
+  }
+
   private async publishCandidate(
     input: GenerationCandidatePublicationInput,
     requiredFamily?: 'illustrious',
@@ -869,6 +905,12 @@ export class GenerationStagingRepository {
       this.requireReconciled()
       const queue = new GenerationQueueRepository(this.db, this.dataRoot)
       const verified = await queue.loadVerifiedInput(input.queueItemId)
+      if (isQueuedOutpaint(verified.payload)) {
+        throw new GenerationStagingError(
+          'STAGING_OUTPAINT_UNAVAILABLE',
+          'Normal outpaint RGBA contribution verification and recovery are not integrated yet.',
+        )
+      }
       if (
         requiredFamily === 'illustrious' &&
         verified.payload.kind !== 'illustrious-txt2img' &&
@@ -1407,15 +1449,22 @@ function parseFrozenPayload(json: string): FrozenPayload {
       'The frozen candidate context is too large.',
     )
   }
-  let payload: FrozenPayload
+  let parsed: FrozenQueuedGenerationV1
   try {
-    payload = parseFrozenGenerationPayloadV1(json)
+    parsed = parseFrozenGenerationPayloadV1(json)
   } catch {
     throw new GenerationStagingError(
       'STAGING_INPUT_INVALID',
       'The frozen candidate context is invalid.',
     )
   }
+  if (isQueuedOutpaint(parsed)) {
+    throw new GenerationStagingError(
+      'STAGING_OUTPAINT_UNAVAILABLE',
+      'Normal outpaint RGBA contribution verification and recovery are not integrated yet.',
+    )
+  }
+  const payload = parsed
   if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
     return payload
   }
@@ -1455,7 +1504,7 @@ function parseFrozenPayload(json: string): FrozenPayload {
   return payload
 }
 
-function validateEntry(entry: CandidateEntry): void {
+function validateEntry(entry: CandidateEntry, internalOutpaint = false): void {
   if (
     entry.candidateId !== entry.queueItemId ||
     entry.image.relativePath !== `assets/${entry.candidateId}.png` ||
@@ -1466,7 +1515,9 @@ function validateEntry(entry: CandidateEntry): void {
   ) {
     throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The candidate manifest changed.')
   }
-  const payload = parseFrozenPayload(entry.frozenPayloadJson)
+  const payload = internalOutpaint
+    ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
+    : parseFrozenPayload(entry.frozenPayloadJson)
   if (
     payload.context.documentId !== entry.documentId ||
     payload.context.documentRevision !== entry.documentRevision ||

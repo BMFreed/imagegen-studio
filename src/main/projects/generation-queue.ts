@@ -1,5 +1,6 @@
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import {
   GENERATION_QUEUE_PAGE_SIZE,
   isGenerationQueueCursor,
@@ -25,10 +26,17 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { DB, GenerationQueueItem } from '../db/database.types.js'
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
+import type {
+  AnimaGenerationModelResolver,
+  PreparedAnimaOutpaintGeneration,
+} from './anima-generation-preparation.js'
 import type {
   FrozenQueuedAnimaGenerationContextV1,
   FrozenQueuedAnimaGenerationV1,
+  FrozenQueuedAnimaOutpaintContextV1,
+  FrozenQueuedAnimaOutpaintV1,
 } from './anima-queued-generation.js'
 import type {
   IllustriousGenerationRequestV1,
@@ -38,16 +46,22 @@ import type {
 import type {
   FrozenNormalGenerationPreparationV1,
   FrozenNormalImg2ImgPreparationV1,
+  FrozenNormalOutpaintPreparationV1,
   FrozenNormalTxt2ImgPreparationV1,
   PreparedNormalGeneration,
+  PreparedNormalOutpaintGeneration,
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
 
 import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
+import { assertFrozenAnimaOutpaintGeneration } from './anima-generation-preparation.js'
 import {
   buildFrozenQueuedAnimaGenerationV1,
+  buildFrozenQueuedAnimaOutpaintV1,
   FrozenQueuedAnimaGenerationSchema,
+  FrozenQueuedAnimaOutpaintSchema,
   parseFrozenQueuedAnimaGenerationV1,
+  parseFrozenQueuedAnimaOutpaintV1,
 } from './anima-queued-generation.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
@@ -57,13 +71,28 @@ import {
   IllustriousWorkerEmbeddingsSchema,
   PromptEmbeddingRefsSchema,
 } from './illustrious-generation-embeddings.js'
-import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
+import {
+  reverifyFrozenGenerationEmbeddings,
+  workerEmbeddings,
+} from './illustrious-generation-embeddings.js'
+import {
+  frozenLoraFieldsAgree,
+  type GenerationModelResolver,
+  reverifyFrozenGenerationLoras,
+  workerLoras,
+} from './illustrious-generation-loras.js'
 import {
   FrozenGenerationVaeSchema,
   frozenVaeFieldsAgree,
   IllustriousWorkerVaeSchema,
+  reverifyFrozenGenerationVae,
+  workerVae,
 } from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import {
+  assertFrozenAlphaOutpaintConditioning,
+  FrozenAlphaOutpaintConditioningSchema,
+} from './outpaint-conditioning.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
@@ -285,6 +314,21 @@ export const FrozenIllustriousPayloadSchema = v.variant('kind', [
   }),
 ])
 
+const FrozenIllustriousOutpaintPayloadSchema = v.strictObject({
+  ...Txt2ImgFrozenPayloadSchema.entries,
+  context: v.strictObject({
+    ...Img2ImgFrozenContextSchema.entries,
+    bbox: v.pipe(
+      BboxSchema,
+      v.check((bbox) => bbox.width >= 64 && bbox.height >= 64),
+    ),
+    conditioning: FrozenAlphaOutpaintConditioningSchema,
+    kind: v.literal('normal-outpaint-preparation'),
+  }),
+  kind: v.literal('illustrious-outpaint'),
+  workerJob: Img2ImgWorkerJobSchema,
+})
+
 /** One frozen request and context. A dispatch attempt must assign fresh output and request paths. */
 export interface FrozenQueuedIllustriousTxt2ImgV1 {
   context: FrozenNormalTxt2ImgPreparationV1
@@ -307,13 +351,33 @@ export interface FrozenQueuedIllustriousImg2ImgV1 extends Omit<
 export type FrozenQueuedIllustriousGenerationV1 =
   FrozenQueuedIllustriousImg2ImgV1 | FrozenQueuedIllustriousTxt2ImgV1
 
+export interface FrozenQueuedIllustriousOutpaintV1 extends Omit<
+  FrozenQueuedIllustriousImg2ImgV1,
+  'context' | 'kind'
+> {
+  context: FrozenNormalOutpaintPreparationV1
+  kind: 'illustrious-outpaint'
+}
+export type PreparedOutpaintGeneration =
+  PreparedAnimaOutpaintGeneration | PreparedNormalOutpaintGeneration
+export type FrozenQueuedOutpaintV1 = FrozenQueuedAnimaOutpaintV1 | FrozenQueuedIllustriousOutpaintV1
+
 export type FrozenQueuedGenerationV1 =
-  FrozenQueuedAnimaGenerationV1 | FrozenQueuedIllustriousGenerationV1
+  FrozenQueuedAnimaGenerationV1 | FrozenQueuedIllustriousGenerationV1 | FrozenQueuedOutpaintV1
+
+export function isQueuedOutpaint(
+  payload: FrozenQueuedGenerationV1,
+): payload is FrozenQueuedOutpaintV1 {
+  return payload.kind === 'illustrious-outpaint' || payload.kind === 'anima-outpaint'
+}
+export type { FrozenQueuedAnimaOutpaintV1 } from './anima-queued-generation.js'
 
 /** Internal operational schemas; accepted portable provenance remains separately restricted. */
 export const FrozenGenerationPayloadSchema = v.variant('kind', [
   ...FrozenIllustriousPayloadSchema.options,
   ...FrozenQueuedAnimaGenerationSchema.options,
+  FrozenIllustriousOutpaintPayloadSchema,
+  FrozenQueuedAnimaOutpaintSchema,
 ])
 
 export interface QueuedGenerationItem {
@@ -1277,6 +1341,224 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Internal durable ownership only; this admits no worker command or portable accepted result. */
+  async enqueuePreparedOutpaintBatch(input: {
+    batchId?: string
+    beforeCommit?: () => Promise<void>
+    infillResolver: OutpaintInfillResolver
+    items: readonly PreparedOutpaintGeneration[]
+    modelService: AnimaGenerationModelResolver & GenerationModelResolver
+    preflight: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    projectPath: string
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    if (
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > GENERATION_BATCH_JOB_LIMIT ||
+      typeof input.preflight !== 'function' ||
+      !v.is(UuidSchema, input.stagingSessionId) ||
+      (input.beforeCommit !== undefined && typeof input.beforeCommit !== 'function') ||
+      !Buffer.isBuffer(input.items[0]?.targetPngBytes)
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The internal outpaint batch is invalid.',
+      )
+    }
+    const { beforeCommit, infillResolver, modelService, preflight, projectPath, stagingSessionId } =
+      input
+    const capturedBatchId = input.batchId ?? randomUUID()
+    if (!v.is(UuidSchema, capturedBatchId)) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The internal outpaint batch identity is invalid.',
+      )
+    }
+    const targetBytes = Buffer.from(input.items[0].targetPngBytes)
+    const captures = input.items.map((prepared) => {
+      if (
+        !Buffer.isBuffer(prepared?.targetPngBytes) ||
+        !prepared.targetPngBytes.equals(targetBytes)
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The outpaint batch must share one source.',
+        )
+      }
+      return { context: structuredClone(prepared.context), targetPngBytes: targetBytes }
+    })
+    const payloads = captures.map((prepared) => buildFrozenQueuedOutpaintV1(prepared, randomUUID()))
+    const common = comparableOutpaintBatchContext(payloads[0])
+    if (
+      payloads.some(
+        (payload) => !isDeepStrictEqual(comparableOutpaintBatchContext(payload), common),
+      )
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The outpaint batch mixes captured inputs.',
+      )
+    }
+    const illustriousContexts = payloads.flatMap((payload) =>
+      payload.kind === 'illustrious-outpaint' ? [payload.context] : [],
+    )
+    if (!batchEmbeddingFilesAgree(illustriousContexts)) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'A captured embedding changed inside the outpaint batch.',
+      )
+    }
+    const payloadJsons = payloads.map((payload) => JSON.stringify(payload))
+    for (const prepared of captures) {
+      if (prepared.context.kind === 'anima-outpaint-preparation') {
+        await assertFrozenAnimaOutpaintGeneration(prepared.context, targetBytes)
+      }
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
+      const initialQualification = memoizedOutpaintQualification(modelService, infillResolver)
+      await validateTargetPng(targetBytes, payloads[0].context)
+      for (const payload of payloads) {
+        await reverifyFrozenQueuedOutpaintGeneration(
+          payload,
+          initialQualification.models,
+          initialQualification.infill,
+        )
+      }
+      const batchId = capturedBatchId
+      // IDs remain opaque random UUIDs. Canonical assignment to plan slots preserves supplied
+      // order through the existing created_at/id query without synthetic timestamps or migration.
+      const ids = payloads.map(() => randomUUID()).sort()
+      const now = new Date().toISOString()
+      const rows: Selectable<GenerationQueueItem>[] = payloads.map((payload, index) => ({
+        batch_id: batchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: payload.context.documentId,
+        document_revision: payload.context.documentRevision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: payloadJsons[index],
+        id: ids[index],
+        local_project_key: localProjectKey,
+        operation: payload.kind,
+        staging_session_id: stagingSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }))
+      await preflight(
+        Object.freeze(
+          rows.map((row) =>
+            Object.freeze({
+              frozenPayloadJson: row.frozen_payload_json,
+              queueItemId: row.id,
+            }),
+          ),
+        ),
+      )
+      this.assertProjectCanEnqueue(localProjectKey)
+      const root = await this.ensureRoot()
+      const directories: { path: string; published: boolean }[] = []
+      try {
+        for (const row of rows) {
+          const temporary = await mkdtemp(path.join(root, '.tmp-'))
+          const directory = { path: temporary, published: false }
+          directories.push(directory)
+          const manifest: InputManifestV1 = {
+            payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
+            queueInputVersion: QUEUE_INPUT_VERSION,
+            queueItemId: row.id,
+            targetByteSize: targetBytes.length,
+            targetFile: 'target.png',
+            targetSha256: sha256(targetBytes),
+          }
+          await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          await writeDurableFile(
+            path.join(temporary, 'manifest.json'),
+            Buffer.from(JSON.stringify(manifest), 'utf8'),
+          )
+          await syncDirectory(temporary)
+          const published = path.join(root, row.id)
+          await rename(temporary, published)
+          directory.path = published
+          directory.published = true
+          await syncDirectory(root)
+          await this.testHooks.afterInputPublish?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        }
+        await beforeCommit?.()
+        const finalQualification = memoizedOutpaintQualification(modelService, infillResolver)
+        for (const payload of payloads) {
+          await reverifyFrozenQueuedOutpaintGeneration(
+            payload,
+            finalQualification.models,
+            finalQualification.infill,
+          )
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
+          for (const row of rows) {
+            await transaction.insertInto('generation_queue_item').values(row).execute()
+            this.assertProjectCanEnqueue(localProjectKey)
+          }
+          await this.testHooks.beforeBatchCommit?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return rows.map(toItem)
+      } catch (error) {
+        if (!directories.some((directory) => directory.published)) {
+          await removeUnregisteredBatchDirectories(
+            directories.map((directory) => directory.path),
+            root,
+          )
+          throw error
+        }
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', 'in', ids)
+            .execute()
+        } catch {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        if (batchRowsMatch(committed, rows)) {
+          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
+        }
+        if (committed.length !== 0) {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        await removeUnregisteredBatchDirectories(
+          directories.map((directory) => directory.path),
+          root,
+        )
+        throw error
+      }
+    })
+  }
+
   /** A worker failure is accepted only for the exact running revision it was started for. */
   async failRunning(
     id: string,
@@ -1731,6 +2013,34 @@ export class GenerationQueueRepository {
     this.fencedProjects.delete(localProjectKey)
   }
 
+  /** Internal Retry owns exact family/LaMa requalification; ordinary Retry cannot admit outpaint. */
+  async retryPreparedOutpaintTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    options: {
+      infillResolver: OutpaintInfillResolver
+      modelService: AnimaGenerationModelResolver & GenerationModelResolver
+      preflight: (input: GenerationQueueRetryPreflightInput) => Promise<void>
+    },
+  ): Promise<QueuedGenerationItem> {
+    if (typeof options.preflight !== 'function') {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Outpaint Retry needs capacity preflight.',
+      )
+    }
+    const qualification = {
+      infillResolver: options.infillResolver,
+      modelService: options.modelService,
+    }
+    return await this.retryTerminalInternal(
+      id,
+      expectedStatusSequence,
+      options.preflight,
+      qualification,
+    )
+  }
+
   /**
    * Retry from the original frozen bytes, never from today's Project draft. A fresh queue item and
    * staging session keep an old candidate/receipt independent of this new attempt. The source row's
@@ -1742,153 +2052,7 @@ export class GenerationQueueRepository {
     expectedStatusSequence: number,
     preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
   ): Promise<QueuedGenerationItem> {
-    validateQueueId(id)
-    validateExpectedSequence(expectedStatusSequence)
-    return await this.serialize(async () => {
-      this.assertReadyForDispatch()
-      const source = await this.requireRow(id)
-      if (
-        source.status_sequence !== expectedStatusSequence ||
-        (source.status !== 'failed' && source.status !== 'canceled')
-      ) {
-        throw statusConflict()
-      }
-      this.assertProjectCanEnqueue(source.local_project_key)
-      if (await this.hasReceipt(id)) {
-        throw publicationUncertain()
-      }
-      const canonicalPath = await canonicalProjectPath(source.canonical_project_path)
-      if (
-        canonicalPath !== source.canonical_project_path ||
-        localProjectRecoveryKey(canonicalPath) !== source.local_project_key
-      ) {
-        throw new GenerationQueueError(
-          'QUEUE_PROJECT_IDENTITY_CHANGED',
-          'The Project path changed before retrying.',
-        )
-      }
-      const verified = await this.verifyRow(source)
-      const targetBytes = await readStableFile(
-        verified.targetPath,
-        verified.payload.workerJob.target.byteSize,
-        verified.payload.workerJob.target.sha256,
-      )
-      const nextId = randomUUID()
-      const nextBatchId = randomUUID()
-      const nextSessionId = randomUUID()
-      const now = new Date().toISOString()
-      const nextRow: Selectable<GenerationQueueItem> = {
-        batch_id: nextBatchId,
-        canonical_project_path: canonicalPath,
-        created_at: now,
-        document_id: source.document_id,
-        document_revision: source.document_revision,
-        error_code: null,
-        error_message: null,
-        finished_at: null,
-        frozen_payload_json: source.frozen_payload_json,
-        id: nextId,
-        local_project_key: source.local_project_key,
-        operation: source.operation,
-        staging_session_id: nextSessionId,
-        started_at: null,
-        status: 'pending',
-        status_sequence: 0,
-        updated_at: now,
-      }
-      const manifest: InputManifestV1 = {
-        payloadSha256: sha256(Buffer.from(source.frozen_payload_json, 'utf8')),
-        queueInputVersion: QUEUE_INPUT_VERSION,
-        queueItemId: nextId,
-        targetByteSize: targetBytes.length,
-        targetFile: 'target.png',
-        targetSha256: sha256(targetBytes),
-      }
-      const root = await this.ensureRoot()
-      const temporary = await mkdtemp(path.join(root, '.tmp-'))
-      const published = path.join(root, nextId)
-      let renamed = false
-      try {
-        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
-        await writeDurableFile(
-          path.join(temporary, 'manifest.json'),
-          Buffer.from(JSON.stringify(manifest), 'utf8'),
-        )
-        await syncDirectory(temporary)
-        await rename(temporary, published)
-        renamed = true
-        await syncDirectory(root)
-        await this.testHooks.afterRetryInputPublish?.()
-        this.assertProjectCanEnqueue(source.local_project_key)
-        await preflight?.(
-          Object.freeze({
-            frozenPayloadJson: source.frozen_payload_json,
-            queueItemId: nextId,
-            source: Object.freeze(toItem(source)),
-            stagingSessionId: nextSessionId,
-          }),
-        )
-        this.assertProjectCanEnqueue(source.local_project_key)
-        await this.db.transaction().execute(async (transaction) => {
-          const consumed = await transaction
-            .updateTable('generation_queue_item')
-            .set({
-              status_sequence: sql<number>`status_sequence + 1`,
-              updated_at: now,
-            })
-            .where('id', '=', id)
-            .where('status', '=', source.status)
-            .where('status_sequence', '=', expectedStatusSequence)
-            .where(
-              sql<boolean>`NOT EXISTS (
-                SELECT 1 FROM generation_candidate_receipt AS receipt
-                WHERE receipt.queue_item_id = generation_queue_item.id
-              )`,
-            )
-            .returning('id')
-            .executeTakeFirst()
-          if (!consumed) {
-            throw statusConflict()
-          }
-          await transaction.insertInto('generation_queue_item').values(nextRow).execute()
-          await this.testHooks.beforeRetryCommit?.()
-          this.assertProjectCanEnqueue(source.local_project_key)
-        })
-        await this.testHooks.afterRetryCommit?.()
-        return toItem(nextRow)
-      } catch (error) {
-        // A lost acknowledgement is success only when the exact immutable row is observable.
-        // An unreadable or mismatched outcome retains its input and blocks further dispatch.
-        if (renamed) {
-          let committed: Selectable<GenerationQueueItem>[]
-          try {
-            committed = await this.db
-              .selectFrom('generation_queue_item')
-              .selectAll()
-              .where('id', '=', nextId)
-              .execute()
-          } catch {
-            this.publicationUncertainProjects.add(source.local_project_key)
-            this.fencedProjects.add(source.local_project_key)
-            throw batchPublicationUncertain()
-          }
-          if (batchRowsMatch(committed, [nextRow])) {
-            return toItem(committed[0])
-          }
-          if (committed.length !== 0) {
-            this.publicationUncertainProjects.add(source.local_project_key)
-            this.fencedProjects.add(source.local_project_key)
-            throw batchPublicationUncertain()
-          }
-        }
-        await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
-          (cleanupError: unknown) => {
-            process.emitWarning(`Generation retry input cleanup failed: ${String(cleanupError)}`)
-          },
-        )
-        throw error
-      }
-    })
+    return await this.retryTerminalInternal(id, expectedStatusSequence, preflight)
   }
 
   private async cleanupPrunedInputs(root: string, ids: readonly string[]): Promise<void> {
@@ -1963,6 +2127,186 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
     }
     return row
+  }
+
+  private async retryTerminalInternal(
+    id: string,
+    expectedStatusSequence: number,
+    preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
+    outpaintQualification?: {
+      infillResolver: OutpaintInfillResolver
+      modelService: AnimaGenerationModelResolver & GenerationModelResolver
+    },
+  ): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const source = await this.requireRow(id)
+      if (
+        source.status_sequence !== expectedStatusSequence ||
+        (source.status !== 'failed' && source.status !== 'canceled')
+      ) {
+        throw statusConflict()
+      }
+      this.assertProjectCanEnqueue(source.local_project_key)
+      if (await this.hasReceipt(id)) {
+        throw publicationUncertain()
+      }
+      const canonicalPath = await canonicalProjectPath(source.canonical_project_path)
+      if (
+        canonicalPath !== source.canonical_project_path ||
+        localProjectRecoveryKey(canonicalPath) !== source.local_project_key
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before retrying.',
+        )
+      }
+      const verified = await this.verifyRow(source)
+      if (isQueuedOutpaint(verified.payload)) {
+        if (!outpaintQualification || !preflight) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'Outpaint Retry requires its internal exact-resource owner.',
+          )
+        }
+        await reverifyFrozenQueuedOutpaintGeneration(
+          verified.payload,
+          outpaintQualification.modelService,
+          outpaintQualification.infillResolver,
+        )
+      } else if (outpaintQualification) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Expected an outpaint Retry source.')
+      }
+      const targetBytes = await readStableFile(
+        verified.targetPath,
+        verified.payload.workerJob.target.byteSize,
+        verified.payload.workerJob.target.sha256,
+      )
+      const nextId = randomUUID()
+      const nextBatchId = randomUUID()
+      const nextSessionId = randomUUID()
+      const now = new Date().toISOString()
+      const nextRow: Selectable<GenerationQueueItem> = {
+        batch_id: nextBatchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: source.document_id,
+        document_revision: source.document_revision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: source.frozen_payload_json,
+        id: nextId,
+        local_project_key: source.local_project_key,
+        operation: source.operation,
+        staging_session_id: nextSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }
+      const manifest: InputManifestV1 = {
+        payloadSha256: sha256(Buffer.from(source.frozen_payload_json, 'utf8')),
+        queueInputVersion: QUEUE_INPUT_VERSION,
+        queueItemId: nextId,
+        targetByteSize: targetBytes.length,
+        targetFile: 'target.png',
+        targetSha256: sha256(targetBytes),
+      }
+      const root = await this.ensureRoot()
+      const temporary = await mkdtemp(path.join(root, '.tmp-'))
+      const published = path.join(root, nextId)
+      let renamed = false
+      try {
+        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+        await writeDurableFile(
+          path.join(temporary, 'manifest.json'),
+          Buffer.from(JSON.stringify(manifest), 'utf8'),
+        )
+        await syncDirectory(temporary)
+        await rename(temporary, published)
+        renamed = true
+        await syncDirectory(root)
+        await this.testHooks.afterRetryInputPublish?.()
+        this.assertProjectCanEnqueue(source.local_project_key)
+        await preflight?.(
+          Object.freeze({
+            frozenPayloadJson: source.frozen_payload_json,
+            queueItemId: nextId,
+            source: Object.freeze(toItem(source)),
+            stagingSessionId: nextSessionId,
+          }),
+        )
+        this.assertProjectCanEnqueue(source.local_project_key)
+        if (isQueuedOutpaint(verified.payload) && outpaintQualification) {
+          await reverifyFrozenQueuedOutpaintGeneration(
+            verified.payload,
+            outpaintQualification.modelService,
+            outpaintQualification.infillResolver,
+          )
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          const consumed = await transaction
+            .updateTable('generation_queue_item')
+            .set({
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', id)
+            .where('status', '=', source.status)
+            .where('status_sequence', '=', expectedStatusSequence)
+            .where(
+              sql<boolean>`NOT EXISTS (
+                SELECT 1 FROM generation_candidate_receipt AS receipt
+                WHERE receipt.queue_item_id = generation_queue_item.id
+              )`,
+            )
+            .returning('id')
+            .executeTakeFirst()
+          if (!consumed) {
+            throw statusConflict()
+          }
+          await transaction.insertInto('generation_queue_item').values(nextRow).execute()
+          await this.testHooks.beforeRetryCommit?.()
+          this.assertProjectCanEnqueue(source.local_project_key)
+        })
+        await this.testHooks.afterRetryCommit?.()
+        return toItem(nextRow)
+      } catch (error) {
+        // A lost acknowledgement is success only when the exact immutable row is observable.
+        // An unreadable or mismatched outcome retains its input and blocks further dispatch.
+        if (renamed) {
+          let committed: Selectable<GenerationQueueItem>[]
+          try {
+            committed = await this.db
+              .selectFrom('generation_queue_item')
+              .selectAll()
+              .where('id', '=', nextId)
+              .execute()
+          } catch {
+            this.publicationUncertainProjects.add(source.local_project_key)
+            this.fencedProjects.add(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+          if (batchRowsMatch(committed, [nextRow])) {
+            return toItem(committed[0])
+          }
+          if (committed.length !== 0) {
+            this.publicationUncertainProjects.add(source.local_project_key)
+            this.fencedProjects.add(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+        }
+        await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
+          (cleanupError: unknown) => {
+            process.emitWarning(`Generation retry input cleanup failed: ${String(cleanupError)}`)
+          },
+        )
+        throw error
+      }
+    })
   }
 
   private async serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -2055,6 +2399,32 @@ export function parseFrozenGenerationPayloadV1(json: string): FrozenQueuedGenera
   } catch {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
   }
+  if (typeof value === 'object' && value !== null && 'kind' in value) {
+    if (value.kind === 'anima-outpaint') {
+      try {
+        return parseFrozenQueuedAnimaOutpaintV1(json)
+      } catch {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The frozen outpaint input is invalid.',
+        )
+      }
+    }
+    if (value.kind === 'illustrious-outpaint') {
+      const parsed = v.safeParse(FrozenIllustriousOutpaintPayloadSchema, value)
+      if (
+        !parsed.success ||
+        !payloadFieldsAgree(parsed.output) ||
+        !outpaintContextFieldsAgree(parsed.output.context)
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The frozen outpaint input is invalid.',
+        )
+      }
+      return parsed.output
+    }
+  }
   if (
     typeof value === 'object' &&
     value !== null &&
@@ -2070,12 +2440,118 @@ export function parseFrozenGenerationPayloadV1(json: string): FrozenQueuedGenera
   return parseIllustriousPayload(json)
 }
 
+/** Derive concrete numerical fields only; no current public command is fabricated for outpaint. */
+export function buildFrozenQueuedOutpaintV1(
+  prepared: PreparedOutpaintGeneration,
+  originRequestId: string,
+): FrozenQueuedOutpaintV1 {
+  const context = structuredClone(prepared.context)
+  if (context.kind === 'anima-outpaint-preparation') {
+    return buildFrozenQueuedAnimaOutpaintV1(context, originRequestId)
+  }
+  const { colorSpace: _space, format: _format, ...target } = context.target
+  const payload = parseFrozenGenerationPayloadV1(
+    JSON.stringify({
+      context,
+      kind: 'illustrious-outpaint',
+      originRequestId,
+      schemaVersion: 1,
+      workerJob: {
+        bbox: context.bbox,
+        checkpoint: {
+          path: context.model.managedPath,
+          predictionType: context.model.reference.predictionType,
+          sha256: context.model.reference.fileSha256,
+        },
+        ...(context.embeddings !== undefined ? { embeddings: workerEmbeddings(context) } : {}),
+        ...(context.loras !== undefined ? { loras: workerLoras(context) } : {}),
+        ...(context.vae !== undefined ? { vae: workerVae(context) } : {}),
+        ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
+        prompts: context.prompts,
+        sampling: {
+          cfgScale: context.sampling.cfgScale,
+          ...(context.sampling.cfgRescale !== undefined
+            ? { cfgRescale: context.sampling.cfgRescale }
+            : {}),
+          denoisingStrength: context.sampling.denoisingStrength,
+          scheduler: context.sampling.invokeScheduler,
+          seed: context.sampling.seed,
+          steps: context.sampling.steps,
+        },
+        schemaVersion: 1,
+        target,
+      },
+    }),
+  )
+  if (payload.kind !== 'illustrious-outpaint') {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Expected an Illustrious outpaint job.')
+  }
+  return payload
+}
+
+/** Force-qualify exact family and common infill files; neither Library Default nor draft is read. */
+export async function reverifyFrozenQueuedOutpaintGeneration(
+  input: FrozenQueuedOutpaintV1,
+  models: AnimaGenerationModelResolver & GenerationModelResolver,
+  infillResolver: OutpaintInfillResolver,
+): Promise<void> {
+  const parsed = parseFrozenGenerationPayloadV1(JSON.stringify(input))
+  if (!isQueuedOutpaint(parsed)) {
+    throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Expected a frozen outpaint job.')
+  }
+  if (parsed.kind === 'anima-outpaint') {
+    const model = await models.resolveVerifiedGenerationAnimaBundleForPlan(
+      parsed.context.model.checkpoint.reference,
+    )
+    if (!isDeepStrictEqual(model, parsed.context.model)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen Anima bundle changed.')
+    }
+    for (const entry of parsed.context.loras) {
+      const actual = await models.resolveVerifiedAnimaGenerationLoraForPlan(entry.reference)
+      if (
+        !isDeepStrictEqual(actual, {
+          byteSize: entry.byteSize,
+          managedPath: entry.managedPath,
+          reference: entry.reference,
+        })
+      ) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen Anima LoRA changed.')
+      }
+    }
+  } else {
+    const model = await models.resolveVerifiedGenerationCheckpointForPlan(
+      parsed.context.model.reference,
+    )
+    if (
+      model.managedPath !== parsed.context.model.managedPath ||
+      !isDeepStrictEqual(model.reference, parsed.context.model.reference)
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen checkpoint changed.')
+    }
+    await reverifyFrozenGenerationLoras(parsed.context, models)
+    await reverifyFrozenGenerationVae(parsed.context, models)
+    await reverifyFrozenGenerationEmbeddings(parsed.context, models)
+  }
+  const infill = await infillResolver.resolveVerifiedOutpaintInfill()
+  if (
+    infill.role !== parsed.context.conditioning.infillResource.role ||
+    infill.sha256 !== parsed.context.conditioning.infillResource.sha256 ||
+    infill.byteSize !== parsed.context.conditioning.infillResource.byteSize ||
+    !path.isAbsolute(infill.managedPath) ||
+    path.resolve(infill.managedPath) !== infill.managedPath
+  ) {
+    throw new GenerationQueueError(
+      'QUEUE_INPUT_INVALID',
+      'The frozen outpaint infill resource changed.',
+    )
+  }
+}
+
 function validateQueueId(id: string): void {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
   }
 }
-
 function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
   // Concrete branches may activate different captured embeddings. Original authoring refs must
   // still agree across the group; each active projection is checked before publication.
@@ -2089,7 +2565,7 @@ function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
 
 /** Active subsets vary by branch, but a captured literal cannot change files within one batch. */
 function batchEmbeddingFilesAgree(
-  contexts: readonly FrozenNormalGenerationPreparationV1[],
+  contexts: readonly (FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1)[],
 ): boolean {
   const captured = new Map<
     string,
@@ -2109,6 +2585,7 @@ function batchEmbeddingFilesAgree(
   }
   return true
 }
+
 function frozenPayload(
   context: FrozenNormalGenerationPreparationV1,
   request: IllustriousGenerationRequestV1,
@@ -2170,13 +2647,90 @@ function frozenPayload(
 }
 
 function denoisingFieldsAgree(
-  context: FrozenNormalGenerationPreparationV1,
+  context: FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1,
   sampling: IllustriousGenerationRequestV1['job']['sampling'],
 ): boolean {
-  return context.kind === 'normal-img2img-preparation'
+  return context.kind !== 'normal-txt2img-preparation'
     ? 'denoisingStrength' in sampling &&
         sampling.denoisingStrength === context.sampling.denoisingStrength
     : !('denoisingStrength' in sampling)
+}
+
+function outpaintContextFieldsAgree(
+  context: FrozenNormalOutpaintPreparationV1 | FrozenQueuedAnimaOutpaintContextV1,
+): boolean {
+  const source = context.conditioning.sourceTarget
+  return (
+    isDeepStrictEqual(context.conditioning.bbox, context.bbox) &&
+    source.byteSize === context.target.byteSize &&
+    source.sha256 === context.target.sha256 &&
+    source.iccSha256 === context.target.iccSha256 &&
+    source.width === context.target.width &&
+    source.height === context.target.height
+  )
+}
+
+/** A fresh qualification boundary shares expensive exact-file reads, never a previous admission. */
+function memoizedOutpaintQualification(
+  models: AnimaGenerationModelResolver & GenerationModelResolver,
+  infill: OutpaintInfillResolver,
+) {
+  const memoizedModels: AnimaGenerationModelResolver & GenerationModelResolver = {
+    assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
+    resolveVerifiedAnimaGenerationLoraForPlan: memoizedResourceResolution(
+      models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
+    ),
+    resolveVerifiedGenerationAnimaBundleForPlan: memoizedResourceResolution(
+      models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
+    ),
+    resolveVerifiedGenerationCheckpointForPlan: memoizedResourceResolution(
+      models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
+    ),
+    resolveVerifiedGenerationEmbeddingForPlan: memoizedResourceResolution(
+      models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
+    ),
+    resolveVerifiedGenerationLoraForPlan: memoizedResourceResolution(
+      models.resolveVerifiedGenerationLoraForPlan.bind(models),
+    ),
+    resolveVerifiedGenerationVaeForPlan: memoizedResourceResolution(
+      models.resolveVerifiedGenerationVaeForPlan.bind(models),
+    ),
+  }
+  let verifiedInfill:
+    ReturnType<OutpaintInfillResolver['resolveVerifiedOutpaintInfill']> | undefined
+  return {
+    infill: {
+      resolveVerifiedOutpaintInfill: () => {
+        verifiedInfill ??= infill.resolveVerifiedOutpaintInfill()
+        return verifiedInfill
+      },
+    },
+    models: memoizedModels,
+  }
+}
+
+function memoizedResourceResolution<Argument, Result>(
+  resolve: (reference: Argument) => Promise<Result>,
+): (reference: Argument) => Promise<Result> {
+  const pending = new Map<string, Promise<Result>>()
+  return (reference) => {
+    const key = JSON.stringify(reference)
+    let result = pending.get(key)
+    if (!result) {
+      result = resolve(structuredClone(reference))
+      pending.set(key, result)
+    }
+    return result
+  }
+}
+
+function comparableOutpaintBatchContext(payload: FrozenQueuedOutpaintV1) {
+  const { prompts: _prompts, sampling, ...context } = payload.context
+  if ('embeddings' in context) {
+    const { embeddings: _effective, ...authoring } = context
+    return { context: authoring, kind: payload.kind, sampling: { ...sampling, seed: 0 } }
+  }
+  return { context, kind: payload.kind, sampling: { ...sampling, seed: 0 } }
 }
 
 function frozenBatchPayloadJson(
@@ -2376,7 +2930,9 @@ function parseIllustriousPayload(json: string): FrozenQueuedIllustriousGeneratio
   return parsed.output
 }
 
-function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boolean {
+function payloadFieldsAgree(
+  payload: FrozenQueuedIllustriousGenerationV1 | FrozenQueuedIllustriousOutpaintV1,
+): boolean {
   const { context, workerJob } = payload
   const scheduler = resolveIllustriousScheduler(
     context.sampling.sampler,
@@ -2413,7 +2969,11 @@ function payloadFieldsAgree(payload: FrozenQueuedIllustriousGenerationV1): boole
 
 async function validateTargetPng(
   bytes: Buffer,
-  context: FrozenNormalGenerationPreparationV1 | FrozenQueuedAnimaGenerationContextV1,
+  context:
+    | FrozenNormalGenerationPreparationV1
+    | FrozenNormalOutpaintPreparationV1
+    | FrozenQueuedAnimaGenerationContextV1
+    | FrozenQueuedAnimaOutpaintContextV1,
 ): Promise<void> {
   let actualMode: ReturnType<typeof classifyTargetPngAlpha>
   try {
@@ -2438,11 +2998,28 @@ async function validateTargetPng(
     bytes[25] !== 6 ||
     !hasIccProfile(bytes) ||
     actualMode !==
-      (context.kind === 'normal-img2img-preparation' || context.kind === 'anima-img2img-preparation'
-        ? 'img2img'
-        : 'txt2img')
+      (context.kind === 'normal-outpaint-preparation' ||
+      context.kind === 'anima-outpaint-preparation'
+        ? 'outpaint'
+        : context.kind === 'normal-img2img-preparation' ||
+            context.kind === 'anima-img2img-preparation'
+          ? 'img2img'
+          : 'txt2img')
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued target has wrong PNG pixels.')
+  }
+  if ('conditioning' in context) {
+    try {
+      await assertFrozenAlphaOutpaintConditioning(context.conditioning, bytes)
+      if (!outpaintContextFieldsAgree(context)) {
+        throw new Error('The source differs.')
+      }
+    } catch {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The frozen alpha conditioning changed.',
+      )
+    }
   }
 }
 
@@ -2479,7 +3056,27 @@ async function readStableFile(
     ) {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input file is invalid.')
     }
-    const bytes = await file.readFile()
+    // The initial stat does not bound a later readFile(): a concurrent writer can grow the file.
+    // Keep both allocation and every descriptor read within the captured ceiling plus one sentinel.
+    const ceiling = expectedBytes ?? MAX_MANIFEST_BYTES
+    const buffer = Buffer.allocUnsafe(ceiling + 1)
+    let offset = 0
+    while (offset < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        offset,
+        Math.min(64 * 1024, buffer.length - offset),
+        null,
+      )
+      if (bytesRead === 0) {
+        break
+      }
+      offset += bytesRead
+    }
+    if (offset > ceiling) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queued input file grew.')
+    }
+    const bytes = buffer.subarray(0, offset)
     const after = await file.stat({ bigint: true })
     const atPath = await lstat(filePath, { bigint: true })
     if (
@@ -2555,9 +3152,14 @@ function toManagerEntry(
 ): GenerationQueueEntry {
   const item = toItem(row)
   if (
-    !['anima-img2img', 'anima-txt2img', 'illustrious-img2img', 'illustrious-txt2img'].includes(
-      row.operation,
-    ) ||
+    ![
+      'anima-img2img',
+      'anima-outpaint',
+      'anima-txt2img',
+      'illustrious-img2img',
+      'illustrious-outpaint',
+      'illustrious-txt2img',
+    ].includes(row.operation) ||
     !v.is(UuidSchema, row.document_id)
   ) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The queue identity is invalid.')
@@ -2602,7 +3204,11 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
     ) {
       return null
     }
-    if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+    if (
+      payload.kind === 'anima-txt2img' ||
+      payload.kind === 'anima-img2img' ||
+      payload.kind === 'anima-outpaint'
+    ) {
       const { context } = payload
       return {
         modelName: context.model.checkpoint.reference.displayName,
@@ -2612,7 +3218,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         sampling: {
           animaMethod: context.sampling.animaMethod,
           cfgScale: context.sampling.cfgScale,
-          ...(context.kind === 'anima-img2img-preparation'
+          ...(context.kind !== 'anima-txt2img-preparation'
             ? { denoisingStrength: context.sampling.denoisingStrength }
             : {}),
           seed: context.sampling.seed,
@@ -2638,7 +3244,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         ...(context.sampling.cfgRescale !== undefined
           ? { cfgRescale: context.sampling.cfgRescale }
           : {}),
-        ...(context.kind === 'normal-img2img-preparation'
+        ...(context.kind !== 'normal-txt2img-preparation'
           ? { denoisingStrength: context.sampling.denoisingStrength }
           : {}),
         cfgScale: context.sampling.cfgScale,
@@ -2665,6 +3271,8 @@ function managerError(row: Selectable<GenerationQueueItem>): GenerationQueueEntr
   const messages: Record<string, string> = {
     APP_RESTART: 'The application closed before this job completed.',
     GENERATION_INPUT_CHANGED: 'The frozen generation input could not be verified.',
+    GENERATION_OUTPAINT_UNAVAILABLE:
+      'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
     GENERATION_WORKER_FAILED: 'The generation worker did not return a valid completed result.',
     QUEUE_INPUT_INVALID: 'The frozen queue input is invalid.',
     USER_CANCELED: row.status === 'running' ? 'Cancellation requested.' : 'The job was canceled.',

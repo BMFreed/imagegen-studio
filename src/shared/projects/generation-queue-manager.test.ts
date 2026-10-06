@@ -210,3 +210,54 @@ test('Queue Manager Anima details expose native methods and reject fake SD field
   assert.equal(isGenerationQueuePage(page([{ ...row, operation: 'illustrious-txt2img' }])), false)
   assert.equal(isGenerationQueuePage(page([{ ...legacy, operation: 'anima-txt2img' }])), false)
 })
+
+test('Queue Manager outpaint history requires exact family details and frozen strength without exposing conditioning paths', () => {
+  const illustrious = entry()
+  const row: GenerationQueueEntry = {
+    ...illustrious,
+    details: {
+      ...illustrious.details!,
+      sampling: { ...illustrious.details!.sampling, denoisingStrength: 0 },
+    },
+    operation: 'illustrious-outpaint',
+  }
+  const anima: GenerationQueueEntry = {
+    ...row,
+    details: {
+      ...row.details!,
+      sampling: { animaMethod: 'heun', cfgScale: 4, denoisingStrength: 1, seed: 0, steps: 4 },
+    },
+    operation: 'anima-outpaint',
+  }
+  for (const candidate of [row, anima]) {
+    assert.equal(isGenerationQueuePage(page([candidate])), true)
+    assert.equal(isGenerationQueuePage(page([{ ...candidate, details: null }])), true)
+    const { denoisingStrength: _strength, ...withoutStrength } = candidate.details!.sampling
+    assert.equal(typeof _strength, 'number')
+    assert.equal(
+      isGenerationQueuePage({
+        ...page([candidate]),
+        items: [{ ...candidate, details: { ...candidate.details!, sampling: withoutStrength } }],
+      }),
+      false,
+    )
+    assert.equal(
+      isGenerationQueuePage({
+        ...page([candidate]),
+        items: [
+          {
+            ...candidate,
+            details: { ...candidate.details!, conditioning: { infillPath: '/private/lama' } },
+          },
+        ],
+      }),
+      false,
+    )
+  }
+  assert.equal(isGenerationQueuePage(page([{ ...row, operation: 'anima-outpaint' }])), false)
+  assert.equal(
+    isGenerationQueuePage(page([{ ...anima, operation: 'illustrious-outpaint' }])),
+    false,
+  )
+  assert.equal(isGenerationQueuePage(page([illustrious])), true)
+})

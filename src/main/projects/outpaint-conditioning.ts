@@ -1,3 +1,4 @@
+import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
@@ -5,8 +6,11 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
+import * as v from 'valibot'
 
 import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
+import { validateSrgbPngStream } from './igs-package.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
 
 /** Exact Invoke alpha-derived outpaint defaults; this does not advertise an executable capability. */
@@ -43,10 +47,80 @@ export interface FrozenAlphaOutpaintConditioningV1 {
     readonly byteSize: number
     readonly format: 'png'
     readonly height: number
+    readonly iccSha256: typeof IGS_SRGB_ICC_SHA256
     readonly sha256: string
     readonly width: number
   }
 }
+
+const side = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(8),
+  v.maxValue(2048),
+  v.check((value) => value % 8 === 0),
+)
+const position = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(-IGS_SAFETY_CEILINGS.coordinateMagnitude),
+  v.maxValue(IGS_SAFETY_CEILINGS.coordinateMagnitude),
+)
+const sha = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/))
+const byteSize = v.pipe(
+  v.number(),
+  v.safeInteger(),
+  v.minValue(1),
+  v.maxValue(IGS_GENERATION_PNG_MAX_BYTES),
+)
+
+/** Strict operational conditioning identity. Family admission owns its stronger minimum side. */
+export const FrozenAlphaOutpaintConditioningSchema = v.pipe(
+  v.strictObject({
+    bbox: v.strictObject({ height: side, width: side, x: position, y: position }),
+    infillResource: v.strictObject({
+      byteSize: v.literal(LAMA_OUTPAINT_ARTIFACT.sizeBytes),
+      role: v.literal(LAMA_OUTPAINT_ARTIFACT.role),
+      sha256: v.literal(LAMA_OUTPAINT_ARTIFACT.sha256),
+    }),
+    keepMask: v.strictObject({
+      byteSize,
+      format: v.literal('alpha8'),
+      height: side,
+      polarity: v.literal('keep'),
+      sha256: sha,
+      width: side,
+    }),
+    kind: v.literal('alpha-outpaint-conditioning'),
+    policy: v.strictObject({
+      edgeRadius: v.literal(16),
+      fadeDistance: v.literal(16),
+      infillMethod: v.literal('lama'),
+      maskBlur: v.literal('gaussian-weighted-max'),
+      minimumDenoise: v.literal(0),
+      outputMode: v.literal('contribution'),
+      version: v.literal(1),
+    }),
+    schemaVersion: v.literal(1),
+    sourceTarget: v.strictObject({
+      byteSize,
+      format: v.literal('png'),
+      height: side,
+      iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+      sha256: sha,
+      width: side,
+    }),
+  }),
+  v.check(
+    (value) =>
+      value.bbox.width * value.bbox.height <= 4_000_000 &&
+      value.keepMask.width === value.bbox.width &&
+      value.keepMask.height === value.bbox.height &&
+      value.keepMask.byteSize === value.bbox.width * value.bbox.height &&
+      value.sourceTarget.width === value.bbox.width &&
+      value.sourceTarget.height === value.bbox.height,
+  ),
+)
 
 export interface PreparedAlphaOutpaintConditioning {
   readonly context: FrozenAlphaOutpaintConditioningV1
@@ -54,6 +128,65 @@ export interface PreparedAlphaOutpaintConditioning {
   readonly keepMaskBytes: Buffer
   /** Detached exact source PNG; future materialization must recheck it against the frozen identity. */
   readonly targetPngBytes: Buffer
+}
+
+/** Detached strict capture for queue reload; it neither reads files nor trusts a mask's pixels. */
+export function parseFrozenAlphaOutpaintConditioningV1(
+  value: unknown,
+): FrozenAlphaOutpaintConditioningV1 {
+  const parsed = v.safeParse(FrozenAlphaOutpaintConditioningSchema, value)
+  if (!parsed.success) {
+    throw new Error('The frozen outpaint conditioning identity is invalid.')
+  }
+  const captured = parsed.output
+  return Object.freeze({
+    ...captured,
+    bbox: Object.freeze(captured.bbox),
+    infillResource: Object.freeze(captured.infillResource),
+    keepMask: Object.freeze(captured.keepMask),
+    policy: Object.freeze(captured.policy),
+    sourceTarget: Object.freeze(captured.sourceTarget),
+  })
+}
+
+/** Requalify exact persisted pixels, including CRC/color metadata and the rederived soft mask. */
+export async function assertFrozenAlphaOutpaintConditioning(
+  inputContext: FrozenAlphaOutpaintConditioningV1,
+  inputBytes: Buffer,
+): Promise<void> {
+  const context = parseFrozenAlphaOutpaintConditioningV1(inputContext)
+  if (!Buffer.isBuffer(inputBytes) || inputBytes.length > IGS_GENERATION_PNG_MAX_BYTES) {
+    throw new Error('The frozen outpaint source must be a bounded PNG buffer.')
+  }
+  const bytes = Buffer.from(inputBytes)
+  const actual = freezeAlphaOutpaintConditioning({
+    bbox: context.bbox,
+    sourceTargetSha256: context.sourceTarget.sha256,
+    targetPngBytes: bytes,
+  })
+  if (!isDeepStrictEqual(actual.context, context)) {
+    throw new Error('The frozen outpaint conditioning differs from its source pixels.')
+  }
+  await validateSrgbPngStream(
+    (async function* () {
+      yield bytes
+    })(),
+    'target.png',
+    IGS_GENERATION_PNG_MAX_BYTES,
+    2048,
+  )
+  // Generic sRGB validation permits absent ICC; frozen generation input requires this actual chunk.
+  let hasIcc = false
+  for (let offset = 8; offset + 12 <= bytes.length;) {
+    const size = bytes.readUInt32BE(offset)
+    if (bytes.toString('ascii', offset + 4, offset + 8) === 'iCCP') {
+      hasIcc = true
+    }
+    offset += size + 12
+  }
+  if (!hasIcc) {
+    throw new Error('The frozen outpaint source has no pinned sRGB ICC profile.')
+  }
 }
 
 /**
@@ -125,6 +258,7 @@ export function freezeAlphaOutpaintConditioning(input: {
       byteSize: targetPngBytes.length,
       format: 'png',
       height: bbox.height,
+      iccSha256: IGS_SRGB_ICC_SHA256,
       sha256: sourceTargetSha256,
       width: bbox.width,
     }),

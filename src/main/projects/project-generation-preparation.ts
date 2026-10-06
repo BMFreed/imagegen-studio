@@ -23,6 +23,11 @@ import {
   validAuthoredGenerationVae,
 } from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import {
+  assertFrozenAlphaOutpaintConditioning,
+  freezeAlphaOutpaintConditioning,
+  type FrozenAlphaOutpaintConditioningV1,
+} from './outpaint-conditioning.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 /** Main-owned snapshot, deliberately distinct from a qualified worker request or queue row. */
@@ -89,6 +94,20 @@ export type FrozenNormalGenerationPreparationV1 =
   FrozenNormalImg2ImgPreparationV1 | FrozenNormalTxt2ImgPreparationV1
 export interface PreparedNormalGeneration {
   context: FrozenNormalGenerationPreparationV1
+  embeddingPool?: FrozenGenerationEmbeddings
+  targetPngBytes: Buffer
+}
+
+/** Internal concrete alpha-derived job; ordinary public preparation still refuses this mode. */
+export interface FrozenNormalOutpaintPreparationV1 extends Omit<
+  FrozenNormalImg2ImgPreparationV1,
+  'kind'
+> {
+  conditioning: FrozenAlphaOutpaintConditioningV1
+  kind: 'normal-outpaint-preparation'
+}
+export interface PreparedNormalOutpaintGeneration {
+  context: FrozenNormalOutpaintPreparationV1
   embeddingPool?: FrozenGenerationEmbeddings
   targetPngBytes: Buffer
 }
@@ -278,20 +297,61 @@ export async function prepareNormalGeneration(input: {
   randomUint32?: () => number
   target: FrozenGenerationTarget
 }): Promise<PreparedNormalGeneration> {
-  const { target } = input
+  const prepared = await prepareNormalGenerationInternal(input, false)
+  if (prepared.context.kind === 'normal-outpaint-preparation') {
+    throw new GenerationPreparationError(
+      'GENERATION_MODE_UNSUPPORTED',
+      'Outpaint is internal only.',
+    )
+  }
+  return { ...prepared, context: prepared.context }
+}
+
+/** Capture actual mixed-alpha pixels without disguising them as an opaque img2img target. */
+export async function prepareNormalOutpaintGeneration(
+  input: Parameters<typeof prepareNormalGeneration>[0],
+): Promise<PreparedNormalOutpaintGeneration> {
+  const prepared = await prepareNormalGenerationInternal(input, true)
+  if (prepared.context.kind !== 'normal-outpaint-preparation') {
+    throw new GenerationPreparationError(
+      'GENERATION_MODE_UNSUPPORTED',
+      'Expected an outpaint target.',
+    )
+  }
+  return { ...prepared, context: prepared.context }
+}
+
+async function prepareNormalGenerationInternal(
+  input: Parameters<typeof prepareNormalGeneration>[0],
+  outpaint: boolean,
+): Promise<PreparedNormalGeneration | PreparedNormalOutpaintGeneration> {
+  const { lastActualSeed, modelService, randomUint32, target } = input
   // Freeze everything before the model-file verification await. The target is main-owned but its
   // nested objects and Buffer are mutable to a caller that retains the original references.
   const draft = structuredClone(target.generationDraft)
   const bbox = { ...target.bbox }
+  if (
+    outpaint &&
+    (bbox.width < 64 ||
+      bbox.height < 64 ||
+      bbox.width > 2048 ||
+      bbox.height > 2048 ||
+      bbox.width * bbox.height > 4_000_000)
+  ) {
+    throw new GenerationPreparationError(
+      'GENERATION_TARGET_UNSUPPORTED',
+      'Outpaint dimensions must fit the qualified family target bounds.',
+    )
+  }
   const composite = { ...target.composite, bytes: Buffer.from(target.composite.bytes) }
-  const { documentId, documentRevision } = target
+  const { documentId, documentRevision, mode } = target
   const savedSnapshot = target.lastActualSeedSnapshot
   const { cfgRescale, cfgScale, invokeScheduler, model, steps } = validateNormalGenerationDraft(
     draft,
-    input.lastActualSeed,
+    lastActualSeed,
     savedSnapshot,
   )
-  await input.modelService.assertNoUnboundGenerationEmbeddings({
+  await modelService.assertNoUnboundGenerationEmbeddings({
     modelFamily: model.baseModelFamily,
     negativePrompt: structuredClone(draft.negativePrompt),
     positivePrompt: structuredClone(draft.positivePrompt),
@@ -300,8 +360,8 @@ export async function prepareNormalGeneration(input: {
     draft.seed.policy === 'fixed'
       ? draft.seed.value
       : draft.seed.policy === 'reuse'
-        ? (input.lastActualSeed ?? savedSnapshot)
-        : (input.randomUint32?.() ?? randomBytes(4).readUInt32LE(0))
+        ? (lastActualSeed ?? savedSnapshot)
+        : (randomUint32?.() ?? randomBytes(4).readUInt32LE(0))
   if (actualSeed === null || !isUint32(actualSeed)) {
     throw new GenerationPreparationError(
       'GENERATION_SEED_INVALID',
@@ -333,19 +393,25 @@ export async function prepareNormalGeneration(input: {
       'The frozen target is not valid bounded RGBA pixels.',
     )
   }
-  if (actualMode !== target.mode) {
+  if (actualMode !== mode) {
     throw new GenerationPreparationError(
       'GENERATION_TARGET_CHANGED',
       'The frozen generation mode differs from the target pixels.',
     )
   }
-  if (actualMode === 'outpaint') {
+  if (actualMode === 'outpaint' && !outpaint) {
     throw new GenerationPreparationError(
       'GENERATION_MODE_UNSUPPORTED',
       'Partially transparent generation areas are not supported by this Illustrious pipeline yet.',
     )
   }
-  if (actualMode === 'img2img' && draft.sampling.denoisingStrength === null) {
+  if (outpaint && actualMode !== 'outpaint') {
+    throw new GenerationPreparationError(
+      'GENERATION_MODE_UNSUPPORTED',
+      'Expected a partially transparent target.',
+    )
+  }
+  if (actualMode !== 'txt2img' && draft.sampling.denoisingStrength === null) {
     throw new GenerationPreparationError(
       'GENERATION_SAMPLING_REQUIRED',
       'Set Denoising Strength before generating from the image in this area.',
@@ -353,18 +419,14 @@ export async function prepareNormalGeneration(input: {
   }
 
   // Main re-hashes the exact installed file; Default and same-model alternatives are irrelevant.
-  const verified = await input.modelService.resolveVerifiedGenerationCheckpointForPlan(model)
-  const vae = draft.vae
-    ? await input.modelService.resolveVerifiedGenerationVaeForPlan(draft.vae)
-    : null
+  const verified = await modelService.resolveVerifiedGenerationCheckpointForPlan(model)
+  const vae = draft.vae ? await modelService.resolveVerifiedGenerationVaeForPlan(draft.vae) : null
   const loras: FrozenGenerationLora[] = []
   for (const entry of draft.loras) {
     if (!entry.enabled) {
       continue
     }
-    const verifiedLora = await input.modelService.resolveVerifiedGenerationLoraForPlan(
-      entry.resource,
-    )
+    const verifiedLora = await modelService.resolveVerifiedGenerationLoraForPlan(entry.resource)
     loras.push({ ...verifiedLora, weight: entry.weight })
   }
   const embeddingRefs: FrozenPromptEmbeddingRefs = {
@@ -374,7 +436,7 @@ export async function prepareNormalGeneration(input: {
   const embeddingPool: FrozenGenerationEmbeddings = { negative: [], positive: [] }
   for (const polarity of ['positive', 'negative'] as const) {
     for (const ref of embeddingRefs[polarity]) {
-      const verifiedEmbedding = await input.modelService.resolveVerifiedGenerationEmbeddingForPlan(
+      const verifiedEmbedding = await modelService.resolveVerifiedGenerationEmbeddingForPlan(
         ref.resource,
       )
       embeddingPool[polarity].push({ ...verifiedEmbedding, token: ref.token })
@@ -417,8 +479,8 @@ export async function prepareNormalGeneration(input: {
     vae: vae ? structuredClone(vae) : null,
     vaePrecision: draft.vaePrecision ?? 'Auto',
   }
-  let context: FrozenNormalGenerationPreparationV1
-  if (actualMode === 'img2img') {
+  let context: FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1
+  if (actualMode !== 'txt2img') {
     const denoisingStrength = draft.sampling.denoisingStrength
     if (denoisingStrength === null) {
       throw new GenerationPreparationError(
@@ -426,19 +488,33 @@ export async function prepareNormalGeneration(input: {
         'Set Denoising Strength before generating from this image.',
       )
     }
-    context = {
-      ...common,
-      kind: 'normal-img2img-preparation',
-      sampling: { ...common.sampling, denoisingStrength },
+    if (actualMode === 'outpaint') {
+      const frozen = freezeAlphaOutpaintConditioning({
+        bbox,
+        sourceTargetSha256: composite.sha256,
+        targetPngBytes: bytes,
+      })
+      await assertFrozenAlphaOutpaintConditioning(frozen.context, bytes)
+      context = {
+        ...common,
+        conditioning: frozen.context,
+        kind: 'normal-outpaint-preparation',
+        sampling: { ...common.sampling, denoisingStrength },
+      }
+    } else {
+      context = {
+        ...common,
+        kind: 'normal-img2img-preparation',
+        sampling: { ...common.sampling, denoisingStrength },
+      }
     }
   } else {
     context = { ...common, kind: 'normal-txt2img-preparation' }
   }
-  return {
-    context,
-    embeddingPool,
-    targetPngBytes: bytes,
+  if (context.kind === 'normal-outpaint-preparation') {
+    return { context, embeddingPool, targetPngBytes: bytes }
   }
+  return { context, embeddingPool, targetPngBytes: bytes }
 }
 
 function isUint32(value: number): boolean {

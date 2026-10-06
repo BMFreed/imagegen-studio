@@ -149,3 +149,9 @@ The accepted LaMa first-engine delivery decision is unchanged: show full size
 before installation; Main downloads, caches and verifies; worker loads verified
 local bytes. No auxiliary installer or release delivery is implemented here.
 PP-005/007/008 readiness and phase2C completion remain unchanged.
+
+The subsequent [internal frozen jobs checkpoint](./phase-2c-outpaint-jobs-research.md)
+adds durable mixed-alpha inputs, internal atomic admission/Retry and Main's pinned
+shared LaMa resolver. Public dispatch, RGBA publication/portable provenance and
+auxiliary installation remain open; this does not change the earlier numerical
+evidence or public readiness.
