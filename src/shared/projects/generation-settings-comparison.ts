@@ -183,7 +183,8 @@ function compareIllustriousGenerationSettings(
   const recordedStrength =
     'denoisingStrength' in baseline.sampling ? baseline.sampling.denoisingStrength : undefined
   const currentStrength =
-    data.currentMode === 'img2img' && draft.model?.baseModelFamily === 'illustrious'
+    (data.currentMode === 'img2img' || data.currentMode === 'outpaint') &&
+    draft.model?.baseModelFamily === 'illustrious'
       ? (draft.sampling.denoisingStrength ?? undefined)
       : undefined
   return [
@@ -489,7 +490,7 @@ function compareAnimaGenerationSettings(
       ? (draft.vaePrecision ?? 'Auto')
       : undefined
   const strength =
-    data.currentMode === 'img2img' &&
+    (data.currentMode === 'img2img' || data.currentMode === 'outpaint') &&
     (nativeCurrent || draft.model?.baseModelFamily === 'illustrious')
       ? (draft.sampling.denoisingStrength ?? undefined)
       : undefined

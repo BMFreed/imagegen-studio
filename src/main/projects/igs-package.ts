@@ -28,6 +28,8 @@ import { crc32, createInflate, type Inflate, inflateSync } from 'node:zlib'
 import * as yauzl from 'yauzl'
 import * as yazl from 'yazl'
 
+import { decodeTargetPngAlpha } from './target-png-mode.js'
+
 export type IgsAssetSource = { bytes: Buffer } | { sourcePath: string }
 
 export interface IgsPackageLimits {
@@ -761,7 +763,7 @@ export async function readIgsPackage(
     throw new IgsPackageError('PACKAGE_CHANGED', 'The Project package changed while it was opened.')
   }
   const packageFingerprint = fingerprint(initialStat)
-  return {
+  const result: IgsPackageReadResult = {
     extractMemberToFile: async (memberPath: string, destinationPath: string) => {
       const expected = manifest.members.find((member) => member.path === memberPath)
       if (!expected) {
@@ -906,6 +908,36 @@ export async function readIgsPackage(
       }
     },
   }
+  // The source conditioning image is local recovery data and deliberately absent from .igs.
+  // Portable validation still verifies that the retained contribution identity describes the
+  // actual RGBA asset. Save also enters this reader before publishing its staged archive.
+  for (const layer of document.layers) {
+    const provenance = layer.generationProvenance
+    if (provenance?.kind !== 'illustrious-outpaint' && provenance?.kind !== 'anima-outpaint') {
+      continue
+    }
+    const output = provenance.executionResultContext.output
+    const bytes = await result.readMember(layer.asset.path)
+    let alpha: Buffer
+    try {
+      alpha = decodeTargetPngAlpha(bytes, output.width, output.height)
+    } catch {
+      throw new IgsPackageError(
+        'INVALID_IMAGE',
+        'An accepted outpaint contribution must be a bounded RGBA PNG.',
+      )
+    }
+    if (
+      alpha.length !== output.contributionAlpha8.byteSize ||
+      createHash('sha256').update(alpha).digest('hex') !== output.contributionAlpha8.sha256
+    ) {
+      throw new IgsPackageError(
+        'MEMBER_MISMATCH',
+        'The accepted outpaint contribution alpha differs from its provenance.',
+      )
+    }
+  }
+  return result
 }
 
 export async function saveIgsPackage(

@@ -48,6 +48,8 @@ MAX_GENERATION_STEPS = 200
 MAX_GENERATION_CFG_RESCALE = 0.99
 MAX_GENERATION_CFG_SCALE = 30
 MAX_EMBEDDING_VECTORS = 300  # Four CLIP chunks, each with 75 content positions.
+OUTPAINT_INFILL_SHA256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
+OUTPAINT_INFILL_BYTE_SIZE = 205_669_692
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -105,6 +107,30 @@ class GenerationEmbedding:
 
 
 @dataclass(frozen=True)
+class OutpaintInfillResource:
+    path: Path
+    sha256: str
+    byte_size: int
+    role: Literal["outpaint-infill"] = "outpaint-infill"
+
+
+@dataclass(frozen=True)
+class AlphaOutpaintConditioning:
+    """Strict captured alpha/policy identity; pixels are independently rederived at execution."""
+
+    bbox: PreviewRect
+    source_sha256: str
+    source_byte_size: int
+    width: int
+    height: int
+    keep_mask_sha256: str
+    keep_mask_byte_size: int
+    edge_radius: int = 16
+    fade_distance: int = 16
+    minimum_denoise: float = 0
+
+
+@dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
     """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
@@ -142,6 +168,12 @@ class GenerateIllustriousImg2ImgCommand(GenerateIllustriousTxt2ImgCommand):
     denoising_strength: float
 
 
+@dataclass(frozen=True, kw_only=True)
+class GenerateIllustriousOutpaintCommand(GenerateIllustriousImg2ImgCommand):
+    conditioning: AlphaOutpaintConditioning
+    infill_resource: OutpaintInfillResource
+
+
 @dataclass(frozen=True)
 class GenerateAnimaTxt2ImgCommand:
     """Original Anima's captured worker boundary, separate from Main admission and SDXL."""
@@ -165,6 +197,12 @@ class GenerateAnimaTxt2ImgCommand:
 @dataclass(frozen=True)
 class GenerateAnimaImg2ImgCommand(GenerateAnimaTxt2ImgCommand):
     """A fully opaque frozen RGBA target and explicit captured strength."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class GenerateAnimaOutpaintCommand(GenerateAnimaImg2ImgCommand):
+    conditioning: AlphaOutpaintConditioning
+    infill_resource: OutpaintInfillResource
 
 
 def ready_message() -> dict[str, object]:
@@ -274,12 +312,13 @@ def _target_bbox(value: object) -> PreviewRect:
 
 
 def _generate_illustrious_txt2img(
-    value: object, request_id: str, *, img2img: bool = False
+    value: object, request_id: str, *, img2img: bool = False, outpaint: bool = False
 ) -> GenerateIllustriousTxt2ImgCommand:
     job = _object(
         value,
         "Generation job",
-        {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"},
+        {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"}
+        | ({"conditioning", "infillResource"} if outpaint else set()),
         optional_keys={"loras", "vaePrecision", "vae", "embeddings"},
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
@@ -482,6 +521,14 @@ def _generate_illustrious_txt2img(
         output_path=png_path,
     )
     if denoising_strength is not None:
+        if outpaint:
+            conditioning, infill_resource = _outpaint_identity(job, command)
+            return GenerateIllustriousOutpaintCommand(
+                **vars(command),
+                denoising_strength=denoising_strength,
+                conditioning=conditioning,
+                infill_resource=infill_resource,
+            )
         return GenerateIllustriousImg2ImgCommand(
             **vars(command), denoising_strength=denoising_strength
         )
@@ -507,7 +554,7 @@ def _anima_byte_size(value: object, label: str) -> int:
 
 
 def _generate_anima(
-    value: object, request_id: str, *, img2img: bool
+    value: object, request_id: str, *, img2img: bool, outpaint: bool = False
 ) -> GenerateAnimaTxt2ImgCommand:
     # Local imports avoid a cycle: the numerical helpers share GenerationLora above.
     from imagegen_worker.anima_conditioning import validate_compiled_anima_prompt
@@ -517,7 +564,8 @@ def _generate_anima(
     job = _object(
         value,
         "Anima generation job",
-        {"schemaVersion", "model", "target", "bbox", "prompts", "sampling", "loras", "output"},
+        {"schemaVersion", "model", "target", "bbox", "prompts", "sampling", "loras", "output"}
+        | ({"conditioning", "infillResource"} if outpaint else set()),
     )
     if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
         raise DerivativeError("INVALID_REQUEST", "Anima job schema version is unsupported.")
@@ -605,7 +653,7 @@ def _generate_anima(
     if paths & model_paths or {target_path, output_path} & (model_paths | paths):
         raise DerivativeError("INVALID_REQUEST", "Anima models, LoRAs and images must be distinct.")
     command_type = GenerateAnimaImg2ImgCommand if img2img else GenerateAnimaTxt2ImgCommand
-    return command_type(
+    command = command_type(
         request_id=request_id,
         bundle=bundle,
         target_path=target_path,
@@ -620,6 +668,132 @@ def _generate_anima(
         loras=tuple(loras),
         staging_root=staging_root,
         output_path=output_path,
+    )
+    if outpaint:
+        conditioning, infill_resource = _outpaint_identity(job, command)
+        return GenerateAnimaOutpaintCommand(
+            **vars(command), conditioning=conditioning, infill_resource=infill_resource
+        )
+    return command
+
+
+def _outpaint_identity(
+    job: dict[str, object],
+    command: GenerateIllustriousTxt2ImgCommand | GenerateAnimaTxt2ImgCommand,
+) -> tuple[AlphaOutpaintConditioning, OutpaintInfillResource]:
+    fields = _object(
+        job["conditioning"],
+        "Outpaint conditioning",
+        {"bbox", "infillResource", "keepMask", "kind", "policy", "schemaVersion", "sourceTarget"},
+    )
+    if (
+        fields["kind"] != "alpha-outpaint-conditioning"
+        or type(fields["schemaVersion"]) is not int
+        or fields["schemaVersion"] != 1
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Outpaint conditioning version is unsupported.")
+    policy = _object(
+        fields["policy"],
+        "Outpaint policy",
+        {
+            "edgeRadius",
+            "fadeDistance",
+            "infillMethod",
+            "maskBlur",
+            "minimumDenoise",
+            "outputMode",
+            "version",
+        },
+    )
+    expected: dict[str, object] = {
+        "edgeRadius": 16,
+        "fadeDistance": 16,
+        "infillMethod": "lama",
+        "maskBlur": "gaussian-weighted-max",
+        "minimumDenoise": 0,
+        "outputMode": "contribution",
+        "version": 1,
+    }
+    if policy != expected or any(
+        isinstance(policy[name], bool)
+        for name in ("edgeRadius", "fadeDistance", "minimumDenoise", "version")
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Outpaint policy is unsupported.")
+    bbox = _target_bbox(fields["bbox"])
+    source = _object(
+        fields["sourceTarget"],
+        "Outpaint source target",
+        {"byteSize", "format", "height", "iccSha256", "sha256", "width"},
+    )
+    mask = _object(
+        fields["keepMask"],
+        "Outpaint keep mask",
+        {"byteSize", "format", "height", "polarity", "sha256", "width"},
+    )
+    if (
+        bbox != command.bbox
+        or source["format"] != "png"
+        or _sha256(source["sha256"], "Outpaint source SHA-256") != command.target_sha256
+        or _positive_integer(source["byteSize"], "Outpaint source byte size")
+        != command.target_byte_size
+        or _sha256(source["iccSha256"], "Outpaint source ICC") != PINNED_SRGB_ICC_SHA256
+        or _positive_integer(source["width"], "Outpaint source width") != command.width
+        or _positive_integer(source["height"], "Outpaint source height") != command.height
+        or mask["format"] != "alpha8"
+        or mask["polarity"] != "keep"
+        or _positive_integer(mask["width"], "Outpaint mask width") != command.width
+        or _positive_integer(mask["height"], "Outpaint mask height") != command.height
+        or _positive_integer(mask["byteSize"], "Outpaint mask byte size")
+        != command.width * command.height
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Outpaint source, mask and job identities differ.")
+    manifest = _object(
+        fields["infillResource"], "Outpaint frozen infill", {"byteSize", "role", "sha256"}
+    )
+    resource = _object(
+        job["infillResource"], "Outpaint local infill", {"path", "byteSize", "role", "sha256"}
+    )
+    for value in (manifest, resource):
+        if (
+            value["role"] != "outpaint-infill"
+            or _sha256(value["sha256"], "Outpaint infill SHA-256") != OUTPAINT_INFILL_SHA256
+            or _positive_integer(value["byteSize"], "Outpaint infill byte size")
+            != OUTPAINT_INFILL_BYTE_SIZE
+        ):
+            raise DerivativeError("INVALID_REQUEST", "Outpaint infill is not the pinned resource.")
+    resource_path = _anima_path(resource["path"], "Outpaint infill path")
+    image_paths = {command.target_path, command.output_path}
+    model_paths = {entry.path for entry in command.loras}
+    if isinstance(command, GenerateAnimaTxt2ImgCommand):
+        model_paths |= {
+            command.bundle.checkpoint.path,
+            command.bundle.qwen3_encoder.path,
+            command.bundle.vae.path,
+        }
+    else:
+        model_paths.add(command.checkpoint_path)
+        if command.vae is not None:
+            model_paths.add(command.vae.path)
+        model_paths |= {
+            entry.path for entry in (*command.positive_embeddings, *command.negative_embeddings)
+        }
+    if (
+        resource_path in image_paths | model_paths
+        or resource_path.parent == command.staging_root
+        or image_paths & model_paths
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Outpaint images and resources must be distinct.")
+    return (
+        AlphaOutpaintConditioning(
+            bbox=bbox,
+            source_sha256=command.target_sha256,
+            source_byte_size=command.target_byte_size,
+            width=command.width,
+            height=command.height,
+            keep_mask_sha256=_sha256(mask["sha256"], "Outpaint mask SHA-256"),
+            keep_mask_byte_size=command.width * command.height,
+        ),
+        OutpaintInfillResource(resource_path, OUTPAINT_INFILL_SHA256, OUTPAINT_INFILL_BYTE_SIZE),
     )
 
 
@@ -679,19 +853,33 @@ def parse_request(
     if fields.get("type") == "self-test":
         _object(fields, "Self-test request", {"type", "requestId", "protocolVersion"})
         return SelfTestCommand(request_id)
-    if fields.get("type") in ("generate-illustrious-txt2img", "generate-illustrious-img2img"):
+    if fields.get("type") in (
+        "generate-illustrious-txt2img",
+        "generate-illustrious-img2img",
+        "generate-illustrious-outpaint",
+    ):
         _object(
             fields,
             "Generation request",
             {"type", "requestId", "protocolVersion", "job"},
         )
         return _generate_illustrious_txt2img(
-            fields["job"], request_id, img2img=fields["type"] == "generate-illustrious-img2img"
+            fields["job"],
+            request_id,
+            img2img=fields["type"] != "generate-illustrious-txt2img",
+            outpaint=fields["type"] == "generate-illustrious-outpaint",
         )
-    if fields.get("type") in ("generate-anima-txt2img", "generate-anima-img2img"):
+    if fields.get("type") in (
+        "generate-anima-txt2img",
+        "generate-anima-img2img",
+        "generate-anima-outpaint",
+    ):
         _object(fields, "Anima request", {"type", "requestId", "protocolVersion", "job"})
         return _generate_anima(
-            fields["job"], request_id, img2img=fields["type"] == "generate-anima-img2img"
+            fields["job"],
+            request_id,
+            img2img=fields["type"] != "generate-anima-txt2img",
+            outpaint=fields["type"] == "generate-anima-outpaint",
         )
     if fields.get("type") == "normalize-import":
         _object(

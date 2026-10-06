@@ -1,17 +1,22 @@
 import * as v from 'valibot'
 
+import {
+  AlphaOutpaintContributionAlpha8V1Schema,
+  AlphaOutpaintIdentityV1Schema,
+} from './alpha-outpaint.js'
 import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
 import {
   GenerationDynamicPromptSettingsSchema,
   getEffectiveDynamicPromptSettings,
 } from './generation-dynamic-settings.js'
+import { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
+
+export { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 
 /** An internal package marker; it does not claim IANA registration. */
 export const IGS_MIMETYPE = 'application/vnd.imagegen-studio.project+zip'
 export const IGS_SCHEMA_VERSION = 1
-/** Defensive ceiling shared by temporary output verification and accepted-result metadata. */
-export const IGS_GENERATION_PNG_MAX_BYTES = 32 * 1024 * 1024
 
 /**
  * Defensive format ceilings, not measured generation/runtime capacity. The ZIP reader must also
@@ -236,9 +241,14 @@ const Img2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
     denoisingStrength: UnitIntervalSchema,
   }),
 })
+const OutpaintRasterGenerationConfigurationV1Schema = v.strictObject({
+  ...Img2ImgRasterGenerationConfigurationV1Schema.entries,
+  mode: v.literal('outpaint'),
+})
 const IllustriousRasterGenerationConfigurationV1Schema = v.variant('mode', [
   Txt2ImgRasterGenerationConfigurationV1Schema,
   Img2ImgRasterGenerationConfigurationV1Schema,
+  OutpaintRasterGenerationConfigurationV1Schema,
 ])
 
 const AnimaCheckpointRefSchema = v.strictObject({
@@ -313,9 +323,14 @@ const Img2ImgAnimaRasterGenerationConfigurationV1Schema = v.strictObject({
     denoisingStrength: UnitIntervalSchema,
   }),
 })
+const OutpaintAnimaRasterGenerationConfigurationV1Schema = v.strictObject({
+  ...Img2ImgAnimaRasterGenerationConfigurationV1Schema.entries,
+  mode: v.literal('outpaint'),
+})
 const AnimaRasterGenerationConfigurationV1Schema = v.variant('mode', [
   Txt2ImgAnimaRasterGenerationConfigurationV1Schema,
   Img2ImgAnimaRasterGenerationConfigurationV1Schema,
+  OutpaintAnimaRasterGenerationConfigurationV1Schema,
 ])
 const RasterGenerationConfigurationV1Schema = v.union([
   IllustriousRasterGenerationConfigurationV1Schema,
@@ -372,12 +387,39 @@ const Img2ImgAnimaRasterGenerationProvenanceV1Schema = v.strictObject({
   generationConfiguration: Img2ImgAnimaRasterGenerationConfigurationV1Schema,
   kind: v.literal('anima-img2img'),
 })
+const OutpaintExecutionResultContextV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries.executionResultContext.entries,
+  output: v.strictObject({
+    ...Txt2ImgRasterGenerationProvenanceV1Schema.entries.executionResultContext.entries.output
+      .entries,
+    contributionAlpha8: AlphaOutpaintContributionAlpha8V1Schema,
+    outputMode: v.literal('contribution'),
+  }),
+})
+const OutpaintLayerSourceContextV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries.layerSourceContext.entries,
+  outpaint: AlphaOutpaintIdentityV1Schema,
+})
+const OutpaintRasterGenerationProvenanceV1Schema = v.strictObject({
+  ...Txt2ImgRasterGenerationProvenanceV1Schema.entries,
+  executionResultContext: OutpaintExecutionResultContextV1Schema,
+  generationConfiguration: OutpaintRasterGenerationConfigurationV1Schema,
+  kind: v.literal('illustrious-outpaint'),
+  layerSourceContext: OutpaintLayerSourceContextV1Schema,
+})
+const OutpaintAnimaRasterGenerationProvenanceV1Schema = v.strictObject({
+  ...OutpaintRasterGenerationProvenanceV1Schema.entries,
+  generationConfiguration: OutpaintAnimaRasterGenerationConfigurationV1Schema,
+  kind: v.literal('anima-outpaint'),
+})
 const RasterGenerationProvenanceV1Schema = v.pipe(
   v.variant('kind', [
     Txt2ImgRasterGenerationProvenanceV1Schema,
     Img2ImgRasterGenerationProvenanceV1Schema,
     Txt2ImgAnimaRasterGenerationProvenanceV1Schema,
     Img2ImgAnimaRasterGenerationProvenanceV1Schema,
+    OutpaintRasterGenerationProvenanceV1Schema,
+    OutpaintAnimaRasterGenerationProvenanceV1Schema,
   ]),
   v.check(
     ({ executionResultContext, generationConfiguration, layerSourceContext }) =>
@@ -387,6 +429,20 @@ const RasterGenerationProvenanceV1Schema = v.pipe(
       generationConfiguration.size.height === executionResultContext.output.height,
     'The accepted result size must match its frozen bbox and output image.',
   ),
+  v.check((value) => {
+    if (value.kind !== 'illustrious-outpaint' && value.kind !== 'anima-outpaint') {
+      return true
+    }
+    const { bbox, outpaint, sourceTargetSha256 } = value.layerSourceContext
+    const { contributionAlpha8 } = value.executionResultContext.output
+    return (
+      outpaint.sourceTarget.sha256 === sourceTargetSha256 &&
+      outpaint.sourceTarget.width === bbox.width &&
+      outpaint.sourceTarget.height === bbox.height &&
+      contributionAlpha8.width === bbox.width &&
+      contributionAlpha8.height === bbox.height
+    )
+  }, 'Outpaint input and contribution identities must match their frozen source and bbox.'),
 )
 
 const GenerationDraftSchema = v.strictObject({
@@ -477,11 +533,15 @@ export type IgsRasterGenerationProvenanceV1 = v.InferOutput<
 >
 export type IgsIllustriousRasterGenerationProvenanceV1 = Extract<
   IgsRasterGenerationProvenanceV1,
-  { kind: 'illustrious-img2img' | 'illustrious-txt2img' }
+  { kind: 'illustrious-img2img' | 'illustrious-outpaint' | 'illustrious-txt2img' }
 >
 export type IgsAnimaRasterGenerationProvenanceV1 = Extract<
   IgsRasterGenerationProvenanceV1,
-  { kind: 'anima-img2img' | 'anima-txt2img' }
+  { kind: 'anima-img2img' | 'anima-outpaint' | 'anima-txt2img' }
+>
+export type IgsOutpaintRasterGenerationProvenanceV1 = Extract<
+  IgsRasterGenerationProvenanceV1,
+  { kind: 'anima-outpaint' | 'illustrious-outpaint' }
 >
 export type IgsProjectDocumentV1 = v.InferOutput<typeof ProjectDocumentV1Schema>
 export type IgsManifestV1 = v.InferOutput<typeof IgsManifestV1Schema>
@@ -516,6 +576,22 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
   for (const layer of document.layers) {
     if (layerIds.has(layer.id) || !LAYER_ASSET_PATH_PATTERN.test(layer.asset.path)) {
       throw new IgsSchemaError('INVALID_PROJECT', 'The Project layer references are invalid.')
+    }
+    const provenance = layer.generationProvenance
+    if (provenance?.kind === 'illustrious-outpaint' || provenance?.kind === 'anima-outpaint') {
+      const output = provenance.executionResultContext.output
+      if (
+        !layer.asset.path.endsWith('.png') ||
+        layer.asset.bytes !== output.byteSize ||
+        layer.asset.sha256 !== output.sha256 ||
+        layer.asset.width !== output.width ||
+        layer.asset.height !== output.height
+      ) {
+        throw new IgsSchemaError(
+          'INVALID_PROJECT',
+          'The outpaint layer asset differs from its accepted contribution.',
+        )
+      }
     }
     const profile = layer.sourceIccProfile
     if (

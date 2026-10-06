@@ -52,8 +52,33 @@ identity; availability still requires current installed bindings. Local IDs are
 advisory recorded bindings, not portable identity. Missing native catalog
 metadata or unsupported current controls never become Same. Catalog status is
 the existing fast metadata/stat/cache check; Generate requalifies actual bytes.
-Preset creation, Smart Patch, regions/outpaint and installed-runtime/trained-model
-release qualification remain separate roadmap work.
+Preset creation, Smart Patch, regions, public outpaint Generate/Retry and
+installed-runtime/trained-model release qualification remain separate roadmap work.
+
+## Current internal outpaint boundary (06.10.2026)
+
+The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
+adds strict portable `illustrious-outpaint` and `anima-outpaint` v1 records only
+after explicit Add of source-bound RGBA contributions. Their generation
+configuration records `mode: outpaint`, applied denoising strength and the actual
+completed uint32 seed, including a valid deviation from the scheduled seed.
+Layer/source context retains captured source PNG/keep-mask identities and exact
+policy/LaMa identity; execution/result context retains the contribution PNG and
+actual alpha8 identity. Machine-local paths, source PNG bytes, mask assets and
+model weights are absent from `.igs`.
+
+Staging verifies contribution semantics against its independently owned source,
+including after queue pruning. Save/readback binds the accepted layer asset to
+its original contribution and checks actual RGBA alpha against the portable
+identity without requiring local recovery files. Grouped Undo/Redo, shadow
+recovery and portable copy/open preserve the record. Read-only settings
+comparison includes outpaint mode and denoising strength while leaving private
+source/execution groups outside the settings payload.
+
+Public mixed-alpha Generate/Retry, first-setup LaMa installation and installed
+trained or release qualification remain open. The research note separates the
+executed storage/native boundary evidence and its counts from those gaps;
+PP-005/007/008 and phase 2C are not complete.
 
 ## Contents
 

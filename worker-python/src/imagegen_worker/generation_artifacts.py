@@ -6,6 +6,7 @@ import io
 import os
 import warnings
 from pathlib import Path
+from typing import Literal
 
 from PIL import Image, UnidentifiedImageError
 
@@ -105,13 +106,16 @@ def publish_generation_image(
     height: int,
     request_id: str,
     seed: int,
+    output_mode: Literal["RGB", "RGBA"] = "RGB",
 ) -> dict[str, object]:
     """Publish one complete PNG exclusively; its thumbnail remains an optional cache."""
     if not isinstance(image, Image.Image) or image.size != (width, height):
         raise DerivativeError(
             "GENERATION_WORKER_FAILED", "Inference did not return the expected image."
         )
-    output_image = image.convert("RGB")
+    if output_mode not in ("RGB", "RGBA") or (output_mode == "RGBA" and image.mode != "RGBA"):
+        raise DerivativeError("GENERATION_WORKER_FAILED", "Generation output mode differs.")
+    output_image = image.convert(output_mode)
     temporary = write_temporary_image(output_image, output_path, "PNG")
     published = False
     try:

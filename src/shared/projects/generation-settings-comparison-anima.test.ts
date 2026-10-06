@@ -335,13 +335,17 @@ test('an external VAE in the current Anima draft remains explicitly unsupported 
   assert.equal(result(source, 'anima.qwen3Encoder').status, 'Same')
 })
 
-test('strength zero is comparable for actual img2img and unavailable for txt2img/outpaint or unknown mode', () => {
+test('strength zero is comparable for actual img2img/outpaint and unavailable for txt2img or unknown mode', () => {
   const source = fixture('img2img')
   assert.equal(result(source, 'denoisingStrength.value').status, 'Same')
   assert.equal(result(source, 'denoisingStrength.value').before, '0')
   source.current.generationDraft.sampling.denoisingStrength = 0.5
   assert.equal(result(source, 'denoisingStrength.value').status, 'Changed')
-  for (const mode of ['txt2img', 'outpaint', null] as const) {
+  source.data.currentMode = 'outpaint'
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Changed')
+  source.current.generationDraft.sampling.denoisingStrength = 0
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Same')
+  for (const mode of ['txt2img', null] as const) {
     source.data.currentMode = mode
     source.data.modeUnavailableReason = mode === null ? 'Worker unavailable' : null
     assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')

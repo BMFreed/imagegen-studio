@@ -24,6 +24,7 @@ from imagegen_worker.inference import (
     INFERENCE_EXTERNAL_VAE_CAPABILITY,
     INFERENCE_IMG2IMG_CAPABILITY,
     INFERENCE_LORA_CAPABILITY,
+    INFERENCE_OUTPAINT_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
     INFERENCE_THUMBNAIL_CAPABILITY,
@@ -31,6 +32,7 @@ from imagegen_worker.inference import (
     INFERENCE_WORKER_VERSION,
     MLRuntime,
     generate_illustrious_img2img,
+    generate_illustrious_outpaint,
     generate_illustrious_txt2img,
     qualify_ml_runtime,
 )
@@ -40,6 +42,7 @@ from imagegen_worker.protocol import (
     ComposeTargetCommand,
     GenerateAnimaTxt2ImgCommand,
     GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
     error_message,
     parse_request,
@@ -73,6 +76,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             INFERENCE_VAE_PRECISION_CAPABILITY,
             INFERENCE_EXTERNAL_VAE_CAPABILITY,
             INFERENCE_EMBEDDINGS_CAPABILITY,
+            INFERENCE_OUTPAINT_CAPABILITY,
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)
@@ -136,6 +140,13 @@ def process_inference_request(
             if isinstance(command, GenerateAnimaTxt2ImgCommand):
                 return generate_anima(
                     command,
+                    runtime=runtime,
+                    on_progress=report_progress if on_progress is not None else None,
+                )
+            if isinstance(command, GenerateIllustriousOutpaintCommand):
+                return generate_illustrious_outpaint(
+                    command,
+                    config_dir=config_dir,
                     runtime=runtime,
                     on_progress=report_progress if on_progress is not None else None,
                 )

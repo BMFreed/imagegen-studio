@@ -24,6 +24,22 @@ The user can select one or more completed candidates in [GenerationResults](./ge
 
 Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, the primary generation bbox or a Smart Patch bbox while they are pending.
 
+## Current internal outpaint boundary (06.10.2026)
+
+The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
+dispatches already frozen `illustrious-outpaint` and `anima-outpaint` jobs through
+explicit qualified worker 0.12.0 commands. Both use their native masked executors,
+exact local family/LaMa resources and the original mixed-alpha target; neither
+falls back to ordinary RGB img2img. Main independently verifies the contribution
+alpha against the captured source and fixed policy before publishing a temporary
+RGBA candidate. Completion leaves the Project and saved `.igs` unchanged.
+
+Public mixed-alpha `Generate` and public outpaint `Retry` still refuse these
+operations. Internal frozen Retry retains its earlier exact-input contract.
+First-setup LaMa installation and installed trained Generate/Add/Save/reopen or
+release qualification remain subsequent boundaries. The research note owns the
+executed evidence and does not declare phase 2C or PP-005/007/008 complete.
+
 ## Generate Action Area
 
 In the current Project UI, generation commands live in a fixed action bar at the top of the left panel, above the independently scrolling settings stack. No separate `Create` header is shown. A compact target label appears only when generating into a Smart Patch:

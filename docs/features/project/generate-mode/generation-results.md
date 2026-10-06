@@ -17,8 +17,27 @@ and mixed selections with Illustrious. Every selected output, native provenance
 and the prospective package must pass before journal, Project edits, sibling
 cancellation or discard. A bad second candidate or package overflow preserves
 the complete original selection. Grouped Undo/Redo, shadow Recover and explicit
-Save/reopen keep the same native records. Partial-alpha outpaint, regions and
-Smart Patch remain outside this implemented path.
+Save/reopen keep the same native records. Public partial-alpha Generate/Retry,
+regions and Smart Patch remain outside this implemented path.
+
+## Current internal outpaint boundary (06.10.2026)
+
+The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
+publishes verified RGBA contributions for both frozen outpaint kinds. Staging
+keeps an independent durable source PNG before the candidate manifest, rederives
+the original alpha and verifies the exact contribution policy after restart and
+terminal queue pruning. Source or output changes hide the invalid candidate;
+publication, recovery and acceptance retain the existing receipt/identity checks.
+The actual completed uint32 seed may differ from the scheduled seed and remains
+the candidate, Reuse-cursor and accepted-provenance value.
+
+Explicit Add preflights the selected contributions and portable records before
+journal, sibling cancellation or discard, then uses the shared grouped
+Undo/Redo and shadow owner. Explicit Save/readback and portable reopening retain
+the RGBA asset and immutable outpaint provenance; source recovery files and LaMa
+weights stay local. These internal results do not activate public mixed-alpha
+Generate/Retry or prove installed/release execution. Evidence and counts are
+recorded in the research note.
 
 ## Feature
 

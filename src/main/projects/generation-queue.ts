@@ -286,7 +286,7 @@ const Img2ImgWorkerJobSchema = v.strictObject({
     denoisingStrength: DenoisingStrengthSchema,
   }),
 })
-const Img2ImgSourceRequestSchema = v.strictObject({
+export const Img2ImgSourceRequestSchema = v.strictObject({
   ...Txt2ImgSourceRequestSchema.entries,
   job: v.strictObject({
     ...Img2ImgWorkerJobSchema.entries,
@@ -3272,7 +3272,7 @@ function managerError(row: Selectable<GenerationQueueItem>): GenerationQueueEntr
     APP_RESTART: 'The application closed before this job completed.',
     GENERATION_INPUT_CHANGED: 'The frozen generation input could not be verified.',
     GENERATION_OUTPAINT_UNAVAILABLE:
-      'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
+      'The active runtime or local infill resource is unavailable for outpaint.',
     GENERATION_WORKER_FAILED: 'The generation worker did not return a valid completed result.',
     QUEUE_INPUT_INVALID: 'The frozen queue input is invalid.',
     USER_CANCELED: row.status === 'running' ? 'Cancellation requested.' : 'The job was canceled.',

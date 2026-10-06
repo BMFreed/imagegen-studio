@@ -5,6 +5,10 @@ import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 
+import {
+  createInferenceAuxiliaryResourceRoot,
+  InferenceAuxiliaryResources,
+} from '../runtime/inference-auxiliary-resources.js'
 import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { GenerationProcessor } from './generation-processor.js'
@@ -107,6 +111,9 @@ export async function createGenerationAppContext(
       staging,
       dependencies.modelService,
       dependencies.scratchBasePath,
+      new InferenceAuxiliaryResources(
+        await createInferenceAuxiliaryResourceRoot(dependencies.dataRoot),
+      ),
     )
     const orchestrator = new GenerationOrchestrator(
       dependencies.projectService,

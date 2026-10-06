@@ -6,6 +6,7 @@ export interface QualifiedInferenceWorkerReady {
   workerVersion:
     | '0.10.0'
     | '0.11.0'
+    | '0.12.0'
     | '0.2.0'
     | '0.3.0'
     | '0.4.0'
@@ -64,7 +65,10 @@ export function isQualifiedInferenceWorkerReady(
         ready.capabilities.includes('illustrious-lora') &&
         ready.capabilities.includes('illustrious-vae-precision') &&
         ready.capabilities.includes('illustrious-external-vae')) ||
-      ((ready.workerVersion === '0.10.0' || ready.workerVersion === '0.11.0') &&
+      ((ready.workerVersion === '0.10.0' ||
+        ready.workerVersion === '0.11.0' ||
+        (ready.workerVersion === '0.12.0' &&
+          ready.capabilities.includes('illustrious-outpaint'))) &&
         ready.capabilities.includes('denoising-progress') &&
         ready.capabilities.includes('candidate-thumbnails') &&
         ready.capabilities.includes('illustrious-cfg-rescale') &&
@@ -92,7 +96,8 @@ export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
       value.workerVersion === '0.8.0' ||
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -106,7 +111,8 @@ export function supportsInferenceCFGRescale(value: unknown): boolean {
       value.workerVersion === '0.8.0' ||
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -118,7 +124,8 @@ export function supportsInferenceImg2Img(value: unknown): boolean {
       value.workerVersion === '0.8.0' ||
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -130,7 +137,8 @@ export function supportsInferenceLora(value: unknown): boolean {
       value.workerVersion === '0.8.0' ||
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -141,7 +149,8 @@ export function supportsInferenceVaePrecision(value: unknown): boolean {
     (value.workerVersion === '0.8.0' ||
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -151,7 +160,8 @@ export function supportsInferenceExternalVae(value: unknown): boolean {
     isQualifiedInferenceWorkerReady(value) &&
     (value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
-      value.workerVersion === '0.11.0')
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -159,7 +169,9 @@ export function supportsInferenceExternalVae(value: unknown): boolean {
 export function supportsInferenceEmbeddings(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    (value.workerVersion === '0.10.0' || value.workerVersion === '0.11.0')
+    (value.workerVersion === '0.10.0' ||
+      value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0')
   )
 }
 
@@ -167,7 +179,7 @@ export function supportsInferenceEmbeddings(value: unknown): boolean {
 export function supportsInferenceAnima(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    value.workerVersion === '0.11.0' &&
+    (value.workerVersion === '0.11.0' || value.workerVersion === '0.12.0') &&
     [
       'anima-txt2img',
       'anima-img2img',
@@ -175,5 +187,20 @@ export function supportsInferenceAnima(value: unknown): boolean {
       'anima-prompt-weighting',
       'anima-flow-sampling',
     ].every((capability) => value.capabilities.includes(capability))
+  )
+}
+
+/** Explicit alpha conditioning and RGBA contribution require the qualified 0.12 adapter. */
+export function supportsInferenceOutpaint(value: unknown): boolean {
+  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.12.0'
+}
+
+/** Original Anima also requires native BF16 and its explicit contribution adapter. */
+export function supportsInferenceAnimaOutpaint(value: unknown): boolean {
+  return (
+    supportsInferenceOutpaint(value) &&
+    supportsInferenceAnima(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('anima-outpaint')
   )
 }

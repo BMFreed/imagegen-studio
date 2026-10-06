@@ -7,11 +7,13 @@ import { isGenerationDenoisingProgress } from '../../shared/projects/generation-
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceAnimaOutpaint,
   supportsInferenceCandidateThumbnails,
   supportsInferenceDenoisingProgress,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceOutpaint,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -20,8 +22,16 @@ import { constants } from 'node:fs'
 import { lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import type {
+  OutpaintInfillResolver,
+  VerifiedOutpaintInfill,
+} from '../runtime/inference-auxiliary-resources.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
-import type { QueuedGenerationItem, VerifiedQueuedInput } from './generation-queue.js'
+import type {
+  FrozenQueuedAnimaOutpaintV1,
+  QueuedGenerationItem,
+  VerifiedQueuedInput,
+} from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
@@ -30,22 +40,26 @@ import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
+import type { AnimaOutpaintRequestV1, OutpaintWorkerRequest } from './outpaint-worker-request.js'
 
 import { buildQueuedAnimaWorkerRequest } from './anima-generation-dispatch.js'
 import {
   type FrozenQueuedAnimaGenerationV1,
   reverifyFrozenQueuedAnimaGeneration,
 } from './anima-queued-generation.js'
-import { isQueuedOutpaint } from './generation-queue.js'
+import { isQueuedOutpaint, reverifyFrozenQueuedOutpaintGeneration } from './generation-queue.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
+import { assertFrozenAlphaOutpaintConditioning } from './outpaint-conditioning.js'
+import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 
 const PROTOCOL_VERSION = '1'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 
-export type GenerationWorkerRequest = AnimaWorkerRequest | IllustriousGenerationRequestV1
+export type GenerationWorkerRequest =
+  AnimaWorkerRequest | IllustriousGenerationRequestV1 | OutpaintWorkerRequest
 export type GenerationDispatchModelResolver = GenerationModelResolver &
   Partial<AnimaGenerationModelResolver>
 
@@ -113,6 +127,7 @@ export class GenerationProcessor {
     private readonly staging: GenerationStagingRepository,
     private readonly modelService: GenerationDispatchModelResolver,
     private readonly scratchBasePath: string,
+    private readonly outpaintInfill?: OutpaintInfillResolver,
   ) {}
 
   async cancel(queueItemId: string): Promise<QueuedGenerationItem> {
@@ -306,13 +321,22 @@ export class GenerationProcessor {
     outputPath: string,
     provisionalRoot: string,
     ready: InferenceWorkerReady,
+    infill?: VerifiedOutpaintInfill,
   ): Promise<GenerationWorkerRequest> {
     const frozen = claimed.payload
     if (isQueuedOutpaint(frozen)) {
-      throw new GenerationProcessorError(
-        'INFERENCE_UNAVAILABLE',
-        'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
-      )
+      if (!infill) {
+        throw new Error('The outpaint infill resource was not qualified.')
+      }
+      return buildQueuedOutpaintWorkerRequest({
+        infill,
+        outputPath,
+        payload: frozen,
+        provisionalRoot,
+        ready,
+        requestId: randomUUID(),
+        targetPath,
+      })
     }
     if (isAnimaPayload(frozen)) {
       const bundle = this.modelService.resolveVerifiedGenerationAnimaBundleForPlan
@@ -430,12 +454,37 @@ export class GenerationProcessor {
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
         }
-        // Internal durable jobs must never fall through to ordinary RGB inference. Refuse before
-        // resource resolution, scratch materialization or the first worker generate request.
+        // Refuse unqualified adapters before scratch or resource resolution. Family and common
+        // infill qualification run outside queue transactions, then the worker rechecks exact bytes.
+        let infill: VerifiedOutpaintInfill | undefined
         if (isQueuedOutpaint(claimed.payload)) {
-          throw new GenerationProcessorError(
-            'INFERENCE_UNAVAILABLE',
-            'Normal outpaint dispatch and RGBA contribution publication are not integrated yet.',
+          if (
+            !supportsInferenceOutpaint(transport.ready) ||
+            !this.outpaintInfill ||
+            (claimed.payload.kind === 'anima-outpaint' &&
+              !supportsInferenceAnimaOutpaint(transport.ready))
+          ) {
+            throw new GenerationProcessorError(
+              'INFERENCE_UNAVAILABLE',
+              'The active worker or local infill resource has not qualified alpha outpaint contribution inference.',
+            )
+          }
+          if (
+            claimed.payload.kind === 'anima-outpaint' &&
+            (typeof this.modelService.resolveVerifiedGenerationAnimaBundleForPlan !== 'function' ||
+              typeof this.modelService.resolveVerifiedAnimaGenerationLoraForPlan !== 'function')
+          ) {
+            throw new Error('Anima generation resource qualification is unavailable.')
+          }
+          await reverifyFrozenQueuedOutpaintGeneration(
+            claimed.payload,
+            this.modelService as AnimaGenerationModelResolver & GenerationModelResolver,
+            {
+              resolveVerifiedOutpaintInfill: async () => {
+                infill = await this.outpaintInfill!.resolveVerifiedOutpaintInfill()
+                return infill
+              },
+            },
           )
         }
         if (isAnimaPayload(claimed.payload) && !supportsInferenceAnima(transport.ready)) {
@@ -483,12 +532,18 @@ export class GenerationProcessor {
         }
         const provisionalRoot = await createProvisionalRoot(
           this.scratchBasePath,
-          isAnimaPayload(claimed.payload) ? 'anima' : 'illustrious',
+          claimed.payload.kind.startsWith('anima-') ? 'anima' : 'illustrious',
         )
         active.provisionalRoot = provisionalRoot
         const targetPath = path.join(provisionalRoot, 'target.png')
         const outputPath = path.join(provisionalRoot, 'result.png')
         const targetBytes = await readStableTarget(claimed)
+        if (isQueuedOutpaint(claimed.payload)) {
+          await assertFrozenAlphaOutpaintConditioning(
+            claimed.payload.context.conditioning,
+            targetBytes,
+          )
+        }
         await writeFile(targetPath, targetBytes, { flag: 'wx', mode: 0o600 })
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -499,6 +554,7 @@ export class GenerationProcessor {
           outputPath,
           provisionalRoot,
           transport.ready,
+          infill,
         )
         if (!(await this.stillRunning(active))) {
           return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -715,12 +771,22 @@ function requireCorrelatedDone(
 
 function isAnimaPayload(
   payload: VerifiedQueuedInput['payload'],
-): payload is FrozenQueuedAnimaGenerationV1 {
-  return payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img'
+): payload is FrozenQueuedAnimaGenerationV1 | FrozenQueuedAnimaOutpaintV1 {
+  return (
+    payload.kind === 'anima-txt2img' ||
+    payload.kind === 'anima-img2img' ||
+    payload.kind === 'anima-outpaint'
+  )
 }
 
-function isAnimaRequest(request: GenerationWorkerRequest): request is AnimaWorkerRequest {
-  return request.type === 'generate-anima-txt2img' || request.type === 'generate-anima-img2img'
+function isAnimaRequest(
+  request: GenerationWorkerRequest,
+): request is AnimaOutpaintRequestV1 | AnimaWorkerRequest {
+  return (
+    request.type === 'generate-anima-txt2img' ||
+    request.type === 'generate-anima-img2img' ||
+    request.type === 'generate-anima-outpaint'
+  )
 }
 
 async function createProvisionalRoot(
@@ -746,7 +812,10 @@ async function readStableTarget(claimed: VerifiedQueuedInput): Promise<Buffer> {
   const expected = claimed.payload.workerJob.target
   let handle
   try {
-    handle = await open(claimed.targetPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+    handle = await open(
+      claimed.targetPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    )
   } catch {
     throw new Error('The frozen target could not be opened.')
   }

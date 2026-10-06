@@ -45,13 +45,15 @@ from imagegen_worker.inference_vae import configure_vae_precision, finite_vae_ou
 from imagegen_worker.protocol import (
     MAX_GENERATION_STEPS,
     GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.11.0"
+INFERENCE_WORKER_VERSION = "0.12.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
+INFERENCE_OUTPAINT_CAPABILITY = "illustrious-outpaint"
 INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_VAE_PRECISION_CAPABILITY = "illustrious-vae-precision"
 INFERENCE_EXTERNAL_VAE_CAPABILITY = "illustrious-external-vae"
@@ -65,6 +67,7 @@ ANIMA_CAPABILITIES = (
     "anima-lora",
     "anima-prompt-weighting",
     "anima-flow-sampling",
+    "anima-outpaint",
 )
 
 DenoisingProgressSink = Callable[[int, int], None]
@@ -82,6 +85,8 @@ PINNED_ML_VERSIONS: dict[str, str] = {
     "pillow": "12.2.0",
     "torchvision": "0.22.1",
     "tokenizers": "0.22.2",
+    "numpy": "2.5.3",
+    "opencv-python-headless": "5.0.0.93",
 }
 
 # Only verified embedding ranges become private tokens; unknown resource markup stays unsupported.
@@ -142,6 +147,12 @@ def qualify_ml_runtime() -> MLRuntime:
         diffusers = importlib.import_module("diffusers")
         compel = importlib.import_module("compel")
         transformers = importlib.import_module("transformers")
+        numpy = importlib.import_module("numpy")
+        cv2 = importlib.import_module("cv2")
+        for name in ("array", "polyfit", "float32", "pad", "maximum"):
+            getattr(numpy, name)
+        for name in ("getGaussianKernel", "distanceTransform", "threshold"):
+            getattr(cv2, name)
         importlib.import_module("accelerate")
         importlib.import_module("safetensors")
         importlib.import_module("peft")
@@ -208,6 +219,10 @@ def validate_generation_assets(command: GenerateIllustriousTxt2ImgCommand) -> Im
     validate_generation_paths(command.staging_root, command.target_path, command.output_path)
     if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
         raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed after enqueue.")
+    if isinstance(command, GenerateIllustriousOutpaintCommand):
+        from imagegen_worker.outpaint_worker_assets import capture_outpaint_target
+
+        return capture_outpaint_target(command)
     return validate_generation_target(
         staging_root=command.staging_root,
         target_path=command.target_path,
@@ -790,6 +805,20 @@ def generate_illustrious_img2img(
     runtime: MLRuntime,
     on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
+    if isinstance(command, GenerateIllustriousOutpaintCommand):
+        raise DerivativeError("INVALID_REQUEST", "Img2img cannot execute an outpaint command.")
+    return _generate_illustrious(
+        command, config_dir=config_dir, runtime=runtime, on_progress=on_progress
+    )
+
+
+def generate_illustrious_outpaint(
+    command: GenerateIllustriousOutpaintCommand,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
     return _generate_illustrious(
         command, config_dir=config_dir, runtime=runtime, on_progress=on_progress
     )
@@ -810,14 +839,28 @@ def _generate_illustrious(
     for prompt in masked_embedding_prompts(command):
         normalize_compel_prompt(prompt)
     verify_pinned_config(str(config_dir))
-    image = validate_generation_assets(command)
+    alpha_conditioning = None
+    if isinstance(command, GenerateIllustriousOutpaintCommand):
+        from imagegen_worker.outpaint_worker_assets import prepare_worker_outpaint
+
+        validate_generation_paths(command.staging_root, command.target_path, command.output_path)
+        if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
+            raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed after enqueue.")
+        alpha_conditioning, image = prepare_worker_outpaint(command)
+    else:
+        image = validate_generation_assets(command)
     torch = cast(Any, runtime.torch)
     diffusers = cast(Any, runtime.diffusers)
-    pipeline_class = (
-        img2img_pipeline_class(diffusers, torch)
-        if isinstance(command, GenerateIllustriousImg2ImgCommand)
-        else diffusers.StableDiffusionXLPipeline
-    )
+    if isinstance(command, GenerateIllustriousOutpaintCommand):
+        from imagegen_worker.sdxl_outpaint import outpaint_pipeline_class
+
+        pipeline_class = outpaint_pipeline_class(diffusers, torch)
+    else:
+        pipeline_class = (
+            img2img_pipeline_class(diffusers, torch)
+            if isinstance(command, GenerateIllustriousImg2ImgCommand)
+            else diffusers.StableDiffusionXLPipeline
+        )
     selected_vae = (
         load_generation_vae(command.vae, config_dir, diffusers, torch)
         if command.vae is not None
@@ -861,30 +904,45 @@ def _generate_illustrious(
                 "GENERATION_WORKER_FAILED", "Resource conditioning produced non-finite values."
             )
         generator = torch.Generator(device="cpu").manual_seed(command.seed)
-        result = run_sdxl_pipeline(
-            pipeline,
-            conditioning,
-            width=command.width,
-            height=command.height,
-            steps=command.steps,
-            cfg_scale=command.cfg_scale,
-            cfg_rescale=command.cfg_rescale,
-            generator=generator,
-            torch=torch,
-            on_progress=on_progress,
-            image=image,
-            denoising_strength=(
+        arguments: dict[str, Any] = {
+            "width": command.width,
+            "height": command.height,
+            "steps": command.steps,
+            "cfg_scale": command.cfg_scale,
+            "cfg_rescale": command.cfg_rescale,
+            "generator": generator,
+            "torch": torch,
+            "on_progress": on_progress,
+            "image": image,
+            "denoising_strength": (
                 command.denoising_strength
                 if isinstance(command, GenerateIllustriousImg2ImgCommand)
                 else None
             ),
-        )
+        }
+        if alpha_conditioning is not None:
+            from imagegen_worker.sdxl_outpaint import run_sdxl_outpaint_pipeline
+
+            result = run_sdxl_outpaint_pipeline(
+                pipeline,
+                conditioning,
+                keep_mask=alpha_conditioning.latent_keep_mask,
+                **arguments,
+            )
+        else:
+            result = run_sdxl_pipeline(pipeline, conditioning, **arguments)
+    output_image = result.images[0]
+    if alpha_conditioning is not None:
+        from imagegen_worker.outpaint_conditioning import create_outpaint_contribution
+
+        output_image = create_outpaint_contribution(output_image, alpha_conditioning)
     return publish_generation_image(
-        result.images[0],
+        output_image,
         staging_root=command.staging_root,
         output_path=command.output_path,
         width=command.width,
         height=command.height,
         request_id=command.request_id,
         seed=command.seed,
+        output_mode="RGBA" if alpha_conditioning is not None else "RGB",
     )

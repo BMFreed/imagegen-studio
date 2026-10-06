@@ -276,8 +276,8 @@ pixels can be overlaid by the separate contribution. Main owns copied/hash-bound
 target/mask/policy/auxiliary identities; Python owns numerical conditioning and
 verified local TorchScript execution. Normal inference dimensions use the /8 grid.
 
-These are internal helpers, not a new command, handshake capability or durable
-job/provenance union. Public mixed-alpha Generate still refuses both families.
+At this helper checkpoint these are not a new command, handshake capability or
+durable job/provenance union. Public mixed-alpha Generate still refuses both families.
 The [internal Illustrious adapter](../engineering/phase-2c-illustrious-outpaint-research.md)
 now executes the native four-channel img2img loop with protected source/noise
 restoration for both UNet and scheduler at actual selected timesteps, including
@@ -287,11 +287,40 @@ uses the existing six-method flow execution with copied original/noise/mask,
 inverse-shift thresholds and shifted source mixing after completed user steps.
 Heun predictors keep the native solver intermediate; terminal restoration precedes
 VAE. These helpers still add no public protocol variant or accepted record.
-Main auxiliary install/materialization, capability
-admission, Retry, RGBA publication/staging and portable accepted settings must
-be implemented and qualified together before activation. The default installed
+At that checkpoint Main auxiliary install/materialization, capability
+admission, Retry, RGBA publication/staging and portable accepted settings still
+needed implementation and qualification before activation. The default installed
 runtime contract is not changed by a development dependency or a research weight
 download. Full authored masks/Regional Guidance/Smart Patch remain phase4.
+
+### Internal qualified outpaint execution checkpoint (06.10.2026)
+
+The [execution checkpoint](../engineering/phase-2c-outpaint-execution-research.md)
+adds explicit protocol `1` commands `generate-illustrious-outpaint` and
+`generate-anima-outpaint`, with strict detached TS/Python capture. Qualified
+worker **0.12.0** retains all preceding Illustrious capabilities and requires
+`illustrious-outpaint`; original Anima additionally requires native CUDA BF16
+and all six `anima-txt2img`, `anima-img2img`, `anima-lora`,
+`anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint` capabilities.
+Older peers cannot gain either adapter by advertising an extra string.
+
+Each command keeps the existing family numerical img2img plan inside its explicit
+outer outpaint operation and carries captured mixed-alpha PNG/keep-mask/policy
+identity plus the exact local pinned LaMa path/hash/size. Main and worker verify
+actual source bytes and resources; aliases, changed alpha and unsupported policy
+refuse before inference. Native masked execution publishes RGBA contribution
+pixels without ordinary RGB conversion. Main independently rederives the expected
+contribution alpha before staging publication, then retains its own source PNG
+for restart verification after terminal queue pruning.
+
+The generic actual-seed rule below applies unchanged to both outpaint commands:
+a valid completed uint32 deviation is retained in the receipt, candidate, Reuse
+cursor and accepted provenance without rewriting the frozen request. Explicit
+Add and Save/readback support portable contribution records and settings
+comparison. Public mixed-alpha Generate and public outpaint Retry remain closed;
+first-setup LaMa installation, installed trained execution and release
+qualification remain open. The research note owns evidence counts and limits;
+this checkpoint does not complete phase 2C or PP-005/007/008.
 
 ## Правила протокола
 

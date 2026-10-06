@@ -12,7 +12,11 @@ from imagegen_worker.generation_artifacts import (
     validate_generation_target,
 )
 from imagegen_worker.inference_anima import load_anima_models
-from imagegen_worker.protocol import GenerateAnimaImg2ImgCommand, GenerateAnimaTxt2ImgCommand
+from imagegen_worker.protocol import (
+    GenerateAnimaImg2ImgCommand,
+    GenerateAnimaOutpaintCommand,
+    GenerateAnimaTxt2ImgCommand,
+)
 
 if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
@@ -47,16 +51,22 @@ def generate_anima(
     Loaded models are local to this request. No process model/scheduler cache is
     retained after success or failure; the serial owner collects returned frames.
     """
-    source = validate_generation_target(
-        staging_root=command.staging_root,
-        target_path=command.target_path,
-        output_path=command.output_path,
-        target_sha256=command.target_sha256,
-        target_byte_size=command.target_byte_size,
-        width=command.width,
-        height=command.height,
-        img2img=isinstance(command, GenerateAnimaImg2ImgCommand),
-    )
+    alpha_conditioning = None
+    if isinstance(command, GenerateAnimaOutpaintCommand):
+        from imagegen_worker.outpaint_worker_assets import prepare_worker_outpaint
+
+        alpha_conditioning, source = prepare_worker_outpaint(command)
+    else:
+        source = validate_generation_target(
+            staging_root=command.staging_root,
+            target_path=command.target_path,
+            output_path=command.output_path,
+            target_sha256=command.target_sha256,
+            target_byte_size=command.target_byte_size,
+            width=command.width,
+            height=command.height,
+            img2img=isinstance(command, GenerateAnimaImg2ImgCommand),
+        )
     torch = cast(Any, runtime.torch)
     if not supports_anima_compute(runtime):
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Anima requires native CUDA BF16 compute.")
@@ -83,23 +93,43 @@ def generate_anima(
         "timesteps": list(plan.timesteps),
         "initialSigma": plan.initial_sigma,
     }
-    result = generate_anima_flow_sampling(
-        sampling,
-        _prompt_payload(command.positive_prompt),
-        _prompt_payload(command.negative_prompt),
-        models,
-        source_image=source,
-        loras=command.loras,
-        progress=on_progress,
-    )
+    if alpha_conditioning is not None:
+        from imagegen_worker.anima_outpaint import generate_anima_outpaint
+
+        result = generate_anima_outpaint(
+            sampling,
+            _prompt_payload(command.positive_prompt),
+            _prompt_payload(command.negative_prompt),
+            models,
+            source_image=source,
+            keep_mask=alpha_conditioning.latent_keep_mask,
+            loras=command.loras,
+            progress=on_progress,
+        )
+    else:
+        result = generate_anima_flow_sampling(
+            sampling,
+            _prompt_payload(command.positive_prompt),
+            _prompt_payload(command.negative_prompt),
+            models,
+            source_image=source,
+            loras=command.loras,
+            progress=on_progress,
+        )
     if result.total_steps != plan.total_steps:
         raise DerivativeError("GENERATION_WORKER_FAILED", "Anima execution count differs.")
+    output_image = result.image
+    if alpha_conditioning is not None:
+        from imagegen_worker.outpaint_conditioning import create_outpaint_contribution
+
+        output_image = create_outpaint_contribution(output_image, alpha_conditioning)
     return publish_generation_image(
-        result.image,
+        output_image,
         staging_root=command.staging_root,
         output_path=command.output_path,
         width=command.width,
         height=command.height,
         request_id=command.request_id,
         seed=plan.seed,
+        output_mode="RGBA" if alpha_conditioning is not None else "RGB",
     )

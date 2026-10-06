@@ -159,20 +159,49 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
-        // Outpaint candidates cannot yet prove the RGBA contribution or portable provenance.
-        // Check every owned result before pending-cancellation/journal recovery can discard it.
+        // Staging verifies source-bound RGBA contributions, including after queue pruning.
+        // Preflight selected outpaint pixels and portable metadata before a pending handoff can
+        // cancel siblings, write its journal or discard sessions. Already accepted results retain
+        // the existing idempotent reconciliation path when their staging files are gone.
         const beforeHandoff = await this.options.staging.listVerifiedCandidates(tabId)
+        const previouslyAccepted = acceptedLayers(owner.document)
         for (const candidate of beforeHandoff) {
           if (
+            candidateIds.includes(candidate.candidateId) &&
             candidate.documentId === owner.document.documentId &&
             candidate.projectPath === owner.filePath &&
             isQueuedOutpaint(parseFrozenGenerationPayloadV1(candidate.frozenPayloadJson))
           ) {
-            throw new ProjectGenerationAcceptanceError(
-              'ACCEPTANCE_OUTPAINT_UNAVAILABLE',
-              'Normal outpaint Raster acceptance is not integrated yet. Temporary results were kept.',
-            )
+            const bytes = await this.options.staging.readVerifiedCandidatePng({
+              candidateId: candidate.candidateId,
+              imageSha256: candidate.image.sha256,
+              localProjectKey: tabId,
+              stagingSessionId: candidate.stagingSessionId,
+            })
+            if (!bytes) {
+              throw new ProjectGenerationAcceptanceError(
+                'ACCEPTANCE_CANDIDATE_UNAVAILABLE',
+                'A selected outpaint contribution changed before Add. Temporary results were kept.',
+              )
+            }
+            provenanceFromVerifiedRasterCandidate({
+              acceptedAt: candidate.completedAt,
+              candidate,
+              imagePngBytes: bytes,
+            })
           }
+        }
+        if (
+          candidateIds.some(
+            (id) =>
+              !previouslyAccepted.has(id) &&
+              !beforeHandoff.some((candidate) => candidate.candidateId === id),
+          )
+        ) {
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_SELECTION_STALE',
+            'A selected generation result is missing or cannot be verified.',
+          )
         }
         if (this.pendingCancellations.has(tabId)) {
           retainFence = true

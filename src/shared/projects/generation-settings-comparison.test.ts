@@ -377,7 +377,7 @@ test('LoRA comparison distinguishes exact portable settings while local rebindin
   )
 })
 
-test('Denoising Strength compares immutable applied img2img settings and ignores stored txt2img strength', () => {
+test('Denoising Strength compares applied img2img/outpaint settings and ignores stored txt2img strength', () => {
   const source = fixture()
   source.current.generationDraft.sampling.denoisingStrength = 0.75
   assert.equal(
@@ -407,7 +407,7 @@ test('Denoising Strength compares immutable applied img2img settings and ignores
   assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')
   assert.match(result(source, 'denoisingStrength.value').after, /Not applied/)
   source.data.currentMode = 'outpaint'
-  assert.equal(result(source, 'denoisingStrength.value').status, 'Unavailable')
+  assert.equal(result(source, 'denoisingStrength.value').status, 'Same')
   assert.equal(frozen.generationConfiguration.mode, 'img2img')
   assert.equal('denoisingStrength' in old.sampling, false)
 })

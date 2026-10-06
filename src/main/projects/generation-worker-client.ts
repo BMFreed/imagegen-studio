@@ -10,11 +10,13 @@ import {
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceOutpaint,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -30,7 +32,13 @@ import type {
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
 
+import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
 import { validWorkerVae } from './illustrious-generation-vae.js'
+import {
+  type AnimaOutpaintRequestV1,
+  captureOutpaintWorkerRequest,
+  isOutpaintWorkerRequest,
+} from './outpaint-worker-request.js'
 import {
   type ComposeTargetInput,
   type ComposeTargetResult,
@@ -357,7 +365,32 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       } catch {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
       }
-      if (isAnimaRequest(frozen)) {
+      if (isOutpaintWorkerRequest(frozen)) {
+        if (
+          !supportsInferenceOutpaint(this.readyMessage) ||
+          (frozen.type === 'generate-anima-outpaint' &&
+            !supportsInferenceAnimaOutpaint(this.readyMessage))
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified this outpaint adapter.',
+          )
+        }
+        try {
+          frozen = captureOutpaintWorkerRequest(frozen, this.readyMessage)
+        } catch (error) {
+          throw new GenerationWorkerError(
+            'INVALID_REQUEST',
+            error instanceof Error ? error.message : 'The outpaint request is invalid.',
+          )
+        }
+        if (!UUID_PATTERN.test(frozen.requestId)) {
+          throw new GenerationWorkerError(
+            'INVALID_REQUEST',
+            'The generation request identity is invalid.',
+          )
+        }
+      } else if (isAnimaRequest(frozen)) {
         if (!supportsInferenceAnima(this.readyMessage)) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
@@ -705,6 +738,21 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   private async validateRequestPaths(request: GenerationWorkerRequest): Promise<void> {
+    if (isOutpaintWorkerRequest(request)) {
+      const infill = request.job.infillResource
+      try {
+        await verifyInferenceAuxiliaryFile({
+          byteSize: infill.byteSize,
+          managedPath: infill.path,
+          sha256: infill.sha256,
+        })
+      } catch {
+        throw new GenerationWorkerError(
+          'INVALID_PATH',
+          'The exact outpaint infill resource is unavailable or changed.',
+        )
+      }
+    }
     if (isAnimaRequest(request)) {
       for (const file of [
         request.job.model.checkpoint,
@@ -867,8 +915,14 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
   )
 }
 
-function isAnimaRequest(request: GenerationWorkerRequest): request is AnimaWorkerRequest {
-  return request?.type === 'generate-anima-txt2img' || request?.type === 'generate-anima-img2img'
+function isAnimaRequest(
+  request: GenerationWorkerRequest,
+): request is AnimaOutpaintRequestV1 | AnimaWorkerRequest {
+  return (
+    request?.type === 'generate-anima-txt2img' ||
+    request?.type === 'generate-anima-img2img' ||
+    request?.type === 'generate-anima-outpaint'
+  )
 }
 
 function validWorkerLoras(value: unknown): boolean {

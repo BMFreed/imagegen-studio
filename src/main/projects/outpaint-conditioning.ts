@@ -1,3 +1,7 @@
+import {
+  AlphaOutpaintIdentityV1ObjectSchema,
+  INVOKE_ALPHA_OUTPAINT_POLICY_V1,
+} from '../../shared/projects/alpha-outpaint.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
@@ -13,16 +17,7 @@ import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
 
-/** Exact Invoke alpha-derived outpaint defaults; this does not advertise an executable capability. */
-export const INVOKE_ALPHA_OUTPAINT_POLICY_V1 = Object.freeze({
-  edgeRadius: 16,
-  fadeDistance: 16,
-  infillMethod: 'lama',
-  maskBlur: 'gaussian-weighted-max',
-  minimumDenoise: 0,
-  outputMode: 'contribution',
-  version: 1,
-} as const)
+export { INVOKE_ALPHA_OUTPAINT_POLICY_V1 } from '../../shared/projects/alpha-outpaint.js'
 
 /** Internal conditioning input, distinct from durable queue jobs and portable accepted provenance. */
 export interface FrozenAlphaOutpaintConditioningV1 {
@@ -66,50 +61,14 @@ const position = v.pipe(
   v.minValue(-IGS_SAFETY_CEILINGS.coordinateMagnitude),
   v.maxValue(IGS_SAFETY_CEILINGS.coordinateMagnitude),
 )
-const sha = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/))
-const byteSize = v.pipe(
-  v.number(),
-  v.safeInteger(),
-  v.minValue(1),
-  v.maxValue(IGS_GENERATION_PNG_MAX_BYTES),
-)
 
 /** Strict operational conditioning identity. Family admission owns its stronger minimum side. */
 export const FrozenAlphaOutpaintConditioningSchema = v.pipe(
   v.strictObject({
+    ...AlphaOutpaintIdentityV1ObjectSchema.entries,
     bbox: v.strictObject({ height: side, width: side, x: position, y: position }),
-    infillResource: v.strictObject({
-      byteSize: v.literal(LAMA_OUTPAINT_ARTIFACT.sizeBytes),
-      role: v.literal(LAMA_OUTPAINT_ARTIFACT.role),
-      sha256: v.literal(LAMA_OUTPAINT_ARTIFACT.sha256),
-    }),
-    keepMask: v.strictObject({
-      byteSize,
-      format: v.literal('alpha8'),
-      height: side,
-      polarity: v.literal('keep'),
-      sha256: sha,
-      width: side,
-    }),
     kind: v.literal('alpha-outpaint-conditioning'),
-    policy: v.strictObject({
-      edgeRadius: v.literal(16),
-      fadeDistance: v.literal(16),
-      infillMethod: v.literal('lama'),
-      maskBlur: v.literal('gaussian-weighted-max'),
-      minimumDenoise: v.literal(0),
-      outputMode: v.literal('contribution'),
-      version: v.literal(1),
-    }),
     schemaVersion: v.literal(1),
-    sourceTarget: v.strictObject({
-      byteSize,
-      format: v.literal('png'),
-      height: side,
-      iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
-      sha256: sha,
-      width: side,
-    }),
   }),
   v.check(
     (value) =>

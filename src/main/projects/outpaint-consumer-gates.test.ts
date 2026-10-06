@@ -88,7 +88,7 @@ function refusingActionOwner(fixture: OutpaintConsumerFixture) {
 for (const family of ['illustrious', 'anima'] as const) {
   // Boundary: actual queue/preparation/fs/processor + action owner. The transport is controlled;
   // the invariant is no RGB inference/resource/scratch fallthrough and no Retry publication.
-  test(`${family} internal outpaint dispatch and public Retry refuse before scratch, resource or worker calls`, async () => {
+  test(`${family} legacy worker outpaint dispatch and public Retry refuse before scratch, resource or worker calls`, async () => {
     await withOutpaintConsumerFixture(family, async (fixture) => {
       const { items } = await enqueueOutpaintConsumerBatch(fixture)
       const scratchBefore = await readdir(fixture.scratch)
@@ -131,7 +131,7 @@ for (const family of ['illustrious', 'anima'] as const) {
         .select('error_message')
         .where('id', '=', failed.id)
         .executeTakeFirstOrThrow()
-      assert.match(failureRow.error_message ?? '', /Normal outpaint dispatch/)
+      assert.match(failureRow.error_message ?? '', /has not qualified alpha outpaint/)
       assert.equal(failed.details?.sampling.denoisingStrength, 0.5)
       assert.equal(generated, 0)
       assert.equal(resolved, 0)
@@ -161,9 +161,9 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   })
 
-  // Neighbor: ordinary Anima publication remains genuine. Internal outpaint capacity is only
-  // metadata sizing; public parser/publication must refuse even a well-formed persisted payload.
-  test(`${family} outpaint capacity is explicit and publication rejects before reading output or reserving a receipt`, async () => {
+  // Neighbor: ordinary Anima publication remains genuine. Frozen outpaint metadata is admitted,
+  // but unowned/missing contribution output must still fail before reserving a receipt.
+  test(`${family} outpaint capacity admits strict metadata but unowned output refuses before a receipt`, async () => {
     await withOutpaintConsumerFixture(family, async (fixture) => {
       const { items } = await enqueueOutpaintConsumerBatch(fixture)
       const verified = await fixture.queue.loadVerifiedInput(items[0].id)
@@ -172,9 +172,9 @@ for (const family of ['illustrious', 'anima'] as const) {
         parseFrozenGenerationPayloadV1(JSON.stringify(verified.payload)).kind,
         `${family}-outpaint`,
       )
-      assert.throws(
-        () => parseFrozenGenerationCandidatePayloadV1(JSON.stringify(verified.payload)),
-        { code: 'STAGING_OUTPAINT_UNAVAILABLE' },
+      assert.equal(
+        parseFrozenGenerationCandidatePayloadV1(JSON.stringify(verified.payload)).kind,
+        `${family}-outpaint`,
       )
       const preflight = {
         entries: [
@@ -186,9 +186,7 @@ for (const family of ['illustrious', 'anima'] as const) {
       }
       const before = await fixture.queue.listManagerPage()
       await fixture.staging.preflightInternalOutpaintBatchCapacity(preflight)
-      await assert.rejects(fixture.staging.preflightBatchCapacity(preflight), {
-        code: 'STAGING_OUTPAINT_UNAVAILABLE',
-      })
+      await fixture.staging.preflightBatchCapacity(preflight)
       const collateral = { ...preflight, stagingSessionId: items[0].stagingSessionId }
       await assert.rejects(fixture.staging.preflightInternalOutpaintBatchCapacity(collateral), {
         code: 'STAGING_INPUT_INVALID',
@@ -205,7 +203,7 @@ for (const family of ['illustrious', 'anima'] as const) {
           provisionalOutputPath: path.join(fixture.scratch, 'never-materialized', 'result.png'),
           queueItemId: claimed.item.id,
         }),
-        { code: 'STAGING_OUTPAINT_UNAVAILABLE' },
+        { code: 'STAGING_OUTPUT_INVALID' },
       )
       assert.equal(await fixture.staging.hasPublicationReceipt(claimed.item.id), false)
       assert.equal((await fixture.queue.getManagerEntry(claimed.item.id)).status, 'running')
@@ -242,11 +240,14 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   })
 
-  test(`${family} injected outpaint candidates cannot form provenance or mutate Add, journal, cancellation and cleanup`, async () => {
+  test(`${family} malformed injected outpaint identity cannot form provenance or mutate Add, journal, cancellation and cleanup`, async () => {
     await withOutpaintConsumerFixture(family, async (fixture) => {
       const { items } = await enqueueOutpaintConsumerBatch(fixture)
       const frozen = await fixture.queue.loadVerifiedInput(items[0].id)
-      const json = JSON.stringify(frozen.payload)
+      assert.ok(isQueuedOutpaint(frozen.payload))
+      const malformed = structuredClone(frozen.payload)
+      Reflect.set(malformed.context.conditioning.keepMask, 'byteSize', 1)
+      const json = JSON.stringify(malformed)
       const candidate: VerifiedGenerationCandidate = {
         actualSeed: 0,
         assetPath: path.join(fixture.root, 'unread-output.png'),
@@ -275,7 +276,7 @@ for (const family of ['illustrious', 'anima'] as const) {
             candidate,
             imagePngBytes: fixture.outputBytes,
           }),
-        { code: 'PROVENANCE_MODEL_UNSUPPORTED' },
+        { code: 'PROVENANCE_INPUT_INVALID' },
       )
       const owner = await ProjectAutosaveCoordinator.open(
         fixture.projectPath,
@@ -339,7 +340,7 @@ for (const family of ['illustrious', 'anima'] as const) {
             [candidate.candidateId],
             [items[0].id],
           ),
-          { code: 'ACCEPTANCE_OUTPAINT_UNAVAILABLE' },
+          { code: 'QUEUE_INPUT_INVALID' },
         )
         assert.deepEqual(calls, { canceled: 0, discarded: 0, journaled: 0, readPixels: 0 })
         assert.deepEqual(owner.document, original)
@@ -353,7 +354,7 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   })
 
-  test(`${family} completed and restart-reserved outpaint manifests stay hidden while ordinary historical candidates recover`, async () => {
+  test(`${family} outpaint manifests without source evidence stay hidden while ordinary historical candidates recover`, async () => {
     await withOutpaintConsumerFixture(family, async (fixture) => {
       const ordinary = await enqueueAnimaStagingBatch(fixture)
       const claim = await fixture.queue.claimNextPending()

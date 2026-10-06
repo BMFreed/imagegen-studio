@@ -9,10 +9,9 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 
-import {
-  GenerationStagingError,
-  parseFrozenGenerationCandidatePayloadV1,
-} from './generation-staging.js'
+import { isQueuedOutpaint } from './generation-queue.js'
+import { parseFrozenGenerationCandidatePayloadV1 } from './generation-staging.js'
+import { outpaintContributionAlphaIdentity } from './outpaint-contribution.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
 export class ProjectGenerationProvenanceError extends Error {
@@ -58,13 +57,7 @@ export function provenanceFromVerifiedRasterCandidate(input: {
   let payload: ReturnType<typeof parseFrozenGenerationCandidatePayloadV1>
   try {
     payload = parseFrozenGenerationCandidatePayloadV1(candidate.frozenPayloadJson)
-  } catch (error) {
-    if (error instanceof GenerationStagingError && error.code === 'STAGING_OUTPAINT_UNAVAILABLE') {
-      throw new ProjectGenerationProvenanceError(
-        'PROVENANCE_MODEL_UNSUPPORTED',
-        'Normal outpaint accepted RGBA provenance is not integrated yet.',
-      )
-    }
+  } catch {
     throw new ProjectGenerationProvenanceError(
       'PROVENANCE_INPUT_INVALID',
       'The frozen generation context is invalid.',
@@ -131,6 +124,16 @@ export function provenanceFromVerifiedRasterCandidate(input: {
           iccSha256: candidate.image.iccSha256,
           sha256: candidate.image.sha256,
           width: candidate.image.width,
+          ...(isQueuedOutpaint(payload)
+            ? {
+                contributionAlpha8: outpaintContributionAlphaIdentity(
+                  imagePngBytes,
+                  candidate.image.width,
+                  candidate.image.height,
+                ),
+                outputMode: 'contribution',
+              }
+            : {}),
         },
         queueItemId: candidate.queueItemId,
       },
@@ -139,10 +142,24 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         sourceDocumentId: candidate.documentId,
         sourceDocumentRevision: candidate.documentRevision,
         sourceTargetSha256: payload.context.target.sha256,
+        ...(isQueuedOutpaint(payload)
+          ? {
+              outpaint: {
+                infillResource: structuredClone(payload.context.conditioning.infillResource),
+                keepMask: structuredClone(payload.context.conditioning.keepMask),
+                policy: structuredClone(payload.context.conditioning.policy),
+                sourceTarget: structuredClone(payload.context.conditioning.sourceTarget),
+              },
+            }
+          : {}),
       },
       schemaVersion: 1,
     }
-    if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+    if (
+      payload.kind === 'anima-txt2img' ||
+      payload.kind === 'anima-img2img' ||
+      payload.kind === 'anima-outpaint'
+    ) {
       const context = payload.context
       const component = (snapshot: {
         byteSize: number
@@ -167,12 +184,18 @@ export function provenanceFromVerifiedRasterCandidate(input: {
           ...(context.cfgRescale !== undefined ? { cfgRescale: context.cfgRescale } : {}),
           ...(context.vaePrecision !== undefined ? { vaePrecision: context.vaePrecision } : {}),
           loras: structuredClone(context.loraStack),
-          mode: payload.kind === 'anima-img2img' ? 'img2img' : 'txt2img',
+          mode:
+            payload.kind === 'anima-outpaint'
+              ? 'outpaint'
+              : payload.kind === 'anima-img2img'
+                ? 'img2img'
+                : 'txt2img',
           model: { ...context.model.checkpoint.reference },
           negativePrompt: { embeddingRefs: [], text: context.prompts.negative },
           positivePrompt: { embeddingRefs: [], text: context.prompts.positive },
           sampling: {
-            ...(context.kind === 'anima-img2img-preparation'
+            ...(context.kind === 'anima-img2img-preparation' ||
+            context.kind === 'anima-outpaint-preparation'
               ? { denoisingStrength: context.sampling.denoisingStrength }
               : {}),
             actualSeed: candidate.actualSeed,
@@ -199,7 +222,12 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         ...(context.sampling.cfgRescale !== undefined
           ? { cfgRescale: context.sampling.cfgRescale }
           : {}),
-        mode: context.kind === 'normal-img2img-preparation' ? 'img2img' : 'txt2img',
+        mode:
+          context.kind === 'normal-outpaint-preparation'
+            ? 'outpaint'
+            : context.kind === 'normal-img2img-preparation'
+              ? 'img2img'
+              : 'txt2img',
         model: { ...context.model.reference },
         negativePrompt: {
           embeddingRefs: (context.embeddings?.negative ?? []).map(({ reference, token }) => ({
@@ -216,7 +244,8 @@ export function provenanceFromVerifiedRasterCandidate(input: {
           text: context.prompts.positive,
         },
         sampling: {
-          ...(context.kind === 'normal-img2img-preparation'
+          ...(context.kind === 'normal-img2img-preparation' ||
+          context.kind === 'normal-outpaint-preparation'
             ? { denoisingStrength: context.sampling.denoisingStrength }
             : {}),
           actualSeed: candidate.actualSeed,
@@ -230,10 +259,7 @@ export function provenanceFromVerifiedRasterCandidate(input: {
         },
         size: { height: context.bbox.height, width: context.bbox.width },
       },
-      kind:
-        context.kind === 'normal-img2img-preparation'
-          ? 'illustrious-img2img'
-          : 'illustrious-txt2img',
+      kind: payload.kind,
     })
   } catch {
     throw new ProjectGenerationProvenanceError(

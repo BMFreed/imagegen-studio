@@ -28,6 +28,7 @@ import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
+import { assertOutpaintContribution } from './outpaint-contribution.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 
 const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
@@ -114,6 +115,8 @@ export interface GenerationStagingTestHooks {
   afterDiscardTombstone?: () => Promise<void>
   /** Crash window after manifest fsync, before the SQLite completion transaction. */
   afterManifestPublish?: () => Promise<void>
+  /** Crash window after the independent outpaint source fsync, before the candidate manifest. */
+  afterOutpaintSourcePublish?: () => Promise<void>
   /** A deletion failure after the tombstone must keep the candidate hidden for startup retry. */
   beforeSessionCleanup?: () => Promise<void>
 }
@@ -123,10 +126,7 @@ export interface GenerationStagingBatchCapacityInput {
   projectPath: string
   stagingSessionId: string
 }
-export type FrozenGenerationCandidatePayloadV1 = Exclude<
-  FrozenQueuedGenerationV1,
-  { kind: 'anima-outpaint' | 'illustrious-outpaint' }
->
+export type FrozenGenerationCandidatePayloadV1 = FrozenQueuedGenerationV1
 export interface GenerationCandidatePublicationInput {
   actualSeed: number
   expectedProvisionalRoot: string
@@ -352,7 +352,7 @@ export class GenerationStagingRepository {
     return await this.preflightCapacity(input, false)
   }
 
-  /** Internal metadata sizing only; this does not qualify outpaint publication or recovery. */
+  /** Family restricted compatibility entry point for frozen outpaint admission/Retry. */
   async preflightInternalOutpaintBatchCapacity(
     input: GenerationStagingBatchCapacityInput,
   ): Promise<void> {
@@ -905,16 +905,11 @@ export class GenerationStagingRepository {
       this.requireReconciled()
       const queue = new GenerationQueueRepository(this.db, this.dataRoot)
       const verified = await queue.loadVerifiedInput(input.queueItemId)
-      if (isQueuedOutpaint(verified.payload)) {
-        throw new GenerationStagingError(
-          'STAGING_OUTPAINT_UNAVAILABLE',
-          'Normal outpaint RGBA contribution verification and recovery are not integrated yet.',
-        )
-      }
       if (
         requiredFamily === 'illustrious' &&
         verified.payload.kind !== 'illustrious-txt2img' &&
-        verified.payload.kind !== 'illustrious-img2img'
+        verified.payload.kind !== 'illustrious-img2img' &&
+        verified.payload.kind !== 'illustrious-outpaint'
       ) {
         throw new GenerationStagingError(
           'STAGING_INPUT_INVALID',
@@ -949,6 +944,22 @@ export class GenerationStagingRepository {
       )
       const outputBytes = await readStableFile(outputPath, MAX_IMAGE_BYTES)
       await validateOutputPng(outputBytes, verified.payload.context.bbox)
+      let sourceBytes: Buffer | undefined
+      if (isQueuedOutpaint(verified.payload)) {
+        sourceBytes = await readStableFile(verified.targetPath, MAX_IMAGE_BYTES)
+        try {
+          await assertOutpaintContribution(
+            verified.payload.context.conditioning,
+            sourceBytes,
+            outputBytes,
+          )
+        } catch {
+          throw new GenerationStagingError(
+            'STAGING_OUTPUT_INVALID',
+            'The output is not the source-bound outpaint contribution.',
+          )
+        }
+      }
       const outputSha256 = sha256(outputBytes)
       const payloadSha256 = sha256(Buffer.from(frozenPayloadJson, 'utf8'))
       const receipt = await this.reserveReceipt({
@@ -985,7 +996,7 @@ export class GenerationStagingRepository {
         queueItemId: input.queueItemId,
         stagingSessionId: row.staging_session_id,
       }
-      const sessionPath = await this.publishFiles(entry, outputBytes)
+      const sessionPath = await this.publishFiles(entry, outputBytes, sourceBytes)
       await this.testHooks.afterManifestPublish?.()
       await this.commitCompletion(entry, 'live')
       // A derivative failure cannot turn a durable, validated PNG completion into a failed job.
@@ -999,7 +1010,11 @@ export class GenerationStagingRepository {
     })
   }
 
-  private async publishFiles(entry: CandidateEntry, outputBytes: Buffer): Promise<string> {
+  private async publishFiles(
+    entry: CandidateEntry,
+    outputBytes: Buffer,
+    sourceBytes?: Buffer,
+  ): Promise<string> {
     const root = await this.ensureStagingRoot()
     const projectRoot = path.join(root, entry.localProjectKey)
     const sessionRoot = path.join(projectRoot, entry.stagingSessionId)
@@ -1007,6 +1022,35 @@ export class GenerationStagingRepository {
     await ensurePrivateDirectory(projectRoot)
     await ensurePrivateDirectory(sessionRoot)
     await ensurePrivateDirectory(assetsRoot)
+    if (sourceBytes) {
+      // A batch/session has exactly one frozen target. Its independent private copy must survive
+      // terminal queue pruning and become durable before any candidate manifest can refer to it.
+      const sourcePath = path.join(sessionRoot, 'source-target.png')
+      if (await exists(sourcePath)) {
+        if (!(await readStableFile(sourcePath, MAX_IMAGE_BYTES)).equals(sourceBytes)) {
+          throw new GenerationStagingError(
+            'STAGING_OUTPUT_INVALID',
+            'The outpaint session source changed.',
+          )
+        }
+      } else {
+        const temporarySource = path.join(sessionRoot, `.source-${randomUUID()}.tmp`)
+        let linked = false
+        try {
+          await writeDurableFile(temporarySource, sourceBytes)
+          await link(temporarySource, sourcePath)
+          linked = true
+          await unlink(temporarySource)
+          await syncDirectory(sessionRoot)
+        } catch (error) {
+          if (!linked) {
+            await unlink(temporarySource).catch(() => undefined)
+          }
+          throw error
+        }
+      }
+      await this.testHooks.afterOutpaintSourcePublish?.()
+    }
     const assetPath = path.join(assetsRoot, `${entry.candidateId}.png`)
     if (await exists(assetPath)) {
       const existing = await readStableFile(assetPath, MAX_IMAGE_BYTES)
@@ -1391,7 +1435,9 @@ export class GenerationStagingRepository {
     await ensurePrivateDirectory(scratch)
     const canonicalStage = await realpath(expectedProvisionalRoot).catch(() => null)
     const expectedPrefix =
-      operation === 'anima-txt2img' || operation === 'anima-img2img'
+      operation === 'anima-txt2img' ||
+      operation === 'anima-img2img' ||
+      operation === 'anima-outpaint'
         ? 'anima-request-'
         : 'illustrious-request-'
     if (
@@ -1419,6 +1465,20 @@ export class GenerationStagingRepository {
     const bytes = await readStableFile(assetPath, MAX_IMAGE_BYTES)
     const payload = parseFrozenPayload(entry.frozenPayloadJson)
     await validateOutputPng(bytes, payload.context.bbox)
+    if (isQueuedOutpaint(payload)) {
+      try {
+        const sourceBytes = await readStableFile(
+          path.join(sessionPath, 'source-target.png'),
+          MAX_IMAGE_BYTES,
+        )
+        await assertOutpaintContribution(payload.context.conditioning, sourceBytes, bytes)
+      } catch {
+        throw new GenerationStagingError(
+          'STAGING_OUTPUT_INVALID',
+          'The recovered outpaint contribution or source changed.',
+        )
+      }
+    }
     if (
       bytes.length !== entry.image.byteSize ||
       sha256(bytes) !== entry.image.sha256 ||
@@ -1459,10 +1519,9 @@ function parseFrozenPayload(json: string): FrozenPayload {
     )
   }
   if (isQueuedOutpaint(parsed)) {
-    throw new GenerationStagingError(
-      'STAGING_OUTPAINT_UNAVAILABLE',
-      'Normal outpaint RGBA contribution verification and recovery are not integrated yet.',
-    )
+    // The queue parser qualifies all duplicated numerical/model/source/policy fields. Actual
+    // contribution pixels additionally require the independently retained source in verifyEntry.
+    return parsed
   }
   const payload = parsed
   if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {

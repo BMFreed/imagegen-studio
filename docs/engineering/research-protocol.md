@@ -125,6 +125,13 @@ point затронутого контура, включая получение �
 Для high risk mutation проверяется исполнением в изолированной копии и удаляется
 после опыта; отсутствие доступа к настоящей границе фиксируется как ограничение.
 
+Failure diagnostics тоже должны быть ограничены: большие binary/image buffers
+сравниваются по точным байтам (`Buffer.equals()` с коротким сообщением), без
+построения многомегабайтного `deepEqual` diff. Тяжёлые suites и mutation harness
+запускаются последовательно с лимитом памяти всей группы процессов и deadline.
+Это следует из воспроизведённого [OOM при outpaint mutation](./phase-2c-outpaint-execution-research.md#test-harness-memory-incident);
+падение от OOM, import или collection не считается обнаруженной semantic mutation.
+
 Успех теста подтверждается командой, результатом, количеством executed/failed/
 skipped tests и проверяемой ревизией. Проверить entry point и свежесть сборки:
 зелёный запуск старого bundle или пропущенного набора не является evidence.
