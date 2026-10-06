@@ -558,7 +558,7 @@ test(
 )
 
 test(
-  'public Anima refuses partial transparent target and unavailable Reuse without worker inference',
+  'public Anima legacy worker refuses outpaint and unavailable Reuse without worker inference',
   options,
   async (t) => {
     for (const failure of ['outpaint', 'reuse'] as const) {
@@ -586,7 +586,7 @@ test(
                   toProjectGenerationActionApiError(error).code,
                   failure === 'reuse'
                     ? 'GENERATION_SEED_UNAVAILABLE'
-                    : 'GENERATION_MODE_UNSUPPORTED',
+                    : 'GENERATION_RUNTIME_UNAVAILABLE',
                 )
                 return true
               },

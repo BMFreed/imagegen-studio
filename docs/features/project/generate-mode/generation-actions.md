@@ -24,21 +24,27 @@ The user can select one or more completed candidates in [GenerationResults](./ge
 
 Pressing `Generate` does not call the worker directly. It creates one or more Queue Manager items from frozen project/generation state. The queued jobs must not change if the user edits prompts, layers, masks, the primary generation bbox or a Smart Patch bbox while they are pending.
 
-## Current internal outpaint boundary (06.10.2026)
+## Current public outpaint boundary (07.10.2026)
+
+The [public admission checkpoint](../../../engineering/phase-2c-public-outpaint-research.md)
+connects mixed-alpha Project Generate and failed/canceled frozen Retry to explicit
+qualified worker 0.12.0 commands for both families. It requires the exact local
+pinned LaMa file. Older workers and missing/corrupt helpers refuse with a diagnostic;
+ordinary txt2img/opaque img2img and recovered history remain usable. Worker capability
+flags are advisory and do not substitute for admission/dispatch resource verification.
+
+Current document and close/shutdown fences apply through final SQLite commit and
+through the runtime's subsequent child-exit wait. A late refusal cancels only this
+action's newly published jobs, with confirmed canceled status or a recovery fence.
+Retry retains the source PNG/alpha/policy/resources and settings despite later draft edits.
 
 The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
-dispatches already frozen `illustrious-outpaint` and `anima-outpaint` jobs through
-explicit qualified worker 0.12.0 commands. Both use their native masked executors,
-exact local family/LaMa resources and the original mixed-alpha target; neither
-falls back to ordinary RGB img2img. Main independently verifies the contribution
-alpha against the captured source and fixed policy before publishing a temporary
-RGBA candidate. Completion leaves the Project and saved `.igs` unchanged.
-
-Public mixed-alpha `Generate` and public outpaint `Retry` still refuse these
-operations. Internal frozen Retry retains its earlier exact-input contract.
-First-setup LaMa installation and installed trained Generate/Add/Save/reopen or
-release qualification remain subsequent boundaries. The research note owns the
-executed evidence and does not declare phase 2C or PP-005/007/008 complete.
+continues to own native masking, independent Main contribution-alpha verification,
+source-bound temporary RGBA and explicit portable Add/Save/read/comparison. Completion
+does not change the Project or saved `.igs`. First-setup LaMa installation, signed
+release qualification, authored masks/regions/Smart Patch remain separate boundaries.
+Executed evidence belongs to the public research note; phase 2C and PP-005/007/008
+are not declared complete by this slice.
 
 ## Generate Action Area
 

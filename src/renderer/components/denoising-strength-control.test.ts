@@ -8,7 +8,7 @@ import {
   parseDenoisingStrength,
 } from './denoising-strength-control.js'
 
-test('denoising control and Generate require verified opaque pixels, supported model/engine and explicit strength', () => {
+test('denoising control and Generate require verified raster pixels, supported model/engine and explicit strength', () => {
   const input = {
     modelFamily: 'illustrious',
     runtimeUnavailableReason: null,
@@ -26,9 +26,17 @@ test('denoising control and Generate require verified opaque pixels, supported m
     denoisingControlReason({ ...input, target: { ...input.target, mode: 'txt2img' } })!,
     /raster input/,
   )
+  assert.equal(
+    denoisingControlReason({ ...input, target: { ...input.target, mode: 'outpaint' } }),
+    null,
+  )
   assert.match(
-    denoisingControlReason({ ...input, target: { ...input.target, mode: 'outpaint' } })!,
-    /partly transparent/,
+    denoisingControlReason({
+      ...input,
+      supported: false,
+      target: { ...input.target, mode: 'outpaint' },
+    })!,
+    /outpaint/,
   )
   assert.match(
     denoisingControlReason({ ...input, target: null, targetError: 'Pixel read failed' })!,
@@ -74,7 +82,12 @@ test('Anima denoising uses native qualification independently of the Illustrious
   assert.equal(denoisingGenerationReason('img2img', 0, true, 'anima'), null)
   assert.match(denoisingGenerationReason('img2img', 0, false, 'anima')!, /for Anima/)
   assert.match(denoisingGenerationReason('img2img', null, true, 'anima')!, /Set Denoising Strength/)
-  assert.match(denoisingGenerationReason('outpaint', 0.5, true, 'anima')!, /partly transparent/)
+  assert.equal(denoisingGenerationReason('outpaint', 0.5, true, 'anima'), null)
+  assert.match(
+    denoisingGenerationReason('outpaint', null, true, 'anima')!,
+    /Set Denoising Strength/,
+  )
+  assert.match(denoisingGenerationReason('outpaint', 0.5, false, 'anima')!, /outpaint for Anima/)
 })
 
 test('denoising raw input retains zero, one and unset while refusing nonfinite and out-of-range values', () => {
@@ -89,4 +102,28 @@ test('denoising raw input retains zero, one and unset while refusing nonfinite a
   for (const raw of ['-0.1', '1.00001', 'Infinity', 'NaN', '1e500', '0,5']) {
     assert.deepEqual(parseDenoisingStrength(raw), { kind: 'invalid' })
   }
+})
+
+// Boundary: renderer consumes validated Main capability data; no capability is inferred from ordinary img2img.
+test('mixed-alpha controls require their own family capability and keep legacy workers disabled', () => {
+  const legacy = { animaSupported: true, img2imgSupported: true }
+  const illustrious = { ...legacy, animaOutpaintSupported: false, outpaintSupported: true }
+  const anima = { ...legacy, animaOutpaintSupported: true, outpaintSupported: false }
+  for (const family of ['illustrious', 'anima']) {
+    assert.equal(denoisingRuntimeSupport(family, null, 'outpaint'), null)
+    assert.equal(denoisingRuntimeSupport(family, legacy, 'outpaint'), false)
+    assert.match(denoisingGenerationReason('outpaint', 0.5, false, family)!, /outpaint/)
+    assert.equal(denoisingRuntimeSupport(family, legacy, 'img2img'), true)
+    for (const strength of [0, 0.5, 1]) {
+      assert.equal(denoisingGenerationReason('outpaint', strength, true, family), null)
+    }
+    assert.match(
+      denoisingGenerationReason('outpaint', null, true, family)!,
+      /Set Denoising Strength/,
+    )
+  }
+  assert.equal(denoisingRuntimeSupport('illustrious', illustrious, 'outpaint'), true)
+  assert.equal(denoisingRuntimeSupport('anima', illustrious, 'outpaint'), false)
+  assert.equal(denoisingRuntimeSupport('illustrious', anima, 'outpaint'), false)
+  assert.equal(denoisingRuntimeSupport('anima', anima, 'outpaint'), true)
 })

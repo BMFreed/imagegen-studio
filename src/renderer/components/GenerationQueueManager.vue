@@ -41,6 +41,7 @@ import {
   queueResultReference,
   type QueueResultReference,
 } from './generation-queue-result.js'
+import { outpaintQueueRetryReason } from './generation-queue-retry.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 
 const show = defineModel<boolean>('show', { required: true })
@@ -370,6 +371,10 @@ function retryReason(item: GenerationQueueEntry): string | null {
   }
   if (state.phase !== 'idle' && state.phase !== 'processing') {
     return 'Wait for the current queue request to finish.'
+  }
+  const outpaintReason = outpaintQueueRetryReason(item.operation, state)
+  if (outpaintReason) {
+    return outpaintReason
   }
   if (!counts.value) {
     return 'Wait for the queue to finish updating.'

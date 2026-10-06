@@ -511,7 +511,11 @@ const samplingFamilyNotice = computed(() => {
     : null
 })
 const denoisingRuntimeSupported = computed(() =>
-  denoisingRuntimeSupport(selectedModel.value?.baseModelFamily ?? null, props.generationState),
+  denoisingRuntimeSupport(
+    selectedModel.value?.baseModelFamily ?? null,
+    props.generationState,
+    targetState.value?.mode ?? null,
+  ),
 )
 const samplerOptions = computed(() => {
   const options = [...new Set(ILLUSTRIOUS_SCHEDULER_PAIRS.map((pair) => pair.sampler))].map(
@@ -1258,7 +1262,7 @@ const generationBlockingReason = computed(() => {
   const denoisingReason = denoisingGenerationReason(
     targetState.value?.mode ?? null,
     props.generationDraft.sampling.denoisingStrength,
-    props.generationState.img2imgSupported,
+    denoisingRuntimeSupported.value === true,
   )
   if (denoisingReason) {
     return denoisingReason

@@ -16,11 +16,13 @@ import type {
 } from '../../shared/projects/generation-queue-manager.js'
 import {
   supportsInferenceAnima,
+  supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceOutpaint,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -30,12 +32,21 @@ import type {
 } from '../../shared/projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
+import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { PreparedAnimaGeneration } from './anima-generation-preparation.js'
 import type { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
+import type { PreparedBatchAdmissionResult } from './generation-orchestrator.js'
 import type { GenerationProcessor } from './generation-processor.js'
-import type { GenerationQueueRepository, QueuedGenerationItem } from './generation-queue.js'
+import type {
+  GenerationQueueRepository,
+  GenerationQueueRetryPreflightInput,
+  QueuedGenerationItem,
+} from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
@@ -43,23 +54,27 @@ import type { PreparedNormalGeneration } from './project-generation-preparation.
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { InferenceAuxiliaryResourceError } from '../runtime/inference-auxiliary-resources.js'
 import { AnimaGenerationBatchError, prepareAnimaGenerationBatch } from './anima-generation-batch.js'
 import {
   prepareAnimaGeneration,
+  prepareAnimaOutpaintGeneration,
   validateAnimaGenerationDraft,
 } from './anima-generation-preparation.js'
 import { AnimaGenerationRequestError } from './anima-generation-request.js'
 import { AnimaQueuedGenerationError } from './anima-queued-generation.js'
 import { withQueuedAnimaGenerationRequest } from './anima-queued-request.js'
-import { isQueuedOutpaint } from './generation-queue.js'
+import { isQueuedOutpaint, type PreparedOutpaintGeneration } from './generation-queue.js'
 import {
   IllustriousJobError,
   type InferenceWorkerReady,
   withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
+import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import {
   GenerationPreparationError,
   prepareNormalGeneration,
+  prepareNormalOutpaintGeneration,
 } from './project-generation-preparation.js'
 
 type CapturedNormalInput = {
@@ -96,24 +111,28 @@ interface GenerationActionRuntime {
 interface GenerationActionDependencies {
   dispatch: Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
   gate: ProjectGenerationOperationGate
+  infillResolver?: OutpaintInfillResolver
   models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
-  orchestrator: Partial<Pick<GenerationOrchestrator, 'enqueuePreparedAnimaBatch'>> &
+  orchestrator: Partial<
+    Pick<GenerationOrchestrator, 'enqueuePreparedAnimaBatch' | 'enqueuePreparedOutpaintBatch'>
+  > &
     Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
   processor: Pick<GenerationProcessor, 'cancelAndWait' | 'onChanged'>
   projects: CapturedProjectService
-  queue: Pick<
-    GenerationQueueRepository,
-    | 'cancel'
-    | 'deleteTerminal'
-    | 'fenceProject'
-    | 'getManagerEntry'
-    | 'listManagerPage'
-    | 'listUnfinishedActionJobsByProjectDocument'
-    | 'listUnfinishedByProjectDocument'
-    | 'loadVerifiedRetryInput'
-    | 'pruneTerminal'
-    | 'retryTerminal'
-  >
+  queue: Partial<Pick<GenerationQueueRepository, 'retryPreparedOutpaintTerminal'>> &
+    Pick<
+      GenerationQueueRepository,
+      | 'cancel'
+      | 'deleteTerminal'
+      | 'fenceProject'
+      | 'getManagerEntry'
+      | 'listManagerPage'
+      | 'listUnfinishedActionJobsByProjectDocument'
+      | 'listUnfinishedByProjectDocument'
+      | 'loadVerifiedRetryInput'
+      | 'pruneTerminal'
+      | 'retryTerminal'
+    >
   runtime: GenerationActionRuntime
   scratchBasePath: string
   staging: Pick<
@@ -325,6 +344,8 @@ export class ProjectGenerationActionController {
     }
     this.assertDocument(tabId, documentId)
     return {
+      animaOutpaintSupported:
+        !this.blocked && !this.closed && supportsInferenceAnimaOutpaint(ready),
       animaSupported: !this.blocked && !this.closed && supportsInferenceAnima(ready),
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
@@ -333,6 +354,7 @@ export class ProjectGenerationActionController {
       externalVaeSupported: !this.blocked && !this.closed && supportsInferenceExternalVae(ready),
       img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
       jobs,
+      outpaintSupported: !this.blocked && !this.closed && supportsInferenceOutpaint(ready),
       phase: this.blocked
         ? 'blocked'
         : this.closed
@@ -434,6 +456,23 @@ export class ProjectGenerationActionController {
     }
   }
 
+  private async cancelPublishedOutpaintJobs(
+    tabId: string,
+    items: readonly QueuedGenerationItem[],
+  ): Promise<void> {
+    try {
+      for (const item of items) {
+        const stopped = await this.options.processor.cancelAndWait(item.id)
+        if (stopped.status !== 'canceled') {
+          throw new Error('A newly admitted outpaint job has not stopped.')
+        }
+      }
+    } catch {
+      this.options.queue.fenceProject(tabId)
+      throw replacementUncertain()
+    }
+  }
+
   private emitChanged(): void {
     for (const listener of this.listeners) {
       try {
@@ -450,271 +489,399 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     this.assertAdmissionOpen()
     this.assertDocument(tabId, request.documentId)
-    return await this.options.projects.withCapturedNormalGenerationInput(tabId, async (capture) => {
-      this.assertAdmissionOpen()
-      if (capture.document.documentId !== request.documentId) {
-        throw documentChanged()
-      }
-      const initial = await this.readImpact(tabId, request.documentId)
-      this.assertAdmissionOpen()
-      if (!confirmationMatches(initial, request.confirmation)) {
-        return toConfirmationResult(initial)
-      }
-      const hasEmbeddings =
-        capture.document.generationDraft.positivePrompt.embeddingRefs.length > 0 ||
-        capture.document.generationDraft.negativePrompt.embeddingRefs.length > 0
-      const anima = capture.document.generationDraft.model?.baseModelFamily === 'anima'
-      let animaModels: AnimaGenerationModelResolver | null = null
-      if (anima) {
-        const models = this.options.models
-        const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
-        const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
-        if (
-          typeof resolveBundle !== 'function' ||
-          typeof resolveLora !== 'function' ||
-          typeof this.options.orchestrator.enqueuePreparedAnimaBatch !== 'function'
-        ) {
-          throw new ProjectGenerationActionError(
-            'GENERATION_MODEL_UNAVAILABLE',
-            'The selected Anima resources cannot be verified for generation.',
-          )
-        }
-        animaModels = {
-          resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
-          resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
-        }
-        // Validate the complete authored envelope and concrete weighted prompt pairs without
-        // choosing Random or disguising unavailable Reuse. The real cursor is checked below.
-        validateAnimaGenerationDraft(capture.document.generationDraft, {
-          bbox: capture.document.primaryBbox,
-          lastActualSeed: capture.document.generationDraft.seed.policy === 'reuse' ? 0 : undefined,
-          lastActualSeedSnapshot: capture.document.lastActualSeedSnapshot,
-        })
-        const dynamic = getEffectiveDynamicPromptSettings(
-          capture.document.generationDraft.dynamicPrompt,
-        )
-        const preflight = planGenerationBatch({
-          baseSeed: 0,
-          iterations: request.iterations,
-          maxJobs: GENERATION_BATCH_JOB_LIMIT,
-          maxPrompts: dynamic.maxPrompts,
-          negativePrompt: capture.document.generationDraft.negativePrompt.text,
-          positivePrompt: capture.document.generationDraft.positivePrompt.text,
-          seedBehavior: dynamic.seedBehavior,
-        })
-        for (const item of preflight.items) {
-          compileAnimaPromptWeighting(item.prompts.positive)
-          compileAnimaPromptWeighting(item.prompts.negative)
-        }
-      }
-      // Refuse known legacy peers before reserving a worker or composing target pixels.
-      const ready =
-        hasEmbeddings || anima ? await this.options.runtime.readQualifiedInferenceReady() : null
-      if (anima && ready && !supportsInferenceAnima(ready)) {
-        throw new AnimaGenerationRequestError(
-          'INFERENCE_UNAVAILABLE',
-          'The active image engine has not qualified the original Anima pipeline.',
-        )
-      }
-      if (!anima && hasEmbeddings && ready && !supportsInferenceEmbeddings(ready)) {
-        throw new GenerationPreparationError(
-          'GENERATION_EMBEDDING_UNSUPPORTED',
-          'The active image engine has not qualified Illustrious prompt embeddings.',
-        )
-      }
-      if (!anima) {
-        await this.options.models.assertNoUnboundGenerationEmbeddings({
-          modelFamily: capture.document.generationDraft.model?.baseModelFamily ?? null,
-          negativePrompt: capture.document.generationDraft.negativePrompt,
-          positivePrompt: capture.document.generationDraft.positivePrompt,
-        })
-      }
-      this.assertAdmissionOpen()
-      const dynamic = getEffectiveDynamicPromptSettings(
-        capture.document.generationDraft.dynamicPrompt,
-      )
-      const admitted = await this.options.runtime.withGenerationPreparation(
-        this.options.scratchBasePath,
-        async ({ inferenceReady, targetWorker }) => {
-          this.assertAdmissionOpen()
-          if (anima && !supportsInferenceAnima(inferenceReady)) {
-            throw new AnimaGenerationRequestError(
-              'INFERENCE_UNAVAILABLE',
-              'The active image engine has not qualified the original Anima pipeline.',
-            )
-          }
-          if (!anima && hasEmbeddings && !supportsInferenceEmbeddings(inferenceReady)) {
-            throw new GenerationPreparationError(
-              'GENERATION_EMBEDDING_UNSUPPORTED',
-              'The active image engine has not qualified Illustrious prompt embeddings.',
-            )
-          }
-          if (
-            !anima &&
-            capture.document.generationDraft.vae &&
-            !supportsInferenceExternalVae(inferenceReady)
-          ) {
-            throw new IllustriousJobError(
-              'INFERENCE_UNAVAILABLE',
-              'The active worker has not qualified external Illustrious VAE loading.',
-            )
-          }
-          if (
-            !anima &&
-            capture.document.generationDraft.vaePrecision !== undefined &&
-            capture.document.generationDraft.vaePrecision !== 'Auto' &&
-            !supportsInferenceVaePrecision(inferenceReady)
-          ) {
-            throw new IllustriousJobError(
-              'INFERENCE_UNAVAILABLE',
-              'The active worker has not qualified manual Illustrious VAE Precision.',
-            )
-          }
-          if (
-            !anima &&
-            (capture.document.generationDraft.cfgRescale ?? 0) !== 0 &&
-            !supportsInferenceCFGRescale(inferenceReady)
-          ) {
-            throw new IllustriousJobError(
-              'INFERENCE_UNAVAILABLE',
-              'The active worker has not qualified Illustrious CFG Rescale.',
-            )
-          }
-          if (
-            !anima &&
-            capture.document.generationDraft.loras.some((entry) => entry.enabled) &&
-            !supportsInferenceLora(inferenceReady)
-          ) {
-            throw new IllustriousJobError(
-              'INFERENCE_UNAVAILABLE',
-              'The active worker has not qualified Illustrious LoRA.',
-            )
-          }
-          const target = await capture.composeTarget(targetWorker)
-          this.assertAdmissionOpen()
-          if (!anima && target.mode === 'img2img' && !supportsInferenceImg2Img(inferenceReady)) {
-            throw new IllustriousJobError(
-              'INFERENCE_UNAVAILABLE',
-              'The active worker has not qualified opaque Illustrious img2img.',
-            )
-          }
-          const lastActualSeed = await this.options.staging.readLastActualSeed(
-            tabId,
-            request.documentId,
-          )
-          this.assertAdmissionOpen()
-          const prepared = anima
-            ? await prepareAnimaGeneration({ lastActualSeed, modelService: animaModels!, target })
-            : await prepareNormalGeneration({
-                lastActualSeed,
-                modelService: this.options.models,
-                target,
+    const outpaintPublication: { admission: PreparedBatchAdmissionResult | null } = {
+      admission: null,
+    }
+    let outpaintOldCleanupStarted = false
+    try {
+      const result =
+        await this.options.projects.withCapturedNormalGenerationInput<ProjectGenerateResult>(
+          tabId,
+          async (capture) => {
+            this.assertAdmissionOpen()
+            if (capture.document.documentId !== request.documentId) {
+              throw documentChanged()
+            }
+            const initial = await this.readImpact(tabId, request.documentId)
+            this.assertAdmissionOpen()
+            if (!confirmationMatches(initial, request.confirmation)) {
+              return toConfirmationResult(initial)
+            }
+            const hasEmbeddings =
+              capture.document.generationDraft.positivePrompt.embeddingRefs.length > 0 ||
+              capture.document.generationDraft.negativePrompt.embeddingRefs.length > 0
+            const anima = capture.document.generationDraft.model?.baseModelFamily === 'anima'
+            let animaModels: AnimaGenerationModelResolver | null = null
+            if (anima) {
+              const models = this.options.models
+              const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+              const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
+              if (
+                typeof resolveBundle !== 'function' ||
+                typeof resolveLora !== 'function' ||
+                typeof this.options.orchestrator.enqueuePreparedAnimaBatch !== 'function'
+              ) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_MODEL_UNAVAILABLE',
+                  'The selected Anima resources cannot be verified for generation.',
+                )
+              }
+              animaModels = {
+                resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
+                resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
+              }
+              // Validate the complete authored envelope and concrete weighted prompt pairs without
+              // choosing Random or disguising unavailable Reuse. The real cursor is checked below.
+              validateAnimaGenerationDraft(capture.document.generationDraft, {
+                bbox: capture.document.primaryBbox,
+                lastActualSeed:
+                  capture.document.generationDraft.seed.policy === 'reuse' ? 0 : undefined,
+                lastActualSeedSnapshot: capture.document.lastActualSeedSnapshot,
               })
-          this.assertAdmissionOpen()
-          this.assertDocument(tabId, request.documentId)
-          const beforePublication = async () => {
-            this.assertAdmissionOpen()
-            const current = await this.readImpact(tabId, request.documentId)
-            this.assertAdmissionOpen()
-            if (!confirmationMatches(current, request.confirmation)) {
-              throw new ConfirmationChanged(current)
+              const dynamic = getEffectiveDynamicPromptSettings(
+                capture.document.generationDraft.dynamicPrompt,
+              )
+              const preflight = planGenerationBatch({
+                baseSeed: 0,
+                iterations: request.iterations,
+                maxJobs: GENERATION_BATCH_JOB_LIMIT,
+                maxPrompts: dynamic.maxPrompts,
+                negativePrompt: capture.document.generationDraft.negativePrompt.text,
+                positivePrompt: capture.document.generationDraft.positivePrompt.text,
+                seedBehavior: dynamic.seedBehavior,
+              })
+              for (const item of preflight.items) {
+                compileAnimaPromptWeighting(item.prompts.positive)
+                compileAnimaPromptWeighting(item.prompts.negative)
+              }
             }
-          }
-          const admitted = isPreparedAnimaGeneration(prepared)
-            ? await this.options.orchestrator.enqueuePreparedAnimaBatch!(
-                tabId,
-                prepareAnimaGenerationBatch({
-                  iterations: request.iterations,
-                  prepared,
-                }),
-                { ready: inferenceReady },
-                beforePublication,
+            // Refuse known legacy peers before reserving a worker or composing target pixels.
+            const ready =
+              hasEmbeddings || anima
+                ? await this.options.runtime.readQualifiedInferenceReady()
+                : null
+            if (anima && ready && !supportsInferenceAnima(ready)) {
+              throw new AnimaGenerationRequestError(
+                'INFERENCE_UNAVAILABLE',
+                'The active image engine has not qualified the original Anima pipeline.',
               )
-            : await this.options.orchestrator.enqueuePreparedBatch(
-                tabId,
-                prepared,
-                {
-                  iterations: request.iterations,
-                  maxPrompts: dynamic.maxPrompts,
-                  seedBehavior: dynamic.seedBehavior,
-                },
-                { ready: inferenceReady },
-                beforePublication,
+            }
+            if (!anima && hasEmbeddings && ready && !supportsInferenceEmbeddings(ready)) {
+              throw new GenerationPreparationError(
+                'GENERATION_EMBEDDING_UNSUPPORTED',
+                'The active image engine has not qualified Illustrious prompt embeddings.',
               )
-          // The new batch is durable before any reviewed old result is discarded. Dispatch is
-          // still held by admission; a failure below cancels only these newly admitted job IDs.
-          let oldCleanupStarted = false
-          try {
+            }
+            if (!anima) {
+              await this.options.models.assertNoUnboundGenerationEmbeddings({
+                modelFamily: capture.document.generationDraft.model?.baseModelFamily ?? null,
+                negativePrompt: capture.document.generationDraft.negativePrompt,
+                positivePrompt: capture.document.generationDraft.positivePrompt,
+              })
+            }
             this.assertAdmissionOpen()
-            await admitted.assertCurrent?.()
-            const current = await this.readImpact(
-              tabId,
-              request.documentId,
-              admitted.items.map((item) => item.id),
+            const dynamic = getEffectiveDynamicPromptSettings(
+              capture.document.generationDraft.dynamicPrompt,
             )
-            this.assertAdmissionOpen()
-            await admitted.assertCurrent?.()
-            this.assertAdmissionOpen()
-            if (!confirmationMatches(current, request.confirmation)) {
-              throw new ConfirmationChanged(current)
-            }
-            if (request.confirmation && hasImpact(current)) {
-              for (const item of current.unfinished) {
-                await admitted.assertCurrent?.()
+            const admitted = await this.options.runtime.withGenerationPreparation(
+              this.options.scratchBasePath,
+              async ({ inferenceReady, targetWorker }) => {
                 this.assertAdmissionOpen()
-                oldCleanupStarted = true
-                const stopped = await this.options.processor.cancelAndWait(item.id)
-                if (stopped.status !== 'canceled') {
-                  throw new ProjectGenerationActionError(
-                    'GENERATION_WORKER_EXIT_UNCONFIRMED',
-                    'An old generation job has not stopped.',
+                if (anima && !supportsInferenceAnima(inferenceReady)) {
+                  throw new AnimaGenerationRequestError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active image engine has not qualified the original Anima pipeline.',
                   )
                 }
-              }
-              this.assertAdmissionOpen()
-              await admitted.assertCurrent?.()
-              this.assertAdmissionOpen()
-              oldCleanupStarted = true
-              await this.options.staging.discardSessions(tabId, current.sessions)
-              this.emitChanged()
-            }
-          } catch (error) {
-            try {
-              for (const item of admitted.items) {
-                const canceled = await this.options.processor.cancelAndWait(item.id)
-                if (canceled.status !== 'canceled') {
-                  throw new Error('A newly admitted replacement job did not stop.')
+                if (!anima && hasEmbeddings && !supportsInferenceEmbeddings(inferenceReady)) {
+                  throw new GenerationPreparationError(
+                    'GENERATION_EMBEDDING_UNSUPPORTED',
+                    'The active image engine has not qualified Illustrious prompt embeddings.',
+                  )
                 }
-              }
-            } catch {
-              this.options.queue.fenceProject(tabId)
-              throw replacementUncertain()
+                if (
+                  !anima &&
+                  capture.document.generationDraft.vae &&
+                  !supportsInferenceExternalVae(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified external Illustrious VAE loading.',
+                  )
+                }
+                if (
+                  !anima &&
+                  capture.document.generationDraft.vaePrecision !== undefined &&
+                  capture.document.generationDraft.vaePrecision !== 'Auto' &&
+                  !supportsInferenceVaePrecision(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified manual Illustrious VAE Precision.',
+                  )
+                }
+                if (
+                  !anima &&
+                  (capture.document.generationDraft.cfgRescale ?? 0) !== 0 &&
+                  !supportsInferenceCFGRescale(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified Illustrious CFG Rescale.',
+                  )
+                }
+                if (
+                  !anima &&
+                  capture.document.generationDraft.loras.some((entry) => entry.enabled) &&
+                  !supportsInferenceLora(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified Illustrious LoRA.',
+                  )
+                }
+                const target = await capture.composeTarget(targetWorker)
+                this.assertAdmissionOpen()
+                if (target.mode === 'outpaint') {
+                  if (
+                    !supportsInferenceOutpaint(inferenceReady) ||
+                    (anima && !supportsInferenceAnimaOutpaint(inferenceReady))
+                  ) {
+                    throw new ProjectGenerationActionError(
+                      'GENERATION_RUNTIME_UNAVAILABLE',
+                      'The active image engine has not qualified this outpaint operation. Existing jobs and results were kept.',
+                    )
+                  }
+                  if (
+                    !this.options.infillResolver ||
+                    typeof this.options.orchestrator.enqueuePreparedOutpaintBatch !== 'function'
+                  ) {
+                    throw new ProjectGenerationActionError(
+                      'GENERATION_RUNTIME_UNAVAILABLE',
+                      'The exact local outpaint infill resource is unavailable. Existing jobs and results were kept.',
+                    )
+                  }
+                }
+                if (
+                  !anima &&
+                  target.mode === 'img2img' &&
+                  !supportsInferenceImg2Img(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified opaque Illustrious img2img.',
+                  )
+                }
+                const lastActualSeed = await this.options.staging.readLastActualSeed(
+                  tabId,
+                  request.documentId,
+                )
+                this.assertAdmissionOpen()
+                const prepared =
+                  target.mode === 'outpaint'
+                    ? anima
+                      ? await prepareAnimaOutpaintGeneration({
+                          lastActualSeed,
+                          modelService: animaModels!,
+                          target,
+                        })
+                      : await prepareNormalOutpaintGeneration({
+                          lastActualSeed,
+                          modelService: this.options.models,
+                          target,
+                        })
+                    : anima
+                      ? await prepareAnimaGeneration({
+                          lastActualSeed,
+                          modelService: animaModels!,
+                          target,
+                        })
+                      : await prepareNormalGeneration({
+                          lastActualSeed,
+                          modelService: this.options.models,
+                          target,
+                        })
+                this.assertAdmissionOpen()
+                this.assertDocument(tabId, request.documentId)
+                const beforePublication = async () => {
+                  this.assertAdmissionOpen()
+                  const current = await this.readImpact(tabId, request.documentId)
+                  this.assertAdmissionOpen()
+                  if (!confirmationMatches(current, request.confirmation)) {
+                    throw new ConfirmationChanged(current)
+                  }
+                }
+                const admitted = isPreparedOutpaintGeneration(prepared)
+                  ? await this.options.orchestrator.enqueuePreparedOutpaintBatch!(
+                      tabId,
+                      prepared,
+                      {
+                        iterations: request.iterations,
+                        maxPrompts: dynamic.maxPrompts,
+                        seedBehavior: dynamic.seedBehavior,
+                      },
+                      { ready: inferenceReady },
+                      beforePublication,
+                      () => {
+                        this.assertAdmissionOpen()
+                        this.assertDocument(tabId, request.documentId)
+                      },
+                    )
+                  : isPreparedAnimaGeneration(prepared)
+                    ? await this.options.orchestrator.enqueuePreparedAnimaBatch!(
+                        tabId,
+                        prepareAnimaGenerationBatch({
+                          iterations: request.iterations,
+                          prepared,
+                        }),
+                        { ready: inferenceReady },
+                        beforePublication,
+                      )
+                    : await this.options.orchestrator.enqueuePreparedBatch(
+                        tabId,
+                        prepared,
+                        {
+                          iterations: request.iterations,
+                          maxPrompts: dynamic.maxPrompts,
+                          seedBehavior: dynamic.seedBehavior,
+                        },
+                        { ready: inferenceReady },
+                        beforePublication,
+                      )
+                if (target.mode === 'outpaint') {
+                  // Retain ownership beyond both the runtime's worker exit and the Project's raster
+                  // lease cleanup. Neither wrapper may discard reviewed old work before it succeeds.
+                  outpaintPublication.admission = admitted
+                  return admitted
+                }
+                // The new batch is durable before any reviewed old result is discarded. Dispatch is
+                // still held by admission; a failure below cancels only these newly admitted job IDs.
+                let oldCleanupStarted = false
+                try {
+                  this.assertAdmissionOpen()
+                  await admitted.assertCurrent?.()
+                  const current = await this.readImpact(
+                    tabId,
+                    request.documentId,
+                    admitted.items.map((item) => item.id),
+                  )
+                  this.assertAdmissionOpen()
+                  await admitted.assertCurrent?.()
+                  this.assertAdmissionOpen()
+                  if (!confirmationMatches(current, request.confirmation)) {
+                    throw new ConfirmationChanged(current)
+                  }
+                  if (request.confirmation && hasImpact(current)) {
+                    for (const item of current.unfinished) {
+                      await admitted.assertCurrent?.()
+                      this.assertAdmissionOpen()
+                      oldCleanupStarted = true
+                      const stopped = await this.options.processor.cancelAndWait(item.id)
+                      if (stopped.status !== 'canceled') {
+                        throw new ProjectGenerationActionError(
+                          'GENERATION_WORKER_EXIT_UNCONFIRMED',
+                          'An old generation job has not stopped.',
+                        )
+                      }
+                    }
+                    this.assertAdmissionOpen()
+                    await admitted.assertCurrent?.()
+                    this.assertAdmissionOpen()
+                    oldCleanupStarted = true
+                    await this.options.staging.discardSessions(tabId, current.sessions)
+                    this.emitChanged()
+                  }
+                } catch (error) {
+                  try {
+                    for (const item of admitted.items) {
+                      const canceled = await this.options.processor.cancelAndWait(item.id)
+                      if (canceled.status !== 'canceled') {
+                        throw new Error('A newly admitted replacement job did not stop.')
+                      }
+                    }
+                  } catch {
+                    this.options.queue.fenceProject(tabId)
+                    throw replacementUncertain()
+                  }
+                  this.emitChanged()
+                  if (oldCleanupStarted) {
+                    this.options.queue.fenceProject(tabId)
+                    throw replacementUncertain()
+                  }
+                  throw error
+                }
+                return admitted
+              },
+            )
+            if (!admitted) {
+              throw new ProjectGenerationActionError(
+                'GENERATION_RUNTIME_UNAVAILABLE',
+                'The image runtime could not reserve a qualified generation worker.',
+              )
             }
-            this.emitChanged()
-            if (oldCleanupStarted) {
-              this.options.queue.fenceProject(tabId)
-              throw replacementUncertain()
+            this.assertAdmissionOpen()
+            return {
+              batchId: admitted.items[0].batchId,
+              documentId: request.documentId,
+              jobIds: admitted.items.map((item) => item.id),
+              kind: 'queued',
+              truncated: admitted.plan.truncated,
             }
-            throw error
-          }
-          return admitted
-        },
-      )
-      if (!admitted) {
-        throw new ProjectGenerationActionError(
-          'GENERATION_RUNTIME_UNAVAILABLE',
-          'The image runtime could not reserve a qualified generation worker.',
+          },
         )
+      const admitted = outpaintPublication.admission
+      if (admitted) {
+        // Both child exit and frozen-raster lease cleanup have completed. Dispatch remains held
+        // by the public admission while identity and the exact reviewed impact are refreshed.
+        this.assertAdmissionOpen()
+        await admitted.assertCurrent?.()
+        const current = await this.readImpact(
+          tabId,
+          request.documentId,
+          admitted.items.map((item) => item.id),
+        )
+        this.assertAdmissionOpen()
+        await admitted.assertCurrent?.()
+        this.assertAdmissionOpen()
+        if (!confirmationMatches(current, request.confirmation)) {
+          throw new ConfirmationChanged(current)
+        }
+        if (request.confirmation && hasImpact(current)) {
+          for (const item of current.unfinished) {
+            await admitted.assertCurrent?.()
+            this.assertAdmissionOpen()
+            outpaintOldCleanupStarted = true
+            const stopped = await this.options.processor.cancelAndWait(item.id)
+            if (stopped.status !== 'canceled') {
+              throw new ProjectGenerationActionError(
+                'GENERATION_WORKER_EXIT_UNCONFIRMED',
+                'An old generation job has not stopped.',
+              )
+            }
+          }
+          this.assertAdmissionOpen()
+          await admitted.assertCurrent?.()
+          this.assertAdmissionOpen()
+          outpaintOldCleanupStarted = true
+          await this.options.staging.discardSessions(tabId, current.sessions)
+          this.emitChanged()
+        }
+        this.assertAdmissionOpen()
+        await admitted.assertCurrent?.()
+        this.assertAdmissionOpen()
+        this.assertDocument(tabId, request.documentId)
       }
-      this.assertAdmissionOpen()
-      return {
-        batchId: admitted.items[0].batchId,
-        documentId: request.documentId,
-        jobIds: admitted.items.map((item) => item.id),
-        kind: 'queued',
-        truncated: admitted.plan.truncated,
+      return result
+    } catch (error) {
+      if (outpaintPublication.admission) {
+        await this.cancelPublishedOutpaintJobs(tabId, outpaintPublication.admission.items)
       }
-    })
+      if (outpaintOldCleanupStarted) {
+        this.options.queue.fenceProject(tabId)
+        throw replacementUncertain()
+      }
+      throw error
+    }
   }
 
   private async readImpact(
@@ -786,100 +953,191 @@ export class ProjectGenerationActionController {
         )
       }
       this.assertDocument(tabId, frozen.payload.context.documentId)
-      if (isQueuedOutpaint(frozen.payload)) {
-        throw new ProjectGenerationActionError(
-          'GENERATION_RUNTIME_UNAVAILABLE',
-          'Normal outpaint Retry is not integrated yet. The original queue item and temporary results were kept.',
-        )
-      }
       const payload = frozen.payload
-      const admitted = await this.options.runtime.withGenerationAdmission(
-        this.options.scratchBasePath,
-        async (ready) => {
-          this.assertAdmissionOpen()
-          this.assertDocument(tabId, documentId)
-          const publish = async () => {
+      if (isQueuedOutpaint(payload)) {
+        const ready = await this.options.runtime.readQualifiedInferenceReady()
+        this.assertAdmissionOpen()
+        this.assertDocument(tabId, documentId)
+        if (
+          ready &&
+          (!supportsInferenceOutpaint(ready) ||
+            (payload.kind === 'anima-outpaint' && !supportsInferenceAnimaOutpaint(ready)))
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'The active image engine has not qualified this outpaint operation. The original queue item and temporary results were kept.',
+          )
+        }
+        if (
+          !this.options.infillResolver ||
+          typeof this.options.queue.retryPreparedOutpaintTerminal !== 'function'
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'The exact local outpaint infill resource is unavailable. The original queue item and temporary results were kept.',
+          )
+        }
+      }
+      let publishedOutpaintRetry: QueuedGenerationItem | null = null
+      let admitted: boolean | null
+      try {
+        admitted = await this.options.runtime.withGenerationAdmission(
+          this.options.scratchBasePath,
+          async (ready) => {
             this.assertAdmissionOpen()
             this.assertDocument(tabId, documentId)
-            const queued = await this.options.queue.retryTerminal(
-              review.id,
-              review.statusSequence,
-              async (input) => {
-                this.assertAdmissionOpen()
-                this.assertDocument(tabId, documentId)
-                await this.options.staging.preflightBatchCapacity({
-                  entries: [
-                    {
-                      frozenPayloadJson: input.frozenPayloadJson,
-                      queueItemId: input.queueItemId,
-                    },
-                  ],
-                  localProjectKey: tabId,
-                  projectPath: input.source.projectPath,
-                  stagingSessionId: input.stagingSessionId,
-                })
-                this.assertAdmissionOpen()
-                this.assertDocument(tabId, documentId)
-              },
-            )
-            try {
+            const preflight = async (input: GenerationQueueRetryPreflightInput) => {
               this.assertAdmissionOpen()
               this.assertDocument(tabId, documentId)
-            } catch (error) {
-              // A late identity/shutdown refusal cannot leave this newly published retry live.
-              await this.options.processor.cancelAndWait(queued.id)
-              throw error
+              await this.options.staging.preflightBatchCapacity({
+                entries: [
+                  { frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId },
+                ],
+                localProjectKey: tabId,
+                projectPath: input.source.projectPath,
+                stagingSessionId: input.stagingSessionId,
+              })
+              this.assertAdmissionOpen()
+              this.assertDocument(tabId, documentId)
             }
-          }
-          if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
-            const { models } = this.options
-            const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
-            const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
-            if (typeof resolveBundle !== 'function' || typeof resolveLora !== 'function') {
+            const publish = async () => {
+              this.assertAdmissionOpen()
+              this.assertDocument(tabId, documentId)
+              const queued = isQueuedOutpaint(payload)
+                ? await this.options.queue.retryPreparedOutpaintTerminal!(
+                    review.id,
+                    review.statusSequence,
+                    {
+                      assertCurrent: () => {
+                        this.assertAdmissionOpen()
+                        this.assertDocument(tabId, documentId)
+                      },
+                      infillResolver: this.options.infillResolver!,
+                      modelService: this.options.models as AnimaGenerationModelResolver &
+                        GenerationModelResolver,
+                      preflight,
+                    },
+                  )
+                : await this.options.queue.retryTerminal(
+                    review.id,
+                    review.statusSequence,
+                    preflight,
+                  )
+              if (isQueuedOutpaint(payload)) {
+                publishedOutpaintRetry = queued
+              }
+              try {
+                this.assertAdmissionOpen()
+                this.assertDocument(tabId, documentId)
+              } catch (error) {
+                // A late identity/shutdown refusal cannot leave this newly published retry live.
+                if (isQueuedOutpaint(payload)) {
+                  await this.cancelPublishedOutpaintJobs(tabId, [queued])
+                  publishedOutpaintRetry = null
+                } else {
+                  await this.options.processor.cancelAndWait(queued.id)
+                }
+                throw error
+              }
+            }
+            if (isQueuedOutpaint(payload)) {
+              if (
+                !supportsInferenceOutpaint(ready) ||
+                (payload.kind === 'anima-outpaint' && !supportsInferenceAnimaOutpaint(ready))
+              ) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'The active image engine has not qualified this outpaint operation. The original queue item and temporary results were kept.',
+                )
+              }
+              if (
+                payload.kind === 'anima-outpaint' &&
+                (typeof this.options.models.resolveVerifiedGenerationAnimaBundleForPlan !==
+                  'function' ||
+                  typeof this.options.models.resolveVerifiedAnimaGenerationLoraForPlan !==
+                    'function')
+              ) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_MODEL_UNAVAILABLE',
+                  'The saved Anima resources cannot be verified. The original queue item was kept.',
+                )
+              }
+              const infill = await this.options.infillResolver!.resolveVerifiedOutpaintInfill()
+              this.assertAdmissionOpen()
+              this.assertDocument(tabId, documentId)
+              const provisionalRoot = path.join(
+                path.resolve(this.options.scratchBasePath),
+                `outpaint-admission-${randomUUID()}`,
+              )
+              buildQueuedOutpaintWorkerRequest({
+                infill,
+                outputPath: path.join(provisionalRoot, 'result.png'),
+                payload,
+                provisionalRoot,
+                ready,
+                requestId: randomUUID(),
+                targetPath: path.join(provisionalRoot, 'target.png'),
+              })
+              await publish()
+            } else if (payload.kind === 'anima-txt2img' || payload.kind === 'anima-img2img') {
+              const { models } = this.options
+              const resolveBundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+              const resolveLora = models.resolveVerifiedAnimaGenerationLoraForPlan
+              if (typeof resolveBundle !== 'function' || typeof resolveLora !== 'function') {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_MODEL_UNAVAILABLE',
+                  'The saved Anima resources cannot be verified. The original queue item was kept.',
+                )
+              }
+              await withQueuedAnimaGenerationRequest({
+                modelService: {
+                  resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
+                  resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
+                },
+                payload,
+                ready,
+                scratchBasePath: this.options.scratchBasePath,
+                targetPngBytes: frozen.targetPngBytes,
+                use: publish,
+              })
+            } else if (
+              payload.kind === 'illustrious-txt2img' ||
+              payload.kind === 'illustrious-img2img'
+            ) {
+              await withIllustriousGenerationRequest({
+                modelService: this.options.models,
+                prepared: {
+                  context: payload.context,
+                  targetPngBytes: frozen.targetPngBytes,
+                },
+                ready,
+                scratchBasePath: this.options.scratchBasePath,
+                use: publish,
+              })
+            } else {
               throw new ProjectGenerationActionError(
-                'GENERATION_MODEL_UNAVAILABLE',
-                'The saved Anima resources cannot be verified. The original queue item was kept.',
+                'GENERATION_INVALID_REQUEST',
+                'The frozen generation operation is unsupported.',
               )
             }
-            await withQueuedAnimaGenerationRequest({
-              modelService: {
-                resolveVerifiedAnimaGenerationLoraForPlan: resolveLora.bind(models),
-                resolveVerifiedGenerationAnimaBundleForPlan: resolveBundle.bind(models),
-              },
-              payload,
-              ready,
-              scratchBasePath: this.options.scratchBasePath,
-              targetPngBytes: frozen.targetPngBytes,
-              use: publish,
-            })
-          } else if (
-            payload.kind === 'illustrious-txt2img' ||
-            payload.kind === 'illustrious-img2img'
-          ) {
-            await withIllustriousGenerationRequest({
-              modelService: this.options.models,
-              prepared: {
-                context: payload.context,
-                targetPngBytes: frozen.targetPngBytes,
-              },
-              ready,
-              scratchBasePath: this.options.scratchBasePath,
-              use: publish,
-            })
-          } else {
-            throw new ProjectGenerationActionError(
-              'GENERATION_INVALID_REQUEST',
-              'The frozen generation operation is unsupported.',
-            )
-          }
-          return true
-        },
-      )
-      if (admitted === null) {
-        throw new ProjectGenerationActionError(
-          'GENERATION_RUNTIME_UNAVAILABLE',
-          'The image runtime is unavailable. The original queue item and temporary results were kept.',
+            return true
+          },
         )
+        if (admitted === null) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'The image runtime is unavailable. The original queue item and temporary results were kept.',
+          )
+        }
+        if (isQueuedOutpaint(payload)) {
+          this.assertAdmissionOpen()
+          this.assertDocument(tabId, documentId)
+        }
+      } catch (error) {
+        if (publishedOutpaintRetry) {
+          await this.cancelPublishedOutpaintJobs(tabId, [publishedOutpaintRetry])
+        }
+        throw error
       }
     })
   }
@@ -950,6 +1208,13 @@ export function toProjectGenerationActionApiError(error: unknown): {
   code: string
   message: string
 } {
+  if (error instanceof InferenceAuxiliaryResourceError) {
+    return {
+      code: 'GENERATION_RESOURCE_CHANGED',
+      message:
+        'The exact local LaMa resource is unavailable or changed. Repair the image engine resources before outpaint. Ordinary generation and Save remain available.',
+    }
+  }
   const rawCode =
     error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code
@@ -1031,6 +1296,15 @@ function isPreparedAnimaGeneration(
   prepared: PreparedAnimaGeneration | PreparedNormalGeneration,
 ): prepared is PreparedAnimaGeneration {
   return prepared.context.kind === 'anima-generation-preparation'
+}
+
+function isPreparedOutpaintGeneration(
+  prepared: PreparedAnimaGeneration | PreparedNormalGeneration | PreparedOutpaintGeneration,
+): prepared is PreparedOutpaintGeneration {
+  return (
+    prepared.context.kind === 'normal-outpaint-preparation' ||
+    prepared.context.kind === 'anima-outpaint-preparation'
+  )
 }
 
 function confirmationMatches(

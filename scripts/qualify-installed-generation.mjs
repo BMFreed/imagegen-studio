@@ -22,16 +22,28 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 
 import { _electron as electron, expect as baseExpect } from '@playwright/test'
 
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
+import { ModelDownloader } from '../src/main/models/model-downloader.ts'
 import {
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
 } from '../src/main/models/anima-manifest.ts'
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { assertOutpaintContribution } from '../src/main/projects/outpaint-contribution.ts'
+import { decodeTargetPngAlpha } from '../src/main/projects/target-png-mode.ts'
+import { createLamaAuxiliaryInstaller } from '../src/main/runtime/inference-auxiliary-installer.ts'
+import {
+  createInferenceAuxiliaryResourceRoot,
+  InferenceAuxiliaryResources,
+  verifyInferenceAuxiliaryFile,
+} from '../src/main/runtime/inference-auxiliary-resources.ts'
+import { LAMA_OUTPAINT_ARTIFACT } from '../src/main/runtime/lama-manifest.ts'
+import { INVOKE_ALPHA_OUTPAINT_POLICY_V1 } from '../src/shared/projects/alpha-outpaint.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
@@ -44,6 +56,7 @@ const runId = Date.now().toString(36)
 assert.ok(path.isAbsolute(process.argv[3]))
 const fixture = JSON.parse(await readFile(process.argv[3], 'utf8'))
 const cfgRescaleProfile = fixture.profile === 'cfg-rescale'
+const outpaintProfile = fixture.profile === 'outpaint'
 assert.equal(fixture.schemaVersion, 1)
 for (const value of [fixture.appData, fixture.artifacts]) {
   assert.equal(typeof value, 'string')
@@ -99,14 +112,17 @@ const report = {
   generations: [],
   pageErrors: [],
   screenshots: [],
+  stages: [],
   boundary: {
     actual:
       'Built Electron renderer/preload/Main, production model qualification and runtime leases, noneditable installed Python worker, trained CUDA models, SQLite queue/receipts, PNG staging, explicit UI Add, .igs writer/loader and close/reopen.',
     preconditions:
       'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
-    limits: cfgRescaleProfile
-      ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
-      : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
+    limits: outpaintProfile
+      ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
+      : cfgRescaleProfile
+        ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
+        : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
     browser:
       'Existing native _electron system harness exercises genuine Electron IPC and the installed CUDA child. HTTP preview availability is outside this qualification.',
   },
@@ -115,6 +131,89 @@ async function hashFile(file) {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(file)) hash.update(chunk)
   return hash.digest('hex')
+}
+function validateOutpaintFixture() {
+  assert.equal(fixture.side, 256, 'Outpaint qualification requires exactly 256 pixels per side.')
+  assert.equal(fixture.steps, 3, 'Outpaint qualification requires exactly 3 authored steps.')
+  assert.ok(
+    fixture.lama &&
+      typeof fixture.lama === 'object' &&
+      !Array.isArray(fixture.lama) &&
+      Object.keys(fixture.lama).sort().join(',') === 'byteSize,path,sha256',
+    'Outpaint qualification requires an exact local LaMa descriptor.',
+  )
+  assert.ok(
+    typeof fixture.lama.path === 'string' &&
+      path.isAbsolute(fixture.lama.path) &&
+      path.normalize(fixture.lama.path) === fixture.lama.path,
+    'The LaMa source must be an absolute normalized read-only path.',
+  )
+  assert.equal(
+    fixture.lama.byteSize,
+    LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    'The LaMa size must match the fixed resource pin.',
+  )
+  assert.equal(
+    fixture.lama.sha256,
+    LAMA_OUTPAINT_ARTIFACT.sha256,
+    'The LaMa SHA-256 must match the fixed resource pin.',
+  )
+}
+async function installQualificationLama() {
+  const source = await lstat(fixture.lama.path)
+  await verifyInferenceAuxiliaryFile({
+    byteSize: fixture.lama.byteSize,
+    managedPath: fixture.lama.path,
+    sha256: fixture.lama.sha256,
+  })
+  const resources = await createInferenceAuxiliaryResourceRoot(fixture.appData)
+  let transportCalls = 0
+  const downloader = new ModelDownloader({
+    resolveAddresses: async () => ['140.82.112.3'],
+    transport: async (url, options) => {
+      assert.equal(String(url), LAMA_OUTPAINT_ARTIFACT.url)
+      assert.equal(new Headers(options.headers).get('authorization'), null)
+      transportCalls += 1
+      const sourceStream = createReadStream(fixture.lama.path)
+      return new Response(
+        Readable.toWeb(sourceStream, {
+          strategy: {
+            highWaterMark: sourceStream.readableHighWaterMark,
+            size: (chunk) => chunk.byteLength,
+          },
+        }),
+        {
+          headers: { 'content-length': String(fixture.lama.byteSize) },
+          status: 200,
+        },
+      )
+    },
+  })
+  const installer = createLamaAuxiliaryInstaller(resources, downloader)
+  const preview = await installer.preview()
+  assert.equal(preview.scope, 'auxiliary-weights')
+  const installed = await installer.install(preview.planId)
+  const verified = await new InferenceAuxiliaryResources(resources).resolveVerifiedOutpaintInfill()
+  assert.equal(verified.sha256, fixture.lama.sha256)
+  assert.equal(verified.byteSize, fixture.lama.byteSize)
+  const sourceAfter = await lstat(fixture.lama.path)
+  assert.deepEqual(
+    [sourceAfter.dev, sourceAfter.ino, sourceAfter.size, sourceAfter.mtimeMs, sourceAfter.ctimeMs],
+    [source.dev, source.ino, source.size, source.mtimeMs, source.ctimeMs],
+  )
+  report.lama = {
+    source: fixture.lama,
+    installed,
+    verified,
+    preview,
+    transportCalls,
+    sourceUnchanged: true,
+    network:
+      'Existing genuine pinned read-only LaMa bytes substitute DNS/transport only; no public network download.',
+  }
+  await check(
+    'Fixed Main LaMa installer independently verifies real local bytes in isolated storage',
+  )
 }
 async function checkpointEvidence(final = false) {
   try {
@@ -139,6 +238,89 @@ async function checkpointEvidence(final = false) {
 async function check(name, evidence = {}) {
   report.checks.push({ name, ...evidence })
   console.log(`PASS ${name}`)
+  await checkpointEvidence()
+}
+async function stage(name, evidence = {}) {
+  report.stage = { name, at: new Date().toISOString(), ...evidence }
+  report.stages.push(report.stage)
+  console.log(`STAGE ${name} ${JSON.stringify(evidence)}`)
+  await checkpointEvidence()
+}
+async function withDeadline(operation, milliseconds, description) {
+  let timer
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(description)), milliseconds)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+async function closeNativeQualification() {
+  if (!application) return
+  if (report.status !== 'failed') {
+    await application.close()
+    return
+  }
+  const child = application.process()
+  const closing = application.close()
+  try {
+    await withDeadline(closing, 30_000, 'Failed qualification native close exceeded 30 seconds.')
+    return
+  } catch (cause) {
+    report.cleanup = { gracefulCloseError: String(cause), forcedExit: false }
+    console.error('QUALIFICATION cleanup', report.cleanup.gracefulCloseError)
+    await checkpointEvidence().catch((writeError) => {
+      report.cleanup.diagnosticWriteError = String(writeError?.stack ?? writeError)
+      console.error(
+        'QUALIFICATION cleanup diagnostic could not be checkpointed',
+        report.cleanup.diagnosticWriteError,
+      )
+    })
+  }
+  // Only this explicitly provisioned disposable fixture and the child launched by this script
+  // may bypass its dirty-document close prompt. Preserve recovery and never manufacture Save.
+  assert.equal(report.status, 'failed')
+  assert.equal(await realpath(fixture.appData), fixture.appData)
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(fixture.appData, 'qualification-runtime.json'), 'utf8')),
+    provision,
+  )
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(fixture.appData, 'runtime/current-runtime.json'), 'utf8')),
+    pointer,
+  )
+  assert.equal(child.pid, report.nativeProcessPid)
+  await withDeadline(
+    application.evaluate(
+      ({ app }, ownership) => {
+        if (
+          process.pid !== ownership.pid ||
+          process.env.XDG_DATA_HOME !== ownership.data ||
+          process.env.XDG_CONFIG_HOME !== ownership.config
+        ) {
+          throw new Error('Refusing forced exit outside the owned failed qualification fixture.')
+        }
+        app.exit(1)
+      },
+      { pid: child.pid, data: env.XDG_DATA_HOME, config: env.XDG_CONFIG_HOME },
+    ),
+    5_000,
+    'Owned failed fixture app.exit exceeded 5 seconds.',
+  ).catch((cause) => {
+    // app.exit can close the evaluation channel before it acknowledges. The process exit below
+    // is the independent observation; an evaluation rejection is never reported as success.
+    report.cleanup.exitEvaluationError = String(cause)
+  })
+  await withDeadline(closing, 5_000, 'Owned failed fixture exit was not confirmed.').catch(
+    (cause) => {
+      report.cleanup.exitConfirmationError = String(cause)
+    },
+  )
+  report.cleanup.forcedExit = child.exitCode !== null || child.signalCode !== null
   await checkpointEvidence()
 }
 async function installArtifact(repository, value, id, dependencies) {
@@ -327,6 +509,43 @@ async function compareCfgRescale(project, layer, captured, caseName) {
     await expect(comparison).toBeHidden()
   }
 }
+async function compareOutpaint(project, layer, retryCase, caseName) {
+  const before = await tab(project)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    const mode = comparison.locator('[data-setting="context.mode"]')
+    await expect(mode).toHaveAttribute('data-status', 'Changed')
+    await expect(mode.locator('.comparison-values p')).toHaveText(['outpaint', 'img2img'])
+    if (retryCase) {
+      const strength = comparison.locator('[data-setting="denoisingStrength.value"]')
+      await expect(strength).toHaveAttribute('data-status', 'Changed')
+      await expect(strength.locator('.comparison-values p')).toHaveText(['0.5', '0.25'])
+    }
+    const after = await tab(project)
+    assert.deepEqual(after.layers, before.layers)
+    assert.deepEqual(after.generationDraft, before.generationDraft)
+    assert.deepEqual(after.primaryBbox, before.primaryBbox)
+    assert.equal(after.dirty, before.dirty)
+    assert.equal(after.canUndo, before.canUndo)
+    assert.equal(after.canRedo, before.canRedo)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { recordedMode: 'outpaint', currentMode: 'img2img', retryCase, screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+  }
+}
 async function queueRows(project) {
   return await database.db
     .selectFrom('generation_queue_item')
@@ -508,7 +727,7 @@ async function createProject(model, lora, caseName = '') {
     .toBe(fixture.steps)
   return project
 }
-async function generateAndAccept(project, family, mode, qualification = null) {
+async function generateAndAccept(project, family, mode, qualification = null, retryCase = false) {
   // Images-per-click is transient UI state and resets when this script closes/reopens a tab.
   // Set the declared single-job qualification input for every click, including img2img.
   await setInput('Images per click', 1)
@@ -536,6 +755,7 @@ async function generateAndAccept(project, family, mode, qualification = null) {
     }
   }
   assert.ok(beforePackagePath)
+  const previousAcceptedLayers = (await readIgsPackage(beforePackagePath)).project.layers
   const beforePackageSha256 = await hashFile(beforePackagePath)
   const previousRows = await queueRows(project)
   const existingJobIds = new Set(previousRows.map(({ id }) => id))
@@ -605,17 +825,17 @@ async function generateAndAccept(project, family, mode, qualification = null) {
       0.7,
     )
     nativePlan = frozen.workerJob.sampling
-    const startStep = mode === 'img2img' ? Math.floor(0.5 * fixture.steps) : 0
+    const startStep = mode !== 'txt2img' ? Math.floor(0.5 * fixture.steps) : 0
     assert.equal(frozen.context.sampling.animaMethod, 'euler')
     assert.equal(nativePlan.version, 'anima-flow-denoising-v1')
     assert.equal(nativePlan.scheduler, 'euler')
-    assert.equal(nativePlan.mode, mode)
+    assert.equal(nativePlan.mode, mode === 'outpaint' ? 'img2img' : mode)
     assert.equal(nativePlan.steps, fixture.steps)
     assert.equal(nativePlan.seed, 0)
     assert.equal(nativePlan.guidanceScale, 4)
     assert.equal(nativePlan.width, fixture.side)
     assert.equal(nativePlan.height, fixture.side)
-    assert.equal(nativePlan.strength, mode === 'img2img' ? 0.5 : null)
+    assert.equal(nativePlan.strength, mode !== 'txt2img' ? 0.5 : null)
     assert.equal(nativePlan.startStep, startStep)
     assert.equal(nativePlan.totalSteps, fixture.steps - startStep)
     assert.equal(nativePlan.timesteps.length, nativePlan.totalSteps)
@@ -629,7 +849,7 @@ async function generateAndAccept(project, family, mode, qualification = null) {
     assert.equal(frozen.context.sampling.invokeScheduler, 'euler_a')
     assert.deepEqual(frozen.workerJob.prompts, frozen.context.prompts)
   }
-  if (mode === 'img2img') assert.equal(frozen.context.sampling.denoisingStrength, 0.5)
+  if (mode !== 'txt2img') assert.equal(frozen.context.sampling.denoisingStrength, 0.5)
   const targetPath = path.join(fixture.appData, 'generation-inputs', admitted.id, 'target.png')
   const targetEntry = await lstat(targetPath)
   assert.ok(targetEntry.isFile() && !targetEntry.isSymbolicLink())
@@ -642,10 +862,26 @@ async function generateAndAccept(project, family, mode, qualification = null) {
   assert.equal(target.sha256, targetSha256)
   assert.equal(target.width, fixture.side)
   assert.equal(target.height, fixture.side)
-  assert.equal(
-    mode === 'img2img' ? target.opaquePixels : target.transparentPixels,
-    fixture.side * fixture.side,
-  )
+  if (mode === 'outpaint') {
+    assert.equal(target.transparentPixels, 64 * fixture.side)
+    assert.equal(target.opaquePixels, (fixture.side - 64) * fixture.side)
+    assert.deepEqual(frozen.context.conditioning.policy, INVOKE_ALPHA_OUTPAINT_POLICY_V1)
+    assert.deepEqual(frozen.context.conditioning.infillResource, {
+      byteSize: fixture.lama.byteSize,
+      role: 'outpaint-infill',
+      sha256: fixture.lama.sha256,
+    })
+    assert.equal(frozen.context.conditioning.sourceTarget.sha256, targetSha256)
+    assert.equal(
+      frozen.context.conditioning.keepMask.sha256,
+      sha256(decodeTargetPngAlpha(targetBytes, fixture.side, fixture.side)),
+    )
+  } else {
+    assert.equal(
+      mode === 'img2img' ? target.opaquePixels : target.transparentPixels,
+      fixture.side * fixture.side,
+    )
+  }
   if (mode === 'img2img') {
     const previous = report.generations.findLast(
       (generation) =>
@@ -662,6 +898,61 @@ async function generateAndAccept(project, family, mode, qualification = null) {
   await expect
     .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
     .toBe(changedPrompt)
+  let retry = null
+  if (retryCase) {
+    assert.equal(mode, 'outpaint')
+    const original = admitted
+    // Cancel the actual admitted worker through the public UI. There is no controlled peer,
+    // manufactured terminal row or completion-to-canceled rewrite in this qualification.
+    const cancel = window.getByRole('button', { name: 'Cancel current generation', exact: true })
+    await expect(cancel).toBeEnabled({ timeout: 180_000 })
+    await cancel.click()
+    await expect
+      .poll(async () => (await queueRows(project)).find(({ id }) => id === original.id)?.status, {
+        timeout: 180_000,
+      })
+      .toBe('canceled')
+    const canceled = (await queueRows(project)).find(({ id }) => id === original.id)
+    await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
+    assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
+    await setInput('Denoising Strength', 0.25)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+      .toBe(0.25)
+    await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+    const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+    const retryButton = manager
+      .locator(`[data-testid="queue-job-row"][data-job-id="${original.id}"]`)
+      .getByRole('button', { name: 'Retry job', exact: true })
+    await expect(retryButton).toBeEnabled({ timeout: 180_000 })
+    await retryButton.click()
+    await expect
+      .poll(async () => {
+        const attempts = (await queueRows(project)).filter(
+          ({ id }) => id !== original.id && !existingJobIds.has(id),
+        )
+        if (attempts.length === 1) admitted = attempts[0]
+        return attempts.length
+      })
+      .toBe(1)
+    assert.equal(admitted.frozen_payload_json, original.frozen_payload_json)
+    assert.notEqual(admitted.staging_session_id, original.staging_session_id)
+    const source = (await queueRows(project)).find(({ id }) => id === original.id)
+    assert.equal(source.status, 'canceled')
+    assert.equal(source.status_sequence, canceled.status_sequence + 1)
+    const copiedTargetPath = path.join(
+      fixture.appData,
+      'generation-inputs',
+      admitted.id,
+      'target.png',
+    )
+    assert.ok(
+      (await readFile(copiedTargetPath)).equals(targetBytes),
+      'Retry must retain exact target bytes',
+    )
+    retry = { originalQueueItemId: original.id, retryQueueItemId: admitted.id, copiedTargetPath }
+    await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  }
   let normalizedInputs = null
   if (qualification) {
     normalizedInputs = structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
@@ -749,6 +1040,22 @@ async function generateAndAccept(project, family, mode, qualification = null) {
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, fixture.side)
   assert.equal(pixels.height, fixture.side)
+  let contributionAlpha8 = null
+  if (mode === 'outpaint') {
+    const outputBytes = Buffer.from(
+      await application.evaluate(async ({ net }, url) => {
+        const response = await net.fetch(url)
+        if (response.status !== 200) throw new Error('The actual contribution is unavailable.')
+        return Array.from(new Uint8Array(await response.arrayBuffer()))
+      }, candidate.imageUrl),
+    )
+    assert.equal(sha256(outputBytes), receipt.image_sha256)
+    contributionAlpha8 = await assertOutpaintContribution(
+      frozen.context.conditioning,
+      targetBytes,
+      outputBytes,
+    )
+  }
   assert.ok(candidate.thumbnailUrl, 'actual worker thumbnail must be published')
   const thumbnail = await decodedImage(candidate.thumbnailUrl)
   assert.equal(thumbnail.status, 200)
@@ -832,20 +1139,48 @@ async function generateAndAccept(project, family, mode, qualification = null) {
       })
     }
   }
-  if (mode === 'img2img')
+  if (mode !== 'txt2img')
     assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, 0.5)
+  if (mode === 'outpaint') {
+    assert.equal(provenance.generationConfiguration.mode, 'outpaint')
+    assert.deepEqual(
+      provenance.executionResultContext.output.contributionAlpha8,
+      contributionAlpha8,
+    )
+    assert.equal(provenance.executionResultContext.output.outputMode, 'contribution')
+    for (const field of ['infillResource', 'keepMask', 'policy', 'sourceTarget']) {
+      assert.deepEqual(
+        provenance.layerSourceContext.outpaint[field],
+        frozen.context.conditioning[field],
+      )
+    }
+    assert.deepEqual(await layerSnapshot(accepted.layers.slice(1)), existingLayers)
+    assert.deepEqual(saved.project.layers.slice(1), previousAcceptedLayers)
+  }
   const savedLayer = saved.project.layers.find(({ id }) => id === layer.id)
   assert.ok(savedLayer)
   assert.equal(sha256(await saved.readMember(savedLayer.asset.path)), receipt.image_sha256)
   assert.equal(savedLayer.asset.bytes, receipt.image_byte_size)
   assert.equal(savedLayer.asset.sha256, receipt.image_sha256)
   assert.equal(saved.manifest.preview.status, 'rendered')
-  assert.deepEqual(saved.manifest.preview.rect, before.primaryBbox)
+  const previewRect =
+    mode === 'outpaint'
+      ? { height: fixture.side, width: fixture.side + before.primaryBbox.x, x: 0, y: 0 }
+      : before.primaryBbox
+  assert.deepEqual(saved.manifest.preview.rect, previewRect)
   const mergedPreviewBytes = await saved.readMember('preview/merged.png')
   const mergedPreview = await decodedImage(
     `data:image/png;base64,${mergedPreviewBytes.toString('base64')}`,
   )
-  assert.equal(mergedPreview.pixelSha256, pixels.pixelSha256)
+  if (mode === 'outpaint') {
+    // A contribution overlays the protected source. Its transparent pixels must remain in the
+    // accepted asset while the real installed CPU compositor renders the complete opaque canvas.
+    assert.ok(pixels.transparentPixels > 0)
+    assert.equal(mergedPreview.width, previewRect.width)
+    assert.equal(mergedPreview.height, previewRect.height)
+    assert.equal(mergedPreview.opaquePixels, previewRect.width * previewRect.height)
+    assert.notEqual(mergedPreview.pixelSha256, pixels.pixelSha256)
+  } else assert.equal(mergedPreview.pixelSha256, pixels.pixelSha256)
   const previewThumbnailBytes = await saved.readMember('preview/thumbnail.webp')
   const previewThumbnail = await decodedImage(
     `data:image/webp;base64,${previewThumbnailBytes.toString('base64')}`,
@@ -885,7 +1220,7 @@ async function generateAndAccept(project, family, mode, qualification = null) {
     }
     await expect(input).toHaveValue('0.2')
   }
-  const caseName = qualification?.caseName ?? `${family}-${mode}`
+  const caseName = qualification?.caseName ?? `${family}-${mode}${retryCase ? '-retry' : ''}`
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
@@ -896,7 +1231,14 @@ async function generateAndAccept(project, family, mode, qualification = null) {
         capturedCfgRescale,
         caseName,
       )
-    : null
+    : mode === 'outpaint'
+      ? await compareOutpaint(
+          project,
+          reopened.layers.find(({ id }) => id === layer.id),
+          retryCase,
+          caseName,
+        )
+      : null
   report.generations.push({
     family,
     mode,
@@ -912,6 +1254,9 @@ async function generateAndAccept(project, family, mode, qualification = null) {
     target: { ...target, path: targetPath },
     nativePlan,
     progress,
+    retry,
+    contributionAlpha8,
+    comparison,
     requestedSeedPolicy,
     mergedPreview,
     previewThumbnail,
@@ -935,12 +1280,15 @@ async function generateAndAccept(project, family, mode, qualification = null) {
   )
 }
 async function prepareImg2Img(project) {
+  await stage('Prepare image-based input: manual seed', { projectKey: project.id })
   // Make the previous manual value observably different from the actual completed seed.
   await setInput('Generation seed', 123)
   await expect.poll(async () => (await tab(project)).generationDraft.seed.value).toBe(123)
+  await stage('Prepare image-based input: Reuse completed seed', { projectKey: project.id })
   await window.getByRole('button', { name: 'Reuse last seed', exact: true }).click()
   await expect.poll(async () => (await tab(project)).generationDraft.seed.policy).toBe('reuse')
   await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('0')
+  await stage('Prepare image-based input: Denoising Strength', { projectKey: project.id })
   await expect(window.locator('input[aria-label="Denoising Strength"]')).toBeVisible({
     timeout: 90_000,
   })
@@ -948,6 +1296,62 @@ async function prepareImg2Img(project) {
   await expect
     .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
     .toBe(0.5)
+  await stage('Image-based input prepared', { projectKey: project.id })
+}
+async function prepareOutpaint(project) {
+  await stage('Prepare outpaint: capture original bbox', { projectKey: project.id })
+  const before = await tab(project)
+  const beforeLayers = await layerSnapshot(before.layers)
+  await stage('Prepare outpaint: Bounding Box tool and focus', {
+    projectKey: project.id,
+    bbox: before.primaryBbox,
+  })
+  await window.getByRole('button', { name: 'Bounding Box tool', exact: true }).click()
+  await window.locator('.canvas-area').focus()
+  await stage('Prepare outpaint: keyboard move by 64 pixels', { projectKey: project.id })
+  // One held-key edit commits exactly once through the ordinary canvas keyboard handler.
+  for (let index = 0; index < 64; index += 1) await window.keyboard.down('ArrowRight')
+  await window.keyboard.up('ArrowRight')
+  await expect.poll(async () => (await tab(project)).primaryBbox.x).toBe(before.primaryBbox.x + 64)
+  const moved = await tab(project)
+  await stage('Prepare outpaint: bbox committed', {
+    projectKey: project.id,
+    bbox: moved.primaryBbox,
+  })
+  assert.deepEqual(moved.primaryBbox, { ...before.primaryBbox, x: before.primaryBbox.x + 64 })
+  assert.deepEqual(await layerSnapshot(moved.layers), beforeLayers)
+  await prepareImg2Img(project)
+  const state = await api('getGenerationState', project.id)
+  assert.equal(
+    state[
+      before.generationDraft.model.baseModelFamily === 'anima'
+        ? 'animaOutpaintSupported'
+        : 'outpaintSupported'
+    ],
+    true,
+  )
+  const screenshot = path.join(
+    fixture.artifacts,
+    `${before.generationDraft.model.baseModelFamily}-mixed-target-${moved.primaryBbox.x}.png`,
+  )
+  await captureScreenshot(screenshot)
+  report.screenshots.push(screenshot)
+  await stage('Mixed-alpha outpaint input prepared', { projectKey: project.id, screenshot })
+}
+async function qualifyOutpaint() {
+  for (const [family, loraKey] of [
+    ['illustrious', 'illustriousLora'],
+    ['anima', 'animaLora'],
+  ]) {
+    const project = await createProject(fixture[family], fixture[loraKey])
+    await generateAndAccept(project, family, 'txt2img')
+    await prepareOutpaint(project)
+    await generateAndAccept(project, family, 'outpaint')
+    await prepareOutpaint(project)
+    await generateAndAccept(project, family, 'outpaint', null, true)
+  }
+  assert.equal(report.generations.length, 6)
+  assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 2)
 }
 async function qualifyCfgRescale() {
   let nonneutralProject
@@ -1160,8 +1564,8 @@ async function qualifyInstalledImport(project) {
 }
 try {
   assert.ok(
-    !Object.hasOwn(fixture, 'profile') || fixture.profile === 'cfg-rescale',
-    'Qualification profile must be omitted or exactly cfg-rescale.',
+    !Object.hasOwn(fixture, 'profile') || fixture.profile === 'cfg-rescale' || outpaintProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale or outpaint.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -1173,6 +1577,15 @@ try {
   assert.ok(Number.isInteger(fixture.steps) && fixture.steps >= 1 && fixture.steps <= 200)
   if (cfgRescaleProfile) {
     assert.equal(fixture.steps, 3, 'CFG Rescale qualification requires exactly 3 authored steps.')
+  }
+  if (outpaintProfile) {
+    validateOutpaintFixture()
+    // Qualify the declared local file before model copying, catalog writes or Electron startup.
+    await verifyInferenceAuxiliaryFile({
+      byteSize: fixture.lama.byteSize,
+      managedPath: fixture.lama.path,
+      sha256: fixture.lama.sha256,
+    })
   }
   const families = cfgRescaleProfile ? ['illustrious'] : ['illustrious', 'anima']
   const allModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
@@ -1241,7 +1654,9 @@ try {
       fixture[key].installed = await installArtifact(repository, fixture[key], id)
   }
   await check('Real exact model files copied, verified and cataloged; source weights unchanged')
+  if (outpaintProfile) await installQualificationLama()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
+  report.nativeProcessPid = application.process().pid
   mainLog = createWriteStream(path.join(fixture.artifacts, 'electron-main.log'), { flags: 'wx' })
   application.process().stderr.pipe(mainLog, { end: false })
   application.process().on('exit', (code, signal) => {
@@ -1289,7 +1704,18 @@ try {
   await check('Unmodified production Main qualifies activated real Linux/NVIDIA runtime', {
     runtime: runtime.value,
   })
-  if (cfgRescaleProfile) {
+  if (outpaintProfile) {
+    const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
+    assert.equal(
+      ready.workerVersion,
+      '0.12.0',
+      'Outpaint qualification requires an installed 0.12 worker.',
+    )
+    for (const capability of ['illustrious-outpaint', 'anima-outpaint'])
+      assert.ok(ready.capabilities.includes(capability))
+    report.installedReady = ready
+    await qualifyOutpaint()
+  } else if (cfgRescaleProfile) {
     await qualifyCfgRescale()
   } else {
     let lastProject
@@ -1317,10 +1743,47 @@ try {
 } catch (error) {
   report.status = 'failed'
   report.error = String(error.stack ?? error)
+  console.error('QUALIFICATION FAILED', report.error)
+  await checkpointEvidence().catch((cause) =>
+    console.error('QUALIFICATION failure report could not be checkpointed', cause),
+  )
   throw error
 } finally {
-  if (application) await application.close()
-  if (database) await database.close()
-  if (mainLog) await new Promise((resolve) => mainLog.end(resolve))
-  await checkpointEvidence(true)
+  const qualificationFailed = report.status === 'failed'
+  const finalizationErrors = []
+  const finalize = async (name, operation) => {
+    try {
+      await operation()
+    } catch (cause) {
+      const error = String(cause?.stack ?? cause)
+      finalizationErrors.push(cause)
+      report.cleanupErrors ??= []
+      report.cleanupErrors.push({ name, error })
+      console.error(`QUALIFICATION ${name} failed`, error)
+      if (!qualificationFailed) {
+        report.status = 'failed'
+        report.error ??= error
+      }
+    }
+  }
+  await finalize('native cleanup', closeNativeQualification)
+  await finalize('database close', async () => {
+    if (database) await database.close()
+  })
+  await finalize('main log close', async () => {
+    if (!mainLog) return
+    await new Promise((resolve, reject) => {
+      const onError = (cause) => reject(cause)
+      mainLog.once('error', onError)
+      mainLog.end((cause) => {
+        mainLog.off('error', onError)
+        if (cause) reject(cause)
+        else resolve()
+      })
+    })
+  })
+  await finalize('final evidence checkpoint', () => checkpointEvidence(true))
+  // A pending qualification throw remains authoritative. A successful run must still reject
+  // when native/database/log closure or final evidence publication fails.
+  if (!qualificationFailed && finalizationErrors.length > 0) throw finalizationErrors[0]
 }

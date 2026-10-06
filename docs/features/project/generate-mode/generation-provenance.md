@@ -52,10 +52,10 @@ identity; availability still requires current installed bindings. Local IDs are
 advisory recorded bindings, not portable identity. Missing native catalog
 metadata or unsupported current controls never become Same. Catalog status is
 the existing fast metadata/stat/cache check; Generate requalifies actual bytes.
-Preset creation, Smart Patch, regions, public outpaint Generate/Retry and
-installed-runtime/trained-model release qualification remain separate roadmap work.
+Preset creation, Smart Patch, regions and trained-model release qualification
+remain separate roadmap work. Public outpaint admission follows the checkpoint below.
 
-## Current internal outpaint boundary (06.10.2026)
+## Historical internal outpaint checkpoint (06.10.2026)
 
 The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
 adds strict portable `illustrious-outpaint` and `anima-outpaint` v1 records only
@@ -75,9 +75,12 @@ recovery and portable copy/open preserve the record. Read-only settings
 comparison includes outpaint mode and denoising strength while leaving private
 source/execution groups outside the settings payload.
 
-Public mixed-alpha Generate/Retry, first-setup LaMa installation and installed
-trained or release qualification remain open. The research note separates the
-executed storage/native boundary evidence and its counts from those gaps;
+At this checkpoint, public mixed-alpha Generate/Retry, first-setup LaMa installation
+and installed trained or release qualification remained open. The research note
+separates that checkpoint's executed storage/native boundary evidence and its
+counts from those gaps. Public admission and the scoped installed trained
+qualification were connected in the 07.10.2026 checkpoint below; first setup and
+signed release qualification remain open.
 PP-005/007/008 and phase 2C are not complete.
 
 ## Contents
@@ -452,3 +455,19 @@ Add, Undo/recovery and explicit Save/reopen preserve the record. Comparison
 compares portable source/hash/family identity independently of local IDs and
 display names, and detects unavailable resources. This does not establish Preset
 creation/Apply, Anima conditioning or full MVP pipeline readiness.
+
+## Public outpaint admission (07.10.2026)
+
+[Public Generate/Retry](../../../engineering/phase-2c-public-outpaint-research.md) now
+reaches the existing two portable outpaint kinds. Public frozen Retry retains
+original source, policy, resource identities, bbox and effective settings even
+when the current draft differs. Worker completion remains temporary; provenance
+appears only through explicit Add and reaches the saved `.igs` only through Save.
+Admission/dispatch qualify local bytes rather than trusting advisory UI flags.
+Installed development Electron qualification completes six trained cases across
+both families: normal source, mixed-alpha Generate and frozen Retry after actual
+Cancel, each with explicit Add/Save/reopen; outpaint comparison retains the frozen
+baseline despite current edits. Source layers, exact contribution alpha and
+portable identities survive at 256×256/three steps with genuine CPU LaMa and
+trained CUDA models. This scoped evidence is recorded in the research note.
+First setup and signed release qualification remain open.

@@ -7,7 +7,9 @@ import type { ProjectService } from './project-service.js'
 
 import {
   createInferenceAuxiliaryResourceRoot,
+  InferenceAuxiliaryResourceError,
   InferenceAuxiliaryResources,
+  type OutpaintInfillResolver,
 } from '../runtime/inference-auxiliary-resources.js'
 import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
@@ -26,6 +28,7 @@ export interface GenerationAppDependencies {
 }
 
 export interface RecoveredGenerationServices {
+  readonly infillResolver: OutpaintInfillResolver
   readonly orchestrator: GenerationOrchestrator
   readonly processor: GenerationProcessor
   readonly queue: GenerationQueueRepository
@@ -106,14 +109,28 @@ export async function createGenerationAppContext(
       dependencies.database,
       dependencies.dataRoot,
     )
+    // A shared helper failure affects outpaint only; recovered ordinary jobs/history remain usable.
+    let infillResolver: OutpaintInfillResolver
+    try {
+      infillResolver = new InferenceAuxiliaryResources(
+        await createInferenceAuxiliaryResourceRoot(dependencies.dataRoot),
+      )
+    } catch {
+      infillResolver = {
+        resolveVerifiedOutpaintInfill: async () => {
+          throw new InferenceAuxiliaryResourceError(
+            'GENERATION_RESOURCE_CHANGED',
+            'The local LaMa resource storage needs repair before outpaint can run.',
+          )
+        },
+      }
+    }
     const processor = new GenerationProcessor(
       queue,
       staging,
       dependencies.modelService,
       dependencies.scratchBasePath,
-      new InferenceAuxiliaryResources(
-        await createInferenceAuxiliaryResourceRoot(dependencies.dataRoot),
-      ),
+      infillResolver,
     )
     const orchestrator = new GenerationOrchestrator(
       dependencies.projectService,
@@ -123,8 +140,12 @@ export async function createGenerationAppContext(
       staging,
       processor,
       dependencies.scratchBasePath,
+      infillResolver,
     )
-    return new OwnedGenerationAppContext({ orchestrator, processor, queue, staging }, null)
+    return new OwnedGenerationAppContext(
+      { infillResolver, orchestrator, processor, queue, staging },
+      null,
+    )
   } catch (error) {
     // A partially recovered pair must never become reachable through this context.
     return new OwnedGenerationAppContext(null, error)

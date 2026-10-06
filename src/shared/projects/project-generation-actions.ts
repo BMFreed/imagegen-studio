@@ -14,6 +14,8 @@ export interface ProjectGenerationQueueJob {
 }
 
 export interface ProjectGenerationActionState {
+  /** Explicit worker 0.12+ support; absence must not enable mixed-alpha generation. */
+  animaOutpaintSupported?: boolean
   /** Absent in older responses; never treat absence as native Anima support. */
   animaSupported?: boolean
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
@@ -24,6 +26,8 @@ export interface ProjectGenerationActionState {
   externalVaeSupported: boolean
   img2imgSupported: boolean
   jobs: ProjectGenerationQueueJob[]
+  /** Worker capability only. Main verifies the exact local LaMa resource on admission. */
+  outpaintSupported?: boolean
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
   runningJobId: string | null
@@ -103,9 +107,12 @@ export function isProjectGenerationActionState(
         'runningJobId',
         'vaePrecisionSupported',
       ],
-      ['animaSupported'],
+      ['animaSupported', 'animaOutpaintSupported', 'outpaintSupported'],
     ) ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
+    (value['animaOutpaintSupported'] !== undefined &&
+      typeof value['animaOutpaintSupported'] !== 'boolean') ||
+    (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
     typeof value['embeddingsSupported'] !== 'boolean' ||
     typeof value['externalVaeSupported'] !== 'boolean' ||

@@ -6,7 +6,8 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
-- [Internal outpaint execution (06.10.2026)](./phase-2c-outpaint-execution-research.md) — explicit worker 0.12.0 commands for both families, independent Main contribution-alpha verification, owned staging source after queue pruning and portable Add/Save/read/comparison; public mixed-alpha Generate/Retry, first-setup LaMa installation and installed/release qualification remain open. Counts and evidence boundaries live in the research note.
+- [Public outpaint admission (07.10.2026)](./phase-2c-public-outpaint-research.md) — both-family mixed-alpha Generate/frozen Retry, final SQL and runtime child-exit document fences, exact local LaMa refusal with ordinary storage preserved; counts, installed evidence and remaining release boundaries live in the research note.
+- [Internal outpaint execution (06.10.2026)](./phase-2c-outpaint-execution-research.md) — explicit worker 0.12.0 commands for both families, independent Main contribution-alpha verification, owned staging source after queue pruning and portable Add/Save/read/comparison; public admission is described by the newer checkpoint above. First-setup LaMa installation and release qualification remain open. Counts and historical evidence boundaries live in the research note.
 - [Normal outpaint conditioning (06.10.2026)](./phase-2c-outpaint-conditioning-research.md) — frozen Main alpha/policy/LaMa identity, exact Invoke CPU masks and local TorchScript infill; durable RGBA publication and public activation were open at this helper checkpoint.
 - [Internal Illustrious masked denoising (06.10.2026)](./phase-2c-illustrious-outpaint-research.md) — native img2img loop with same protected latents for UNet/scheduler, exact external Invoke oracle and trained CUDA controls; durable integration and public activation were open at this adapter checkpoint.
 - [Internal Anima masked denoising (06.10.2026)](./phase-2c-anima-outpaint-research.md) — six-method after-step restoration with inverse-shift thresholds, shifted source/noise and completed Heun steps; shared unmasked APIs retained, durable RGBA/public activation were open at this adapter checkpoint.
@@ -62,7 +63,7 @@
 
 - [Main-owned LaMa delivery](./phase-2c-lama-install-research.md) — pinned download,
   exact durable auxiliary publication/reuse and full-artifact engine byte accounting.
-  Renderer Set up/Install/Repair, release manifests and public outpaint remain open.
+  Renderer Set up/Install/Repair and release manifests remain open; public outpaint is covered by the newer admission checkpoint.
 
 ## Источник и адаптация
 

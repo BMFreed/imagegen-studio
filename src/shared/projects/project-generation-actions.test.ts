@@ -195,3 +195,20 @@ test('action state requires an explicit boolean embedding capability', () => {
     assert.equal(isProjectGenerationActionState({ ...state, embeddingsSupported }), false)
   }
 })
+
+// Boundary: untrusted Main/preload DTO. Neighbor: old ordinary-only response remains valid.
+test('outpaint advisory flags accept booleans only and never require older responses to invent support', () => {
+  assert.equal(isProjectGenerationActionState(pendingState()), true)
+  for (const key of ['outpaintSupported', 'animaOutpaintSupported']) {
+    for (const value of [true, false]) {
+      assert.equal(isProjectGenerationActionState({ ...pendingState(), [key]: value }), true)
+    }
+    for (const value of [null, 1, 'true', {}]) {
+      assert.equal(isProjectGenerationActionState({ ...pendingState(), [key]: value }), false)
+    }
+  }
+  assert.equal(
+    isProjectGenerationActionState({ ...pendingState(), lamaPath: '/private/big-lama.pt' }),
+    false,
+  )
+})

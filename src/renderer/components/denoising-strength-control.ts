@@ -3,10 +3,19 @@ import type { ProjectGenerationTargetState } from '../../shared/projects/project
 
 export function denoisingRuntimeSupport(
   modelFamily: string | null,
-  state: Pick<ProjectGenerationActionState, 'animaSupported' | 'img2imgSupported'> | null,
+  state: Pick<
+    ProjectGenerationActionState,
+    'animaOutpaintSupported' | 'animaSupported' | 'img2imgSupported' | 'outpaintSupported'
+  > | null,
+  mode: ProjectGenerationTargetState['mode'] = 'img2img',
 ): boolean | null {
   if (!state) {
     return null
+  }
+  if (mode === 'outpaint') {
+    return modelFamily === 'anima'
+      ? (state.animaOutpaintSupported ?? false)
+      : (state.outpaintSupported ?? false)
   }
   return modelFamily === 'anima' ? (state.animaSupported ?? false) : state.img2imgSupported
 }
@@ -49,13 +58,13 @@ export function denoisingControlReason(input: {
   if (input.target.mode === 'txt2img') {
     return 'Denoising Strength is available when the generation area contains raster input.'
   }
-  if (input.target.mode === 'outpaint') {
-    return 'The generation area is partly transparent. This generation path is not supported yet.'
-  }
   if (input.supported === null) {
     return 'Checking image engine support for Denoising Strength.'
   }
   if (!input.supported) {
+    if (input.target.mode === 'outpaint') {
+      return `The current image engine does not support outpaint for ${input.modelFamily === 'anima' ? 'Anima' : 'Illustrious'}.`
+    }
     return `The current image engine does not support image-based generation for ${input.modelFamily === 'anima' ? 'Anima' : 'Illustrious'}.`
   }
   return null
@@ -67,14 +76,14 @@ export function denoisingGenerationReason(
   supported: boolean,
   modelFamily: string | null = 'illustrious',
 ): string | null {
-  if (mode === 'outpaint') {
-    return 'The generation area is partly transparent. This generation path is not supported yet.'
-  }
-  if (mode !== 'img2img') {
+  if (mode !== 'img2img' && mode !== 'outpaint') {
     return null
   }
   if (value === null) {
     return 'Set Denoising Strength before generating from this raster input.'
+  }
+  if (mode === 'outpaint' && !supported) {
+    return `The current image engine does not support outpaint for ${modelFamily === 'anima' ? 'Anima' : 'Illustrious'}.`
   }
   return supported
     ? null

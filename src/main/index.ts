@@ -456,6 +456,7 @@ if (!gotInstanceLock) {
           ? new ProjectGenerationActionController({
               dispatch: generationDispatch,
               gate: projectGenerationGate,
+              infillResolver: recoveredGeneration.infillResolver,
               models: modelService,
               orchestrator: recoveredGeneration.orchestrator,
               processor: recoveredGeneration.processor,

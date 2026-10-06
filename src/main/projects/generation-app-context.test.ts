@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
+import { InferenceAuxiliaryResourceError } from '../runtime/inference-auxiliary-resources.js'
+import { toProjectGenerationActionApiError } from './generation-action-controller.js'
 import { createGenerationAppContext } from './generation-app-context.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -101,4 +103,68 @@ test('unsafe staging recovery leaves generation unavailable without disabling th
       await rm(outside, { force: true, recursive: true })
     }
   })
+})
+
+// Boundary: actual startup SQLite/storage recovery. A helper failure must not become a storage failure.
+for (const kind of ['missing', 'corrupt', 'linked-root', 'file-root'] as const) {
+  test(`LaMa ${kind} refuses outpaint only while normal generation storage recovers`, async () => {
+    await withDatabase(async (dataRoot, database) => {
+      const resources = path.join(dataRoot, 'inference-resources')
+      const outside = await mkdtemp(path.join(os.tmpdir(), 'imagegen-outside-infill-'))
+      try {
+        switch (kind) {
+          case 'corrupt': {
+            await mkdir(resources)
+            await writeFile(path.join(resources, 'big-lama.pt'), 'wrong weights')
+
+            break
+          }
+          case 'file-root': {
+            await writeFile(resources, 'preserve this foreign file')
+
+            break
+          }
+          case 'linked-root': {
+            await symlink(outside, resources)
+
+            break
+          }
+          // No default
+        }
+        const context = await createGenerationAppContext(dependencies(dataRoot, database))
+        assert.deepEqual(context.availability, { kind: 'storage-recovered' })
+        assert.equal(context.recoveryFailure, null)
+        const services = context.requireRecoveredServices()
+        assert.doesNotThrow(() => services.queue.assertReadyForDispatch())
+        assert.doesNotThrow(() => services.staging.assertReadyForPublication())
+        assert.equal(await services.queue.claimNextPending(), null)
+        await assert.rejects(services.infillResolver.resolveVerifiedOutpaintInfill(), {
+          code: 'GENERATION_RESOURCE_CHANGED',
+        })
+        assert.deepEqual(await database.db.selectFrom('app_metadata').selectAll().execute(), [])
+        context.shutdown()
+      } finally {
+        await rm(outside, { force: true, recursive: true })
+      }
+    })
+  })
+}
+
+test('auxiliary resource refusals expose a concrete outpaint repair action without private paths', () => {
+  for (const code of ['GENERATION_RESOURCE_CHANGED', 'INVALID_INFERENCE_RESOURCE_ROOT'] as const) {
+    const projected = toProjectGenerationActionApiError(
+      new InferenceAuxiliaryResourceError(code, 'private /home/person/big-lama.pt'),
+    )
+    assert.equal(projected.code, 'GENERATION_RESOURCE_CHANGED')
+    assert.match(projected.message, /LaMa/)
+    assert.match(projected.message, /Ordinary generation and Save remain available/)
+    assert.ok(!projected.message.includes('/home/person'))
+  }
+  assert.ok(
+    !toProjectGenerationActionApiError(
+      Object.assign(new Error('private /home/person/big-lama.pt'), {
+        code: 'GENERATION_RESOURCE_CHANGED',
+      }),
+    ).message.includes('/home/person'),
+  )
 })

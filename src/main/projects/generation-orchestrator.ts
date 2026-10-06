@@ -5,12 +5,18 @@ import type {
 } from '../../shared/projects/generation-batch-plan.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import {
+  supportsInferenceAnimaOutpaint,
+  supportsInferenceOutpaint,
+} from '../../shared/projects/inference-worker-capabilities.js'
+import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
@@ -18,6 +24,7 @@ import type { GenerationProcessorResult } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
+import type { PreparedOutpaintGeneration } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
@@ -30,6 +37,7 @@ import type { ProjectService } from './project-service.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
+import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   effectiveGenerationEmbeddings,
@@ -43,6 +51,7 @@ import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
+import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -119,6 +128,7 @@ export class GenerationOrchestrator {
     private readonly staging: GenerationStagingRepository,
     private readonly processor: GenerationProcessor,
     private readonly scratchBasePath: string,
+    private readonly infillResolver?: OutpaintInfillResolver,
   ) {}
 
   /** Cancel only the document/session/job set whose loss was explicitly confirmed for Add. */
@@ -531,6 +541,231 @@ export class GenerationOrchestrator {
           return { items: await this.enqueueBatchUnlocked(tabId, concrete), plan }
         },
       })
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** Admit explicit alpha outpaint operations under the same capture and dispatch barrier. */
+  async enqueuePreparedOutpaintBatch(
+    tabId: string,
+    prepared: PreparedOutpaintGeneration,
+    options: GenerationPreparedBatchOptions,
+    inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
+    beforePublication?: () => Promise<void>,
+    assertAdmissionCurrent?: () => void,
+  ): Promise<PreparedBatchAdmissionResult> {
+    this.assertGenerationOpen(tabId)
+    if (
+      !Buffer.isBuffer(prepared?.targetPngBytes) ||
+      prepared.targetPngBytes.length < 1 ||
+      prepared.targetPngBytes.length > IGS_GENERATION_PNG_MAX_BYTES
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The frozen outpaint target is invalid.',
+      )
+    }
+    const context = structuredClone(prepared.context)
+    const targetPngBytes = Buffer.from(prepared.targetPngBytes)
+    const embeddingPool = structuredClone(
+      'embeddingPool' in prepared
+        ? (prepared.embeddingPool ?? ('embeddings' in context ? context.embeddings : undefined))
+        : undefined,
+    )
+    const plannedOptions = { ...options }
+    const ready = structuredClone(inferenceWorker.ready)
+    const anima = context.kind === 'anima-outpaint-preparation'
+    if (
+      context.kind === 'anima-outpaint-preparation' &&
+      (plannedOptions.maxPrompts !== context.dynamic.maxPrompts ||
+        plannedOptions.seedBehavior !== context.dynamic.seedBehavior)
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The outpaint batch options differ from the captured Anima settings.',
+      )
+    }
+    if (!supportsInferenceOutpaint(ready) || (anima && !supportsInferenceAnimaOutpaint(ready))) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The active worker has not qualified this outpaint operation.',
+      )
+    }
+    const infillResolver = this.infillResolver
+    if (!infillResolver) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The exact local outpaint infill resource is unavailable.',
+      )
+    }
+    if (
+      anima &&
+      (typeof this.models.resolveVerifiedGenerationAnimaBundleForPlan !== 'function' ||
+        typeof this.models.resolveVerifiedAnimaGenerationLoraForPlan !== 'function')
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The exact Anima resources cannot be verified.',
+      )
+    }
+    // The repository resolves only the captured family. Ordinary Illustrious installations do
+    // not need Anima resolvers; the Anima branch above proves them before entering that path.
+    const models = this.models as AnimaGenerationModelResolver & GenerationModelResolver
+    const plan = planGenerationBatch({
+      ...plannedOptions,
+      baseSeed: context.sampling.seed,
+      maxJobs: GENERATION_BATCH_JOB_LIMIT,
+      negativePrompt: context.prompts.negative,
+      positivePrompt: context.prompts.positive,
+    })
+    if (
+      !anima &&
+      plan.items.some(
+        (item) => /[{}]/.test(item.prompts.positive) || /[{}]/.test(item.prompts.negative),
+      )
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_PROMPT_UNSUPPORTED',
+        'The active Illustrious pipeline does not support literal brace text yet.',
+      )
+    }
+    const concrete: PreparedOutpaintGeneration[] = plan.items.map((item) => {
+      if (context.kind === 'anima-outpaint-preparation') {
+        const generationDraft = structuredClone(context.generationDraft)
+        generationDraft.positivePrompt.text = item.prompts.positive
+        generationDraft.negativePrompt.text = item.prompts.negative
+        if (generationDraft.seed.policy === 'fixed') {
+          generationDraft.seed.value = item.seed
+        }
+        return {
+          context: {
+            ...context,
+            generationDraft,
+            prompts: { ...item.prompts },
+            sampling: { ...context.sampling, seed: item.seed },
+          },
+          targetPngBytes,
+        }
+      }
+      const embeddings =
+        context.embeddingRefs && embeddingPool
+          ? effectiveGenerationEmbeddings(item.prompts, context.embeddingRefs, embeddingPool)
+          : context.embeddings
+      return {
+        context: {
+          ...context,
+          ...(embeddings !== undefined ? { embeddings } : {}),
+          prompts: { ...item.prompts },
+          sampling: {
+            ...context.sampling,
+            seed: item.seed,
+            seedBehavior: plannedOptions.seedBehavior,
+          },
+        },
+        targetPngBytes,
+      }
+    })
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      this.assertGenerationOpen(tabId)
+      const project = await this.indexedProject(tabId)
+      const assertDocument = () => {
+        this.assertGenerationOpen(tabId)
+        assertAdmissionCurrent?.()
+        if (
+          this.projects.getOpenDocumentId(tabId) !== project.documentId ||
+          context.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The captured outpaint batch no longer belongs to the open Project document.',
+          )
+        }
+      }
+      const assertIdentity = async () => {
+        assertDocument()
+        const current = await this.indexedProject(tabId)
+        assertDocument()
+        if (
+          current.canonicalPath !== project.canonicalPath ||
+          current.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The indexed Project changed while the outpaint batch was being prepared.',
+          )
+        }
+      }
+      assertDocument()
+      const infill = await infillResolver.resolveVerifiedOutpaintInfill()
+      assertDocument()
+      // This detached envelope is qualified without starting inference or publishing scratch.
+      // Dispatch later supplies its own disposable paths and independently verifies all files.
+      const provisionalRoot = path.join(
+        path.resolve(this.scratchBasePath),
+        `outpaint-admission-${randomUUID()}`,
+      )
+      for (const item of concrete) {
+        const payload = buildFrozenQueuedOutpaintV1(item, randomUUID())
+        buildQueuedOutpaintWorkerRequest({
+          infill,
+          outputPath: path.join(provisionalRoot, 'result.png'),
+          payload,
+          provisionalRoot,
+          ready,
+          requestId: randomUUID(),
+          targetPath: path.join(provisionalRoot, 'target.png'),
+        })
+      }
+      await assertIdentity()
+      await beforePublication?.()
+      assertDocument()
+      const stagingSessionId = randomUUID()
+      const queued = await this.queue.enqueuePreparedOutpaintBatch({
+        assertCurrent: assertDocument,
+        beforeCommit: assertIdentity,
+        infillResolver,
+        items: concrete,
+        modelService: models,
+        preflight: async (entries) => {
+          await assertIdentity()
+          await this.staging.preflightBatchCapacity({
+            entries,
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId,
+          })
+          await assertIdentity()
+        },
+        projectPath: project.canonicalPath,
+        stagingSessionId,
+      })
+      try {
+        await assertIdentity()
+      } catch (error) {
+        try {
+          for (const item of queued) {
+            const stopped = await this.processor.cancelAndWait(item.id)
+            if (stopped.status !== 'canceled') {
+              throw cancellationUncertain('A failed outpaint batch job has not stopped.')
+            }
+          }
+        } catch {
+          this.batchCleanupUnconfirmed.add(tabId)
+          this.fencedProjects.add(tabId)
+          this.queue.fenceProject(tabId)
+          throw cancellationUncertain(
+            'The Project changed after outpaint batch enqueue, and its cancellation needs recovery.',
+          )
+        }
+        throw error
+      }
+      return { assertCurrent: assertIdentity, items: queued, plan }
     })
     this.enqueueBarrier = operation.then(
       () => undefined,

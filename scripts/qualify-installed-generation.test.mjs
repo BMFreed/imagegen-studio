@@ -7,6 +7,8 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import { LAMA_OUTPAINT_ARTIFACT } from '../src/main/runtime/lama-manifest.ts'
+
 const exec = promisify(execFile)
 const repository = path.dirname(import.meta.dirname)
 const script = path.join(repository, 'scripts/qualify-installed-generation.mjs')
@@ -79,10 +81,10 @@ test('fresh canonical destinations reserve a failed preflight report without sta
   })
 })
 
-test('omitted and CFG Rescale profiles reach the neighboring size refusal without starting a worker', async () => {
+test('omitted, CFG Rescale and outpaint profiles reach the neighboring size refusal without starting a worker', async () => {
   // Boundary: real CLI fixture admission. The invalid image side is a controlled stop after
   // profile validation, so accepting a profile does not launch Electron or inference.
-  for (const profile of [undefined, 'cfg-rescale']) {
+  for (const profile of [undefined, 'cfg-rescale', 'outpaint']) {
     await fixture(async ({ artifacts, input, run }) => {
       if (profile !== undefined) input.profile = profile
       input.steps = 3
@@ -106,7 +108,10 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
     await fixture(async ({ artifacts, input, run }) => {
       input.profile = profile
       const refusal = await run()
-      assert.match(refusal.stderr, /Qualification profile must be omitted or exactly cfg-rescale/)
+      assert.match(
+        refusal.stderr,
+        /Qualification profile must be omitted or exactly cfg-rescale or outpaint/,
+      )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
       assert.equal(report.status, 'failed')
@@ -132,6 +137,85 @@ test('CFG Rescale profile refuses a changed step control before preparing any mo
     assert.deepEqual(report.generations, [])
     await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
   })
+})
+
+test('outpaint profile refuses changed geometry, steps and LaMa pins before model or worker setup', async () => {
+  // Boundary: actual CLI finite profile/resource admission. Neighbor: the accepted profile above
+  // reaches generic geometry validation. Mutations: expand the profile or accept an altered pin.
+  for (const [change, message] of [
+    [{ side: 128 }, /Outpaint qualification requires exactly 256 pixels/],
+    [{ steps: 4 }, /Outpaint qualification requires exactly 3 authored steps/],
+    [{ lama: null }, /requires an exact local LaMa descriptor/],
+    [
+      { lama: { path: '/unread-source', byteSize: 1, sha256: LAMA_OUTPAINT_ARTIFACT.sha256 } },
+      /LaMa size must match/,
+    ],
+    [
+      {
+        lama: {
+          path: '/unread-source',
+          byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+          sha256: '0'.repeat(64),
+        },
+      },
+      /LaMa SHA-256 must match/,
+    ],
+    [
+      {
+        lama: {
+          path: 'relative.pt',
+          byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+          sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+        },
+      },
+      /absolute normalized read-only path/,
+    ],
+  ]) {
+    await fixture(async ({ artifacts, input, run }) => {
+      Object.assign(input, { profile: 'outpaint', side: 256, steps: 3 }, change)
+      const refusal = await run()
+      assert.match(refusal.stderr, message)
+      const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+      assert.equal(report.status, 'failed')
+      assert.deepEqual(report.models, [])
+      assert.deepEqual(report.generations, [])
+      await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+    })
+  }
+})
+
+test('outpaint exact local source verification refuses wrong bytes or symlink before catalog and preserves source', async () => {
+  // This exercises the real CLI and fixed production verifier, with no ML or model fixtures.
+  // Mutation: defer or omit exact source verification until after catalog copying/startup.
+  for (const linked of [false, true]) {
+    await fixture(async ({ root, appData, artifacts, input, run }) => {
+      const source = path.join(root, 'source.pt')
+      const unchanged = Buffer.from('wrong local bytes; not trained LaMa')
+      await fs.writeFile(source, unchanged)
+      const declared = linked ? path.join(root, 'linked.pt') : source
+      if (linked) await fs.symlink(source, declared)
+      Object.assign(input, {
+        profile: 'outpaint',
+        side: 256,
+        steps: 3,
+        lama: {
+          path: declared,
+          byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+          sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+        },
+      })
+      const refusal = await run()
+      assert.match(refusal.stderr, /auxiliary resource/)
+      assert.ok((await fs.readFile(source)).equals(unchanged))
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+      await assert.rejects(fs.lstat(path.join(appData, 'inference-resources')), { code: 'ENOENT' })
+      const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+      assert.equal(report.status, 'failed')
+      assert.deepEqual(report.models, [])
+      assert.deepEqual(report.generations, [])
+      await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+    })
+  }
 })
 
 test('a redirected models destination refuses before reserving or writing any report', async () => {

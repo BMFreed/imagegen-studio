@@ -491,10 +491,12 @@ async function provision(options) {
     report.ready = structuredClone(worker.ready)
     if (
       !capabilities.isQualifiedInferenceWorkerReady(report.ready) ||
-      !capabilities.supportsInferenceAnima(report.ready)
+      !capabilities.supportsInferenceAnima(report.ready) ||
+      !capabilities.supportsInferenceOutpaint(report.ready) ||
+      !capabilities.supportsInferenceAnimaOutpaint(report.ready)
     ) {
       throw new Error(
-        'The installed worker did not qualify both Illustrious and original Anima capabilities.',
+        'The installed worker did not qualify Illustrious, original Anima and both explicit outpaint capabilities.',
       )
     }
     await worker.close()

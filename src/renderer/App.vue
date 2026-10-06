@@ -454,6 +454,7 @@ function openGenerationQueue() {
 function refreshQueueResults() {
   queueResultNavigationError.value = null
   for (const tab of projectTabs.value) {
+    void refreshGenerationState(tab.id)
     void refreshGenerationResults(tab.id)
   }
 }

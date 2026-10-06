@@ -1343,6 +1343,8 @@ export class GenerationQueueRepository {
 
   /** Internal durable ownership only; this admits no worker command or portable accepted result. */
   async enqueuePreparedOutpaintBatch(input: {
+    /** Synchronous document/close assertion; must not reenter the database connection. */
+    assertCurrent?: () => void
     batchId?: string
     beforeCommit?: () => Promise<void>
     infillResolver: OutpaintInfillResolver
@@ -1360,6 +1362,7 @@ export class GenerationQueueRepository {
       input.items.length > GENERATION_BATCH_JOB_LIMIT ||
       typeof input.preflight !== 'function' ||
       !v.is(UuidSchema, input.stagingSessionId) ||
+      (input.assertCurrent !== undefined && typeof input.assertCurrent !== 'function') ||
       (input.beforeCommit !== undefined && typeof input.beforeCommit !== 'function') ||
       !Buffer.isBuffer(input.items[0]?.targetPngBytes)
     ) {
@@ -1368,8 +1371,15 @@ export class GenerationQueueRepository {
         'The internal outpaint batch is invalid.',
       )
     }
-    const { beforeCommit, infillResolver, modelService, preflight, projectPath, stagingSessionId } =
-      input
+    const {
+      assertCurrent,
+      beforeCommit,
+      infillResolver,
+      modelService,
+      preflight,
+      projectPath,
+      stagingSessionId,
+    } = input
     const capturedBatchId = input.batchId ?? randomUUID()
     if (!v.is(UuidSchema, capturedBatchId)) {
       throw new GenerationQueueError(
@@ -1512,6 +1522,7 @@ export class GenerationQueueRepository {
         }
         await this.db.transaction().execute(async (transaction) => {
           this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent?.()
           // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
           for (const row of rows) {
             await transaction.insertInto('generation_queue_item').values(row).execute()
@@ -1519,6 +1530,9 @@ export class GenerationQueueRepository {
           }
           await this.testHooks.beforeBatchCommit?.()
           this.assertProjectCanEnqueue(localProjectKey)
+          // Resource qualification stays outside SQL: the real model owner uses this same
+          // connection. Recheck synchronous document/close identity after the final SQL await.
+          assertCurrent?.()
         })
         await this.testHooks.afterBatchCommit?.()
         return rows.map(toItem)
@@ -2018,27 +2032,29 @@ export class GenerationQueueRepository {
     id: string,
     expectedStatusSequence: number,
     options: {
+      /** Synchronous document/close assertion; must not reenter the database connection. */
+      assertCurrent?: () => void
       infillResolver: OutpaintInfillResolver
       modelService: AnimaGenerationModelResolver & GenerationModelResolver
       preflight: (input: GenerationQueueRetryPreflightInput) => Promise<void>
     },
   ): Promise<QueuedGenerationItem> {
-    if (typeof options.preflight !== 'function') {
+    const { assertCurrent, infillResolver, modelService, preflight } = options
+    if (
+      typeof preflight !== 'function' ||
+      (assertCurrent !== undefined && typeof assertCurrent !== 'function')
+    ) {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
         'Outpaint Retry needs capacity preflight.',
       )
     }
     const qualification = {
-      infillResolver: options.infillResolver,
-      modelService: options.modelService,
+      assertCurrent,
+      infillResolver,
+      modelService,
     }
-    return await this.retryTerminalInternal(
-      id,
-      expectedStatusSequence,
-      options.preflight,
-      qualification,
-    )
+    return await this.retryTerminalInternal(id, expectedStatusSequence, preflight, qualification)
   }
 
   /**
@@ -2134,6 +2150,7 @@ export class GenerationQueueRepository {
     expectedStatusSequence: number,
     preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
     outpaintQualification?: {
+      assertCurrent?: () => void
       infillResolver: OutpaintInfillResolver
       modelService: AnimaGenerationModelResolver & GenerationModelResolver
     },
@@ -2248,6 +2265,8 @@ export class GenerationQueueRepository {
           )
         }
         await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(source.local_project_key)
+          outpaintQualification?.assertCurrent?.()
           const consumed = await transaction
             .updateTable('generation_queue_item')
             .set({
@@ -2271,6 +2290,7 @@ export class GenerationQueueRepository {
           await transaction.insertInto('generation_queue_item').values(nextRow).execute()
           await this.testHooks.beforeRetryCommit?.()
           this.assertProjectCanEnqueue(source.local_project_key)
+          outpaintQualification?.assertCurrent?.()
         })
         await this.testHooks.afterRetryCommit?.()
         return toItem(nextRow)
