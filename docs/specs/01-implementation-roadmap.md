@@ -1270,8 +1270,24 @@ GPU отказ в этом fixture не наблюдался; путь ошиб�
 precision; opaque случаи доказывают wiring, а не numerical ablation.
 Worker 0.12.0/six-resource catalog reused, 256×256/three steps,
 без новых тяжёлых копий моделей или signed release/maximum GPU claims.
-External VAE, embeddings, installed v_prediction и batch qualification
+Embeddings, installed v_prediction и batch qualification
 остаются открытыми. Counts/checks/mutations и resource limits — в research note.
+
+**Installed external Illustrious VAE checkpoint (07.10.2026):**
+[Actual VAE selection → installed trained pipeline](../engineering/phase-2c-installed-external-vae-research.md)
+прошли восемь finite cases при 256×256, трёх requested steps и FP32:
+Embedded, exact LDM, exact native и искусственный finite bias control в txt2img
+и common-source opaque img2img при strength 0. Exact форматы дают pixels Embedded;
+control меняет pixels в обоих режимах. Это combined control, без независимой
+encoder/decoder ablation или nonzero img2img denoising qualification.
+Actual Cancel сохраняет canceled original; после настоящей смены library Default
+и Reset текущего draft public Retry сохраняет исходный exact native VAE/target/
+prompt/seed/FP32. Явный Add/Save/readback/reopen/comparison проверены.
+В девяти admissions — восемь завершений и один canceled original; шесть прежних
+resource rows сохранены, три локальных VAE files — версии одного нового ресурса.
+Это installed development evidence, не CivitAI download/отдельная training lineage,
+external outpaint, Anima alternate VAE, качество или signed release.
+Проверки и sensitivity evidence находятся в research note.
 
 **Normal outpaint conditioning foundation (06.10.2026):**
 [Alpha/coherence/LaMa contract](../engineering/phase-2c-outpaint-conditioning-research.md)
@@ -1348,11 +1364,11 @@ Main installer с заменой только transport/DNS локальным �
 подтверждённо завершился. Это development Linux/NVIDIA evidence, без public
 network/setup, signed release, all-model/all-GPU или всей фазы 2C claims.
 
-**Следующий шаг:** installed qualification существующего exact внешнего VAE
-в обоих Illustrious normal modes. Применимые именованные Advanced controls
+**Следующий шаг:** trained installed qualification существующего embedding
+pipeline через публичный Project flow. Применимые именованные Advanced controls
 (VAE, precision, CFG Rescale) уже имеют production paths; CLIP Skip явно
 неприменим к обоим MVP pipelines, нового selector не требуется.
-Далее остаются trained embeddings, installed `v_prediction`, concrete
+Далее остаются installed `v_prediction`, concrete
 multi-job dynamic batches/actual seed scheduling и crash/reopen `Reuse`,
 расширенная installed Anima method/weighting qualification по выходным критериям.
 First-setup integration остаётся зависимостью release/runtime installer;

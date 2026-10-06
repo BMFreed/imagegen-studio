@@ -327,6 +327,26 @@ admissions. New portable accepted metadata records exact VAE or known Embedded;
 historical absence remains Unavailable. Anima's required companion remains
 pinned. This checkpoint does not complete the full MVP pipeline or release runtime.
 
+## Installed external Illustrious VAE qualification
+
+[Installed external VAE evidence](../../../engineering/phase-2c-installed-external-vae-research.md)
+joins the actual Project selector to Main, noneditable installed worker 0.12.0,
+trained CUDA execution and explicit Add/Save/readback/reopen/comparison. Eight
+finite cases at 256×256, three requested steps and FP32 cover Embedded, exact
+standalone LDM, exact native Diffusers and an explicitly artificial finite
+bias control, each in txt2img and common-source opaque img2img at strength 0.
+Both exact extracted formats reproduce Embedded decoded pixels; altered weights
+change them. The combined control does not separately ablate encoder/decoder,
+and zero strength does not qualify nonzero img2img denoising or image quality.
+
+After real Cancel, library Default changes through Model Manager and the current
+draft resets to Embedded. Public Retry retains the original native VAE, target,
+prompt, seed and FP32. Completion stays temporary until Add; accepted portable
+references survive Save/reopen and compare against the current different draft.
+Local extracted/derived weights are catalog preconditions, not a live CivitAI
+installation, independent training lineage, alternate Anima VAE or signed release
+qualification. Full MVP promises remain open.
+
 ## Vue Prototype Coverage
 
 The current Project settings stack implements:

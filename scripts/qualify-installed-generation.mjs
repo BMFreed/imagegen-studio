@@ -58,7 +58,9 @@ const fixture = JSON.parse(await readFile(process.argv[3], 'utf8'))
 const cfgRescaleProfile = fixture.profile === 'cfg-rescale'
 const outpaintProfile = fixture.profile === 'outpaint'
 const vaePrecisionProfile = fixture.profile === 'vae-precision'
-const illustriousOnlyProfile = cfgRescaleProfile || vaePrecisionProfile
+const externalVaeProfile = fixture.profile === 'external-vae'
+const illustriousOnlyProfile = cfgRescaleProfile || vaePrecisionProfile || externalVaeProfile
+const externalVaeKeys = ['externalVaeLdm', 'externalVaeNative', 'externalVaeControl']
 assert.equal(fixture.schemaVersion, 1)
 for (const value of [fixture.appData, fixture.artifacts]) {
   assert.equal(typeof value, 'string')
@@ -119,16 +121,20 @@ const report = {
   boundary: {
     actual:
       'Built Electron renderer/preload/Main, production model qualification and runtime leases, noneditable installed Python worker, trained CUDA models, SQLite queue/receipts, PNG staging, explicit UI Add, .igs writer/loader and close/reopen.',
-    preconditions: vaePrecisionProfile
-      ? 'The same six-resource isolated catalog and installed runtime are resumed without new weight or runtime copies; only exact Illustrious checkpoint and signed LoRA are used. Embedded VAE, source family and prediction type are declared qualification preconditions.'
-      : 'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
-    limits: outpaintProfile
-      ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
+    preconditions: externalVaeProfile
+      ? 'The same installed runtime and six-resource isolated catalog are resumed. Three exact locally extracted/derived VAE files are verified and cataloged as versions of one qualification resource. The native and LDM files contain trained checkpoint VAE tensors; altered encoder/decoder biases are a labeled artificial causal control. No standalone CivitAI download or independently trained replacement claim.'
       : vaePrecisionProfile
-        ? 'Installed development worker 0.12 with genuine trained Illustrious embedded VAE, 256 pixels and 3 steps. Same-input txt2img Auto/FP32/FP16 policy comparison and opaque img2img wiring, actual Cancel/frozen FP32 Retry, explicit Add/Save/reopen and recorded comparison. FP16 qualifies only by finite publication or exact native VAE non-finite refusal with no candidate, PNG, acceptance or seed mutation. Img2img inputs may differ and do not establish numerical equivalence. No signed release lifecycle, external VAE, maximum geometry/VRAM, image quality or whole-MVP claim.'
-        : cfgRescaleProfile
-          ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
-          : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
+        ? 'The same six-resource isolated catalog and installed runtime are resumed without new weight or runtime copies; only exact Illustrious checkpoint and signed LoRA are used. Embedded VAE, source family and prediction type are declared qualification preconditions.'
+        : 'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
+    limits: externalVaeProfile
+      ? 'Installed development worker 0.12, trained Illustrious checkpoint with exact LDM/native external VAE and a finite artificial bias control at 256 pixels/3 steps, explicit FP32. Matched txt2img and common-source strength-zero opaque img2img, genuine Cancel/frozen external Retry after UI library Default and draft edits, explicit Add/Save/reopen/comparison. No external VAE network install/repair, arbitrary model compatibility, independent training lineage, signed release lifecycle, maximum geometry/VRAM, image quality or whole-MVP claim.'
+      : outpaintProfile
+        ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
+        : vaePrecisionProfile
+          ? 'Installed development worker 0.12 with genuine trained Illustrious embedded VAE, 256 pixels and 3 steps. Same-input txt2img Auto/FP32/FP16 policy comparison and opaque img2img wiring, actual Cancel/frozen FP32 Retry, explicit Add/Save/reopen and recorded comparison. FP16 qualifies only by finite publication or exact native VAE non-finite refusal with no candidate, PNG, acceptance or seed mutation. Img2img inputs may differ and do not establish numerical equivalence. No signed release lifecycle, external VAE, maximum geometry/VRAM, image quality or whole-MVP claim.'
+          : cfgRescaleProfile
+            ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
+            : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
     browser:
       'Existing native _electron system harness exercises genuine Electron IPC and the installed CUDA child. HTTP preview availability is outside this qualification.',
   },
@@ -137,6 +143,115 @@ async function hashFile(file) {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(file)) hash.update(chunk)
   return hash.digest('hex')
+}
+function validateExternalVaeFixture() {
+  assert.equal(
+    fixture.side,
+    256,
+    'External VAE qualification requires exactly 256 pixels per side.',
+  )
+  assert.equal(fixture.steps, 3, 'External VAE qualification requires exactly 3 authored steps.')
+  const hashes = new Set()
+  const versionNames = new Set()
+  assert.deepEqual(
+    Object.keys(fixture).filter(
+      (key) => key.startsWith('externalVae') && !externalVaeKeys.includes(key),
+    ),
+    [],
+    'External VAE qualification accepts only the three declared external descriptor keys.',
+  )
+  for (const key of externalVaeKeys) {
+    const value = fixture[key]
+    assert.ok(
+      value && typeof value === 'object' && !Array.isArray(value),
+      `External VAE qualification requires ${key}.`,
+    )
+    assert.equal(
+      Object.keys(value).sort().join(','),
+      'byteSize,family,name,origin,path,sha256,type,versionName',
+      'External VAE descriptors must contain exactly the declared identity, labels and origin fields.',
+    )
+    assert.equal(value.type, 'vae')
+    assert.equal(value.family, 'illustrious')
+    assert.ok(
+      typeof value.path === 'string' &&
+        path.isAbsolute(value.path) &&
+        path.normalize(value.path) === value.path,
+    )
+    assert.ok(typeof value.sha256 === 'string' && /^[0-9a-f]{64}$/.test(value.sha256))
+    assert.ok(Number.isSafeInteger(value.byteSize) && value.byteSize > 0)
+    assert.ok(typeof value.name === 'string' && value.name.trim().length > 0)
+    assert.ok(typeof value.versionName === 'string' && value.versionName.trim().length > 0)
+    assert.ok(value.origin && typeof value.origin === 'object' && !Array.isArray(value.origin))
+    if (key === 'externalVaeControl') {
+      assert.equal(
+        Object.keys(value.origin).sort().join(','),
+        'decoderBiasAdd,encoderBiasAdd,format,kind,sourceVaeSha256',
+        'The external VAE control origin must contain exactly the declared causal fields.',
+      )
+      assert.equal(value.origin.kind, 'finite-causal-control')
+      assert.equal(value.origin.sourceVaeSha256, fixture.externalVaeNative.sha256)
+      assert.equal(value.origin.encoderBiasAdd, 0.1)
+      assert.equal(value.origin.decoderBiasAdd, 0.15)
+    } else {
+      assert.equal(
+        Object.keys(value.origin).sort().join(','),
+        'checkpointSha256,format,kind',
+        'Extracted external VAE origins must contain exactly checkpointSha256, format and kind.',
+      )
+      assert.equal(value.origin.kind, 'checkpoint-extraction')
+      assert.ok(
+        typeof value.origin.checkpointSha256 === 'string' &&
+          /^[0-9a-f]{64}$/.test(value.origin.checkpointSha256),
+      )
+      assert.equal(
+        value.origin.checkpointSha256,
+        fixture.illustrious?.sha256,
+        'Extracted external VAE origins must match the exact qualification checkpoint SHA-256.',
+      )
+    }
+    assert.equal(
+      value.origin.format,
+      key === 'externalVaeLdm' ? 'original-ldm' : 'diffusers-native',
+    )
+    assert.equal(
+      value.name,
+      fixture.externalVaeLdm.name,
+      'External VAE versions must share one resource display name.',
+    )
+    hashes.add(value.sha256)
+    versionNames.add(value.versionName)
+  }
+  assert.equal(
+    hashes.size,
+    3,
+    'External VAE qualification requires three distinct file identities.',
+  )
+  assert.equal(
+    versionNames.size,
+    3,
+    'External VAE qualification requires three distinct version names.',
+  )
+  const priorKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
+  const priorHashes = new Set()
+  for (const key of priorKeys) {
+    assert.ok(
+      fixture[key] &&
+        typeof fixture[key].sha256 === 'string' &&
+        /^[0-9a-f]{64}$/.test(fixture[key].sha256),
+      'External VAE qualification must declare all six prior resource identities.',
+    )
+    priorHashes.add(fixture[key].sha256)
+  }
+  assert.equal(
+    priorHashes.size,
+    6,
+    'External VAE qualification requires six distinct prior resource identities.',
+  )
+  assert.ok(
+    [...hashes].every((hash) => !priorHashes.has(hash)),
+    'External VAE files must be distinct from the six prior resource identities.',
+  )
 }
 function validateOutpaintFixture() {
   assert.equal(fixture.side, 256, 'Outpaint qualification requires exactly 256 pixels per side.')
@@ -329,7 +444,7 @@ async function closeNativeQualification() {
   report.cleanup.forcedExit = child.exitCode !== null || child.signalCode !== null
   await checkpointEvidence()
 }
-async function installArtifact(repository, value, id, dependencies) {
+async function installArtifact(repository, value, id, dependencies, publication = null) {
   assert.ok(path.isAbsolute(value.path))
   assert.match(value.sha256, /^[0-9a-f]{64}$/)
   const source = await lstat(value.path)
@@ -348,12 +463,16 @@ async function installArtifact(repository, value, id, dependencies) {
     assert.equal(existing?.status, 'ready')
     assert.equal(existing.managedPath, managed)
     report.models.push({ ...value, managedPath: managed, reusedQualificationPrecondition: true })
-    return { resourceId: existing.resourceId, versionId: existing.versionId }
+    return { resourceId: existing.resourceId, versionId: existing.versionId, managedPath: managed }
   }
   assert.equal(
     vaePrecisionProfile,
     false,
     'VAE Precision qualification must reuse existing exact managed resources without copies.',
+  )
+  assert.ok(
+    !externalVaeProfile || publication !== null,
+    'External VAE qualification must reuse the six existing resources without new copies.',
   )
   await copyFile(value.path, managed, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
   assert.equal(await hashFile(managed), value.sha256)
@@ -365,7 +484,7 @@ async function installArtifact(repository, value, id, dependencies) {
   report.models.push({ ...value, managedPath: managed, sourceUnchanged: true })
   const supported =
     value.type === 'qwen3_encoder' || (value.type === 'vae' && value.family === 'anima')
-  return await repository.publishVerifiedInstallation({
+  const published = await repository.publishVerifiedInstallation({
     dependencies,
     primary: {
       file: {
@@ -379,14 +498,14 @@ async function installArtifact(repository, value, id, dependencies) {
         displayName: value.name,
         source: supported
           ? { kind: 'supported_dependency', key: `qualification-${id}` }
-          : { kind: 'civitai', modelId: id },
+          : { kind: 'civitai', modelId: publication?.sourceModelId ?? id },
         sourceMetadata: { qualificationPrecondition: true },
         type: value.type,
       },
       version: {
         baseModelFamily: value.family,
         format: 'safetensors',
-        name: 'Exact local qualification weights',
+        name: publication?.versionName ?? 'Exact local qualification weights',
         predictionType: value.predictionType ?? null,
         source: supported
           ? {
@@ -395,15 +514,20 @@ async function installArtifact(repository, value, id, dependencies) {
               revision: 'qualification-local-v1',
             }
           : { kind: 'civitai', expectedSha256: value.sha256, versionId: id + 1, fileId: id + 2 },
-        sourceMetadata: { qualificationPrecondition: true },
+        sourceMetadata: {
+          qualificationPrecondition: true,
+          ...(publication ? { origin: value.origin } : {}),
+        },
       },
     },
   })
+  return { ...published, managedPath: managed }
 }
 let application
 let window
 let database
 let mainLog
+let preservedExternalPriorCatalog = null
 const env = {
   ...process.env,
   NODE_ENV: 'production',
@@ -508,6 +632,151 @@ async function setVaePrecision(project, value) {
       'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " n-base-selection ")]',
     ),
   ).toContainText(value)
+}
+async function setExternalVae(project, key) {
+  assert.ok(key === null || externalVaeKeys.includes(key))
+  const input = window.locator('input[aria-label="VAE"]')
+  if (!(await input.isVisible()))
+    await window.getByText('Advanced Options', { exact: true }).click()
+  await expect(input).toBeEnabled({ timeout: 180_000 })
+  await input.scrollIntoViewIfNeeded()
+  if (key === null && (await tab(project)).generationDraft.vae !== null) {
+    await window.getByRole('button', { name: 'Reset VAE', exact: true }).click()
+  } else {
+    await input.click()
+    if (key === null) await window.getByText('Embedded', { exact: true }).last().click()
+    else {
+      const value = fixture[key]
+      await window
+        .locator('.model-option')
+        .filter({ hasText: value.name })
+        .filter({ hasText: `· ${value.versionName} ·` })
+        .click()
+    }
+  }
+  await expect
+    .poll(async () => (await tab(project)).generationDraft.vae?.localVersionId ?? null)
+    .toBe(key === null ? null : fixture[key].installed.versionId)
+  const reference = structuredClone((await tab(project)).generationDraft.vae)
+  if (key !== null) {
+    assert.equal(reference.localModelId, fixture[key].installed.resourceId)
+    assert.equal(reference.fileSha256, fixture[key].sha256)
+    assert.equal(reference.versionName, fixture[key].versionName)
+    assert.equal(JSON.stringify(reference).includes(fixture[key].installed.managedPath), false)
+  }
+  await expect(
+    window.getByText(
+      key === null ? 'Uses the VAE included in the checkpoint.' : 'Uses the selected external VAE.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+  return reference
+}
+async function setExternalVaeDefaultThroughUi(project, key) {
+  const value = fixture[key]
+  const before = await tab(project)
+  const beforeCatalog = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(beforeCatalog.ok, true)
+  const resourceBefore = beforeCatalog.value.find(({ id }) => id === value.installed.resourceId)
+  assert.ok(resourceBefore)
+  await window.getByRole('button', { name: 'Open VAE in Models', exact: true }).click()
+  const manager = window.getByRole('dialog', { name: 'Model Manager', exact: true })
+  await expect(manager).toBeVisible()
+  const row = manager
+    .locator('.version-row')
+    .filter({ has: window.getByText(value.versionName, { exact: true }) })
+  await expect(row).toBeVisible()
+  if (resourceBefore.defaultVersionId !== value.installed.versionId) {
+    await row.getByRole('button', { name: 'Set Default', exact: true }).click()
+  }
+  await expect
+    .poll(async () => {
+      const catalog = await window.evaluate(() => window.api.models.getCatalog())
+      assert.equal(catalog.ok, true)
+      return catalog.value.find(({ id }) => id === value.installed.resourceId)?.defaultVersionId
+    })
+    .toBe(value.installed.versionId)
+  await expect(row).toContainText('Default')
+  const screenshot = path.join(
+    fixture.artifacts,
+    `external-vae-default-${key}-${report.screenshots.length}.png`,
+  )
+  await captureScreenshot(screenshot, manager)
+  report.screenshots.push(screenshot)
+  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await expect(manager).toBeHidden()
+  const after = await tab(project)
+  for (const field of [
+    'documentId',
+    'generationDraft',
+    'primaryBbox',
+    'layers',
+    'dirty',
+    'canUndo',
+    'canRedo',
+  ]) {
+    assert.deepEqual(after[field], before[field], `Library Default must not edit Project ${field}.`)
+  }
+  return {
+    resourceId: value.installed.resourceId,
+    previousVersionId: resourceBefore.defaultVersionId,
+    defaultVersionId: value.installed.versionId,
+    throughUi: true,
+    screenshot,
+  }
+}
+async function compareExternalVae(project, layer, captured, current, caseName, packagePath) {
+  const before = await tab(project)
+  const packageSha256 = await hashFile(packagePath)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    const row = comparison.locator('[data-setting="vae.resource"]')
+    const status = captured === null ? 'Added' : current === null ? 'Removed' : 'Changed'
+    await expect(row).toHaveAttribute('data-status', status)
+    const values = row.locator('.comparison-values p')
+    for (const [index, reference] of [captured, current].entries()) {
+      if (reference === null) await expect(values.nth(index)).toHaveText('Embedded')
+      else {
+        await expect(values.nth(index)).toContainText(reference.displayName)
+        await expect(values.nth(index)).toContainText(reference.versionName)
+      }
+    }
+    // Same rows are intentionally hidden by default; expose them through the real UI before
+    // requiring the captured/current FP32 invariant instead of weakening it to an absent row.
+    await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
+    const precision = comparison.locator('[data-setting="vaePrecision.value"]')
+    await expect(precision).toHaveAttribute('data-status', 'Same')
+    await expect(precision.locator('.comparison-values p')).toHaveText(['FP32', 'FP32'])
+    const after = await tab(project)
+    for (const field of [
+      'documentId',
+      'generationDraft',
+      'primaryBbox',
+      'layers',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ]) {
+      assert.deepEqual(after[field], before[field])
+    }
+    assert.equal(await hashFile(packagePath), packageSha256)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { captured, current, status, precision: 'FP32', screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+  }
 }
 async function compareVaePrecision(project, layer, captured, current, caseName) {
   const before = await tab(project)
@@ -830,10 +1099,23 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await expect(window.locator('input[aria-label="Images per click"]')).toHaveValue('1')
   const before = await tab(project)
   const precisionQualification = qualification?.kind === 'vae-precision'
-  const cfgQualification = qualification !== null && !precisionQualification
+  const externalQualification = qualification?.kind === 'external-vae'
+  const cfgQualification =
+    qualification !== null && !precisionQualification && !externalQualification
   const capturedCfgRescale = qualification?.cfgRescale ?? 0
-  const capturedVaePrecision = precisionQualification ? qualification.vaePrecision : null
+  const capturedVaePrecision = precisionQualification
+    ? qualification.vaePrecision
+    : externalQualification
+      ? 'FP32'
+      : null
   const currentVaePrecision = precisionQualification ? qualification.currentVaePrecision : null
+  const capturedVaeReference = externalQualification
+    ? structuredClone(before.generationDraft.vae)
+    : null
+  const capturedVaeKey = externalQualification ? qualification.vaeKey : null
+  const capturedStrength = externalQualification && mode === 'img2img' ? 0 : 0.5
+  let currentVaeReference = null
+  let libraryDefaultChange = null
   if (cfgQualification) {
     assert.equal(family, 'illustrious')
     assert.equal(
@@ -854,6 +1136,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
     if (mode === 'txt2img') assert.deepEqual(before.layers, [])
   }
+  if (externalQualification) {
+    assert.equal(family, 'illustrious')
+    assert.equal(before.generationDraft.vaePrecision, 'FP32')
+    if (capturedVaeKey === null) assert.equal(capturedVaeReference, null)
+    else {
+      assert.equal(capturedVaeReference.localVersionId, fixture[capturedVaeKey].installed.versionId)
+      assert.equal(capturedVaeReference.fileSha256, fixture[capturedVaeKey].sha256)
+    }
+    if (mode === 'txt2img') assert.deepEqual(before.layers, [])
+  }
   const existingLayers = await layerSnapshot(before.layers)
   const workspaceDirectory = path.join(fixture.appData, 'workspaces/Uncategorized')
   let beforePackagePath
@@ -869,16 +1161,18 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const previousAcceptedLayers = (await readIgsPackage(beforePackagePath)).project.layers
   const beforePackageSha256 = await hashFile(beforePackagePath)
   const previousRows = await queueRows(project)
-  const previousSeedCursor = precisionQualification
-    ? await database.db
-        .selectFrom('generation_seed_cursor')
-        .selectAll()
-        .where('local_project_key', '=', project.id)
-        .executeTakeFirst()
-    : null
-  const previousLastActualSeed = precisionQualification
-    ? (await api('listGenerationResults', project.id)).lastActualSeed
-    : null
+  const previousSeedCursor =
+    precisionQualification || externalQualification
+      ? await database.db
+          .selectFrom('generation_seed_cursor')
+          .selectAll()
+          .where('local_project_key', '=', project.id)
+          .executeTakeFirst()
+      : null
+  const previousLastActualSeed =
+    precisionQualification || externalQualification
+      ? (await api('listGenerationResults', project.id)).lastActualSeed
+      : null
   const existingJobIds = new Set(previousRows.map(({ id }) => id))
   const started = Date.now()
   const button = window.getByRole('button', { name: 'Generate', exact: true })
@@ -897,7 +1191,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
     .toBe(1)
   const frozen = JSON.parse(admitted.frozen_payload_json)
-  const requestedSeedPolicy = mode === 'txt2img' ? 'fixed' : 'reuse'
+  const requestedSeedPolicy = mode === 'txt2img' || externalQualification ? 'fixed' : 'reuse'
   assert.equal(before.generationDraft.seed.policy, requestedSeedPolicy)
   assert.equal(admitted.document_id, before.documentId)
   assert.equal(admitted.operation, `${family}-${mode}`)
@@ -923,6 +1217,31 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(frozen.workerJob.vaePrecision, capturedVaePrecision)
     assert.equal(frozen.context.vae, null, 'The frozen context must use Embedded VAE.')
     assert.equal(frozen.workerJob.vae, null, 'The actual worker must use Embedded VAE.')
+  }
+  if (externalQualification) {
+    assert.equal(frozen.context.vaePrecision, 'FP32')
+    assert.equal(frozen.workerJob.vaePrecision, 'FP32')
+    const value = capturedVaeKey === null ? null : fixture[capturedVaeKey]
+    assert.deepEqual(
+      frozen.context.vae,
+      value === null
+        ? null
+        : {
+            byteSize: value.byteSize,
+            managedPath: value.installed.managedPath,
+            reference: capturedVaeReference,
+          },
+    )
+    assert.deepEqual(
+      frozen.workerJob.vae,
+      value === null
+        ? null
+        : {
+            byteSize: value.byteSize,
+            path: value.installed.managedPath,
+            sha256: value.sha256,
+          },
+    )
   }
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   assert.equal(frozen.context.loras.length, 1)
@@ -976,7 +1295,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(frozen.context.sampling.invokeScheduler, 'euler_a')
     assert.deepEqual(frozen.workerJob.prompts, frozen.context.prompts)
   }
-  if (mode !== 'txt2img') assert.equal(frozen.context.sampling.denoisingStrength, 0.5)
+  if (mode !== 'txt2img') assert.equal(frozen.context.sampling.denoisingStrength, capturedStrength)
+  if (externalQualification && mode === 'img2img')
+    assert.equal(frozen.workerJob.sampling.denoisingStrength, 0)
   const targetPath = path.join(fixture.appData, 'generation-inputs', admitted.id, 'target.png')
   const targetEntry = await lstat(targetPath)
   assert.ok(targetEntry.isFile() && !targetEntry.isSymbolicLink())
@@ -1010,14 +1331,18 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
   }
   if (mode === 'img2img') {
-    const previous = report.generations.findLast(
-      (generation) =>
-        generation.projectKey === project.id &&
-        generation.family === family &&
-        (precisionQualification || generation.mode === 'txt2img'),
-    )
-    assert.ok(previous)
-    assert.equal(target.pixelSha256, previous.dimensions.pixelSha256)
+    if (externalQualification)
+      assert.equal(target.pixelSha256, qualification.commonSource.pixelSha256)
+    else {
+      const previous = report.generations.findLast(
+        (generation) =>
+          generation.projectKey === project.id &&
+          generation.family === family &&
+          (precisionQualification || generation.mode === 'txt2img'),
+      )
+      assert.ok(previous)
+      assert.equal(target.pixelSha256, previous.dimensions.pixelSha256)
+    }
   }
   // Change current authoring only after durable admission; the accepted record must retain click input.
   const changedPrompt = `${before.generationDraft.positivePrompt.text}, later authoring edit`
@@ -1027,7 +1352,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .toBe(changedPrompt)
   let retry = null
   if (retryCase) {
-    assert.ok(mode === 'outpaint' || (precisionQualification && mode === 'img2img'))
+    assert.ok(
+      mode === 'outpaint' ||
+        ((precisionQualification || externalQualification) && mode === 'img2img'),
+    )
     const original = admitted
     // Cancel the actual admitted worker through the public UI. There is no controlled peer,
     // manufactured terminal row or completion-to-canceled rewrite in this qualification.
@@ -1042,7 +1370,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     const canceled = (await queueRows(project)).find(({ id }) => id === original.id)
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
-    if (precisionQualification) {
+    if (precisionQualification || externalQualification) {
       assert.deepEqual(
         await database.db
           .selectFrom('generation_candidate_receipt')
@@ -1061,8 +1389,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       )
       await expect.poll(liveInstalledInferenceChildren).toEqual([])
       assert.equal(capturedVaePrecision, 'FP32')
-      assert.equal(currentVaePrecision, 'FP16')
-      await setVaePrecision(project, currentVaePrecision)
+      if (externalQualification) {
+        assert.equal(capturedVaeKey, 'externalVaeNative')
+        libraryDefaultChange = await setExternalVaeDefaultThroughUi(project, 'externalVaeControl')
+        assert.notEqual(
+          libraryDefaultChange.previousVersionId,
+          libraryDefaultChange.defaultVersionId,
+        )
+        assert.deepEqual((await tab(project)).generationDraft.vae, capturedVaeReference)
+        currentVaeReference = await setExternalVae(project, qualification.currentVaeKey)
+      } else {
+        assert.equal(currentVaePrecision, 'FP16')
+        await setVaePrecision(project, currentVaePrecision)
+      }
     } else {
       await setInput('Denoising Strength', 0.25)
       await expect
@@ -1112,6 +1451,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
             consumedSourceStatusSequence: source.status_sequence,
           }
         : {}),
+      ...(externalQualification
+        ? {
+            capturedVaeReference,
+            currentVaeReference,
+            libraryDefaultChange,
+            canceledStatusSequence: canceled.status_sequence,
+            consumedSourceStatusSequence: source.status_sequence,
+          }
+        : {}),
     }
     await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
   }
@@ -1121,7 +1469,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
-    if (precisionQualification) {
+    if (externalQualification) {
+      delete normalizedInputs.context.vae
+      delete normalizedInputs.workerJob.vae
+      if (!retryCase)
+        currentVaeReference = await setExternalVae(project, qualification.currentVaeKey)
+      assert.equal((await tab(project)).generationDraft.vaePrecision, 'FP32')
+    } else if (precisionQualification) {
       delete normalizedInputs.context.vaePrecision
       delete normalizedInputs.workerJob.vaePrecision
       if (!retryCase) await setVaePrecision(project, currentVaePrecision)
@@ -1193,6 +1547,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (cfgQualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
   if (precisionQualification)
     assert.equal(completedTab.generationDraft.vaePrecision, currentVaePrecision)
+  if (externalQualification) {
+    assert.equal(completedTab.generationDraft.vaePrecision, 'FP32')
+    assert.deepEqual(completedTab.generationDraft.vae, currentVaeReference)
+  }
   const receipt = await database.db
     .selectFrom('generation_candidate_receipt')
     .selectAll()
@@ -1209,7 +1567,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .executeTakeFirstOrThrow()
   assert.equal(row.status, 'completed')
   assert.equal(row.frozen_payload_json, admitted.frozen_payload_json)
-  if (precisionQualification) {
+  if (precisionQualification || externalQualification) {
     assert.ok(
       (await readFile(targetPath)).equals(targetBytes),
       'Completion must retain the exact captured source.',
@@ -1221,7 +1579,14 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       window.__installedQualificationProgress.filter(({ current }) => current.jobId === jobId),
     admitted.id,
   )
-  assert.ok(progress.length > 0, 'the genuine preload must deliver actual denoising progress')
+  if (externalQualification && mode === 'img2img') {
+    assert.deepEqual(
+      progress,
+      [],
+      'Strength zero must use the VAE roundtrip without denoising progress.',
+    )
+  } else
+    assert.ok(progress.length > 0, 'the genuine preload must deliver actual denoising progress')
   for (let index = 0; index < progress.length; index += 1) {
     const { current, revision } = progress[index]
     assert.equal(current.documentId, before.documentId)
@@ -1236,7 +1601,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       assert.equal(current.totalSteps, progress[index - 1].current.totalSteps)
     }
   }
-  assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
+  if (progress.length > 0)
+    assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
   assert.equal(
     await hashFile(beforePackagePath),
     beforePackageSha256,
@@ -1248,7 +1614,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, fixture.side)
   assert.equal(pixels.height, fixture.side)
-  if (precisionQualification) assert.equal(pixels.opaquePixels, fixture.side * fixture.side)
+  if (precisionQualification || externalQualification)
+    assert.equal(pixels.opaquePixels, fixture.side * fixture.side)
   let contributionAlpha8 = null
   if (mode === 'outpaint') {
     const outputBytes = Buffer.from(
@@ -1294,6 +1661,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (precisionQualification) {
     assert.equal(acceptedData.generationConfiguration.vaePrecision, capturedVaePrecision)
     assert.equal(accepted.generationDraft.vaePrecision, currentVaePrecision)
+  }
+  if (externalQualification) {
+    assert.deepEqual(acceptedData.generationConfiguration.vae, capturedVaeReference)
+    assert.equal(acceptedData.generationConfiguration.vaePrecision, 'FP32')
+    assert.deepEqual(accepted.generationDraft.vae, currentVaeReference)
+    assert.equal(accepted.generationDraft.vaePrecision, 'FP32')
+    for (const key of externalVaeKeys) {
+      assert.equal(JSON.stringify(acceptedData).includes(fixture[key].installed.managedPath), false)
+      assert.equal(JSON.stringify(acceptedData).includes(fixture[key].path), false)
+    }
   }
   assert.equal(
     acceptedData.generationConfiguration.positivePrompt.text,
@@ -1353,7 +1730,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     }
   }
   if (mode !== 'txt2img')
-    assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, 0.5)
+    assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, capturedStrength)
   if (mode === 'outpaint') {
     assert.equal(provenance.generationConfiguration.mode, 'outpaint')
     assert.deepEqual(
@@ -1368,7 +1745,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       )
     }
   }
-  if (mode === 'outpaint' || precisionQualification) {
+  if (mode === 'outpaint' || precisionQualification || externalQualification) {
     assert.deepEqual(await layerSnapshot(accepted.layers.slice(1)), existingLayers)
     assert.deepEqual(saved.project.layers.slice(1), previousAcceptedLayers)
   }
@@ -1411,6 +1788,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(provenance.generationConfiguration.vaePrecision, capturedVaePrecision)
     assert.equal(saved.project.generationDraft.vaePrecision, currentVaePrecision)
   }
+  if (externalQualification) {
+    assert.deepEqual(provenance.generationConfiguration.vae, capturedVaeReference)
+    assert.equal(provenance.generationConfiguration.vaePrecision, 'FP32')
+    assert.deepEqual(saved.project.generationDraft.vae, currentVaeReference)
+    assert.equal(saved.project.generationDraft.vaePrecision, 'FP32')
+    for (const key of externalVaeKeys) {
+      assert.equal(JSON.stringify(provenance).includes(fixture[key].installed.managedPath), false)
+      assert.equal(JSON.stringify(provenance).includes(fixture[key].path), false)
+    }
+  }
   await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
@@ -1420,6 +1807,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (cfgQualification) assert.equal(reopened.generationDraft.cfgRescale, 0.2)
   if (precisionQualification)
     assert.equal(reopened.generationDraft.vaePrecision, currentVaePrecision)
+  if (externalQualification) {
+    assert.deepEqual(reopened.generationDraft.vae, currentVaeReference)
+    assert.equal(reopened.generationDraft.vaePrecision, 'FP32')
+  }
   assert.deepEqual(
     (await api('getRasterGenerationData', project.id, reopened.documentId, layer.id))
       .generationConfiguration,
@@ -1455,29 +1846,38 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = precisionQualification
-    ? await compareVaePrecision(
+  const comparison = externalQualification
+    ? await compareExternalVae(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        capturedVaePrecision,
-        currentVaePrecision,
+        capturedVaeReference,
+        currentVaeReference,
         caseName,
+        packagePath,
       )
-    : cfgQualification
-      ? await compareCfgRescale(
+    : precisionQualification
+      ? await compareVaePrecision(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          capturedCfgRescale,
+          capturedVaePrecision,
+          currentVaePrecision,
           caseName,
         )
-      : mode === 'outpaint'
-        ? await compareOutpaint(
+      : cfgQualification
+        ? await compareCfgRescale(
             project,
             reopened.layers.find(({ id }) => id === layer.id),
-            retryCase,
+            capturedCfgRescale,
             caseName,
           )
-        : null
+        : mode === 'outpaint'
+          ? await compareOutpaint(
+              project,
+              reopened.layers.find(({ id }) => id === layer.id),
+              retryCase,
+              caseName,
+            )
+          : null
   const generation = {
     family,
     mode,
@@ -1502,30 +1902,57 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     provenance,
     packagePath,
     previewState: saved.manifest.preview,
-    qualification: precisionQualification
+    qualification: externalQualification
       ? {
-          kind: 'vae-precision',
+          kind: 'external-vae',
           caseName,
           outcome: 'completed-finite',
-          authoredVaePrecision: capturedVaePrecision,
-          capturedVaePrecision,
-          workerVaePrecision: frozen.workerJob.vaePrecision,
-          currentVaePrecision: reopened.generationDraft.vaePrecision,
+          capturedVaeKey,
+          capturedVae: capturedVaeReference,
+          workerVae: frozen.workerJob.vae,
+          currentVae: reopened.generationDraft.vae,
+          precision: 'FP32',
+          origin:
+            capturedVaeKey === null
+              ? 'trained-checkpoint-embedded'
+              : fixture[capturedVaeKey].origin,
           frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
           retainedTargetUnchanged: true,
           normalizedInputs,
           comparison,
+          libraryDefaultChange,
+          ...(mode === 'img2img'
+            ? {
+                commonSource: qualification.commonSource,
+                denoisingStrength: 0,
+                progressScope: 'Actual native VAE roundtrip; zero denoising evaluations.',
+              }
+            : {}),
         }
-      : cfgQualification
+      : precisionQualification
         ? {
+            kind: 'vae-precision',
             caseName,
-            authoredCfgRescale: qualification.cfgRescale,
-            capturedCfgRescale,
-            currentCfgRescale: reopened.generationDraft.cfgRescale,
+            outcome: 'completed-finite',
+            authoredVaePrecision: capturedVaePrecision,
+            capturedVaePrecision,
+            workerVaePrecision: frozen.workerJob.vaePrecision,
+            currentVaePrecision: reopened.generationDraft.vaePrecision,
+            frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
+            retainedTargetUnchanged: true,
             normalizedInputs,
             comparison,
           }
-        : null,
+        : cfgQualification
+          ? {
+              caseName,
+              authoredCfgRescale: qualification.cfgRescale,
+              capturedCfgRescale,
+              currentCfgRescale: reopened.generationDraft.cfgRescale,
+              normalizedInputs,
+              comparison,
+            }
+          : null,
   }
   report.generations.push(generation)
   await check(
@@ -1951,6 +2378,257 @@ async function qualifyVaePrecision() {
     report.vaePrecisionSummary,
   )
 }
+async function importRasterThroughUi(project, importPath) {
+  const before = await tab(project)
+  const existingLayers = await layerSnapshot(before.layers)
+  // The OS chooser is the only controlled boundary; actual UI, Main and installed normalization run.
+  await application.evaluate(({ dialog }, selectedPath) => {
+    globalThis.__qualificationOpenDialog = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, importPath)
+  try {
+    await window.getByRole('button', { name: 'Import image as Raster Layer', exact: true }).click()
+    await expect.poll(async () => (await tab(project)).layers.length).toBe(before.layers.length + 1)
+  } finally {
+    await application.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = globalThis.__qualificationOpenDialog
+      delete globalThis.__qualificationOpenDialog
+    })
+  }
+  const imported = await tab(project)
+  assert.deepEqual(imported.primaryBbox, before.primaryBbox)
+  assert.equal(imported.layers[0].transform.x, before.primaryBbox.x)
+  assert.equal(imported.layers[0].transform.y, before.primaryBbox.y)
+  assert.deepEqual(
+    await layerSnapshot(imported.layers.slice(1)),
+    existingLayers,
+    'import must preserve previous layer properties and exact image bytes/pixels',
+  )
+  return { before, existingLayers, imported }
+}
+async function importMatchedExternalVaeSource(project, commonSource) {
+  const sourceHashBefore = await hashFile(commonSource.path)
+  assert.equal(sourceHashBefore, commonSource.sha256)
+  const { imported } = await importRasterThroughUi(project, commonSource.path)
+  assert.equal(imported.layers.length, 1)
+  assert.equal(imported.layers[0].width, fixture.side)
+  assert.equal(imported.layers[0].height, fixture.side)
+  const normalized = (await layerSnapshot(imported.layers))[0].image
+  assert.equal(normalized.pixelSha256, commonSource.pixelSha256)
+  assert.equal(normalized.opaquePixels, fixture.side * fixture.side)
+  await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+  await expect.poll(async () => (await tab(project)).dirty).toBe(false)
+  let saved
+  let packagePath
+  const directory = path.join(fixture.appData, 'workspaces/Uncategorized')
+  for (const name of await readdir(directory)) {
+    if (!name.endsWith('.igs')) continue
+    const file = path.join(directory, name)
+    const current = await readIgsPackage(file)
+    if (current.project.documentId === imported.documentId) {
+      saved = current
+      packagePath = file
+      break
+    }
+  }
+  assert.ok(saved)
+  assert.equal(saved.project.layers[0].generationProvenance, undefined)
+  assert.equal(saved.project.lastActualSeedSnapshot, null)
+  assert.equal(saved.manifest.preview.status, 'rendered')
+  assert.equal(
+    sha256(await saved.readMember(saved.project.layers[0].asset.path)),
+    saved.project.layers[0].asset.sha256,
+  )
+  assert.equal(await hashFile(commonSource.path), sourceHashBefore)
+  const evidence = {
+    projectKey: project.id,
+    packagePath,
+    importedLayerId: imported.layers[0].id,
+    normalized,
+    source: commonSource,
+    controlled: 'OS chooser selects the single recorded real PNG only',
+  }
+  report.externalVaeImports.push(evidence)
+  await check(
+    'External VAE matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels',
+    evidence,
+  )
+}
+async function assertMatchedExternalVaePixels(generations, mode) {
+  const [embedded, ldm, native, control] = generations
+  for (const result of [ldm, native, control]) {
+    assert.deepEqual(
+      result.qualification.normalizedInputs,
+      embedded.qualification.normalizedInputs,
+      'Only the selected VAE may differ in matched inference inputs.',
+    )
+    assert.equal(result.target.sha256, embedded.target.sha256)
+    assert.equal(result.target.pixelSha256, embedded.target.pixelSha256)
+  }
+  const evidence = {
+    mode,
+    normalizedInputs: embedded.qualification.normalizedInputs,
+    targetSha256: embedded.target.sha256,
+    targetPixelSha256: embedded.target.pixelSha256,
+    embeddedPixelSha256: embedded.dimensions.pixelSha256,
+    ldmPixelSha256: ldm.dimensions.pixelSha256,
+    nativePixelSha256: native.dimensions.pixelSha256,
+    causalControlPixelSha256: control.dimensions.pixelSha256,
+    exactLdmEqualsEmbedded: ldm.dimensions.pixelSha256 === embedded.dimensions.pixelSha256,
+    exactNativeEqualsEmbedded: native.dimensions.pixelSha256 === embedded.dimensions.pixelSha256,
+    finiteCausalControlChangesPixels:
+      control.dimensions.pixelSha256 !== embedded.dimensions.pixelSha256,
+    causalControlScope:
+      'Artificial F16-rounded encoder/decoder bias additions; no independent training or image-quality claim.',
+  }
+  report.externalVaeNumerics[mode] = evidence
+  // Retain observed numerical evidence even when a production mutation makes this assertion red.
+  await checkpointEvidence()
+  assert.equal(
+    ldm.dimensions.pixelSha256,
+    embedded.dimensions.pixelSha256,
+    `Exact standalone LDM VAE must reproduce Embedded ${mode} pixels for matched inputs.`,
+  )
+  assert.equal(
+    native.dimensions.pixelSha256,
+    embedded.dimensions.pixelSha256,
+    `Exact standalone native VAE must reproduce Embedded ${mode} pixels for matched inputs.`,
+  )
+  assert.notEqual(
+    control.dimensions.pixelSha256,
+    embedded.dimensions.pixelSha256,
+    `The finite artificial VAE causal control must change ${mode} pixels for matched inputs.`,
+  )
+  await check(
+    `Matched installed ${mode}: exact LDM/native VAE equals Embedded; finite causal VAE changes pixels`,
+    evidence,
+  )
+}
+async function qualifyExternalVae() {
+  report.externalVaeImports = []
+  report.externalVaeNumerics = {}
+  const choices = [
+    ['embedded', null],
+    ['ldm-exact', 'externalVaeLdm'],
+    ['native-exact', 'externalVaeNative'],
+    ['native-causal-control', 'externalVaeControl'],
+  ]
+  const projects = []
+  const txtCases = []
+  for (const [label, vaeKey] of choices) {
+    const caseName = `illustrious-txt2img-external-vae-${label}`
+    await stage('Installed external VAE matched txt2img case', { caseName, vaeKey })
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    projects.push(project)
+    await expect
+      .poll(async () => (await api('getGenerationState', project.id)).externalVaeSupported)
+      .toBe(true)
+    await setVaePrecision(project, 'FP32')
+    await setExternalVae(project, vaeKey)
+    if (vaeKey === 'externalVaeLdm') {
+      report.externalVaeInitialDefault = await setExternalVaeDefaultThroughUi(
+        project,
+        'externalVaeNative',
+      )
+    }
+    txtCases.push(
+      await generateAndAccept(project, 'illustrious', 'txt2img', {
+        kind: 'external-vae',
+        caseName,
+        vaeKey,
+        currentVaeKey: vaeKey === null ? 'externalVaeNative' : null,
+      }),
+    )
+  }
+  // Fail the actual selected-module causal mutation before starting four additional GPU cases.
+  await assertMatchedExternalVaePixels(txtCases, 'txt2img')
+  const embedded = txtCases[0]
+  const embeddedPackage = await readIgsPackage(embedded.packagePath)
+  const sourceLayer = embeddedPackage.project.layers[0]
+  const sourceBytes = await embeddedPackage.readMember(sourceLayer.asset.path)
+  assert.equal(sha256(sourceBytes), embedded.outputSha256)
+  const sourcePath = path.join(fixture.artifacts, 'external-vae-common-img2img-source.png')
+  await writeFile(sourcePath, sourceBytes, { flag: 'wx' })
+  const commonSource = {
+    path: sourcePath,
+    sha256: sha256(sourceBytes),
+    byteSize: sourceBytes.length,
+    pixelSha256: embedded.dimensions.pixelSha256,
+    width: fixture.side,
+    height: fixture.side,
+    sourceQueueItemId: embedded.queueItemId,
+    sourcePackagePath: embedded.packagePath,
+  }
+  report.externalVaeCommonSource = commonSource
+  const imgCases = []
+  for (const [label, vaeKey] of choices) {
+    const retryCase = vaeKey === 'externalVaeNative'
+    const caseName = `illustrious-img2img-external-vae-${label}${retryCase ? '-retry' : ''}`
+    await stage('Installed external VAE matched opaque img2img roundtrip case', {
+      caseName,
+      vaeKey,
+      strength: 0,
+    })
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    projects.push(project)
+    await importMatchedExternalVaeSource(project, commonSource)
+    await setVaePrecision(project, 'FP32')
+    await setExternalVae(project, vaeKey)
+    await expect(window.locator('input[aria-label="Denoising Strength"]')).toBeVisible()
+    await setInput('Denoising Strength', 0)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+      .toBe(0)
+    assert.equal((await tab(project)).generationDraft.seed.policy, 'fixed')
+    imgCases.push(
+      await generateAndAccept(
+        project,
+        'illustrious',
+        'img2img',
+        {
+          kind: 'external-vae',
+          caseName,
+          vaeKey,
+          commonSource,
+          currentVaeKey: vaeKey === null ? 'externalVaeNative' : null,
+        },
+        retryCase,
+      ),
+    )
+  }
+  await assertMatchedExternalVaePixels(imgCases, 'img2img')
+  assert.equal(report.generations.length, 8)
+  assert.deepEqual(report.failures, [])
+  assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 1)
+  let actualAdmissions = 0
+  for (const project of projects) {
+    const rows = await queueRows(project)
+    actualAdmissions += rows.length
+    assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
+  }
+  assert.equal(actualAdmissions, 9)
+  assert.equal(await hashFile(sourcePath), commonSource.sha256)
+  report.externalVaeSummary = {
+    finiteCompletions: 8,
+    actualAdmissions,
+    canceledOriginals: 1,
+    modes: ['matched txt2img decode', 'same-source opaque strength-zero img2img encode/decode'],
+    choices: choices.map(([label, key]) => ({
+      label,
+      descriptor: key === null ? null : fixture[key],
+    })),
+    installedFormats: ['original-ldm', 'diffusers-native'],
+    precision: 'FP32',
+    commonSource,
+    genuineUiDefaultAndResetBeforeFrozenRetry: true,
+    causalControl:
+      'Locally altered finite trained tensors, not an independently trained or published VAE.',
+  }
+  await check(
+    'Eight finite installed VAE completions and genuine external Cancel/frozen Retry preserve recorded resources and portable pixels',
+    report.externalVaeSummary,
+  )
+}
 async function qualifyMissingRuntimeSaveAndRebuild(project) {
   const latest = report.generations.at(-1)
   assert.ok(latest && latest.family === 'anima' && latest.mode === 'img2img')
@@ -2058,32 +2736,7 @@ async function qualifyInstalledImport(project) {
   await writeFile(importPath, await savedBefore.readMember(sourceLayer.asset.path), { flag: 'wx' })
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
-  const before = await tab(project)
-  const existingLayers = await layerSnapshot(before.layers)
-  // Only the nondeterministic OS file chooser is controlled. UI, Main import/normalization,
-  // installed CPU worker, document mutation and package writer/loader remain genuine.
-  await application.evaluate(({ dialog }, selectedPath) => {
-    globalThis.__qualificationOpenDialog = dialog.showOpenDialog
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
-  }, importPath)
-  try {
-    await window.getByRole('button', { name: 'Import image as Raster Layer', exact: true }).click()
-    await expect.poll(async () => (await tab(project)).layers.length).toBe(before.layers.length + 1)
-  } finally {
-    await application.evaluate(({ dialog }) => {
-      dialog.showOpenDialog = globalThis.__qualificationOpenDialog
-      delete globalThis.__qualificationOpenDialog
-    })
-  }
-  const imported = await tab(project)
-  assert.deepEqual(imported.primaryBbox, before.primaryBbox)
-  assert.equal(imported.layers[0].transform.x, before.primaryBbox.x)
-  assert.equal(imported.layers[0].transform.y, before.primaryBbox.y)
-  assert.deepEqual(
-    await layerSnapshot(imported.layers.slice(1)),
-    existingLayers,
-    'import must preserve previous layer properties and exact image bytes/pixels',
-  )
+  const { existingLayers, imported } = await importRasterThroughUi(project, importPath)
   await window.getByRole('button', { name: 'Save Project', exact: true }).click()
   await expect.poll(async () => (await tab(project)).dirty).toBe(false)
   const saved = await readIgsPackage(latest.packagePath)
@@ -2111,8 +2764,9 @@ try {
     !Object.hasOwn(fixture, 'profile') ||
       cfgRescaleProfile ||
       outpaintProfile ||
-      vaePrecisionProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint or vae-precision.',
+      vaePrecisionProfile ||
+      externalVaeProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision or external-vae.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -2133,6 +2787,7 @@ try {
     )
     assert.equal(fixture.steps, 3, 'VAE Precision qualification requires exactly 3 authored steps.')
   }
+  if (externalVaeProfile) validateExternalVaeFixture()
   if (outpaintProfile) {
     validateOutpaintFixture()
     // Qualify the declared local file before model copying, catalog writes or Electron startup.
@@ -2170,6 +2825,32 @@ try {
     assert.ok(ready.capabilities.includes('illustrious-lora'))
     report.installedReady = ready
   }
+  if (externalVaeProfile) {
+    assert.equal(
+      resume,
+      true,
+      'External VAE qualification must resume the existing isolated catalog.',
+    )
+    const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
+    assert.equal(
+      ready.workerVersion,
+      '0.12.0',
+      'External VAE qualification requires an installed 0.12 worker.',
+    )
+    for (const capability of [
+      'illustrious-external-vae',
+      'illustrious-vae-precision',
+      'illustrious-txt2img',
+      'illustrious-img2img',
+      'illustrious-lora',
+    ]) {
+      assert.ok(
+        ready.capabilities.includes(capability),
+        `External VAE qualification requires ${capability}.`,
+      )
+    }
+    report.installedReady = ready
+  }
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
     workerLock: await hashFile('worker-python/uv.lock'),
@@ -2193,8 +2874,9 @@ try {
   else {
     // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
+    const declaredKeys = externalVaeProfile ? [...allModelKeys, ...externalVaeKeys] : allModelKeys
     const hashes = new Set(
-      allModelKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
+      declaredKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
     )
     assert.ok(
       catalog.every((model) => model.versions.every((version) => hashes.has(version.file.sha256))),
@@ -2220,6 +2902,59 @@ try {
         resourceCount: catalog.length,
         declaredIdentityCount: hashes.size,
         copiedResources: 0,
+      }
+    }
+    if (externalVaeProfile) {
+      assert.equal(hashes.size, 9)
+      const priorHashes = new Set(allModelKeys.map((key) => fixture[key].sha256))
+      const prior = catalog.filter((model) =>
+        model.versions.some(({ file }) => priorHashes.has(file.sha256)),
+      )
+      assert.equal(
+        prior.length,
+        6,
+        'External VAE qualification must retain all six original resources.',
+      )
+      assert.ok(
+        prior.every(
+          (model) => model.versions.length === 1 && model.versions[0].file.status === 'ready',
+        ),
+      )
+      assert.equal(new Set(prior.map(({ versions }) => versions[0].file.sha256)).size, 6)
+      const added = catalog.filter((model) => !prior.includes(model))
+      assert.ok(
+        added.length <= 1,
+        'Only the single declared external VAE qualification resource may be added.',
+      )
+      const actualHashes = catalog.flatMap(({ versions }) =>
+        versions.map(({ file }) => file.sha256),
+      )
+      assert.equal(new Set(actualHashes).size, actualHashes.length)
+      for (const model of added) {
+        assert.equal(model.type, 'vae')
+        assert.deepEqual(model.source, { kind: 'civitai', modelId: 700_070 })
+        assert.equal(model.displayName, fixture.externalVaeLdm.name)
+        assert.ok(model.versions.length >= 1 && model.versions.length <= 3)
+        for (const version of model.versions) {
+          const key = externalVaeKeys.find((key) => fixture[key].sha256 === version.file.sha256)
+          assert.ok(key)
+          assert.equal(version.file.status, 'ready')
+          assert.equal(version.baseModelFamily, 'illustrious')
+          assert.equal(version.name, fixture[key].versionName)
+          assert.deepEqual(version.sourceMetadata.origin, fixture[key].origin)
+          assert.equal(version.civitaiVersionId, 700_071 + externalVaeKeys.indexOf(key) * 10)
+          assert.equal(version.civitaiFileId, 700_072 + externalVaeKeys.indexOf(key) * 10)
+        }
+      }
+      preservedExternalPriorCatalog = structuredClone(prior).sort((left, right) =>
+        left.id.localeCompare(right.id),
+      )
+      report.catalogReuse = {
+        originalResourceCount: prior.length,
+        initialResourceCount: catalog.length,
+        declaredIdentityCount: hashes.size,
+        allowedAddedResources: 1,
+        allowedExternalFiles: 3,
       }
     }
   }
@@ -2248,10 +2983,34 @@ try {
     if (modelKeys.includes(key) && fixture[key])
       fixture[key].installed = await installArtifact(repository, fixture[key], id)
   }
+  if (externalVaeProfile) {
+    for (const [key, id] of [
+      ['externalVaeLdm', 700_070],
+      ['externalVaeNative', 700_080],
+      ['externalVaeControl', 700_090],
+    ]) {
+      fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
+        sourceModelId: 700_070,
+        versionName: fixture[key].versionName,
+      })
+    }
+    assert.equal(new Set(externalVaeKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
+    const seeded = await repository.listInstalled()
+    assert.equal(seeded.length, 7)
+    assert.equal(seeded.flatMap(({ versions }) => versions).length, 9)
+    assert.ok(seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')))
+    report.catalogReuse.finalResourceCount = 7
+    report.catalogReuse.finalVersionCount = 9
+    report.catalogReuse.newManagedFiles = report.models.filter(
+      ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+    ).length
+  }
   await check(
-    vaePrecisionProfile
-      ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
-      : 'Real exact model files copied, verified and cataloged; source weights unchanged',
+    externalVaeProfile
+      ? 'Same six resources retained; three exact local VAE files cataloged as versions of one added qualification resource'
+      : vaePrecisionProfile
+        ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
+        : 'Real exact model files copied, verified and cataloged; source weights unchanged',
   )
   if (outpaintProfile) await installQualificationLama()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
@@ -2314,6 +3073,8 @@ try {
       assert.ok(ready.capabilities.includes(capability))
     report.installedReady = ready
     await qualifyOutpaint()
+  } else if (externalVaeProfile) {
+    await qualifyExternalVae()
   } else if (vaePrecisionProfile) {
     await qualifyVaePrecision()
   } else if (cfgRescaleProfile) {
@@ -2334,6 +3095,23 @@ try {
     await qualifyInstalledImport(lastProject)
   }
   assert.deepEqual(report.pageErrors, [])
+  if (externalVaeProfile) {
+    const finalCatalog = await repository.listInstalled()
+    const priorIds = new Set(preservedExternalPriorCatalog.map(({ id }) => id))
+    assert.deepEqual(
+      finalCatalog
+        .filter(({ id }) => priorIds.has(id))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      preservedExternalPriorCatalog,
+      'The six prior resource rows, versions and defaults must remain unchanged.',
+    )
+    assert.equal(finalCatalog.length, 7)
+    assert.equal(finalCatalog.flatMap(({ versions }) => versions).length, 9)
+    assert.ok(
+      finalCatalog.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')),
+    )
+    report.catalogReuse.originalRowsUnchanged = true
+  }
   // Observational closure only: neither source files nor the active runtime is rewritten.
   for (const model of report.models) assert.equal(await hashFile(model.managedPath), model.sha256)
   assert.deepEqual(

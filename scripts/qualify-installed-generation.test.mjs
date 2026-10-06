@@ -1,6 +1,7 @@
 /** Actual qualification CLI preflight/filesystem checks; no Electron, model copy or ML execution. */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,7 +14,7 @@ const exec = promisify(execFile)
 const repository = path.dirname(import.meta.dirname)
 const script = path.join(repository, 'scripts/qualify-installed-generation.mjs')
 
-async function fixture(use) {
+async function fixture(use, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-qualification-preflight-'))
   const appData = path.join(root, 'data/imagegen-studio')
   const artifacts = path.join(root, 'artifacts')
@@ -26,7 +27,14 @@ async function fixture(use) {
   await fs.writeFile(executable, `#!/bin/sh\nprintf 'invoked\\n' > '${invoked}'\nexit 93\n`, {
     mode: 0o700,
   })
-  const marker = JSON.stringify({ status: 'passed', appData, runtimeId })
+  const runtimeReport = path.join(root, 'installed-runtime-report.json')
+  if (options.ready) await fs.writeFile(runtimeReport, JSON.stringify({ ready: options.ready }))
+  const marker = JSON.stringify({
+    status: 'passed',
+    appData,
+    runtimeId,
+    ...(options.ready ? { report: runtimeReport } : {}),
+  })
   const pointer = JSON.stringify({ schemaVersion: 1, runtimeId, pythonExecutable: executable })
   await fs.writeFile(path.join(appData, 'qualification-runtime.json'), marker)
   await fs.writeFile(path.join(appData, 'runtime/current-runtime.json'), pointer)
@@ -75,6 +83,76 @@ async function fixture(use) {
   }
 }
 
+async function externalVaeInput(root, input) {
+  Object.assign(input, { profile: 'external-vae', side: 256, steps: 3 })
+  const sources = []
+  for (const [key, type, family] of [
+    ['encoder', 'qwen3_encoder', 'anima'],
+    ['vae', 'vae', 'anima'],
+    ['anima', 'checkpoint', 'anima'],
+    ['illustrious', 'checkpoint', 'illustrious'],
+    ['animaLora', 'lora', 'anima'],
+    ['illustriousLora', 'lora', 'illustrious'],
+    ['externalVaeLdm', 'vae', 'illustrious'],
+    ['externalVaeNative', 'vae', 'illustrious'],
+    ['externalVaeControl', 'vae', 'illustrious'],
+  ]) {
+    // Deliberately tiny source bytes: these are preflight inputs, never ML substitutes.
+    const bytes = Buffer.from(`read-only preflight source ${key}\n`)
+    const source = path.join(root, `${key}.safetensors`)
+    await fs.writeFile(source, bytes)
+    const entry = await fs.lstat(source)
+    sources.push({ source, bytes, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs })
+    input[key] = {
+      path: source,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      byteSize: bytes.length,
+      type,
+      family,
+      name: key.startsWith('externalVae') ? 'Qualification external VAE' : key,
+    }
+  }
+  for (const [key, format] of [
+    ['externalVaeLdm', 'original-ldm'],
+    ['externalVaeNative', 'diffusers-native'],
+  ]) {
+    Object.assign(input[key], {
+      versionName: key,
+      origin: { kind: 'checkpoint-extraction', format, checkpointSha256: input.illustrious.sha256 },
+    })
+  }
+  Object.assign(input.externalVaeControl, {
+    versionName: 'externalVaeControl',
+    origin: {
+      kind: 'finite-causal-control',
+      format: 'diffusers-native',
+      sourceVaeSha256: input.externalVaeNative.sha256,
+      encoderBiasAdd: 0.1,
+      decoderBiasAdd: 0.15,
+    },
+  })
+  return sources
+}
+
+async function assertExternalPreflightPreserved(appData, artifacts, sources = []) {
+  const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+  assert.equal(report.status, 'failed')
+  assert.equal(report.profile, 'external-vae')
+  assert.deepEqual(report.models, [])
+  assert.deepEqual(report.generations, [])
+  assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+  await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
+  await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+  for (const { source, bytes, mtimeMs, ctimeMs } of sources) {
+    assert.ok(
+      (await fs.readFile(source)).equals(bytes),
+      'Refused preflight must preserve source bytes.',
+    )
+    const entry = await fs.lstat(source)
+    assert.deepEqual([entry.size, entry.mtimeMs, entry.ctimeMs], [bytes.length, mtimeMs, ctimeMs])
+  }
+}
+
 test('fresh canonical destinations reserve a failed preflight report without starting the worker', async () => {
   // Boundary: actual CLI setup and report writer. Neighbor: directory/report refusals below.
   // The image size intentionally stops the real CLI after preflight, before any catalog/ML work.
@@ -92,10 +170,10 @@ test('fresh canonical destinations reserve a failed preflight report without sta
   })
 })
 
-test('omitted, CFG Rescale, outpaint and VAE Precision profiles reach the neighboring size refusal without starting a worker', async () => {
+test('omitted, CFG Rescale, outpaint, VAE Precision and external VAE profiles reach the neighboring size refusal without starting a worker', async () => {
   // Boundary: real CLI fixture admission. The invalid image side is a controlled stop after
   // profile validation, so accepting a profile does not launch Electron or inference.
-  for (const profile of [undefined, 'cfg-rescale', 'outpaint', 'vae-precision']) {
+  for (const profile of [undefined, 'cfg-rescale', 'outpaint', 'vae-precision', 'external-vae']) {
     await fixture(async ({ artifacts, input, run }) => {
       if (profile !== undefined) input.profile = profile
       input.steps = 3
@@ -124,6 +202,8 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
     'cfg_rescale',
     'vae_precision',
     'VAE-Precision',
+    'external_vae',
+    'External-VAE',
     {},
     ['cfg-rescale'],
   ]) {
@@ -132,7 +212,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint or vae-precision/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision or external-vae/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
@@ -247,6 +327,340 @@ test('VAE Precision selected Illustrious resources require resume before catalog
     await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
     await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
   })
+})
+
+test('external VAE strict numeric controls refuse before descriptor, catalog or worker setup', async () => {
+  // Boundary: actual CLI profile admission. Neighbor: a complete 256/3 fixture below reaches
+  // resume. Mutations: widen the finite qualification or coerce authored numeric controls.
+  for (const [change, message] of [
+    [{ side: 128 }, /External VAE qualification requires exactly 256 pixels/],
+    [{ side: 512 }, /External VAE qualification requires exactly 256 pixels/],
+    [{ steps: 2 }, /External VAE qualification requires exactly 3 authored steps/],
+    [{ steps: 4 }, /External VAE qualification requires exactly 3 authored steps/],
+    [{ side: '256' }, /Qualification image side must be/],
+    [{ side: null }, /Qualification image side must be/],
+    [{ steps: true }, /AssertionError/],
+    [{ steps: null }, /AssertionError/],
+  ]) {
+    await fixture(async ({ appData, artifacts, input, run }) => {
+      Object.assign(input, { profile: 'external-vae', side: 256, steps: 3 }, change)
+      const refusal = await run()
+      assert.match(refusal.stderr, message)
+      assert.doesNotMatch(
+        refusal.stderr,
+        /requires externalVae|must resume|Qualification profile must be/,
+      )
+      await assertExternalPreflightPreserved(appData, artifacts)
+    })
+  }
+})
+
+test('external VAE descriptor shape and value refusals preserve every source before installation', async (t) => {
+  // The actual CLI must reject malformed descriptors before the independent no-resume stop.
+  // This catches omitted shape checks and coercion without preparing a catalog or fake ML output.
+  for (const [name, mutate] of [
+    [
+      'missing LDM descriptor',
+      (input) => {
+        delete input.externalVaeLdm
+      },
+    ],
+    [
+      'null native descriptor',
+      (input) => {
+        input.externalVaeNative = null
+      },
+    ],
+    [
+      'array control descriptor',
+      (input) => {
+        input.externalVaeControl = []
+      },
+    ],
+    [
+      'extra descriptor field',
+      (input) => {
+        input.externalVaeLdm.unknown = 'untrusted'
+      },
+    ],
+    [
+      'relative source path',
+      (input) => {
+        input.externalVaeNative.path = 'relative.safetensors'
+      },
+    ],
+    [
+      'unnormalized source path',
+      (input) => {
+        input.externalVaeControl.path += '/../control.safetensors'
+      },
+    ],
+    [
+      'malformed file identity',
+      (input) => {
+        input.externalVaeLdm.sha256 = 'unknown'
+      },
+    ],
+    [
+      'string byte size',
+      (input) => {
+        input.externalVaeNative.byteSize = '1'
+      },
+    ],
+    [
+      'zero byte size',
+      (input) => {
+        input.externalVaeControl.byteSize = 0
+      },
+    ],
+    [
+      'blank resource name',
+      (input) => {
+        input.externalVaeLdm.name = ' '
+      },
+    ],
+    [
+      'blank version name',
+      (input) => {
+        input.externalVaeNative.versionName = ''
+      },
+    ],
+    [
+      'Illustrious checkpoint incompatible type',
+      (input) => {
+        input.illustrious.type = 'lora'
+      },
+    ],
+    [
+      'Illustrious checkpoint incompatible family',
+      (input) => {
+        input.illustrious.family = 'anima'
+      },
+    ],
+    [
+      'Illustrious LoRA incompatible type',
+      (input) => {
+        input.illustriousLora.type = 'vae'
+      },
+    ],
+    [
+      'Illustrious LoRA incompatible family',
+      (input) => {
+        input.illustriousLora.family = 'anima'
+      },
+    ],
+    ...['externalVaeLdm', 'externalVaeNative', 'externalVaeControl'].flatMap((key) => [
+      [
+        `${key} incompatible type`,
+        (input) => {
+          input[key].type = 'lora'
+        },
+      ],
+      [
+        `${key} incompatible family`,
+        (input) => {
+          input[key].family = 'anima'
+        },
+      ],
+    ]),
+  ]) {
+    await t.test(name, async () => {
+      await fixture(async ({ root, appData, artifacts, input, run }) => {
+        const sources = await externalVaeInput(root, input)
+        mutate(input)
+        const refusal = await run()
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        await assertExternalPreflightPreserved(appData, artifacts, sources)
+      })
+    })
+  }
+})
+
+test('external VAE origins reject unknown lineage, format and causal controls before installation', async (t) => {
+  // Boundary: actual fixture-origin admission. Neighbor: the exact origins reach resume below.
+  // Mutation: accept synthetic or unrelated weights while claiming checkpoint extraction/control.
+  for (const [name, mutate] of [
+    [
+      'array origin',
+      (input) => {
+        input.externalVaeLdm.origin = []
+      },
+    ],
+    [
+      'missing extraction checkpoint',
+      (input) => {
+        delete input.externalVaeNative.origin.checkpointSha256
+      },
+    ],
+    [
+      'LDM source checkpoint differs',
+      (input) => {
+        input.externalVaeLdm.origin.checkpointSha256 = 'a'.repeat(64)
+      },
+    ],
+    [
+      'native source checkpoint differs',
+      (input) => {
+        input.externalVaeNative.origin.checkpointSha256 = 'a'.repeat(64)
+      },
+    ],
+    [
+      'control source differs',
+      (input) => {
+        input.externalVaeControl.origin.sourceVaeSha256 = input.externalVaeLdm.sha256
+      },
+    ],
+    [
+      'control encoder bias differs',
+      (input) => {
+        input.externalVaeControl.origin.encoderBiasAdd = 0.2
+      },
+    ],
+    [
+      'control decoder bias differs',
+      (input) => {
+        input.externalVaeControl.origin.decoderBiasAdd = '0.15'
+      },
+    ],
+    ...['externalVaeLdm', 'externalVaeNative', 'externalVaeControl'].flatMap((key) => [
+      [
+        `${key} unknown origin kind`,
+        (input) => {
+          input[key].origin.kind = 'downloaded'
+        },
+      ],
+      [
+        `${key} wrong format`,
+        (input) => {
+          input[key].origin.format = 'unknown'
+        },
+      ],
+      [
+        `${key} extra origin field`,
+        (input) => {
+          input[key].origin.untrusted = true
+        },
+      ],
+    ]),
+  ]) {
+    await t.test(name, async () => {
+      await fixture(async ({ root, appData, artifacts, input, run }) => {
+        const sources = await externalVaeInput(root, input)
+        mutate(input)
+        const refusal = await run()
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        await assertExternalPreflightPreserved(appData, artifacts, sources)
+      })
+    })
+  }
+})
+
+test('external VAE duplicate identities and inconsistent resource versions refuse before installation', async (t) => {
+  // The same resource owns three distinct exact versions; duplicates cannot substitute for a case.
+  for (const [name, mutate, message] of [
+    [
+      'duplicate external file identity',
+      (input) => {
+        input.externalVaeControl.sha256 = input.externalVaeLdm.sha256
+      },
+      /three distinct file identities/,
+    ],
+    [
+      'duplicate prior resource identity',
+      (input) => {
+        input.anima.sha256 = input.encoder.sha256
+      },
+      /six distinct prior resource identities/,
+    ],
+    [
+      'external identity collides with prior resource',
+      (input) => {
+        input.externalVaeControl.sha256 = input.encoder.sha256
+      },
+      /distinct from the six prior resource identities/,
+    ],
+    [
+      'missing prior resource identity',
+      (input) => {
+        delete input.encoder
+      },
+      /declare all six prior resource identities/,
+    ],
+    [
+      'malformed prior resource identity',
+      (input) => {
+        input.vae.sha256 = 'unknown'
+      },
+      /declare all six prior resource identities/,
+    ],
+    [
+      'extra external descriptor identity',
+      (input) => {
+        input.externalVaeUnlisted = structuredClone(input.externalVaeLdm)
+      },
+      /only the three declared external descriptor keys/,
+    ],
+    [
+      'different resource name',
+      (input) => {
+        input.externalVaeNative.name = 'Another resource'
+      },
+      /share one resource display name/,
+    ],
+    [
+      'duplicate version name',
+      (input) => {
+        input.externalVaeControl.versionName = input.externalVaeLdm.versionName
+      },
+      /three distinct version names/,
+    ],
+  ]) {
+    await t.test(name, async () => {
+      await fixture(async ({ root, appData, artifacts, input, run }) => {
+        const sources = await externalVaeInput(root, input)
+        mutate(input)
+        const refusal = await run()
+        assert.match(refusal.stderr, message)
+        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        await assertExternalPreflightPreserved(appData, artifacts, sources)
+      })
+    })
+  }
+})
+
+test('external VAE exact schema and origins require resume before source or catalog setup', async () => {
+  // Positive schema neighbor: the actual CLI passes all descriptor/origin checks, then refuses
+  // missing resume without reading or copying the deliberately tiny source files.
+  await fixture(async ({ root, appData, artifacts, input, run }) => {
+    const sources = await externalVaeInput(root, input)
+    const refusal = await run()
+    assert.match(
+      refusal.stderr,
+      /External VAE qualification must resume the existing isolated catalog/,
+    )
+    assert.doesNotMatch(refusal.stderr, /Qualification profile must be|requires exactly|ENOENT/)
+    await assertExternalPreflightPreserved(appData, artifacts, sources)
+  })
+})
+
+test('external VAE exact schema with resume reaches installed worker qualification before installation', async () => {
+  // Positive operational neighbor: genuine --resume admission passes the complete schema and
+  // lineage checks, then a controlled older ready record stops before catalog or source use.
+  await fixture(
+    async ({ root, appData, artifacts, input, run }) => {
+      const sources = await externalVaeInput(root, input)
+      const refusal = await run({ resume: true })
+      assert.match(refusal.stderr, /External VAE qualification requires an installed 0\.12 worker/)
+      assert.doesNotMatch(
+        refusal.stderr,
+        /must resume|Qualification profile must be|requires exactly|ENOENT/,
+      )
+      await assertExternalPreflightPreserved(appData, artifacts, sources)
+    },
+    { ready: { workerVersion: '0.11.0', capabilities: [] } },
+  )
 })
 
 test('outpaint profile refuses changed geometry, steps and LaMa pins before model or worker setup', async () => {
