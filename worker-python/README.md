@@ -2,6 +2,14 @@
 
 This package contains the Phase 2A image-import/derivative subprocess and a **separate, narrow development inference entrypoint**. The default `python -I -m imagegen_worker` stays version `0.1.0`, `derivatives-only`, with Pillow-only default dependencies and no generation capability. There is no packaged Linux/NVIDIA inference runtime or installer yet; this package alone must not satisfy the production runtime activation gate.
 
+The [normal outpaint foundation](../docs/engineering/phase-2c-outpaint-conditioning-research.md)
+adds internal `outpaint_conditioning` and `lama_infill` helpers. Exact Invoke
+Gaussian weighted maximum/fade masks consume copied RGBA and explicit Main
+policy; a hash-bound local TorchScript loader performs LaMa infill without
+downloads. OpenCV headless5.0.0.93 is pinned only in the inference extra.
+The helpers do not add a worker command/capability or lift mixed-alpha Generate
+refusal. Family masked denoising and mode-aware RGBA publication remain open.
+
 Run locally with the app-managed development Python selected by `.python-version`:
 
 ```bash

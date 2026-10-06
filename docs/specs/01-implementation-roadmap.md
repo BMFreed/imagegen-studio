@@ -1236,11 +1236,20 @@ filesystem, queue и dispatch boundaries с поведенческими kills �
 параметр и конкретные trained weights, без обещания качества, independent
 img2img pixel ablation, остальных options или готового release runtime.
 
-**Следующий шаг:** исследование и конкретный контракт operational alpha-derived
-outpaint conditioning: infill/coherence, сохранность исходных pixels, durable
-inputs и family-specific masked execution. Снятие mixed-alpha отказа само по
-себе не реализует этот pipeline. Installed model/options qualification фазы 2C
-продолжается; остальные Advanced Options также остаются открытыми.
+**Normal outpaint conditioning foundation (06.10.2026):**
+[Alpha/coherence/LaMa contract](../engineering/phase-2c-outpaint-conditioning-research.md)
+и внутренние production helpers фиксируют detached Main target/soft-alpha mask,
+exact policy/resource identities, source-equivalent CPU gradient/fade,
+transparent RGBA contribution и hash-bound local TorchScript infill. Источник
+Canvas не перезаписывается; seam может перекрываться отдельным слоем. Это ещё
+не исполняемый durable outpaint job или public capability.
+
+**Следующий шаг:** Illustrious family-specific masked denoising на подготовленном
+source/coherence, затем Anima с её linear-time/shifted-sigma semantics. До снятия
+mixed-alpha отказа согласовать queue/resource materialization/Retry, worker
+capability, RGBA publication/staging и immutable portable provenance/comparison,
+а затем проверить installed trained Generate/Add/Save/reopen. Installed
+model/options qualification продолжается; прочие Advanced Options остаются открытыми.
 Общие вспомогательные веса LaMa устанавливаются вместе с первой установкой
 движка с предварительным показом полного объёма загрузки; Main владеет download,
 cache и exact identity verification, worker получает готовый локальный путь.

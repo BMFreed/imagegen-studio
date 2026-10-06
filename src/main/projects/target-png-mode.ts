@@ -4,7 +4,27 @@ export type TargetPngMode = 'img2img' | 'outpaint' | 'txt2img'
 
 /** Decode only the PNG alpha channel, using its row filters, to verify the worker's mode claim. */
 export function classifyTargetPngAlpha(png: Buffer, width: number, height: number): TargetPngMode {
+  const alpha = decodeTargetPngAlpha(png, width, height)
+  let allTransparent = true
+  let allOpaque = true
+  for (const value of alpha) {
+    if (value !== 0) {
+      allTransparent = false
+    }
+    if (value !== 255) {
+      allOpaque = false
+    }
+  }
+  return allTransparent ? 'txt2img' : allOpaque ? 'img2img' : 'outpaint'
+}
+
+/**
+ * Return owned row-major alpha bytes without thresholding soft coverage. This bounded pixel decoder
+ * is not the separate CRC/ICC verifier: callers still qualify the complete target PNG before use.
+ */
+export function decodeTargetPngAlpha(png: Buffer, width: number, height: number): Buffer {
   if (
+    !Buffer.isBuffer(png) ||
     !Number.isSafeInteger(width) ||
     !Number.isSafeInteger(height) ||
     width < 1 ||
@@ -67,8 +87,8 @@ export function classifyTargetPngAlpha(png: Buffer, width: number, height: numbe
   }
   let previous = new Uint8Array(width)
   let current = new Uint8Array(width)
-  let allTransparent = true
-  let allOpaque = true
+  // At most 4 MB in addition to the existing bounded inflated RGBA rows and two predictor rows.
+  const alphaBytes = Buffer.alloc(width * height)
   for (let row = 0; row < height; row++) {
     const rowStart = row * rowBytes
     const filter = decoded[rowStart]
@@ -111,14 +131,9 @@ export function classifyTargetPngAlpha(png: Buffer, width: number, height: numbe
       }
       const alpha = (decoded[rowStart + 1 + column * 4 + 3] + predictor) & 0xff
       current[column] = alpha
-      if (alpha !== 0) {
-        allTransparent = false
-      }
-      if (alpha !== 255) {
-        allOpaque = false
-      }
+      alphaBytes[row * width + column] = alpha
     }
     ;[previous, current] = [current, previous]
   }
-  return allTransparent ? 'txt2img' : allOpaque ? 'img2img' : 'outpaint'
+  return alphaBytes
 }

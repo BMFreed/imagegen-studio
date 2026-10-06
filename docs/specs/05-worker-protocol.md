@@ -266,6 +266,24 @@ type WorkerMessage =
   | { type: 'error'; jobId?: string; code: string; message: string; details?: unknown }
 ```
 
+### Internal normal outpaint foundation (06.10.2026)
+
+The [alpha conditioning contract](../engineering/phase-2c-outpaint-conditioning-research.md)
+pins the ordinary Invoke Canvas policy: fractional alpha keep mask, local LaMa
+infill, Gaussian weighted maximum coherence16px, minimum denoise0, output fade16px
+and transparent RGBA contribution. Original document assets are preserved; seam
+pixels can be overlaid by the separate contribution. Main owns copied/hash-bound
+target/mask/policy/auxiliary identities; Python owns numerical conditioning and
+verified local TorchScript execution. Normal inference dimensions use the /8 grid.
+
+These are internal helpers, not a new command, handshake capability or durable
+job/provenance union. Public mixed-alpha Generate still refuses both families.
+Family masked denoising, Main auxiliary install/materialization, capability
+admission, Retry, RGBA publication/staging and portable accepted settings must
+be implemented and qualified together before activation. The default installed
+runtime contract is not changed by a development dependency or a research weight
+download. Full authored masks/Regional Guidance/Smart Patch remain phase4.
+
 ## Правила протокола
 
 - `jobId` создаёт main process.

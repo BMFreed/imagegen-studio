@@ -23,3 +23,25 @@ The vendor file is excluded narrowly from local style/type rewriting to preserve
 its exact upstream bytes. Application policy and integration wrappers remain
 under the project's normal checks. Independent numerical tests load the pinned
 external Invoke source and compare actual execution, not this copy as its oracle.
+
+InvokeAI normal outpaint conditioning and LaMa adapter
+
+ImageGen Studio's ../outpaint_conditioning.py and ../lama_infill.py adapt:
+invokeai/app/invocations/create_gradient_mask.py
+SHA-256: 4cf9673b0935547a043f64c6ecd9b44a83a392fa1de19ee9be2f2ebb0ada0f37
+invokeai/app/invocations/image.py (ExpandMaskWithFadeInvocation / ApplyMaskToImageInvocation)
+SHA-256: 3f6a9c80649d1fe0185bb48d64cbe27c809c3104d4eaa45946211a615a3ce972
+invokeai/backend/image_util/infill_methods/lama.py
+SHA-256: 15562f2c69436f02e8934e95bd7de765233e153caa469ca596991ab77baf64cf
+All from InvokeAI commit 9e1540962bcca7f8fa668d7d8e02cf79d75fda3b,
+https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b
+Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
+
+Modifications: explicit caller-owned policy, copied RGBA source, CPU NumPy
+weighted maximum filter, bounded grid/output guards, descriptor-backed exact
+local TorchScript capture, finite output validation, and no remote service,
+invocation storage or publication. The shared source-equivalent defaults are
+owned by Main; family denoising/public outpaint are not enabled by these modules.
+LaMa weights are not bundled in this worker package. The separately pinned
+Sanster/models TorchScript release is a Main-owned future engine resource;
+this source adaptation notice does not change its separate weight attribution.
