@@ -50,6 +50,15 @@
 - Run `pnpm run typecheck` after TypeScript/Vue changes.
 - Run `pnpm run prototype:test` after prototype UI changes.
 
+## Local test artifacts
+
+- Before creating or reusing data under `~/.codex/artifacts/imagegen-studio/`, read [Artifact lifecycle](docs/engineering/artifact-lifecycle.md). Inventory disk usage before heavy runs and clean up at run completion and task handoff.
+- Separate compact evidence from bulky disposable payloads. Prefer one verified compatible reusable ML runtime/catalog; additional copies need a concrete test reason and a disposal checkpoint.
+- Clean only confirmed idle, agent-generated data within this artifact root during authorized implementation/test work. Audit-only tasks remain read-only. Routine cleanup within this boundary does not need repeated approval.
+- Preserve active processes, cross-run dependencies, current reusable environments and mutation rollback data. Confirm physical process exit and restoration before deleting; directory age and a finished parent process are insufficient.
+- The initial soft budgets are 30 GiB for the artifact root and 1 GiB for compact evidence. They trigger inspection/pruning, never deletion of protected data; record necessary exceptions and when they can be released.
+- Never sweep the root blindly, follow symlinks into external data, or delete ordinary app data, original model/image files outside the root or global package caches. Record actual reclaimed space and retained dependencies.
+
 ## Product contracts and engineering workflow
 
 - Before behavior/scope changes, read the relevant entry in `docs/product-promises.md` and its supporting contract. Preserve negative scope and record prototype gaps separately from production intent.

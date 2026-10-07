@@ -6,6 +6,7 @@
 - [Product Promises](../product-promises.md) — обязательства и публичная готовность.
 - [Research protocol](./research-protocol.md) — исследование до изменения по риску.
 - [Review protocol](./review-protocol.md) — проверка результата и регрессий.
+- [Artifact lifecycle](./artifact-lifecycle.md) — обязательный inventory и постепенная очистка локальных test payloads, один compatible reusable ML runtime/catalog, компактное evidence и защита cross-run dependencies.
 - [Public outpaint admission (07.10.2026)](./phase-2c-public-outpaint-research.md) — both-family mixed-alpha Generate/frozen Retry, final SQL and runtime child-exit document fences, exact local LaMa refusal with ordinary storage preserved; counts, installed evidence and remaining release boundaries live in the research note.
 - [Internal outpaint execution (06.10.2026)](./phase-2c-outpaint-execution-research.md) — explicit worker 0.12.0 commands for both families, independent Main contribution-alpha verification, owned staging source after queue pruning and portable Add/Save/read/comparison; public admission is described by the newer checkpoint above. First-setup LaMa installation and release qualification remain open. Counts and historical evidence boundaries live in the research note.
 - [Normal outpaint conditioning (06.10.2026)](./phase-2c-outpaint-conditioning-research.md) — frozen Main alpha/policy/LaMa identity, exact Invoke CPU masks and local TorchScript infill; durable RGBA publication and public activation were open at this helper checkpoint.

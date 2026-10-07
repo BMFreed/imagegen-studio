@@ -125,6 +125,12 @@ point затронутого контура, включая получение �
 Для high risk mutation проверяется исполнением в изолированной копии и удаляется
 после опыта; отсутствие доступа к настоящей границе фиксируется как ограничение.
 
+Создание и переиспользование локальных тестовых данных следует
+[Artifact lifecycle](./artifact-lifecycle.md): inventory до тяжёлого прогона,
+компактные доказательства отдельно от environment/weights, проверка cross-run
+dependencies и очистка своих ненужных payloads после physical exit/restoration.
+Дата каталога и завершение parent CLI не доказывают его удаляемость.
+
 Failure diagnostics тоже должны быть ограничены: большие binary/image buffers
 сравниваются по точным байтам (`Buffer.equals()` с коротким сообщением), без
 построения многомегабайтного `deepEqual` diff. Тяжёлые suites и mutation harness
