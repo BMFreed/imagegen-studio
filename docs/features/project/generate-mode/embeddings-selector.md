@@ -102,3 +102,45 @@ old workers and expanded prompts above the existing four-chunk budget fail
 explicitly. Anima embeddings, Preset handoff and the release runtime remain
 separate gaps. Synthetic native tensor/image checks establish mechanics, not
 trained embedding quality or compatibility of every CivitAI file.
+
+## Installed trained Illustrious checkpoint (07.10.2026)
+
+[Installed embedding qualification](../../../engineering/phase-2c-installed-embeddings-research.md)
+completed eight finite cases through built Electron and the installed worker
+0.12.0. The exact trained source is **IllustriousPhoto**, by
+**CautionMergeAhead**, version **WAI v15 1152steps**; required creator credit is
+retained in the research and fixture. Its paired F16 `clip_l [12,768]` and
+`clip_g [12,1280]` tensors are compared with a separately labeled artificial
+zero-tensor control. Both installed versions use `<illustriousphoto>` and real
+ID-only autocomplete choices. Matched positive-only and negative-only txt2img
+pairs, and weighted/repeated dual-polarity opaque img2img pairs, change decoded
+pixels when only the exact trained/control weight identity changes.
+
+The bounded cases use 256×256, three requested steps, seed `0`, Embedded VAE
+with explicit FP32 and signed ordinary LoRA −0.5. Positive weighted text has
+three literal occurrences, including weight 1.3; negative has two, including
+weight 0.7. Each polarity keeps one deduplicated ref. Both img2img cases import
+the same genuine plain txt2img PNG and use strength 0.5; native progress
+observed two denoising evaluations per case. This combined tensor control does
+not independently ablate CLIP L/G or attention weights.
+
+Nine real admissions include one actual canceled original, with no completion
+receipt or seed advance. After a real library Default change to the zero
+control and removal of every literal from both live prompts, public Retry
+retains the original trained refs, prompt text and target bytes. Explicit
+Add/Save/readback/reopen preserve exact portable sidecars without model paths or
+worker-private aliases. Comparison shows recorded refs as `Removed` against the
+edited live prompts; known empty refs remain `Same`. The seven prior resource
+rows and their Defaults are unchanged; the final catalog has eight resources
+and eleven ready versions.
+
+The shared editor now explicitly closes active or pending completion on blur.
+A native authoring regression was RED before this fix and GREEN afterward;
+its eleven checks use catalog-only fixtures and a controlled worker peer,
+separate from trained inference. Qualification selects only from the focused
+editor's `aria-controls` list and waits for actual DOM/Main text acknowledgment.
+
+These are installed development results for one declared trained file and its
+artificial control. Live CivitAI install/repair, arbitrary formats, image
+quality, Anima embeddings, Preset handoff, dynamic multi-job qualification,
+full conditioning-budget capacity and release qualification remain open.

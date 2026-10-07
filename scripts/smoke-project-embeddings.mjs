@@ -45,9 +45,11 @@ const report = {
   screenshots: [],
   viewportChecks: [],
   hoverChecks: [],
+  authoringCases: [],
   sourceSha256: hashFiles([
     'scripts/smoke-project-embeddings.mjs',
     'scripts/native-smoke-window.mjs',
+    'src/renderer/components/PlainPromptEditor.vue',
   ]),
   bundleSha256: hashFiles([
     'dist/main/main.cjs',
@@ -469,7 +471,6 @@ try {
   assert.equal(runtime.ok, true)
   assert.equal(runtime.value.kind, 'ready')
   await observePromptIpc()
-  const initial = await prompt('positive')
   await editor('positive').click()
   await editor('positive').press('Control+Space')
   await expect(window.getByRole('option')).toHaveCount(5)
@@ -482,6 +483,96 @@ try {
   check(
     'Native keyboard completion exposes only available Illustrious embedding versions; Anima neighbor is excluded',
   )
+
+  const originalPrompts = {
+    positive: await prompt('positive'),
+    negative: await prompt('negative'),
+  }
+  const dualPromptCase = {
+    name: 'Weighted repeated positive binding followed by same-token negative selection',
+    status: 'running',
+    token: '<native-ambiguous>',
+    positiveText: 'portrait, (<native-ambiguous>:1.3), <native-ambiguous>, <native-ambiguous>',
+    negativeText: 'blurry, low quality, <native-ambiguous>',
+    selectedIpc: [],
+  }
+  report.authoringCases.push(dualPromptCase)
+  const selectionStart = (await selectedCalls()).length
+  const exactAmbiguousRef = [{ resource: fixture.ambiguousA.portable, token: '<native-ambiguous>' }]
+  try {
+    dualPromptCase.phase = 'positive-selection'
+    await editor('positive').fill('portrait, <native-ambiguous>')
+    await editor('positive').press('Control+End')
+    await editor('positive').press('Control+Space')
+    const positiveChoice = option('<native-ambiguous>', 'Ambiguity A · Embedding v1')
+    await expect(positiveChoice).toHaveCount(1)
+    await expect(positiveChoice).toBeVisible()
+    await positiveChoice.click()
+    await expect
+      .poll(async () => (await prompt('positive')).embeddingRefs)
+      .toEqual(exactAmbiguousRef)
+    await editor('positive').fill(dualPromptCase.positiveText)
+    await expect
+      .poll(async () => await prompt('positive'))
+      .toEqual({
+        text: dualPromptCase.positiveText,
+        embeddingRefs: exactAmbiguousRef,
+      })
+    await seal('positive')
+    await expect(editor('positive').locator('.cm-prompt-embedding')).toHaveCount(3)
+    dualPromptCase.positive = await prompt('positive')
+
+    dualPromptCase.phase = 'negative-selection'
+    await editor('negative').fill(dualPromptCase.negativeText)
+    await editor('negative').press('Control+End')
+    await editor('negative').press('Control+Space')
+    const negativeChoice = option('<native-ambiguous>', 'Ambiguity A · Embedding v1')
+    await expect(negativeChoice).toHaveCount(1)
+    await expect(negativeChoice).toBeVisible()
+    await negativeChoice.click()
+    await expect
+      .poll(async () => {
+        dualPromptCase.selectedIpc = (await selectedCalls()).slice(selectionStart)
+        return dualPromptCase.selectedIpc.map((args) => args[1].kind)
+      })
+      .toEqual(['positive-prompt', 'negative-prompt'])
+    for (const args of dualPromptCase.selectedIpc) {
+      assert.equal(args[0], fixture.project.key)
+      assert.deepEqual(args[1].embeddingSelection, {
+        resourceId: fixture.ambiguousA.resourceId,
+        token: '<native-ambiguous>',
+        versionId: fixture.ambiguousA.versionId,
+      })
+    }
+    await expect
+      .poll(async () => await prompt('negative'))
+      .toEqual({
+        text: dualPromptCase.negativeText,
+        embeddingRefs: exactAmbiguousRef,
+      })
+    assert.deepEqual(await prompt('positive'), dualPromptCase.positive)
+    await seal('negative')
+    await expect(editor('negative').locator('.cm-prompt-embedding')).toHaveCount(1)
+    dualPromptCase.negative = await prompt('negative')
+    dualPromptCase.status = 'passed'
+    check(
+      'Same-token negative completion after weighted repeated positive authoring sends negative selection IPC, binds its exact version and preserves positive text/refs',
+      {
+        authoringCase: dualPromptCase.name,
+        selectedKinds: dualPromptCase.selectedIpc.map((args) => args[1].kind),
+      },
+    )
+  } catch (error) {
+    dualPromptCase.status = 'failed'
+    dualPromptCase.selectedIpc = (await selectedCalls()).slice(selectionStart)
+    dualPromptCase.mainAtFailure = (await tab()).generationDraft
+    throw error
+  }
+  await edit('positive', originalPrompts.positive.text)
+  await edit('negative', originalPrompts.negative.text)
+  assert.deepEqual(await prompt('positive'), originalPrompts.positive)
+  assert.deepEqual(await prompt('negative'), originalPrompts.negative)
+  const initial = await prompt('positive')
 
   await complete(
     'positive',
@@ -833,6 +924,7 @@ try {
     JSON.stringify({
       artifacts,
       checks: report.checks.length,
+      authoringCases: report.authoringCases.length,
       pageErrors: report.pageErrors.length,
       outcome: report.outcome,
     }),

@@ -29,6 +29,7 @@ import { _electron as electron, expect as baseExpect } from '@playwright/test'
 import { openAppDatabase } from '../src/main/db/database.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { ModelDownloader } from '../src/main/models/model-downloader.ts'
+import { qualifyIllustriousEmbedding } from '../src/main/models/illustrious-embedding-qualification.ts'
 import {
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
@@ -44,6 +45,7 @@ import {
 } from '../src/main/runtime/inference-auxiliary-resources.ts'
 import { LAMA_OUTPAINT_ARTIFACT } from '../src/main/runtime/lama-manifest.ts'
 import { INVOKE_ALPHA_OUTPAINT_POLICY_V1 } from '../src/shared/projects/alpha-outpaint.ts'
+import { embeddingActivationToken } from '../src/shared/projects/prompt-embeddings.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
@@ -59,8 +61,13 @@ const cfgRescaleProfile = fixture.profile === 'cfg-rescale'
 const outpaintProfile = fixture.profile === 'outpaint'
 const vaePrecisionProfile = fixture.profile === 'vae-precision'
 const externalVaeProfile = fixture.profile === 'external-vae'
-const illustriousOnlyProfile = cfgRescaleProfile || vaePrecisionProfile || externalVaeProfile
+const embeddingsProfile = fixture.profile === 'embeddings'
+const illustriousOnlyProfile =
+  cfgRescaleProfile || vaePrecisionProfile || externalVaeProfile || embeddingsProfile
 const externalVaeKeys = ['externalVaeLdm', 'externalVaeNative', 'externalVaeControl']
+const embeddingKeys = ['embeddingTrained', 'embeddingControl']
+const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
+const embeddingControlSourceIds = { versionId: 700_111, fileId: 700_112 }
 assert.equal(fixture.schemaVersion, 1)
 for (const value of [fixture.appData, fixture.artifacts]) {
   assert.equal(typeof value, 'string')
@@ -121,20 +128,24 @@ const report = {
   boundary: {
     actual:
       'Built Electron renderer/preload/Main, production model qualification and runtime leases, noneditable installed Python worker, trained CUDA models, SQLite queue/receipts, PNG staging, explicit UI Add, .igs writer/loader and close/reopen.',
-    preconditions: externalVaeProfile
-      ? 'The same installed runtime and six-resource isolated catalog are resumed. Three exact locally extracted/derived VAE files are verified and cataloged as versions of one qualification resource. The native and LDM files contain trained checkpoint VAE tensors; altered encoder/decoder biases are a labeled artificial causal control. No standalone CivitAI download or independently trained replacement claim.'
-      : vaePrecisionProfile
-        ? 'The same six-resource isolated catalog and installed runtime are resumed without new weight or runtime copies; only exact Illustrious checkpoint and signed LoRA are used. Embedded VAE, source family and prediction type are declared qualification preconditions.'
-        : 'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
-    limits: externalVaeProfile
-      ? 'Installed development worker 0.12, trained Illustrious checkpoint with exact LDM/native external VAE and a finite artificial bias control at 256 pixels/3 steps, explicit FP32. Matched txt2img and common-source strength-zero opaque img2img, genuine Cancel/frozen external Retry after UI library Default and draft edits, explicit Add/Save/reopen/comparison. No external VAE network install/repair, arbitrary model compatibility, independent training lineage, signed release lifecycle, maximum geometry/VRAM, image quality or whole-MVP claim.'
-      : outpaintProfile
-        ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
+    preconditions: embeddingsProfile
+      ? 'The same installed runtime and seven-resource/nine-version isolated catalog are resumed unchanged. A declared CivitAI-trained Illustrious dual-CLIP embedding and a separately labeled finite zero-tensor causal control are locally verified and cataloged as two versions of one added resource. Same original filename provides one literal with explicit UI version selection. Source download, training attribution and required creator credit are declared fixture preconditions; this runner does not implement network delivery.'
+      : externalVaeProfile
+        ? 'The same installed runtime and six-resource isolated catalog are resumed. Three exact locally extracted/derived VAE files are verified and cataloged as versions of one qualification resource. The native and LDM files contain trained checkpoint VAE tensors; altered encoder/decoder biases are a labeled artificial causal control. No standalone CivitAI download or independently trained replacement claim.'
         : vaePrecisionProfile
-          ? 'Installed development worker 0.12 with genuine trained Illustrious embedded VAE, 256 pixels and 3 steps. Same-input txt2img Auto/FP32/FP16 policy comparison and opaque img2img wiring, actual Cancel/frozen FP32 Retry, explicit Add/Save/reopen and recorded comparison. FP16 qualifies only by finite publication or exact native VAE non-finite refusal with no candidate, PNG, acceptance or seed mutation. Img2img inputs may differ and do not establish numerical equivalence. No signed release lifecycle, external VAE, maximum geometry/VRAM, image quality or whole-MVP claim.'
-          : cfgRescaleProfile
-            ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
-            : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
+          ? 'The same six-resource isolated catalog and installed runtime are resumed without new weight or runtime copies; only exact Illustrious checkpoint and signed LoRA are used. Embedded VAE, source family and prediction type are declared qualification preconditions.'
+          : 'Read-only existing source weights copied and SHA-verified into isolated managed catalog; declared model family/prediction type supplied by qualification fixture. No CivitAI download or family inference claim.',
+    limits: embeddingsProfile
+      ? 'Installed development worker 0.12, trained Illustrious checkpoint, signed ordinary LoRA -0.5, explicit Embedded VAE/FP32, 256 pixels/3 requested steps/seed 0. Six txt2img cases exercise plain, separate trained/control polarities and weighted repeated dual-polarity literals; two common-source opaque img2img cases use strength 0.5. Genuine Cancel, UI library Default change and removal of both live embedding sidecars precede frozen trained Retry. All eight cases must complete finite pixels with explicit Add/Save/reopen/comparison. Trained-versus-zero pairs preserve literal text and all other numeric inputs; plain-versus-trained changes both prompt literals and binding. No broad embedding compatibility, image quality, network install/repair, Anima embedding, chunk-budget stress, signed release lifecycle, maximum geometry/VRAM or whole-MVP claim.'
+      : externalVaeProfile
+        ? 'Installed development worker 0.12, trained Illustrious checkpoint with exact LDM/native external VAE and a finite artificial bias control at 256 pixels/3 steps, explicit FP32. Matched txt2img and common-source strength-zero opaque img2img, genuine Cancel/frozen external Retry after UI library Default and draft edits, explicit Add/Save/reopen/comparison. No external VAE network install/repair, arbitrary model compatibility, independent training lineage, signed release lifecycle, maximum geometry/VRAM, image quality or whole-MVP claim.'
+        : outpaintProfile
+          ? 'Installed development worker 0.12, genuine pinned CPU LaMa and trained CUDA outpaint at 256 pixels. Existing local LaMa bytes replace only network transport through the fixed Main installer. No public network download, first Set up/Install/Repair, signed release lifecycle, maximum geometry, image quality, regional inference or whole-MVP claim.'
+          : vaePrecisionProfile
+            ? 'Installed development worker 0.12 with genuine trained Illustrious embedded VAE, 256 pixels and 3 steps. Same-input txt2img Auto/FP32/FP16 policy comparison and opaque img2img wiring, actual Cancel/frozen FP32 Retry, explicit Add/Save/reopen and recorded comparison. FP16 qualifies only by finite publication or exact native VAE non-finite refusal with no candidate, PNG, acceptance or seed mutation. Img2img inputs may differ and do not establish numerical equivalence. No signed release lifecycle, external VAE, maximum geometry/VRAM, image quality or whole-MVP claim.'
+            : cfgRescaleProfile
+              ? 'Development provisioner, not signed release installer/repair or relocatable bundle. Same-input trained txt2img CFG ablation and opaque img2img nonzero wiring/provenance use healthy installed-runtime Save/reopen. This profile does not exercise missing-runtime Save or Home preview rebuild, independently ablate img2img numerics, or establish full image-quality, maximum-resolution/VRAM or whole-MVP readiness.'
+              : 'Development provisioner, not signed release installer/repair or relocatable bundle. No full image-quality, maximum-resolution/VRAM or whole-MVP claim. Healthy Save/rebuild uses the installed runtime; a neighboring missing-runtime Save must preserve accepted pixels/provenance with valid placeholder previews.',
     browser:
       'Existing native _electron system harness exercises genuine Electron IPC and the installed CUDA child. HTTP preview availability is outside this qualification.',
   },
@@ -251,6 +262,103 @@ function validateExternalVaeFixture() {
   assert.ok(
     [...hashes].every((hash) => !priorHashes.has(hash)),
     'External VAE files must be distinct from the six prior resource identities.',
+  )
+}
+function validateEmbeddingFixture() {
+  assert.equal(fixture.side, 256, 'Embedding qualification requires exactly 256 pixels per side.')
+  assert.equal(fixture.steps, 3, 'Embedding qualification requires exactly 3 authored steps.')
+  assert.deepEqual(
+    Object.keys(fixture).filter(
+      (key) => key.startsWith('embedding') && !embeddingKeys.includes(key),
+    ),
+    [],
+    'Embedding qualification accepts only the two declared embedding descriptor keys.',
+  )
+  const hashes = new Set()
+  const versionNames = new Set()
+  for (const key of embeddingKeys) {
+    const value = fixture[key]
+    assert.ok(
+      value && typeof value === 'object' && !Array.isArray(value),
+      `Embedding qualification requires ${key}.`,
+    )
+    assert.equal(
+      Object.keys(value).sort().join(','),
+      'byteSize,family,name,origin,path,sha256,type,versionName',
+      'Embedding descriptors must contain exactly the declared identity, labels and origin fields.',
+    )
+    assert.equal(value.type, 'embedding')
+    assert.equal(value.family, 'illustrious')
+    assert.ok(
+      typeof value.path === 'string' &&
+        path.isAbsolute(value.path) &&
+        path.normalize(value.path) === value.path,
+    )
+    assert.ok(typeof value.sha256 === 'string' && /^[0-9a-f]{64}$/.test(value.sha256))
+    assert.ok(Number.isSafeInteger(value.byteSize) && value.byteSize > 0)
+    assert.ok(typeof value.name === 'string' && value.name.trim().length > 0)
+    assert.ok(typeof value.versionName === 'string' && value.versionName.trim().length > 0)
+    assert.ok(value.origin && typeof value.origin === 'object' && !Array.isArray(value.origin))
+    if (key === 'embeddingTrained') {
+      assert.equal(
+        Object.keys(value.origin).sort().join(','),
+        'creator,creditRequired,fileId,kind,modelId,url,versionId',
+        'The trained embedding origin must contain exactly the declared CivitAI attribution fields.',
+      )
+      assert.equal(value.origin.kind, 'civitai-trained')
+      for (const field of ['modelId', 'versionId', 'fileId'])
+        assert.ok(Number.isSafeInteger(value.origin[field]) && value.origin[field] > 0)
+      assert.equal(
+        value.origin.url,
+        `https://civitai.com/api/download/models/${value.origin.versionId}?fileId=${value.origin.fileId}`,
+      )
+      assert.ok(typeof value.origin.creator === 'string' && value.origin.creator.trim().length > 0)
+      assert.equal(value.origin.creditRequired, true)
+      assert.notEqual(value.origin.versionId, embeddingControlSourceIds.versionId)
+      assert.notEqual(value.origin.fileId, embeddingControlSourceIds.fileId)
+    } else {
+      assert.equal(
+        Object.keys(value.origin).sort().join(','),
+        'kind,sourceEmbeddingSha256,tensorScale',
+        'The embedding control origin must contain exactly the declared causal fields.',
+      )
+      assert.equal(value.origin.kind, 'finite-causal-control')
+      assert.equal(value.origin.sourceEmbeddingSha256, fixture.embeddingTrained.sha256)
+      assert.equal(value.origin.tensorScale, 0)
+    }
+    assert.equal(
+      value.name,
+      fixture.embeddingTrained.name,
+      'Embedding versions must share one resource display name.',
+    )
+    const fileName = path.basename(value.path)
+    assert.ok(
+      embeddingActivationToken(fileName),
+      'Embedding source names must define a valid safetensors activation token.',
+    )
+    assert.equal(
+      fileName,
+      path.basename(fixture.embeddingTrained.path),
+      'Embedding versions must share the exact canonical filename token.',
+    )
+    hashes.add(value.sha256)
+    versionNames.add(value.versionName)
+  }
+  assert.equal(hashes.size, 2, 'Embedding qualification requires two distinct file identities.')
+  assert.equal(versionNames.size, 2, 'Embedding qualification requires two distinct version names.')
+  // Retain the prior external-VAE manifest contract, including its checkpoint/control lineage.
+  validateExternalVaeFixture()
+  const priorHashes = new Set(
+    [...priorModelKeys, ...externalVaeKeys].map((key) => fixture[key].sha256),
+  )
+  assert.equal(
+    priorHashes.size,
+    9,
+    'Embedding qualification must declare all nine prior file identities.',
+  )
+  assert.ok(
+    [...hashes].every((hash) => !priorHashes.has(hash)),
+    'Embedding files must be distinct from the nine prior file identities.',
   )
 }
 function validateOutpaintFixture() {
@@ -474,6 +582,10 @@ async function installArtifact(repository, value, id, dependencies, publication 
     !externalVaeProfile || publication !== null,
     'External VAE qualification must reuse the six existing resources without new copies.',
   )
+  assert.ok(
+    !embeddingsProfile || value.type === 'embedding',
+    'Embedding qualification must reuse the seven existing resources without new copies.',
+  )
   await copyFile(value.path, managed, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
   assert.equal(await hashFile(managed), value.sha256)
   const sourceAfter = await lstat(value.path)
@@ -496,10 +608,14 @@ async function installArtifact(repository, value, id, dependencies, publication 
       },
       resource: {
         displayName: value.name,
+        ...(publication?.creator ? { creator: publication.creator } : {}),
         source: supported
           ? { kind: 'supported_dependency', key: `qualification-${id}` }
           : { kind: 'civitai', modelId: publication?.sourceModelId ?? id },
-        sourceMetadata: { qualificationPrecondition: true },
+        sourceMetadata: {
+          qualificationPrecondition: true,
+          ...(publication?.resourceOrigin ? { origin: publication.resourceOrigin } : {}),
+        },
         type: value.type,
       },
       version: {
@@ -513,7 +629,12 @@ async function installArtifact(repository, value, id, dependencies, publication 
               expectedSha256: value.sha256,
               revision: 'qualification-local-v1',
             }
-          : { kind: 'civitai', expectedSha256: value.sha256, versionId: id + 1, fileId: id + 2 },
+          : {
+              kind: 'civitai',
+              expectedSha256: value.sha256,
+              versionId: publication?.sourceVersionId ?? id + 1,
+              fileId: publication?.sourceFileId ?? id + 2,
+            },
         sourceMetadata: {
           qualificationPrecondition: true,
           ...(publication ? { origin: value.origin } : {}),
@@ -528,6 +649,7 @@ let window
 let database
 let mainLog
 let preservedExternalPriorCatalog = null
+let preservedEmbeddingPriorCatalog = null
 const env = {
   ...process.env,
   NODE_ENV: 'production',
@@ -671,6 +793,315 @@ async function setExternalVae(project, key) {
     ),
   ).toBeVisible()
   return reference
+}
+const embeddingBasePrompts = {
+  positive: 'a red ceramic cup on a wooden table, studio photograph',
+  negative: 'blurry, low quality',
+}
+function embeddingSourceIds(key) {
+  return key === 'embeddingTrained'
+    ? fixture.embeddingTrained.origin
+    : { ...embeddingControlSourceIds, modelId: fixture.embeddingTrained.origin.modelId }
+}
+function expectedEmbeddingRef(key) {
+  const value = fixture[key]
+  const source = embeddingSourceIds(key)
+  return {
+    token: embeddingActivationToken(path.basename(value.path)),
+    resource: {
+      baseModelFamily: 'illustrious',
+      civitaiFileId: source.fileId,
+      civitaiModelId: source.modelId,
+      civitaiVersionId: source.versionId,
+      displayName: value.name,
+      fileSha256: value.sha256,
+      kind: 'embedding',
+      localModelId: value.installed.resourceId,
+      localVersionId: value.installed.versionId,
+      predictionType: null,
+      versionName: value.versionName,
+    },
+  }
+}
+function authoredEmbeddingPrompt(polarity, key, repeated) {
+  const base = embeddingBasePrompts[polarity]
+  if (key === null) return base
+  const { token } = expectedEmbeddingRef(key)
+  return repeated
+    ? `${base}, (${token}:${polarity === 'positive' ? '1.3' : '0.7'}), ${token}${polarity === 'positive' ? `, ${token}` : ''}`
+    : `${base}, ${token}`
+}
+async function authorEmbeddingThroughUi(project, polarity, key, repeated = false) {
+  assert.ok(['positive', 'negative'].includes(polarity))
+  assert.ok(key === null || embeddingKeys.includes(key))
+  const field = polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
+  const control = window.getByRole('textbox', {
+    name: polarity === 'positive' ? 'Positive prompt' : 'Negative prompt',
+    exact: true,
+  })
+  const expectedText = authoredEmbeddingPrompt(polarity, key, repeated)
+  let phase = 'fill'
+  try {
+    if (key === null) await control.fill(expectedText)
+    else {
+      const value = fixture[key]
+      const { token } = expectedEmbeddingRef(key)
+      // Seal the seeded text in Main before opening an explicit version choice. The same
+      // literal belongs to both versions, so only the focused editor's list owns this choice.
+      const seedText = `${embeddingBasePrompts[polarity]}, ${token}`
+      await control.fill(seedText)
+      await expect(control).toHaveText(seedText)
+      await expect.poll(async () => (await tab(project)).generationDraft[field].text).toBe(seedText)
+      phase = 'seal seeded text'
+      await control.press('Tab')
+      await expect(control).not.toBeFocused()
+      await expect(control).toHaveText(seedText)
+      await expect.poll(async () => (await tab(project)).generationDraft[field].text).toBe(seedText)
+      phase = 'open owned completion'
+      await control.focus()
+      await control.press('Control+End')
+      await expect(control).toBeFocused()
+      await control.press('Control+Space')
+      await expect(control).toHaveAttribute('aria-controls', /^[A-Za-z0-9_-]+$/)
+      const completionListId = await control.getAttribute('aria-controls')
+      const list = window.locator(`[role="listbox"][id="${completionListId}"]`)
+      await expect(list).toHaveCount(1)
+      await expect(list).toBeVisible()
+      const option = list
+        .getByRole('option')
+        .filter({ has: window.getByText(token, { exact: true }) })
+        .filter({ hasText: `${value.name} · ${value.versionName}` })
+      await expect(option).toHaveCount(1)
+      await expect(option).toBeVisible()
+      await expect(control).toBeFocused()
+      assert.equal(await control.getAttribute('aria-controls'), completionListId)
+      assert.equal(
+        await option.evaluate((element) => element.closest('[role="listbox"]')?.id),
+        completionListId,
+      )
+      phase = 'choose owned version'
+      await option.click()
+      await expect(control).toBeFocused()
+      await expect
+        .poll(async () => (await tab(project)).generationDraft[field].embeddingRefs)
+        .toEqual([expectedEmbeddingRef(key)])
+      if (repeated) {
+        phase = 'fill weighted repeated literals'
+        await control.fill(expectedText)
+      }
+    }
+    phase = 'verify authored prompt'
+    await expect(control).toHaveText(expectedText)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft[field])
+      .toEqual({
+        text: expectedText,
+        embeddingRefs: key === null ? [] : [expectedEmbeddingRef(key)],
+      })
+    phase = 'seal authored prompt'
+    await control.press('Tab')
+    await expect(control).not.toBeFocused()
+    const decorations = control.locator('.cm-prompt-embedding')
+    await expect(decorations).toHaveCount(
+      key === null ? 0 : repeated ? (polarity === 'positive' ? 3 : 2) : 1,
+    )
+    if (key !== null) await expect(decorations.first()).toHaveText(expectedEmbeddingRef(key).token)
+    await expect(control.locator('.cm-prompt-embedding-warning')).toHaveCount(0)
+    return structuredClone((await tab(project)).generationDraft[field])
+  } catch (error) {
+    const evidence = {
+      phase,
+      polarity,
+      key,
+      repeated,
+      projectId: project.id,
+      expectedText,
+      error: String(error),
+    }
+    const [dom, main] = await Promise.allSettled([
+      window.evaluate(() => ({
+        editors: [...document.querySelectorAll('.cm-content[role="textbox"]')].map((element) => ({
+          label: element.getAttribute('aria-label'),
+          text: element.textContent,
+          focused: document.activeElement === element,
+          controls: element.getAttribute('aria-controls'),
+        })),
+        lists: [...document.querySelectorAll('[role="listbox"]')].map((element) => ({
+          id: element.id,
+          options: [...element.querySelectorAll('[role="option"]')].map(
+            (option) => option.textContent,
+          ),
+        })),
+      })),
+      tab(project).then(({ generationDraft }) => ({
+        positivePrompt: generationDraft.positivePrompt,
+        negativePrompt: generationDraft.negativePrompt,
+      })),
+    ])
+    evidence.dom = dom.status === 'fulfilled' ? dom.value : { error: String(dom.reason) }
+    evidence.main = main.status === 'fulfilled' ? main.value : { error: String(main.reason) }
+    report.embeddingAuthoringFailures ??= []
+    report.embeddingAuthoringFailures.push(evidence)
+    await checkpointEvidence().catch(() => {})
+    throw error
+  }
+}
+async function setEmbeddingDefaultThroughUi(project, key) {
+  const value = fixture[key]
+  const before = await tab(project)
+  const beforeCatalog = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(beforeCatalog.ok, true)
+  const resourceBefore = beforeCatalog.value.find(({ id }) => id === value.installed.resourceId)
+  assert.ok(resourceBefore)
+  await window.getByRole('button', { name: 'Manage Models', exact: true }).click()
+  const manager = window.getByRole('dialog', { name: 'Model Manager', exact: true })
+  await expect(manager).toBeVisible()
+  await manager.getByRole('button', { name: /^Embeddings/ }).click()
+  const resource = manager
+    .locator('.resource-row')
+    .filter({ has: window.getByText(value.name, { exact: true }) })
+  await expect(resource).toHaveCount(1)
+  await resource.locator('.resource-select').click()
+  const row = manager
+    .locator('.version-row')
+    .filter({ has: window.getByText(value.versionName, { exact: true }) })
+  await expect(row).toBeVisible()
+  if (resourceBefore.defaultVersionId !== value.installed.versionId)
+    await row.getByRole('button', { name: 'Set Default', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const catalog = await window.evaluate(() => window.api.models.getCatalog())
+      assert.equal(catalog.ok, true)
+      return catalog.value.find(({ id }) => id === value.installed.resourceId)?.defaultVersionId
+    })
+    .toBe(value.installed.versionId)
+  await expect(row).toContainText('Default')
+  const screenshot = path.join(
+    fixture.artifacts,
+    `embedding-default-${key}-${report.screenshots.length}.png`,
+  )
+  await captureScreenshot(screenshot, manager)
+  report.screenshots.push(screenshot)
+  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await expect(manager).toBeHidden()
+  const after = await tab(project)
+  for (const field of [
+    'documentId',
+    'generationDraft',
+    'primaryBbox',
+    'layers',
+    'dirty',
+    'canUndo',
+    'canRedo',
+  ])
+    assert.deepEqual(after[field], before[field])
+  return {
+    resourceId: value.installed.resourceId,
+    previousVersionId: resourceBefore.defaultVersionId,
+    defaultVersionId: value.installed.versionId,
+    throughUi: true,
+    screenshot,
+  }
+}
+function normalizeEmbeddingInputs(frozen) {
+  const normalized = structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
+  delete normalized.context.documentId
+  delete normalized.context.documentRevision
+  const normalizeReference = (reference) => {
+    for (const field of [
+      'fileSha256',
+      'localVersionId',
+      'civitaiVersionId',
+      'civitaiFileId',
+      'versionName',
+    ])
+      delete reference[field]
+  }
+  for (const polarity of ['positive', 'negative']) {
+    for (const ref of normalized.context.embeddingRefs[polarity]) normalizeReference(ref.resource)
+    for (const entry of normalized.context.embeddings[polarity]) {
+      delete entry.byteSize
+      delete entry.managedPath
+      normalizeReference(entry.reference)
+    }
+    for (const entry of normalized.workerJob.embeddings?.[polarity] ?? []) {
+      delete entry.byteSize
+      delete entry.path
+      delete entry.sha256
+    }
+  }
+  return normalized
+}
+function assertPortableEmbeddingConfiguration(configuration, capturedPrompts) {
+  assert.equal(configuration.vaePrecision, 'FP32')
+  assert.equal(configuration.vae, null)
+  for (const polarity of ['positive', 'negative']) {
+    const field = polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
+    assert.deepEqual(configuration[field], capturedPrompts[polarity])
+  }
+  const serialized = JSON.stringify(configuration)
+  assert.equal(serialized.includes('igs_ti_private_'), false)
+  for (const key of embeddingKeys) {
+    assert.equal(serialized.includes(fixture[key].path), false)
+    assert.equal(serialized.includes(fixture[key].installed.managedPath), false)
+  }
+}
+async function compareEmbeddings(project, layer, capturedPrompts, caseName, packagePath) {
+  const before = await tab(project)
+  const packageSha256 = await hashFile(packagePath)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
+    const evidence = {}
+    for (const polarity of ['positive', 'negative']) {
+      const refs = capturedPrompts[polarity].embeddingRefs
+      const row = comparison.locator(
+        `[data-setting="${polarity === 'positive' ? 'prompt' : 'negativePrompt'}.embeddings"]`,
+      )
+      const status = refs.length ? 'Removed' : 'Same'
+      await expect(row).toHaveAttribute('data-status', status)
+      const values = row.locator('.comparison-values p')
+      await expect(values).toHaveCount(2)
+      if (refs.length) {
+        await expect(values.nth(0)).toContainText(refs[0].token)
+        await expect(values.nth(0)).toContainText(refs[0].resource.displayName)
+        await expect(values.nth(0)).toContainText(refs[0].resource.versionName)
+      } else await expect(values.nth(0)).toHaveText('None')
+      await expect(values.nth(1)).toHaveText('None')
+      evidence[polarity] = { status, capturedRefs: refs, currentRefs: [] }
+    }
+    const precision = comparison.locator('[data-setting="vaePrecision.value"]')
+    await expect(precision).toHaveAttribute('data-status', 'Same')
+    await expect(precision.locator('.comparison-values p')).toHaveText(['FP32', 'FP32'])
+    const after = await tab(project)
+    for (const field of [
+      'documentId',
+      'generationDraft',
+      'primaryBbox',
+      'layers',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ])
+      assert.deepEqual(after[field], before[field])
+    assert.equal(await hashFile(packagePath), packageSha256)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { ...evidence, precision: 'FP32', screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+  }
 }
 async function setExternalVaeDefaultThroughUi(project, key) {
   const value = fixture[key]
@@ -1100,12 +1531,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const before = await tab(project)
   const precisionQualification = qualification?.kind === 'vae-precision'
   const externalQualification = qualification?.kind === 'external-vae'
+  const embeddingQualification = qualification?.kind === 'embeddings'
   const cfgQualification =
-    qualification !== null && !precisionQualification && !externalQualification
+    qualification !== null &&
+    !precisionQualification &&
+    !externalQualification &&
+    !embeddingQualification
   const capturedCfgRescale = qualification?.cfgRescale ?? 0
   const capturedVaePrecision = precisionQualification
     ? qualification.vaePrecision
-    : externalQualification
+    : externalQualification || embeddingQualification
       ? 'FP32'
       : null
   const currentVaePrecision = precisionQualification ? qualification.currentVaePrecision : null
@@ -1116,6 +1551,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const capturedStrength = externalQualification && mode === 'img2img' ? 0 : 0.5
   let currentVaeReference = null
   let libraryDefaultChange = null
+  const capturedEmbeddingPrompts = embeddingQualification
+    ? {
+        positive: structuredClone(before.generationDraft.positivePrompt),
+        negative: structuredClone(before.generationDraft.negativePrompt),
+      }
+    : null
   if (cfgQualification) {
     assert.equal(family, 'illustrious')
     assert.equal(
@@ -1146,6 +1587,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     }
     if (mode === 'txt2img') assert.deepEqual(before.layers, [])
   }
+  if (embeddingQualification) {
+    assert.equal(family, 'illustrious')
+    assert.equal(before.generationDraft.vae, null)
+    assert.equal(before.generationDraft.vaePrecision, 'FP32')
+    for (const polarity of ['positive', 'negative']) {
+      const key = qualification.embeddingSelection[polarity]
+      assert.deepEqual(capturedEmbeddingPrompts[polarity], {
+        text: authoredEmbeddingPrompt(polarity, key, qualification.repeated),
+        embeddingRefs: key === null ? [] : [expectedEmbeddingRef(key)],
+      })
+    }
+    if (mode === 'txt2img') assert.deepEqual(before.layers, [])
+  }
   const existingLayers = await layerSnapshot(before.layers)
   const workspaceDirectory = path.join(fixture.appData, 'workspaces/Uncategorized')
   let beforePackagePath
@@ -1162,7 +1616,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const beforePackageSha256 = await hashFile(beforePackagePath)
   const previousRows = await queueRows(project)
   const previousSeedCursor =
-    precisionQualification || externalQualification
+    precisionQualification || externalQualification || embeddingQualification
       ? await database.db
           .selectFrom('generation_seed_cursor')
           .selectAll()
@@ -1170,7 +1624,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
           .executeTakeFirst()
       : null
   const previousLastActualSeed =
-    precisionQualification || externalQualification
+    precisionQualification || externalQualification || embeddingQualification
       ? (await api('listGenerationResults', project.id)).lastActualSeed
       : null
   const existingJobIds = new Set(previousRows.map(({ id }) => id))
@@ -1191,7 +1645,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
     .toBe(1)
   const frozen = JSON.parse(admitted.frozen_payload_json)
-  const requestedSeedPolicy = mode === 'txt2img' || externalQualification ? 'fixed' : 'reuse'
+  const requestedSeedPolicy =
+    mode === 'txt2img' || externalQualification || embeddingQualification ? 'fixed' : 'reuse'
   assert.equal(before.generationDraft.seed.policy, requestedSeedPolicy)
   assert.equal(admitted.document_id, before.documentId)
   assert.equal(admitted.operation, `${family}-${mode}`)
@@ -1242,6 +1697,41 @@ async function generateAndAccept(project, family, mode, qualification = null, re
             sha256: value.sha256,
           },
     )
+  }
+  if (embeddingQualification) {
+    assert.equal(frozen.context.vaePrecision, 'FP32')
+    assert.equal(frozen.workerJob.vaePrecision, 'FP32')
+    assert.equal(frozen.context.vae, null)
+    assert.equal(frozen.workerJob.vae, null)
+    const expectedRefs = {
+      positive: capturedEmbeddingPrompts.positive.embeddingRefs,
+      negative: capturedEmbeddingPrompts.negative.embeddingRefs,
+    }
+    const expectedFiles = { positive: [], negative: [] }
+    const expectedWire = { positive: [], negative: [] }
+    for (const polarity of ['positive', 'negative']) {
+      for (const ref of expectedRefs[polarity]) {
+        const value = fixture[qualification.embeddingSelection[polarity]]
+        expectedFiles[polarity].push({
+          token: ref.token,
+          byteSize: value.byteSize,
+          managedPath: value.installed.managedPath,
+          reference: ref.resource,
+        })
+        expectedWire[polarity].push({
+          token: ref.token,
+          byteSize: value.byteSize,
+          path: value.installed.managedPath,
+          sha256: value.sha256,
+        })
+      }
+    }
+    assert.deepEqual(frozen.context.embeddingRefs, expectedRefs)
+    assert.deepEqual(frozen.context.embeddings, expectedFiles)
+    if (expectedWire.positive.length || expectedWire.negative.length)
+      assert.deepEqual(frozen.workerJob.embeddings, expectedWire)
+    else assert.equal(Object.hasOwn(frozen.workerJob, 'embeddings'), false)
+    assert.equal(JSON.stringify(frozen.context.prompts).includes('igs_ti_private_'), false)
   }
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   assert.equal(frozen.context.loras.length, 1)
@@ -1298,6 +1788,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (mode !== 'txt2img') assert.equal(frozen.context.sampling.denoisingStrength, capturedStrength)
   if (externalQualification && mode === 'img2img')
     assert.equal(frozen.workerJob.sampling.denoisingStrength, 0)
+  if (embeddingQualification && mode === 'img2img')
+    assert.equal(frozen.workerJob.sampling.denoisingStrength, 0.5)
   const targetPath = path.join(fixture.appData, 'generation-inputs', admitted.id, 'target.png')
   const targetEntry = await lstat(targetPath)
   assert.ok(targetEntry.isFile() && !targetEntry.isSymbolicLink())
@@ -1331,7 +1823,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
   }
   if (mode === 'img2img') {
-    if (externalQualification)
+    if (externalQualification || embeddingQualification)
       assert.equal(target.pixelSha256, qualification.commonSource.pixelSha256)
     else {
       const previous = report.generations.findLast(
@@ -1345,18 +1837,53 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     }
   }
   // Change current authoring only after durable admission; the accepted record must retain click input.
-  const changedPrompt = `${before.generationDraft.positivePrompt.text}, later authoring edit`
-  await window.getByRole('textbox', { name: 'Positive prompt', exact: true }).fill(changedPrompt)
-  await expect
-    .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
-    .toBe(changedPrompt)
+  const changedPrompt = `${embeddingQualification ? embeddingBasePrompts.positive : before.generationDraft.positivePrompt.text}, later authoring edit`
+  const changedNegativePrompt = embeddingQualification
+    ? `${embeddingBasePrompts.negative}, later authoring edit`
+    : null
+  const removeLiveEmbeddingPrompts = async () => {
+    for (const polarity of ['positive', 'negative']) {
+      const field = polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
+      const text = polarity === 'positive' ? changedPrompt : changedNegativePrompt
+      const control = window.getByRole('textbox', {
+        name: polarity === 'positive' ? 'Positive prompt' : 'Negative prompt',
+        exact: true,
+      })
+      await control.fill(text)
+      await expect
+        .poll(async () => (await tab(project)).generationDraft[field])
+        .toEqual({ text, embeddingRefs: [] })
+      await control.press('Tab')
+      await expect(control.locator('.cm-prompt-embedding')).toHaveCount(0)
+    }
+  }
+  if (!embeddingQualification) {
+    await window.getByRole('textbox', { name: 'Positive prompt', exact: true }).fill(changedPrompt)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
+      .toBe(changedPrompt)
+  }
   let retry = null
   if (retryCase) {
     assert.ok(
       mode === 'outpaint' ||
-        ((precisionQualification || externalQualification) && mode === 'img2img'),
+        ((precisionQualification || externalQualification || embeddingQualification) &&
+          mode === 'img2img'),
     )
     const original = admitted
+    let nativeChildrenBeforeCancel = null
+    if (embeddingQualification) {
+      await expect
+        .poll(
+          async () => {
+            const current = (await queueRows(project)).find(({ id }) => id === original.id)
+            nativeChildrenBeforeCancel = await liveInstalledInferenceChildren()
+            return current?.status === 'running' && nativeChildrenBeforeCancel.length > 0
+          },
+          { timeout: 180_000 },
+        )
+        .toBe(true)
+    }
     // Cancel the actual admitted worker through the public UI. There is no controlled peer,
     // manufactured terminal row or completion-to-canceled rewrite in this qualification.
     const cancel = window.getByRole('button', { name: 'Cancel current generation', exact: true })
@@ -1370,7 +1897,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     const canceled = (await queueRows(project)).find(({ id }) => id === original.id)
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
-    if (precisionQualification || externalQualification) {
+    if (precisionQualification || externalQualification || embeddingQualification) {
       assert.deepEqual(
         await database.db
           .selectFrom('generation_candidate_receipt')
@@ -1389,7 +1916,34 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       )
       await expect.poll(liveInstalledInferenceChildren).toEqual([])
       assert.equal(capturedVaePrecision, 'FP32')
-      if (externalQualification) {
+      if (embeddingQualification) {
+        assert.equal(
+          (await api('listGenerationResults', project.id)).lastActualSeed,
+          previousLastActualSeed,
+        )
+        const canceledTab = await tab(project)
+        assert.deepEqual(await layerSnapshot(canceledTab.layers), existingLayers)
+        assert.deepEqual(canceledTab.primaryBbox, before.primaryBbox)
+        assert.deepEqual(canceledTab.generationDraft, before.generationDraft)
+        assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
+        assert.deepEqual(qualification.embeddingSelection, {
+          positive: 'embeddingTrained',
+          negative: 'embeddingTrained',
+        })
+        libraryDefaultChange = await setEmbeddingDefaultThroughUi(project, 'embeddingControl')
+        assert.notEqual(
+          libraryDefaultChange.previousVersionId,
+          libraryDefaultChange.defaultVersionId,
+        )
+        for (const polarity of ['positive', 'negative']) {
+          const field = polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
+          assert.deepEqual(
+            (await tab(project)).generationDraft[field],
+            capturedEmbeddingPrompts[polarity],
+          )
+        }
+        await removeLiveEmbeddingPrompts()
+      } else if (externalQualification) {
         assert.equal(capturedVaeKey, 'externalVaeNative')
         libraryDefaultChange = await setExternalVaeDefaultThroughUi(project, 'externalVaeControl')
         assert.notEqual(
@@ -1460,16 +2014,34 @@ async function generateAndAccept(project, family, mode, qualification = null, re
             consumedSourceStatusSequence: source.status_sequence,
           }
         : {}),
+      ...(embeddingQualification
+        ? {
+            capturedEmbeddingPrompts,
+            currentEmbeddingRefs: { positive: [], negative: [] },
+            libraryDefaultChange,
+            canceledStatusSequence: canceled.status_sequence,
+            consumedSourceStatusSequence: source.status_sequence,
+            originalFrozenPayloadSha256: sha256(Buffer.from(original.frozen_payload_json)),
+            nativeChildrenBeforeCancel,
+            nativeChildrenAfterCancel: [],
+          }
+        : {}),
     }
     await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
   }
   let normalizedInputs = null
   if (qualification) {
-    normalizedInputs = structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
+    normalizedInputs = embeddingQualification
+      ? normalizeEmbeddingInputs(frozen)
+      : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
     // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
-    if (externalQualification) {
+    if (embeddingQualification) {
+      if (!retryCase) await removeLiveEmbeddingPrompts()
+      assert.equal((await tab(project)).generationDraft.vaePrecision, 'FP32')
+      assert.equal((await tab(project)).generationDraft.vae, null)
+    } else if (externalQualification) {
       delete normalizedInputs.context.vae
       delete normalizedInputs.workerJob.vae
       if (!retryCase)
@@ -1551,6 +2123,18 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(completedTab.generationDraft.vaePrecision, 'FP32')
     assert.deepEqual(completedTab.generationDraft.vae, currentVaeReference)
   }
+  if (embeddingQualification) {
+    assert.equal(completedTab.generationDraft.vaePrecision, 'FP32')
+    assert.equal(completedTab.generationDraft.vae, null)
+    assert.deepEqual(completedTab.generationDraft.positivePrompt, {
+      text: changedPrompt,
+      embeddingRefs: [],
+    })
+    assert.deepEqual(completedTab.generationDraft.negativePrompt, {
+      text: changedNegativePrompt,
+      embeddingRefs: [],
+    })
+  }
   const receipt = await database.db
     .selectFrom('generation_candidate_receipt')
     .selectAll()
@@ -1567,7 +2151,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .executeTakeFirstOrThrow()
   assert.equal(row.status, 'completed')
   assert.equal(row.frozen_payload_json, admitted.frozen_payload_json)
-  if (precisionQualification || externalQualification) {
+  if (precisionQualification || externalQualification || embeddingQualification) {
     assert.ok(
       (await readFile(targetPath)).equals(targetBytes),
       'Completion must retain the exact captured source.',
@@ -1603,6 +2187,11 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   if (progress.length > 0)
     assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
+  if (embeddingQualification && mode === 'img2img')
+    assert.ok(
+      progress.at(-1).current.totalSteps > 0,
+      'The actual embedding img2img pipeline must evaluate nonzero denoising steps.',
+    )
   assert.equal(
     await hashFile(beforePackagePath),
     beforePackageSha256,
@@ -1614,7 +2203,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, fixture.side)
   assert.equal(pixels.height, fixture.side)
-  if (precisionQualification || externalQualification)
+  if (precisionQualification || externalQualification || embeddingQualification)
     assert.equal(pixels.opaquePixels, fixture.side * fixture.side)
   let contributionAlpha8 = null
   if (mode === 'outpaint') {
@@ -1671,6 +2260,20 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       assert.equal(JSON.stringify(acceptedData).includes(fixture[key].installed.managedPath), false)
       assert.equal(JSON.stringify(acceptedData).includes(fixture[key].path), false)
     }
+  }
+  if (embeddingQualification) {
+    assertPortableEmbeddingConfiguration(
+      acceptedData.generationConfiguration,
+      capturedEmbeddingPrompts,
+    )
+    assert.deepEqual(accepted.generationDraft.positivePrompt, {
+      text: changedPrompt,
+      embeddingRefs: [],
+    })
+    assert.deepEqual(accepted.generationDraft.negativePrompt, {
+      text: changedNegativePrompt,
+      embeddingRefs: [],
+    })
   }
   assert.equal(
     acceptedData.generationConfiguration.positivePrompt.text,
@@ -1745,7 +2348,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       )
     }
   }
-  if (mode === 'outpaint' || precisionQualification || externalQualification) {
+  if (
+    mode === 'outpaint' ||
+    precisionQualification ||
+    externalQualification ||
+    embeddingQualification
+  ) {
     assert.deepEqual(await layerSnapshot(accepted.layers.slice(1)), existingLayers)
     assert.deepEqual(saved.project.layers.slice(1), previousAcceptedLayers)
   }
@@ -1798,6 +2406,22 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       assert.equal(JSON.stringify(provenance).includes(fixture[key].path), false)
     }
   }
+  if (embeddingQualification) {
+    assertPortableEmbeddingConfiguration(
+      provenance.generationConfiguration,
+      capturedEmbeddingPrompts,
+    )
+    assert.deepEqual(saved.project.generationDraft.positivePrompt, {
+      text: changedPrompt,
+      embeddingRefs: [],
+    })
+    assert.deepEqual(saved.project.generationDraft.negativePrompt, {
+      text: changedNegativePrompt,
+      embeddingRefs: [],
+    })
+    assert.equal(saved.project.generationDraft.vaePrecision, 'FP32')
+    assert.equal(saved.project.generationDraft.vae, null)
+  }
   await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
@@ -1810,6 +2434,18 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (externalQualification) {
     assert.deepEqual(reopened.generationDraft.vae, currentVaeReference)
     assert.equal(reopened.generationDraft.vaePrecision, 'FP32')
+  }
+  if (embeddingQualification) {
+    assert.deepEqual(reopened.generationDraft.positivePrompt, {
+      text: changedPrompt,
+      embeddingRefs: [],
+    })
+    assert.deepEqual(reopened.generationDraft.negativePrompt, {
+      text: changedNegativePrompt,
+      embeddingRefs: [],
+    })
+    assert.equal(reopened.generationDraft.vaePrecision, 'FP32')
+    assert.equal(reopened.generationDraft.vae, null)
   }
   assert.deepEqual(
     (await api('getRasterGenerationData', project.id, reopened.documentId, layer.id))
@@ -1846,38 +2482,46 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = externalQualification
-    ? await compareExternalVae(
+  const comparison = embeddingQualification
+    ? await compareEmbeddings(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        capturedVaeReference,
-        currentVaeReference,
+        capturedEmbeddingPrompts,
         caseName,
         packagePath,
       )
-    : precisionQualification
-      ? await compareVaePrecision(
+    : externalQualification
+      ? await compareExternalVae(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          capturedVaePrecision,
-          currentVaePrecision,
+          capturedVaeReference,
+          currentVaeReference,
           caseName,
+          packagePath,
         )
-      : cfgQualification
-        ? await compareCfgRescale(
+      : precisionQualification
+        ? await compareVaePrecision(
             project,
             reopened.layers.find(({ id }) => id === layer.id),
-            capturedCfgRescale,
+            capturedVaePrecision,
+            currentVaePrecision,
             caseName,
           )
-        : mode === 'outpaint'
-          ? await compareOutpaint(
+        : cfgQualification
+          ? await compareCfgRescale(
               project,
               reopened.layers.find(({ id }) => id === layer.id),
-              retryCase,
+              capturedCfgRescale,
               caseName,
             )
-          : null
+          : mode === 'outpaint'
+            ? await compareOutpaint(
+                project,
+                reopened.layers.find(({ id }) => id === layer.id),
+                retryCase,
+                caseName,
+              )
+            : null
   const generation = {
     family,
     mode,
@@ -1902,20 +2546,21 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     provenance,
     packagePath,
     previewState: saved.manifest.preview,
-    qualification: externalQualification
+    qualification: embeddingQualification
       ? {
-          kind: 'external-vae',
+          kind: 'embeddings',
           caseName,
           outcome: 'completed-finite',
-          capturedVaeKey,
-          capturedVae: capturedVaeReference,
-          workerVae: frozen.workerJob.vae,
-          currentVae: reopened.generationDraft.vae,
+          embeddingSelection: qualification.embeddingSelection,
+          repeated: qualification.repeated,
+          capturedEmbeddingPrompts,
+          frozenEmbeddingRefs: frozen.context.embeddingRefs,
+          effectiveEmbeddings: frozen.context.embeddings,
+          workerEmbeddings: frozen.workerJob.embeddings ?? null,
+          currentEmbeddingRefs: { positive: [], negative: [] },
           precision: 'FP32',
-          origin:
-            capturedVaeKey === null
-              ? 'trained-checkpoint-embedded'
-              : fixture[capturedVaeKey].origin,
+          vae: 'Embedded',
+          origins: Object.fromEntries(embeddingKeys.map((key) => [key, fixture[key].origin])),
           frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
           retainedTargetUnchanged: true,
           normalizedInputs,
@@ -1924,35 +2569,64 @@ async function generateAndAccept(project, family, mode, qualification = null, re
           ...(mode === 'img2img'
             ? {
                 commonSource: qualification.commonSource,
-                denoisingStrength: 0,
-                progressScope: 'Actual native VAE roundtrip; zero denoising evaluations.',
+                denoisingStrength: 0.5,
+                effectiveDenoisingEvaluations: progress.at(-1).current.totalSteps,
+                progressScope:
+                  'Actual nonzero installed img2img denoising progress; count observed from native progress, not inferred from requested steps times strength.',
               }
             : {}),
         }
-      : precisionQualification
+      : externalQualification
         ? {
-            kind: 'vae-precision',
+            kind: 'external-vae',
             caseName,
             outcome: 'completed-finite',
-            authoredVaePrecision: capturedVaePrecision,
-            capturedVaePrecision,
-            workerVaePrecision: frozen.workerJob.vaePrecision,
-            currentVaePrecision: reopened.generationDraft.vaePrecision,
+            capturedVaeKey,
+            capturedVae: capturedVaeReference,
+            workerVae: frozen.workerJob.vae,
+            currentVae: reopened.generationDraft.vae,
+            precision: 'FP32',
+            origin:
+              capturedVaeKey === null
+                ? 'trained-checkpoint-embedded'
+                : fixture[capturedVaeKey].origin,
             frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
             retainedTargetUnchanged: true,
             normalizedInputs,
             comparison,
+            libraryDefaultChange,
+            ...(mode === 'img2img'
+              ? {
+                  commonSource: qualification.commonSource,
+                  denoisingStrength: 0,
+                  progressScope: 'Actual native VAE roundtrip; zero denoising evaluations.',
+                }
+              : {}),
           }
-        : cfgQualification
+        : precisionQualification
           ? {
+              kind: 'vae-precision',
               caseName,
-              authoredCfgRescale: qualification.cfgRescale,
-              capturedCfgRescale,
-              currentCfgRescale: reopened.generationDraft.cfgRescale,
+              outcome: 'completed-finite',
+              authoredVaePrecision: capturedVaePrecision,
+              capturedVaePrecision,
+              workerVaePrecision: frozen.workerJob.vaePrecision,
+              currentVaePrecision: reopened.generationDraft.vaePrecision,
+              frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
+              retainedTargetUnchanged: true,
               normalizedInputs,
               comparison,
             }
-          : null,
+          : cfgQualification
+            ? {
+                caseName,
+                authoredCfgRescale: qualification.cfgRescale,
+                capturedCfgRescale,
+                currentCfgRescale: reopened.generationDraft.cfgRescale,
+                normalizedInputs,
+                comparison,
+              }
+            : null,
   }
   report.generations.push(generation)
   await check(
@@ -2406,7 +3080,7 @@ async function importRasterThroughUi(project, importPath) {
   )
   return { before, existingLayers, imported }
 }
-async function importMatchedExternalVaeSource(project, commonSource) {
+async function importMatchedExternalVaeSource(project, commonSource, profile = 'external-vae') {
   const sourceHashBefore = await hashFile(commonSource.path)
   assert.equal(sourceHashBefore, commonSource.sha256)
   const { imported } = await importRasterThroughUi(project, commonSource.path)
@@ -2448,9 +3122,10 @@ async function importMatchedExternalVaeSource(project, commonSource) {
     source: commonSource,
     controlled: 'OS chooser selects the single recorded real PNG only',
   }
-  report.externalVaeImports.push(evidence)
+  const imports = profile === 'embeddings' ? report.embeddingImports : report.externalVaeImports
+  imports.push(evidence)
   await check(
-    'External VAE matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels',
+    `${profile === 'embeddings' ? 'Embedding' : 'External VAE'} matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels`,
     evidence,
   )
 }
@@ -2629,6 +3304,254 @@ async function qualifyExternalVae() {
     report.externalVaeSummary,
   )
 }
+async function assertMatchedEmbeddingPixels(trained, control, label) {
+  const evidence = {
+    scope:
+      'Identical literal prompts and complete numeric input except the exact trained/zero embedding version.',
+    trainedQueueItemId: trained.queueItemId,
+    controlQueueItemId: control.queueItemId,
+    trainedNormalizedInputs: trained.qualification.normalizedInputs,
+    controlNormalizedInputs: control.qualification.normalizedInputs,
+    trainedInputSha256: sha256(Buffer.from(JSON.stringify(trained.qualification.normalizedInputs))),
+    controlInputSha256: sha256(Buffer.from(JSON.stringify(control.qualification.normalizedInputs))),
+    trainedTargetSha256: trained.target.sha256,
+    controlTargetSha256: control.target.sha256,
+    trainedTargetPixelSha256: trained.target.pixelSha256,
+    controlTargetPixelSha256: control.target.pixelSha256,
+    trainedPixelSha256: trained.dimensions.pixelSha256,
+    controlPixelSha256: control.dimensions.pixelSha256,
+    pixelsDiffer: trained.dimensions.pixelSha256 !== control.dimensions.pixelSha256,
+    trainedOrigin: fixture.embeddingTrained.origin,
+    causalControlOrigin: fixture.embeddingControl.origin,
+  }
+  report.embeddingNumerics[label] = evidence
+  // Checkpoint the real observed values before a semantic mutation can fail the assertions.
+  await checkpointEvidence()
+  assert.deepEqual(
+    control.qualification.normalizedInputs,
+    trained.qualification.normalizedInputs,
+    'Only the exact embedding weight identity may differ in the causal pair.',
+  )
+  assert.equal(control.target.sha256, trained.target.sha256)
+  assert.equal(control.target.pixelSha256, trained.target.pixelSha256)
+  assert.notEqual(
+    control.dimensions.pixelSha256,
+    trained.dimensions.pixelSha256,
+    `The declared trained embedding must change ${label} pixels relative to its finite zero-tensor control.`,
+  )
+  await check(
+    `Matched installed embedding ${label}: trained and finite zero-tensor control produce different pixels`,
+    evidence,
+  )
+}
+async function assertPlainEmbeddingPixels(plain, trained, label) {
+  const normalizeNonEmbeddingInputs = (generation) => {
+    const normalized = structuredClone(generation.qualification.normalizedInputs)
+    delete normalized.context.embeddingRefs
+    delete normalized.context.embeddings
+    delete normalized.workerJob.embeddings
+    // Exact authored strings and placements were checked at UI admission. This neighbor removes
+    // precisely that declared prompt/embedding axis, rather than claiming weight-only causality.
+    normalized.context.prompts = { ...embeddingBasePrompts }
+    normalized.workerJob.prompts = { ...embeddingBasePrompts }
+    return normalized
+  }
+  const evidence = {
+    scope:
+      'Same checkpoint/sampling/LoRA/Embedded FP32/target; declared literal insertion and its trained binding change together.',
+    plainQueueItemId: plain.queueItemId,
+    trainedQueueItemId: trained.queueItemId,
+    plainPrompts: plain.qualification.capturedEmbeddingPrompts,
+    trainedPrompts: trained.qualification.capturedEmbeddingPrompts,
+    plainPixelSha256: plain.dimensions.pixelSha256,
+    trainedPixelSha256: trained.dimensions.pixelSha256,
+    pixelsDiffer: plain.dimensions.pixelSha256 !== trained.dimensions.pixelSha256,
+    targetSha256: plain.target.sha256,
+  }
+  report.embeddingNumerics[`plain-versus-${label}`] = evidence
+  await checkpointEvidence()
+  assert.deepEqual(normalizeNonEmbeddingInputs(trained), normalizeNonEmbeddingInputs(plain))
+  assert.equal(trained.target.sha256, plain.target.sha256)
+  assert.equal(trained.target.pixelSha256, plain.target.pixelSha256)
+  assert.notEqual(trained.dimensions.pixelSha256, plain.dimensions.pixelSha256)
+  await check(
+    `Installed plain versus ${label} trained literal/binding produces different pixels`,
+    evidence,
+  )
+}
+async function qualifyEmbeddings() {
+  report.embeddingImports = []
+  report.embeddingNumerics = {}
+  const txtChoices = [
+    { label: 'plain', positive: null, negative: null, repeated: false },
+    { label: 'positive-trained', positive: 'embeddingTrained', negative: null, repeated: false },
+    { label: 'positive-control', positive: 'embeddingControl', negative: null, repeated: false },
+    { label: 'negative-trained', positive: null, negative: 'embeddingTrained', repeated: false },
+    { label: 'negative-control', positive: null, negative: 'embeddingControl', repeated: false },
+    {
+      label: 'both-weighted-repeated-trained',
+      positive: 'embeddingTrained',
+      negative: 'embeddingTrained',
+      repeated: true,
+    },
+  ]
+  const projects = []
+  const txtCases = []
+  for (const choice of txtChoices) {
+    const caseName = `illustrious-txt2img-embeddings-${choice.label}`
+    await stage('Installed embedding exact UI txt2img case', { caseName, choice })
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    projects.push(project)
+    await expect
+      .poll(async () => (await api('getGenerationState', project.id)).embeddingsSupported)
+      .toBe(true)
+    await setVaePrecision(project, 'FP32')
+    assert.equal((await tab(project)).generationDraft.vae, null)
+    // Resuming after a previous run may leave the new resource on the control Default. This
+    // genuine UI action establishes a later distinct Default transition before the Retry case.
+    if (choice.label === 'plain')
+      report.embeddingInitialDefault = await setEmbeddingDefaultThroughUi(
+        project,
+        'embeddingTrained',
+      )
+    for (const polarity of ['positive', 'negative'])
+      await authorEmbeddingThroughUi(project, polarity, choice[polarity], choice.repeated)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-authored.png`)
+    await captureScreenshot(screenshot)
+    report.screenshots.push(screenshot)
+    txtCases.push(
+      await generateAndAccept(project, 'illustrious', 'txt2img', {
+        kind: 'embeddings',
+        caseName,
+        repeated: choice.repeated,
+        embeddingSelection: { positive: choice.positive, negative: choice.negative },
+      }),
+    )
+    if (choice.label === 'positive-control') {
+      await assertMatchedEmbeddingPixels(txtCases[1], txtCases[2], 'positive-txt2img')
+      await assertPlainEmbeddingPixels(txtCases[0], txtCases[1], 'positive-txt2img')
+    }
+    if (choice.label === 'negative-control') {
+      await assertMatchedEmbeddingPixels(txtCases[3], txtCases[4], 'negative-txt2img')
+      await assertPlainEmbeddingPixels(txtCases[0], txtCases[3], 'negative-txt2img')
+    }
+  }
+  await assertPlainEmbeddingPixels(
+    txtCases[0],
+    txtCases[5],
+    'weighted-repeated-dual-polarity-txt2img',
+  )
+  const plain = txtCases[0]
+  const plainPackage = await readIgsPackage(plain.packagePath)
+  const sourceLayer = plainPackage.project.layers[0]
+  const sourceBytes = await plainPackage.readMember(sourceLayer.asset.path)
+  assert.equal(sha256(sourceBytes), plain.outputSha256)
+  const sourcePath = path.join(fixture.artifacts, 'embeddings-common-img2img-source.png')
+  await writeFile(sourcePath, sourceBytes, { flag: 'wx' })
+  const commonSource = {
+    path: sourcePath,
+    sha256: sha256(sourceBytes),
+    byteSize: sourceBytes.length,
+    pixelSha256: plain.dimensions.pixelSha256,
+    width: fixture.side,
+    height: fixture.side,
+    sourceQueueItemId: plain.queueItemId,
+    sourcePackagePath: plain.packagePath,
+  }
+  report.embeddingCommonSource = commonSource
+  const imgCases = []
+  for (const key of embeddingKeys) {
+    const retryCase = key === 'embeddingTrained'
+    const caseName = `illustrious-img2img-embeddings-both-weighted-repeated-${retryCase ? 'trained-retry' : 'control'}`
+    await stage('Installed embedding matched opaque img2img case', { caseName, key, strength: 0.5 })
+    const project = await createProject(fixture.illustrious, fixture.illustriousLora, caseName)
+    projects.push(project)
+    await expect
+      .poll(async () => (await api('getGenerationState', project.id)).embeddingsSupported)
+      .toBe(true)
+    await importMatchedExternalVaeSource(project, commonSource, 'embeddings')
+    await setVaePrecision(project, 'FP32')
+    assert.equal((await tab(project)).generationDraft.vae, null)
+    await setInput('Denoising Strength', 0.5)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+      .toBe(0.5)
+    for (const polarity of ['positive', 'negative'])
+      await authorEmbeddingThroughUi(project, polarity, key, true)
+    assert.equal((await tab(project)).generationDraft.seed.policy, 'fixed')
+    const screenshot = path.join(fixture.artifacts, `${caseName}-authored.png`)
+    await captureScreenshot(screenshot)
+    report.screenshots.push(screenshot)
+    imgCases.push(
+      await generateAndAccept(
+        project,
+        'illustrious',
+        'img2img',
+        {
+          kind: 'embeddings',
+          caseName,
+          repeated: true,
+          commonSource,
+          embeddingSelection: { positive: key, negative: key },
+        },
+        retryCase,
+      ),
+    )
+  }
+  await assertMatchedEmbeddingPixels(
+    imgCases[0],
+    imgCases[1],
+    'weighted-repeated-dual-polarity-img2img',
+  )
+  assert.equal(report.generations.length, 8)
+  assert.deepEqual(report.failures, [])
+  assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 1)
+  let actualAdmissions = 0
+  for (const project of projects) {
+    const rows = await queueRows(project)
+    actualAdmissions += rows.length
+    assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
+    assert.equal(
+      rows.filter(({ status }) => status === 'canceled').length,
+      project.id === imgCases[0].projectKey ? 1 : 0,
+    )
+  }
+  assert.equal(actualAdmissions, 9)
+  assert.equal(await hashFile(sourcePath), commonSource.sha256)
+  report.embeddingSummary = {
+    finiteCompletions: 8,
+    actualAdmissions,
+    canceledOriginals: 1,
+    txtCases: txtChoices,
+    imgCases: ['both-weighted-repeated-trained-retry', 'both-weighted-repeated-control'],
+    precision: 'FP32',
+    vae: 'Embedded',
+    side: fixture.side,
+    steps: fixture.steps,
+    seed: 0,
+    loraWeight: -0.5,
+    img2imgStrength: 0.5,
+    commonSource,
+    effectiveImg2imgDenoisingEvaluations: imgCases.map(({ queueItemId, qualification }) => ({
+      queueItemId,
+      observedCount: qualification.effectiveDenoisingEvaluations,
+    })),
+    literal: embeddingActivationToken(path.basename(fixture.embeddingTrained.path)),
+    positiveOccurrences: 3,
+    positiveFirstWeight: 1.3,
+    negativeOccurrences: 2,
+    negativeFirstWeight: 0.7,
+    trainedSource: fixture.embeddingTrained.origin,
+    creatorCredit: `${fixture.embeddingTrained.origin.creator} — ${fixture.embeddingTrained.name}`,
+    causalControl: fixture.embeddingControl.origin,
+    genuineUiAuthoringBothPolarities: true,
+    genuineUiDefaultAndLiteralRemovalBeforeFrozenRetry: true,
+  }
+  await check(
+    'Eight finite installed embedding cases and one genuine Cancel/frozen trained Retry retain exact per-polarity provenance',
+    report.embeddingSummary,
+  )
+}
 async function qualifyMissingRuntimeSaveAndRebuild(project) {
   const latest = report.generations.at(-1)
   assert.ok(latest && latest.family === 'anima' && latest.mode === 'img2img')
@@ -2765,8 +3688,9 @@ try {
       cfgRescaleProfile ||
       outpaintProfile ||
       vaePrecisionProfile ||
-      externalVaeProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision or external-vae.',
+      externalVaeProfile ||
+      embeddingsProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae or embeddings.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -2788,6 +3712,7 @@ try {
     assert.equal(fixture.steps, 3, 'VAE Precision qualification requires exactly 3 authored steps.')
   }
   if (externalVaeProfile) validateExternalVaeFixture()
+  if (embeddingsProfile) validateEmbeddingFixture()
   if (outpaintProfile) {
     validateOutpaintFixture()
     // Qualify the declared local file before model copying, catalog writes or Electron startup.
@@ -2798,7 +3723,7 @@ try {
     })
   }
   const families = illustriousOnlyProfile ? ['illustrious'] : ['illustrious', 'anima']
-  const allModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
+  const allModelKeys = priorModelKeys
   const modelKeys = illustriousOnlyProfile ? ['illustrious', 'illustriousLora'] : allModelKeys
   for (const family of families) {
     assert.equal(fixture[family]?.type, 'checkpoint')
@@ -2851,6 +3776,54 @@ try {
     }
     report.installedReady = ready
   }
+  if (embeddingsProfile) {
+    assert.equal(resume, true, 'Embedding qualification must resume the existing isolated catalog.')
+    const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
+    assert.equal(
+      ready.workerVersion,
+      '0.12.0',
+      'Embedding qualification requires an installed 0.12 worker.',
+    )
+    for (const capability of [
+      'illustrious-embeddings',
+      'illustrious-vae-precision',
+      'illustrious-txt2img',
+      'illustrious-img2img',
+      'illustrious-lora',
+    ])
+      assert.ok(
+        ready.capabilities.includes(capability),
+        `Embedding qualification requires ${capability}.`,
+      )
+    report.installedReady = ready
+    report.embeddingFiles = []
+    for (const key of embeddingKeys) {
+      const value = fixture[key]
+      const before = await lstat(value.path)
+      assert.ok(before.isFile() && !before.isSymbolicLink())
+      assert.equal(before.size, value.byteSize)
+      assert.equal(await hashFile(value.path), value.sha256)
+      await qualifyIllustriousEmbedding(value.path)
+      const after = await lstat(value.path)
+      assert.deepEqual(
+        [after.dev, after.ino, after.size, after.mtimeMs, after.ctimeMs],
+        [before.dev, before.ino, before.size, before.mtimeMs, before.ctimeMs],
+      )
+      report.embeddingFiles.push({
+        key,
+        descriptor: structuredClone(value),
+        sourceStat: {
+          dev: before.dev,
+          ino: before.ino,
+          size: before.size,
+          mtimeMs: before.mtimeMs,
+          ctimeMs: before.ctimeMs,
+        },
+        headerScope:
+          'Production Main paired clip_l/clip_g bounded safetensors header qualification; actual native tensor finiteness is required by the worker.',
+      })
+    }
+  }
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
     workerLock: await hashFile('worker-python/uv.lock'),
@@ -2874,7 +3847,11 @@ try {
   else {
     // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
-    const declaredKeys = externalVaeProfile ? [...allModelKeys, ...externalVaeKeys] : allModelKeys
+    const declaredKeys = embeddingsProfile
+      ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
+      : externalVaeProfile
+        ? [...allModelKeys, ...externalVaeKeys]
+        : allModelKeys
     const hashes = new Set(
       declaredKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
     )
@@ -2957,6 +3934,126 @@ try {
         allowedExternalFiles: 3,
       }
     }
+    if (embeddingsProfile) {
+      assert.equal(hashes.size, 11)
+      const priorHashes = new Set(
+        [...allModelKeys, ...externalVaeKeys].map((key) => fixture[key].sha256),
+      )
+      const prior = catalog.filter((model) =>
+        model.versions.some(({ file }) => priorHashes.has(file.sha256)),
+      )
+      assert.equal(
+        prior.length,
+        7,
+        'Embedding qualification must retain all seven prior resources.',
+      )
+      assert.equal(prior.flatMap(({ versions }) => versions).length, 9)
+      assert.ok(
+        prior.every(({ versions }) =>
+          versions.every(({ file }) => file.status === 'ready' && priorHashes.has(file.sha256)),
+        ),
+      )
+      const original = prior.filter((model) =>
+        model.versions.some(({ file }) =>
+          allModelKeys.some((key) => fixture[key].sha256 === file.sha256),
+        ),
+      )
+      assert.equal(original.length, 6)
+      for (const model of original) {
+        assert.equal(model.versions.length, 1)
+        const version = model.versions[0]
+        const key = allModelKeys.find((key) => fixture[key].sha256 === version.file.sha256)
+        assert.ok(key)
+        assert.equal(model.type, fixture[key].type)
+        assert.equal(version.baseModelFamily, fixture[key].family)
+        assert.equal(version.file.sizeBytes, fixture[key].byteSize)
+      }
+      const external = prior.filter((model) => !original.includes(model))
+      assert.equal(external.length, 1)
+      const vaeResource = external[0]
+      assert.equal(vaeResource.type, 'vae')
+      assert.deepEqual(vaeResource.source, { kind: 'civitai', modelId: 700_070 })
+      assert.equal(vaeResource.displayName, fixture.externalVaeLdm.name)
+      assert.equal(vaeResource.versions.length, 3)
+      for (const version of vaeResource.versions) {
+        const key = externalVaeKeys.find((key) => fixture[key].sha256 === version.file.sha256)
+        assert.ok(key)
+        assert.equal(version.name, fixture[key].versionName)
+        assert.equal(version.baseModelFamily, 'illustrious')
+        assert.equal(version.file.sizeBytes, fixture[key].byteSize)
+        assert.deepEqual(version.sourceMetadata.origin, fixture[key].origin)
+        assert.equal(version.civitaiVersionId, 700_071 + externalVaeKeys.indexOf(key) * 10)
+        assert.equal(version.civitaiFileId, 700_072 + externalVaeKeys.indexOf(key) * 10)
+      }
+      const added = catalog.filter((model) => !prior.includes(model))
+      assert.ok(
+        added.length <= 1,
+        'Only the single declared embedding qualification resource may be added.',
+      )
+      const actualHashes = catalog.flatMap(({ versions }) =>
+        versions.map(({ file }) => file.sha256),
+      )
+      assert.equal(new Set(actualHashes).size, actualHashes.length)
+      assert.equal(
+        new Set(prior.flatMap(({ versions }) => versions.map(({ file }) => file.sha256))).size,
+        9,
+      )
+      assert.ok(
+        prior.every(
+          ({ source }) =>
+            source.kind !== 'civitai' || source.modelId !== fixture.embeddingTrained.origin.modelId,
+        ),
+        'The trained embedding source must not replace a prior resource identity.',
+      )
+      const priorVersions = prior.flatMap(({ versions }) => versions)
+      for (const key of embeddingKeys) {
+        const source = embeddingSourceIds(key)
+        assert.ok(
+          priorVersions.every(
+            (version) =>
+              version.civitaiVersionId !== source.versionId &&
+              version.civitaiFileId !== source.fileId,
+          ),
+          'Embedding version/file source IDs must not replace prior catalog identities.',
+        )
+      }
+      for (const model of added) {
+        assert.equal(model.type, 'embedding')
+        assert.deepEqual(model.source, {
+          kind: 'civitai',
+          modelId: fixture.embeddingTrained.origin.modelId,
+        })
+        assert.equal(model.displayName, fixture.embeddingTrained.name)
+        assert.equal(model.creator, fixture.embeddingTrained.origin.creator)
+        assert.deepEqual(model.sourceMetadata.origin, fixture.embeddingTrained.origin)
+        assert.ok(model.versions.length >= 1 && model.versions.length <= 2)
+        for (const version of model.versions) {
+          const key = embeddingKeys.find((key) => fixture[key].sha256 === version.file.sha256)
+          assert.ok(key)
+          const source = embeddingSourceIds(key)
+          assert.equal(version.file.status, 'ready')
+          assert.equal(version.baseModelFamily, 'illustrious')
+          assert.equal(version.predictionType, null)
+          assert.equal(version.name, fixture[key].versionName)
+          assert.equal(version.file.sizeBytes, fixture[key].byteSize)
+          assert.equal(version.file.originalFilename, path.basename(fixture[key].path))
+          assert.deepEqual(version.sourceMetadata.origin, fixture[key].origin)
+          assert.equal(version.civitaiVersionId, source.versionId)
+          assert.equal(version.civitaiFileId, source.fileId)
+        }
+      }
+      preservedEmbeddingPriorCatalog = structuredClone(prior).sort((left, right) =>
+        left.id.localeCompare(right.id),
+      )
+      report.catalogReuse = {
+        originalResourceCount: 7,
+        originalVersionCount: 9,
+        initialResourceCount: catalog.length,
+        declaredIdentityCount: hashes.size,
+        allowedAddedResources: 1,
+        allowedEmbeddingFiles: 2,
+      }
+    }
   }
   if (!illustriousOnlyProfile) {
     for (const [key, pin] of [
@@ -3005,12 +4102,41 @@ try {
       ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
     ).length
   }
+  if (embeddingsProfile) {
+    for (const [key, id] of [
+      ['embeddingTrained', 700_100],
+      ['embeddingControl', 700_110],
+    ]) {
+      const source = embeddingSourceIds(key)
+      fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
+        sourceModelId: source.modelId,
+        sourceVersionId: source.versionId,
+        sourceFileId: source.fileId,
+        versionName: fixture[key].versionName,
+        creator: fixture.embeddingTrained.origin.creator,
+        resourceOrigin: fixture.embeddingTrained.origin,
+      })
+      await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
+    }
+    assert.equal(new Set(embeddingKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
+    const seeded = await repository.listInstalled()
+    assert.equal(seeded.length, 8)
+    assert.equal(seeded.flatMap(({ versions }) => versions).length, 11)
+    assert.ok(seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')))
+    report.catalogReuse.finalResourceCount = 8
+    report.catalogReuse.finalVersionCount = 11
+    report.catalogReuse.newManagedFiles = report.models.filter(
+      ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+    ).length
+  }
   await check(
-    externalVaeProfile
-      ? 'Same six resources retained; three exact local VAE files cataloged as versions of one added qualification resource'
-      : vaePrecisionProfile
-        ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
-        : 'Real exact model files copied, verified and cataloged; source weights unchanged',
+    embeddingsProfile
+      ? 'Same seven resources/nine versions retained; trained embedding and finite zero-tensor control cataloged as two exact versions with required creator credit'
+      : externalVaeProfile
+        ? 'Same six resources retained; three exact local VAE files cataloged as versions of one added qualification resource'
+        : vaePrecisionProfile
+          ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
+          : 'Real exact model files copied, verified and cataloged; source weights unchanged',
   )
   if (outpaintProfile) await installQualificationLama()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
@@ -3073,6 +4199,8 @@ try {
       assert.ok(ready.capabilities.includes(capability))
     report.installedReady = ready
     await qualifyOutpaint()
+  } else if (embeddingsProfile) {
+    await qualifyEmbeddings()
   } else if (externalVaeProfile) {
     await qualifyExternalVae()
   } else if (vaePrecisionProfile) {
@@ -3111,6 +4239,38 @@ try {
       finalCatalog.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')),
     )
     report.catalogReuse.originalRowsUnchanged = true
+  }
+  if (embeddingsProfile) {
+    const finalCatalog = await repository.listInstalled()
+    const priorIds = new Set(preservedEmbeddingPriorCatalog.map(({ id }) => id))
+    assert.deepEqual(
+      finalCatalog
+        .filter(({ id }) => priorIds.has(id))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      preservedEmbeddingPriorCatalog,
+      'The seven prior resource rows, nine versions and all prior defaults must remain unchanged.',
+    )
+    assert.equal(finalCatalog.length, 8)
+    assert.equal(finalCatalog.flatMap(({ versions }) => versions).length, 11)
+    assert.ok(
+      finalCatalog.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')),
+    )
+    report.catalogReuse.originalRowsUnchanged = true
+    for (const { descriptor, sourceStat } of report.embeddingFiles) {
+      assert.equal(await hashFile(descriptor.path), descriptor.sha256)
+      const after = await lstat(descriptor.path)
+      assert.deepEqual(
+        {
+          dev: after.dev,
+          ino: after.ino,
+          size: after.size,
+          mtimeMs: after.mtimeMs,
+          ctimeMs: after.ctimeMs,
+        },
+        sourceStat,
+      )
+    }
+    report.embeddingSourcesUnchanged = true
   }
   // Observational closure only: neither source files nor the active runtime is rewritten.
   for (const model of report.models) assert.equal(await hashFile(model.managedPath), model.sha256)

@@ -179,7 +179,9 @@ onMounted(() => {
           ...defaultKeymap,
         ]),
         EditorView.domEventHandlers({
-          blur() {
+          blur(_event, editor) {
+            // Cancel pending queries as well as visible menus before another editor gains focus.
+            closeCompletion(editor)
             focused.value = false
             emit('blur')
           },

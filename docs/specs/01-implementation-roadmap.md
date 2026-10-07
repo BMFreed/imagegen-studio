@@ -1270,8 +1270,9 @@ GPU отказ в этом fixture не наблюдался; путь ошиб�
 precision; opaque случаи доказывают wiring, а не numerical ablation.
 Worker 0.12.0/six-resource catalog reused, 256×256/three steps,
 без новых тяжёлых копий моделей или signed release/maximum GPU claims.
-Embeddings, installed v_prediction и batch qualification
-остаются открытыми. Counts/checks/mutations и resource limits — в research note.
+На этом precision checkpoint embeddings, installed v_prediction и batch
+qualification оставались открытыми; последующий embedding checkpoint описан ниже.
+Counts/checks/mutations и resource limits — в research note.
 
 **Installed external Illustrious VAE checkpoint (07.10.2026):**
 [Actual VAE selection → installed trained pipeline](../engineering/phase-2c-installed-external-vae-research.md)
@@ -1288,6 +1289,39 @@ resource rows сохранены, три локальных VAE files — вер
 Это installed development evidence, не CivitAI download/отдельная training lineage,
 external outpaint, Anima alternate VAE, качество или signed release.
 Проверки и sensitivity evidence находятся в research note.
+
+**Installed Illustrious embeddings checkpoint (07.10.2026):**
+[Actual prompt authoring → installed trained pipeline](../engineering/phase-2c-installed-embeddings-research.md)
+завершил восемь finite cases в девяти admissions, включая один actual canceled
+original: plain txt2img, matched positive trained/zero и negative trained/zero,
+trained weighted/repeated literals в обеих полярностях и matched dual-polarity
+opaque img2img. Trained source — IllustriousPhoto, CautionMergeAhead,
+WAI v15 1152steps; авторская credit requirement сохранена. Artificial zero
+control сохраняет layout, но обнуляет оба CLIP tensors, без отдельной training
+lineage или independent L/G/attention ablation. При одинаковом literal text и
+остальных normalized inputs смена только exact trained/control weights меняет
+pixels в обоих txt2img polarity pairs и img2img pair.
+
+Все случаи используют 256×256, три requested steps, seed `0`, Embedded VAE/FP32
+и ordinary LoRA −0.5. Img2img импортирует один genuine plain txt2img PNG через
+actual UI/Main/installed CPU worker; strength 0.5 даёт два наблюдаемых native
+denoising evaluations. Positive prompt повторяет literal трижды с weight 1.3,
+negative — дважды с weight 0.7; refs deduplicated отдельно по полярности.
+Actual Cancel не создаёт receipt/candidate и не продвигает seed cursor. После
+настоящей смены embedding library Default и удаления всех current literals
+public frozen Retry сохраняет original trained refs/prompts/target/seed.
+Explicit Add/Save/readback/reopen/comparison удерживает portable identity без
+paths/private aliases и показывает `Removed` относительно current empty refs.
+Прежние семь resources/девять versions и их Defaults сохранены; две declared
+embedding versions дают итоговые восемь resources/одиннадцать ready versions.
+
+Native matrix прошла 19 checks без page errors и завершилась с exit 0.
+Обнаруженный pending-completion-after-blur дефект отдельно воспроизведён native
+RED/GREEN; shared editor close-on-blur сохраняет обе prompt histories и обычный
+completion. Его controlled-peer smoke отделён от trained inference. Полные
+evidence, limits и sensitivity результаты находятся в research note.
+Live product CivitAI install/repair, arbitrary embedding formats/quality,
+Anima/presets, dynamic multi-job capacity и signed release остаются открытыми.
 
 **Normal outpaint conditioning foundation (06.10.2026):**
 [Alpha/coherence/LaMa contract](../engineering/phase-2c-outpaint-conditioning-research.md)
@@ -1364,12 +1398,13 @@ Main installer с заменой только transport/DNS локальным �
 подтверждённо завершился. Это development Linux/NVIDIA evidence, без public
 network/setup, signed release, all-model/all-GPU или всей фазы 2C claims.
 
-**Следующий шаг:** trained installed qualification существующего embedding
-pipeline через публичный Project flow. Применимые именованные Advanced controls
+**Следующий шаг:** trained installed qualification `predictionType=v_prediction`
+через публичный Project flow с exact frozen identity и явным Add/Save/reopen.
+Применимые именованные Advanced controls
 (VAE, precision, CFG Rescale) уже имеют production paths; CLIP Skip явно
 неприменим к обоим MVP pipelines, нового selector не требуется.
-Далее остаются installed `v_prediction`, concrete
-multi-job dynamic batches/actual seed scheduling и crash/reopen `Reuse`,
+Далее остаются concrete multi-job dynamic batches/actual seed scheduling и
+crash/reopen `Reuse`,
 расширенная installed Anima method/weighting qualification по выходным критериям.
 First-setup integration остаётся зависимостью release/runtime installer;
 вес LaMa обязан входить в общий preview.
