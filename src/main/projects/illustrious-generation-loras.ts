@@ -1,3 +1,4 @@
+import type { IllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { RecordedGenerationLoraStackSchema } from '../../shared/projects/project-schema.js'
 
@@ -10,11 +11,22 @@ import type { ModelService } from '../models/model-service.js'
 export type GenerationModelResolver = Pick<
   ModelService,
   | 'assertNoUnboundGenerationEmbeddings'
-  | 'resolveVerifiedGenerationCheckpointForPlan'
   | 'resolveVerifiedGenerationEmbeddingForPlan'
   | 'resolveVerifiedGenerationLoraForPlan'
   | 'resolveVerifiedGenerationVaeForPlan'
->
+> & {
+  /** Production supplies a policy; historical controlled resolvers retain baseline omission. */
+  resolveVerifiedGenerationCheckpointForPlan: (
+    ...args: Parameters<ModelService['resolveVerifiedGenerationCheckpointForPlan']>
+  ) => Promise<
+    Omit<
+      Awaited<ReturnType<ModelService['resolveVerifiedGenerationCheckpointForPlan']>>,
+      'noiseProfile'
+    > & {
+      noiseProfile?: IllustriousNoiseProfileV1
+    }
+  >
+}
 export type FrozenLoraStack = IgsProjectDocumentV1['generationDraft']['loras']
 export interface FrozenGenerationLora {
   byteSize: number

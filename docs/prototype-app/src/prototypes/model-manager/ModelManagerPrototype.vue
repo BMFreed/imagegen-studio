@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { SetCheckpointNoiseProfileChange } from '../../../../../src/shared/api.js'
+import { defaultIllustriousNoiseProfile } from '../../../../../src/shared/projects/illustrious-noise-profile.js'
+
 import { NModal, NSplit } from 'naive-ui'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
@@ -102,6 +105,15 @@ function installAvailableVersion() {
       id: available.id,
       isDefault: false,
       label: available.label,
+      ...(resource.type === 'checkpoint' && ['Illustrious', 'NoobAI'].includes(resource.baseModel)
+        ? {
+            noiseProfile: {
+              effective: defaultIllustriousNoiseProfile(),
+              rescaleBetasZeroSnrSource: 'assumed' as const,
+              timestepSpacingSource: 'assumed' as const,
+            },
+          }
+        : {}),
       sizeLabel: available.sizeLabel,
     }
     resource.versions = [installedVersion, ...(resource.versions ?? [])]
@@ -140,6 +152,23 @@ function resetFilters() {
   statusFilter.value = 'all'
   searchFilter.value = ''
   baseModelFilter.value = 'all'
+}
+
+// Prototype-only state; production uses Main's exact SHA/size policy and persisted commands.
+function setNoiseProfile(versionId: string, change: SetCheckpointNoiseProfileChange) {
+  const version = selectedResource.value.versions?.find((item) => item.id === versionId)
+  if (!version?.noiseProfile) {
+    return
+  }
+  const defaults = defaultIllustriousNoiseProfile()
+  if (change.kind === 'rescale-betas-zero-snr') {
+    version.noiseProfile.effective.rescaleBetasZeroSnr =
+      change.value ?? defaults.rescaleBetasZeroSnr
+    version.noiseProfile.rescaleBetasZeroSnrSource = change.value === null ? 'assumed' : 'override'
+  } else {
+    version.noiseProfile.effective.timestepSpacing = change.value ?? defaults.timestepSpacing
+    version.noiseProfile.timestepSpacingSource = change.value === null ? 'assumed' : 'override'
+  }
 }
 
 function requestClose() {
@@ -215,6 +244,7 @@ onUnmounted(() => {
                   @checkForUpdates="checkForUpdates"
                   @previewVersion="previewAvailableVersion"
                   @setDefaultVersion="setDefaultVersion"
+                  @setNoiseProfile="setNoiseProfile"
                 />
               </aside>
             </template>

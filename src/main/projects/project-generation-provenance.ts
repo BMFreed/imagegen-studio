@@ -249,6 +249,9 @@ export function provenanceFromVerifiedRasterCandidate(input: {
             ? { denoisingStrength: context.sampling.denoisingStrength }
             : {}),
           actualSeed: candidate.actualSeed,
+          ...(context.sampling.noiseProfile !== undefined
+            ? { noiseProfile: structuredClone(context.sampling.noiseProfile) }
+            : {}),
           cfgScale: context.sampling.cfgScale,
           invokeScheduler: context.sampling.invokeScheduler,
           requestedSeedPolicy: context.sampling.requestedSeedPolicy,

@@ -28,6 +28,7 @@ import {
   isRasterGenerationData,
   type RasterGenerationData,
 } from '../shared/projects/generation-settings-comparison.js'
+import { isIllustriousNoiseProfileV1 } from '../shared/projects/illustrious-noise-profile.js'
 import { isProjectAcceptedResultView } from '../shared/projects/project-accepted-results.js'
 import {
   isProjectDocumentId,
@@ -136,7 +137,14 @@ function isModelCatalog(value: unknown): value is ModelCatalogItem[] {
             isRecord(version) &&
             typeof version.id === 'string' &&
             typeof version.name === 'string' &&
-            typeof version.fileName === 'string',
+            typeof version.fileName === 'string' &&
+            (version.noiseProfile === undefined ||
+              (isRecord(version.noiseProfile) &&
+                isIllustriousNoiseProfileV1(version.noiseProfile.effective) &&
+                (version.noiseProfile.rescaleBetasZeroSnrSource === 'assumed' ||
+                  version.noiseProfile.rescaleBetasZeroSnrSource === 'override') &&
+                (version.noiseProfile.timestepSpacingSource === 'assumed' ||
+                  version.noiseProfile.timestepSpacingSource === 'override'))),
         ),
     )
   )
@@ -611,6 +619,8 @@ const api: StudioApi = {
     saveToken: (token) => invokeModel(ipcChannels.models.saveToken, [token], isTokenStatus),
     setDefaultVersion: (resourceId, versionId) =>
       invokeModel(ipcChannels.models.setDefaultVersion, [resourceId, versionId], isVoid),
+    setNoiseProfile: (resourceId, versionId, change) =>
+      invokeModel(ipcChannels.models.setNoiseProfile, [resourceId, versionId, change], isVoid),
     setPredictionType: (resourceId, versionId, predictionType) =>
       invokeModel(
         ipcChannels.models.setPredictionType,

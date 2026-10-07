@@ -11,6 +11,7 @@ import {
   getEffectiveDynamicPromptSettings,
 } from './generation-dynamic-settings.js'
 import { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
+import { IllustriousNoiseProfileV1Schema } from './illustrious-noise-profile.js'
 
 export { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 
@@ -229,6 +230,7 @@ const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
       'dpmpp_sde_k',
       'dpmpp_sde',
     ]),
+    noiseProfile: v.optional(IllustriousNoiseProfileV1Schema),
     requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
     sampler: NonemptyTextSchema,
     scheduler: NonemptyTextSchema,

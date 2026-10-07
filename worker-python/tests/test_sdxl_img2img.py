@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import importlib.metadata
+from dataclasses import replace
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 from PIL import Image
 
 from imagegen_worker import inference
-from imagegen_worker.inference import SdxlConditioning, run_sdxl_pipeline
+from imagegen_worker.inference import MLRuntime, SdxlConditioning, run_sdxl_pipeline
+from imagegen_worker.protocol import (
+    GenerateIllustriousTxt2ImgCommand,
+    IllustriousNoiseProfile,
+    parse_request,
+)
+from test_generation_protocol import generation_request
 
 
-def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progress() -> None:
+def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progress(
+    tmp_path: Path,
+) -> None:
     torch = pytest.importorskip("torch")
     diffusers = pytest.importorskip("diffusers")
     assert importlib.metadata.version("diffusers") == "0.40.0"
@@ -84,6 +95,7 @@ def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progr
                 image: Image.Image = source,
                 seed: int = 42,
                 rescale: float = 0,
+                noise_profile: IllustriousNoiseProfile | None = None,
             ) -> tuple[bytes, list[tuple[int, int]], Any]:
                 beta = {"beta_start": 0.00085, "beta_end": 0.012, "beta_schedule": "scaled_linear"}
                 if scheduler == "euler":
@@ -97,6 +109,29 @@ def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progr
                 else:
                     pipeline.scheduler = diffusers.DPMSolverMultistepScheduler(
                         **beta, use_karras_sigmas=scheduler.endswith("_k")
+                    )
+                if noise_profile is not None:
+                    wire = generation_request(tmp_path)
+                    wire["type"] = "generate-illustrious-img2img"
+                    job: Any = wire["job"]
+                    job["checkpoint"]["predictionType"] = "v_prediction"
+                    job["sampling"].update(
+                        scheduler=scheduler,
+                        denoisingStrength=strength,
+                        noiseProfile={
+                            "schemaVersion": 1,
+                            "baseSchedule": "sdxl-scaled-linear-v1",
+                            "rescaleBetasZeroSnr": noise_profile.rescale_betas_zero_snr,
+                            "timestepSpacing": noise_profile.timestep_spacing,
+                        },
+                    )
+                    captured = parse_request(wire)
+                    assert isinstance(captured, GenerateIllustriousTxt2ImgCommand)
+                    assert captured.noise_profile == noise_profile
+                    pipeline.scheduler = inference.select_inference_scheduler(
+                        replace(captured, seed=seed),
+                        pipeline,
+                        MLRuntime(torch, diffusers, ModuleType("unused")),
                     )
                 actual_noise = pipeline.scheduler.add_noise
                 actual_step = pipeline.scheduler.step
@@ -178,6 +213,34 @@ def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progr
             assert original != changed_seed
             rescaled, _, _ = generate(0.75, rescale=0.7)
             assert original != rescaled
+            for noise_profile in (
+                IllustriousNoiseProfile(True, "trailing"),
+                IllustriousNoiseProfile(False, "leading"),
+            ):
+                pixels, profile_progress, profile_noised = generate(
+                    0.75, "euler", noise_profile=noise_profile
+                )
+                full = pipeline.scheduler.timesteps
+                expected_full = (
+                    [999, 749, 499, 249]
+                    if noise_profile.rescale_betas_zero_snr
+                    else [751, 501, 251, 1]
+                )
+                assert full.tolist() == expected_full
+                assert pipeline.scheduler.config.prediction_type == "v_prediction"
+                if noise_profile.rescale_betas_zero_snr:
+                    assert pipeline.scheduler.alphas_cumprod[-1].item() == 2**-24
+                else:
+                    assert pipeline.scheduler.alphas_cumprod[-1].item() > 0.004
+                selected = full[full < 750]
+                assert len(observed["steps"]) == len(selected)
+                assert profile_progress == [
+                    (index + 1, len(selected)) for index in range(len(selected))
+                ]
+                assert len(profile_noised) == 1
+                assert torch.equal(profile_noised[0][2], selected[:1])
+                replay, replay_progress, _ = generate(0.75, "euler", noise_profile=noise_profile)
+                assert pixels == replay and profile_progress == replay_progress
             native = diffusers.StableDiffusionXLImg2ImgPipeline(
                 vae=vae,
                 text_encoder=None,

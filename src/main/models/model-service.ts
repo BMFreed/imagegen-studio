@@ -1,10 +1,17 @@
 import type {
   AnimaModelBundleView,
+  CheckpointNoiseProfileView,
   CivitaiTokenStatus,
   ModelCatalogItem,
   ModelImportPreview,
   ModelVersionView,
+  SetCheckpointNoiseProfileChange,
 } from '../../shared/api.js'
+import { isCheckpointNoiseProfileChange } from '../../shared/api.js'
+import {
+  defaultIllustriousNoiseProfile,
+  type IllustriousNoiseProfileV1,
+} from '../../shared/projects/illustrious-noise-profile.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import {
   embeddingActivationToken,
@@ -27,6 +34,7 @@ import type { CivitaiClient } from './civitai-client.js'
 import type { CivitaiTokenStore } from './civitai-token-store.js'
 import type {
   BaseModelFamily,
+  CheckpointNoiseProfileOverride,
   InstalledModelFile,
   InstalledModelVersion,
   ModelPredictionType,
@@ -240,6 +248,12 @@ export class ModelService {
         override.predictionType,
       ]),
     )
+    const noiseOverrides = new Map(
+      (await this.repository.listNoiseProfileOverrides()).map((override) => [
+        `${override.sha256}:${override.sizeBytes}`,
+        override,
+      ]),
+    )
     const versionsById = new Map(
       installed.flatMap((model) => model.versions.map((version) => [version.id, version] as const)),
     )
@@ -346,6 +360,14 @@ export class ModelService {
                   id: version.id,
                   installedAt: version.createdAt,
                   name: version.name,
+                  ...(model.type === 'checkpoint' && version.baseModelFamily === 'illustrious'
+                    ? {
+                        noiseProfile: this.effectiveNoiseProfile(
+                          noiseOverrides.get(`${version.file.sha256}:${version.file.sizeBytes}`) ??
+                            null,
+                        ),
+                      }
+                    : {}),
                   predictionType: prediction.value,
                   predictionTypeSource: prediction.source,
                   sha256: version.file.sha256,
@@ -958,6 +980,7 @@ export class ModelService {
     saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
   ): Promise<{
     managedPath: string
+    noiseProfile: IllustriousNoiseProfileV1
     reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
   }> {
     if (saved.kind !== 'checkpoint') {
@@ -1014,6 +1037,12 @@ export class ModelService {
     const predictionType = reference.predictionType
     return {
       managedPath: resolved.managedPath,
+      noiseProfile: this.effectiveNoiseProfile(
+        await this.repository.getNoiseProfileOverride({
+          sha256: reference.fileSha256,
+          sizeBytes: resolved.fileSizeBytes,
+        }),
+      ).effective,
       reference: { ...reference, predictionType },
     }
   }
@@ -1223,6 +1252,46 @@ export class ModelService {
     await this.repository.setDefaultVersion(resourceId, versionId)
   }
 
+  async setNoiseProfile(
+    resourceId: string,
+    versionId: string,
+    change: SetCheckpointNoiseProfileChange,
+  ): Promise<void> {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuid.test(resourceId) || !uuid.test(versionId)) {
+      throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource or version ID.')
+    }
+    if (!isCheckpointNoiseProfileChange(change)) {
+      throw new ModelServiceError(
+        'MODEL_NOISE_PROFILE_INVALID',
+        'Choose a supported noise setting.',
+      )
+    }
+    const installed = await this.repository.listInstalled()
+    const resource = installed.find((item) => item.id === resourceId)
+    const version = resource?.versions.find((item) => item.id === versionId)
+    if (resource?.type !== 'checkpoint' || version?.baseModelFamily !== 'illustrious') {
+      throw new ModelServiceError(
+        'MODEL_VERSION_UNAVAILABLE',
+        'Choose an installed Illustrious checkpoint version.',
+      )
+    }
+    const status = await this.actualFileStatus(version.file, true)
+    if (status !== 'ready') {
+      throw new ModelServiceError(
+        status === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT',
+        'The checkpoint file must pass verification before editing its noise settings.',
+      )
+    }
+    await this.repository.setNoiseProfileOverride({
+      change,
+      expectedSha256: version.file.sha256,
+      expectedSizeBytes: version.file.sizeBytes,
+      resourceId,
+      versionId,
+    })
+  }
+
   async setPredictionType(
     resourceId: string,
     versionId: string,
@@ -1352,6 +1421,24 @@ export class ModelService {
     } catch (error) {
       this.fileStatusCache.delete(file.managedPath)
       return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'corrupt'
+    }
+  }
+
+  private effectiveNoiseProfile(
+    override: CheckpointNoiseProfileOverride | null,
+  ): CheckpointNoiseProfileView {
+    const defaults = defaultIllustriousNoiseProfile()
+    return {
+      effective: {
+        ...defaults,
+        rescaleBetasZeroSnr: override?.rescaleBetasZeroSnr ?? defaults.rescaleBetasZeroSnr,
+        timestepSpacing: override?.timestepSpacing ?? defaults.timestepSpacing,
+      },
+      rescaleBetasZeroSnrSource:
+        override?.rescaleBetasZeroSnr === null || override?.rescaleBetasZeroSnr === undefined
+          ? 'assumed'
+          : 'override',
+      timestepSpacingSource: override?.timestepSpacing == null ? 'assumed' : 'override',
     }
   }
 

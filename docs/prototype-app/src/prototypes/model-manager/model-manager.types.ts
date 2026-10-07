@@ -1,3 +1,5 @@
+import type { CheckpointNoiseProfileView } from '../../../../../src/shared/api.js'
+
 export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae'
 
 export type ModelResourceStatus =
@@ -9,6 +11,7 @@ export interface ModelResourceVersion {
   id: string
   isDefault: boolean
   label: string
+  noiseProfile?: CheckpointNoiseProfileView
   sizeLabel: string
 }
 

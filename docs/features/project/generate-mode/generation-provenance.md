@@ -11,6 +11,15 @@ Generation provenance is immutable metadata attached to an accepted generated Ra
 
 It is not an undo snapshot, a staging candidate or an independent History item.
 
+The [exact-file noise-profile checkpoint](../../../engineering/phase-2c-noise-profile-research.md)
+records actual Illustrious `sampling.noiseProfile` with schema/base-schedule
+semantics, zero-SNR and timestep spacing from the frozen job. Assumption labels
+are library presentation, not execution metadata. Later library edits do not
+rewrite accepted records. Old accepted records without a profile remain
+Unavailable in read-only comparison; the current library never fills their gap.
+Resource refs stay exact and portable; profile policy is not a Project/preset
+editable setting. Add/shadow/Save/readback preserve the recorded snapshot.
+
 ## Reference
 
 Reference: InvokeAI generation metadata, adapted to ImageGen Studio `.igs`, presets and layer-owned Smart Patch workflows.

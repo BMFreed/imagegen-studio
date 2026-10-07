@@ -47,14 +47,16 @@ from imagegen_worker.protocol import (
     GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
+    validate_illustrious_noise_scheduler,
 )
 
-INFERENCE_WORKER_VERSION = "0.13.0"
+INFERENCE_WORKER_VERSION = "0.14.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
 INFERENCE_OUTPAINT_CAPABILITY = "illustrious-outpaint"
 INFERENCE_EULER_CAPABILITY = "illustrious-euler"
+INFERENCE_NOISE_PROFILE_CAPABILITY = "illustrious-noise-profile"
 INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_VAE_PRECISION_CAPABILITY = "illustrious-vae-precision"
 INFERENCE_EXTERNAL_VAE_CAPABILITY = "illustrious-external-vae"
@@ -351,8 +353,27 @@ def select_inference_scheduler(
         raise DerivativeError(
             "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
         )
+    validate_illustrious_noise_scheduler(command.noise_profile, command.scheduler)
     diffusers = cast(Any, runtime.diffusers)
+    # A missing profile is a legacy request, whose existing scheduler config stays
+    # authoritative. Versioned profiles instead fix every base beta-schedule value;
+    # loader extras (trained betas, spacing or alternate sigma policies) cannot leak
+    # into a request whose durable metadata names sdxl-scaled-linear-v1.
     config = pipeline.scheduler.config
+    if command.noise_profile is not None:
+        config = {
+            "num_train_timesteps": 1000,
+            "beta_start": 0.00085,
+            "beta_end": 0.012,
+            "beta_schedule": "scaled_linear",
+            "trained_betas": None,
+            "steps_offset": 1,
+            "timestep_spacing": command.noise_profile.timestep_spacing,
+        }
+        if command.scheduler not in ("dpmpp_sde", "dpmpp_sde_k"):
+            # Native SDE has no such parameter; even false must not masquerade
+            # as a supported ignored ConfigMixin attribute.
+            config["rescale_betas_zero_snr"] = command.noise_profile.rescale_betas_zero_snr
     if command.scheduler == "euler":
         return diffusers.EulerDiscreteScheduler.from_config(
             config, prediction_type=command.prediction_type
@@ -842,6 +863,9 @@ def _generate_illustrious(
         raise DerivativeError(
             "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
         )
+    # Refuse unsupported captured sampling before config/asset reads, LaMa or
+    # checkpoint loading; select_inference_scheduler repeats this for direct use.
+    validate_illustrious_noise_scheduler(command.noise_profile, command.scheduler)
     for prompt in masked_embedding_prompts(command):
         normalize_compel_prompt(prompt)
     verify_pinned_config(str(config_dir))

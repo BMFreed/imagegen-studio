@@ -5,6 +5,7 @@ import {
 import type { ProjectGenerationDraftChange } from '../../shared/api.js'
 import { isAcceptedResultHistoryPage } from '../../shared/projects/accepted-result-history.js'
 import { isRasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 import { isProjectAcceptedResultView } from '../../shared/projects/project-accepted-results.js'
 import {
   generationTargetSignature,
@@ -3188,7 +3189,7 @@ test('Raster Layer commands persist top-first order and properties through shado
   })
 })
 
-test('editing an accepted Euler Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
+test('editing an accepted Euler Raster Layer preserves immutable noise profile and provenance through service, shadow and Save', async () => {
   await withService(async ({ database, dataRoot, repository, service, shadow }) => {
     const originalOutput = await acceptedOutputPngFixture()
     const output = await acceptedOutputPngFixture(16, 16)
@@ -3208,6 +3209,11 @@ test('editing an accepted Euler Raster Layer preserves immutable provenance thro
     provenance.generationConfiguration.sampling.actualSeed = 0
     Object.assign(provenance.generationConfiguration.sampling, {
       invokeScheduler: 'euler',
+      noiseProfile: {
+        ...defaultIllustriousNoiseProfile(),
+        rescaleBetasZeroSnr: true,
+        timestepSpacing: 'trailing',
+      },
       sampler: 'Euler',
       scheduler: 'Normal',
     })

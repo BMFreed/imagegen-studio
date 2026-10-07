@@ -25,6 +25,7 @@ from imagegen_worker.inference import (
     INFERENCE_EXTERNAL_VAE_CAPABILITY,
     INFERENCE_IMG2IMG_CAPABILITY,
     INFERENCE_LORA_CAPABILITY,
+    INFERENCE_NOISE_PROFILE_CAPABILITY,
     INFERENCE_OUTPAINT_CAPABILITY,
     INFERENCE_PROGRESS_CAPABILITY,
     INFERENCE_RUNTIME_PROFILE,
@@ -79,6 +80,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             INFERENCE_EMBEDDINGS_CAPABILITY,
             INFERENCE_OUTPAINT_CAPABILITY,
             INFERENCE_EULER_CAPABILITY,
+            INFERENCE_NOISE_PROFILE_CAPABILITY,
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)

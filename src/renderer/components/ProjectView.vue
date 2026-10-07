@@ -1611,6 +1611,23 @@ function applyFitBbox() {
                     selectedModelVersion.predictionTypeSource === 'default' ? ' (assumed)' : ''
                   }}
                 </span>
+                <span v-if="selectedModelVersion?.noiseProfile" class="model-prediction">
+                  ZTSNR:
+                  {{
+                    selectedModelVersion.noiseProfile.effective.rescaleBetasZeroSnr ? 'on' : 'off'
+                  }}
+                  {{
+                    selectedModelVersion.noiseProfile.rescaleBetasZeroSnrSource === 'assumed'
+                      ? '(assumed)'
+                      : ''
+                  }}
+                  · Spacing: {{ selectedModelVersion.noiseProfile.effective.timestepSpacing }}
+                  {{
+                    selectedModelVersion.noiseProfile.timestepSpacingSource === 'assumed'
+                      ? '(assumed)'
+                      : ''
+                  }}
+                </span>
               </div>
               <p v-if="modelCatalogError" class="model-message" role="alert">
                 Could not check installed models. {{ modelCatalogError }}

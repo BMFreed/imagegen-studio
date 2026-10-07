@@ -3,6 +3,7 @@ import {
   GENERATION_THUMBNAIL_MAX_BYTES,
   GENERATION_THUMBNAIL_MAX_SIDE,
 } from '../../shared/projects/generation-thumbnail.js'
+import { equalIllustriousNoiseProfiles } from '../../shared/projects/illustrious-noise-profile.js'
 import { IGS_GENERATION_PNG_MAX_BYTES } from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable } from 'kysely'
@@ -1541,6 +1542,10 @@ function parseFrozenPayload(json: string): FrozenPayload {
     context.model.managedPath !== workerJob.checkpoint.path ||
     context.model.reference.fileSha256 !== workerJob.checkpoint.sha256 ||
     context.model.reference.predictionType !== workerJob.checkpoint.predictionType ||
+    !equalIllustriousNoiseProfiles(
+      context.sampling.noiseProfile,
+      workerJob.sampling.noiseProfile,
+    ) ||
     (context.sampling.cfgRescale ?? 0) !== (workerJob.sampling.cfgRescale ?? 0) ||
     context.sampling.cfgScale !== workerJob.sampling.cfgScale ||
     context.sampling.invokeScheduler !== workerJob.sampling.scheduler ||

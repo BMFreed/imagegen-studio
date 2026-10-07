@@ -11,6 +11,12 @@ import type {
   GenerationQueuePage,
 } from '../../shared/projects/generation-queue-manager.js'
 import {
+  defaultIllustriousNoiseProfile,
+  equalIllustriousNoiseProfiles,
+  IllustriousNoiseProfileV1Schema,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
+import {
   IGS_SAFETY_CEILINGS,
   RecordedGenerationLoraStackSchema,
 } from '../../shared/projects/project-schema.js'
@@ -202,6 +208,7 @@ const Txt2ImgFrozenContextSchema = v.strictObject({
     cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
     cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
     invokeScheduler: SchedulerKeySchema,
+    noiseProfile: v.optional(IllustriousNoiseProfileV1Schema),
     requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
     sampler: NonemptySchema,
     scheduler: NonemptySchema,
@@ -235,6 +242,7 @@ const Txt2ImgWorkerJobSchema = v.strictObject({
   sampling: v.strictObject({
     cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
     cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
+    noiseProfile: v.optional(IllustriousNoiseProfileV1Schema),
     scheduler: SchedulerKeySchema,
     seed: Uint32Schema,
     steps: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(200)),
@@ -2494,6 +2502,9 @@ export function buildFrozenQueuedOutpaintV1(
           ...(context.sampling.cfgRescale !== undefined
             ? { cfgRescale: context.sampling.cfgRescale }
             : {}),
+          ...(context.sampling.noiseProfile !== undefined
+            ? { noiseProfile: structuredClone(context.sampling.noiseProfile) }
+            : {}),
           denoisingStrength: context.sampling.denoisingStrength,
           scheduler: context.sampling.invokeScheduler,
           seed: context.sampling.seed,
@@ -2545,9 +2556,13 @@ export async function reverifyFrozenQueuedOutpaintGeneration(
     )
     if (
       model.managedPath !== parsed.context.model.managedPath ||
-      !isDeepStrictEqual(model.reference, parsed.context.model.reference)
+      !isDeepStrictEqual(model.reference, parsed.context.model.reference) ||
+      !equalIllustriousNoiseProfiles(model.noiseProfile, parsed.context.sampling.noiseProfile)
     ) {
-      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen checkpoint changed.')
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The frozen checkpoint or noise profile changed.',
+      )
     }
     await reverifyFrozenGenerationLoras(parsed.context, models)
     await reverifyFrozenGenerationVae(parsed.context, models)
@@ -2912,6 +2927,14 @@ function validateSnapshot(
     request.job.checkpoint.path !== context.model.managedPath ||
     request.job.checkpoint.sha256 !== context.model.reference.fileSha256 ||
     request.job.checkpoint.predictionType !== context.model.reference.predictionType ||
+    !equalIllustriousNoiseProfiles(
+      request.job.sampling.noiseProfile,
+      context.sampling.noiseProfile,
+    ) ||
+    !supportsIllustriousNoiseProfile(
+      request.job.sampling.scheduler,
+      request.job.sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
+    ) ||
     (request.job.sampling.cfgRescale ?? 0) !== (context.sampling.cfgRescale ?? 0) ||
     request.job.sampling.cfgScale !== context.sampling.cfgScale ||
     request.job.sampling.scheduler !== context.sampling.invokeScheduler ||
@@ -2972,6 +2995,11 @@ function payloadFieldsAgree(
     workerJob.checkpoint.predictionType === context.model.reference.predictionType &&
     isDeepStrictEqual(workerJob.bbox, context.bbox) &&
     isDeepStrictEqual(workerJob.prompts, context.prompts) &&
+    equalIllustriousNoiseProfiles(workerJob.sampling.noiseProfile, context.sampling.noiseProfile) &&
+    supportsIllustriousNoiseProfile(
+      workerJob.sampling.scheduler,
+      workerJob.sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
+    ) &&
     (workerJob.sampling.cfgRescale ?? 0) === (context.sampling.cfgRescale ?? 0) &&
     workerJob.sampling.cfgScale === context.sampling.cfgScale &&
     workerJob.sampling.seed === context.sampling.seed &&

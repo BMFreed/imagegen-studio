@@ -8,6 +8,7 @@ import type {
 } from './project-schema.js'
 
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
+import { defaultIllustriousNoiseProfile } from './illustrious-noise-profile.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_GENERATION_PNG_MAX_BYTES,
@@ -601,4 +602,55 @@ test('portable comparison configuration uses the same strict accepted provenance
     parseRasterGenerationProvenanceV1(rasterGenerationProvenance()).generationConfiguration,
     baseline,
   )
+})
+
+test('noise profile is optional strict accepted sampling data in every Illustrious mode without editing draft policy', () => {
+  const legacy = rasterGenerationProvenance()
+  assert.equal(
+    Object.hasOwn(
+      parseRasterGenerationProvenanceV1(legacy).generationConfiguration.sampling,
+      'noiseProfile',
+    ),
+    false,
+  )
+  for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+    for (const spacing of ['leading', 'linspace', 'trailing'] as const) {
+      const configuration = {
+        ...legacy.generationConfiguration,
+        mode,
+        sampling: {
+          ...legacy.generationConfiguration.sampling,
+          ...(mode === 'txt2img' ? {} : { denoisingStrength: 0.5 }),
+          noiseProfile: {
+            ...defaultIllustriousNoiseProfile(),
+            rescaleBetasZeroSnr: true,
+            timestepSpacing: spacing,
+          },
+        },
+      }
+      assert.equal(isRasterGenerationConfigurationV1(configuration), true)
+      for (const noiseProfile of [
+        null,
+        {},
+        { ...configuration.sampling.noiseProfile, schemaVersion: 2 },
+        { ...configuration.sampling.noiseProfile, baseSchedule: 'whatever' },
+        { ...configuration.sampling.noiseProfile, timestepSpacing: 'auto' },
+        { ...configuration.sampling.noiseProfile, rescaleBetasZeroSnr: 1 },
+        { ...configuration.sampling.noiseProfile, unknown: true },
+      ]) {
+        assert.equal(
+          isRasterGenerationConfigurationV1({
+            ...configuration,
+            sampling: { ...configuration.sampling, noiseProfile },
+          }),
+          false,
+        )
+      }
+    }
+  }
+  const document = emptyDocument()
+  Object.assign(document.generationDraft.sampling, {
+    noiseProfile: defaultIllustriousNoiseProfile(),
+  })
+  assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
 })

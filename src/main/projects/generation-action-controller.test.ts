@@ -3584,3 +3584,113 @@ test('Euler Retry refuses legacy peers without changing the failed source and ig
     )
   })
 })
+
+const noiseReady: InferenceWorkerReady = {
+  ...eulerReady,
+  capabilities: [...eulerReady.capabilities, 'illustrious-noise-profile'],
+  workerVersion: '0.14.0',
+}
+
+test('public noise policy admission refuses legacy before composition and freezes actual profile into durable execution', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, modelService, projects, queue, runtime, staging, tabId } =
+      fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    const ref = projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.model!
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'rescale-betas-zero-snr',
+      value: true,
+    })
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'timestep-spacing',
+      value: 'trailing',
+    })
+    const seedBefore = await staging.readLastActualSeed(tabId, documentId)
+    const saved = await readFile(fixture.packagePath)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 1 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.preparationCount, 0)
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    assert.equal(await staging.readLastActualSeed(tabId, documentId), seedBefore)
+    assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    runtime.ready = structuredClone(noiseReady)
+    const queued = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(queued.kind, 'queued')
+    if (queued.kind !== 'queued') {
+      throw new Error('expected queue')
+    }
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const frozen = await queue.loadVerifiedInput(queued.jobIds[0])
+    assert.ok(
+      frozen.payload.kind === 'illustrious-txt2img' ||
+        frozen.payload.kind === 'illustrious-img2img',
+    )
+    const expected = {
+      baseSchedule: 'sdxl-scaled-linear-v1',
+      rescaleBetasZeroSnr: true,
+      schemaVersion: 1,
+      timestepSpacing: 'trailing',
+    }
+    assert.deepEqual(frozen.payload.context.sampling.noiseProfile, expected)
+    assert.deepEqual(frozen.payload.workerJob.sampling.noiseProfile, expected)
+    assert.deepEqual(runtime.generated[0].job.sampling.noiseProfile, expected)
+    assert.equal((await staging.listVerifiedCandidates(tabId)).length, 1)
+  })
+})
+
+test('noise policy changes cause preserving public frozen Retry refusal; exact restore ignores later draft and permits retry', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, modelService, projects, queue, runtime, staging, tabId } =
+      fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    const ref = projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.model!
+    runtime.ready = structuredClone(noiseReady)
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'rescale-betas-zero-snr',
+      value: true,
+    })
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'timestep-spacing',
+      value: 'trailing',
+    })
+    runtime.beforeGenerate = async () => {
+      throw new Error('controlled failure')
+    }
+    const queued = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(queued.kind, 'queued')
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    const before = await queue.loadVerifiedRetryInput(source.id)
+    const seedBefore = await staging.readLastActualSeed(tabId, documentId)
+    runtime.beforeGenerate = null
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'timestep-spacing',
+      value: 'leading',
+    })
+    await assert.rejects(controller.retryJob(source))
+    assert.deepEqual(await queue.loadVerifiedRetryInput(source.id), before)
+    assert.equal((await controller.getQueue()).items.length, 1)
+    assert.equal(runtime.generated.length, 1)
+    assert.equal(await staging.readLastActualSeed(tabId, documentId), seedBefore)
+    assert.deepEqual(await staging.listVerifiedCandidates(tabId), [])
+    await modelService.setNoiseProfile(ref.localModelId, ref.localVersionId, {
+      kind: 'timestep-spacing',
+      value: 'trailing',
+    })
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'sampling-pair',
+      sampler: 'Euler a',
+      scheduler: 'Normal',
+    })
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.equal(runtime.generated[1].job.sampling.scheduler, 'dpmpp_2m_k')
+    assert.equal(runtime.generated[1].job.sampling.noiseProfile?.rescaleBetasZeroSnr, true)
+    assert.equal(runtime.generated[1].job.sampling.noiseProfile?.timestepSpacing, 'trailing')
+  })
+})

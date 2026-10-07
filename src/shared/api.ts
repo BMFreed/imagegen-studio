@@ -13,6 +13,7 @@ import type {
   GenerationQueueTerminalStatus,
 } from './projects/generation-queue-manager.js'
 import type { RasterGenerationData } from './projects/generation-settings-comparison.js'
+import type { IllustriousNoiseProfileV1 } from './projects/illustrious-noise-profile.js'
 import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
@@ -50,6 +51,7 @@ export const ipcChannels = {
     removeToken: 'models:remove-token',
     saveToken: 'models:save-token',
     setDefaultVersion: 'models:set-default-version',
+    setNoiseProfile: 'models:set-noise-profile',
     setPredictionType: 'models:set-prediction-type',
     startInstall: 'models:start-install',
   },
@@ -418,6 +420,17 @@ export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler'
 export type BaseModelFamily = 'anima' | 'illustrious'
 export type ModelFileStatus = 'corrupt' | 'missing' | 'ready'
 export type IllustriousPredictionType = 'epsilon' | 'v_prediction'
+/** Independent user choices for exact checkpoint bytes. Null restores one assumed default. */
+export type SetCheckpointNoiseProfileChange =
+  | { kind: 'rescale-betas-zero-snr'; value: boolean | null }
+  | { kind: 'timestep-spacing'; value: IllustriousNoiseProfileV1['timestepSpacing'] | null }
+
+export interface CheckpointNoiseProfileView {
+  effective: IllustriousNoiseProfileV1
+  rescaleBetasZeroSnrSource: 'assumed' | 'override'
+  timestepSpacingSource: 'assumed' | 'override'
+}
+
 /** Read-only identities of the app-pinned Anima companions; no filesystem paths cross IPC. */
 export interface AnimaModelBundleView {
   architecture: 'anima-base-1.0'
@@ -448,12 +461,12 @@ export interface ModelVersionView {
   id: string
   installedAt: string
   name: string
+  noiseProfile?: CheckpointNoiseProfileView
   predictionType: 'epsilon' | 'sample' | 'v_prediction' | null
   predictionTypeSource?: 'default' | 'manifest' | 'not-applicable' | 'user'
   sha256: string
   trainedWords: string[]
 }
-
 export interface ModelCatalogItem {
   author: string | null
   defaultVersionId: string | null
@@ -543,6 +556,11 @@ export interface ModelApi {
   removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
   saveToken: (token: string) => Promise<ApiResult<CivitaiTokenStatus>>
   setDefaultVersion: (resourceId: string, versionId: string) => Promise<ApiResult<void>>
+  setNoiseProfile: (
+    resourceId: string,
+    versionId: string,
+    change: SetCheckpointNoiseProfileChange,
+  ) => Promise<ApiResult<void>>
   setPredictionType: (
     resourceId: string,
     versionId: string,
@@ -566,6 +584,31 @@ export interface StudioApi {
   models: ModelApi
   projects: ProjectApi
   runtime: RuntimeApi
+}
+
+export function isCheckpointNoiseProfileChange(
+  value: unknown,
+): value is SetCheckpointNoiseProfileChange {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const change = value as Record<string, unknown>
+  if (
+    Object.keys(change).length !== 2 ||
+    !Object.hasOwn(change, 'kind') ||
+    !Object.hasOwn(change, 'value')
+  ) {
+    return false
+  }
+  return (
+    (change['kind'] === 'rescale-betas-zero-snr' &&
+      (change['value'] === null || typeof change['value'] === 'boolean')) ||
+    (change['kind'] === 'timestep-spacing' &&
+      (change['value'] === null ||
+        change['value'] === 'leading' ||
+        change['value'] === 'linspace' ||
+        change['value'] === 'trailing'))
+  )
 }
 
 /** The renderer may edit scalar draft settings, never forge resource sidecars. */

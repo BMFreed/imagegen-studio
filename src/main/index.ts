@@ -1,5 +1,6 @@
 import {
   ipcChannels,
+  isCheckpointNoiseProfileChange,
   isProjectEmbeddingIdentity,
   isProjectGenerationDraftChange,
   isProjectGenerationModelSelection,
@@ -17,6 +18,7 @@ import type {
   ProjectRasterLayerChange,
   ProjectTab,
   RuntimeStatus,
+  SetCheckpointNoiseProfileChange,
 } from '../shared/api.js'
 import {
   type AcceptedResultHistoryCursor,
@@ -1681,6 +1683,21 @@ if (!gotInstanceLock) {
             resourceId as string,
             versionId as string,
             predictionType as 'epsilon' | 'v_prediction',
+          )
+        },
+      )
+      registerModelHandler(
+        ipcChannels.models.setNoiseProfile,
+        (args) =>
+          args.length === 3 &&
+          typeof args[0] === 'string' &&
+          typeof args[1] === 'string' &&
+          isCheckpointNoiseProfileChange(args[2]),
+        async (resourceId, versionId, change) => {
+          await modelService.setNoiseProfile(
+            resourceId as string,
+            versionId as string,
+            change as SetCheckpointNoiseProfileChange,
           )
         },
       )

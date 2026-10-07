@@ -131,6 +131,30 @@ class AlphaOutpaintConditioning:
 
 
 @dataclass(frozen=True)
+class IllustriousNoiseProfile:
+    """Frozen exact-file policy; the version fixes the native SDXL beta schedule."""
+
+    rescale_betas_zero_snr: bool
+    timestep_spacing: Literal["leading", "linspace", "trailing"]
+    schema_version: Literal[1] = 1
+    base_schedule: Literal["sdxl-scaled-linear-v1"] = "sdxl-scaled-linear-v1"
+
+
+def validate_illustrious_noise_scheduler(
+    profile: IllustriousNoiseProfile | None, scheduler: str
+) -> None:
+    if (
+        profile is not None
+        and profile.rescale_betas_zero_snr
+        and scheduler in ("dpmpp_sde", "dpmpp_sde_k")
+    ):
+        raise DerivativeError(
+            "GENERATION_SAMPLING_UNSUPPORTED",
+            "DPM++ SDE does not support zero-terminal-SNR rescaling in this runtime.",
+        )
+
+
+@dataclass(frozen=True)
 class GenerateIllustriousTxt2ImgCommand:
     """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
 
@@ -159,6 +183,7 @@ class GenerateIllustriousTxt2ImgCommand:
     vae: GenerationVae | None = None
     positive_embeddings: tuple[GenerationEmbedding, ...] = ()
     negative_embeddings: tuple[GenerationEmbedding, ...] = ()
+    noise_profile: IllustriousNoiseProfile | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -311,6 +336,25 @@ def _target_bbox(value: object) -> PreviewRect:
     }
 
 
+def _illustrious_noise_profile(value: object) -> IllustriousNoiseProfile:
+    fields = _object(
+        value,
+        "Illustrious noise profile",
+        {"schemaVersion", "baseSchedule", "rescaleBetasZeroSnr", "timestepSpacing"},
+    )
+    if type(fields["schemaVersion"]) is not int or fields["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Noise profile version is unsupported.")
+    if fields["baseSchedule"] != "sdxl-scaled-linear-v1":
+        raise DerivativeError("INVALID_REQUEST", "Noise profile base schedule is unsupported.")
+    rescale = fields["rescaleBetasZeroSnr"]
+    if type(rescale) is not bool:
+        raise DerivativeError("INVALID_REQUEST", "Zero-SNR rescaling must be boolean.")
+    spacing = fields["timestepSpacing"]
+    if not isinstance(spacing, str) or spacing not in ("leading", "linspace", "trailing"):
+        raise DerivativeError("INVALID_REQUEST", "Noise profile timestep spacing is unsupported.")
+    return IllustriousNoiseProfile(rescale, spacing)
+
+
 def _generate_illustrious_txt2img(
     value: object, request_id: str, *, img2img: bool = False, outpaint: bool = False
 ) -> GenerateIllustriousTxt2ImgCommand:
@@ -453,7 +497,7 @@ def _generate_illustrious_txt2img(
         job["sampling"],
         "Sampling",
         {"steps", "cfgScale", "seed", "scheduler"} | ({"denoisingStrength"} if img2img else set()),
-        optional_keys={"cfgRescale"},
+        optional_keys={"cfgRescale", "noiseProfile"},
     )
     steps = _positive_integer(sampling["steps"], "Sampling steps")
     if steps > MAX_GENERATION_STEPS:
@@ -484,6 +528,10 @@ def _generate_illustrious_txt2img(
         "dpmpp_sde",
     ):
         raise DerivativeError("INVALID_REQUEST", "Generation scheduler is unsupported.")
+    noise_profile = (
+        _illustrious_noise_profile(sampling["noiseProfile"]) if "noiseProfile" in sampling else None
+    )
+    validate_illustrious_noise_scheduler(noise_profile, scheduler)
 
     output = _object(job["output"], "Output", {"stagingRoot", "pngPath"})
     staging_root = _absolute_path(output["stagingRoot"], "Output staging root")
@@ -516,6 +564,7 @@ def _generate_illustrious_txt2img(
         vae=vae,
         positive_embeddings=signed_embeddings[0],
         negative_embeddings=signed_embeddings[1],
+        noise_profile=noise_profile,
         seed=seed,
         scheduler=scheduler,
         staging_root=staging_root,

@@ -4495,7 +4495,7 @@ try {
   if (vPredictionProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
-      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
       'V-prediction qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
@@ -4538,7 +4538,7 @@ try {
     )
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
-      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
       'VAE Precision qualification requires an installed qualified contribution worker.',
     )
     assert.ok(ready.capabilities.includes('illustrious-vae-precision'))
@@ -4555,7 +4555,7 @@ try {
     )
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
-      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
       'External VAE qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
@@ -4576,7 +4576,7 @@ try {
     assert.equal(resume, true, 'Embedding qualification must resume the existing isolated catalog.')
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
-      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
       'Embedding qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
@@ -5037,7 +5037,7 @@ try {
   if (outpaintProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
-      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
       'Outpaint qualification requires an installed qualified contribution worker.',
     )
     for (const capability of ['illustrious-outpaint', 'anima-outpaint'])

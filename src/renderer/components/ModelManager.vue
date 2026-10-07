@@ -9,6 +9,7 @@ import type {
   ModelInstallJobView,
   ModelResourceType,
   ModelVersionView,
+  SetCheckpointNoiseProfileChange,
 } from '../../shared/api.js'
 
 import {
@@ -43,6 +44,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ModelManagerFocus } from './model-manager-focus.js'
 
+import CheckpointNoiseProfileControls from './CheckpointNoiseProfileControls.vue'
 import { mergeModelManagerJobSnapshot } from './model-manager-job-snapshot.js'
 import { ModelManagerReadGuard } from './model-manager-read-guard.js'
 
@@ -105,7 +107,7 @@ const navigationPaneSize = ref<number | string>('220px')
 const resourcePaneSize = ref<number | string>('calc(100% - 400px)')
 const loading = ref(false)
 const busy = ref<
-  'cancel' | 'default' | 'install' | 'prediction' | 'preview' | 'token' | 'updates' | null
+  'cancel' | 'default' | 'install' | 'noise' | 'prediction' | 'preview' | 'token' | 'updates' | null
 >(null)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
@@ -769,6 +771,28 @@ function selectPredictionType(
   }
 }
 
+async function setNoiseProfile(
+  resourceId: string,
+  versionId: string,
+  change: SetCheckpointNoiseProfileChange,
+) {
+  if (busy.value) {
+    return
+  }
+  busy.value = 'noise'
+  error.value = null
+  const changed = await runApi(
+    () => requireApi().setNoiseProfile(resourceId, versionId, change),
+    () => {
+      notice.value = 'Noise setting saved for this exact checkpoint file.'
+    },
+  )
+  if (changed) {
+    await loadCatalog()
+  }
+  busy.value = null
+}
+
 async function checkUpdates(resource: ModelCatalogItem) {
   if (resource.modelId === null || busy.value) {
     return
@@ -1342,28 +1366,6 @@ onBeforeUnmount(() => {
                             <span>
                               {{ formatBytes(version.fileSizeBytes) }} · {{ version.fileStatus }}
                             </span>
-                            <div
-                              v-if="
-                                selectedResource.resourceType === 'checkpoint' &&
-                                version.baseModelFamily === 'illustrious'
-                              "
-                              class="version-prediction"
-                            >
-                              <label :for="`prediction-${version.id}`">Prediction type</label>
-                              <NSelect
-                                :id="`prediction-${version.id}`"
-                                :aria-label="`Prediction type for ${version.name}`"
-                                :disabled="busy !== null || version.fileStatus !== 'ready'"
-                                :options="predictionChoices"
-                                size="small"
-                                :value="version.predictionType"
-                                @update:value="
-                                  (value) =>
-                                    selectPredictionType(selectedResource!.id, version.id, value)
-                                "
-                              />
-                              <small>{{ predictionSourceLabel(version) }}</small>
-                            </div>
                             <span v-if="version.dependencyIssues.length" class="dependency-warning">
                               Missing: {{ version.dependencyIssues.join(', ') }}
                             </span>
@@ -1417,6 +1419,40 @@ onBeforeUnmount(() => {
                             >
                               Set Default
                             </NButton>
+                          </div>
+                          <div
+                            v-if="
+                              selectedResource.resourceType === 'checkpoint' &&
+                              version.baseModelFamily === 'illustrious'
+                            "
+                            class="version-settings"
+                          >
+                            <div class="version-prediction">
+                              <label :for="`prediction-${version.id}`">Prediction type</label>
+                              <NSelect
+                                :id="`prediction-${version.id}`"
+                                :aria-label="`Prediction type for ${version.name}`"
+                                :disabled="busy !== null || version.fileStatus !== 'ready'"
+                                :options="predictionChoices"
+                                size="small"
+                                :value="version.predictionType"
+                                @update:value="
+                                  (value) =>
+                                    selectPredictionType(selectedResource!.id, version.id, value)
+                                "
+                              />
+                              <small>{{ predictionSourceLabel(version) }}</small>
+                            </div>
+                            <CheckpointNoiseProfileControls
+                              v-if="version.noiseProfile"
+                              :disabled="busy !== null || version.fileStatus !== 'ready'"
+                              :policy="version.noiseProfile"
+                              :versionName="version.name"
+                              @change="
+                                (change) =>
+                                  setNoiseProfile(selectedResource!.id, version.id, change)
+                              "
+                            />
                           </div>
                         </article>
                         <div v-if="checkedUpdates.has(selectedResource.id)" class="updates-list">
@@ -2126,6 +2162,17 @@ onBeforeUnmount(() => {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
 }
+.version-list > .version-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+.version-settings {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+  min-width: 0;
+}
 .version-main {
   display: grid;
   min-width: 0;
@@ -2147,7 +2194,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
 }
-.version-prediction small {
+.version-prediction > small {
   color: var(--app-text-muted);
   line-height: 1.3;
 }

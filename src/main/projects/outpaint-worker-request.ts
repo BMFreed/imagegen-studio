@@ -4,8 +4,14 @@ import {
   captureCompiledAnimaWorkerRequest,
 } from '../../shared/projects/anima-worker-request.js'
 import {
+  IllustriousNoiseProfileV1Schema,
+  isDefaultIllustriousNoiseProfile,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
+import {
   supportsInferenceAnimaOutpaint,
   supportsInferenceEuler,
+  supportsInferenceIllustriousNoiseProfile,
   supportsInferenceOutpaint,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -76,6 +82,21 @@ export function captureOutpaintWorkerRequest(
     !supportsInferenceEuler(ready)
   ) {
     throw new Error('The active worker has not qualified ordinary Illustrious Euler.')
+  }
+  if (
+    envelope.type === 'generate-illustrious-outpaint' &&
+    record(job.sampling).noiseProfile !== undefined
+  ) {
+    const sampling = record(job.sampling)
+    const profile = v.parse(IllustriousNoiseProfileV1Schema, sampling.noiseProfile)
+    if (!supportsIllustriousNoiseProfile(String(sampling.scheduler), profile)) {
+      throw new Error('DPM++ SDE does not support ZTSNR in this image engine.')
+    }
+    if (!supportsInferenceIllustriousNoiseProfile(ready)) {
+      if (!isDefaultIllustriousNoiseProfile(profile)) {
+        throw new Error('The active worker has not qualified the checkpoint noise profile.')
+      }
+    }
   }
   const conditioning = parseFrozenAlphaOutpaintConditioningV1(job.conditioning)
   const infill = record(job.infillResource)

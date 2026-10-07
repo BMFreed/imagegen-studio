@@ -136,6 +136,11 @@ process.stdin.on('data', chunk => {
             runtimeRoot,
             scratchBasePath: fixture.scratch,
           })
+          const expectedWire = structuredClone(request)
+          if (expectedWire.type === 'generate-illustrious-outpaint') {
+            // Worker0.12 receives only the neutral wire adaptation; captured metadata remains.
+            delete expectedWire.job.sampling.noiseProfile
+          }
           const pathClient = client as unknown as {
             validateRequestPaths: (request: GenerationWorkerRequest) => Promise<void>
           }
@@ -144,7 +149,7 @@ process.stdin.on('data', chunk => {
             pathClient,
             'validateRequestPaths',
             async (input: GenerationWorkerRequest) => {
-              assert.deepEqual(input, request)
+              assert.deepEqual(input, expectedWire)
               // The shared fixture intentionally owns a tiny identity-only infill substitute.
               // Reuse the real ordinary-family path verifier for all other files; this disposable
               // validation view never replaces the native outpaint request sent to the peer.
@@ -176,7 +181,7 @@ process.stdin.on('data', chunk => {
             })
             assert.equal(pathPrecondition.mock.callCount(), 1)
             const sent = JSON.parse((await readFile(marker, 'utf8')).trim())
-            assert.deepEqual(sent, request)
+            assert.deepEqual(sent, expectedWire)
             assert.equal(sent.type, `generate-${family}-outpaint`)
             assert.deepEqual(await readFile(targetPath), fixture.outpaintPrepared.targetPngBytes)
             await assert.rejects(lstat(request.job.output.pngPath), { code: 'ENOENT' })

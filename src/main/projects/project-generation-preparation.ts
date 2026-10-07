@@ -1,4 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import {
+  defaultIllustriousNoiseProfile,
+  type IllustriousNoiseProfileV1,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -53,6 +58,8 @@ export interface FrozenNormalTxt2ImgPreparationV1 {
     cfgRescale?: number
     cfgScale: number
     invokeScheduler: IllustriousSchedulerKey | null
+    /** Missing historical policy retains the original false/leading execution baseline. */
+    noiseProfile?: IllustriousNoiseProfileV1
     requestedSeedPolicy: SeedPolicy
     sampler: string | null
     scheduler: string | null
@@ -420,6 +427,13 @@ async function prepareNormalGenerationInternal(
 
   // Main re-hashes the exact installed file; Default and same-model alternatives are irrelevant.
   const verified = await modelService.resolveVerifiedGenerationCheckpointForPlan(model)
+  const noiseProfile = structuredClone(verified.noiseProfile ?? defaultIllustriousNoiseProfile())
+  if (invokeScheduler !== null && !supportsIllustriousNoiseProfile(invokeScheduler, noiseProfile)) {
+    throw new GenerationPreparationError(
+      'GENERATION_SAMPLING_UNSUPPORTED',
+      'ZTSNR is not supported by DPM++ SDE. Disable ZTSNR in Model Manager or choose another sampler.',
+    )
+  }
   const vae = draft.vae ? await modelService.resolveVerifiedGenerationVaeForPlan(draft.vae) : null
   const loras: FrozenGenerationLora[] = []
   for (const entry of draft.loras) {
@@ -460,6 +474,7 @@ async function prepareNormalGenerationInternal(
       cfgRescale,
       cfgScale,
       invokeScheduler,
+      noiseProfile,
       requestedSeedPolicy: draft.seed.policy,
       sampler: draft.sampling.sampler,
       scheduler: draft.sampling.scheduler,

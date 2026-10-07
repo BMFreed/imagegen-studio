@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { SetCheckpointNoiseProfileChange } from '../../../../../src/shared/api.js'
+
 import {
   Download as DownloadIcon,
   Folder as FolderIcon,
@@ -12,6 +14,7 @@ import { computed } from 'vue'
 
 import type { ModelResource } from './model-manager.types'
 
+import CheckpointNoiseProfileControls from '../../../../../src/renderer/components/CheckpointNoiseProfileControls.vue'
 import ResourceThumbnail from '../../components/ResourceThumbnail.vue'
 import StatusBadge from '../../components/StatusBadge.vue'
 
@@ -24,6 +27,7 @@ defineEmits<{
   checkForUpdates: []
   previewVersion: []
   setDefaultVersion: [versionId: string]
+  setNoiseProfile: [versionId: string, change: SetCheckpointNoiseProfileChange]
 }>()
 
 function referenceVersionLabel(versionId: string): string {
@@ -150,6 +154,14 @@ const usageSummary = computed(() => {
                   </NButton>
                 </div>
               </div>
+              <CheckpointNoiseProfileControls
+                v-if="version.noiseProfile"
+                class="version-noise-controls"
+                :disabled="resource.status !== 'installed'"
+                :policy="version.noiseProfile"
+                :versionName="version.label"
+                @change="(change) => $emit('setNoiseProfile', version.id, change)"
+              />
             </NCard>
           </div>
           <div v-if="resource.references?.length" class="reference-summary">
@@ -306,6 +318,9 @@ h3 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+.version-noise-controls {
+  margin-top: 12px;
 }
 
 .version-actions {

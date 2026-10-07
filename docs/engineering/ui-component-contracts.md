@@ -8,16 +8,32 @@ Vue-прототипа, а не готовность production UI.
 Общий редактор размера используется в обоих контурах; его production-проводка
 проверяется отдельно через Electron.
 
-| Роль                      | Компонент                                                                                                                                                        | Текущий потребитель                                                                        |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Действие с иконкой        | [`IconButton.vue`](../prototype-app/src/components/IconButton.vue)                                                                                               | [`AppChrome.vue`](../prototype-app/src/components/AppChrome.vue)                           |
-| Поверхность слоя          | [`ProjectEntitySurface.vue`](../prototype-app/src/prototypes/project/ProjectEntitySurface.vue)                                                                   | Raster, Smart Patch и Regional rows                                                        |
-| Выбор ресурса             | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue)                                                        | Project Settings, LoRA stack, Preset editor                                                |
-| Поле с подписью           | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                                                                       | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
-| Размер и пропорции        | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue)                                                                                   | Electron New Project/Project bbox; prototype New Project/Project Size                      |
-| Действия и справка prompt | [`PromptEditorActions.vue`](../../src/renderer/components/PromptEditorActions.vue), [`PromptEditorHelp.vue`](../../src/renderer/components/PromptEditorHelp.vue) | Electron PlainPromptEditor; prototype ProjectPromptCard                                    |
+| Роль                       | Компонент                                                                                                                                                        | Текущий потребитель                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Действие с иконкой         | [`IconButton.vue`](../prototype-app/src/components/IconButton.vue)                                                                                               | [`AppChrome.vue`](../prototype-app/src/components/AppChrome.vue)                           |
+| Поверхность слоя           | [`ProjectEntitySurface.vue`](../prototype-app/src/prototypes/project/ProjectEntitySurface.vue)                                                                   | Raster, Smart Patch и Regional rows                                                        |
+| Выбор ресурса              | [`GenerationResourceSelect.vue`](../prototype-app/src/components/generation/GenerationResourceSelect.vue)                                                        | Project Settings, LoRA stack, Preset editor                                                |
+| Поле с подписью            | [`LabeledControl.vue`](../prototype-app/src/components/LabeledControl.vue)                                                                                       | [`ProjectLayersPanel.vue`](../prototype-app/src/prototypes/project/ProjectLayersPanel.vue) |
+| Размер и пропорции         | [`ResolutionControl.vue`](../../src/renderer/components/ResolutionControl.vue)                                                                                   | Electron New Project/Project bbox; prototype New Project/Project Size                      |
+| Действия и справка prompt  | [`PromptEditorActions.vue`](../../src/renderer/components/PromptEditorActions.vue), [`PromptEditorHelp.vue`](../../src/renderer/components/PromptEditorHelp.vue) | Electron PlainPromptEditor; prototype ProjectPromptCard                                    |
+| Шумовой профиль checkpoint | [`CheckpointNoiseProfileControls.vue`](../../src/renderer/components/CheckpointNoiseProfileControls.vue)                                                         | Electron/Prototype Model Manager version cards                                             |
 
 ## Публичный API и инварианты
+
+- **Шумовой профиль checkpoint:** обязательные `policy: CheckpointNoiseProfileView`
+  и `versionName`, опциональный `disabled`; `change` передаёт типизированную
+  команду одного поля (`SetCheckpointNoiseProfileChange`), `null` сбрасывает
+  только это поле. Компонент не хранит библиотечную policy и не имитирует
+  успешный Save: effective значения/источник возвращает владелец Main либо
+  явно обозначенный prototype mock. ZTSNR switch и spacing select имеют
+  доступные имена для конкретной версии; reset — маленькая secondary icon action.
+  Assumed defaults и ручной override различимы. Project показывает read-only
+  значения, editable controls остаются только в Model Manager. У простого
+  `NSelect` этой версии Naive именованный root не имеет role=combobox, а меню
+  не даёт role=option: проверяйте реальный DOM/API вместо предположения о ролях.
+  Rich resource picker имеет собственный ARIA adapter и другой контракт.
+  Правила native
+  совместимости и fixed schedule определяет [контракт модели](../contracts/managed-model-library.md).
 
 - **Размер и пропорции:** `v-model: ResolutionSize` (`width`/`height`: `number | null`)
   и `v-model:aspectRatio: AspectRatioState`; обязательный `max`, опциональные

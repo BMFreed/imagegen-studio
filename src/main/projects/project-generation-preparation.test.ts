@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   createEmptyProjectDocumentV1,
   type IgsProjectDocumentV1,
@@ -497,6 +498,7 @@ test(
           cfgRescale: 0,
           cfgScale: 7.5,
           invokeScheduler: null,
+          noiseProfile: defaultIllustriousNoiseProfile(),
           requestedSeedPolicy: 'fixed',
           sampler: null,
           scheduler: null,
@@ -887,6 +889,7 @@ test(
         cfgRescale: 0,
         cfgScale: 7.5,
         invokeScheduler: null,
+        noiseProfile: defaultIllustriousNoiseProfile(),
         requestedSeedPolicy: 'random',
         sampler: null,
         scheduler: null,
@@ -1049,7 +1052,8 @@ test(
         }),
         {
           code: 'GENERATION_INPUT_CHANGED',
-          message: 'The exact checkpoint or its prediction type changed after preparation.',
+          message:
+            'The exact checkpoint, prediction type or noise profile changed after preparation.',
         },
       )
       assert.equal(called, false)

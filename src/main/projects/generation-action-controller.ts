@@ -15,12 +15,19 @@ import type {
   GenerationQueueTerminalStatus,
 } from '../../shared/projects/generation-queue-manager.js'
 import {
+  defaultIllustriousNoiseProfile,
+  isDefaultIllustriousNoiseProfile,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
+import { resolveIllustriousScheduler } from '../../shared/projects/illustrious-scheduler.js'
+import {
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
   supportsInferenceExternalVae,
+  supportsInferenceIllustriousNoiseProfile,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
@@ -557,11 +564,39 @@ export class ProjectGenerationActionController {
                 compileAnimaPromptWeighting(item.prompts.negative)
               }
             }
+            const checkpointPolicy =
+              !anima && capture.document.generationDraft.model
+                ? await this.options.models.resolveVerifiedGenerationCheckpointForPlan(
+                    capture.document.generationDraft.model,
+                  )
+                : null
+            const noiseProfile = checkpointPolicy?.noiseProfile ?? defaultIllustriousNoiseProfile()
+            const requiresNoiseProfile = !anima && !isDefaultIllustriousNoiseProfile(noiseProfile)
+            const pair = resolveIllustriousScheduler(
+              capture.document.generationDraft.sampling.sampler,
+              capture.document.generationDraft.sampling.scheduler,
+            )
+            if (
+              !anima &&
+              pair.kind === 'supported' &&
+              !supportsIllustriousNoiseProfile(pair.key, noiseProfile)
+            ) {
+              throw new GenerationPreparationError(
+                'GENERATION_SAMPLING_UNSUPPORTED',
+                'DPM++ SDE does not support ZTSNR in this image engine. Choose another sampler or disable ZTSNR in Model Manager.',
+              )
+            }
             // Refuse known legacy peers before reserving a worker or composing target pixels.
             const ready =
-              hasEmbeddings || anima || euler
+              hasEmbeddings || anima || euler || requiresNoiseProfile
                 ? await this.options.runtime.readQualifiedInferenceReady()
                 : null
+            if (requiresNoiseProfile && ready && !supportsInferenceIllustriousNoiseProfile(ready)) {
+              throw new IllustriousJobError(
+                'INFERENCE_UNAVAILABLE',
+                'The active worker has not qualified the checkpoint noise profile.',
+              )
+            }
             if (euler && ready && !supportsInferenceEuler(ready)) {
               throw new IllustriousJobError(
                 'INFERENCE_UNAVAILABLE',
@@ -595,6 +630,15 @@ export class ProjectGenerationActionController {
               this.options.scratchBasePath,
               async ({ inferenceReady, targetWorker }) => {
                 this.assertAdmissionOpen()
+                if (
+                  requiresNoiseProfile &&
+                  !supportsInferenceIllustriousNoiseProfile(inferenceReady)
+                ) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified the checkpoint noise profile.',
+                  )
+                }
                 if (euler && !supportsInferenceEuler(inferenceReady)) {
                   throw new IllustriousJobError(
                     'INFERENCE_UNAVAILABLE',
@@ -973,11 +1017,24 @@ export class ProjectGenerationActionController {
           payload.kind === 'illustrious-img2img' ||
           payload.kind === 'illustrious-outpaint') &&
         payload.context.sampling.invokeScheduler === 'euler'
-      if (euler) {
+      const requiresNoiseProfile =
+        (payload.kind === 'illustrious-txt2img' ||
+          payload.kind === 'illustrious-img2img' ||
+          payload.kind === 'illustrious-outpaint') &&
+        !isDefaultIllustriousNoiseProfile(
+          payload.context.sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
+        )
+      if (euler || requiresNoiseProfile) {
         const ready = await this.options.runtime.readQualifiedInferenceReady()
         this.assertAdmissionOpen()
         this.assertDocument(tabId, documentId)
-        if (ready && !supportsInferenceEuler(ready)) {
+        if (requiresNoiseProfile && ready && !supportsInferenceIllustriousNoiseProfile(ready)) {
+          throw new IllustriousJobError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified the checkpoint noise profile. The original queue item was kept.',
+          )
+        }
+        if (euler && ready && !supportsInferenceEuler(ready)) {
           throw new IllustriousJobError(
             'INFERENCE_UNAVAILABLE',
             'The active worker has not qualified ordinary Illustrious Euler.',
@@ -1016,6 +1073,12 @@ export class ProjectGenerationActionController {
           async (ready) => {
             this.assertAdmissionOpen()
             this.assertDocument(tabId, documentId)
+            if (requiresNoiseProfile && !supportsInferenceIllustriousNoiseProfile(ready)) {
+              throw new IllustriousJobError(
+                'INFERENCE_UNAVAILABLE',
+                'The active worker has not qualified the checkpoint noise profile. The original queue item was kept.',
+              )
+            }
             if (euler && !supportsInferenceEuler(ready)) {
               throw new IllustriousJobError(
                 'INFERENCE_UNAVAILABLE',

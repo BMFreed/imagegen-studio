@@ -281,7 +281,7 @@ test('outpaint capability qualification preserves legacy peers and Illustrious w
   }
   assert.equal(supportsInferenceOutpaint({ ...OUTPAINT_READY, workerVersion: '0.13.0' }), true)
   assert.equal(supportsInferenceEuler({ ...OUTPAINT_READY, workerVersion: '0.13.0' }), false)
-  for (const workerVersion of ['0.11.0', '0.12.1', '0.14.0']) {
+  for (const workerVersion of ['0.11.0', '0.12.1', '0.15.0']) {
     assert.equal(supportsInferenceOutpaint({ ...OUTPAINT_READY, workerVersion }), false)
   }
 })

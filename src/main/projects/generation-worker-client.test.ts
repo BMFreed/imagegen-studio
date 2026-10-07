@@ -58,6 +58,11 @@ if (mode.startsWith('euler-')) {
   ready.capabilities = ${JSON.stringify([...OUTPAINT_READY.capabilities, 'illustrious-euler'])}
   if (mode === 'euler-missing-capability') ready.capabilities = ready.capabilities.filter(value => value !== 'illustrious-euler')
 }
+if (mode.startsWith('noise-')) {
+  ready.workerVersion = mode === 'noise-old-spoof' ? '0.13.0' : '0.14.0'
+  ready.capabilities = ${JSON.stringify([...OUTPAINT_READY.capabilities, 'illustrious-euler', 'illustrious-noise-profile'])}
+  if (mode === 'noise-missing-capability') ready.capabilities = ready.capabilities.filter(value => value !== 'illustrious-noise-profile')
+}
 if (mode === 'precision-error') ready.capabilities.push('target-composition')
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -84,7 +89,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'precision-error' || mode === 'vae-done' || mode.startsWith('euler-')) && request.type === 'generate-illustrious-img2img') && !(mode.startsWith('euler-') && request.type === 'generate-illustrious-outpaint') && !(mode === 'precision-error' && request.type === 'compose-target')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'precision-error' || mode === 'vae-done' || mode.startsWith('euler-') || mode.startsWith('noise-')) && request.type === 'generate-illustrious-img2img') && !((mode.startsWith('euler-') || mode.startsWith('noise-')) && request.type === 'generate-illustrious-outpaint') && !(mode === 'precision-error' && request.type === 'compose-target')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -1441,5 +1446,70 @@ test('worker 0.7.0 without its adapter capability fails handshake qualification'
       }),
       { code: 'WORKER_VERSION_MISMATCH' },
     )
+  })
+})
+
+test('noise profile crosses real JSONL detached; legacy neutral adaptation never rewrites durable request', async () => {
+  await withFixture(async (fixture) => {
+    for (const mode of ['noise-done', 'done'] as const) {
+      const marker = path.join(fixture.root, `${mode}.json`)
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: mode, FAKE_PAYLOAD_MARKER: marker },
+      })
+      try {
+        const request = await requestFor(fixture)
+        request.job.sampling.noiseProfile = {
+          baseSchedule: 'sdxl-scaled-linear-v1',
+          rescaleBetasZeroSnr: false,
+          schemaVersion: 1,
+          timestepSpacing: 'leading',
+        }
+        const original = structuredClone(request)
+        await client.generate(request)
+        const wire = JSON.parse(await readFile(marker, 'utf8'))
+        if (mode === 'noise-done') {
+          assert.deepEqual(wire.job.sampling.noiseProfile, original.job.sampling.noiseProfile)
+        } else {
+          assert.equal('noiseProfile' in wire.job.sampling, false)
+        }
+        assert.deepEqual(request, original)
+      } finally {
+        await client.close()
+      }
+    }
+  })
+})
+
+test('non-neutral profile refuses old or unqualified peers before JSONL publication and native peer preserves both fields', async () => {
+  await withFixture(async (fixture) => {
+    for (const mode of ['noise-old-spoof', 'noise-missing-capability', 'noise-done']) {
+      const marker = path.join(fixture.root, `${mode}.json`)
+      const client = await GenerationWorkerClient.start(fixture.location, {
+        environment: { FAKE_MODE: mode, FAKE_PAYLOAD_MARKER: marker },
+      })
+      try {
+        const request = await requestFor(fixture)
+        request.job.sampling.noiseProfile = {
+          baseSchedule: 'sdxl-scaled-linear-v1',
+          rescaleBetasZeroSnr: true,
+          schemaVersion: 1,
+          timestepSpacing: 'trailing',
+        }
+        if (mode === 'noise-done') {
+          await client.generate(request)
+          assert.deepEqual(
+            JSON.parse(await readFile(marker, 'utf8')).job.sampling.noiseProfile,
+            request.job.sampling.noiseProfile,
+          )
+          request.job.sampling.scheduler = 'dpmpp_sde'
+          await assert.rejects(client.generate(request), { code: 'INVALID_REQUEST' })
+        } else {
+          await assert.rejects(client.generate(request), { code: 'WORKER_VERSION_MISMATCH' })
+          await assert.rejects(readFile(marker), { code: 'ENOENT' })
+        }
+      } finally {
+        await client.close()
+      }
+    }
   })
 })

@@ -11,6 +11,7 @@ import {
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
   supportsInferenceExternalVae,
+  supportsInferenceIllustriousNoiseProfile,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
@@ -406,7 +407,7 @@ test('an Euler advertisement cannot qualify incomplete, malformed or unknown pee
     null,
     { ...eulerReady, workerVersion: '0.11.0' },
     { ...eulerReady, workerVersion: '0.13.1' },
-    { ...eulerReady, workerVersion: '0.14.0' },
+    { ...eulerReady, workerVersion: '0.15.0' },
     { ...eulerReady, protocolVersion: 1 },
     { ...eulerReady, protocolVersion: '2' },
     { ...eulerReady, runtimeProfile: 'cpu' },
@@ -510,4 +511,52 @@ test('wrong profile, protocol and malformed advertisements cannot grant Anima su
     }),
     true,
   )
+})
+
+const noiseReady = {
+  ...eulerReady,
+  capabilities: [...eulerReady.capabilities, 'illustrious-noise-profile'],
+  workerVersion: '0.14.0',
+}
+test('noise profile requires exact 0.14 and complete native capabilities while retaining earlier methods', () => {
+  assert.equal(supportsInferenceIllustriousNoiseProfile(noiseReady), true)
+  for (const check of [
+    ...coreChecks,
+    supportsInferenceEuler,
+    supportsInferenceAnima,
+    supportsInferenceOutpaint,
+    supportsInferenceAnimaOutpaint,
+  ]) {
+    assert.equal(check(noiseReady), true, check.name)
+  }
+  for (const removed of [
+    ...currentCoreCapabilities,
+    'illustrious-outpaint',
+    'illustrious-euler',
+    'illustrious-noise-profile',
+  ]) {
+    assert.equal(
+      supportsInferenceIllustriousNoiseProfile({
+        ...noiseReady,
+        capabilities: noiseReady.capabilities.filter((value) => value !== removed),
+      }),
+      false,
+      removed,
+    )
+  }
+  for (const workerVersion of ['0.2.0', '0.12.0', '0.13.0', '0.14.1', '0.15.0']) {
+    assert.equal(
+      supportsInferenceIllustriousNoiseProfile({ ...noiseReady, workerVersion }),
+      false,
+      workerVersion,
+    )
+  }
+  for (const peer of [
+    null,
+    { ...noiseReady, protocolVersion: 2 },
+    { ...noiseReady, runtimeProfile: 'cpu' },
+    { ...noiseReady, capabilities: [...noiseReady.capabilities, 1] },
+  ]) {
+    assert.equal(supportsInferenceIllustriousNoiseProfile(peer), false)
+  }
 })

@@ -304,8 +304,29 @@ advertising that string. Worker construction uses the actual pinned
 existing inherited schedule defaults. The new worker retains previous
 Illustrious and optional native-BF16 Anima capabilities; Anima flow Euler is
 unchanged. Queue and portable accepted settings allow the additive key without
-rewriting historical records. There is no noise-profile DTO/migration yet:
-zero-SNR, spacing policy and trained author-recipe qualification remain planned.
+rewriting historical records. At that checkpoint no noise-profile DTO existed; the following slice adds it.
+Trained author-recipe qualification remains separate.
+
+### Illustrious exact-file noise profile (07.10.2026)
+
+[Noise profile](../engineering/phase-2c-noise-profile-research.md) adds optional
+strict `job.sampling.noiseProfile`: `{schemaVersion:1,
+baseSchedule:'sdxl-scaled-linear-v1', rescaleBetasZeroSnr:boolean,
+timestepSpacing:'leading'|'linspace'|'trailing'}`. Semantics fix 1000 training
+steps, scaled-linear beta 0.00085–0.012 and steps_offset=1, independent of
+checkpoint prediction type. Worker0.14 advertises `illustrious-noise-profile`
+and retains earlier capabilities. Unknown versions or older extra capability
+strings do not qualify. Non-neutral profiles refuse before durable enqueue or
+wire publication on older peers; neutral profiles are omitted only from the
+detached wire copy. Historical missing profiles retain the original pinned
+scheduler config and frozen payload.
+
+The worker constructs actual native betas and spacing, retaining method-specific
+Karras grids. DPM++ SDE has no native zero-SNR parameter and rejects true before
+asset/model loading. Finite terminal alpha uses pinned native `2**-24` clamping.
+Anima requests stay separate and do not acquire this field. Accepted profile
+metadata is portable; old absence remains Unavailable. CPU numeric tests and
+controlled JSONL/SQLite proof do not qualify the trained NoobAI author recipe.
 
 ### Internal qualified outpaint execution checkpoint (06.10.2026)
 

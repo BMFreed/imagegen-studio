@@ -161,6 +161,11 @@ function compareIllustriousGenerationSettings(
     : currentModelVersion?.predictionType === null || !currentModelVersion
       ? undefined
       : currentModelVersion.predictionType
+  const currentNoiseProfile =
+    draft.model?.baseModelFamily === 'illustrious' && draft.model.kind === 'checkpoint'
+      ? currentModelVersion?.noiseProfile?.effective
+      : undefined
+  const recordedNoiseProfile = baseline.sampling.noiseProfile
   const scheduler =
     draft.model?.baseModelFamily === 'illustrious' && draft.model.kind === 'checkpoint'
       ? resolveIllustriousScheduler(draft.sampling.sampler, draft.sampling.scheduler)
@@ -276,6 +281,44 @@ function compareIllustriousGenerationSettings(
           scheduler.kind === 'supported' ? scheduler.key : undefined,
           baseline.sampling.invokeScheduler,
           scheduler.kind === 'supported' ? scheduler.key : 'Unavailable for the current selection',
+        ),
+      ],
+    },
+    {
+      key: 'noiseProfile',
+      label: 'Checkpoint noise profile',
+      rows: [
+        row(
+          'noiseProfile.baseSchedule',
+          'Base schedule',
+          recordedNoiseProfile?.baseSchedule,
+          currentNoiseProfile?.baseSchedule,
+          recordedNoiseProfile?.baseSchedule ?? UNRECORDED,
+          currentNoiseProfile?.baseSchedule ?? 'Unavailable for the current exact checkpoint',
+        ),
+        row(
+          'noiseProfile.rescaleBetasZeroSnr',
+          'ZTSNR',
+          recordedNoiseProfile?.rescaleBetasZeroSnr,
+          currentNoiseProfile?.rescaleBetasZeroSnr,
+          recordedNoiseProfile === undefined
+            ? UNRECORDED
+            : recordedNoiseProfile.rescaleBetasZeroSnr
+              ? 'Enabled'
+              : 'Disabled',
+          currentNoiseProfile === undefined
+            ? 'Unavailable for the current exact checkpoint'
+            : currentNoiseProfile.rescaleBetasZeroSnr
+              ? 'Enabled'
+              : 'Disabled',
+        ),
+        row(
+          'noiseProfile.timestepSpacing',
+          'Timestep spacing',
+          recordedNoiseProfile?.timestepSpacing,
+          currentNoiseProfile?.timestepSpacing,
+          recordedNoiseProfile?.timestepSpacing ?? UNRECORDED,
+          currentNoiseProfile?.timestepSpacing ?? 'Unavailable for the current exact checkpoint',
         ),
       ],
     },

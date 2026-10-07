@@ -7,6 +7,11 @@ import {
   isGenerationDenoisingProgress,
   MAX_DENOISING_STEPS,
 } from '../../shared/projects/generation-progress.js'
+import {
+  isDefaultIllustriousNoiseProfile,
+  isIllustriousNoiseProfileV1,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
 import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-scheduler.js'
 import {
   isQualifiedInferenceWorkerReady,
@@ -16,6 +21,7 @@ import {
   supportsInferenceDenoisingProgress,
   supportsInferenceEuler,
   supportsInferenceExternalVae,
+  supportsInferenceIllustriousNoiseProfile,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
@@ -381,6 +387,32 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'The active worker has not qualified ordinary Illustrious Euler.',
         )
       }
+      if (
+        frozen.type === 'generate-illustrious-txt2img' ||
+        frozen.type === 'generate-illustrious-img2img' ||
+        frozen.type === 'generate-illustrious-outpaint'
+      ) {
+        const profile = frozen.job?.sampling?.noiseProfile
+        if (profile !== undefined) {
+          if (
+            !isIllustriousNoiseProfileV1(profile) ||
+            !supportsIllustriousNoiseProfile(frozen.job.sampling.scheduler, profile)
+          ) {
+            throw new GenerationWorkerError(
+              'INVALID_REQUEST',
+              'The checkpoint noise profile is invalid or unsupported by this sampler.',
+            )
+          }
+          if (!supportsInferenceIllustriousNoiseProfile(this.readyMessage)) {
+            if (!isDefaultIllustriousNoiseProfile(profile)) {
+              throw new GenerationWorkerError(
+                'WORKER_VERSION_MISMATCH',
+                'The active worker has not qualified the checkpoint noise profile.',
+              )
+            }
+          }
+        }
+      }
       if (isOutpaintWorkerRequest(frozen)) {
         if (
           !supportsInferenceOutpaint(this.readyMessage) ||
@@ -480,6 +512,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           // durable preparation still distinguishes recorded neutral 0 from historical absence.
           delete frozen.job.sampling.cfgRescale
         }
+      }
+      if (!isAnimaRequest(frozen) && !supportsInferenceIllustriousNoiseProfile(this.readyMessage)) {
+        // Adapt the captured transport copy; durable metadata stays explicit.
+        delete frozen.job.sampling.noiseProfile
       }
       let line: Buffer
       try {
@@ -925,6 +961,12 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
     ILLUSTRIOUS_SCHEDULER_PAIRS.some(
       (pair) => pair.invokeKey === request.job?.sampling?.scheduler,
     ) &&
+    (request.job?.sampling?.noiseProfile === undefined ||
+      (isIllustriousNoiseProfileV1(request.job.sampling.noiseProfile) &&
+        supportsIllustriousNoiseProfile(
+          request.job.sampling.scheduler,
+          request.job.sampling.noiseProfile,
+        ))) &&
     validWorkerLoras(request.job?.loras) &&
     validWorkerVae(request.job?.vae) &&
     (request.job?.vaePrecision === undefined ||

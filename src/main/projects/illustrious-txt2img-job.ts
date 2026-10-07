@@ -1,10 +1,19 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import {
+  defaultIllustriousNoiseProfile,
+  equalIllustriousNoiseProfiles,
+  type IllustriousNoiseProfileV1,
+  isDefaultIllustriousNoiseProfile,
+  isIllustriousNoiseProfileV1,
+  supportsIllustriousNoiseProfile,
+} from '../../shared/projects/illustrious-noise-profile.js'
+import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
   supportsInferenceExternalVae,
+  supportsInferenceIllustriousNoiseProfile,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceVaePrecision,
@@ -68,6 +77,7 @@ export interface IllustriousTxt2ImgRequestV1 {
     sampling: {
       cfgRescale?: number
       cfgScale: number
+      noiseProfile?: IllustriousNoiseProfileV1
       scheduler: IllustriousSchedulerKey
       seed: number
       steps: number
@@ -183,6 +193,16 @@ export async function withIllustriousGenerationRequest<T>(input: {
       'The active worker has not qualified ordinary Illustrious Euler.',
     )
   }
+  if (
+    context.sampling.noiseProfile !== undefined &&
+    !isDefaultIllustriousNoiseProfile(context.sampling.noiseProfile) &&
+    !supportsInferenceIllustriousNoiseProfile(input.ready)
+  ) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified Illustrious noise-profile settings.',
+    )
+  }
   if ((context.sampling.cfgRescale ?? 0) !== 0 && !supportsInferenceCFGRescale(input.ready)) {
     throw new IllustriousJobError(
       'INFERENCE_UNAVAILABLE',
@@ -232,11 +252,12 @@ export async function withIllustriousGenerationRequest<T>(input: {
   if (
     verified.managedPath !== context.model.managedPath ||
     verified.reference.fileSha256 !== context.model.reference.fileSha256 ||
-    verified.reference.predictionType !== qualified.predictionType
+    verified.reference.predictionType !== qualified.predictionType ||
+    !equalIllustriousNoiseProfiles(verified.noiseProfile, context.sampling.noiseProfile)
   ) {
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',
-      'The exact checkpoint or its prediction type changed after preparation.',
+      'The exact checkpoint, prediction type or noise profile changed after preparation.',
     )
   }
 
@@ -270,6 +291,10 @@ export async function withIllustriousGenerationRequest<T>(input: {
         sampling: {
           ...(supportsInferenceCFGRescale(input.ready) && context.sampling.cfgRescale !== undefined
             ? { cfgRescale: context.sampling.cfgRescale }
+            : {}),
+          ...(supportsInferenceIllustriousNoiseProfile(input.ready) &&
+          context.sampling.noiseProfile !== undefined
+            ? { noiseProfile: structuredClone(context.sampling.noiseProfile) }
             : {}),
           cfgScale: context.sampling.cfgScale,
           scheduler: qualified.scheduler,
@@ -476,6 +501,12 @@ function validatePrepared(
       'Illustrious txt2img requires 1–200 Steps, CFG from 1–30 and a uint32 seed.',
     )
   }
+  if (sampling.noiseProfile !== undefined && !isIllustriousNoiseProfileV1(sampling.noiseProfile)) {
+    throw new IllustriousJobError(
+      'GENERATION_INPUT_CHANGED',
+      'The frozen noise profile is invalid.',
+    )
+  }
   const resolved = resolveIllustriousScheduler(sampling.sampler, sampling.scheduler)
   if (resolved.kind === 'missing' || sampling.invokeScheduler === null) {
     throw new IllustriousJobError(
@@ -487,6 +518,17 @@ function validatePrepared(
     throw new IllustriousJobError(
       'GENERATION_SAMPLING_UNSUPPORTED',
       'The frozen sampler and scheduler do not match a supported Invoke scheduler.',
+    )
+  }
+  if (
+    !supportsIllustriousNoiseProfile(
+      resolved.key,
+      sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
+    )
+  ) {
+    throw new IllustriousJobError(
+      'GENERATION_SAMPLING_UNSUPPORTED',
+      'ZTSNR is not supported by DPM++ SDE. Disable ZTSNR in Model Manager or choose another sampler.',
     )
   }
   if (

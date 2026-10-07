@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -730,4 +731,55 @@ test('portable LoRA provenance distinguishes legacy unknown from recorded empty 
     ;(payload.workerJob as { loras: { weight: number }[] }).loras[0].weight = 0.9
   })
   assert.throws(() => map(crossed), { code: 'PROVENANCE_INPUT_INVALID' })
+})
+
+test('accepted noise profile projects the exact frozen policy and never fills historical omission from defaults', async () => {
+  const { candidate, imagePngBytes } = await fixture()
+  const map = (candidate: VerifiedGenerationCandidate) =>
+    provenanceFromVerifiedRasterCandidate({
+      acceptedAt: '2026-09-29T12:01:00.000Z',
+      candidate,
+      imagePngBytes,
+    })
+  assert.equal(
+    Object.hasOwn(map(candidate).generationConfiguration.sampling, 'noiseProfile'),
+    false,
+  )
+  for (const profile of [
+    defaultIllustriousNoiseProfile(),
+    {
+      ...defaultIllustriousNoiseProfile(),
+      rescaleBetasZeroSnr: true,
+      timestepSpacing: 'trailing' as const,
+    },
+  ]) {
+    const recorded = structuredClone(candidate)
+    replacePayload(recorded, (payload) => {
+      const frozen = payload as {
+        context: { sampling: Record<string, unknown> }
+        workerJob: { sampling: Record<string, unknown> }
+      }
+      frozen.context.sampling.noiseProfile = structuredClone(profile)
+      frozen.workerJob.sampling.noiseProfile = structuredClone(profile)
+    })
+    const provenance = map(recorded)
+    assert.deepEqual(provenance.generationConfiguration.sampling.noiseProfile, profile)
+    const mismatch = structuredClone(recorded)
+    replacePayload(mismatch, (payload) => {
+      const worker = payload.workerJob as {
+        sampling: { noiseProfile: ReturnType<typeof defaultIllustriousNoiseProfile> }
+      }
+      worker.sampling.noiseProfile.rescaleBetasZeroSnr = !profile.rescaleBetasZeroSnr
+    })
+    assert.throws(() => map(mismatch), { code: 'PROVENANCE_INPUT_INVALID' })
+  }
+  const neutralLegacyTransport = structuredClone(candidate)
+  replacePayload(neutralLegacyTransport, (payload) => {
+    const context = payload.context as { sampling: Record<string, unknown> }
+    context.sampling.noiseProfile = defaultIllustriousNoiseProfile()
+  })
+  assert.deepEqual(
+    map(neutralLegacyTransport).generationConfiguration.sampling.noiseProfile,
+    defaultIllustriousNoiseProfile(),
+  )
 })

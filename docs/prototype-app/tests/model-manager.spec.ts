@@ -24,6 +24,52 @@ async function openModelManager(page: Page) {
 }
 
 test.describe('Model Manager prototype', () => {
+  test('edits one exact version noise setting and independently restores defaults without changing another version', async ({
+    page,
+  }) => {
+    // Prototype state is controlled; production SQLite persistence is covered in model-noise-profile.test.ts.
+    await page.setViewportSize({ height: 900, width: 1440 })
+    await openModelManager(page)
+    const first = page
+      .locator('.version-card')
+      .filter({ has: page.getByText('v1.1 main', { exact: true }) })
+    const other = page
+      .locator('.version-card')
+      .filter({ has: page.getByText('v1.0 archive', { exact: true }) })
+    const ztsnr = first.getByRole('switch', { exact: true, name: 'ZTSNR for v1.1 main' })
+    await expect(ztsnr).not.toBeChecked()
+    await ztsnr.click()
+    await expect(ztsnr).toBeChecked()
+    await expect(
+      first.getByRole('button', { exact: true, name: 'Reset ZTSNR for v1.1 main' }),
+    ).toBeVisible()
+    await expect(
+      other.getByRole('switch', { exact: true, name: 'ZTSNR for v1.0 archive' }),
+    ).not.toBeChecked()
+    await first.locator('[aria-label="Timestep spacing for v1.1 main"]').click()
+    await page.locator('.n-base-select-menu').getByText('Linspace', { exact: true }).click()
+    await expect(first.locator('[aria-label="Timestep spacing for v1.1 main"]')).toContainText(
+      'Linspace',
+    )
+    await expect(other.locator('[aria-label="Timestep spacing for v1.0 archive"]')).toContainText(
+      'Trailing',
+    )
+    await first.getByRole('button', { exact: true, name: 'Reset ZTSNR for v1.1 main' }).click()
+    await expect(ztsnr).not.toBeChecked()
+    await expect(first.locator('[aria-label="Timestep spacing for v1.1 main"]')).toContainText(
+      'Linspace',
+    )
+    await first
+      .getByRole('button', { exact: true, name: 'Reset timestep spacing for v1.1 main' })
+      .click()
+    await expect(first.locator('[aria-label="Timestep spacing for v1.1 main"]')).toContainText(
+      'Leading',
+    )
+    await expect(first.getByRole('button', { name: /Reset (ZTSNR|timestep spacing)/ })).toHaveCount(
+      0,
+    )
+  })
+
   test('enters through the native modal transition', async ({ page }) => {
     await page.addInitScript(() => {
       const state = globalThis as { managerEnteredFromScale?: boolean } & typeof globalThis
@@ -265,6 +311,8 @@ test.describe('Model Manager prototype', () => {
     await expect(resourceRow).not.toContainText('Update available')
     await expect(versions.filter({ hasText: 'v1.1 main' })).toContainText('Default')
     await expect(versions.filter({ hasText: 'v1.2 main' })).toContainText('Set Default')
+    await expect(versions.filter({ hasText: 'v1.2 main' })).toContainText('ZTSNR')
+    await expect(versions.filter({ hasText: 'v1.2 main' })).toContainText('Assumed')
     await page.getByRole('button', { name: 'Check for updates' }).click()
     await expect(page.getByText('No newer versions found.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Install Version' })).toHaveCount(0)

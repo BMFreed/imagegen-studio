@@ -407,13 +407,19 @@ type. An installed but structurally unsupported checkpoint remains visible and
 Generate explains the blocking reason. SHA-256 binds the exact files and saved
 references, not an app-owned allowlist of permitted checkpoint hashes.
 
-The accepted next NoobAI slice adds separate exact-file ZTSNR and timestep
-spacing controls in Model Manager, alongside prediction type; Project does not
-edit this policy. Unknown profiles keep current `false` / `leading` defaults
-with an explicit assumption label and manual override, without a mandatory
-first-generation choice. These controls and their frozen execution are still
-[planned](../../../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp);
-ordinary Euler support alone does not qualify the zero-SNR author recipe.
+The [exact-file noise-profile checkpoint](../../../engineering/phase-2c-noise-profile-research.md)
+adds separate ZTSNR and timestep-spacing controls in Model Manager; Project
+shows the effective values read-only. Unknown profiles keep `false` / `leading`
+with explicit assumption labels; each manual choice/reset is independent.
+Prediction type does not select a noise profile. Prepare captures current verified
+library values in versioned `sampling.noiseProfile`; policy changes before
+materialization or frozen Retry refuse without replacing the original input.
+Restoring actual values permits Retry. DPM++ SDE + ZTSNR is unsupported and
+explicitly refused. Spacing follows native method semantics: DPM++ 2M Karras
+builds its own grid independently of spacing. Non-neutral profiles require worker
+0.14 and `illustrious-noise-profile`; baseline false/leading may be adapted to
+older qualified peers without rewriting durable metadata. Old accepted absence
+stays Unavailable. Trained author-recipe qualification remains subsequent work.
 
 ## Acceptance Criteria
 

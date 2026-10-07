@@ -1,3 +1,6 @@
+import type { SetCheckpointNoiseProfileChange } from '../../shared/api.js'
+import type { IllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
+
 import type { Kysely, Transaction } from 'kysely'
 
 import { randomUUID } from 'node:crypto'
@@ -156,6 +159,22 @@ export interface SetPredictionOverrideInput {
   expectedSha256: string
   expectedSizeBytes: number
   predictionType: ModelPredictionType
+  resourceId: string
+  versionId: string
+}
+
+export interface CheckpointNoiseProfileOverride {
+  rescaleBetasZeroSnr: boolean | null
+  sha256: string
+  sizeBytes: number
+  timestepSpacing: IllustriousNoiseProfileV1['timestepSpacing'] | null
+  updatedAt: string
+}
+
+export interface SetNoiseProfileOverrideInput {
+  change: SetCheckpointNoiseProfileChange
+  expectedSha256: string
+  expectedSizeBytes: number
   resourceId: string
   versionId: string
 }
@@ -445,6 +464,19 @@ export class ModelRepository {
     return null
   }
 
+  async getNoiseProfileOverride(file: {
+    sha256: string
+    sizeBytes: number
+  }): Promise<CheckpointNoiseProfileOverride | null> {
+    const row = await this.db
+      .selectFrom('checkpoint_noise_profile_override')
+      .selectAll()
+      .where('sha256', '=', normalizeSha256(file.sha256, 'Checkpoint override hash'))
+      .where('size_bytes', '=', file.sizeBytes)
+      .executeTakeFirst()
+    return row ? this.noiseProfileOverrideFromRow(row) : null
+  }
+
   async getPredictionOverride(file: {
     sha256: string
     sizeBytes: number
@@ -605,6 +637,11 @@ export class ModelRepository {
         versionName: preview.versionName as string,
       }
     })
+  }
+
+  async listNoiseProfileOverrides(): Promise<CheckpointNoiseProfileOverride[]> {
+    const rows = await this.db.selectFrom('checkpoint_noise_profile_override').selectAll().execute()
+    return rows.map((row) => this.noiseProfileOverrideFromRow(row))
   }
 
   async listPredictionOverrides(): Promise<CheckpointPredictionOverride[]> {
@@ -882,6 +919,66 @@ export class ModelRepository {
     })
   }
 
+  async setNoiseProfileOverride(input: SetNoiseProfileOverrideInput): Promise<void> {
+    const sha256 = normalizeSha256(input.expectedSha256, 'Checkpoint noise override hash')
+    if (!Number.isSafeInteger(input.expectedSizeBytes) || input.expectedSizeBytes <= 0) {
+      throw new Error('Checkpoint noise override size must be a positive safe integer')
+    }
+    const change = input.change
+    if (!(
+      (change.kind === 'rescale-betas-zero-snr' &&
+        (change.value === null || typeof change.value === 'boolean')) ||
+      (change.kind === 'timestep-spacing' &&
+        (change.value === null || ['leading', 'linspace', 'trailing'].includes(change.value)))
+    )) {
+      throw new Error('Unsupported checkpoint noise setting')
+    }
+    await this.db.transaction().execute(async (trx) => {
+      const target = await trx
+        .selectFrom('model_resource_version as version')
+        .innerJoin('model_resource as resource', 'resource.id', 'version.model_resource_id')
+        .innerJoin('local_model_file as file', 'file.resource_version_id', 'version.id')
+        .select([
+          'resource.type as resourceType',
+          'version.base_model_family as family',
+          'file.status as fileStatus',
+        ])
+        .where('resource.id', '=', input.resourceId)
+        .where('version.id', '=', input.versionId)
+        .where('file.sha256', '=', sha256)
+        .where('file.size_bytes', '=', input.expectedSizeBytes)
+        .executeTakeFirst()
+      if (
+        target?.resourceType !== 'checkpoint' ||
+        target.family !== 'illustrious' ||
+        target.fileStatus !== 'ready'
+      ) {
+        throw new Error('Noise override requires this exact ready Illustrious checkpoint')
+      }
+      const updatedAt = new Date().toISOString()
+      const update =
+        change.kind === 'rescale-betas-zero-snr'
+          ? { rescale_betas_zero_snr: change.value === null ? null : Number(change.value) }
+          : { timestep_spacing: change.value }
+      await trx
+        .insertInto('checkpoint_noise_profile_override')
+        .values({
+          rescale_betas_zero_snr: null,
+          sha256,
+          size_bytes: input.expectedSizeBytes,
+          timestep_spacing: null,
+          updated_at: updatedAt,
+          ...update,
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(['sha256', 'size_bytes'])
+            .doUpdateSet({ ...update, updated_at: updatedAt }),
+        )
+        .execute()
+    })
+  }
+
   async setPredictionOverride(
     input: SetPredictionOverrideInput,
   ): Promise<CheckpointPredictionOverride> {
@@ -1051,6 +1148,23 @@ export class ModelRepository {
           .execute()
       }
     })
+  }
+
+  private noiseProfileOverrideFromRow(row: {
+    rescale_betas_zero_snr: number | null
+    sha256: string
+    size_bytes: number
+    timestep_spacing: string | null
+    updated_at: string
+  }): CheckpointNoiseProfileOverride {
+    return {
+      rescaleBetasZeroSnr:
+        row.rescale_betas_zero_snr === null ? null : row.rescale_betas_zero_snr === 1,
+      sha256: row.sha256,
+      sizeBytes: row.size_bytes,
+      timestepSpacing: row.timestep_spacing as CheckpointNoiseProfileOverride['timestepSpacing'],
+      updatedAt: row.updated_at,
+    }
   }
 }
 

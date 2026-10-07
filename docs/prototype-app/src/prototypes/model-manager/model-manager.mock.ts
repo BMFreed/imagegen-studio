@@ -1,3 +1,5 @@
+import { defaultIllustriousNoiseProfile } from '../../../../../src/shared/projects/illustrious-noise-profile.js'
+
 import type { ModelAvailableVersion, ModelResource } from './model-manager.types'
 
 export const selectedModelId = 'illustrious-xl'
@@ -37,6 +39,11 @@ export const modelResources: ModelResource[] = [
         id: 'v1-1',
         isDefault: true,
         label: 'v1.1 main',
+        noiseProfile: {
+          effective: defaultIllustriousNoiseProfile(),
+          rescaleBetasZeroSnrSource: 'assumed',
+          timestepSpacingSource: 'assumed',
+        },
         sizeLabel: '6.6 GB',
       },
       {
@@ -45,6 +52,11 @@ export const modelResources: ModelResource[] = [
         id: 'v1-0',
         isDefault: false,
         label: 'v1.0 archive',
+        noiseProfile: {
+          effective: { ...defaultIllustriousNoiseProfile(), timestepSpacing: 'trailing' },
+          rescaleBetasZeroSnrSource: 'assumed',
+          timestepSpacingSource: 'override',
+        },
         sizeLabel: '6.4 GB',
       },
     ],
@@ -132,6 +144,11 @@ export const modelResources: ModelResource[] = [
         id: 'uncanny-valley-v3',
         isDefault: true,
         label: 'v3',
+        noiseProfile: {
+          effective: defaultIllustriousNoiseProfile(),
+          rescaleBetasZeroSnrSource: 'assumed',
+          timestepSpacingSource: 'assumed',
+        },
         sizeLabel: '6.5 GB',
       },
     ],

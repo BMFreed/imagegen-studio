@@ -324,7 +324,12 @@ def verify_output(
 
 
 @pytest.mark.parametrize(
-    "scheduler", ("dpmpp_2m", "dpmpp_2m_k", "euler", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
+    "scheduler,profile_case",
+    [
+        (name, None)
+        for name in ("dpmpp_2m", "dpmpp_2m_k", "euler", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
+    ]
+    + [("euler", "zero-snr-trailing"), ("euler", "baseline-leading")],
 )
 def test_illustrious_wire_runs_real_masked_loop_and_retains_policy_rgba(
     tmp_path: Path,
@@ -333,13 +338,24 @@ def test_illustrious_wire_runs_real_masked_loop_and_retains_policy_rgba(
     illustrious_native: Any,
     upstream: tuple[Any, Any, Any],
     scheduler: str,
+    profile_case: str | None,
 ) -> None:
     native = illustrious_native
     wire = illus_wire(tmp_path)
     wire["job"]["sampling"].update(scheduler=scheduler, steps=3, seed=0)
+    if profile_case is not None:
+        wire["job"]["checkpoint"]["predictionType"] = "v_prediction"
+        wire["job"]["sampling"]["noiseProfile"] = {
+            "schemaVersion": 1,
+            "baseSchedule": "sdxl-scaled-linear-v1",
+            "rescaleBetasZeroSnr": profile_case == "zero-snr-trailing",
+            "timestepSpacing": "trailing" if profile_case == "zero-snr-trailing" else "leading",
+        }
     captured = typed(wire)
     assert isinstance(captured, GenerateIllustriousOutpaintCommand)
     assert captured.scheduler == scheduler
+    target_before = Path(wire["job"]["target"]["path"]).read_bytes()
+    checkpoint_before = Path(wire["job"]["checkpoint"]["path"]).read_bytes()
     _fixture_path, phases = install_scaled_infill(tmp_path, native.torch, monkeypatch)
     pipeline = native.pipeline
     to = pipeline.to
@@ -368,13 +384,53 @@ def test_illustrious_wire_runs_real_masked_loop_and_retains_policy_rgba(
     monkeypatch.setattr(inference, "build_sdxl_conditioning", scaled_conditioning)
     events: list[dict[str, object]] = []
     runtime = MLRuntime(native.torch, native.diffusers, ModuleType("scaled_conditioning"))
-    done = route(wire, tmp_path, runtime, on_progress=events.append)
+    observed: list[str] = []
+    handles: list[Any] = []
+    if profile_case is not None:
+        assert captured.noise_profile is not None
+
+        def observe_denoising(_module: Any, _args: Any, output: Any) -> None:
+            selected = pipeline.scheduler
+            assert type(selected) is native.diffusers.EulerDiscreteScheduler
+            assert selected.config.prediction_type == "v_prediction"
+            assert selected.alphas_cumprod.shape == (1000,)
+            if profile_case == "zero-snr-trailing":
+                assert selected.alphas_cumprod[-1].item() == 2**-24
+                assert selected.timesteps.tolist() == [999, 666, 332]
+            else:
+                assert selected.alphas_cumprod[-1].item() > 0.004
+                assert selected.timesteps.tolist() == [667, 334, 1]
+            assert native.torch.isfinite(output[0]).all()
+            observed.append("denoise")
+
+        def observe_protected_decode(_module: Any, args: tuple[Any, ...]) -> None:
+            state = pipeline._igs_outpaint_state
+            original = state.original / pipeline.vae.config.scaling_factor
+            protected = (state.generate_mask == 0).expand_as(original)
+            assert protected.any()
+            assert native.torch.equal(args[0][protected], original[protected])
+            assert native.torch.isfinite(args[0]).all()
+            observed.append("decode")
+
+        handles.append(pipeline.unet.register_forward_hook(observe_denoising))
+        handles.append(
+            pipeline.vae.post_quant_conv.register_forward_pre_hook(observe_protected_decode)
+        )
+    try:
+        done = route(wire, tmp_path, runtime, on_progress=events.append)
+    finally:
+        for handle in handles:
+            handle.remove()
     verify_output(wire, done, upstream)
     assert done["seed"] == 0 and phases == ["infill-load", "family-load"]
     assert events and events[-1]["step"] == events[-1]["totalSteps"]
     assert all(event["requestId"] == wire["requestId"] for event in events)
     assert pipeline._igs_outpaint_state is None and not pipeline.unet._forward_pre_hooks
     assert not pipeline.vae.encoder._forward_hooks and not pipeline.vae.decoder._forward_hooks
+    if profile_case is not None:
+        assert observed.count("denoise") == len(events) and observed.count("decode") == 1
+    assert Path(wire["job"]["target"]["path"]).read_bytes() == target_before
+    assert Path(wire["job"]["checkpoint"]["path"]).read_bytes() == checkpoint_before
 
 
 @pytest.mark.parametrize(

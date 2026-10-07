@@ -1566,18 +1566,29 @@ result-to-preset остаются открытыми; фазы 2B/2C не объ
 `86cb88e`: NoobAI admission и bounded Cyberfalafel v/epsilon qualification уже
 есть. [Обычный Euler](../engineering/phase-2c-euler-research.md) добавлен в
 authoring, frozen queue/Retry, native dispatch и portable accepted settings;
-шумовой профиль ещё отсутствует. Это ближайшая работа 2C перед dynamic multi-job
-batches. NoobAI не становится
+[noise-profile срез](../engineering/phase-2c-noise-profile-research.md)
+добавляет exact-file controls, SQLite policy, frozen execution/Retry и accepted
+readback/comparison. Следующий шаг 2C — trained NoobAI author-recipe qualification
+перед dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
 рекомендует Euler a; [NoobAI XL V-Pred 1.0](https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0#how-to-use-the-model)
 использует обычный `EulerDiscreteScheduler`, `v_prediction` и
-`rescale_betas_zero_snr=True`. В текущем worker выбор prediction type оставляет
-общий pinned schedule. Euler больше не является implementation gap;
-ZTSNR/spacing policy и full author-recipe qualification всё ещё отсутствуют,
-а не только недостающие проверки. Рекомендация автора по sampler не доказывает
+`rescale_betas_zero_snr=True`. До noise-profile среза worker при выборе prediction
+type сохранял общий pinned schedule; теперь native scheduler получает независимый
+frozen профиль точного файла. Euler больше не является implementation gap;
+ZTSNR/spacing policy реализована отдельным срезом; full trained author-recipe
+qualification всё ещё отсутствует. Рекомендация автора по sampler не доказывает
 техническую несовместимость всех остальных методов.
+
+**Checkpoint 07.10.2026:** пункты 2–4 по policy/frozen execution имеют
+[реализацию и evidence](../engineering/phase-2c-noise-profile-research.md):
+Model Manager per-field assumptions/override/reset, exact SQLite persistence,
+worker0.14 native schedules, preserving Retry, portable accepted profile/legacy
+Unavailable. Полная component/type-aware matrix и genuine installed author recipe
+ещё не квалифицированы; пункты ниже сохраняют полный целевой scope. Старый
+installed reusable worker0.12 не объявляется новым runtime без обновления и проверки.
 
 Порядок реализации:
 

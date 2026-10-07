@@ -12,6 +12,14 @@ export interface AppMetadata {
   value: string
 }
 
+export interface CheckpointNoiseProfileOverride {
+  rescale_betas_zero_snr: number | null
+  sha256: string
+  size_bytes: number
+  timestep_spacing: string | null
+  updated_at: string
+}
+
 export interface CheckpointPredictionOverride {
   prediction_type: string
   sha256: string
@@ -220,6 +228,7 @@ export interface SchemaMigrations {
 
 export interface DB {
   app_metadata: AppMetadata
+  checkpoint_noise_profile_override: CheckpointNoiseProfileOverride
   checkpoint_prediction_override: CheckpointPredictionOverride
   generation_acceptance_journal: GenerationAcceptanceJournal
   generation_candidate_receipt: GenerationCandidateReceipt

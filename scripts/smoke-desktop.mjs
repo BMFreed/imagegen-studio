@@ -32,8 +32,13 @@ import { checkPromptActions } from './desktop-prompt-actions-checks.mjs'
 import { checkPromptDiagnostics } from './desktop-prompt-diagnostics-checks.mjs'
 import { checkDynamicPromptPreview } from './desktop-dynamic-prompt-checks.mjs'
 import { checkModelResourceHandoff } from './desktop-model-handoff-checks.mjs'
+import { checkCheckpointNoisePolicy } from './desktop-checkpoint-noise-checks.mjs'
 import { checkModelCatalogRace } from './desktop-model-catalog-race-checks.mjs'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
+
+// Wayland may refuse programmatic native resize. Opt-in X11/XWayland keeps layout checks real.
+const launchArgs =
+  process.env.IMAGEGEN_SMOKE_OZONE_PLATFORM === 'x11' ? ['--ozone-platform=x11', '.'] : ['.']
 
 const untaggedRasterPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==',
@@ -314,7 +319,7 @@ let secondProcess
 let tabCloseJobDatabase
 try {
   const queuedBeforeStart = await seedUnfinishedQueueItem()
-  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  application = await electron.launch({ args: launchArgs, cwd: process.cwd(), env: environment })
   await isolateNativeSmokeWindow(application)
   const window = await application.firstWindow()
   await window.locator('body').waitFor()
@@ -437,6 +442,7 @@ try {
     }
     if (process.env.IMAGEGEN_SMOKE_MODEL_HANDOFF_ONLY) {
       await checkModelResourceHandoff(resourceCheckOptions)
+      await checkCheckpointNoisePolicy(resourceCheckOptions)
     }
     await checkModelCatalogRace(resourceCheckOptions)
     application.process().kill('SIGKILL')
@@ -1075,7 +1081,7 @@ try {
   application = undefined
   assert.ok(readFileSync(packagePath).equals(savedPackage), 'Crash must not change the saved .igs')
 
-  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  application = await electron.launch({ args: launchArgs, cwd: process.cwd(), env: environment })
   await isolateNativeSmokeWindow(application)
   const recoveryWindow = await application.firstWindow()
   await recoveryWindow.getByRole('tab', { name: 'Home' }).waitFor()
@@ -2376,7 +2382,7 @@ try {
   symlinkSync(outside, runtimeDir)
   symlinkSync(outside, generationStagingDir)
 
-  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env: environment })
+  application = await electron.launch({ args: launchArgs, cwd: process.cwd(), env: environment })
   await isolateNativeSmokeWindow(application)
   const damagedWindow = await application.firstWindow()
   await damagedWindow.getByRole('tab', { name: 'Home' }).waitFor()

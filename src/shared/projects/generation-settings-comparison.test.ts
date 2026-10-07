@@ -11,6 +11,7 @@ import {
   isRasterGenerationData,
   type RasterGenerationData,
 } from './generation-settings-comparison.js'
+import { defaultIllustriousNoiseProfile } from './illustrious-noise-profile.js'
 import {
   createEmptyProjectDocumentV1,
   isRasterGenerationConfigurationV1,
@@ -992,4 +993,47 @@ test('read-only comparison distinguishes ordinary and ancestral Euler and preser
   assert.equal(result(source, 'sampling.invokeScheduler').after, 'euler_a')
   assert.equal(result(source, 'sampling.scheduler').status, 'Same')
   assert.deepEqual(source, changed)
+})
+
+test('noise profile comparison reads current exact library policy while legacy accepted omissions remain Unavailable', () => {
+  const source = fixture()
+  const profile = {
+    ...defaultIllustriousNoiseProfile(),
+    rescaleBetasZeroSnr: true,
+    timestepSpacing: 'trailing' as const,
+  }
+  source.current.modelCatalog![0].versions[0].noiseProfile = {
+    effective: structuredClone(profile),
+    rescaleBetasZeroSnrSource: 'override',
+    timestepSpacingSource: 'override',
+  }
+  for (const key of [
+    'noiseProfile.baseSchedule',
+    'noiseProfile.rescaleBetasZeroSnr',
+    'noiseProfile.timestepSpacing',
+  ]) {
+    assert.equal(result(source, key).status, 'Unavailable')
+    assert.match(result(source, key).before, /Unavailable in saved generation data/)
+  }
+  source.data.generationConfiguration.sampling.noiseProfile = structuredClone(profile)
+  assert.ok(isRasterGenerationData(source.data))
+  const before = structuredClone(source)
+  for (const key of [
+    'noiseProfile.baseSchedule',
+    'noiseProfile.rescaleBetasZeroSnr',
+    'noiseProfile.timestepSpacing',
+  ]) {
+    assert.equal(result(source, key).status, 'Same')
+  }
+  assert.deepEqual(source, before, 'comparison does not rewrite accepted configuration or draft')
+  source.current.modelCatalog![0].versions[0].noiseProfile.effective.rescaleBetasZeroSnr = false
+  assert.equal(result(source, 'noiseProfile.rescaleBetasZeroSnr').status, 'Changed')
+  assert.equal(result(source, 'noiseProfile.rescaleBetasZeroSnr').before, 'Enabled')
+  assert.equal(result(source, 'noiseProfile.rescaleBetasZeroSnr').after, 'Disabled')
+  source.current.modelCatalog![0].versions[0].noiseProfile.effective.timestepSpacing = 'linspace'
+  assert.equal(result(source, 'noiseProfile.timestepSpacing').status, 'Changed')
+  assert.deepEqual(source.data.generationConfiguration.sampling.noiseProfile, profile)
+  source.current.modelCatalog = null
+  assert.equal(result(source, 'noiseProfile.rescaleBetasZeroSnr').status, 'Unavailable')
+  assert.equal(result(source, 'noiseProfile.timestepSpacing').status, 'Unavailable')
 })

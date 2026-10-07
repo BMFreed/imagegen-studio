@@ -3,6 +3,7 @@ import {
   GENERATION_QUEUE_PAGE_SIZE,
   isGenerationQueuePage,
 } from '../../shared/projects/generation-queue-manager.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -180,6 +181,7 @@ async function inQualifiedLease<T>(
   verifyEmbedding?: (
     entry: NonNullable<PreparedNormalTxt2Img['context']['embeddings']>['positive'][number],
   ) => Promise<NonNullable<PreparedNormalTxt2Img['context']['embeddings']>['positive'][number]>,
+  resolveNoiseProfile?: () => ReturnType<typeof defaultIllustriousNoiseProfile> | undefined,
 ): Promise<T> {
   return await withIllustriousTxt2ImgRequest({
     modelService: {
@@ -187,6 +189,9 @@ async function inQualifiedLease<T>(
       assertNoUnboundGenerationEmbeddings: async () => {},
       resolveVerifiedGenerationCheckpointForPlan: async (reference) => ({
         managedPath: prepared.context.model.managedPath,
+        noiseProfile: resolveNoiseProfile
+          ? resolveNoiseProfile()
+          : prepared.context.sampling.noiseProfile,
         reference,
       }),
       resolveVerifiedGenerationEmbeddingForPlan: async (reference) => {
@@ -3312,5 +3317,210 @@ test('retry unreadable publication outcomes retain inputs and block admission an
         await rm(root, { force: true, recursive: true })
       }
     })
+  }
+})
+
+test('noise profile survives SQLite restart and frozen Retry; a changed effective policy preserves the original until restored', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-noise-policy-retry-'))
+  let database = openAppDatabase(root, migrations)
+  let queue = new GenerationQueueRepository(database.db, root)
+  try {
+    await queue.recoverAfterRestart()
+    const { prepared, projectPath } = await fixture(root)
+    const frozenPolicy = {
+      ...defaultIllustriousNoiseProfile(),
+      rescaleBetasZeroSnr: true,
+      timestepSpacing: 'trailing' as const,
+    }
+    prepared.context.sampling.noiseProfile = structuredClone(frozenPolicy)
+    let currentPolicy: ReturnType<typeof defaultIllustriousNoiseProfile> =
+      structuredClone(frozenPolicy)
+    const qualified = {
+      ...ready,
+      capabilities: [
+        ...embeddingReady.capabilities,
+        'illustrious-outpaint',
+        'illustrious-euler',
+        'illustrious-noise-profile',
+      ],
+      workerVersion: '0.14.0',
+    }
+    const queued = await inQualifiedLease(
+      root,
+      prepared,
+      async (request) => {
+        assert.deepEqual(request.job.sampling.noiseProfile, frozenPolicy)
+        const mismatch = structuredClone(request)
+        mismatch.job.sampling.noiseProfile!.rescaleBetasZeroSnr = false
+        await assert.rejects(
+          queue.enqueueIllustriousTxt2Img({
+            prepared,
+            projectPath,
+            request: mismatch,
+            stagingSessionId: randomUUID(),
+          }),
+          { code: 'QUEUE_INPUT_INVALID' },
+        )
+        assert.equal((await queue.listManagerPage()).items.length, 0)
+        return await queue.enqueueIllustriousTxt2Img({
+          prepared,
+          projectPath,
+          request,
+          stagingSessionId: randomUUID(),
+        })
+      },
+      qualified,
+      undefined,
+      () => currentPolicy,
+    )
+    const original = await queue.loadVerifiedInput(queued.id)
+    await database.close()
+    database = openAppDatabase(root, migrations)
+    queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const canceled = await queue.loadVerifiedInput(queued.id)
+    assert.equal(canceled.item.status, 'canceled')
+    assert.deepEqual(canceled.payload, original.payload)
+    const originalRow = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', queued.id)
+      .executeTakeFirstOrThrow()
+    const inputsRoot = path.dirname(canceled.targetPath)
+    const originalBytes = await readFile(canceled.targetPath)
+    const retryPreflight = async () => {
+      await inQualifiedLease(
+        root,
+        prepared,
+        async () => {},
+        qualified,
+        undefined,
+        () => currentPolicy,
+      )
+    }
+    for (const changed of [
+      { ...frozenPolicy, rescaleBetasZeroSnr: false },
+      { ...frozenPolicy, timestepSpacing: 'leading' as const },
+    ]) {
+      currentPolicy = changed
+      await assert.rejects(
+        queue.retryTerminal(queued.id, canceled.item.statusSequence, retryPreflight),
+        { code: 'GENERATION_INPUT_CHANGED' },
+      )
+      assert.deepEqual(
+        await database.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('id', '=', queued.id)
+          .executeTakeFirstOrThrow(),
+        originalRow,
+      )
+      assert.equal((await queue.listManagerPage()).items.length, 1)
+      assert.deepEqual(await readFile(canceled.targetPath), originalBytes)
+      assert.deepEqual((await readdir(path.dirname(inputsRoot))).sort(), [
+        path.basename(inputsRoot),
+      ])
+    }
+    currentPolicy = structuredClone(frozenPolicy)
+    const retry = await queue.retryTerminal(queued.id, canceled.item.statusSequence, retryPreflight)
+    const retried = await queue.loadVerifiedInput(retry.id)
+    assert.deepEqual(retried.payload, original.payload)
+    assert.equal(retried.item.status, 'pending')
+    assert.notEqual(retry.id, queued.id)
+    const corrupted = structuredClone(retried.payload)
+    assert.ok(corrupted.kind === 'illustrious-txt2img')
+    corrupted.workerJob.sampling.noiseProfile!.timestepSpacing = 'linspace'
+    const corruptJson = JSON.stringify(corrupted)
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: corruptJson })
+      .where('id', '=', retry.id)
+      .execute()
+    // Keep the real manifest coherent: rejection must come from mismatched numerical semantics,
+    // rather than an unchanged integrity hash of the payload we deliberately edited.
+    const manifestPath = path.join(path.dirname(retried.targetPath), 'manifest.json')
+    const manifest = JSON.parse((await readFile(manifestPath)).toString('utf8'))
+    manifest.payloadSha256 = sha256(Buffer.from(corruptJson))
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    await assert.rejects(queue.loadVerifiedInput(retry.id), { code: 'QUEUE_INPUT_INVALID' })
+  } finally {
+    await database.close()
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('legacy noise policy is the immutable baseline; new neutral jobs work with old workers and non-neutral jobs refuse before scratch', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-noise-policy-legacy-'))
+  try {
+    const { prepared } = await fixture(root)
+    const baseline = defaultIllustriousNoiseProfile()
+    await inQualifiedLease(
+      root,
+      prepared,
+      async (request) => {
+        assert.equal(Object.hasOwn(request.job.sampling, 'noiseProfile'), false)
+      },
+      ready,
+      undefined,
+      () => baseline,
+    )
+    await assert.rejects(
+      inQualifiedLease(
+        root,
+        prepared,
+        async () => {
+          assert.fail('changed legacy policy must not materialize')
+        },
+        ready,
+        undefined,
+        () => ({ ...baseline, timestepSpacing: 'trailing' }),
+      ),
+      { code: 'GENERATION_INPUT_CHANGED' },
+    )
+    prepared.context.sampling.noiseProfile = baseline
+    await inQualifiedLease(root, prepared, async (request) => {
+      assert.equal(Object.hasOwn(request.job.sampling, 'noiseProfile'), false)
+    })
+    await rm(path.join(root, 'scratch'), { force: true, recursive: true })
+    for (const profile of [
+      { ...baseline, rescaleBetasZeroSnr: true },
+      { ...baseline, timestepSpacing: 'trailing' as const },
+    ]) {
+      prepared.context.sampling.noiseProfile = profile
+      await assert.rejects(
+        inQualifiedLease(root, prepared, async () => {
+          assert.fail('old worker must not receive non-neutral policy')
+        }),
+        { code: 'INFERENCE_UNAVAILABLE' },
+      )
+      assert.deepEqual((await readdir(root)).sort(), ['Project.igs', 'checkpoint.safetensors'])
+    }
+    const readyProfile = {
+      ...embeddingReady,
+      capabilities: [
+        ...embeddingReady.capabilities,
+        'illustrious-outpaint',
+        'illustrious-euler',
+        'illustrious-noise-profile',
+      ],
+      workerVersion: '0.14.0',
+    }
+    prepared.context.sampling.noiseProfile = { ...baseline, rescaleBetasZeroSnr: true }
+    prepared.context.sampling.invokeScheduler = 'dpmpp_sde'
+    prepared.context.sampling.sampler = 'DPM++ SDE'
+    prepared.context.sampling.scheduler = 'Normal'
+    await assert.rejects(
+      inQualifiedLease(
+        root,
+        prepared,
+        async () => {
+          assert.fail('ZTSNR must not be ignored by SDE')
+        },
+        readyProfile,
+      ),
+      { code: 'GENERATION_SAMPLING_UNSUPPORTED' },
+    )
+  } finally {
+    await rm(root, { force: true, recursive: true })
   }
 })

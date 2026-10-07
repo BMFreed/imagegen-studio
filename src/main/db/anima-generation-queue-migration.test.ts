@@ -15,6 +15,7 @@ test('Anima queue migration preserves both legacy operations, every status and i
   await cp(migrations, legacyMigrations, { recursive: true })
   await rm(path.join(legacyMigrations, '0014_anima_generation_queue.sql'))
   await rm(path.join(legacyMigrations, '0015_outpaint_generation_queue.sql'))
+  await rm(path.join(legacyMigrations, '0016_checkpoint_noise_profile_override.sql'))
   try {
     const before = openAppDatabase(root, legacyMigrations)
     const timestamp = '2026-10-05T00:00:00.000Z'
