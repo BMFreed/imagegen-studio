@@ -95,6 +95,7 @@ import {
   workerVae,
 } from './illustrious-generation-vae.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
+import { IllustriousJobError } from './illustrious-txt2img-job.js'
 import {
   assertFrozenAlphaOutpaintConditioning,
   FrozenAlphaOutpaintConditioningSchema,
@@ -2559,9 +2560,9 @@ export async function reverifyFrozenQueuedOutpaintGeneration(
       !isDeepStrictEqual(model.reference, parsed.context.model.reference) ||
       !equalIllustriousNoiseProfiles(model.noiseProfile, parsed.context.sampling.noiseProfile)
     ) {
-      throw new GenerationQueueError(
-        'QUEUE_INPUT_INVALID',
-        'The frozen checkpoint or noise profile changed.',
+      throw new IllustriousJobError(
+        'GENERATION_INPUT_CHANGED',
+        'The exact checkpoint, prediction type or noise profile changed after preparation.',
       )
     }
     await reverifyFrozenGenerationLoras(parsed.context, models)

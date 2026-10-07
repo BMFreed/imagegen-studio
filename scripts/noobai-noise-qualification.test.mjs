@@ -6,13 +6,18 @@ import {
   assertAcceptedCheckpointIdentity,
   assertNoiseCatalog,
   assertNoiseExecution,
+  assertNoiseImageBasedProgress,
   assertNoiseReady,
   assertNoiseStageOutcome,
   assertNoiseTxt2ImgProgress,
+  assertOutpaintLayerPlacement,
+  assertOutpaintPreviewPixels,
+  assertOutpaintSourcePixels,
   baselineNoiseProfile,
   boundedNoiseCases,
   executionFor,
   noiseRecipeSources,
+  noiseRetryPolicyAxes,
   noiseStagePlan,
   noiseStages,
   normalizeNoiseInputs,
@@ -149,9 +154,15 @@ function frozen(execution = executionFor('illustrious')) {
 }
 
 test('strict guards preserve independent trained checkpoints and explicit stage claims', () => {
-  for (const stage of ['bounded', 'bounded-lifecycle', 'author']) {
+  for (const stage of ['bounded', 'bounded-lifecycle', 'author', 'outpaint']) {
     const value = fixture()
     value.stage = stage
+    if (stage === 'outpaint')
+      value.lama = {
+        path: '/owned/lama.pt',
+        sha256: '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9',
+        byteSize: 205669692,
+      }
     const validated = validateNoiseProfileFixture(value, ready)
     assert.equal(validated.stage, stage)
     assert.equal(validated.modelKeys.length, 3)
@@ -203,6 +214,228 @@ test('partial lifecycle outcome requires four completions/five admissions and ca
     ['noCombinedMatrixClaim', false],
   ])
     assert.throws(() => assertNoiseStageOutcome({ ...observed, [field]: changed }))
+})
+
+test('outpaint independently requires four completions, six admissions, two Cancels and six preserving policy refusals', () => {
+  const value = fixture()
+  value.stage = 'outpaint'
+  value.lama = {
+    path: '/owned/lama.pt',
+    sha256: '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9',
+    byteSize: 205669692,
+  }
+  const validated = validateNoiseProfileFixture(value, ready)
+  assert.deepEqual(validated.expectedOutcome, {
+    finiteCompletions: 4,
+    actualAdmissions: 6,
+    canceledOriginals: 2,
+    preservingRetryRefusals: 6,
+  })
+  assert.equal(validated.fullBoundedClaim, false)
+  assert.equal(validated.matchedTrainedPixelControlCases, 0)
+  assert.match(
+    validated.completedScope,
+    /two actual Cancels and six refused\/restored frozen Retry/,
+  )
+  const observed = {
+    stage: 'outpaint',
+    finiteCompletions: 4,
+    actualAdmissions: 6,
+    canceledOriginals: 2,
+    preservingRetryRefusals: 6,
+    completedScope: validated.completedScope,
+    fullBoundedClaim: false,
+    matchedTrainedPixelControlCases: 0,
+    noCombinedMatrixClaim: true,
+  }
+  assertNoiseStageOutcome(observed)
+  for (const [field, value] of [
+    ['finiteCompletions', 2],
+    ['actualAdmissions', 4],
+    ['canceledOriginals', 0],
+    ['preservingRetryRefusals', 3],
+    ['fullBoundedClaim', true],
+    ['matchedTrainedPixelControlCases', 5],
+    ['noCombinedMatrixClaim', false],
+  ])
+    assert.throws(() => assertNoiseStageOutcome({ ...observed, [field]: value }))
+})
+
+test('noise Retry changes and restores the captured epsilon or v-prediction policy independently', () => {
+  assert.deepEqual(noiseRetryPolicyAxes(executionFor('illustrious')), [
+    { axis: 'zero-snr', field: 'rescaleBetasZeroSnr', captured: true, changed: false },
+    { axis: 'spacing', field: 'timestepSpacing', captured: 'leading', changed: 'trailing' },
+    { axis: 'prediction', field: 'predictionType', captured: 'v_prediction', changed: 'epsilon' },
+  ])
+  assert.deepEqual(noiseRetryPolicyAxes(executionFor('illustriousEpsilon')), [
+    { axis: 'zero-snr', field: 'rescaleBetasZeroSnr', captured: false, changed: true },
+    { axis: 'spacing', field: 'timestepSpacing', captured: 'leading', changed: 'trailing' },
+    { axis: 'prediction', field: 'predictionType', captured: 'epsilon', changed: 'v_prediction' },
+  ])
+  const trailing = executionFor('illustrious')
+  trailing.noiseProfile.timestepSpacing = 'trailing'
+  assert.deepEqual(noiseRetryPolicyAxes(trailing)[1], {
+    axis: 'spacing',
+    field: 'timestepSpacing',
+    captured: 'trailing',
+    changed: 'leading',
+  })
+  assert.throws(() => noiseRetryPolicyAxes({ ...trailing, predictionType: 'sample' }))
+})
+
+test('image-based progress uses two selected leading timesteps and permits coalesced delivery', () => {
+  const oracle = {
+    numTrainTimesteps: 1000,
+    denoisingStrength: 0.5,
+    nativeTimesteps: [667, 334, 1],
+    selectedTimesteps: [334, 1],
+    effectiveDenoisingEvaluations: 2,
+    productionEqualsIndependentNative: true,
+  }
+  assertNoiseImageBasedProgress(
+    [{ current: { step: 1, totalSteps: 2 } }, { current: { step: 2, totalSteps: 2 } }],
+    oracle,
+  )
+  assertNoiseImageBasedProgress([{ current: { step: 2, totalSteps: 2 } }], oracle)
+  for (const trace of [
+    [],
+    [{ current: { step: 1, totalSteps: 1 } }],
+    [{ current: { step: 2, totalSteps: 3 } }],
+    [{ current: { step: 1, totalSteps: 2 } }],
+    [{ current: { step: 1, totalSteps: 3 } }, { current: { step: 2, totalSteps: 2 } }],
+    [{ current: { step: 3, totalSteps: 2 } }, { current: { step: 2, totalSteps: 2 } }],
+    [{ current: { step: 0, totalSteps: 2 } }, { current: { step: 2, totalSteps: 2 } }],
+    [
+      { current: { step: 2, totalSteps: 2 } },
+      { current: { step: 1, totalSteps: 2 } },
+      { current: { step: 2, totalSteps: 2 } },
+    ],
+  ])
+    assert.throws(() => assertNoiseImageBasedProgress(trace, oracle))
+  assert.throws(
+    () =>
+      assertNoiseImageBasedProgress([{ current: { step: 2, totalSteps: 2 } }], {
+        ...oracle,
+        selectedTimesteps: [1],
+        effectiveDenoisingEvaluations: 1,
+      }),
+    /independently selected training cutoff/,
+  )
+})
+
+function pixelExamples() {
+  // Independently fixed 4x2 source, shifted target and 6x2 merged preview; no production compositor.
+  return {
+    sourceRect: { x: 0, y: 0, width: 4, height: 2 },
+    bbox: { x: 2, y: 0, width: 4, height: 2 },
+    previewRect: { x: 0, y: 0, width: 6, height: 2 },
+    source: {
+      width: 4,
+      height: 2,
+      rgba: Buffer.from([
+        10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255, 11, 21, 31, 255, 41,
+        51, 61, 255, 71, 81, 91, 255, 101, 111, 121, 255,
+      ]),
+    },
+    target: {
+      width: 4,
+      height: 2,
+      rgba: Buffer.from([
+        70, 80, 90, 255, 100, 110, 120, 255, 0, 0, 0, 0, 0, 0, 0, 0, 71, 81, 91, 255, 101, 111, 121,
+        255, 0, 0, 0, 0, 0, 0, 0, 0,
+      ]),
+    },
+    contribution: {
+      width: 4,
+      height: 2,
+      rgba: Buffer.from([
+        0, 0, 0, 0, 110, 120, 130, 128, 140, 150, 160, 255, 170, 180, 190, 255, 0, 0, 0, 0, 111,
+        121, 131, 255, 141, 151, 161, 255, 171, 181, 191, 255,
+      ]),
+    },
+    preview: {
+      width: 6,
+      height: 2,
+      rgba: Buffer.from([
+        10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 105, 115, 125, 255, 140, 150, 160, 255,
+        170, 180, 190, 255, 11, 21, 31, 255, 41, 51, 61, 255, 71, 81, 91, 255, 111, 121, 131, 255,
+        141, 151, 161, 255, 171, 181, 191, 255,
+      ]),
+    },
+  }
+}
+
+test('shifted outpaint target retains independent source overlap RGB and transparent extension', () => {
+  assert.deepEqual(assertOutpaintSourcePixels(pixelExamples()), {
+    overlapPixels: 4,
+    transparentPixels: 4,
+  })
+  for (const axis of ['x', 'y']) {
+    const overflowing = pixelExamples()
+    overflowing.sourceRect[axis] = Number.MAX_SAFE_INTEGER
+    assert.throws(() => assertOutpaintSourcePixels(overflowing))
+  }
+  const wrongRgb = pixelExamples()
+  wrongRgb.target.rgba[0] ^= 1
+  assert.throws(() => assertOutpaintSourcePixels(wrongRgb), /exact source RGBA/)
+  const wrongAlpha = pixelExamples()
+  wrongAlpha.target.rgba[11] = 255
+  assert.throws(() => assertOutpaintSourcePixels(wrongAlpha), /remain transparent/)
+  const shifted = pixelExamples()
+  shifted.bbox.x = 1
+  assert.throws(() => assertOutpaintSourcePixels(shifted), /exact source RGBA/)
+})
+
+test('saved outpaint preview retains protected source pixels and permits generated seam changes', () => {
+  assert.deepEqual(assertOutpaintPreviewPixels(pixelExamples()), {
+    protectedPixels: 6,
+    protectedOverlapPixels: 2,
+  })
+  const protectedChange = pixelExamples()
+  protectedChange.preview.rgba[8] ^= 1
+  assert.throws(() => assertOutpaintPreviewPixels(protectedChange), /exact protected source RGBA/)
+  const seamChange = pixelExamples()
+  seamChange.preview.rgba[12] ^= 1
+  assert.deepEqual(assertOutpaintPreviewPixels(seamChange), {
+    protectedPixels: 6,
+    protectedOverlapPixels: 2,
+  })
+  const wrongPlacement = pixelExamples()
+  wrongPlacement.previewRect.x = 1
+  assert.throws(
+    () => assertOutpaintPreviewPixels(wrongPlacement),
+    /cover every protected source pixel/,
+  )
+})
+
+test('accepted outpaint view and saved layer retain bbox placement and composition', () => {
+  const bbox = { x: -7, y: 12, width: 256, height: 256 }
+  const layer = {
+    width: 256,
+    height: 256,
+    transform: { x: -7, y: 12, rotationDegrees: 0, scaleX: 1, scaleY: 1 },
+    opacity: 1,
+    blendMode: 'normal',
+    visible: true,
+  }
+  assertOutpaintLayerPlacement(layer, bbox)
+  const { width, height, ...stored } = layer
+  assertOutpaintLayerPlacement({ ...stored, asset: { width, height } }, bbox)
+  for (const field of ['x', 'y', 'scaleX', 'scaleY', 'rotationDegrees'])
+    assert.throws(() =>
+      assertOutpaintLayerPlacement(
+        { ...layer, transform: { ...layer.transform, [field]: layer.transform[field] + 1 } },
+        bbox,
+      ),
+    )
+  for (const [field, value] of [
+    ['width', 128],
+    ['height', 128],
+    ['opacity', 0.5],
+    ['blendMode', 'multiply'],
+    ['visible', false],
+  ])
+    assert.throws(() => assertOutpaintLayerPlacement({ ...layer, [field]: value }, bbox))
 })
 
 test('accepted exact identity distinguishes genuine epsilon and v-trained checkpoints in the same family', () => {

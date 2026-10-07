@@ -1,9 +1,10 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { lstat, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 
@@ -380,6 +381,239 @@ async function reviewedImpact(owner: Awaited<ReturnType<typeof publicOwner>>) {
     throw new Error('Expected replacement confirmation')
   }
   return { candidateIds: result.candidateIds, unfinishedJobIds: result.unfinishedJobIds }
+}
+
+async function retryPrivateFiles(directory: string): Promise<unknown> {
+  const entry = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') {
+      return null
+    }
+    throw error
+  })
+  if (!entry) {
+    return null
+  }
+  assert.equal(entry.isSymbolicLink(), false)
+  if (entry.isFile()) {
+    const bytes = await readFile(directory)
+    return { byteSize: bytes.length, mode: entry.mode, sha256: sha(bytes) }
+  }
+  assert.equal(entry.isDirectory(), true)
+  const children: Record<string, unknown> = {}
+  for (const name of (await readdir(directory)).sort()) {
+    children[name] = await retryPrivateFiles(path.join(directory, name))
+  }
+  return { children, mode: entry.mode }
+}
+
+for (const predictionType of ['epsilon', 'v_prediction'] as const) {
+  for (const axis of ['prediction', 'zero-snr', 'spacing'] as const) {
+    // Boundary: public Retry diagnoses a verified policy change, preserving real SQL/private
+    // files and an existing candidate. Numerical ML/composition and tiny-file policy are peers.
+    // Mutation: restoring the queue-storage classification must fail the exact public diagnostic.
+    test(`illustrious ${predictionType} public outpaint Retry policy ${axis} reports input change and preserves frozen state`, async () => {
+      await withOutpaintConsumerFixture('illustrious', async (fixture) => {
+        const originalResolver = fixture.outpaintModels.resolveVerifiedGenerationCheckpointForPlan
+        assert.ok(fixture.target.generationDraft.model)
+        const selectedReference = { ...fixture.target.generationDraft.model, predictionType }
+        const baseline = {
+          noiseProfile: {
+            ...defaultIllustriousNoiseProfile(),
+            rescaleBetasZeroSnr: predictionType === 'v_prediction',
+          },
+          predictionType,
+        }
+        let policy = structuredClone(baseline)
+        fixture.target.generationDraft.model = selectedReference
+        fixture.outpaintModels.resolveVerifiedGenerationCheckpointForPlan = async (selected) => {
+          // The inherited exact tiny-file resolver expects epsilon metadata. Keep its actual
+          // managed-byte verification and change only the explicitly controlled current policy.
+          const verified = await originalResolver({ ...selected, predictionType: 'epsilon' })
+          return {
+            ...verified,
+            noiseProfile: structuredClone(policy.noiseProfile),
+            reference: { ...verified.reference, predictionType: policy.predictionType },
+          }
+        }
+        await withPublicOwner(fixture, async (owner) => {
+          owner.runtime.ready = {
+            ...structuredClone(OUTPAINT_READY),
+            capabilities: [
+              ...OUTPAINT_READY.capabilities,
+              'illustrious-euler',
+              'illustrious-noise-profile',
+            ],
+            workerVersion: '0.14.0',
+          }
+          const held = signal()
+          const entered = signal()
+          owner.runtime.beforeGenerate = async () => {
+            entered.resolve()
+            await held.promise
+          }
+          const admission = await owner.controller.generate(owner.tabId, {
+            documentId: owner.document.documentId,
+            iterations: 2,
+          })
+          assert.equal(admission.kind, 'queued')
+          if (admission.kind !== 'queued') {
+            throw new Error('Expected outpaint source jobs')
+          }
+          assert.equal(admission.jobIds.length, 2)
+          await entered.promise
+          const pending = await owner.queue.getManagerEntry(admission.jobIds[1])
+          assert.equal(pending.status, 'pending')
+          await owner.controller.cancelJob(pending)
+          held.resolve()
+          await settle(owner)
+          owner.runtime.beforeGenerate = null
+          const source = await owner.queue.getManagerEntry(pending.id)
+          assert.equal(source.status, 'canceled')
+          const frozen = await owner.queue.loadVerifiedRetryInput(source.id)
+          assert.equal(frozen.payload.kind, 'illustrious-outpaint')
+          if (frozen.payload.kind !== 'illustrious-outpaint') {
+            throw new Error('Expected frozen Illustrious outpaint')
+          }
+          assert.equal(frozen.payload.context.model.reference.predictionType, predictionType)
+          assert.deepEqual(frozen.payload.context.sampling.noiseProfile, baseline.noiseProfile)
+          assert.equal(frozen.payload.context.sampling.seed, 1)
+          assert.equal(frozen.payload.context.sampling.denoisingStrength, 0.5)
+          assert.ok(frozen.targetPngBytes.equals(fixture.target.composite.bytes))
+          const candidates = await owner.staging.listVerifiedCandidates(owner.tabId)
+          assert.equal(candidates.length, 1, 'A healthy neighboring completion must already exist')
+          assert.equal(candidates[0].actualSeed, 7)
+          await owner.projects.updateGenerationDraft(owner.tabId, {
+            kind: 'positive-prompt',
+            text: 'later policy Retry draft',
+          })
+          await owner.projects.updateGenerationDraft(owner.tabId, {
+            kind: 'denoising-strength',
+            value: 0.25,
+          })
+          await owner.projects.updateGenerationDraft(owner.tabId, {
+            kind: 'seed',
+            policy: 'fixed',
+            value: 123,
+          })
+          const preserved = async () => ({
+            candidates: await owner.staging.listVerifiedCandidates(owner.tabId),
+            cursor: await fixture.database.db
+              .selectFrom('generation_seed_cursor')
+              .selectAll()
+              .orderBy('local_project_key')
+              .execute(),
+            inputs: await retryPrivateFiles(path.join(fixture.root, 'generation-inputs')),
+            project: structuredClone(
+              owner.projects.getOpenDocumentForAcceptance(owner.tabId)!.document,
+            ),
+            queue: await fixture.database.db
+              .selectFrom('generation_queue_item')
+              .selectAll()
+              .orderBy('id')
+              .execute(),
+            receipts: await fixture.database.db
+              .selectFrom('generation_candidate_receipt')
+              .selectAll()
+              .orderBy('candidate_id')
+              .execute(),
+            savedPackage: sha(await readFile(owner.packagePath)),
+            staging: await retryPrivateFiles(
+              path.join(fixture.root, 'recovery/generation-staging'),
+            ),
+            tabs: owner.projects.getOpenTabs(),
+          })
+          const before = await preserved()
+          assert.equal(before.cursor.length, 1)
+          assert.equal(before.savedPackage, sha(owner.savedBytes))
+          const compositions = owner.runtime.compositions
+          const generated = owner.runtime.generated.length
+          if (axis === 'prediction') {
+            policy.predictionType = predictionType === 'epsilon' ? 'v_prediction' : 'epsilon'
+          } else if (axis === 'zero-snr') {
+            policy.noiseProfile.rescaleBetasZeroSnr = !baseline.noiseProfile.rescaleBetasZeroSnr
+          } else {
+            policy.noiseProfile.timestepSpacing = 'trailing'
+          }
+          await assert.rejects(owner.controller.retryJob(source))
+          await settle(owner)
+          assert.deepEqual(
+            await preserved(),
+            before,
+            'Refused policy Retry must preserve every durable row, candidate, seed, private file and Project state',
+          )
+          assert.ok((await readFile(frozen.targetPath)).equals(frozen.targetPngBytes))
+          assert.equal(
+            owner.runtime.compositions,
+            compositions,
+            'Refused Retry cannot compose current pixels',
+          )
+          assert.equal(
+            owner.runtime.generated.length,
+            generated,
+            'Refused Retry cannot dispatch inference',
+          )
+          assert.deepEqual((await owner.controller.getState(owner.tabId)).error, {
+            code: 'GENERATION_INPUT_CHANGED',
+            message:
+              'The exact checkpoint, prediction type or noise profile changed after preparation.',
+          })
+          policy = structuredClone(baseline)
+          await owner.controller.retryJob(source)
+          await settle(owner)
+          const page = await owner.queue.listManagerPage()
+          const retry = page.items.find((item) => !before.queue.some((old) => old.id === item.id))
+          assert.ok(retry)
+          assert.equal(retry.status, 'completed')
+          const copied = await owner.queue.loadVerifiedRetryInput(retry.id)
+          assert.deepEqual(copied.payload, frozen.payload)
+          assert.ok(copied.targetPngBytes.equals(frozen.targetPngBytes))
+          assert.notEqual(copied.item.stagingSessionId, frozen.item.stagingSessionId)
+          assert.equal(
+            owner.runtime.compositions,
+            compositions,
+            'Restored Retry cannot compose the later draft',
+          )
+          const after = await preserved()
+          assert.equal(
+            after.queue.find((item) => item.id === retry.id)?.frozen_payload_json,
+            before.queue.find((item) => item.id === source.id)?.frozen_payload_json,
+          )
+          assert.deepEqual(after.project, before.project)
+          assert.deepEqual(after.tabs, before.tabs)
+          assert.equal(after.savedPackage, before.savedPackage)
+          const retainedCandidate = after.candidates.find(
+            (candidate) => candidate.candidateId === candidates[0].candidateId,
+          )
+          assert.deepEqual(retainedCandidate, candidates[0])
+          assert.equal(after.candidates.length, 2)
+          assert.equal(
+            after.candidates.find((candidate) => candidate.queueItemId === retry.id)?.actualSeed,
+            8,
+          )
+          assert.deepEqual(
+            after.receipts.filter((receipt) =>
+              before.receipts.some((old) => old.candidate_id === receipt.candidate_id),
+            ),
+            before.receipts,
+          )
+          const consumed = await owner.queue.getManagerEntry(source.id)
+          assert.equal(consumed.status, 'canceled')
+          assert.equal(consumed.statusSequence, source.statusSequence + 1)
+          assert.ok((await readFile(frozen.targetPath)).equals(frozen.targetPngBytes))
+          const executed = owner.runtime.generated.at(-1)!
+          if (executed.type !== 'generate-illustrious-outpaint') {
+            throw new Error('Expected restored native outpaint request')
+          }
+          assert.equal(executed.job.checkpoint.predictionType, predictionType)
+          assert.deepEqual(executed.job.prompts, frozen.payload.context.prompts)
+          assert.equal(executed.job.sampling.seed, 1)
+          assert.equal(executed.job.sampling.denoisingStrength, 0.5)
+          assert.deepEqual(executed.job.sampling.noiseProfile, baseline.noiseProfile)
+          assert.equal((await owner.controller.getState(owner.tabId)).error, null)
+        })
+      })
+    })
+  }
 }
 
 for (const family of ['illustrious', 'anima'] as const) {

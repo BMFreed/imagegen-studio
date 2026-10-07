@@ -480,3 +480,19 @@ baseline despite current edits. Source layers, exact contribution alpha and
 portable identities survive at 256×256/three steps with genuine CPU LaMa and
 trained CUDA models. This scoped evidence is recorded in the research note.
 First setup and signed release qualification remain open.
+
+The subsequent [installed NoobAI outpaint checkpoint](../../../engineering/phase-2c-noobai-outpaint-research.md)
+qualifies worker0.14 with distinct official epsilon and credited Cyberfalafel
+v-pred weights. Two opaque txt2img source preconditions and two completed frozen
+outpaint Retry results pass explicit Add/Save, independent readback, reopen and
+read-only comparison at256×256/three steps. Source RGB, protected merged-preview
+pixels, contribution alpha and bbox placement are independently checked.
+Recorded outpaint/current img2img and frozen0.5/current0.25 strength appear in
+the same comparison as Changed ZTSNR/Same spacing. Library edits do not rewrite
+the accepted record. Two actual Cancels and six preserving prediction/ZTSNR/
+spacing Retry refusals retain the original source, seed and resources; policy
+restoration permits the original frozen operation despite later draft edits.
+The Main diagnostic is `GENERATION_INPUT_CHANGED` for otherwise valid changed
+Illustrious policy. No schema, worker protocol or capability changes follow.
+New-worker Anima regression, full component matrix, portability/crash expansion,
+quality, Invoke pixel parity and release remain separate gates.

@@ -115,14 +115,14 @@ export function noiseStagePlan(stage) {
         ? '256px/three-step lifecycle only: source precondition, genuine epsilon txt2img/img2img, Cancel and three refused/restored frozen Retry axes; no matched trained pixel-control completion claim'
         : stage === 'author'
           ? 'Two explicit 832x1216/28-step trained recipe executions only'
-          : 'Two explicit 256px/three-step ordinary mixed-alpha outpaint executions only',
+          : 'Two explicit 256px/three-step ordinary mixed-alpha outpaint completions, two opaque source preconditions, two actual Cancels and six refused/restored frozen Retry axes only',
     fullBoundedClaim: bounded,
     matchedTrainedPixelControlCases: bounded ? 5 : 0,
     expectedOutcome: {
       finiteCompletions: bounded ? 8 : lifecycle || stage === 'outpaint' ? 4 : 2,
-      actualAdmissions: bounded ? 9 : lifecycle ? 5 : stage === 'outpaint' ? 4 : 2,
-      canceledOriginals: bounded || lifecycle ? 1 : 0,
-      preservingRetryRefusals: bounded || lifecycle ? 3 : 0,
+      actualAdmissions: bounded ? 9 : lifecycle ? 5 : stage === 'outpaint' ? 6 : 2,
+      canceledOriginals: bounded || lifecycle ? 1 : stage === 'outpaint' ? 2 : 0,
+      preservingRetryRefusals: bounded || lifecycle ? 3 : stage === 'outpaint' ? 6 : 0,
     },
   }
 }
@@ -375,6 +375,194 @@ export function assertNoiseTxt2ImgProgress(progress, execution) {
   )
 }
 
+/** Independently selected native training timesteps, rather than floor(steps * strength). */
+export function assertNoiseImageBasedProgress(progress, oracle) {
+  assert.equal(oracle.productionEqualsIndependentNative, true)
+  assert.equal(oracle.numTrainTimesteps, 1000)
+  assert.ok(
+    Number.isFinite(oracle.denoisingStrength) &&
+      oracle.denoisingStrength > 0 &&
+      oracle.denoisingStrength <= 1,
+  )
+  assert.ok(Array.isArray(oracle.nativeTimesteps) && oracle.nativeTimesteps.length > 0)
+  assert.ok(
+    oracle.nativeTimesteps.every((value) => Number.isFinite(value) && value >= 0 && value < 1000),
+  )
+  const cutoff = Math.round(oracle.numTrainTimesteps * oracle.denoisingStrength)
+  const selected = oracle.nativeTimesteps.filter((value) => value < cutoff)
+  assert.deepEqual(
+    oracle.selectedTimesteps,
+    selected,
+    'Native image-based timesteps must match the independently selected training cutoff.',
+  )
+  assert.equal(oracle.effectiveDenoisingEvaluations, selected.length)
+  assert.ok(selected.length > 0)
+  assert.ok(
+    Array.isArray(progress) && progress.length > 0,
+    'Native image-based inference must report progress.',
+  )
+  let previousStep = 0
+  for (const { current } of progress) {
+    assert.ok(
+      Number.isInteger(current.step) &&
+        current.step >= previousStep &&
+        current.step >= 1 &&
+        current.step <= selected.length,
+      'Native image-based progress must stay within its effective steps and never regress.',
+    )
+    assert.equal(
+      current.totalSteps,
+      selected.length,
+      'Every native image-based event must report the independent effective step count.',
+    )
+    previousStep = current.step
+  }
+  assert.equal(
+    progress.at(-1).current.step,
+    selected.length,
+    'Native image-based completion must reach the independent effective step count.',
+  )
+}
+
+function assertRgbaImage(image, rect) {
+  assert.ok(Number.isSafeInteger(rect.x) && Number.isSafeInteger(rect.y))
+  assert.ok(
+    Number.isSafeInteger(rect.width) &&
+      Number.isSafeInteger(rect.height) &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.width * rect.height <= 4_000_000,
+  )
+  assert.ok(Number.isSafeInteger(rect.x + rect.width) && Number.isSafeInteger(rect.y + rect.height))
+  assert.equal(image.width, rect.width)
+  assert.equal(image.height, rect.height)
+  assert.ok(image.rgba instanceof Uint8Array)
+  assert.equal(image.rgba.length, rect.width * rect.height * 4)
+}
+
+function pixelOffset(rect, x, y) {
+  return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+    ? ((y - rect.y) * rect.width + x - rect.x) * 4
+    : null
+}
+
+/** Compare actual shifted composite pixels to an independently read opaque accepted source. */
+export function assertOutpaintSourcePixels({ source, sourceRect, target, bbox }) {
+  assertRgbaImage(source, sourceRect)
+  assertRgbaImage(target, bbox)
+  let overlapPixels = 0
+  let transparentPixels = 0
+  for (let y = bbox.y; y < bbox.y + bbox.height; y++)
+    for (let x = bbox.x; x < bbox.x + bbox.width; x++) {
+      const captured = pixelOffset(bbox, x, y)
+      const original = pixelOffset(sourceRect, x, y)
+      if (original === null) {
+        assert.equal(
+          target.rgba[captured + 3],
+          0,
+          'Outpaint target outside the accepted source must remain transparent.',
+        )
+        transparentPixels += 1
+      } else {
+        assert.equal(
+          source.rgba[original + 3],
+          255,
+          'The outpaint precondition source must be opaque.',
+        )
+        for (let channel = 0; channel < 4; channel++)
+          assert.equal(
+            target.rgba[captured + channel],
+            source.rgba[original + channel],
+            'Shifted outpaint target must retain exact source RGBA pixels.',
+          )
+        overlapPixels += 1
+      }
+    }
+  assert.ok(
+    overlapPixels > 0 && transparentPixels > 0,
+    'The qualified source shift must produce both opaque overlap and transparent outpaint pixels.',
+  )
+  return { overlapPixels, transparentPixels }
+}
+
+/** Protected pixels remain exactly the source after real contribution compositing and Save. */
+export function assertOutpaintPreviewPixels({
+  source,
+  sourceRect,
+  contribution,
+  bbox,
+  preview,
+  previewRect,
+}) {
+  assertRgbaImage(source, sourceRect)
+  assertRgbaImage(contribution, bbox)
+  assertRgbaImage(preview, previewRect)
+  let protectedPixels = 0
+  let protectedOverlapPixels = 0
+  for (let y = sourceRect.y; y < sourceRect.y + sourceRect.height; y++)
+    for (let x = sourceRect.x; x < sourceRect.x + sourceRect.width; x++) {
+      const output = pixelOffset(bbox, x, y)
+      if (output !== null && contribution.rgba[output + 3] !== 0) continue
+      const original = pixelOffset(sourceRect, x, y)
+      const merged = pixelOffset(previewRect, x, y)
+      assert.notEqual(merged, null, 'Saved preview must cover every protected source pixel.')
+      for (let channel = 0; channel < 4; channel++)
+        assert.equal(
+          preview.rgba[merged + channel],
+          source.rgba[original + channel],
+          'Saved preview must retain exact protected source RGBA pixels.',
+        )
+      protectedPixels += 1
+      if (output !== null) protectedOverlapPixels += 1
+    }
+  assert.ok(
+    protectedOverlapPixels > 0,
+    'The accepted contribution must retain fully protected source pixels in its overlap.',
+  )
+  return { protectedPixels, protectedOverlapPixels }
+}
+
+/** Project view and saved layer must use the captured world placement, not today's viewport. */
+export function assertOutpaintLayerPlacement(layer, bbox) {
+  assert.deepEqual(
+    layer.transform,
+    { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: bbox.x, y: bbox.y },
+    'Accepted outpaint layer must retain exact captured bbox placement.',
+  )
+  assert.equal(layer.width ?? layer.asset?.width, bbox.width)
+  assert.equal(layer.height ?? layer.asset?.height, bbox.height)
+  assert.equal(layer.opacity, 1)
+  assert.equal(layer.blendMode, 'normal')
+  assert.equal(layer.visible, true)
+}
+
+/** Change each library policy relative to the exact captured objective, then restore it. */
+export function noiseRetryPolicyAxes(execution) {
+  assert.ok(['epsilon', 'v_prediction'].includes(execution.predictionType))
+  assert.equal(typeof execution.noiseProfile.rescaleBetasZeroSnr, 'boolean')
+  assert.ok(['leading', 'linspace', 'trailing'].includes(execution.noiseProfile.timestepSpacing))
+  return [
+    {
+      axis: 'zero-snr',
+      field: 'rescaleBetasZeroSnr',
+      captured: execution.noiseProfile.rescaleBetasZeroSnr,
+      changed: !execution.noiseProfile.rescaleBetasZeroSnr,
+    },
+    {
+      axis: 'spacing',
+      field: 'timestepSpacing',
+      captured: execution.noiseProfile.timestepSpacing,
+      changed: execution.noiseProfile.timestepSpacing === 'trailing' ? 'leading' : 'trailing',
+    },
+    {
+      axis: 'prediction',
+      field: 'predictionType',
+      captured: execution.predictionType,
+      changed: execution.predictionType === 'v_prediction' ? 'epsilon' : 'v_prediction',
+    },
+  ]
+}
+
 /** Same family does not identify an accepted checkpoint: compare the exact selected file. */
 export function assertAcceptedCheckpointIdentity(configuration, expectedCheckpoint) {
   assert.equal(expectedCheckpoint.type, 'checkpoint')
@@ -444,7 +632,7 @@ export function assertNoiseCatalog(catalog, fixture, { adopting = false } = {}) 
 /** Independent pinned native constructors compared to the installed production scheduler adapter. */
 export const noiseScheduleOracleProgram = `import hashlib,json,sys,types
 import diffusers,torch
-from imagegen_worker.inference import select_inference_scheduler
+from imagegen_worker.inference import select_inference_scheduler,img2img_pipeline_class
 executions=json.loads(sys.argv[1])
 results=[]
 for e in executions:
@@ -462,5 +650,14 @@ for e in executions:
   assert torch.equal(a,b), 'Installed production noise schedule differs from independent native '+name
   assert bool(torch.isfinite(a).all()), 'Independent native schedule must remain finite'
   hashes[name]=hashlib.sha256(a.numpy().tobytes()).hexdigest()
- results.append({'execution':e,'nativeClass':cls.__name__,'hashes':hashes,'timesteps':actual.timesteps.tolist(),'terminalAlpha':actual.alphas_cumprod[-1].item(),'terminalSigma':actual.sigmas[-1].item(),'productionEqualsIndependentNative':True})
+ result={'execution':e,'nativeClass':cls.__name__,'hashes':hashes,'timesteps':actual.timesteps.tolist(),'terminalAlpha':actual.alphas_cumprod[-1].item(),'terminalSigma':actual.sigmas[-1].item(),'productionEqualsIndependentNative':True}
+ if 'denoisingStrength' in e:
+  strength=e['denoisingStrength']; cutoff=round(expected.config.num_train_timesteps*strength)
+  selected=expected.timesteps[expected.timesteps<cutoff]
+  adapter=object.__new__(img2img_pipeline_class(diffusers,torch)); object.__setattr__(adapter,'scheduler',actual)
+  observed,effective=adapter.get_timesteps(e['steps'],strength,'cpu')
+  assert expected.order==1 and torch.equal(observed,selected), 'Installed image-based adapter differs from independent native timestep cutoff'
+  assert effective==len(selected) and len(selected)>0, 'Installed image-based effective denoising count differs'
+  result['imageBased']={'numTrainTimesteps':expected.config.num_train_timesteps,'denoisingStrength':strength,'nativeTimesteps':expected.timesteps.tolist(),'selectedTimesteps':selected.tolist(),'effectiveDenoisingEvaluations':len(selected),'productionEqualsIndependentNative':True}
+ results.append(result)
 print(json.dumps({'diffusersVersion':diffusers.__version__,'torchVersion':torch.__version__,'results':results}))`

@@ -59,12 +59,17 @@ import {
   assertAcceptedCheckpointIdentity,
   assertNoiseCatalog,
   assertNoiseExecution,
+  assertNoiseImageBasedProgress,
   assertNoiseReady,
   assertNoiseStageOutcome,
   assertNoiseTxt2ImgProgress,
+  assertOutpaintLayerPlacement,
+  assertOutpaintPreviewPixels,
+  assertOutpaintSourcePixels,
   boundedNoiseCases,
   executionFor,
   noiseModelKeys,
+  noiseRetryPolicyAxes,
   noiseScheduleOracleProgram,
   noiseStages,
   normalizeNoiseInputs,
@@ -997,8 +1002,15 @@ async function setVaePrecision(project, value) {
   }
   await expect(input).toBeEnabled({ timeout: 180_000 })
   await input.scrollIntoViewIfNeeded()
-  await input.click()
-  await window.getByText(value, { exact: true }).last().click()
+  if ((await tab(project)).generationDraft.vaePrecision !== value) {
+    await input.click()
+    // Scope to the actual open option; the displayed selected label can have identical text.
+    const option = window
+      .locator('.n-base-select-option:visible')
+      .filter({ has: window.getByText(value, { exact: true }) })
+    await expect(option).toHaveCount(1)
+    await option.click()
+  }
   await expect.poll(async () => (await tab(project)).generationDraft.vaePrecision).toBe(value)
   await expect(
     input.locator(
@@ -1650,6 +1662,25 @@ async function decodedImage(url) {
   const { encoded, ...metadata } = result
   return { ...metadata, bytes: encoded.length, sha256: sha256(Buffer.from(encoded)) }
 }
+async function decodedRgba(bytes) {
+  const decoded = await window.evaluate(async (base64) => {
+    const image = new Image()
+    image.src = `data:image/png;base64,${base64}`
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('The exact outpaint pixels could not be decoded.')
+    context.drawImage(image, 0, 0)
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      rgba: Array.from(context.getImageData(0, 0, canvas.width, canvas.height).data),
+    }
+  }, bytes.toString('base64'))
+  return { ...decoded, rgba: Buffer.from(decoded.rgba) }
+}
 async function layerSnapshot(layers) {
   // Main deliberately reissues revision-bound capabilities after a draft edit/import. Compare
   // every semantic layer property and the actual served bytes/pixels, rather than temporary URLs.
@@ -2038,7 +2069,15 @@ async function authorNoiseExecution(project, modelKey, execution) {
   await setVaePrecision(project, 'FP32')
   return { prediction, zeroSnr, spacing }
 }
-async function compareNoiseProfile(project, layer, captured, current, caseName, packagePath) {
+async function compareNoiseProfile(
+  project,
+  layer,
+  captured,
+  current,
+  caseName,
+  packagePath,
+  outpaint = null,
+) {
   const before = await tab(project)
   const originalSha256 = await hashFile(packagePath)
   await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
@@ -2060,6 +2099,19 @@ async function compareNoiseProfile(project, layer, captured, current, caseName, 
     await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
     const spacing = comparison.locator('[data-setting="noiseProfile.timestepSpacing"]')
     await expect(spacing).toHaveAttribute('data-status', 'Same')
+    let outpaintComparison = null
+    if (outpaint) {
+      const mode = comparison.locator('[data-setting="context.mode"]')
+      await expect(mode).toHaveAttribute('data-status', 'Changed')
+      await expect(mode.locator('.comparison-values p')).toHaveText(['outpaint', 'img2img'])
+      const strength = comparison.locator('[data-setting="denoisingStrength.value"]')
+      await expect(strength).toHaveAttribute('data-status', 'Changed')
+      await expect(strength.locator('.comparison-values p')).toHaveText([
+        String(outpaint.capturedStrength),
+        String(outpaint.currentStrength),
+      ])
+      outpaintComparison = { recordedMode: 'outpaint', currentMode: 'img2img', ...outpaint }
+    }
     const screenshot = path.join(fixture.artifacts, `${caseName}-noise-comparison.png`)
     await captureScreenshot(screenshot, comparison)
     report.screenshots.push(screenshot)
@@ -2069,6 +2121,7 @@ async function compareNoiseProfile(project, layer, captured, current, caseName, 
       zeroSnrStatus: 'Changed',
       spacingStatus: 'Same',
       readOnly: true,
+      ...(outpaintComparison ? { outpaint: outpaintComparison } : {}),
       screenshot,
     }
   } finally {
@@ -2255,6 +2308,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const checkpoint = noiseQualification ? fixture[qualification.modelKey] : fixture.illustrious
   const modelKey = noiseQualification ? qualification.modelKey : 'illustrious'
   let currentNoiseProfile = null
+  let outpaintSourcePixels = null
+  let outpaintContributionPixels = null
+  let outpaintPreservation = null
   const cfgQualification = qualification?.kind === 'cfg-rescale'
   assert.ok(
     qualification === null ||
@@ -2583,6 +2639,21 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       frozen.context.conditioning.keepMask.sha256,
       sha256(decodeTargetPngAlpha(targetBytes, execution.width, execution.height)),
     )
+    if (noiseQualification) {
+      assert.ok(qualification.outpaintSource)
+      assert.equal(sha256(qualification.outpaintSource.bytes), qualification.outpaintSource.sha256)
+      outpaintSourcePixels = await decodedRgba(qualification.outpaintSource.bytes)
+      outpaintPreservation = {
+        sourceSha256: qualification.outpaintSource.sha256,
+        sourceRect: qualification.outpaintSource.rect,
+        shiftedTarget: assertOutpaintSourcePixels({
+          source: outpaintSourcePixels,
+          sourceRect: qualification.outpaintSource.rect,
+          target: await decodedRgba(targetBytes),
+          bbox: before.primaryBbox,
+        }),
+      }
+    }
   } else {
     assert.equal(
       mode === 'img2img' ? target.opaquePixels : target.transparentPixels,
@@ -2604,9 +2675,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     }
   }
   // Change current authoring only after durable admission; the accepted record must retain click input.
-  const changedPrompt = predictionQualification
-    ? before.generationDraft.positivePrompt.text
-    : `${embeddingQualification ? embeddingBasePrompts.positive : before.generationDraft.positivePrompt.text}, later authoring edit`
+  const changedPrompt =
+    predictionQualification && !(noiseQualification && mode === 'outpaint' && retryCase)
+      ? before.generationDraft.positivePrompt.text
+      : `${embeddingQualification ? embeddingBasePrompts.positive : before.generationDraft.positivePrompt.text}, later authoring edit`
   const changedNegativePrompt = embeddingQualification
     ? `${embeddingBasePrompts.negative}, later authoring edit`
     : null
@@ -2695,7 +2767,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       await expect.poll(liveInstalledInferenceChildren).toEqual([])
       assert.equal(capturedVaePrecision, 'FP32')
       if (predictionQualification) {
-        assert.equal(capturedPredictionType, 'v_prediction')
+        assert.equal(
+          capturedPredictionType,
+          noiseQualification ? execution.predictionType : 'v_prediction',
+        )
         assert.equal(
           (await api('listGenerationResults', project.id)).lastActualSeed,
           previousLastActualSeed,
@@ -2707,31 +2782,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
         assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
         if (noiseQualification) {
           predictionRetryRefusal = []
-          for (const [axis, change, restore] of [
-            [
-              'zero-snr',
-              () => setNoiseThroughUi(project, 'rescaleBetasZeroSnr', false, modelKey),
-              () => setNoiseThroughUi(project, 'rescaleBetasZeroSnr', true, modelKey),
-            ],
-            [
-              'spacing',
-              () => setNoiseThroughUi(project, 'timestepSpacing', 'trailing', modelKey),
-              () => setNoiseThroughUi(project, 'timestepSpacing', 'leading', modelKey),
-            ],
-            [
-              'prediction',
-              () => setPredictionThroughUi(project, 'epsilon', modelKey),
-              () => setPredictionThroughUi(project, 'v_prediction', modelKey),
-            ],
-          ]) {
+          for (const { axis, field, captured, changed } of noiseRetryPolicyAxes(execution)) {
+            const apply = (value) =>
+              field === 'predictionType'
+                ? setPredictionThroughUi(project, value, modelKey)
+                : setNoiseThroughUi(project, field, value, modelKey)
             const refusal = await qualifyChangedPredictionRetryRefusal(
               project,
               canceled,
               targetBytes,
               beforePackagePath,
               `${qualification.caseName}-${axis}`,
-              change,
-              restore,
+              () => apply(changed),
+              () => apply(captured),
             )
             predictionRetryRefusal.push({ ...refusal, axis })
           }
@@ -2743,6 +2806,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
             beforePackagePath,
             qualification.caseName,
           )
+        if (noiseQualification && mode === 'outpaint') {
+          // Frozen Retry must retain the source/policy despite edits to today's authoring.
+          await window
+            .getByRole('textbox', { name: 'Positive prompt', exact: true })
+            .fill(changedPrompt)
+          await expect
+            .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
+            .toBe(changedPrompt)
+          await setInput('Denoising Strength', 0.25)
+          await expect
+            .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+            .toBe(0.25)
+        }
       } else if (embeddingQualification) {
         assert.equal(
           (await api('listGenerationResults', project.id)).lastActualSeed,
@@ -3037,6 +3113,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (progress.length > 0)
     assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
   if (noiseQualification && mode === 'txt2img') assertNoiseTxt2ImgProgress(progress, execution)
+  if (noiseQualification && mode === 'outpaint')
+    assertNoiseImageBasedProgress(progress, qualification.effectiveDenoisingOracle)
   if ((embeddingQualification || predictionQualification) && mode === 'img2img')
     assert.ok(
       progress.at(-1).current.totalSteps > 0,
@@ -3075,6 +3153,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       targetBytes,
       outputBytes,
     )
+    if (noiseQualification) outpaintContributionPixels = await decodedRgba(outputBytes)
   }
   assert.ok(candidate.thumbnailUrl, 'actual worker thumbnail must be published')
   const thumbnail = await decodedImage(candidate.thumbnailUrl)
@@ -3107,6 +3186,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await expect.poll(async () => (await tab(project)).layers.length).toBe(before.layers.length + 1)
   const accepted = await tab(project)
   const layer = accepted.layers[0]
+  if (noiseQualification && mode === 'outpaint')
+    assertOutpaintLayerPlacement(layer, before.primaryBbox)
   const acceptedData = await api(
     'getRasterGenerationData',
     project.id,
@@ -3263,6 +3344,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   const savedLayer = saved.project.layers.find(({ id }) => id === layer.id)
   assert.ok(savedLayer)
+  if (noiseQualification && mode === 'outpaint')
+    assertOutpaintLayerPlacement(savedLayer, before.primaryBbox)
   assert.equal(sha256(await saved.readMember(savedLayer.asset.path)), receipt.image_sha256)
   assert.equal(savedLayer.asset.bytes, receipt.image_byte_size)
   assert.equal(savedLayer.asset.sha256, receipt.image_sha256)
@@ -3284,6 +3367,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(mergedPreview.height, previewRect.height)
     assert.equal(mergedPreview.opaquePixels, previewRect.width * previewRect.height)
     assert.notEqual(mergedPreview.pixelSha256, pixels.pixelSha256)
+    if (noiseQualification) {
+      outpaintPreservation.mergedPreview = assertOutpaintPreviewPixels({
+        source: outpaintSourcePixels,
+        sourceRect: qualification.outpaintSource.rect,
+        contribution: outpaintContributionPixels,
+        bbox: before.primaryBbox,
+        preview: await decodedRgba(mergedPreviewBytes),
+        previewRect,
+      })
+    }
   } else assert.equal(mergedPreview.pixelSha256, pixels.pixelSha256)
   const previewThumbnailBytes = await saved.readMember('preview/thumbnail.webp')
   const previewThumbnail = await decodedImage(
@@ -3341,6 +3434,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
   const reopened = await tab(project)
+  if (noiseQualification && mode === 'outpaint') {
+    const reopenedLayer = reopened.layers.find(({ id }) => id === layer.id)
+    assert.ok(reopenedLayer)
+    assertOutpaintLayerPlacement(reopenedLayer, before.primaryBbox)
+    assert.deepEqual(
+      await layerSnapshot(reopened.layers.filter(({ id }) => id !== layer.id)),
+      existingLayers,
+    )
+  }
   assert.equal(reopened.generationDraft.positivePrompt.text, changedPrompt)
   if (cfgQualification) assert.equal(reopened.generationDraft.cfgRescale, 0.2)
   if (precisionQualification)
@@ -3404,6 +3506,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
         currentNoiseProfile,
         qualification.caseName,
         packagePath,
+        mode === 'outpaint'
+          ? {
+              capturedStrength,
+              currentStrength: reopened.generationDraft.sampling.denoisingStrength,
+            }
+          : null,
       )
     : predictionQualification
       ? await comparePrediction(
@@ -3601,6 +3709,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       currentPredictionChange: null,
       currentNoiseChange: currentPredictionChange,
       predictionRetryRefusal,
+      ...(mode === 'outpaint'
+        ? {
+            outpaintPreservation,
+            effectiveDenoisingOracle: qualification.effectiveDenoisingOracle,
+            effectiveDenoisingEvaluations: progress.at(-1).current.totalSteps,
+            currentDenoisingStrength: reopened.generationDraft.sampling.denoisingStrength,
+            capturedDenoisingStrength: capturedStrength,
+          }
+        : {}),
     }
   report.generations.push(generation)
   await check(
@@ -4791,8 +4908,17 @@ async function qualifyNoiseProfile() {
     assert.equal(report.generations.length, 2)
   } else {
     assert.equal(fixture.stage, 'outpaint')
-    for (const modelKey of ['illustrious', 'illustriousEpsilon']) {
+    const modelKeys = ['illustrious', 'illustriousEpsilon']
+    const oracle = await independentNoiseScheduleOracle(
+      modelKeys.map((key) => ({ ...executionFor(key, 'outpaint'), denoisingStrength: 0.5 })),
+    )
+    report.outpaintSourcePreconditions = []
+    for (const [index, modelKey] of modelKeys.entries()) {
       const execution = executionFor(modelKey, 'outpaint')
+      const effectiveDenoisingOracle = oracle.results[index].imageBased
+      assert.deepEqual(effectiveDenoisingOracle.nativeTimesteps, [667, 334, 1])
+      assert.deepEqual(effectiveDenoisingOracle.selectedTimesteps, [334, 1])
+      assert.equal(effectiveDenoisingOracle.effectiveDenoisingEvaluations, 2)
       const caseName = `noise-outpaint-${modelKey}`
       const project = await createProject(
         fixture[modelKey],
@@ -4802,28 +4928,64 @@ async function qualifyNoiseProfile() {
       )
       projects.push(project)
       let authored = await authorNoiseExecution(project, modelKey, execution)
-      await generateAndAccept(project, 'illustrious', 'txt2img', {
+      const sourceGeneration = await generateAndAccept(project, 'illustrious', 'txt2img', {
         kind: 'noise-profile',
         modelKey,
         execution,
         authored,
         caseName: `${caseName}-source-precondition`,
       })
+      // Read saved source bytes before bbox/draft edits invalidate revision-bound image URLs.
+      const sourcePackage = await readIgsPackage(sourceGeneration.packagePath)
+      assert.equal(sourcePackage.project.layers.length, 1)
+      const sourceLayer = sourcePackage.project.layers[0]
+      const sourceBytes = await sourcePackage.readMember(sourceLayer.asset.path)
+      assert.equal(sha256(sourceBytes), sourceGeneration.outputSha256)
+      const outpaintSource = {
+        bytes: sourceBytes,
+        sha256: sourceGeneration.outputSha256,
+        rect: {
+          x: sourceLayer.transform.x,
+          y: sourceLayer.transform.y,
+          width: sourceLayer.asset.width,
+          height: sourceLayer.asset.height,
+        },
+      }
+      assertOutpaintLayerPlacement(sourceLayer, sourceGeneration.provenance.layerSourceContext.bbox)
+      report.outpaintSourcePreconditions.push({
+        modelKey,
+        queueItemId: sourceGeneration.queueItemId,
+        sha256: outpaintSource.sha256,
+        rect: outpaintSource.rect,
+      })
       authored = await authorNoiseExecution(project, modelKey, execution)
       await prepareOutpaint(project)
-      await generateAndAccept(project, 'illustrious', 'outpaint', {
-        kind: 'noise-profile',
-        modelKey,
-        execution,
-        authored,
-        caseName,
-      })
+      const outpaint = await generateAndAccept(
+        project,
+        'illustrious',
+        'outpaint',
+        {
+          kind: 'noise-profile',
+          modelKey,
+          execution,
+          authored,
+          caseName,
+          outpaintSource,
+          effectiveDenoisingOracle,
+        },
+        true,
+      )
+      assert.deepEqual(
+        outpaint.qualification.predictionRetryRefusal.map(({ axis }) => axis),
+        ['zero-snr', 'spacing', 'prediction'],
+      )
+      assert.ok(outpaint.retry)
     }
     assert.equal(report.generations.filter(({ mode }) => mode === 'outpaint').length, 2)
-    report.outpaintSourcePreconditionCompletions = 2
-    await independentNoiseScheduleOracle(
-      ['illustrious', 'illustriousEpsilon'].map((key) => executionFor(key)),
-    )
+    assert.equal(report.generations.filter(({ mode }) => mode === 'txt2img').length, 2)
+    assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 2)
+    assert.equal(report.predictionRetryRefusals.length, 6)
+    report.outpaintSourcePreconditionCompletions = report.outpaintSourcePreconditions.length
   }
   assert.deepEqual(report.failures, [])
   let actualAdmissions = 0

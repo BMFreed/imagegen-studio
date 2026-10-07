@@ -352,10 +352,25 @@ The generic actual-seed rule below applies unchanged to both outpaint commands:
 a valid completed uint32 deviation is retained in the receipt, candidate, Reuse
 cursor and accepted provenance without rewriting the frozen request. Explicit
 Add and Save/readback support portable contribution records and settings
-comparison. Public mixed-alpha Generate and public outpaint Retry remain closed;
-first-setup LaMa installation, installed trained execution and release
-qualification remain open. The research note owns evidence counts and limits;
+comparison. At that internal checkpoint, public mixed-alpha Generate and public
+outpaint Retry were closed; first-setup LaMa installation, installed trained
+execution and release qualification remained open. The research note owns evidence counts and limits;
 this checkpoint does not complete phase 2C or PP-005/007/008.
+
+### Installed NoobAI outpaint checkpoint (07.10.2026)
+
+[Installed qualification](../engineering/phase-2c-noobai-outpaint-research.md)
+executes the existing public outpaint command on worker0.14 with official
+NoobAI epsilon and credited Cyberfalafel v-pred weights, ordinary compatible
+LoRA and Embedded FP32 VAE. The independent pinned native schedule selects
+334/1 from667/334/1 at strength0.5: actual progress total/final is2, allowing
+coalesced events. Two source completions and two completed frozen outpaint Retry
+results survive Add/Save/readback/reopen; two actual Cancels and six independent
+policy changes refuse preserving the original durable state. Source/protected
+RGB and accepted placement are checked independently. The targeted input-change
+diagnostic fix belongs to Main; there is no protocol/capability/worker bump.
+The old both-family qualification is not new-worker Anima evidence. Full
+component coverage, dynamic batches, engine first setup and release remain open.
 
 ## Правила протокола
 

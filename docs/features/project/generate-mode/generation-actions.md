@@ -38,6 +38,14 @@ through the runtime's subsequent child-exit wait. A late refusal cancels only th
 action's newly published jobs, with confirmed canceled status or a recovery fence.
 Retry retains the source PNG/alpha/policy/resources and settings despite later draft edits.
 
+For otherwise valid frozen Illustrious outpaint input, a changed verified
+checkpoint, prediction type or noise profile refuses with
+`GENERATION_INPUT_CHANGED`: "The exact checkpoint, prediction type or noise
+profile changed after preparation." Restoring the original policy permits Retry
+without recomposition or adopting later draft edits. Malformed queue storage
+retains its existing classification. The targeted Main diagnostic regression is
+recorded in the [NoobAI outpaint research](../../../engineering/phase-2c-noobai-outpaint-research.md).
+
 The [internal execution checkpoint](../../../engineering/phase-2c-outpaint-execution-research.md)
 continues to own native masking, independent Main contribution-alpha verification,
 source-bound temporary RGBA and explicit portable Add/Save/read/comparison. Completion

@@ -1571,8 +1571,11 @@ authoring, frozen queue/Retry, native dispatch и portable accepted settings;
 readback/comparison. [Installed NoobAI author-recipe qualification](../engineering/phase-2c-noobai-author-recipe-research.md)
 проверяет два distinct trained checkpoints, independent noise/sampler controls,
 Cancel/refused/restored Retry и два source-grounded прогона 832×1216/28 steps.
-Следующий шаг 2C — normal outpaint на обоих NoobAI objectives и component/type-aware
-matrix, затем dynamic multi-job batches. NoobAI не становится
+Новый [installed NoobAI mixed-alpha outpaint checkpoint](../engineering/phase-2c-noobai-outpaint-research.md)
+проверяет оба objectives на worker0.14: два source completions, два restored
+frozen outpaint Retry, шесть admissions, две actual Cancel и шесть preserving
+policy refusals. Следующий шаг 2C — component/type-aware matrix и новые Anima
+trained regressions на этом worker, затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1591,15 +1594,21 @@ upstream NoobAI guidance на credited derivative; leading spacing отдель�
 [реализацию и evidence](../engineering/phase-2c-noise-profile-research.md):
 Model Manager per-field assumptions/override/reset, exact SQLite persistence,
 worker0.14 native schedules, preserving Retry, portable accepted profile/legacy
-Unavailable. Новый installed checkpoint проверяет пять trained single-axis
+Unavailable. Предшествующий author-recipe installed checkpoint проверяет пять trained single-axis
 controls (их partial report завершился oracle-launcher setup error), отдельный
 успешный lifecycle stage с четырьмя finite completions/пятью admissions/Cancel/тремя
 refusals и два author-parameter cases. Три installed CPU mutations независимо
 ловят ignored ZTSNR, spacing и Euler dispatch; source bytes восстановлены.
 Один canonical reusable environment обновлён до worker0.14 с native startup/exit
 и свежим manifest; исторический worker0.12 provision report сохранён. Полная
-component/type-aware matrix, оба NoobAI outpaint objectives и новые Anima trained
-regressions на этом worker остаются открытыми; пункты ниже сохраняют полный scope.
+component/type-aware matrix и новые Anima trained regressions на этом worker
+остаются открытыми. Последующий outpaint checkpoint независимо проверяет shifted
+source RGB, protected preview pixels, effective timestep cutoff и placement после
+Add/Save/readback/reopen. Исправлена диагностика смены exact checkpoint/noise
+policy при frozen outpaint Retry: сохраняющий отказ теперь сообщает
+`GENERATION_INPUT_CHANGED`, без ослабления проверок. Это bounded256×256/three-step
+evidence, а не full NoobAI/MVP или release qualification; пункты ниже сохраняют
+полный scope.
 
 Порядок реализации:
 
