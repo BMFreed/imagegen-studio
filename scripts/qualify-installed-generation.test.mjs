@@ -224,6 +224,7 @@ test('omitted and all named qualification profiles reach the neighboring size re
     'vae-precision',
     'external-vae',
     'embeddings',
+    'v-prediction',
   ]) {
     await fixture(async ({ artifacts, input, run }) => {
       if (profile !== undefined) input.profile = profile
@@ -257,6 +258,8 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
     'External-VAE',
     'embedding',
     'Embeddings',
+    'v_prediction',
+    'V-Prediction',
     {},
     ['cfg-rescale'],
   ]) {
@@ -265,7 +268,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae or embeddings/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings or v-prediction/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
@@ -1132,6 +1135,254 @@ test('embedding resume refuses old workers and every missing required capability
         { ready },
       )
     })
+  }
+})
+
+async function vPredictionInput(root, input) {
+  Object.assign(input, { profile: 'v-prediction', side: 256, steps: 3 })
+  const sources = []
+  for (const [key, type] of [
+    ['illustrious', 'checkpoint'],
+    ['illustriousLora', 'lora'],
+  ]) {
+    // Exact tiny files are controlled preflight inputs. Readiness deliberately stops before
+    // catalog, copies or inference; these are never presented as trained model substitutes.
+    const bytes = Buffer.from(`read-only v-prediction preflight ${key}\n`)
+    const source = path.join(root, `${key}.safetensors`)
+    await fs.writeFile(source, bytes)
+    const entry = await fs.lstat(source)
+    sources.push({ source, bytes, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs })
+    input[key] = {
+      path: source,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      byteSize: bytes.length,
+      type,
+      family: 'illustrious',
+      name: key,
+      versionName: `${key} exact version`,
+    }
+  }
+  Object.assign(input.illustrious, {
+    predictionType: null,
+    trainedObjective: 'v_prediction',
+    origin: {
+      kind: 'civitai-trained',
+      modelId: 1147756,
+      versionId: 2679856,
+      fileId: 2566634,
+      url: 'https://civitai.com/api/download/models/2679856?fileId=2566634',
+      modelApi: 'https://civitai.com/api/v1/models/1147756',
+      versionApi: 'https://civitai.com/api/v1/model-versions/2679856',
+      creator: 'Knightus_Ai',
+      baseModel: 'NoobAI',
+    },
+  })
+  return sources
+}
+
+test('v-prediction requires strict 256/3 controls before catalog, worker or source reads', async (t) => {
+  // Production boundary: the actual CLI finite-profile admission. Valid fixture fields remain
+  // fixed; neighboring controls below reach the independent readiness refusal.
+  for (const [name, change, message] of [
+    ['small side', { side: 128 }, /V-prediction qualification requires exactly 256 pixels/],
+    ['fewer steps', { steps: 2 }, /V-prediction qualification requires exactly 3 authored steps/],
+    ['boolean side', { side: true }, /Qualification image side must be/],
+    ['string steps', { steps: '3' }, /AssertionError/],
+  ])
+    await t.test(name, async () => {
+      await fixture(async ({ root, appData, artifacts, input, run }) => {
+        const sources = await vPredictionInput(root, input)
+        Object.assign(input, change)
+        const refusal = await run()
+        assert.match(refusal.stderr, message)
+        assert.doesNotMatch(refusal.stderr, /installed 0\.12 worker|ENOENT/)
+        await assertProfilePreflightPreserved(appData, artifacts, 'v-prediction', sources)
+      })
+    })
+})
+
+test('v-prediction validates exact two-resource descriptors, initial policy and trained attribution before readiness', async (t) => {
+  // Mutations: let unrelated pool identities in, infer v from a fixture/header, coerce identity
+  // fields or substitute another author/API source. All refuse before DB/source/worker effects.
+  const descriptorFields = /V-prediction qualification requires exact descriptor fields/
+  const sourceIdentity =
+    /V-prediction qualification requires exact candidate API\/source\/author identity/
+  const cases = [
+    [
+      'extra Anima resource',
+      (input) => {
+        input.anima = {}
+      },
+      /accepts only its two declared resource descriptors/,
+    ],
+    [
+      'missing checkpoint',
+      (input) => {
+        input.illustrious = null
+      },
+      /requires illustrious/,
+    ],
+    [
+      'extra descriptor field',
+      (input) => {
+        input.illustriousLora.origin = {}
+      },
+      descriptorFields,
+    ],
+    [
+      'wrong LoRA type',
+      (input) => {
+        input.illustriousLora.type = 'embedding'
+      },
+      /requires checkpoint and ordinary LoRA descriptors/,
+    ],
+    [
+      'wrong checkpoint family',
+      (input) => {
+        input.illustrious.family = 'anima'
+      },
+      /requires the Illustrious family/,
+    ],
+    [
+      'relative source path',
+      (input) => {
+        input.illustrious.path = 'relative.safetensors'
+      },
+      /canonical absolute safetensors paths/,
+    ],
+    [
+      'coerced SHA',
+      (input) => {
+        input.illustriousLora.sha256 = null
+      },
+      /exact SHA-256 identities/,
+    ],
+    [
+      'zero size',
+      (input) => {
+        input.illustrious.byteSize = 0
+      },
+      /positive exact byte sizes/,
+    ],
+    [
+      'blank name',
+      (input) => {
+        input.illustrious.name = ' '
+      },
+      /nonempty exact labels/,
+    ],
+    [
+      'duplicate weight identity',
+      (input) => {
+        input.illustriousLora.sha256 = input.illustrious.sha256
+      },
+      /two distinct file identities/,
+    ],
+    [
+      'seeded v override',
+      (input) => {
+        input.illustrious.predictionType = 'v_prediction'
+      },
+      /begin with assumed epsilon/,
+    ],
+    [
+      'other trained objective',
+      (input) => {
+        input.illustrious.trainedObjective = 'epsilon'
+      },
+      /declared v-trained checkpoint/,
+    ],
+    [
+      'extra origin field',
+      (input) => {
+        input.illustrious.origin.creditRequired = true
+      },
+      sourceIdentity,
+    ],
+    [
+      'other source file',
+      (input) => {
+        input.illustrious.origin.fileId += 1
+      },
+      sourceIdentity,
+    ],
+    [
+      'other download URL',
+      (input) => {
+        input.illustrious.origin.url += '&download=1'
+      },
+      sourceIdentity,
+    ],
+    [
+      'other creator',
+      (input) => {
+        input.illustrious.origin.creator = 'Someone else'
+      },
+      sourceIdentity,
+    ],
+    [
+      'inferred source label',
+      (input) => {
+        input.illustrious.origin.baseModel = 'Illustrious'
+      },
+      sourceIdentity,
+    ],
+  ]
+  for (const [name, mutate, message] of cases)
+    await t.test(name, async () => {
+      await fixture(async ({ root, appData, artifacts, input, run }) => {
+        const sources = await vPredictionInput(root, input)
+        mutate(input)
+        const refusal = await run()
+        assert.match(refusal.stderr, message)
+        assert.doesNotMatch(refusal.stderr, /installed 0\.12 worker|ENOENT/)
+        await assertProfilePreflightPreserved(appData, artifacts, 'v-prediction', sources)
+      })
+    })
+})
+
+test('valid fresh and resumed v-prediction fixtures reach exact worker/capability refusals before any model copy', async (t) => {
+  // Neighbor: full schema and source attribution accepted, independent ready evidence refused.
+  // This dedicated profile permits fresh admission; it must not inherit old six-resource resume.
+  const capabilities = [
+    'illustrious-txt2img',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+  ]
+  for (const resume of [false, true]) {
+    for (const [name, ready, message] of [
+      [
+        'old worker',
+        { workerVersion: '0.11.0', capabilities },
+        /V-prediction qualification requires an installed 0\.12 worker/,
+      ],
+      ...capabilities.map((capability) => [
+        `missing ${capability}`,
+        {
+          workerVersion: '0.12.0',
+          capabilities: capabilities.filter((entry) => entry !== capability),
+        },
+        new RegExp(`V-prediction qualification requires ${capability}`),
+      ]),
+    ]) {
+      if (resume && name !== 'old worker') continue
+      await t.test(`${resume ? 'resume' : 'fresh'} ${name}`, async () => {
+        await fixture(
+          async ({ root, appData, artifacts, input, run }) => {
+            const sources = await vPredictionInput(root, input)
+            const refusal = await run({ resume })
+            assert.match(refusal.stderr, message)
+            assert.doesNotMatch(
+              refusal.stderr,
+              /must resume|Qualification profile must be|requires exactly|ENOENT/,
+            )
+            await assertProfilePreflightPreserved(appData, artifacts, 'v-prediction', sources)
+          },
+          { ready },
+        )
+      })
+    }
   }
 })
 

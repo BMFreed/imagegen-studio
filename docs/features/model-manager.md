@@ -74,7 +74,12 @@ Already fixed project decisions:
 - CivitAI in-app search / marketplace browsing is not MVP.
 - SDXL/Illustrious-like `.safetensors` files remain source files; the worker loads them through the Invoke-like Diffusers single-file path and caches loaded components in RAM/VRAM.
 - Illustrious and Anima are the supported MVP checkpoint families. Any supported
-  CivitAI `.safetensors` checkpoint in either family can be installed. Anima
+  CivitAI `.safetensors` checkpoint in either family can be installed. The exact
+  CivitAI `NoobAI` label maps to the Illustrious family while its raw source label
+  remains unchanged; arbitrary SDXL and Pony checkpoints remain unsupported.
+  Standalone VAE applicability follows its separate
+  [managed-model contract](../contracts/managed-model-library.md#source-metadata-и-пользовательские-настройки).
+  Anima
   uses a separate rectified-flow path. Each supported custom Anima checkpoint
   is installed with pinned Qwen3 encoder and VAE. This pairing does not prove
   structural compatibility; Generate checks it separately.

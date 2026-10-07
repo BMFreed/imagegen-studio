@@ -55,15 +55,25 @@ hash и source link. Любой CivitAI checkpoint поддерживаемог�
 Illustrious или Anima с поддерживаемым `.safetensors`-файлом можно установить
 после обычной проверки источника и целостности; SHA-256 определяет точные bytes
 и resource identity, но не служит списком разрешённых моделей.
-Метка семейства `SDXL` в CivitAI сама по себе не означает `Illustrious` и не
-включает checkpoint в поддерживаемый список. SDXL в названии loader'а и
-проверки весов обозначает архитектуру Illustrious, а не третье семейство.
+Для checkpoint, LoRA и embedding точная CivitAI source label `NoobAI` относится
+к поддерживаемому семейству `illustrious`, как и `Illustrious`. Исходный
+`baseModel: NoobAI` сохраняется в preview и установленной source metadata;
+mapping не переименовывает source и не доказывает совместимость точных весов.
+[Официальная карточка NoobAI](https://huggingface.co/Laxhar/noobai-XL-1.0)
+указывает fine-tuning от `OnomaAIResearch/Illustrious-xl-early-release-v0`.
+Метки `SDXL`, `SDXL 1.0` и `Pony` сами по себе не означают `Illustrious` и не
+включают checkpoint/LoRA/embedding в поддерживаемый список. Другие написания
+`NoobAI` также не принимаются по substring или нормализации регистра.
+SDXL в названии loader'а и проверки весов обозначает архитектуру Illustrious,
+а не третье семейство.
 
 Для standalone VAE type-aware mapping принимает source label `Illustrious` или
 `SDXL 1.0` как применимость компонента к Illustrious pipeline. Исходный `baseModel`
 сохраняется в source metadata; это не утверждение о lineage VAE и не расширение
-семейств checkpoint/LoRA. Другие source labels внешнего VAE сейчас отвергаются;
-закреплённый Anima VAE сохраняет отдельную dependency identity. Проверенная
+семейств checkpoint/LoRA. Другие source labels внешнего VAE, включая `NoobAI`,
+сейчас отвергаются: family mapping derivatives не заменяет отдельную политику
+применимости standalone VAE. Закреплённый Anima VAE сохраняет отдельную dependency
+identity. Проверенная
 целостность установленного VAE не доказывает его ML compatibility: она требует
 структурной проверки и actual loading следующим pipeline checkpoint.
 
@@ -158,6 +168,11 @@ resource:
   файла;
 - presets и provenance остаются читаемыми после удаления локального файла;
 - наличие другой версии той же модели не маскирует exact-version mismatch.
+
+Для NoobAI derivatives repair повторно проходит тот же exact-label source
+mapping и проверку exact CivitAI version/file/hash; raw source label остаётся
+`NoobAI`, локальное семейство — `illustrious`. Repair не подменяет source family,
+не выводит `predictionType` из имени/metadata и не сбрасывает exact-file override.
 
 ## Перенос точной ссылки между библиотеками
 

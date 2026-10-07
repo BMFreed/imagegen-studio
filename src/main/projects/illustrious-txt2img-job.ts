@@ -229,7 +229,7 @@ export async function withIllustriousGenerationRequest<T>(input: {
   ) {
     throw new IllustriousJobError(
       'GENERATION_INPUT_CHANGED',
-      'The exact checkpoint path changed after preparation.',
+      'The exact checkpoint or its prediction type changed after preparation.',
     )
   }
 

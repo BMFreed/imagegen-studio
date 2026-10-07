@@ -336,7 +336,9 @@ function baseModelFamily(input: string, type: ModelResourceType): BaseModelFamil
       'Standalone VAE installation supports only Illustrious and SDXL 1.0 components. Anima uses its pinned VAE.',
     )
   }
-  if (input === 'Illustrious') {
+  // NoobAI derivatives use the supported Illustrious family; keep the source label intact.
+  // This exact-label mapping does not broaden standalone VAE applicability above.
+  if (input === 'Illustrious' || input === 'NoobAI') {
     return 'illustrious'
   }
   if (input === 'Anima') {

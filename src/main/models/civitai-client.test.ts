@@ -157,8 +157,100 @@ test('preview preserves exact file IDs and file-specific URLs on a multi-file ve
   )
 })
 
+test('NoobAI version selection retains source labels and the selected checkpoint maps to Illustrious', async () => {
+  const sourceModel = {
+    ...model,
+    modelVersions: [
+      { baseModel: 'NoobAI', id: 7, name: 'v-pred derivative' },
+      { baseModel: 'Anima', id: 8, name: 'Anima derivative' },
+      { baseModel: 'Pony', id: 9, name: 'unsupported derivative' },
+    ],
+  }
+  const { calls, fetcher } = fixtureTransport({ ...version, baseModel: 'NoobAI' }, sourceModel)
+  const client = new CivitaiClient(fetcher)
+  const choices = await client.previewImport('https://civitai.com/models/42', 'token')
+  assert.equal(choices.kind, 'select-version')
+  if (choices.kind !== 'select-version') {
+    throw new Error('Expected explicit version selection.')
+  }
+  assert.deepEqual(choices.versions, sourceModel.modelVersions)
+  assert.deepEqual(
+    calls.map((call) => call.pathname),
+    ['/api/v1/models/42'],
+  )
+
+  const selected = await client.previewImport(
+    'https://civitai.com/models/42?modelVersionId=7',
+    'token',
+  )
+  assert.equal(selected.kind, 'select-file')
+  if (selected.kind !== 'select-file') {
+    throw new Error('Expected the selected checkpoint file.')
+  }
+  assert.equal(selected.baseModel, 'NoobAI')
+  assert.equal(selected.baseModelFamily, 'illustrious')
+  assert.equal(selected.resourceType, 'checkpoint')
+  assert.equal(selected.modelId, 42)
+  assert.equal(selected.versionId, 7)
+  assert.deepEqual(selected.trainedWords, ['portrait'])
+  assert.deepEqual(
+    selected.files.map((file) => file.fileId),
+    [701, 702],
+  )
+  assert.equal(selected.files[0]?.sha256, 'a'.repeat(64))
+  assert.equal(selected.files[0]?.sizeEstimateBytes, 10_752)
+  assert.equal(
+    selected.files[1]?.downloadUrl,
+    'https://civitai.com/api/download/models/6?fileId=702',
+  )
+  assert.deepEqual(
+    calls.map((call) => call.pathname),
+    ['/api/v1/models/42', '/api/v1/models/42', '/api/v1/model-versions/7'],
+  )
+})
+
+test('NoobAI LoRA and embedding previews use Illustrious without rewriting source metadata', async () => {
+  for (const [type, expectedType] of [
+    ['LORA', 'lora'],
+    ['TextualInversion', 'embedding'],
+  ]) {
+    const { fetcher } = fixtureTransport({ ...version, baseModel: 'NoobAI' }, { ...model, type })
+    const selected = await new CivitaiClient(fetcher).previewImport(
+      'https://civitai.com/models/42?modelVersionId=7',
+      'token',
+    )
+    assert.equal(selected.kind, 'select-file')
+    if (selected.kind !== 'select-file') {
+      throw new Error('Expected a derivative file preview.')
+    }
+    assert.equal(selected.baseModel, 'NoobAI')
+    assert.equal(selected.baseModelFamily, 'illustrious')
+    assert.equal(selected.resourceType, expectedType)
+    assert.deepEqual(selected.trainedWords, version.trainedWords)
+    assert.equal(selected.files[0]?.sha256, 'a'.repeat(64))
+  }
+})
+
+test('NoobAI family mapping does not admit an unsupported resource type', async () => {
+  const { calls, fetcher } = fixtureTransport(
+    { ...version, baseModel: 'NoobAI' },
+    { ...model, type: 'LoCon' },
+  )
+  await assert.rejects(
+    new CivitaiClient(fetcher).previewImport(
+      'https://civitai.com/models/42?modelVersionId=7',
+      'token',
+    ),
+    { code: 'CIVITAI_UNSUPPORTED_TYPE' },
+  )
+  assert.deepEqual(
+    calls.map((call) => call.pathname),
+    ['/api/v1/models/42'],
+  )
+})
+
 test('upscaler preview accepts checkpoint files without a generation model family', async () => {
-  for (const sourceFamily of [null, 'Other']) {
+  for (const sourceFamily of [null, 'Other', 'NoobAI']) {
     const upscalerModel = {
       ...model,
       modelVersions: [{ baseModel: sourceFamily, id: 7, name: 'v1' }],
@@ -216,26 +308,43 @@ test('upscaler preview accepts checkpoint files without a generation model famil
 })
 
 test('checkpoint imports still exclude pickle files and unsupported model families', async () => {
-  const pickleOnly = fixtureTransport({
-    ...version,
-    files: [{ ...version.files[0], name: 'checkpoint.pth' }],
-  })
-  await assert.rejects(
-    new CivitaiClient(pickleOnly.fetcher).previewImport(
-      'https://civitai.com/models/42?modelVersionId=7',
-      'token',
-    ),
-    { code: 'CIVITAI_NO_SUPPORTED_FILE' },
-  )
+  for (const baseModel of ['Illustrious', 'NoobAI']) {
+    const pickleOnly = fixtureTransport({
+      ...version,
+      baseModel,
+      files: [{ ...version.files[0], name: 'checkpoint.pth' }],
+    })
+    await assert.rejects(
+      new CivitaiClient(pickleOnly.fetcher).previewImport(
+        'https://civitai.com/models/42?modelVersionId=7',
+        'token',
+      ),
+      { code: 'CIVITAI_NO_SUPPORTED_FILE' },
+      baseModel,
+    )
+  }
 
-  const unsupportedFamily = fixtureTransport({ ...version, baseModel: 'Other' })
-  await assert.rejects(
-    new CivitaiClient(unsupportedFamily.fetcher).previewImport(
-      'https://civitai.com/models/42?modelVersionId=7',
-      'token',
-    ),
-    { code: 'CIVITAI_UNSUPPORTED_FAMILY' },
-  )
+  for (const type of ['Checkpoint', 'LORA', 'TextualInversion']) {
+    for (const baseModel of [
+      'Other',
+      'SDXL',
+      'SDXL 1.0',
+      'Pony',
+      'NoobAI XL',
+      'noobai',
+      'NoobAI ',
+    ]) {
+      const unsupportedFamily = fixtureTransport({ ...version, baseModel }, { ...model, type })
+      await assert.rejects(
+        new CivitaiClient(unsupportedFamily.fetcher).previewImport(
+          'https://civitai.com/models/42?modelVersionId=7',
+          'token',
+        ),
+        { code: 'CIVITAI_UNSUPPORTED_FAMILY' },
+        `${type}: ${baseModel}`,
+      )
+    }
+  }
 })
 
 test('standalone VAE preview maps only Illustrious and SDXL 1.0 applicability while retaining source labels', async () => {
@@ -256,7 +365,7 @@ test('standalone VAE preview maps only Illustrious and SDXL 1.0 applicability wh
       )
     }
   }
-  for (const baseModel of ['Anima', 'SD 1.5', 'SDXL', 'Pony', 'Other', '', null]) {
+  for (const baseModel of ['Anima', 'NoobAI', 'SD 1.5', 'SDXL', 'Pony', 'Other', '', null]) {
     const { fetcher } = fixtureTransport({ ...version, baseModel }, { ...model, type: 'VAE' })
     await assert.rejects(
       new CivitaiClient(fetcher).previewImport(

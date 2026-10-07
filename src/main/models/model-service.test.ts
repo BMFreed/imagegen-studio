@@ -63,7 +63,7 @@ function safeStorage(): SafeStorageAdapter {
 }
 
 function civitaiApi(options: {
-  family?: 'Anima' | 'Illustrious' | 'SDXL 1.0'
+  family?: 'Anima' | 'Illustrious' | 'NoobAI' | 'SDXL 1.0'
   fileHash?: string
   fileSizeKB?: number | string | null
   fileUrl?: string
@@ -1072,57 +1072,111 @@ test('storage summary counts shared model bytes once, includes managed dependenc
   )
 })
 
-test('repairing a missing managed file preserves the exact CivitAI version and default selection', async () => {
-  const bytes = Buffer.from('checkpoint bytes to restore after deletion')
-  let downloadCount = 0
-  const requests: { authorization: string | null; pathname: string }[] = []
-  const downloader = new ModelDownloader({
-    resolveAddresses: PUBLIC_ADDRESSES,
-    transport: async () => {
-      downloadCount++
-      return new Response(bytes, {
-        headers: { 'content-type': 'application/octet-stream' },
-      })
-    },
+// Actual CivitAI parser -> service -> coordinator -> managed bytes/SQLite -> repair and reopen.
+// The external source/download, secret store and ML qualification are fixtures; no inference runs.
+for (const family of ['Illustrious', 'NoobAI'] as const) {
+  test(`${family} missing-file repair preserves exact source identity, default and prediction override`, async () => {
+    const bytes = Buffer.from('checkpoint bytes to restore after deletion')
+    let downloadCount = 0
+    const requests: { authorization: string | null; pathname: string }[] = []
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => {
+        downloadCount++
+        return new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      },
+    })
+    await withModelHarness(
+      civitaiApi({ family, fileHash: sha256(bytes), requests }),
+      downloader,
+      async ({ coordinator, repository, root, service }) => {
+        const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(firstPreview.baseModel, family)
+        assert.equal(firstPreview.baseModelFamily, 'illustrious')
+        const firstJob = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(firstPreview.previewId, 701, false),
+        )
+        assert.equal(firstJob.status, 'completed', firstJob.error?.message ?? '')
+        const before = (await repository.listInstalled())[0]
+        assert.ok(before)
+        const originalVersion = before.versions[0]
+        assert.ok(originalVersion)
+        assert.equal(originalVersion.baseModelFamily, 'illustrious')
+        assert.equal(originalVersion.sourceMetadata['baseModel'], family)
+        assert.equal(originalVersion.predictionType, null)
+        assert.equal(
+          (await service.resolveGenerationCheckpoint(before.id, originalVersion.id)).predictionType,
+          'epsilon',
+        )
+        await service.setPredictionType(before.id, originalVersion.id, 'v_prediction')
+        const reference = await service.resolveGenerationCheckpoint(before.id, originalVersion.id)
+        assert.equal(reference.predictionType, 'v_prediction')
+        await rm(originalVersion.file.managedPath)
+
+        const repairPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(repairPreview.baseModel, family)
+        assert.equal(repairPreview.baseModelFamily, 'illustrious')
+        assert.equal(repairPreview.files[0]?.alreadyInstalled, false)
+        assert.equal(repairPreview.files[0]?.needsRepair, true)
+        assert.equal(repairPreview.files[0]?.reusesInstalledFile, false)
+        const repairedJob = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(repairPreview.previewId, 701, false),
+        )
+        assert.equal(repairedJob.status, 'completed', repairedJob.error?.message ?? '')
+        assert.equal(downloadCount, 2)
+
+        const after = (await repository.listInstalled())[0]
+        assert.ok(after)
+        assert.equal(after.id, before.id)
+        assert.equal(after.defaultVersionId, before.defaultVersionId)
+        assert.equal(after.versions.length, 1)
+        assert.equal(after.versions[0]?.id, originalVersion.id)
+        assert.equal(after.versions[0]?.file.id, originalVersion.file.id)
+        assert.equal(after.versions[0]?.file.managedPath, originalVersion.file.managedPath)
+        assert.equal(after.versions[0]?.baseModelFamily, 'illustrious')
+        assert.equal(after.versions[0]?.sourceMetadata['baseModel'], family)
+        assert.equal(after.versions[0]?.civitaiVersionId, 7)
+        assert.equal(after.versions[0]?.civitaiFileId, 701)
+        assert.equal(after.versions[0]?.file.sha256, sha256(bytes))
+        assert.deepEqual(await readFile(originalVersion.file.managedPath), bytes)
+        assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'ready')
+        assert.deepEqual(
+          await service.resolveGenerationCheckpoint(before.id, originalVersion.id),
+          reference,
+        )
+
+        const reopened = openAppDatabase(root, migrations)
+        try {
+          const reopenedRepository = new ModelRepository(reopened.db)
+          const [persisted] = await reopenedRepository.listInstalled()
+          assert.ok(persisted)
+          assert.equal(persisted.id, before.id)
+          assert.equal(persisted.defaultVersionId, before.defaultVersionId)
+          assert.equal(persisted.versions.length, 1)
+          const restored = persisted.versions[0]
+          assert.ok(restored)
+          assert.equal(restored.id, originalVersion.id)
+          assert.equal(restored.baseModelFamily, 'illustrious')
+          assert.deepEqual(restored.sourceMetadata, originalVersion.sourceMetadata)
+          assert.equal(restored.civitaiVersionId, 7)
+          assert.equal(restored.civitaiFileId, 701)
+          assert.equal(restored.file.id, originalVersion.file.id)
+          assert.equal(restored.file.sha256, sha256(bytes))
+          assert.equal(restored.file.sizeBytes, bytes.length)
+          assert.equal(
+            await reopenedRepository.getPredictionOverride(restored.file),
+            'v_prediction',
+          )
+          assert.deepEqual(await readFile(restored.file.managedPath), bytes)
+        } finally {
+          await reopened.close()
+        }
+      },
+    )
   })
-  await withModelHarness(
-    civitaiApi({ fileHash: sha256(bytes), requests }),
-    downloader,
-    async ({ coordinator, repository, service }) => {
-      const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
-      const firstJob = await waitForTerminalJob(coordinator, () =>
-        coordinator.startInstall(firstPreview.previewId, 701, false),
-      )
-      assert.equal(firstJob.status, 'completed', firstJob.error?.message ?? '')
-      const before = (await repository.listInstalled())[0]
-      assert.ok(before)
-      const originalVersion = before.versions[0]
-      assert.ok(originalVersion)
-      await rm(originalVersion.file.managedPath)
-
-      const repairPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
-      assert.equal(repairPreview.files[0]?.alreadyInstalled, false)
-      assert.equal(repairPreview.files[0]?.needsRepair, true)
-      assert.equal(repairPreview.files[0]?.reusesInstalledFile, false)
-      const repairedJob = await waitForTerminalJob(coordinator, () =>
-        coordinator.startInstall(repairPreview.previewId, 701, false),
-      )
-      assert.equal(repairedJob.status, 'completed', repairedJob.error?.message ?? '')
-      assert.equal(downloadCount, 2)
-
-      const after = (await repository.listInstalled())[0]
-      assert.ok(after)
-      assert.equal(after.id, before.id)
-      assert.equal(after.defaultVersionId, before.defaultVersionId)
-      assert.equal(after.versions.length, 1)
-      assert.equal(after.versions[0]?.id, originalVersion.id)
-      assert.equal(after.versions[0]?.file.id, originalVersion.file.id)
-      assert.equal(after.versions[0]?.file.managedPath, originalVersion.file.managedPath)
-      assert.deepEqual(await readFile(originalVersion.file.managedPath), bytes)
-      assert.equal((await service.getCatalog())[0]?.versions[0]?.fileStatus, 'ready')
-    },
-  )
-})
+}
 
 // Boundary: actual import parser -> install/repair coordinator -> SQLite/managed bytes -> exact resolver.
 // Small integrity fixtures are deliberately not ML-loadable VAEs; no inference is exercised here.

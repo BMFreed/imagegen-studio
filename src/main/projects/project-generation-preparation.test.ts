@@ -1047,7 +1047,10 @@ test(
             called = true
           },
         }),
-        { code: 'GENERATION_INPUT_CHANGED' },
+        {
+          code: 'GENERATION_INPUT_CHANGED',
+          message: 'The exact checkpoint or its prediction type changed after preparation.',
+        },
       )
       assert.equal(called, false)
       assert.equal(existsSync(scratchBasePath), false)
