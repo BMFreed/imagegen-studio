@@ -1568,8 +1568,11 @@ result-to-preset остаются открытыми; фазы 2B/2C не объ
 authoring, frozen queue/Retry, native dispatch и portable accepted settings;
 [noise-profile срез](../engineering/phase-2c-noise-profile-research.md)
 добавляет exact-file controls, SQLite policy, frozen execution/Retry и accepted
-readback/comparison. Следующий шаг 2C — trained NoobAI author-recipe qualification
-перед dynamic multi-job batches. NoobAI не становится
+readback/comparison. [Installed NoobAI author-recipe qualification](../engineering/phase-2c-noobai-author-recipe-research.md)
+проверяет два distinct trained checkpoints, independent noise/sampler controls,
+Cancel/refused/restored Retry и два source-grounded прогона 832×1216/28 steps.
+Следующий шаг 2C — normal outpaint на обоих NoobAI objectives и component/type-aware
+matrix, затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1578,17 +1581,25 @@ readback/comparison. Следующий шаг 2C — trained NoobAI author-reci
 `rescale_betas_zero_snr=True`. До noise-profile среза worker при выборе prediction
 type сохранял общий pinned schedule; теперь native scheduler получает независимый
 frozen профиль точного файла. Euler больше не является implementation gap;
-ZTSNR/spacing policy реализована отдельным срезом; full trained author-recipe
-qualification всё ещё отсутствует. Рекомендация автора по sampler не доказывает
+ZTSNR/spacing policy реализована отдельным срезом; установленный worker0.14 теперь
+проверен на официальном epsilon NoobAI и v-trained Cyberfalafel. V recipe использует
+upstream NoobAI guidance на credited derivative; leading spacing отдельно отмечен
+как export-based assumption. Рекомендация автора по sampler не доказывает
 техническую несовместимость всех остальных методов.
 
 **Checkpoint 07.10.2026:** пункты 2–4 по policy/frozen execution имеют
 [реализацию и evidence](../engineering/phase-2c-noise-profile-research.md):
 Model Manager per-field assumptions/override/reset, exact SQLite persistence,
 worker0.14 native schedules, preserving Retry, portable accepted profile/legacy
-Unavailable. Полная component/type-aware matrix и genuine installed author recipe
-ещё не квалифицированы; пункты ниже сохраняют полный целевой scope. Старый
-installed reusable worker0.12 не объявляется новым runtime без обновления и проверки.
+Unavailable. Новый installed checkpoint проверяет пять trained single-axis
+controls (их partial report завершился oracle-launcher setup error), отдельный
+успешный lifecycle stage с четырьмя finite completions/пятью admissions/Cancel/тремя
+refusals и два author-parameter cases. Три installed CPU mutations независимо
+ловят ignored ZTSNR, spacing и Euler dispatch; source bytes восстановлены.
+Один canonical reusable environment обновлён до worker0.14 с native startup/exit
+и свежим manifest; исторический worker0.12 provision report сохранён. Полная
+component/type-aware matrix, оба NoobAI outpaint objectives и новые Anima trained
+regressions на этом worker остаются открытыми; пункты ниже сохраняют полный scope.
 
 Порядок реализации:
 

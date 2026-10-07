@@ -20,6 +20,7 @@ import {
   readdir,
   realpath,
   rename,
+  rm,
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
@@ -52,6 +53,23 @@ import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
+import { assertUpgradeBounds } from './upgrade-qualification-worker.mjs'
+import { stageLocalCivitaiQualification } from './qualification-local-civitai.mjs'
+import {
+  assertAcceptedCheckpointIdentity,
+  assertNoiseCatalog,
+  assertNoiseExecution,
+  assertNoiseReady,
+  assertNoiseStageOutcome,
+  assertNoiseTxt2ImgProgress,
+  boundedNoiseCases,
+  executionFor,
+  noiseModelKeys,
+  noiseScheduleOracleProgram,
+  noiseStages,
+  normalizeNoiseInputs,
+  validateNoiseProfileFixture,
+} from './noobai-noise-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -68,12 +86,14 @@ const vaePrecisionProfile = fixture.profile === 'vae-precision'
 const externalVaeProfile = fixture.profile === 'external-vae'
 const embeddingsProfile = fixture.profile === 'embeddings'
 const vPredictionProfile = fixture.profile === 'v-prediction'
+const noiseProfile = fixture.profile === 'noise-profile'
 const illustriousOnlyProfile =
   cfgRescaleProfile ||
   vaePrecisionProfile ||
   externalVaeProfile ||
   embeddingsProfile ||
-  vPredictionProfile
+  vPredictionProfile ||
+  noiseProfile
 const externalVaeKeys = ['externalVaeLdm', 'externalVaeNative', 'externalVaeControl']
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
 const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
@@ -165,6 +185,14 @@ if (vPredictionProfile) {
     'Fresh exact two-resource catalog: declared Cyberfalafel NoobAI-derived v-trained checkpoint by Knightus_Ai and one previously qualified ordinary Illustrious LoRA. Source/API/objective descriptors and local bytes are preconditions, not live product download or reconstructed training lineage. The checkpoint starts with null prediction/assumed epsilon; only actual Model Manager UI authors the exact-file override.'
   report.boundary.limits =
     'Installed development worker 0.12, 256 pixels/three requested steps/seed 0/Euler a/Embedded FP32/signed LoRA -0.5. Four finite matched v_prediction/epsilon-policy-control txt2img and common-source strength-0.5 img2img cases. Actual Cancel, refused public Retry under changed library prediction, UI restoration and exact frozen successful Retry, explicit Add/Save/readback/reopen/comparison. Epsilon on v-trained weights is an interpretation control. No ZTSNR/trailing-schedule or full author recipe, image quality, Invoke parity, other installed samplers/outpaint, dynamic batches, live delivery, arbitrary compatibility, Anima or signed release claim.'
+}
+if (noiseProfile) {
+  report.boundary.preconditions =
+    'Reuses the original canonical installed worker0.14/runtime and exact credited Cyberfalafel v-trained checkpoint/ordinary LoRA. One distinct official NoobAI epsilon-trained checkpoint is adopted through Main ModelDownloader with local transport. Exact source cards, training attribution, original bytes and recipe snapshots are declared preconditions. Cyber execution uses separately labeled upstream NoobAI guidance on a credited derivative; it does not claim the derivative author published that same recipe.'
+  report.boundary.limits =
+    'Only the explicitly selected bounded, bounded-lifecycle, author or outpaint stage is qualified. Bounded-lifecycle covers four lifecycle completions and five admissions, without the five trained matched pixel controls or a full bounded claim. Bounded 256px/three-step causal controls do not prove author-resolution execution. Author 832x1216/28-step runs are separate. Normal outpaint uses fixed local LaMa; no authored masks, Regional Guidance, Smart Patch, dynamic batches, Invoke pixel parity, subjective quality, live CivitAI delivery, release Install/Repair or full component matrix.'
+  report.noiseStage = fixture.stage
+  report.authorRecipes = structuredClone(fixture.authorRecipes)
 }
 async function hashFile(file) {
   const hash = createHash('sha256')
@@ -765,7 +793,44 @@ async function installArtifact(repository, value, id, dependencies, publication 
     !embeddingsProfile || value.type === 'embedding',
     'Embedding qualification must reuse the seven existing resources without new copies.',
   )
-  await copyFile(value.path, managed, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+  if (noiseProfile && value === fixture.illustriousEpsilon) {
+    assert.equal(id, 700_140, 'Only the one new official epsilon checkpoint may be adopted.')
+    await assert.rejects(lstat(managed), { code: 'ENOENT' })
+    const stagingDirectory = path.join(fixture.appData, 'models', `.qualification-epsilon-${runId}`)
+    const {
+      verified,
+      transportCalls: localTransportCalls,
+      credentialBoundary,
+    } = await stageLocalCivitaiQualification({
+      ModelDownloader,
+      stagingDirectory,
+      source: {
+        path: value.path,
+        url: value.origin.url,
+        byteSize: value.byteSize,
+        sha256: value.sha256,
+      },
+    })
+    assert.equal(verified.sha256, value.sha256)
+    assert.equal(verified.sizeBytes, value.byteSize)
+    await rename(verified.stagingPath, managed)
+    await rm(stagingDirectory, { recursive: true })
+    report.epsilonAdoption = {
+      source: value.origin,
+      localTransportCalls,
+      bytes: verified.sizeBytes,
+      sha256: verified.sha256,
+      credentialBoundary,
+      boundary:
+        'Actual Main ModelDownloader hash/size/staging and catalog publication with local source transport; no live CivitAI delivery claim.',
+    }
+  } else {
+    assert.ok(
+      !noiseProfile,
+      'Noise profile must reuse its two prior managed files; only the new epsilon checkpoint may be copied.',
+    )
+    await copyFile(value.path, managed, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+  }
   assert.equal(await hashFile(managed), value.sha256)
   const sourceAfter = await lstat(value.path)
   assert.deepEqual(
@@ -829,6 +894,7 @@ let database
 let mainLog
 let preservedExternalPriorCatalog = null
 let preservedEmbeddingPriorCatalog = null
+let preservedNoisePriorCatalog = null
 async function ensureQualificationResourceLimits(phase) {
   report.resourceLimits = await boundQualificationProcess(report.nativeProcessPid)
   report.resourceLimitChecks ??= []
@@ -1652,14 +1718,18 @@ function assertNativePrompt(compiled, raw, weightedText, weight) {
     version: 'anima-prompt-weighting-v1',
   })
 }
-async function createProject(model, lora, caseName = '') {
+async function createProject(model, lora, caseName = '', execution = null) {
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: 'New Project', exact: true }).first().click()
   const dialog = window.getByRole('dialog', { name: 'New Project', exact: true })
   const title = `Installed ${model.family} qualification ${runId}${caseName ? ` ${caseName}` : ''}`
   await dialog.locator('input[aria-label="Project name"]').fill(title)
-  await dialog.locator('input[aria-label="Project width"]').fill(String(fixture.side))
-  await dialog.locator('input[aria-label="Project height"]').fill(String(fixture.side))
+  await dialog
+    .locator('input[aria-label="Project width"]')
+    .fill(String(execution?.width ?? fixture.side))
+  await dialog
+    .locator('input[aria-label="Project height"]')
+    .fill(String(execution?.height ?? fixture.side))
   await dialog.getByRole('button', { name: 'Create Project', exact: true }).click()
   await window.getByRole('tab', { name: title, exact: true }).waitFor()
   const project = (await api('list')).find((item) => item.title === title)
@@ -1676,12 +1746,15 @@ async function createProject(model, lora, caseName = '') {
     await window.getByText('Euler', { exact: true }).last().click()
   } else {
     await window.locator('[aria-label="Sampler"]').click()
-    await window.getByText('Euler a', { exact: true }).last().click()
+    await window
+      .getByText(execution?.sampler === 'euler' ? 'Euler' : 'Euler a', { exact: true })
+      .last()
+      .click()
     await window.locator('[aria-label="Scheduler"]').click()
     await window.getByText('Normal', { exact: true }).last().click()
   }
-  await setInput('Steps', fixture.steps)
-  await setInput('CFG scale', 4)
+  await setInput('Steps', execution?.steps ?? fixture.steps)
+  await setInput('CFG scale', execution?.cfgScale ?? 4)
   const random = window.getByRole('switch', { name: 'Random seed switch' })
   if ((await random.getAttribute('aria-checked')) === 'true') await random.click()
   await setInput('Generation seed', 0)
@@ -1705,15 +1778,18 @@ async function createProject(model, lora, caseName = '') {
   }
   await expect
     .poll(async () => (await tab(project)).generationDraft.sampling.steps)
-    .toBe(fixture.steps)
+    .toBe(execution?.steps ?? fixture.steps)
   return project
 }
-async function setPredictionThroughUi(project, predictionType) {
+async function setPredictionThroughUi(project, predictionType, modelKey = 'illustrious') {
   assert.ok(['epsilon', 'v_prediction'].includes(predictionType))
   const before = await tab(project)
+  const packagePath = noiseProfile ? await qualificationPackagePath(project) : null
+  const packageSha256 = packagePath ? await hashFile(packagePath) : null
   const catalogBefore = await window.evaluate(() => window.api.models.getCatalog())
   assert.equal(catalogBefore.ok, true)
-  const installed = fixture.illustrious.installed
+  const model = fixture[modelKey]
+  const installed = model.installed
   const previous = catalogBefore.value
     .find(({ id }) => id === installed.resourceId)
     .versions.find(({ id }) => id === installed.versionId)
@@ -1723,12 +1799,12 @@ async function setPredictionThroughUi(project, predictionType) {
   await manager.getByRole('button', { name: /^Checkpoints/ }).click()
   const resource = manager
     .locator('.resource-row')
-    .filter({ has: window.getByText(fixture.illustrious.name, { exact: true }) })
+    .filter({ has: window.getByText(model.name, { exact: true }) })
   await expect(resource).toHaveCount(1)
   await resource.locator('.resource-select').click()
   const row = manager
     .locator('.version-row')
-    .filter({ has: window.getByText(fixture.illustrious.versionName, { exact: true }) })
+    .filter({ has: window.getByText(model.versionName, { exact: true }) })
   await expect(row).toHaveCount(1)
   const selection = row.locator('.version-prediction .n-base-selection')
   await expect(selection).toBeVisible()
@@ -1768,11 +1844,27 @@ async function setPredictionThroughUi(project, predictionType) {
       `Library prediction editing must preserve Project ${field}.`,
     )
   await expect(window.getByText(`Prediction: ${predictionType}`, { exact: false })).toBeVisible()
+  let sql = null
+  if (noiseProfile) {
+    sql = await database.db
+      .selectFrom('checkpoint_prediction_override')
+      .selectAll()
+      .where('sha256', '=', model.sha256)
+      .where('size_bytes', '=', model.byteSize)
+      .executeTakeFirstOrThrow()
+    assert.equal(sql.prediction_type, predictionType)
+    assert.equal(
+      await hashFile(packagePath),
+      packageSha256,
+      'Library prediction editing must preserve saved .igs bytes.',
+    )
+  }
   return {
     previousPredictionType: previous.predictionType,
     predictionType,
     source: 'user',
     throughUi: true,
+    ...(noiseProfile ? { sql, packageUnchanged: true } : {}),
   }
 }
 async function comparePrediction(project, layer, captured, current, caseName, packagePath) {
@@ -1813,6 +1905,191 @@ async function comparePrediction(project, layer, captured, current, caseName, pa
     await expect(comparison).toBeHidden()
   }
 }
+async function qualificationPackagePath(project) {
+  const current = await tab(project)
+  for (const name of await readdir(path.join(fixture.appData, 'workspaces/Uncategorized'))) {
+    if (!name.endsWith('.igs')) continue
+    const packagePath = path.join(fixture.appData, 'workspaces/Uncategorized', name)
+    if ((await readIgsPackage(packagePath)).project.documentId === current.documentId)
+      return packagePath
+  }
+  throw new Error('The qualification Project has no saved package.')
+}
+async function setNoiseThroughUi(project, field, value, modelKey = 'illustrious') {
+  assert.ok(['rescaleBetasZeroSnr', 'timestepSpacing'].includes(field))
+  if (field === 'rescaleBetasZeroSnr') assert.equal(typeof value, 'boolean')
+  else assert.ok(['leading', 'linspace', 'trailing'].includes(value))
+  const model = fixture[modelKey]
+  const before = await tab(project)
+  const packagePath = await qualificationPackagePath(project)
+  const packageSha256 = await hashFile(packagePath)
+  const catalogBefore = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(catalogBefore.ok, true)
+  const previous = catalogBefore.value
+    .find(({ id }) => id === model.installed.resourceId)
+    .versions.find(({ id }) => id === model.installed.versionId)
+  const sourceField =
+    field === 'rescaleBetasZeroSnr' ? 'rescaleBetasZeroSnrSource' : 'timestepSpacingSource'
+  const policy = async () => {
+    const current = await window.evaluate(() => window.api.models.getCatalog())
+    assert.equal(current.ok, true)
+    return current.value
+      .find(({ id }) => id === model.installed.resourceId)
+      .versions.find(({ id }) => id === model.installed.versionId).noiseProfile
+  }
+  await window.getByRole('button', { name: 'Manage Models', exact: true }).click()
+  const manager = window.getByRole('dialog', { name: 'Model Manager', exact: true })
+  await expect(manager).toBeVisible()
+  await manager.getByRole('button', { name: /^Checkpoints/ }).click()
+  const resource = manager
+    .locator('.resource-row')
+    .filter({ has: window.getByText(model.name, { exact: true }) })
+  await expect(resource).toHaveCount(1)
+  await resource.locator('.resource-select').click()
+  const row = manager
+    .locator('.version-row')
+    .filter({ has: window.getByText(model.versionName, { exact: true }) })
+  const select = async (chosen) => {
+    if (field === 'rescaleBetasZeroSnr')
+      await row.getByRole('switch', { name: `ZTSNR for ${model.versionName}`, exact: true }).click()
+    else {
+      await row.locator('.checkpoint-noise-controls .n-base-selection').click()
+      await window
+        .getByText(chosen[0].toUpperCase() + chosen.slice(1), { exact: true })
+        .last()
+        .click()
+    }
+    await expect.poll(async () => (await policy()).effective[field]).toBe(chosen)
+  }
+  if (
+    previous.noiseProfile.effective[field] === value &&
+    previous.noiseProfile[sourceField] === 'assumed'
+  ) {
+    await select(
+      field === 'rescaleBetasZeroSnr' ? !value : value === 'leading' ? 'trailing' : 'leading',
+    )
+    await select(value)
+  } else if (previous.noiseProfile.effective[field] !== value) await select(value)
+  await expect
+    .poll(async () => ({
+      value: (await policy()).effective[field],
+      source: (await policy())[sourceField],
+    }))
+    .toEqual({ value, source: 'override' })
+  const actual = await policy()
+  const other = field === 'rescaleBetasZeroSnr' ? 'timestepSpacing' : 'rescaleBetasZeroSnr'
+  assert.equal(
+    actual.effective[other],
+    previous.noiseProfile.effective[other],
+    'Editing one exact-file noise field must preserve the other.',
+  )
+  const sql = await database.db
+    .selectFrom('checkpoint_noise_profile_override')
+    .selectAll()
+    .where('sha256', '=', model.sha256)
+    .where('size_bytes', '=', model.byteSize)
+    .executeTakeFirstOrThrow()
+  assert.equal(
+    field === 'rescaleBetasZeroSnr' ? sql.rescale_betas_zero_snr : sql.timestep_spacing,
+    field === 'rescaleBetasZeroSnr' ? Number(value) : value,
+  )
+  await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await expect(manager).toBeHidden()
+  const after = await tab(project)
+  for (const key of [
+    'documentId',
+    'generationDraft',
+    'primaryBbox',
+    'layers',
+    'dirty',
+    'canUndo',
+    'canRedo',
+  ])
+    assert.deepEqual(after[key], before[key], `Library noise editing must preserve Project ${key}.`)
+  assert.equal(
+    await hashFile(packagePath),
+    packageSha256,
+    'Library noise editing must preserve saved .igs bytes.',
+  )
+  return {
+    field,
+    value,
+    modelKey,
+    effective: actual.effective,
+    throughUi: true,
+    sql,
+    packageUnchanged: true,
+  }
+}
+async function authorNoiseExecution(project, modelKey, execution) {
+  const prediction = await setPredictionThroughUi(project, execution.predictionType, modelKey)
+  const zeroSnr = await setNoiseThroughUi(
+    project,
+    'rescaleBetasZeroSnr',
+    execution.noiseProfile.rescaleBetasZeroSnr,
+    modelKey,
+  )
+  const spacing = await setNoiseThroughUi(
+    project,
+    'timestepSpacing',
+    execution.noiseProfile.timestepSpacing,
+    modelKey,
+  )
+  await setVaePrecision(project, 'FP32')
+  return { prediction, zeroSnr, spacing }
+}
+async function compareNoiseProfile(project, layer, captured, current, caseName, packagePath) {
+  const before = await tab(project)
+  const originalSha256 = await hashFile(packagePath)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    const changed = comparison.locator('[data-setting="noiseProfile.rescaleBetasZeroSnr"]')
+    await expect(changed).toHaveAttribute('data-status', 'Changed')
+    await expect(changed.locator('.comparison-values p')).toHaveText([
+      captured.rescaleBetasZeroSnr ? 'Enabled' : 'Disabled',
+      current.rescaleBetasZeroSnr ? 'Enabled' : 'Disabled',
+    ])
+    // The production comparison intentionally hides Same rows by default.
+    await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
+    const spacing = comparison.locator('[data-setting="noiseProfile.timestepSpacing"]')
+    await expect(spacing).toHaveAttribute('data-status', 'Same')
+    const screenshot = path.join(fixture.artifacts, `${caseName}-noise-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return {
+      captured,
+      current,
+      zeroSnrStatus: 'Changed',
+      spacingStatus: 'Same',
+      readOnly: true,
+      screenshot,
+    }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+    const after = await tab(project)
+    for (const key of [
+      'documentId',
+      'generationDraft',
+      'layers',
+      'primaryBbox',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ])
+      assert.deepEqual(after[key], before[key])
+    assert.equal(await hashFile(packagePath), originalSha256)
+  }
+}
 async function qualificationTreeSnapshot(directory) {
   const entry = await lstat(directory).catch((error) => {
     if (error.code === 'ENOENT') return null
@@ -1840,9 +2117,11 @@ async function qualifyChangedPredictionRetryRefusal(
   targetBytes,
   packagePath,
   caseName,
+  change = () => setPredictionThroughUi(project, 'epsilon'),
+  restore = () => setPredictionThroughUi(project, 'v_prediction'),
 ) {
   assert.equal(original.status, 'canceled')
-  await setPredictionThroughUi(project, 'epsilon')
+  const changed = await change()
   const before = await tab(project)
   const layers = await layerSnapshot(before.layers)
   const rows = await queueRows(project)
@@ -1874,7 +2153,8 @@ async function qualifyChangedPredictionRetryRefusal(
   await expect(button).toBeEnabled({ timeout: 180_000 })
   await ensureQualificationResourceLimits('before refused prediction Retry')
   await button.click()
-  const message = 'The exact checkpoint or its prediction type changed after preparation.'
+  const message =
+    'The exact checkpoint, prediction type or noise profile changed after preparation.'
   await expect(manager.getByText(message, { exact: true })).toBeVisible()
   await expect
     .poll(async () => (await api('getGenerationState', project.id)).error)
@@ -1933,7 +2213,7 @@ async function qualifyChangedPredictionRetryRefusal(
   report.screenshots.push(screenshot)
   await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
   await expect(manager).toBeHidden()
-  const restored = await setPredictionThroughUi(project, 'v_prediction')
+  const restored = await restore()
   const evidence = {
     originalQueueItemId: original.id,
     sourceStatusSequence: original.status_sequence,
@@ -1944,6 +2224,7 @@ async function qualifyChangedPredictionRetryRefusal(
     stagingSha256: sha256(Buffer.from(JSON.stringify(staging))),
     packageSha256,
     restored,
+    changed,
     screenshot,
   }
   report.predictionRetryRefusals ??= []
@@ -1960,7 +2241,20 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const precisionQualification = qualification?.kind === 'vae-precision'
   const externalQualification = qualification?.kind === 'external-vae'
   const embeddingQualification = qualification?.kind === 'embeddings'
-  const predictionQualification = qualification?.kind === 'v-prediction'
+  const noiseQualification = qualification?.kind === 'noise-profile'
+  const predictionQualification = qualification?.kind === 'v-prediction' || noiseQualification
+  const execution = noiseQualification
+    ? qualification.execution
+    : {
+        width: fixture.side,
+        height: fixture.side,
+        steps: fixture.steps,
+        cfgScale: 4,
+        sampler: 'euler_a',
+      }
+  const checkpoint = noiseQualification ? fixture[qualification.modelKey] : fixture.illustrious
+  const modelKey = noiseQualification ? qualification.modelKey : 'illustrious'
+  let currentNoiseProfile = null
   const cfgQualification = qualification?.kind === 'cfg-rescale'
   assert.ok(
     qualification === null ||
@@ -1984,8 +2278,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const capturedVaeKey = externalQualification ? qualification.vaeKey : null
   const capturedStrength = externalQualification && mode === 'img2img' ? 0 : 0.5
   const capturedPredictionType = predictionQualification
-    ? qualification.predictionType
-    : fixture.illustrious.predictionType
+    ? noiseQualification
+      ? execution.predictionType
+      : qualification.predictionType
+    : checkpoint.predictionType
   const currentPredictionType = predictionQualification
     ? capturedPredictionType === 'v_prediction'
       ? 'epsilon'
@@ -2105,7 +2401,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     .toBe(1)
   const frozen = JSON.parse(admitted.frozen_payload_json)
   const requestedSeedPolicy =
-    mode === 'txt2img' || externalQualification || embeddingQualification || predictionQualification
+    mode === 'txt2img' ||
+    externalQualification ||
+    embeddingQualification ||
+    (predictionQualification && mode !== 'outpaint')
       ? 'fixed'
       : 'reuse'
   assert.equal(before.generationDraft.seed.policy, requestedSeedPolicy)
@@ -2121,8 +2420,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   })
   assert.equal(frozen.context.sampling.seed, 0)
   assert.equal(frozen.context.sampling.requestedSeedPolicy, requestedSeedPolicy)
-  assert.equal(frozen.context.sampling.steps, fixture.steps)
-  assert.equal(frozen.context.sampling.cfgScale, 4)
+  assert.equal(frozen.context.sampling.steps, execution.steps)
+  assert.equal(frozen.context.sampling.cfgScale, execution.cfgScale)
   assert.deepEqual(frozen.context.loraStack, before.generationDraft.loras)
   if (cfgQualification) {
     assert.equal(frozen.context.sampling.cfgRescale, capturedCfgRescale)
@@ -2194,6 +2493,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     else assert.equal(Object.hasOwn(frozen.workerJob, 'embeddings'), false)
     assert.equal(JSON.stringify(frozen.context.prompts).includes('igs_ti_private_'), false)
   }
+  if (noiseQualification) assertNoiseExecution(frozen, execution)
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   if (predictionQualification) {
     assert.equal(frozen.context.vaePrecision, 'FP32')
@@ -2228,28 +2528,28 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       0.7,
     )
     nativePlan = frozen.workerJob.sampling
-    const startStep = mode !== 'txt2img' ? Math.floor(0.5 * fixture.steps) : 0
+    const startStep = mode !== 'txt2img' ? Math.floor(0.5 * execution.steps) : 0
     assert.equal(frozen.context.sampling.animaMethod, 'euler')
     assert.equal(nativePlan.version, 'anima-flow-denoising-v1')
     assert.equal(nativePlan.scheduler, 'euler')
     assert.equal(nativePlan.mode, mode === 'outpaint' ? 'img2img' : mode)
-    assert.equal(nativePlan.steps, fixture.steps)
+    assert.equal(nativePlan.steps, execution.steps)
     assert.equal(nativePlan.seed, 0)
-    assert.equal(nativePlan.guidanceScale, 4)
-    assert.equal(nativePlan.width, fixture.side)
-    assert.equal(nativePlan.height, fixture.side)
+    assert.equal(nativePlan.guidanceScale, execution.cfgScale)
+    assert.equal(nativePlan.width, execution.width)
+    assert.equal(nativePlan.height, execution.height)
     assert.equal(nativePlan.strength, mode !== 'txt2img' ? 0.5 : null)
     assert.equal(nativePlan.startStep, startStep)
-    assert.equal(nativePlan.totalSteps, fixture.steps - startStep)
+    assert.equal(nativePlan.totalSteps, execution.steps - startStep)
     assert.equal(nativePlan.timesteps.length, nativePlan.totalSteps)
     assert.equal(nativePlan.sigmas.length, nativePlan.totalSteps + 1)
     assert.equal(nativePlan.sigmas.at(-1), 0)
   } else {
-    assert.equal(frozen.context.model.reference.fileSha256, fixture.illustrious.sha256)
+    assert.equal(frozen.context.model.reference.fileSha256, checkpoint.sha256)
     assert.equal(frozen.context.model.reference.predictionType, capturedPredictionType)
-    assert.equal(frozen.workerJob.checkpoint.sha256, fixture.illustrious.sha256)
+    assert.equal(frozen.workerJob.checkpoint.sha256, checkpoint.sha256)
     assert.equal(frozen.workerJob.checkpoint.predictionType, capturedPredictionType)
-    assert.equal(frozen.context.sampling.invokeScheduler, 'euler_a')
+    assert.equal(frozen.context.sampling.invokeScheduler, execution.sampler)
     assert.deepEqual(frozen.workerJob.prompts, frozen.context.prompts)
   }
   if (mode !== 'txt2img') assert.equal(frozen.context.sampling.denoisingStrength, capturedStrength)
@@ -2267,11 +2567,11 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(targetSha256, frozen.workerJob.target.sha256)
   const target = await decodedImage(`data:image/png;base64,${targetBytes.toString('base64')}`)
   assert.equal(target.sha256, targetSha256)
-  assert.equal(target.width, fixture.side)
-  assert.equal(target.height, fixture.side)
+  assert.equal(target.width, execution.width)
+  assert.equal(target.height, execution.height)
   if (mode === 'outpaint') {
-    assert.equal(target.transparentPixels, 64 * fixture.side)
-    assert.equal(target.opaquePixels, (fixture.side - 64) * fixture.side)
+    assert.equal(target.transparentPixels, 64 * execution.height)
+    assert.equal(target.opaquePixels, (execution.width - 64) * execution.height)
     assert.deepEqual(frozen.context.conditioning.policy, INVOKE_ALPHA_OUTPAINT_POLICY_V1)
     assert.deepEqual(frozen.context.conditioning.infillResource, {
       byteSize: fixture.lama.byteSize,
@@ -2281,12 +2581,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(frozen.context.conditioning.sourceTarget.sha256, targetSha256)
     assert.equal(
       frozen.context.conditioning.keepMask.sha256,
-      sha256(decodeTargetPngAlpha(targetBytes, fixture.side, fixture.side)),
+      sha256(decodeTargetPngAlpha(targetBytes, execution.width, execution.height)),
     )
   } else {
     assert.equal(
       mode === 'img2img' ? target.opaquePixels : target.transparentPixels,
-      fixture.side * fixture.side,
+      execution.width * execution.height,
     )
   }
   if (mode === 'img2img') {
@@ -2405,13 +2705,44 @@ async function generateAndAccept(project, family, mode, qualification = null, re
         assert.deepEqual(canceledTab.generationDraft, before.generationDraft)
         assert.deepEqual(canceledTab.primaryBbox, before.primaryBbox)
         assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
-        predictionRetryRefusal = await qualifyChangedPredictionRetryRefusal(
-          project,
-          canceled,
-          targetBytes,
-          beforePackagePath,
-          qualification.caseName,
-        )
+        if (noiseQualification) {
+          predictionRetryRefusal = []
+          for (const [axis, change, restore] of [
+            [
+              'zero-snr',
+              () => setNoiseThroughUi(project, 'rescaleBetasZeroSnr', false, modelKey),
+              () => setNoiseThroughUi(project, 'rescaleBetasZeroSnr', true, modelKey),
+            ],
+            [
+              'spacing',
+              () => setNoiseThroughUi(project, 'timestepSpacing', 'trailing', modelKey),
+              () => setNoiseThroughUi(project, 'timestepSpacing', 'leading', modelKey),
+            ],
+            [
+              'prediction',
+              () => setPredictionThroughUi(project, 'epsilon', modelKey),
+              () => setPredictionThroughUi(project, 'v_prediction', modelKey),
+            ],
+          ]) {
+            const refusal = await qualifyChangedPredictionRetryRefusal(
+              project,
+              canceled,
+              targetBytes,
+              beforePackagePath,
+              `${qualification.caseName}-${axis}`,
+              change,
+              restore,
+            )
+            predictionRetryRefusal.push({ ...refusal, axis })
+          }
+        } else
+          predictionRetryRefusal = await qualifyChangedPredictionRetryRefusal(
+            project,
+            canceled,
+            targetBytes,
+            beforePackagePath,
+            qualification.caseName,
+          )
       } else if (embeddingQualification) {
         assert.equal(
           (await api('listGenerationResults', project.id)).lastActualSeed,
@@ -2545,7 +2876,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
-    if (predictionQualification) {
+    if (noiseQualification) {
+      normalizedInputs = normalizeNoiseInputs(frozen)
+    } else if (predictionQualification) {
       delete normalizedInputs.context.model.reference.predictionType
       delete normalizedInputs.workerJob.checkpoint.predictionType
     } else if (embeddingQualification) {
@@ -2694,7 +3027,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(current.statusSequence, receipt.expected_status_sequence)
     assert.equal(current.statusSequence + 1, row.status_sequence)
     if (nativePlan) assert.equal(current.totalSteps, nativePlan.totalSteps)
-    else assert.ok(current.totalSteps >= 1 && current.totalSteps <= 2 * fixture.steps)
+    else assert.ok(current.totalSteps >= 1 && current.totalSteps <= 2 * execution.steps)
     if (index > 0) {
       assert.ok(revision > progress[index - 1].revision)
       assert.ok(current.step > progress[index - 1].current.step)
@@ -2703,6 +3036,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   if (progress.length > 0)
     assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
+  if (noiseQualification && mode === 'txt2img') assertNoiseTxt2ImgProgress(progress, execution)
   if ((embeddingQualification || predictionQualification) && mode === 'img2img')
     assert.ok(
       progress.at(-1).current.totalSteps > 0,
@@ -2717,15 +3051,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.status, 200)
   assert.equal(pixels.bytes, receipt.image_byte_size)
   assert.equal(pixels.sha256, receipt.image_sha256)
-  assert.equal(pixels.width, fixture.side)
-  assert.equal(pixels.height, fixture.side)
+  assert.equal(pixels.width, execution.width)
+  assert.equal(pixels.height, execution.height)
   if (
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    predictionQualification
+    (predictionQualification && mode !== 'outpaint')
   )
-    assert.equal(pixels.opaquePixels, fixture.side * fixture.side)
+    assert.equal(pixels.opaquePixels, execution.width * execution.height)
   let contributionAlpha8 = null
   if (mode === 'outpaint') {
     const outputBytes = Buffer.from(
@@ -2751,7 +3085,18 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (predictionQualification) {
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     await expect.poll(liveInstalledInferenceChildren).toEqual([])
-    currentPredictionChange = await setPredictionThroughUi(project, currentPredictionType)
+    if (noiseQualification) {
+      currentNoiseProfile = {
+        ...execution.noiseProfile,
+        rescaleBetasZeroSnr: !execution.noiseProfile.rescaleBetasZeroSnr,
+      }
+      currentPredictionChange = await setNoiseThroughUi(
+        project,
+        'rescaleBetasZeroSnr',
+        currentNoiseProfile.rescaleBetasZeroSnr,
+        modelKey,
+      )
+    } else currentPredictionChange = await setPredictionThroughUi(project, currentPredictionType)
     assert.equal(
       (await queueRows(project)).find(({ id }) => id === row.id).frozen_payload_json,
       row.frozen_payload_json,
@@ -2778,13 +3123,25 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(acceptedData.generationConfiguration.model.predictionType, capturedPredictionType)
     assert.equal(acceptedData.generationConfiguration.vaePrecision, 'FP32')
     assert.equal(acceptedData.generationConfiguration.vae, null)
-    for (const value of [fixture.illustrious, fixture.illustriousLora]) {
+    for (const value of [checkpoint, fixture.illustriousLora]) {
       assert.equal(JSON.stringify(acceptedData.generationConfiguration).includes(value.path), false)
       assert.equal(
         JSON.stringify(acceptedData.generationConfiguration).includes(value.installed.managedPath),
         false,
       )
     }
+  }
+  if (noiseQualification) {
+    assert.deepEqual(
+      acceptedData.generationConfiguration.sampling.noiseProfile,
+      execution.noiseProfile,
+    )
+    assert.equal(acceptedData.generationConfiguration.sampling.steps, execution.steps)
+    assert.equal(acceptedData.generationConfiguration.sampling.cfgScale, execution.cfgScale)
+    assert.equal(
+      acceptedData.generationConfiguration.sampling.sampler,
+      execution.sampler === 'euler' ? 'Euler' : 'Euler a',
+    )
   }
   if (cfgQualification) {
     assert.equal(acceptedData.generationConfiguration.cfgRescale, capturedCfgRescale)
@@ -2856,7 +3213,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(provenance.layerSourceContext.sourceDocumentRevision, admitted.document_revision)
   assert.equal(provenance.layerSourceContext.sourceTargetSha256, targetSha256)
   assert.deepEqual(provenance.layerSourceContext.bbox, before.primaryBbox)
-  assert.equal(provenance.generationConfiguration.model.fileSha256, fixture[family].sha256)
+  assertAcceptedCheckpointIdentity(
+    provenance.generationConfiguration,
+    noiseQualification ? checkpoint : fixture[family],
+  )
   if (family === 'anima') {
     const config = provenance.generationConfiguration
     assert.equal(config.sampling.animaMethod, 'euler')
@@ -2909,7 +3269,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(saved.manifest.preview.status, 'rendered')
   const previewRect =
     mode === 'outpaint'
-      ? { height: fixture.side, width: fixture.side + before.primaryBbox.x, x: 0, y: 0 }
+      ? { height: execution.height, width: execution.width + before.primaryBbox.x, x: 0, y: 0 }
       : before.primaryBbox
   assert.deepEqual(saved.manifest.preview.rect, previewRect)
   const mergedPreviewBytes = await saved.readMember('preview/merged.png')
@@ -2937,6 +3297,11 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(provenance.generationConfiguration.vaePrecision, 'FP32')
     assert.equal(provenance.generationConfiguration.vae, null)
   }
+  if (noiseQualification)
+    assert.deepEqual(
+      provenance.generationConfiguration.sampling.noiseProfile,
+      execution.noiseProfile,
+    )
   if (cfgQualification) {
     assert.equal(provenance.generationConfiguration.cfgRescale, capturedCfgRescale)
     assert.equal(saved.project.generationDraft.cfgRescale, 0.2)
@@ -3031,55 +3396,64 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = predictionQualification
-    ? await comparePrediction(
+  const comparison = noiseQualification
+    ? await compareNoiseProfile(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        capturedPredictionType,
-        currentPredictionType,
-        caseName,
+        execution.noiseProfile,
+        currentNoiseProfile,
+        qualification.caseName,
         packagePath,
       )
-    : embeddingQualification
-      ? await compareEmbeddings(
+    : predictionQualification
+      ? await comparePrediction(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          capturedEmbeddingPrompts,
+          capturedPredictionType,
+          currentPredictionType,
           caseName,
           packagePath,
         )
-      : externalQualification
-        ? await compareExternalVae(
+      : embeddingQualification
+        ? await compareEmbeddings(
             project,
             reopened.layers.find(({ id }) => id === layer.id),
-            capturedVaeReference,
-            currentVaeReference,
+            capturedEmbeddingPrompts,
             caseName,
             packagePath,
           )
-        : precisionQualification
-          ? await compareVaePrecision(
+        : externalQualification
+          ? await compareExternalVae(
               project,
               reopened.layers.find(({ id }) => id === layer.id),
-              capturedVaePrecision,
-              currentVaePrecision,
+              capturedVaeReference,
+              currentVaeReference,
               caseName,
+              packagePath,
             )
-          : cfgQualification
-            ? await compareCfgRescale(
+          : precisionQualification
+            ? await compareVaePrecision(
                 project,
                 reopened.layers.find(({ id }) => id === layer.id),
-                capturedCfgRescale,
+                capturedVaePrecision,
+                currentVaePrecision,
                 caseName,
               )
-            : mode === 'outpaint'
-              ? await compareOutpaint(
+            : cfgQualification
+              ? await compareCfgRescale(
                   project,
                   reopened.layers.find(({ id }) => id === layer.id),
-                  retryCase,
+                  capturedCfgRescale,
                   caseName,
                 )
-              : null
+              : mode === 'outpaint'
+                ? await compareOutpaint(
+                    project,
+                    reopened.layers.find(({ id }) => id === layer.id),
+                    retryCase,
+                    caseName,
+                  )
+                : null
   const generation = {
     family,
     mode,
@@ -3112,8 +3486,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
           capturedPredictionType,
           currentPredictionType,
           currentPredictionChange,
-          trainedObjective: fixture.illustrious.trainedObjective,
-          checkpointOrigin: fixture.illustrious.origin,
+          trainedObjective: checkpoint.trainedObjective,
+          checkpointOrigin: checkpoint.origin,
           precision: 'FP32',
           vae: 'Embedded',
           frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
@@ -3211,6 +3585,23 @@ async function generateAndAccept(project, family, mode, qualification = null, re
                 }
               : null,
   }
+  if (noiseQualification)
+    generation.qualification = {
+      ...generation.qualification,
+      kind: 'noise-profile',
+      execution: structuredClone(execution),
+      modelKey,
+      authored: qualification.authored,
+      axis: qualification.axis ?? null,
+      frozen: structuredClone(frozen),
+      normalizedInputs,
+      capturedNoiseProfile: execution.noiseProfile,
+      currentNoiseProfile,
+      currentPredictionType: capturedPredictionType,
+      currentPredictionChange: null,
+      currentNoiseChange: currentPredictionChange,
+      predictionRetryRefusal,
+    }
   report.generations.push(generation)
   await check(
     `${qualification?.caseName ?? `${family} ${mode}`}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen${qualification ? '/comparison' : ''}`,
@@ -3715,7 +4106,9 @@ async function importMatchedExternalVaeSource(project, commonSource, profile = '
       ? report.embeddingImports
       : profile === 'v-prediction'
         ? report.predictionImports
-        : report.externalVaeImports
+        : profile === 'noise-profile'
+          ? report.noiseImports
+          : report.externalVaeImports
   imports.push(evidence)
   await check(
     `${profile === 'embeddings' ? 'Embedding' : profile === 'v-prediction' ? 'Prediction' : 'External VAE'} matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels`,
@@ -4188,6 +4581,277 @@ async function assertMatchedPredictionPixels(cases, mode) {
     evidence,
   )
 }
+async function independentNoiseScheduleOracle(executions) {
+  await expect.poll(liveInstalledInferenceChildren).toEqual([])
+  await ensureQualificationResourceLimits('before independent installed native schedule oracle')
+  // Run from the bounded launcher. Electron's Playwright evaluation VM intentionally has no
+  // dynamic Node import callback; this CPU-only child inherits the launcher's finite cgroup.
+  await assertUpgradeBounds()
+  const output = execFileSync(
+    pointer.pythonExecutable,
+    ['-I', '-c', noiseScheduleOracleProgram, JSON.stringify(executions)],
+    {
+      cwd: path.join(fixture.appData, 'runtime'),
+      env: {
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+        CUDA_VISIBLE_DEVICES: '',
+        HF_HUB_OFFLINE: '1',
+        TRANSFORMERS_OFFLINE: '1',
+      },
+      encoding: 'utf8',
+      timeout: 60_000,
+      killSignal: 'SIGKILL',
+      maxBuffer: 256 * 1024,
+    },
+  )
+  const result = JSON.parse(output)
+  assert.equal(result.diffusersVersion, '0.40.0')
+  assert.equal(result.results.length, executions.length)
+  assert.ok(
+    result.results.every(
+      ({ productionEqualsIndependentNative }) => productionEqualsIndependentNative,
+    ),
+  )
+  report.noiseScheduleOracle = result
+  await check(
+    'Installed production schedule adapter equals independently constructed pinned native beta/alpha/timestep/sigma tensors',
+    result,
+  )
+  return result
+}
+async function assertMatchedNoiseControls(cases) {
+  const baseline = cases[0]
+  report.noiseNumerics = []
+  for (const control of cases.slice(1)) {
+    const axis = control.qualification.axis
+    const left = normalizeNoiseInputs(baseline.qualification.frozen, axis)
+    const right = normalizeNoiseInputs(control.qualification.frozen, axis)
+    const evidence = {
+      axis,
+      baselineQueueItemId: baseline.queueItemId,
+      controlQueueItemId: control.queueItemId,
+      baselineNormalizedInputs: left,
+      controlNormalizedInputs: right,
+      baselineTargetSha256: baseline.target.sha256,
+      controlTargetSha256: control.target.sha256,
+      baselinePixelSha256: baseline.dimensions.pixelSha256,
+      controlPixelSha256: control.dimensions.pixelSha256,
+      pixelsDiffer: baseline.dimensions.pixelSha256 !== control.dimensions.pixelSha256,
+    }
+    report.noiseNumerics.push(evidence)
+    await checkpointEvidence()
+    assert.deepEqual(
+      right,
+      left,
+      `Matched ${axis} control must differ in only its declared semantic axis.`,
+    )
+    assert.equal(control.target.sha256, baseline.target.sha256)
+    assert.ok(
+      (await readFile(control.target.path)).equals(await readFile(baseline.target.path)),
+      'Matched controls require byte-identical captured targets.',
+    )
+    assert.notEqual(
+      control.dimensions.pixelSha256,
+      baseline.dimensions.pixelSha256,
+      `Installed ${axis} causal control must change actual decoded pixels.`,
+    )
+    await check(
+      `Matched installed ${axis} control changes decoded pixels with every neighboring input preserved`,
+      evidence,
+    )
+  }
+}
+async function qualifyNoiseProfile() {
+  assertNoiseReady(report.installedReady)
+  report.noiseImports = []
+  const projects = []
+  const run = async (
+    modelKey,
+    execution,
+    caseName,
+    mode = 'txt2img',
+    commonSource = null,
+    retry = false,
+    axis = null,
+  ) => {
+    await stage('Installed explicit noise-profile case', {
+      modelKey,
+      caseName,
+      mode,
+      execution,
+      retry,
+    })
+    const project = await createProject(
+      fixture[modelKey],
+      fixture.illustriousLora,
+      caseName,
+      execution,
+    )
+    projects.push(project)
+    if (mode === 'img2img') {
+      await importMatchedExternalVaeSource(project, commonSource, 'noise-profile')
+      await setInput('Denoising Strength', 0.5)
+    }
+    const authored = await authorNoiseExecution(project, modelKey, execution)
+    return generateAndAccept(
+      project,
+      'illustrious',
+      mode,
+      { kind: 'noise-profile', modelKey, caseName, execution, authored, commonSource, axis },
+      retry,
+    )
+  }
+  if (fixture.stage === 'bounded' || fixture.stage === 'bounded-lifecycle') {
+    let baseline
+    if (fixture.stage === 'bounded') {
+      const controls = []
+      for (const spec of boundedNoiseCases())
+        controls.push(
+          await run(
+            'illustrious',
+            spec.execution,
+            `noise-txt2img-${spec.name}`,
+            'txt2img',
+            null,
+            false,
+            spec.axis,
+          ),
+        )
+      await assertMatchedNoiseControls(controls)
+      await independentNoiseScheduleOracle(boundedNoiseCases().map(({ execution }) => execution))
+      baseline = controls[0]
+    } else {
+      // A separate partial run reuses evidence from previous controls only in the external
+      // review. This report must qualify its own CPU oracle before any lifecycle ML case.
+      await independentNoiseScheduleOracle(boundedNoiseCases().map(({ execution }) => execution))
+      baseline = await run(
+        'illustrious',
+        executionFor('illustrious'),
+        'noise-lifecycle-v-txt2img-source-precondition',
+      )
+      report.noiseLifecycleSourcePreconditionCompletions = 1
+    }
+    await run(
+      'illustriousEpsilon',
+      executionFor('illustriousEpsilon'),
+      'noise-epsilon-trained-txt2img',
+    )
+    const sourcePackage = await readIgsPackage(baseline.packagePath)
+    const sourceLayer =
+      sourcePackage.project.layers.find(
+        ({ generationProvenance }) => generationProvenance?.queueItemId === baseline.queueItemId,
+      ) ?? sourcePackage.project.layers[0]
+    const sourceBytes = await sourcePackage.readMember(sourceLayer.asset.path)
+    const sourcePath = path.join(fixture.artifacts, 'noise-common-nonzero-img2img-source.png')
+    await writeFile(sourcePath, sourceBytes, { flag: 'wx' })
+    const commonSource = {
+      path: sourcePath,
+      sha256: sha256(sourceBytes),
+      pixelSha256: baseline.dimensions.pixelSha256,
+      width: 256,
+      height: 256,
+      originQueueItemId: baseline.queueItemId,
+      byteSize: sourceBytes.length,
+    }
+    report.noiseCommonSource = commonSource
+    await run(
+      'illustrious',
+      executionFor('illustrious'),
+      'noise-v-img2img-cancel-three-refusals-restored-retry',
+      'img2img',
+      commonSource,
+      true,
+    )
+    await run(
+      'illustriousEpsilon',
+      executionFor('illustriousEpsilon'),
+      'noise-epsilon-trained-img2img',
+      'img2img',
+      commonSource,
+    )
+    assert.equal(report.generations.length, fixture.stage === 'bounded' ? 8 : 4)
+    assert.equal(report.predictionRetryRefusals.length, 3)
+    assert.equal(report.generations.filter(({ retry }) => retry !== null).length, 1)
+    const refusalAxes = report.generations
+      .find(({ retry }) => retry !== null)
+      .qualification.predictionRetryRefusal.map(({ axis }) => axis)
+    assert.deepEqual(refusalAxes, ['zero-snr', 'spacing', 'prediction'])
+    assert.equal(await hashFile(sourcePath), commonSource.sha256)
+  } else if (fixture.stage === 'author') {
+    for (const modelKey of ['illustrious', 'illustriousEpsilon'])
+      await run(
+        modelKey,
+        fixture.authorRecipes[modelKey].execution,
+        `noise-author-${modelKey}-832x1216-28steps`,
+      )
+    await independentNoiseScheduleOracle(
+      ['illustrious', 'illustriousEpsilon'].map((key) => fixture.authorRecipes[key].execution),
+    )
+    assert.equal(report.generations.length, 2)
+  } else {
+    assert.equal(fixture.stage, 'outpaint')
+    for (const modelKey of ['illustrious', 'illustriousEpsilon']) {
+      const execution = executionFor(modelKey, 'outpaint')
+      const caseName = `noise-outpaint-${modelKey}`
+      const project = await createProject(
+        fixture[modelKey],
+        fixture.illustriousLora,
+        caseName,
+        execution,
+      )
+      projects.push(project)
+      let authored = await authorNoiseExecution(project, modelKey, execution)
+      await generateAndAccept(project, 'illustrious', 'txt2img', {
+        kind: 'noise-profile',
+        modelKey,
+        execution,
+        authored,
+        caseName: `${caseName}-source-precondition`,
+      })
+      authored = await authorNoiseExecution(project, modelKey, execution)
+      await prepareOutpaint(project)
+      await generateAndAccept(project, 'illustrious', 'outpaint', {
+        kind: 'noise-profile',
+        modelKey,
+        execution,
+        authored,
+        caseName,
+      })
+    }
+    assert.equal(report.generations.filter(({ mode }) => mode === 'outpaint').length, 2)
+    report.outpaintSourcePreconditionCompletions = 2
+    await independentNoiseScheduleOracle(
+      ['illustrious', 'illustriousEpsilon'].map((key) => executionFor(key)),
+    )
+  }
+  assert.deepEqual(report.failures, [])
+  let actualAdmissions = 0
+  let canceledOriginals = 0
+  for (const project of projects) {
+    const rows = await queueRows(project)
+    actualAdmissions += rows.length
+    canceledOriginals += rows.filter(({ status }) => status === 'canceled').length
+  }
+  report.noiseSummary = {
+    stage: fixture.stage,
+    finiteCompletions: report.generations.length,
+    actualAdmissions,
+    canceledOriginals,
+    preservingRetryRefusals: report.predictionRetryRefusals?.length ?? 0,
+    sourceRecipes: fixture.authorRecipes,
+    completedScope: report.noiseFixture.completedScope,
+    fullBoundedClaim: report.noiseFixture.fullBoundedClaim,
+    matchedTrainedPixelControlCases: report.noiseFixture.matchedTrainedPixelControlCases,
+    remainingStages: noiseStages.filter((value) => value !== fixture.stage),
+    noCombinedMatrixClaim: true,
+  }
+  assertNoiseStageOutcome(report.noiseSummary)
+  await check(
+    'Declared installed noise-profile stage retains frozen inputs, exact trained objectives and immutable accepted settings',
+    report.noiseSummary,
+  )
+}
 async function qualifyVPrediction() {
   const projects = []
   const txtCases = []
@@ -4448,8 +5112,9 @@ try {
       vaePrecisionProfile ||
       externalVaeProfile ||
       embeddingsProfile ||
-      vPredictionProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings or v-prediction.',
+      vPredictionProfile ||
+      noiseProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction or noise-profile.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -4473,6 +5138,49 @@ try {
   if (externalVaeProfile) validateExternalVaeFixture()
   if (embeddingsProfile) validateEmbeddingFixture()
   if (vPredictionProfile) validateVPredictionFixture()
+  if (noiseProfile) {
+    const installed = JSON.parse(await readFile(provision.report, 'utf8'))
+    report.noiseFixture = validateNoiseProfileFixture(fixture, installed.ready)
+    assert.equal(
+      resume,
+      true,
+      'Noise-profile qualification must reuse the original canonical runtime/catalog.',
+    )
+    assert.equal(installed.confirmedWorkerExit, true)
+    assert.equal(installed.status, 'activated-qualified')
+    report.installedReady = installed.ready
+    report.launcherBounds = await assertUpgradeBounds()
+    report.noiseSourceFiles = []
+    for (const key of noiseModelKeys) {
+      const value = fixture[key]
+      const entry = await lstat(value.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(value.path), value.path)
+      assert.equal(entry.size, value.byteSize)
+      assert.equal(await hashFile(value.path), value.sha256)
+      report.noiseSourceFiles.push({
+        key,
+        descriptor: structuredClone(value),
+        sourceStat: {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+      })
+    }
+    if (fixture.stage === 'outpaint') {
+      assert.deepEqual(Object.keys(fixture.lama).sort(), ['path', 'sha256', 'byteSize'].sort())
+      assert.equal(fixture.lama.sha256, LAMA_OUTPAINT_ARTIFACT.sha256)
+      assert.equal(fixture.lama.byteSize, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+      await verifyInferenceAuxiliaryFile({
+        byteSize: fixture.lama.byteSize,
+        managedPath: fixture.lama.path,
+        sha256: fixture.lama.sha256,
+      })
+    }
+  }
   if (outpaintProfile) {
     validateOutpaintFixture()
     // Qualify the declared local file before model copying, catalog writes or Electron startup.
@@ -4484,7 +5192,11 @@ try {
   }
   const families = illustriousOnlyProfile ? ['illustrious'] : ['illustrious', 'anima']
   const allModelKeys = priorModelKeys
-  const modelKeys = illustriousOnlyProfile ? ['illustrious', 'illustriousLora'] : allModelKeys
+  const modelKeys = noiseProfile
+    ? noiseModelKeys
+    : illustriousOnlyProfile
+      ? ['illustrious', 'illustriousLora']
+      : allModelKeys
   for (const family of families) {
     assert.equal(fixture[family]?.type, 'checkpoint')
     assert.equal(fixture[family]?.family, family)
@@ -4622,6 +5334,13 @@ try {
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
     workerLock: await hashFile('worker-python/uv.lock'),
+    ...(noiseProfile
+      ? {
+          noiseQualification: await hashFile('scripts/noobai-noise-qualification.mjs'),
+          qualificationUpgrade: await hashFile('scripts/upgrade-qualification-worker.mjs'),
+          localCivitaiTransport: await hashFile('scripts/qualification-local-civitai.mjs'),
+        }
+      : {}),
   }
   report.bundleSha256 = Object.fromEntries(
     await Promise.all(
@@ -4642,13 +5361,14 @@ try {
   else {
     // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
-    const declaredKeys = vPredictionProfile
-      ? modelKeys
-      : embeddingsProfile
-        ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
-        : externalVaeProfile
-          ? [...allModelKeys, ...externalVaeKeys]
-          : allModelKeys
+    const declaredKeys =
+      vPredictionProfile || noiseProfile
+        ? modelKeys
+        : embeddingsProfile
+          ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
+          : externalVaeProfile
+            ? [...allModelKeys, ...externalVaeKeys]
+            : allModelKeys
     const hashes = new Set(
       declaredKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
     )
@@ -4664,6 +5384,11 @@ try {
         'V-prediction qualification may resume only its exact two-resource catalog.',
       )
       assertPredictionCatalog(catalog)
+    }
+    if (noiseProfile) {
+      assert.equal(hashes.size, 3)
+      assertNoiseCatalog(catalog, fixture, { adopting: true })
+      preservedNoisePriorCatalog = structuredClone(catalog)
     }
     if (vaePrecisionProfile) {
       assert.equal(
@@ -4883,7 +5608,7 @@ try {
     fixture.illustrious,
     700_040,
     undefined,
-    vPredictionProfile
+    vPredictionProfile || noiseProfile
       ? {
           sourceModelId: fixture.illustrious.origin.modelId,
           sourceVersionId: fixture.illustrious.origin.versionId,
@@ -4904,8 +5629,31 @@ try {
         fixture[key],
         id,
         undefined,
-        vPredictionProfile ? { versionName: fixture[key].versionName } : null,
+        vPredictionProfile || noiseProfile ? { versionName: fixture[key].versionName } : null,
       )
+  }
+  if (noiseProfile) {
+    const value = fixture.illustriousEpsilon
+    value.installed = await installArtifact(repository, value, 700_140, undefined, {
+      sourceModelId: value.origin.modelId,
+      sourceVersionId: value.origin.versionId,
+      sourceFileId: value.origin.fileId,
+      creator: value.origin.creator,
+      resourceOrigin: value.origin,
+      versionName: value.versionName,
+    })
+    assertNoiseCatalog(await repository.listInstalled(), fixture)
+    report.catalogReuse = {
+      initialResourceCount: catalog.length,
+      finalResourceCount: 3,
+      finalVersionCount: 3,
+      declaredIdentityCount: 3,
+      newManagedFiles: report.models.filter(
+        ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+      ).length,
+      maximumAdditionalManagedFiles: 1,
+    }
+    assert.ok(report.catalogReuse.newManagedFiles <= 1)
   }
   if (vPredictionProfile) {
     const seeded = await repository.listInstalled()
@@ -4983,7 +5731,8 @@ try {
           ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
           : 'Real exact model files copied, verified and cataloged; source weights unchanged',
   )
-  if (outpaintProfile) await installQualificationLama()
+  if (outpaintProfile || (noiseProfile && fixture.stage === 'outpaint'))
+    await installQualificationLama()
   application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
   report.nativeProcessPid = application.process().pid
   await ensureQualificationResourceLimits('native-launch')
@@ -5044,6 +5793,8 @@ try {
       assert.ok(ready.capabilities.includes(capability))
     report.installedReady = ready
     await qualifyOutpaint()
+  } else if (noiseProfile) {
+    await qualifyNoiseProfile()
   } else if (vPredictionProfile) {
     await qualifyVPrediction()
   } else if (embeddingsProfile) {
@@ -5070,6 +5821,41 @@ try {
     await qualifyInstalledImport(lastProject)
   }
   assert.deepEqual(report.pageErrors, [])
+  if (noiseProfile) {
+    const final = await repository.listInstalled()
+    assertNoiseCatalog(final, fixture)
+    const policyFree = (resource) => {
+      const value = structuredClone(resource)
+      if (value.type === 'checkpoint')
+        for (const version of value.versions)
+          for (const key of ['predictionType', 'predictionTypeSource', 'noiseProfile'])
+            delete version[key]
+      return value
+    }
+    for (const previous of preservedNoisePriorCatalog)
+      assert.deepEqual(
+        policyFree(final.find(({ id }) => id === previous.id)),
+        policyFree(previous),
+        'The original catalog rows/bytes/defaults/source attribution must be preserved apart from exact-file authored policies.',
+      )
+    for (const { descriptor, sourceStat } of report.noiseSourceFiles) {
+      assert.equal(await hashFile(descriptor.path), descriptor.sha256)
+      const entry = await lstat(descriptor.path)
+      assert.deepEqual(
+        {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+        sourceStat,
+      )
+    }
+    report.noiseSourcesUnchanged = true
+    report.catalogReuse.exactThreeResourceClosure = true
+    report.catalogReuse.priorRowsPreservedApartFromAuthoredExactFilePolicies = true
+  }
   if (vPredictionProfile) {
     assertPredictionCatalog(await repository.listInstalled())
     for (const { descriptor, sourceStat } of report.predictionSourceFiles) {

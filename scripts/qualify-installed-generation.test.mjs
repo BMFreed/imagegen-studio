@@ -9,10 +9,73 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { LAMA_OUTPAINT_ARTIFACT } from '../src/main/runtime/lama-manifest.ts'
+import {
+  executionFor,
+  noiseRecipeSources,
+  officialEpsilonIdentity,
+} from './noobai-noise-qualification.mjs'
 
 const exec = promisify(execFile)
 const repository = path.dirname(import.meta.dirname)
 const script = path.join(repository, 'scripts/qualify-installed-generation.mjs')
+
+function noiseInput(input) {
+  Object.assign(input, {
+    profile: 'noise-profile',
+    stage: 'bounded',
+    side: 256,
+    steps: 3,
+    illustrious: {
+      path: '/unread-original/Cyberfalafel.safetensors',
+      sha256: 'a'.repeat(64),
+      byteSize: 99,
+      type: 'checkpoint',
+      family: 'illustrious',
+      name: 'Cyberfalafel',
+      versionName: 'v1.2',
+      predictionType: null,
+      trainedObjective: 'v_prediction',
+      origin: {
+        kind: 'civitai-trained',
+        modelId: 1147756,
+        versionId: 2679856,
+        fileId: 2566634,
+        url: 'https://civitai.com/api/download/models/2679856?fileId=2566634',
+        modelApi: 'https://civitai.com/api/v1/models/1147756',
+        versionApi: 'https://civitai.com/api/v1/model-versions/2679856',
+        creator: 'Knightus_Ai',
+        baseModel: 'NoobAI',
+      },
+    },
+    illustriousEpsilon: {
+      path: '/unread-original/NoobAI-XL-EPS.safetensors',
+      ...officialEpsilonIdentity,
+      type: 'checkpoint',
+      family: 'illustrious',
+      name: 'Official NoobAI EPS',
+      versionName: '1.0',
+      predictionType: null,
+      trainedObjective: 'epsilon',
+    },
+    illustriousLora: {
+      path: '/unread-original/ordinary.safetensors',
+      sha256: 'b'.repeat(64),
+      byteSize: 9,
+      type: 'lora',
+      family: 'illustrious',
+      name: 'ordinary',
+      versionName: 'trained',
+    },
+    authorRecipes: {},
+  })
+  for (const key of ['illustrious', 'illustriousEpsilon'])
+    input.authorRecipes[key] = {
+      ...noiseRecipeSources[key],
+      attribution: key === 'illustrious' ? 'upstream-on-credited-derivative' : 'checkpoint-author',
+      assumedFields: ['timestepSpacing'],
+      execution: executionFor(key, 'author'),
+    }
+}
 
 async function fixture(use, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-qualification-preflight-'))
@@ -82,6 +145,77 @@ async function fixture(use, options = {}) {
     await fs.rm(root, { recursive: true, force: true })
   }
 }
+
+const noiseReady = {
+  workerVersion: '0.14.0',
+  protocolVersion: '1',
+  runtimeProfile: 'linux-nvidia',
+  capabilities: [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+    'illustrious-embeddings',
+    'illustrious-outpaint',
+    'illustrious-euler',
+    'illustrious-noise-profile',
+  ],
+}
+for (const [name, ready, expected] of [
+  [
+    'old installed worker',
+    { ...noiseReady, workerVersion: '0.13.0' },
+    /worker0\.14 before source copy/,
+  ],
+  [
+    'missing native Euler capability',
+    {
+      ...noiseReady,
+      capabilities: noiseReady.capabilities.filter((v) => v !== 'illustrious-euler'),
+    },
+    /requires illustrious-euler before source copy/,
+  ],
+  [
+    'missing native noise capability',
+    {
+      ...noiseReady,
+      capabilities: noiseReady.capabilities.filter((v) => v !== 'illustrious-noise-profile'),
+    },
+    /requires illustrious-noise-profile before source copy/,
+  ],
+])
+  test(`noise CLI ${name} refuses before touching source paths, copying models or launching workers`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        noiseInput(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, expected)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        assert.equal(
+          JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8')).status,
+          'failed',
+        )
+      },
+      { ready },
+    )
+  })
+
+test('noise CLI unknown stage refuses before source or runtime mutation', async () => {
+  await fixture(
+    async ({ input, run, appData }) => {
+      noiseInput(input)
+      input.stage = 'all'
+      const refusal = await run({ resume: true })
+      assert.match(refusal.stderr, /declared bounded, bounded-lifecycle, author or outpaint stage/)
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    },
+    { ready: noiseReady },
+  )
+})
 
 async function externalVaeInput(root, input) {
   Object.assign(input, { profile: 'external-vae', side: 256, steps: 3 })
@@ -268,7 +402,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings or v-prediction/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction or noise-profile/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
