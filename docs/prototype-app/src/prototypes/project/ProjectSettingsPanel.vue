@@ -85,7 +85,7 @@ function selectModel(name: string | null | undefined) {
     updateModel(model.id)
   }
 }
-const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
+const samplerOptions = ['DPM++ 2M', 'Euler a', 'Euler', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
 }))

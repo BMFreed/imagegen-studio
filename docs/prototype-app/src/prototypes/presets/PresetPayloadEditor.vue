@@ -71,7 +71,7 @@ const modelResources = computed(() => {
   // Keep an unavailable exact version visible until the user explicitly replaces it.
   return [{ ...selected, missing: true }, ...props.resources.models]
 })
-const samplerOptions = ['DPM++ 2M', 'Euler a', 'DPM++ SDE'].map((value) => ({
+const samplerOptions = ['DPM++ 2M', 'Euler a', 'Euler', 'DPM++ SDE'].map((value) => ({
   label: value,
   value,
 }))

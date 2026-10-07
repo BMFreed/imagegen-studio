@@ -1,5 +1,6 @@
 import {
   supportsInferenceAnimaOutpaint,
+  supportsInferenceEuler,
   supportsInferenceOutpaint,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -192,6 +193,75 @@ for (const family of ['illustrious', 'anima'] as const) {
   })
 }
 
+test('ordinary Euler strict outpaint capture requires its qualified peer and retains the exact command', async () => {
+  await withOutpaintConsumerFixture('illustrious', async (fixture) => {
+    const payload = buildFrozenQueuedOutpaintV1(fixture.outpaintPrepared, randomUUID())
+    const provisionalRoot = path.join(fixture.scratch, 'request')
+    const request = buildQueuedOutpaintWorkerRequest({
+      infill: await fixture.infillResolver.resolveVerifiedOutpaintInfill(),
+      outputPath: path.join(provisionalRoot, 'result.png'),
+      payload,
+      provisionalRoot,
+      ready: OUTPAINT_READY,
+      requestId: randomUUID(),
+      targetPath: path.join(provisionalRoot, 'target.png'),
+    })
+    assert.equal(request.type, 'generate-illustrious-outpaint')
+    if (request.type !== 'generate-illustrious-outpaint') {
+      throw new Error('The Illustrious fixture returned another command.')
+    }
+    request.job.sampling.scheduler = 'euler'
+    const expected = structuredClone(request)
+    const ready = {
+      ...OUTPAINT_READY,
+      capabilities: [...OUTPAINT_READY.capabilities, 'illustrious-euler'],
+      workerVersion: '0.13.0',
+    }
+    const captured = captureOutpaintWorkerRequest(request, ready)
+    assert.deepEqual(captured, expected)
+    request.job.sampling.scheduler = 'euler_a'
+    assert.equal(captured.job.sampling.scheduler, 'euler')
+
+    for (const peer of [
+      { ...ready, workerVersion: '0.12.0' },
+      { ...ready, capabilities: OUTPAINT_READY.capabilities },
+    ]) {
+      assert.throws(
+        () => captureOutpaintWorkerRequest(expected, peer),
+        /has not qualified ordinary Illustrious Euler/,
+      )
+      assert.deepEqual(captureOutpaintWorkerRequest(request, peer), request)
+    }
+    assert.equal(expected.job.sampling.scheduler, 'euler')
+    assert.deepEqual(captured.job.conditioning, payload.context.conditioning)
+    assert.deepEqual(captured.job.target, expected.job.target)
+    assert.deepEqual(captured.job.infillResource, expected.job.infillResource)
+  })
+})
+
+test('native Anima Euler outpaint capture remains independent of the Illustrious Euler capability', async () => {
+  await withOutpaintConsumerFixture('anima', async (fixture) => {
+    const payload = buildFrozenQueuedOutpaintV1(fixture.outpaintPrepared, randomUUID())
+    const provisionalRoot = path.join(fixture.scratch, 'request')
+    const request = buildQueuedOutpaintWorkerRequest({
+      infill: await fixture.infillResolver.resolveVerifiedOutpaintInfill(),
+      outputPath: path.join(provisionalRoot, 'result.png'),
+      payload,
+      provisionalRoot,
+      ready: OUTPAINT_READY,
+      requestId: randomUUID(),
+      targetPath: path.join(provisionalRoot, 'target.png'),
+    })
+    assert.equal(request.type, 'generate-anima-outpaint')
+    // The preparation fixture compiles the native Anima Euler plan before this capture.
+    assert.equal(request.job.sampling.scheduler, 'euler')
+    for (const peer of [OUTPAINT_READY, { ...OUTPAINT_READY, workerVersion: '0.13.0' }]) {
+      assert.equal(supportsInferenceEuler(peer), false)
+      assert.deepEqual(captureOutpaintWorkerRequest(request, peer), request)
+    }
+  })
+})
+
 test('outpaint capability qualification preserves legacy peers and Illustrious without native BF16', () => {
   assert.equal(supportsInferenceOutpaint(ANIMA_BATCH_READY), false)
   assert.equal(supportsInferenceAnimaOutpaint(ANIMA_BATCH_READY), false)
@@ -209,7 +279,9 @@ test('outpaint capability qualification preserves legacy peers and Illustrious w
     }
     assert.equal(supportsInferenceAnimaOutpaint(peer), false, missing)
   }
-  for (const workerVersion of ['0.11.0', '0.12.1', '0.13.0']) {
+  assert.equal(supportsInferenceOutpaint({ ...OUTPAINT_READY, workerVersion: '0.13.0' }), true)
+  assert.equal(supportsInferenceEuler({ ...OUTPAINT_READY, workerVersion: '0.13.0' }), false)
+  for (const workerVersion of ['0.11.0', '0.12.1', '0.14.0']) {
     assert.equal(supportsInferenceOutpaint({ ...OUTPAINT_READY, workerVersion }), false)
   }
 })

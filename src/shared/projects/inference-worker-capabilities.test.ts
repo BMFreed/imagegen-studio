@@ -4,13 +4,16 @@ import test from 'node:test'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceAnimaOutpaint,
   supportsInferenceCandidateThumbnails,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
   supportsInferenceEmbeddings,
+  supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
+  supportsInferenceOutpaint,
   supportsInferenceVaePrecision,
 } from './inference-worker-capabilities.js'
 
@@ -343,6 +346,76 @@ const coreChecks = [
   supportsInferenceExternalVae,
   supportsInferenceEmbeddings,
 ]
+
+const eulerReady = {
+  ...currentReady,
+  capabilities: [
+    ...currentReady.capabilities,
+    'illustrious-outpaint',
+    'anima-outpaint',
+    'illustrious-euler',
+  ],
+  workerVersion: '0.13.0',
+}
+
+test('ordinary Illustrious Euler requires qualified 0.13.0 and its explicit capability', () => {
+  assert.equal(supportsInferenceEuler(eulerReady), true)
+  for (const check of [
+    ...coreChecks,
+    supportsInferenceAnima,
+    supportsInferenceOutpaint,
+    supportsInferenceAnimaOutpaint,
+  ]) {
+    assert.equal(check(eulerReady), true, check.name)
+  }
+
+  for (const peer of [
+    { ...eulerReady, workerVersion: '0.12.0' },
+    {
+      ...eulerReady,
+      capabilities: eulerReady.capabilities.filter(
+        (capability) => capability !== 'illustrious-euler',
+      ),
+    },
+  ]) {
+    assert.equal(supportsInferenceEuler(peer), false)
+    // Ordinary retained methods and native Anima Euler do not acquire this new requirement.
+    for (const check of [
+      ...coreChecks,
+      supportsInferenceAnima,
+      supportsInferenceOutpaint,
+      supportsInferenceAnimaOutpaint,
+    ]) {
+      assert.equal(check(peer), true, check.name)
+    }
+  }
+})
+
+test('an Euler advertisement cannot qualify incomplete, malformed or unknown peers', () => {
+  for (const removed of [...currentCoreCapabilities, 'illustrious-outpaint']) {
+    assert.equal(
+      supportsInferenceEuler({
+        ...eulerReady,
+        capabilities: eulerReady.capabilities.filter((capability) => capability !== removed),
+      }),
+      false,
+      removed,
+    )
+  }
+  for (const peer of [
+    null,
+    { ...eulerReady, workerVersion: '0.11.0' },
+    { ...eulerReady, workerVersion: '0.13.1' },
+    { ...eulerReady, workerVersion: '0.14.0' },
+    { ...eulerReady, protocolVersion: 1 },
+    { ...eulerReady, protocolVersion: '2' },
+    { ...eulerReady, runtimeProfile: 'cpu' },
+    { ...eulerReady, capabilities: ['illustrious-euler'] },
+    { ...eulerReady, capabilities: [...eulerReady.capabilities, 1] },
+  ]) {
+    assert.equal(supportsInferenceEuler(peer), false)
+  }
+})
 
 test('qualified 0.11.0 retains every Illustrious capability with or without Anima advertisements', () => {
   for (const capabilities of [currentCoreCapabilities, currentReady.capabilities]) {

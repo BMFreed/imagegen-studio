@@ -1564,15 +1564,18 @@ result-to-preset остаются открытыми; фазы 2B/2C не объ
 
 **Статус на 07.10.2026:** запланировано, не реализовано целиком. База —
 `86cb88e`: NoobAI admission и bounded Cyberfalafel v/epsilon qualification уже
-есть; профиль шумового расписания и обычный Euler ещё отсутствуют. Это
-ближайшая работа 2C перед dynamic multi-job batches. NoobAI не становится
+есть. [Обычный Euler](../engineering/phase-2c-euler-research.md) добавлен в
+authoring, frozen queue/Retry, native dispatch и portable accepted settings;
+шумовой профиль ещё отсутствует. Это ближайшая работа 2C перед dynamic multi-job
+batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
 рекомендует Euler a; [NoobAI XL V-Pred 1.0](https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0#how-to-use-the-model)
 использует обычный `EulerDiscreteScheduler`, `v_prediction` и
 `rescale_betas_zero_snr=True`. В текущем worker выбор prediction type оставляет
-общий pinned schedule; публичного Euler нет. Это implementation gaps,
+общий pinned schedule. Euler больше не является implementation gap;
+ZTSNR/spacing policy и full author-recipe qualification всё ещё отсутствуют,
 а не только недостающие проверки. Рекомендация автора по sampler не доказывает
 техническую несовместимость всех остальных методов.
 
@@ -1583,10 +1586,13 @@ result-to-preset остаются открытыми; фазы 2B/2C не объ
    pinned Diffusers. Зафиксировать независимые `predictionType`, zero-terminal
    SNR и timestep spacing, исходный beta/sigma schedule и версию его semantics.
    `v_prediction` не включает ZTSNR или `trailing` автоматически; обязательность
-   каждого параметра проверяется для конкретного профиля. До schema/UI changes
-   определить defaults для нового/неизвестного файла и форму ручной настройки,
-   различая проверенные author values и предположения; нерешённый продуктовый
-   выбор уточнить у пользователя. Не выводить весь профиль из имени, метки
+   каждого параметра проверяется для конкретного профиля. Решение пользователя
+   07.10.2026: отдельные ZTSNR и timestep-spacing controls в Model Manager;
+   prediction type остаётся только здесь. Для неизвестного файла сохраняем
+   нынешние defaults (`false` / `leading`) с явной пометкой предположения и
+   ручной настройкой, без обязательного выбора перед первой генерацией.
+   Проверенные author values отличаем от предположений. Не выводить весь профиль
+   из имени, метки
    `NoobAI` или формы tensors. Проверить применимость marker/config metadata,
    не превращая её в недоказанную автоматическую политику.
 2. **Расширить canonical exact-file policy.** Хранить эксплуатационный профиль

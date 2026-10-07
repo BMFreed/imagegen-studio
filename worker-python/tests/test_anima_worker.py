@@ -329,7 +329,7 @@ def test_actual_ready_composition_advertises_anima_only_on_native_bf16_hardware(
         "anima-outpaint",
     ]
     assert no["capabilities"] == capabilities[:-6]
-    assert no["workerVersion"] == yes["workerVersion"] == "0.12.0"
+    assert no["workerVersion"] == yes["workerVersion"] == "0.13.0"
     assert "illustrious-txt2img" in cast(list[str], no["capabilities"])
     assert inference_ready_message()["capabilities"] == no["capabilities"]
     broken = fake_runtime()

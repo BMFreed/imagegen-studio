@@ -221,6 +221,43 @@ test('accepted Illustrious provenance parses on the actual Raster Layer without 
   assert.deepEqual(parseProjectDocumentV1(legacy), legacy)
 })
 
+test('ordinary Euler and ancestral accepted configuration keys survive portable readers in every Illustrious mode', () => {
+  for (const { invokeScheduler, sampler } of [
+    { invokeScheduler: 'euler' as const, sampler: 'Euler' },
+    { invokeScheduler: 'euler_a' as const, sampler: 'Euler a' },
+  ]) {
+    const provenance = rasterGenerationProvenance()
+    Object.assign(provenance.generationConfiguration.sampling, {
+      invokeScheduler,
+      sampler,
+      scheduler: 'Normal',
+    })
+    assert.deepEqual(parseRasterGenerationProvenanceV1(provenance), provenance)
+    const document = generatedDocument()
+    document.layers[0].generationProvenance = provenance
+    Object.assign(document.generationDraft.sampling, { sampler, scheduler: 'Normal' })
+    assert.deepEqual(parseProjectDocumentV1(document), document)
+    for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+      const configuration = {
+        ...provenance.generationConfiguration,
+        mode,
+        sampling: {
+          ...provenance.generationConfiguration.sampling,
+          ...(mode === 'txt2img' ? {} : { denoisingStrength: 0.5 }),
+        },
+      }
+      assert.equal(isRasterGenerationConfigurationV1(configuration), true)
+      for (const alias of ['Euler', 'euler_normal', 'Euler a']) {
+        const invalid = structuredClone(configuration)
+        Object.assign(invalid.sampling, { invokeScheduler: alias })
+        assert.equal(isRasterGenerationConfigurationV1(invalid), false)
+      }
+    }
+  }
+  assert.equal(emptyDocument().generationDraft.sampling.sampler, null)
+  assert.equal(emptyDocument().generationDraft.sampling.scheduler, null)
+})
+
 test('accepted provenance rejects unportable fields, invalid model/geometry and forged output metadata', () => {
   assert.equal(IGS_GENERATION_PNG_MAX_BYTES, 32 * 1024 * 1024)
   const invalidCases: ((document: IgsProjectDocumentV1) => void)[] = [

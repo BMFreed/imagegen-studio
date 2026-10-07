@@ -1964,150 +1964,168 @@ test('ProjectService groups prompt edits for Undo while keeping later controls a
 })
 
 test('Project sampling edits survive shadow recovery, Save and reopen independently', async () => {
-  await withService(async ({ dataRoot, repository, service, shadow }) => {
-    const created = await service.create({ height: 512, title: 'Sampling persistence', width: 512 })
-    const savedPath = (await repository.listProjects())[0].canonicalPath
-    const originalSampling = created.generationDraft.sampling
-    assert.deepEqual(originalSampling, {
-      cfgScale: null,
-      denoisingStrength: null,
-      sampler: null,
-      scheduler: null,
-      steps: null,
-    })
+  for (const { sampler, scheduler } of [
+    { sampler: 'DPM++ 2M', scheduler: 'Karras' },
+    { sampler: 'Euler a', scheduler: 'Normal' },
+    { sampler: 'Euler', scheduler: 'Normal' },
+  ]) {
+    await withService(async ({ dataRoot, repository, service, shadow }) => {
+      const created = await service.create({
+        height: 512,
+        title: 'Sampling persistence',
+        width: 512,
+      })
+      const savedPath = (await repository.listProjects())[0].canonicalPath
+      const originalSampling = created.generationDraft.sampling
+      assert.deepEqual(originalSampling, {
+        cfgScale: null,
+        denoisingStrength: null,
+        sampler: null,
+        scheduler: null,
+        steps: null,
+      })
 
-    const steps = await service.updateGenerationDraft(created.id, {
-      kind: 'sampling-steps',
-      value: 35,
-    })
-    assert.equal(steps.dirty, true)
-    assert.deepEqual(steps.generationDraft.sampling, { ...originalSampling, steps: 35 })
-    const cfgScale = await service.updateGenerationDraft(created.id, {
-      kind: 'sampling-cfg-scale',
-      value: 7.5,
-    })
-    assert.deepEqual(cfgScale.generationDraft.sampling, {
-      ...originalSampling,
-      cfgScale: 7.5,
-      steps: 35,
-    })
-    const partialPair = await service.updateGenerationDraft(created.id, {
-      kind: 'sampling-pair',
-      sampler: 'DPM++ 2M',
-      scheduler: null,
-    })
-    assert.equal(partialPair.generationDraft.sampling.scheduler, null)
-    const selectedPair = await service.updateGenerationDraft(created.id, {
-      kind: 'sampling-pair',
-      sampler: 'DPM++ 2M',
-      scheduler: 'Karras',
-    })
-    assert.deepEqual(selectedPair.generationDraft.sampling, {
-      ...cfgScale.generationDraft.sampling,
-      sampler: 'DPM++ 2M',
-      scheduler: 'Karras',
-    })
-    await service.flushAutosave(created.id)
-    assert.deepEqual(
-      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
-      originalSampling,
-    )
+      const steps = await service.updateGenerationDraft(created.id, {
+        kind: 'sampling-steps',
+        value: 35,
+      })
+      assert.equal(steps.dirty, true)
+      assert.deepEqual(steps.generationDraft.sampling, { ...originalSampling, steps: 35 })
+      const cfgScale = await service.updateGenerationDraft(created.id, {
+        kind: 'sampling-cfg-scale',
+        value: 7.5,
+      })
+      assert.deepEqual(cfgScale.generationDraft.sampling, {
+        ...originalSampling,
+        cfgScale: 7.5,
+        steps: 35,
+      })
+      const partialPair = await service.updateGenerationDraft(created.id, {
+        kind: 'sampling-pair',
+        sampler,
+        scheduler: null,
+      })
+      assert.equal(partialPair.generationDraft.sampling.scheduler, null)
+      const selectedPair = await service.updateGenerationDraft(created.id, {
+        kind: 'sampling-pair',
+        sampler,
+        scheduler,
+      })
+      assert.deepEqual(selectedPair.generationDraft.sampling, {
+        ...cfgScale.generationDraft.sampling,
+        sampler,
+        scheduler,
+      })
+      assert.deepEqual(
+        (await service.undo(created.id)).generationDraft.sampling,
+        partialPair.generationDraft.sampling,
+      )
+      assert.deepEqual(
+        (await service.redo(created.id)).generationDraft.sampling,
+        selectedPair.generationDraft.sampling,
+      )
+      await service.flushAutosave(created.id)
+      assert.deepEqual(
+        (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+        originalSampling,
+      )
 
-    const restarted = new ProjectService({
-      autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
-      dataRoot,
-      repository,
-      roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
-      shadow,
-    })
-    assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
-    const recovered = await restarted.resolveRecovery(created.id, 'recover')
-    assert.equal(recovered.dirty, true)
-    assert.deepEqual(recovered.generationDraft.sampling, selectedPair.generationDraft.sampling)
-    assert.deepEqual(
-      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
-      originalSampling,
-    )
+      const restarted = new ProjectService({
+        autosaveOptions: { leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+        dataRoot,
+        repository,
+        roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+        shadow,
+      })
+      assert.equal((await restarted.open(created.id)).kind, 'recovery-required')
+      const recovered = await restarted.resolveRecovery(created.id, 'recover')
+      assert.equal(recovered.dirty, true)
+      assert.deepEqual(recovered.generationDraft.sampling, selectedPair.generationDraft.sampling)
+      assert.deepEqual(
+        (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+        originalSampling,
+      )
 
-    assert.equal((await restarted.save(created.id)).tab.dirty, false)
-    assert.deepEqual(
-      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
-      selectedPair.generationDraft.sampling,
-    )
-    await restarted.close(created.id)
-    const reopened = await restarted.open(created.id)
-    assert.equal(reopened.kind, 'opened')
-    if (reopened.kind !== 'opened') {
-      throw new Error('Saved Project did not reopen.')
-    }
-    assert.deepEqual(reopened.tab.generationDraft.sampling, selectedPair.generationDraft.sampling)
-    assert.equal(
-      (
-        await restarted.updateGenerationDraft(created.id, {
-          kind: 'sampling-pair',
-          sampler: 'DPM++ 2M',
-          scheduler: 'Karras',
-        })
-      ).dirty,
-      false,
-    )
-    assert.equal(
-      (
-        await restarted.updateGenerationDraft(created.id, {
-          kind: 'sampling-steps',
-          value: 35,
-        })
-      ).dirty,
-      false,
-    )
-    assert.equal(
-      (
-        await restarted.updateGenerationDraft(created.id, {
-          kind: 'sampling-cfg-scale',
-          value: 7.5,
-        })
-      ).dirty,
-      false,
-    )
+      assert.equal((await restarted.save(created.id)).tab.dirty, false)
+      assert.deepEqual(
+        (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+        selectedPair.generationDraft.sampling,
+      )
+      await restarted.close(created.id)
+      const reopened = await restarted.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind !== 'opened') {
+        throw new Error('Saved Project did not reopen.')
+      }
+      assert.deepEqual(reopened.tab.generationDraft.sampling, selectedPair.generationDraft.sampling)
+      assert.equal(
+        (
+          await restarted.updateGenerationDraft(created.id, {
+            kind: 'sampling-pair',
+            sampler,
+            scheduler,
+          })
+        ).dirty,
+        false,
+      )
+      assert.equal(
+        (
+          await restarted.updateGenerationDraft(created.id, {
+            kind: 'sampling-steps',
+            value: 35,
+          })
+        ).dirty,
+        false,
+      )
+      assert.equal(
+        (
+          await restarted.updateGenerationDraft(created.id, {
+            kind: 'sampling-cfg-scale',
+            value: 7.5,
+          })
+        ).dirty,
+        false,
+      )
 
-    const clearedPair = await restarted.updateGenerationDraft(created.id, {
-      kind: 'sampling-pair',
-      sampler: null,
-      scheduler: null,
+      const clearedPair = await restarted.updateGenerationDraft(created.id, {
+        kind: 'sampling-pair',
+        sampler: null,
+        scheduler: null,
+      })
+      assert.equal(clearedPair.dirty, true)
+      const clearedSteps = await restarted.updateGenerationDraft(created.id, {
+        kind: 'sampling-steps',
+        value: null,
+      })
+      assert.deepEqual(clearedSteps.generationDraft.sampling, {
+        ...originalSampling,
+        cfgScale: 7.5,
+      })
+      await restarted.save(created.id)
+      await restarted.close(created.id)
+      const reopenedAfterClear = await restarted.open(created.id)
+      assert.equal(reopenedAfterClear.kind, 'opened')
+      if (reopenedAfterClear.kind !== 'opened') {
+        throw new Error('Saved Project did not reopen after clearing Steps.')
+      }
+      assert.deepEqual(
+        reopenedAfterClear.tab.generationDraft.sampling,
+        clearedSteps.generationDraft.sampling,
+      )
+      const clearedCfgScale = await restarted.updateGenerationDraft(created.id, {
+        kind: 'sampling-cfg-scale',
+        value: null,
+      })
+      assert.equal(clearedCfgScale.dirty, true)
+      assert.deepEqual(clearedCfgScale.generationDraft.sampling, originalSampling)
+      await restarted.save(created.id)
+      assert.deepEqual(
+        (await readIgsPackage(savedPath)).project.generationDraft.sampling,
+        originalSampling,
+      )
+      await restarted.close(created.id)
     })
-    assert.equal(clearedPair.dirty, true)
-    const clearedSteps = await restarted.updateGenerationDraft(created.id, {
-      kind: 'sampling-steps',
-      value: null,
-    })
-    assert.deepEqual(clearedSteps.generationDraft.sampling, {
-      ...originalSampling,
-      cfgScale: 7.5,
-    })
-    await restarted.save(created.id)
-    await restarted.close(created.id)
-    const reopenedAfterClear = await restarted.open(created.id)
-    assert.equal(reopenedAfterClear.kind, 'opened')
-    if (reopenedAfterClear.kind !== 'opened') {
-      throw new Error('Saved Project did not reopen after clearing Steps.')
-    }
-    assert.deepEqual(
-      reopenedAfterClear.tab.generationDraft.sampling,
-      clearedSteps.generationDraft.sampling,
-    )
-    const clearedCfgScale = await restarted.updateGenerationDraft(created.id, {
-      kind: 'sampling-cfg-scale',
-      value: null,
-    })
-    assert.equal(clearedCfgScale.dirty, true)
-    assert.deepEqual(clearedCfgScale.generationDraft.sampling, originalSampling)
-    await restarted.save(created.id)
-    assert.deepEqual(
-      (await readIgsPackage(savedPath)).project.generationDraft.sampling,
-      originalSampling,
-    )
-    await restarted.close(created.id)
-  })
+  }
 })
 
 test('Project keeps a registry-selected exact checkpoint through shadow, Save, default change and missing file', async () => {
@@ -2520,6 +2538,10 @@ test('Project draft IPC shape and service reject forged refs and invalid scalar 
     { kind: 'sampling-cfg-scale', value: '7.5' },
     { kind: 'sampling-cfg-scale', loras: [], value: 7.5 },
     { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Karras' },
+    { kind: 'sampling-pair', sampler: 'Euler', scheduler: 'Karras' },
+    { kind: 'sampling-pair', sampler: 'euler', scheduler: 'Normal' },
+    { kind: 'sampling-pair', sampler: 'euler_a', scheduler: 'Normal' },
+    { kind: 'sampling-pair', sampler: 'Euler A', scheduler: 'Normal' },
     { kind: 'sampling-pair', sampler: 'DPM++ 2M', scheduler: 'Exponential' },
     { kind: 'sampling-pair', sampler: null, scheduler: 'Normal' },
     { kind: 'sampling-pair', model: 'forged', sampler: 'Euler a', scheduler: null },
@@ -2544,6 +2566,18 @@ test('Project draft IPC shape and service reject forged refs and invalid scalar 
   )
   assert.equal(
     isProjectGenerationDraftChange({ kind: 'sampling-pair', sampler: 'Euler a', scheduler: null }),
+    true,
+  )
+  assert.equal(
+    isProjectGenerationDraftChange({ kind: 'sampling-pair', sampler: 'Euler', scheduler: null }),
+    true,
+  )
+  assert.equal(
+    isProjectGenerationDraftChange({
+      kind: 'sampling-pair',
+      sampler: 'Euler',
+      scheduler: 'Normal',
+    }),
     true,
   )
   assert.equal(
@@ -3154,7 +3188,7 @@ test('Raster Layer commands persist top-first order and properties through shado
   })
 })
 
-test('editing an accepted Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
+test('editing an accepted Euler Raster Layer preserves immutable provenance through service, shadow and Save', async () => {
   await withService(async ({ database, dataRoot, repository, service, shadow }) => {
     const originalOutput = await acceptedOutputPngFixture()
     const output = await acceptedOutputPngFixture(16, 16)
@@ -3172,6 +3206,11 @@ test('editing an accepted Raster Layer preserves immutable provenance through se
     const bbox = { height: 8, width: 8, x: 13, y: -17 }
     const provenance = acceptedRasterProvenanceFixture(document, originalOutput, bbox)
     provenance.generationConfiguration.sampling.actualSeed = 0
+    Object.assign(provenance.generationConfiguration.sampling, {
+      invokeScheduler: 'euler',
+      sampler: 'Euler',
+      scheduler: 'Normal',
+    })
     const placeholders = await readProjectPlaceholders(placeholdersDir, 'unavailable')
     await saveIgsPackage(externalPath, {
       assets: { [assetPath]: { bytes: output } },

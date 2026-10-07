@@ -271,13 +271,42 @@ def test_generation_parser_rejects_bad_fields_before_unavailable_response(tmp_pa
 
 
 def test_supported_enums_and_seed_limits_remain_valid_input(tmp_path: Path) -> None:
-    for scheduler in ("dpmpp_2m_k", "dpmpp_2m", "euler_a", "dpmpp_sde_k", "dpmpp_sde"):
+    for scheduler in ("dpmpp_2m_k", "dpmpp_2m", "euler", "euler_a", "dpmpp_sde_k", "dpmpp_sde"):
         for prediction_type in ("epsilon", "v_prediction", "sample"):
             request = generation_request(tmp_path)
             set_nested(request, ("job", "sampling", "scheduler"), scheduler)
             set_nested(request, ("job", "checkpoint", "predictionType"), prediction_type)
             set_nested(request, ("job", "sampling", "seed"), 0xFFFFFFFF)
             assert process_request(request)["code"] == "INFERENCE_UNAVAILABLE"
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ["txt2img", "img2img"])
+@pytest.mark.parametrize("scheduler", ["euler", "euler_a"])
+def test_euler_keys_remain_distinct_in_typed_normal_commands(
+    tmp_path: Path, operation: str, scheduler: str
+) -> None:
+    request = generation_request(tmp_path)
+    request["type"] = f"generate-illustrious-{operation}"
+    set_nested(request, ("job", "sampling", "scheduler"), scheduler)
+    if operation == "img2img":
+        set_nested(request, ("job", "sampling", "denoisingStrength"), 0.5)
+    command = parse_request(request)
+    assert isinstance(command, GenerateIllustriousTxt2ImgCommand)
+    assert isinstance(command, GenerateIllustriousImg2ImgCommand) == (operation == "img2img")
+    assert command.scheduler == scheduler
+    assert process_request(request)["code"] == "INFERENCE_UNAVAILABLE"
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("alias", ["Euler", "Euler a", "euler_k", "euler_ancestral", None, 0])
+def test_euler_wire_aliases_never_infer_or_coerce_a_scheduler(
+    tmp_path: Path, alias: object
+) -> None:
+    request = generation_request(tmp_path)
+    set_nested(request, ("job", "sampling", "scheduler"), alias)
+    with pytest.raises(DerivativeError, match="Generation scheduler is unsupported"):
+        parse_request(request)
     assert list(tmp_path.iterdir()) == []
 
 

@@ -3448,3 +3448,139 @@ test('dispatch rechecks a queued embedding changed after admission while preserv
     }
   })
 })
+
+const eulerReady: InferenceWorkerReady = {
+  capabilities: [
+    'illustrious-txt2img',
+    'target-composition',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+    'illustrious-embeddings',
+    'illustrious-outpaint',
+    'illustrious-euler',
+  ],
+  protocolVersion: '1',
+  runtimeProfile: 'linux-nvidia',
+  workerVersion: '0.13.0',
+}
+
+test('ordinary Euler refuses before a worker reservation and freezes selection through concurrent draft edits and completion', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, queue, runtime, staging, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'sampling-pair',
+      sampler: 'Euler',
+      scheduler: 'Normal',
+    })
+    const saved = await readFile(fixture.packagePath)
+    const preparationsBefore = runtime.preparationCount
+    const seedBefore = await staging.readLastActualSeed(tabId, documentId)
+    await assert.rejects(controller.generate(tabId, { documentId, iterations: 1 }), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(runtime.preparationCount, preparationsBefore)
+    assert.equal(await staging.readLastActualSeed(tabId, documentId), seedBefore)
+    assert.equal(runtime.composedTargets.length, 0)
+    assert.equal((await controller.getQueue()).items.length, 0)
+    assert.deepEqual(await staging.listVerifiedCandidates(tabId), [])
+    runtime.ready = structuredClone(eulerReady)
+    const entered = signal()
+    const release = signal()
+    runtime.beforeCompose = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    try {
+      const pending = controller.generate(tabId, { documentId, iterations: 1 })
+      await entered.promise
+      await projects.updateGenerationDraft(tabId, {
+        kind: 'sampling-pair',
+        sampler: 'Euler a',
+        scheduler: 'Normal',
+      })
+      release.resolve()
+      const queued = await pending
+      assert.equal(queued.kind, 'queued')
+      if (queued.kind !== 'queued') {
+        throw new Error('expected durable batch')
+      }
+      await waitForState(controller, tabId, (state) => state.phase === 'idle')
+      const frozen = await queue.loadVerifiedInput(queued.jobIds[0])
+      assert.ok(
+        frozen.payload.kind === 'illustrious-txt2img' ||
+          frozen.payload.kind === 'illustrious-img2img',
+      )
+      assert.equal(frozen.item.status, 'completed')
+      assert.equal(frozen.payload.context.sampling.invokeScheduler, 'euler')
+      assert.equal(frozen.payload.workerJob.sampling.scheduler, 'euler')
+      assert.equal(runtime.generated[0].job.sampling.scheduler, 'euler')
+      const candidates = await staging.listVerifiedCandidates(tabId)
+      assert.equal(candidates.length, 1)
+      assert.equal(
+        JSON.parse(candidates[0].frozenPayloadJson).context.sampling.invokeScheduler,
+        'euler',
+      )
+      assert.equal(
+        projects.getOpenDocumentForAcceptance(tabId)!.document.generationDraft.sampling.sampler,
+        'Euler a',
+      )
+      assert.deepEqual(await readFile(fixture.packagePath), saved)
+    } finally {
+      release.resolve()
+    }
+  })
+})
+
+test('Euler Retry refuses legacy peers without changing the failed source and ignores later sampler edits', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, documentId, projects, runtime, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    runtime.ready = structuredClone(eulerReady)
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'sampling-pair',
+      sampler: 'Euler',
+      scheduler: 'Normal',
+    })
+    runtime.beforeGenerate = async () => {
+      throw new Error('controlled initial inference failure')
+    }
+    const initial = await controller.generate(tabId, { documentId, iterations: 1 })
+    assert.equal(initial.kind, 'queued')
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'sampling-pair',
+      sampler: 'Euler a',
+      scheduler: 'Normal',
+    })
+    runtime.beforeGenerate = null
+    runtime.ready = {
+      ...eulerReady,
+      capabilities: ['illustrious-txt2img'],
+      workerVersion: '0.2.0',
+    }
+    await assert.rejects(controller.retryJob(source), { code: 'INFERENCE_UNAVAILABLE' })
+    const unchanged = await controller.getQueue()
+    assert.equal(unchanged.items.length, 1)
+    assert.equal(unchanged.items[0].statusSequence, source.statusSequence)
+    assert.equal(runtime.generated.length, 1)
+    runtime.ready = structuredClone(eulerReady)
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, 2)
+    assert.equal(runtime.generated[1].job.sampling.scheduler, 'euler')
+    assert.equal(
+      (await controller.getQueue()).items.filter((item) => item.status === 'completed').length,
+      1,
+    )
+  })
+})

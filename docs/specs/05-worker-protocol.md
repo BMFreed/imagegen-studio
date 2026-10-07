@@ -293,6 +293,20 @@ needed implementation and qualification before activation. The default installed
 runtime contract is not changed by a development dependency or a research weight
 download. Full authored masks/Regional Guidance/Smart Patch remain phase4.
 
+### Ordinary Illustrious Euler checkpoint (07.10.2026)
+
+[Ordinary Euler](../engineering/phase-2c-euler-research.md) adds protocol `1`
+Illustrious sampling key `euler`, distinct from `euler_a`, for existing txt2img,
+img2img and normal outpaint commands. Main admits it only with qualified worker
+`0.13.0` and explicit `illustrious-euler`; old peers cannot acquire support by
+advertising that string. Worker construction uses the actual pinned
+`EulerDiscreteScheduler` and the frozen checkpoint prediction type, retaining
+existing inherited schedule defaults. The new worker retains previous
+Illustrious and optional native-BF16 Anima capabilities; Anima flow Euler is
+unchanged. Queue and portable accepted settings allow the additive key without
+rewriting historical records. There is no noise-profile DTO/migration yet:
+zero-SNR, spacing policy and trained author-recipe qualification remain planned.
+
 ### Internal qualified outpaint execution checkpoint (06.10.2026)
 
 The [execution checkpoint](../engineering/phase-2c-outpaint-execution-research.md)

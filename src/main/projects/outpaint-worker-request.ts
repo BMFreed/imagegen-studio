@@ -5,6 +5,7 @@ import {
 } from '../../shared/projects/anima-worker-request.js'
 import {
   supportsInferenceAnimaOutpaint,
+  supportsInferenceEuler,
   supportsInferenceOutpaint,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -69,6 +70,13 @@ export function captureOutpaintWorkerRequest(
     throw new Error('The active worker has not qualified Anima outpaint contribution inference.')
   }
   const job = record(envelope.job)
+  if (
+    envelope.type === 'generate-illustrious-outpaint' &&
+    record(job.sampling).scheduler === 'euler' &&
+    !supportsInferenceEuler(ready)
+  ) {
+    throw new Error('The active worker has not qualified ordinary Illustrious Euler.')
+  }
   const conditioning = parseFrozenAlphaOutpaintConditioningV1(job.conditioning)
   const infill = record(job.infillResource)
   const { path: infillPath, ...identity } = infill

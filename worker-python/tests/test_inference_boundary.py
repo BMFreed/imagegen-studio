@@ -78,7 +78,7 @@ def _request(
     }
 
 
-def _command(tmp_path: Path) -> GenerateIllustriousTxt2ImgCommand:
+def illustrious_command(tmp_path: Path) -> GenerateIllustriousTxt2ImgCommand:
     staging = tmp_path / "staging"
     staging.mkdir(mode=0o700)
     checkpoint = tmp_path / "checkpoint.safetensors"
@@ -101,7 +101,7 @@ def _command(tmp_path: Path) -> GenerateIllustriousTxt2ImgCommand:
 def test_real_composed_txt2img_target_is_accepted_and_opaque_neighbor_is_rejected(
     tmp_path: Path,
 ) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     validate_generation_assets(command)
     assert not command.output_path.exists()
 
@@ -120,7 +120,7 @@ def test_real_composed_txt2img_target_is_accepted_and_opaque_neighbor_is_rejecte
 def test_img2img_verified_snapshot_retains_only_fully_opaque_source(
     tmp_path: Path, alpha: int
 ) -> None:
-    original = _command(tmp_path)
+    original = illustrious_command(tmp_path)
     Image.new("RGBA", (64, 64), (23, 45, 67, alpha)).save(
         original.target_path, format="PNG", icc_profile=SRGB_ICC_PROFILE
     )
@@ -151,7 +151,7 @@ def test_img2img_verified_snapshot_retains_only_fully_opaque_source(
 
 
 def test_exact_model_and_target_hashes_are_rechecked_before_output(tmp_path: Path) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     command.checkpoint_path.write_bytes(b"changed checkpoint")
     with pytest.raises(DerivativeError, match="Checkpoint changed") as checkpoint_error:
         validate_generation_assets(command)
@@ -166,7 +166,7 @@ def test_exact_model_and_target_hashes_are_rechecked_before_output(tmp_path: Pat
 
 
 def test_unsafe_or_preexisting_output_path_never_replaced(tmp_path: Path) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     command.output_path.write_bytes(b"user data")
     with pytest.raises(DerivativeError) as error:
         validate_generation_assets(command)
@@ -204,7 +204,7 @@ def test_pinned_config_requires_every_exact_local_file(tmp_path: Path) -> None:
 def test_config_changed_after_ready_or_during_load_never_produces_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     config_file = config_dir / "model_index.json"
@@ -332,7 +332,7 @@ def test_real_compel_parser_sees_translated_weight_not_literal_text() -> None:
 
 
 def test_both_sdxl_tokenizers_check_both_prompts(tmp_path: Path) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
 
     class _SecondTokenizer(_FakeTokenizer):
         def encode(self, prompt: str, *, add_special_tokens: bool, truncation: bool) -> list[int]:
@@ -666,7 +666,7 @@ def test_progress_sink_failure_does_not_leave_attention_hook_attached() -> None:
 def test_generation_connects_real_pipeline_progress_before_provisional_png_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, thumbnail_failure: str | None
 ) -> None:
-    command = replace(_command(tmp_path), cfg_rescale=0.7)
+    command = replace(illustrious_command(tmp_path), cfg_rescale=0.7)
 
     class GenerationPipeline(_ProgressPipeline):
         def __init__(self) -> None:
@@ -824,7 +824,7 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
 def test_inference_main_flushes_correlated_progress_to_original_stdout_during_redirect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     request = _request(
         command.staging_root,
         command.checkpoint_path,
@@ -944,7 +944,9 @@ def test_two_clip_conditioning_pads_long_positive_and_zeroes_empty_negative(
     torch.zeros = _ShapeTorch.zeros  # type: ignore[attr-defined]
     torch.cat = _ShapeTorch.cat  # type: ignore[attr-defined]
     command = replace(
-        _command(tmp_path), positive_prompt="(portrait:1.2) with many details", negative_prompt=""
+        illustrious_command(tmp_path),
+        positive_prompt="(portrait:1.2) with many details",
+        negative_prompt="",
     )
     pipeline = SimpleNamespace(
         tokenizer=SimpleNamespace(
@@ -1018,7 +1020,7 @@ def test_two_clip_conditioning_pads_long_positive_and_zeroes_empty_negative(
 def test_inference_entrypoint_keeps_request_correlation_on_unsupported_prediction(
     tmp_path: Path,
 ) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     request = _request(
         command.staging_root,
         command.checkpoint_path,
@@ -1044,7 +1046,7 @@ def test_inference_entrypoint_keeps_request_correlation_on_unsupported_predictio
 
 
 def test_inference_scheduler_matrix_has_no_implicit_prediction_fallback(tmp_path: Path) -> None:
-    command = _command(tmp_path)
+    command = illustrious_command(tmp_path)
     calls: list[tuple[str, dict[str, object]]] = []
 
     class _Scheduler:
@@ -1058,7 +1060,8 @@ def test_inference_scheduler_matrix_has_no_implicit_prediction_fallback(tmp_path
     diffusers = ModuleType("fake_diffusers")
     diffusers.__dict__.update(
         {
-            "EulerAncestralDiscreteScheduler": _Scheduler("euler"),
+            "EulerDiscreteScheduler": _Scheduler("euler"),
+            "EulerAncestralDiscreteScheduler": _Scheduler("euler_a"),
             "DPMSolverMultistepScheduler": _Scheduler("2m"),
             "DPMSolverSDEScheduler": _Scheduler("sde"),
         }
@@ -1068,7 +1071,8 @@ def test_inference_scheduler_matrix_has_no_implicit_prediction_fallback(tmp_path
     )
     pipeline = SimpleNamespace(scheduler=SimpleNamespace(config={"prediction_type": "epsilon"}))
     expected = {
-        "euler_a": ("euler", False),
+        "euler": ("euler", False),
+        "euler_a": ("euler_a", False),
         "dpmpp_2m": ("2m", False),
         "dpmpp_2m_k": ("2m", True),
         "dpmpp_sde": ("sde", False),
@@ -1082,7 +1086,7 @@ def test_inference_scheduler_matrix_has_no_implicit_prediction_fallback(tmp_path
         )
         assert actual == name
         assert calls[-1][1]["prediction_type"] == "v_prediction"
-        if key != "euler_a":
+        if key not in ("euler", "euler_a"):
             assert calls[-1][1]["use_karras_sigmas"] is karras
         if key.startswith("dpmpp_sde"):
             assert calls[-1][1]["noise_sampler_seed"] == command.seed
@@ -1108,7 +1112,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
     assert result.returncode == 78
     assert result.stdout == ""
     assert "offline SDXL config" in result.stderr
-    assert inference_ready_message()["workerVersion"] == "0.12.0"
+    assert inference_ready_message()["workerVersion"] == "0.13.0"
     assert inference_ready_message()["runtimeProfile"] == "linux-nvidia"
     assert json.loads(json.dumps(inference_ready_message()))["capabilities"] == [
         "illustrious-txt2img",
@@ -1122,4 +1126,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-external-vae",
         "illustrious-embeddings",
         "illustrious-outpaint",
+        "illustrious-euler",
     ]

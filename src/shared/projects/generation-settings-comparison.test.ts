@@ -970,3 +970,26 @@ test('pure projection leaves frozen inputs unchanged and never allocates a rando
     Math.random = random
   }
 })
+
+test('read-only comparison distinguishes ordinary and ancestral Euler and preserves frozen provenance', () => {
+  const source = fixture()
+  Object.assign(source.data.generationConfiguration.sampling, {
+    invokeScheduler: 'euler',
+    sampler: 'Euler',
+    scheduler: 'Normal',
+  })
+  Object.assign(source.current.generationDraft.sampling, { sampler: 'Euler', scheduler: 'Normal' })
+  assert.ok(isRasterGenerationData(source.data))
+  const unchanged = structuredClone(source)
+  assert.equal(result(source, 'sampling.sampler').status, 'Same')
+  assert.equal(result(source, 'sampling.invokeScheduler').status, 'Same')
+  assert.deepEqual(source, unchanged)
+  source.current.generationDraft.sampling.sampler = 'Euler a'
+  const changed = structuredClone(source)
+  assert.equal(result(source, 'sampling.sampler').status, 'Changed')
+  assert.equal(result(source, 'sampling.invokeScheduler').status, 'Changed')
+  assert.equal(result(source, 'sampling.invokeScheduler').before, 'euler')
+  assert.equal(result(source, 'sampling.invokeScheduler').after, 'euler_a')
+  assert.equal(result(source, 'sampling.scheduler').status, 'Same')
+  assert.deepEqual(source, changed)
+})

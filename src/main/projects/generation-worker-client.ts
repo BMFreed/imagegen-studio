@@ -7,12 +7,14 @@ import {
   isGenerationDenoisingProgress,
   MAX_DENOISING_STEPS,
 } from '../../shared/projects/generation-progress.js'
+import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-scheduler.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
@@ -366,6 +368,18 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         frozen = structuredClone(request)
       } catch {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The generation request is invalid.')
+      }
+      if (
+        (frozen.type === 'generate-illustrious-txt2img' ||
+          frozen.type === 'generate-illustrious-img2img' ||
+          frozen.type === 'generate-illustrious-outpaint') &&
+        frozen.job?.sampling?.scheduler === 'euler' &&
+        !supportsInferenceEuler(this.readyMessage)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified ordinary Illustrious Euler.',
+        )
       }
       if (isOutpaintWorkerRequest(frozen)) {
         if (
@@ -908,6 +922,9 @@ function validRequestShape(request: IllustriousGenerationRequestV1): boolean {
         request.job.sampling.denoisingStrength >= 0 &&
         request.job.sampling.denoisingStrength <= 1
       : !('denoisingStrength' in (request.job?.sampling ?? {}))) &&
+    ILLUSTRIOUS_SCHEDULER_PAIRS.some(
+      (pair) => pair.invokeKey === request.job?.sampling?.scheduler,
+    ) &&
     validWorkerLoras(request.job?.loras) &&
     validWorkerVae(request.job?.vae) &&
     (request.job?.vaePrecision === undefined ||

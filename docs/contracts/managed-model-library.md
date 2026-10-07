@@ -99,6 +99,17 @@ metadata. Текущий эффективный тип берётся из overr
 `.igs` или Preset. Если override изменился между Prepare и materialization,
 операция прерывается и требует повторного Prepare, без silent substitution.
 
+Принятый следующий срез NoobAI (ещё не реализован): ZTSNR и timestep spacing
+редактируются отдельными параметрами в Model Manager и принадлежат той же
+точной SHA-256/size policy. Для неизвестного профиля сохраняются defaults
+`rescaleBetasZeroSnr=false`, `timestepSpacing=leading`, явно помеченные как
+предположения, с ручной настройкой без обязательного выбора до первой генерации.
+Prediction type остаётся отдельным параметром здесь же; `v_prediction` само
+по себе не включает ZTSNR или иной spacing. Ни source label, ни marker, ни
+exported scheduler config не заменяют проверку конкретного author recipe.
+Frozen execution, сохранение фактического профиля и legacy путь определены в
+[плане полной NoobAI поддержки](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp).
+
 Anima использует отдельный rectified-flow pipeline и не получает SDXL
 `predictionType`. Каждый поддерживаемый custom Anima checkpoint устанавливается
 вместе с закреплёнными Qwen3 encoder и VAE; установленная группа сама по себе

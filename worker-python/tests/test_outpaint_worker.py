@@ -324,7 +324,7 @@ def verify_output(
 
 
 @pytest.mark.parametrize(
-    "scheduler", ("dpmpp_2m", "dpmpp_2m_k", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
+    "scheduler", ("dpmpp_2m", "dpmpp_2m_k", "euler", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
 )
 def test_illustrious_wire_runs_real_masked_loop_and_retains_policy_rgba(
     tmp_path: Path,
@@ -337,6 +337,9 @@ def test_illustrious_wire_runs_real_masked_loop_and_retains_policy_rgba(
     native = illustrious_native
     wire = illus_wire(tmp_path)
     wire["job"]["sampling"].update(scheduler=scheduler, steps=3, seed=0)
+    captured = typed(wire)
+    assert isinstance(captured, GenerateIllustriousOutpaintCommand)
+    assert captured.scheduler == scheduler
     _fixture_path, phases = install_scaled_infill(tmp_path, native.torch, monkeypatch)
     pipeline = native.pipeline
     to = pipeline.to

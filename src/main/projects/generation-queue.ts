@@ -143,6 +143,7 @@ const SchedulerKeySchema = v.picklist([
   'dpmpp_2m_k',
   'dpmpp_2m',
   'euler_a',
+  'euler',
   'dpmpp_sde_k',
   'dpmpp_sde',
 ])

@@ -7,6 +7,7 @@ export interface QualifiedInferenceWorkerReady {
     | '0.10.0'
     | '0.11.0'
     | '0.12.0'
+    | '0.13.0'
     | '0.2.0'
     | '0.3.0'
     | '0.4.0'
@@ -67,7 +68,7 @@ export function isQualifiedInferenceWorkerReady(
         ready.capabilities.includes('illustrious-external-vae')) ||
       ((ready.workerVersion === '0.10.0' ||
         ready.workerVersion === '0.11.0' ||
-        (ready.workerVersion === '0.12.0' &&
+        ((ready.workerVersion === '0.12.0' || ready.workerVersion === '0.13.0') &&
           ready.capabilities.includes('illustrious-outpaint'))) &&
         ready.capabilities.includes('denoising-progress') &&
         ready.capabilities.includes('candidate-thumbnails') &&
@@ -97,7 +98,8 @@ export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -112,7 +114,8 @@ export function supportsInferenceCFGRescale(value: unknown): boolean {
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -125,7 +128,8 @@ export function supportsInferenceImg2Img(value: unknown): boolean {
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -138,7 +142,8 @@ export function supportsInferenceLora(value: unknown): boolean {
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -150,7 +155,8 @@ export function supportsInferenceVaePrecision(value: unknown): boolean {
       value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -161,7 +167,8 @@ export function supportsInferenceExternalVae(value: unknown): boolean {
     (value.workerVersion === '0.9.0' ||
       value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -171,7 +178,8 @@ export function supportsInferenceEmbeddings(value: unknown): boolean {
     isQualifiedInferenceWorkerReady(value) &&
     (value.workerVersion === '0.10.0' ||
       value.workerVersion === '0.11.0' ||
-      value.workerVersion === '0.12.0')
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0')
   )
 }
 
@@ -179,7 +187,9 @@ export function supportsInferenceEmbeddings(value: unknown): boolean {
 export function supportsInferenceAnima(value: unknown): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
-    (value.workerVersion === '0.11.0' || value.workerVersion === '0.12.0') &&
+    (value.workerVersion === '0.11.0' ||
+      value.workerVersion === '0.12.0' ||
+      value.workerVersion === '0.13.0') &&
     [
       'anima-txt2img',
       'anima-img2img',
@@ -190,9 +200,12 @@ export function supportsInferenceAnima(value: unknown): boolean {
   )
 }
 
-/** Explicit alpha conditioning and RGBA contribution require the qualified 0.12 adapter. */
+/** Explicit alpha conditioning and RGBA contribution require a qualified contribution adapter. */
 export function supportsInferenceOutpaint(value: unknown): boolean {
-  return isQualifiedInferenceWorkerReady(value) && value.workerVersion === '0.12.0'
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    (value.workerVersion === '0.12.0' || value.workerVersion === '0.13.0')
+  )
 }
 
 /** Original Anima also requires native BF16 and its explicit contribution adapter. */
@@ -202,5 +215,14 @@ export function supportsInferenceAnimaOutpaint(value: unknown): boolean {
     supportsInferenceAnima(value) &&
     isQualifiedInferenceWorkerReady(value) &&
     value.capabilities.includes('anima-outpaint')
+  )
+}
+
+/** Ordinary Euler never follows from an older peer advertising an unqualified string. */
+export function supportsInferenceEuler(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.13.0' &&
+    value.capabilities.includes('illustrious-euler')
   )
 }

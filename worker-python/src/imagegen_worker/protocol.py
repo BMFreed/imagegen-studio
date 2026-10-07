@@ -150,7 +150,7 @@ class GenerateIllustriousTxt2ImgCommand:
     steps: int
     cfg_scale: float
     seed: int
-    scheduler: Literal["dpmpp_2m_k", "dpmpp_2m", "euler_a", "dpmpp_sde_k", "dpmpp_sde"]
+    scheduler: Literal["dpmpp_2m_k", "dpmpp_2m", "euler", "euler_a", "dpmpp_sde_k", "dpmpp_sde"]
     staging_root: Path
     output_path: Path
     cfg_rescale: float = 0.0
@@ -478,6 +478,7 @@ def _generate_illustrious_txt2img(
     if not isinstance(scheduler, str) or scheduler not in (
         "dpmpp_2m_k",
         "dpmpp_2m",
+        "euler",
         "euler_a",
         "dpmpp_sde_k",
         "dpmpp_sde",

@@ -2417,6 +2417,131 @@ test('retry consumes one terminal revision and creates a fresh frozen attempt ac
   }
 })
 
+test('ordinary Euler and ancestral retain distinct frozen pairs through SQLite restart and Retry', async () => {
+  for (const { invokeScheduler, sampler, workerReady } of [
+    {
+      invokeScheduler: 'euler' as const,
+      sampler: 'Euler',
+      workerReady: {
+        ...embeddingReady,
+        capabilities: [...embeddingReady.capabilities, 'illustrious-outpaint', 'illustrious-euler'],
+        workerVersion: '0.13.0',
+      },
+    },
+    { invokeScheduler: 'euler_a' as const, sampler: 'Euler a', workerReady: ready },
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-euler-queue-'))
+    let database = openAppDatabase(root, migrations)
+    try {
+      let queue = new GenerationQueueRepository(database.db, root)
+      await queue.recoverAfterRestart()
+      const { prepared, projectPath } = await fixture(root)
+      Object.assign(prepared.context.sampling, {
+        invokeScheduler,
+        sampler,
+        scheduler: 'Normal',
+        seed: 0,
+      })
+      const projectBytes = await readFile(projectPath)
+      const queued = await inQualifiedLease(
+        root,
+        prepared,
+        async (request) => {
+          const badPair = {
+            context: structuredClone(prepared.context),
+            targetPngBytes: prepared.targetPngBytes,
+          }
+          badPair.context.sampling.scheduler = 'Karras'
+          await assert.rejects(
+            queue.enqueueIllustriousTxt2Img({
+              prepared: badPair,
+              projectPath,
+              request,
+              stagingSessionId: randomUUID(),
+            }),
+            { code: 'QUEUE_INPUT_INVALID' },
+          )
+          for (const alias of [
+            invokeScheduler === 'euler' ? 'euler_a' : 'euler',
+            'Euler',
+            'euler_normal',
+          ]) {
+            const mismatched = structuredClone(request)
+            Object.assign(mismatched.job.sampling, { scheduler: alias })
+            await assert.rejects(
+              queue.enqueueIllustriousTxt2Img({
+                prepared,
+                projectPath,
+                request: mismatched,
+                stagingSessionId: randomUUID(),
+              }),
+              { code: 'QUEUE_INPUT_INVALID' },
+            )
+          }
+          assert.deepEqual(
+            await database.db.selectFrom('generation_queue_item').select('id').execute(),
+            [],
+          )
+          assert.deepEqual(await readdir(path.join(root, 'generation-inputs')).catch(() => []), [])
+          return await queue.enqueueIllustriousTxt2Img({
+            prepared,
+            projectPath,
+            request,
+            stagingSessionId: randomUUID(),
+          })
+        },
+        workerReady,
+      )
+      const original = await queue.loadVerifiedInput(queued.id)
+      assert.equal(original.payload.kind, 'illustrious-txt2img')
+      if (original.payload.kind !== 'illustrious-txt2img') {
+        throw new Error('Expected a frozen Illustrious txt2img payload.')
+      }
+      assert.equal(original.payload.context.sampling.invokeScheduler, invokeScheduler)
+      assert.equal(original.payload.context.sampling.sampler, sampler)
+      assert.equal(original.payload.context.sampling.scheduler, 'Normal')
+      assert.equal(original.payload.context.sampling.seed, 0)
+      assert.equal(original.payload.workerJob.sampling.scheduler, invokeScheduler)
+      const targetBytes = await readFile(original.targetPath)
+      Object.assign(prepared.context.sampling, {
+        invokeScheduler: invokeScheduler === 'euler' ? 'euler_a' : 'euler',
+        sampler: invokeScheduler === 'euler' ? 'Euler a' : 'Euler',
+        seed: 913,
+      })
+      await queue.cancel(queued.id, queued.statusSequence)
+      await database.close()
+      database = openAppDatabase(root, migrations)
+      queue = new GenerationQueueRepository(database.db, root)
+      await queue.recoverAfterRestart()
+      const terminal = await queue.loadVerifiedInput(queued.id)
+      assert.equal(terminal.item.status, 'canceled')
+      assert.deepEqual(terminal.payload, original.payload)
+      const retry = await queue.retryTerminal(queued.id, terminal.item.statusSequence)
+      assert.notEqual(retry.id, queued.id)
+      assert.notEqual(retry.stagingSessionId, queued.stagingSessionId)
+      const frozen = await queue.loadVerifiedInput(retry.id)
+      assert.deepEqual(frozen.payload, original.payload)
+      assert.deepEqual(await readFile(frozen.targetPath), targetBytes)
+      assert.deepEqual(await readFile(projectPath), projectBytes)
+
+      const corrupted = structuredClone(original.payload)
+      corrupted.context.sampling.scheduler = 'Karras'
+      await database.db
+        .updateTable('generation_queue_item')
+        .set({ frozen_payload_json: JSON.stringify(corrupted) })
+        .where('id', '=', retry.id)
+        .execute()
+      await assert.rejects(queue.loadVerifiedInput(retry.id), { code: 'QUEUE_INPUT_INVALID' })
+      assert.equal((await queue.listManagerPage()).items.length, 2)
+      assert.deepEqual(await readFile(frozen.targetPath), targetBytes)
+      assert.deepEqual(await readFile(projectPath), projectBytes)
+    } finally {
+      await database.close()
+      await rm(root, { force: true, recursive: true })
+    }
+  }
+})
+
 test('CFG Rescale is frozen through SQLite publication, restart and retry; mismatches refuse admission and durable reads', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-cfg-rescale-queue-'))
   let database = openAppDatabase(root, migrations)

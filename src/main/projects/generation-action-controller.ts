@@ -19,6 +19,7 @@ import {
   supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
+  supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
@@ -511,6 +512,7 @@ export class ProjectGenerationActionController {
               capture.document.generationDraft.positivePrompt.embeddingRefs.length > 0 ||
               capture.document.generationDraft.negativePrompt.embeddingRefs.length > 0
             const anima = capture.document.generationDraft.model?.baseModelFamily === 'anima'
+            const euler = !anima && capture.document.generationDraft.sampling.sampler === 'Euler'
             let animaModels: AnimaGenerationModelResolver | null = null
             if (anima) {
               const models = this.options.models
@@ -557,9 +559,15 @@ export class ProjectGenerationActionController {
             }
             // Refuse known legacy peers before reserving a worker or composing target pixels.
             const ready =
-              hasEmbeddings || anima
+              hasEmbeddings || anima || euler
                 ? await this.options.runtime.readQualifiedInferenceReady()
                 : null
+            if (euler && ready && !supportsInferenceEuler(ready)) {
+              throw new IllustriousJobError(
+                'INFERENCE_UNAVAILABLE',
+                'The active worker has not qualified ordinary Illustrious Euler.',
+              )
+            }
             if (anima && ready && !supportsInferenceAnima(ready)) {
               throw new AnimaGenerationRequestError(
                 'INFERENCE_UNAVAILABLE',
@@ -587,6 +595,12 @@ export class ProjectGenerationActionController {
               this.options.scratchBasePath,
               async ({ inferenceReady, targetWorker }) => {
                 this.assertAdmissionOpen()
+                if (euler && !supportsInferenceEuler(inferenceReady)) {
+                  throw new IllustriousJobError(
+                    'INFERENCE_UNAVAILABLE',
+                    'The active worker has not qualified ordinary Illustrious Euler.',
+                  )
+                }
                 if (anima && !supportsInferenceAnima(inferenceReady)) {
                   throw new AnimaGenerationRequestError(
                     'INFERENCE_UNAVAILABLE',
@@ -954,6 +968,22 @@ export class ProjectGenerationActionController {
       }
       this.assertDocument(tabId, frozen.payload.context.documentId)
       const payload = frozen.payload
+      const euler =
+        (payload.kind === 'illustrious-txt2img' ||
+          payload.kind === 'illustrious-img2img' ||
+          payload.kind === 'illustrious-outpaint') &&
+        payload.context.sampling.invokeScheduler === 'euler'
+      if (euler) {
+        const ready = await this.options.runtime.readQualifiedInferenceReady()
+        this.assertAdmissionOpen()
+        this.assertDocument(tabId, documentId)
+        if (ready && !supportsInferenceEuler(ready)) {
+          throw new IllustriousJobError(
+            'INFERENCE_UNAVAILABLE',
+            'The active worker has not qualified ordinary Illustrious Euler.',
+          )
+        }
+      }
       if (isQueuedOutpaint(payload)) {
         const ready = await this.options.runtime.readQualifiedInferenceReady()
         this.assertAdmissionOpen()
@@ -986,6 +1016,12 @@ export class ProjectGenerationActionController {
           async (ready) => {
             this.assertAdmissionOpen()
             this.assertDocument(tabId, documentId)
+            if (euler && !supportsInferenceEuler(ready)) {
+              throw new IllustriousJobError(
+                'INFERENCE_UNAVAILABLE',
+                'The active worker has not qualified ordinary Illustrious Euler.',
+              )
+            }
             const preflight = async (input: GenerationQueueRetryPreflightInput) => {
               this.assertAdmissionOpen()
               this.assertDocument(tabId, documentId)

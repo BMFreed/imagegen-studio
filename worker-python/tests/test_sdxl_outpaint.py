@@ -22,7 +22,7 @@ from imagegen_worker.sdxl_outpaint import (
     run_sdxl_outpaint_pipeline,
 )
 
-SCHEDULERS = ("dpmpp_2m", "dpmpp_2m_k", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
+SCHEDULERS = ("dpmpp_2m", "dpmpp_2m_k", "euler", "euler_a", "dpmpp_sde", "dpmpp_sde_k")
 
 
 @pytest.fixture
@@ -99,7 +99,9 @@ def _scheduler(native: Any, name: str, *, prediction: str = "epsilon", seed: int
         "beta_schedule": "scaled_linear",
         "prediction_type": prediction,
     }
-    if name == "euler_a":
+    if name == "euler":
+        scheduler = native.diffusers.EulerDiscreteScheduler(**options)
+    elif name == "euler_a":
         scheduler = native.diffusers.EulerAncestralDiscreteScheduler(**options)
     elif name.startswith("dpmpp_sde"):
         scheduler = native.diffusers.DPMSolverSDEScheduler(
@@ -207,7 +209,7 @@ def _upstream_guidance(torch: Any) -> Any:
 @pytest.mark.parametrize("name", SCHEDULERS)
 @pytest.mark.parametrize("prediction", ["epsilon", "v_prediction"])
 @pytest.mark.parametrize("strength", [0.0, 0.2, 0.75, 1.0])
-def test_actual_five_schedulers_both_predictions_match_default_invoke_prestep_oracle(
+def test_actual_six_schedulers_both_predictions_match_default_invoke_prestep_oracle(
     native: Any,
     name: str,
     prediction: str,

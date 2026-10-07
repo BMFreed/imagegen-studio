@@ -526,7 +526,10 @@ test('external VAE descriptor shape and value refusals preserve every source bef
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, /AssertionError/)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertExternalPreflightPreserved(appData, artifacts, sources)
       })
     })
@@ -606,7 +609,10 @@ test('external VAE origins reject unknown lineage, format and causal controls be
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, /AssertionError/)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertExternalPreflightPreserved(appData, artifacts, sources)
       })
     })
@@ -679,7 +685,10 @@ test('external VAE duplicate identities and inconsistent resource versions refus
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, message)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertExternalPreflightPreserved(appData, artifacts, sources)
       })
     })
@@ -708,7 +717,10 @@ test('external VAE exact schema with resume reaches installed worker qualificati
     async ({ root, appData, artifacts, input, run }) => {
       const sources = await externalVaeInput(root, input)
       const refusal = await run({ resume: true })
-      assert.match(refusal.stderr, /External VAE qualification requires an installed 0\.12 worker/)
+      assert.match(
+        refusal.stderr,
+        /External VAE qualification requires an installed qualified contribution worker/,
+      )
       assert.doesNotMatch(
         refusal.stderr,
         /must resume|Qualification profile must be|requires exactly|ENOENT/,
@@ -842,7 +854,10 @@ test('embedding descriptor refusals preserve all eleven source files before inst
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, /AssertionError/)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertProfilePreflightPreserved(appData, artifacts, 'embeddings', sources)
       })
     })
@@ -983,7 +998,10 @@ test('embedding origins reject malformed CivitAI attribution and unrelated causa
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, /AssertionError/)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertProfilePreflightPreserved(appData, artifacts, 'embeddings', sources)
       })
     })
@@ -1073,7 +1091,10 @@ test('embedding identities, labels and canonical filename token refuse inconsist
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, /AssertionError/)
-        assert.doesNotMatch(refusal.stderr, /must resume|installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(
+          refusal.stderr,
+          /must resume|installed qualified contribution worker|ENOENT/,
+        )
         await assertProfilePreflightPreserved(appData, artifacts, 'embeddings', sources)
       })
     })
@@ -1109,7 +1130,7 @@ test('embedding resume refuses old workers and every missing required capability
     [
       'old worker',
       { workerVersion: '0.11.0', capabilities },
-      /Embedding qualification requires an installed 0\.12 worker/,
+      /Embedding qualification requires an installed qualified contribution worker/,
     ],
     ...capabilities.map((capability) => [
       `missing ${capability}`,
@@ -1195,7 +1216,7 @@ test('v-prediction requires strict 256/3 controls before catalog, worker or sour
         Object.assign(input, change)
         const refusal = await run()
         assert.match(refusal.stderr, message)
-        assert.doesNotMatch(refusal.stderr, /installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(refusal.stderr, /installed qualified contribution worker|ENOENT/)
         await assertProfilePreflightPreserved(appData, artifacts, 'v-prediction', sources)
       })
     })
@@ -1335,7 +1356,7 @@ test('v-prediction validates exact two-resource descriptors, initial policy and 
         mutate(input)
         const refusal = await run()
         assert.match(refusal.stderr, message)
-        assert.doesNotMatch(refusal.stderr, /installed 0\.12 worker|ENOENT/)
+        assert.doesNotMatch(refusal.stderr, /installed qualified contribution worker|ENOENT/)
         await assertProfilePreflightPreserved(appData, artifacts, 'v-prediction', sources)
       })
     })
@@ -1355,7 +1376,7 @@ test('valid fresh and resumed v-prediction fixtures reach exact worker/capabilit
       [
         'old worker',
         { workerVersion: '0.11.0', capabilities },
-        /V-prediction qualification requires an installed 0\.12 worker/,
+        /V-prediction qualification requires an installed qualified contribution worker/,
       ],
       ...capabilities.map((capability) => [
         `missing ${capability}`,

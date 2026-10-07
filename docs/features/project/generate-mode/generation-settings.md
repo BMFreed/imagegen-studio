@@ -407,6 +407,14 @@ type. An installed but structurally unsupported checkpoint remains visible and
 Generate explains the blocking reason. SHA-256 binds the exact files and saved
 references, not an app-owned allowlist of permitted checkpoint hashes.
 
+The accepted next NoobAI slice adds separate exact-file ZTSNR and timestep
+spacing controls in Model Manager, alongside prediction type; Project does not
+edit this policy. Unknown profiles keep current `false` / `leading` defaults
+with an explicit assumption label and manual override, without a mandatory
+first-generation choice. These controls and their frozen execution are still
+[planned](../../../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp);
+ordinary Euler support alone does not qualify the zero-SNR author recipe.
+
 ## Acceptance Criteria
 
 - User can select a model and configure core sampling parameters.

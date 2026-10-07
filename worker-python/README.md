@@ -7,13 +7,13 @@ adds internal `outpaint_conditioning` and `lama_infill` helpers. Exact Invoke
 Gaussian weighted maximum/fade masks consume copied RGBA and explicit Main
 policy; a hash-bound local TorchScript loader performs LaMa infill without
 downloads. OpenCV headless5.0.0.93 is pinned only in the inference extra.
-These helpers now feed the explicit internal worker `0.12.0` outpaint commands
+These helpers feed the explicit outpaint commands introduced in worker `0.12.0`
 described below; public mixed-alpha Generate remains closed.
 The [internal Illustrious masked adapter](../docs/engineering/phase-2c-illustrious-outpaint-research.md)
 adds `sdxl_outpaint`: the existing native img2img loop captures original latents,
 one CPU noise draw and the selected schedule. Mandatory callbacks restore
 protected source before each subsequent model/scheduler evaluation and before
-final decode, even without a progress listener. Five schedulers and both
+final decode, even without a progress listener. The initial five schedulers and both
 prediction types have native CPU oracle tests; a separate trained CUDA script
 checks the internal path. The [internal Anima adapter](../docs/engineering/phase-2c-anima-outpaint-research.md)
 adds `generate_anima_outpaint` through the existing six-method flow executor,
@@ -111,7 +111,21 @@ Inference worker `0.9.0` advertises `illustrious-external-vae` in addition to th
 
 The JSONL loop explicitly collects unreachable Python cycles after a request processor returns and before publishing its terminal response. This prevents dead native pipelines from retaining GPU tensors across sequential requests in one child, while preserving live ownership and the CUDA allocator's reusable cache. This is a worker lifetime guarantee; it does not promise an application model cache, release packaging or a maximum supported GPU resolution.
 
-After qualification, `ready` has `workerVersion:"0.12.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings","illustrious-outpaint"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint`; a false or failed BF16 probe withholds only those six capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-illustrious-outpaint`, `generate-anima-txt2img`, `generate-anima-img2img`, `generate-anima-outpaint` and `compose-target` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
+Worker `0.13.0` adds `illustrious-euler` for ordinary Illustrious/NoobAI Euler in
+txt2img, opaque img2img and existing normal outpaint. The strict wire key `euler`
+constructs the pinned native `EulerDiscreteScheduler` with the frozen prediction
+type; `euler_a` retains `EulerAncestralDiscreteScheduler`. Startup requires both
+classes before advertising inference. Anima's flow Euler remains separate.
+The existing scheduler config is preserved: this slice adds no zero-SNR override,
+timestep-spacing override or automatic interpretation of checkpoint markers.
+Real CPU solver tests compare the production-selected first Euler step to an
+independent ODE equation, preserve deterministic replay, distinguish ancestral
+noise, and exercise source/strength/progress and protected-source restoration.
+These tests do not establish trained-model quality or the author's full recipe;
+current execution evidence is recorded in the
+[Euler research note](../docs/engineering/phase-2c-euler-research.md).
+
+After qualification, `ready` has `workerVersion:"0.13.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings","illustrious-outpaint","illustrious-euler"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint`; a false or failed BF16 probe withholds only those six capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-illustrious-outpaint`, `generate-anima-txt2img`, `generate-anima-img2img`, `generate-anima-outpaint` and `compose-target` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
 
 ### Internal outpaint commands (worker 0.12.0)
 

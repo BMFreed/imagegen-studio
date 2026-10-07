@@ -12,7 +12,7 @@ from imagegen_worker import inference
 from imagegen_worker.inference import SdxlConditioning, run_sdxl_pipeline
 
 
-def test_actual_img2img_source_strength_replay_and_effective_five_scheduler_progress() -> None:
+def test_actual_img2img_source_strength_replay_and_effective_six_scheduler_progress() -> None:
     torch = pytest.importorskip("torch")
     diffusers = pytest.importorskip("diffusers")
     assert importlib.metadata.version("diffusers") == "0.40.0"
@@ -86,7 +86,9 @@ def test_actual_img2img_source_strength_replay_and_effective_five_scheduler_prog
                 rescale: float = 0,
             ) -> tuple[bytes, list[tuple[int, int]], Any]:
                 beta = {"beta_start": 0.00085, "beta_end": 0.012, "beta_schedule": "scaled_linear"}
-                if scheduler == "euler_a":
+                if scheduler == "euler":
+                    pipeline.scheduler = diffusers.EulerDiscreteScheduler(**beta)
+                elif scheduler == "euler_a":
                     pipeline.scheduler = diffusers.EulerAncestralDiscreteScheduler(**beta)
                 elif scheduler.startswith("dpmpp_sde"):
                     pipeline.scheduler = diffusers.DPMSolverSDEScheduler(
@@ -141,7 +143,14 @@ def test_actual_img2img_source_strength_replay_and_effective_five_scheduler_prog
             tiny, progress, noised = generate(0.0001)
             assert zero == tiny and not progress and not noised
 
-            for scheduler in ("dpmpp_2m", "dpmpp_2m_k", "euler_a", "dpmpp_sde", "dpmpp_sde_k"):
+            for scheduler in (
+                "dpmpp_2m",
+                "dpmpp_2m_k",
+                "euler",
+                "euler_a",
+                "dpmpp_sde",
+                "dpmpp_sde_k",
+            ):
                 outputs: dict[float, bytes] = {}
                 for strength in (0.0, 0.2, 0.75, 1.0):
                     pixels, progress, noised = generate(strength, scheduler)
@@ -204,17 +213,19 @@ def test_actual_img2img_source_strength_replay_and_effective_five_scheduler_prog
         torch.set_num_threads(previous_threads)
 
 
-def test_pinned_five_scheduler_cuts_at_actual_training_threshold_for_steps_boundaries() -> None:
+def test_pinned_six_scheduler_cuts_at_actual_training_threshold_for_steps_boundaries() -> None:
     torch = pytest.importorskip("torch")
     diffusers = pytest.importorskip("diffusers")
     factory = inference.img2img_pipeline_class(diffusers, torch)
     # The production override operates on real initialized schedulers; no weights are needed.
     from types import SimpleNamespace
 
-    for name in ("dpmpp_2m", "dpmpp_2m_k", "euler_a", "dpmpp_sde", "dpmpp_sde_k"):
+    for name in ("dpmpp_2m", "dpmpp_2m_k", "euler", "euler_a", "dpmpp_sde", "dpmpp_sde_k"):
         for steps in (1, 2, 7, 200):
             beta = {"beta_start": 0.00085, "beta_end": 0.012, "beta_schedule": "scaled_linear"}
-            if name == "euler_a":
+            if name == "euler":
+                scheduler = diffusers.EulerDiscreteScheduler(**beta)
+            elif name == "euler_a":
                 scheduler = diffusers.EulerAncestralDiscreteScheduler(**beta)
             elif name.startswith("dpmpp_sde"):
                 scheduler = diffusers.DPMSolverSDEScheduler(

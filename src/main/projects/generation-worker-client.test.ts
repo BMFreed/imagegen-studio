@@ -4,20 +4,25 @@ import assert from 'node:assert/strict'
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { pbkdf2, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import type { GenerationWorkerRequest } from './generation-processor.js'
 import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 
+import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
 import {
   GenerationWorkerClient,
   GenerationWorkerError,
   type GenerationWorkerLocation,
 } from './generation-worker-client.js'
+import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { withAnimaDispatchClientFixture } from './test-fixtures/anima-dispatch.js'
+import { withOutpaintConsumerFixture } from './test-fixtures/outpaint-consumers.js'
+import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
 import { ProjectWorkerClient } from './worker-client.js'
 
 type Fixture = {
@@ -48,6 +53,11 @@ const ready = {
   pythonVersion:'3.12.13',
   capabilities: mode === 'vae-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision', 'illustrious-external-vae'] : mode === 'vae-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : (mode === 'precision-done' || mode === 'precision-error') ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora', 'illustrious-vae-precision'] : mode === 'precision-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora'] : mode === 'lora-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale', 'illustrious-img2img'] : mode === 'img2img-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-done' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'no-capability' ? [] : mode.startsWith('progress-') ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
+if (mode.startsWith('euler-')) {
+  ready.workerVersion = mode === 'euler-old-spoof' ? '0.12.0' : '0.13.0'
+  ready.capabilities = ${JSON.stringify([...OUTPAINT_READY.capabilities, 'illustrious-euler'])}
+  if (mode === 'euler-missing-capability') ready.capabilities = ready.capabilities.filter(value => value !== 'illustrious-euler')
+}
 if (mode === 'precision-error') ready.capabilities.push('target-composition')
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -74,7 +84,7 @@ else {
     while (buffer.includes('\n')) {
       const newline = buffer.indexOf('\n')
       const request = JSON.parse(buffer.slice(0,newline)); buffer = buffer.slice(newline+1)
-      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'precision-error' || mode === 'vae-done') && request.type === 'generate-illustrious-img2img') && !(mode === 'precision-error' && request.type === 'compose-target')) process.exit(22)
+      if (request.type !== 'generate-illustrious-txt2img' && !((mode === 'img2img-done' || mode === 'lora-done' || mode === 'precision-done' || mode === 'precision-error' || mode === 'vae-done' || mode.startsWith('euler-')) && request.type === 'generate-illustrious-img2img') && !(mode.startsWith('euler-') && request.type === 'generate-illustrious-outpaint') && !(mode === 'precision-error' && request.type === 'compose-target')) process.exit(22)
       if (process.env.FAKE_REQUEST_MARKER) fs.writeFileSync(process.env.FAKE_REQUEST_MARKER, request.requestId)
       if (process.env.FAKE_PAYLOAD_MARKER) fs.writeFileSync(process.env.FAKE_PAYLOAD_MARKER, JSON.stringify(request))
       if (mode === 'hang' || mode === 'delayed-sigterm' || mode === 'ignore-sigterm') continue
@@ -189,6 +199,174 @@ async function requestFor(fixture: Fixture): Promise<IllustriousTxt2ImgRequestV1
     type: 'generate-illustrious-txt2img',
   }
 }
+
+test('qualified 0.13.0 ordinary Euler survives actual txt2img and img2img JSONL without a scheduler fallback', async () => {
+  await withFixture(async (fixture) => {
+    const marker = path.join(fixture.root, 'euler-payload.json')
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { FAKE_MODE: 'euler-done', FAKE_PAYLOAD_MARKER: marker },
+    })
+    try {
+      for (const mode of ['txt2img', 'img2img'] as const) {
+        const original = await requestFor(fixture)
+        original.job.sampling.scheduler = 'euler'
+        const request =
+          mode === 'txt2img'
+            ? original
+            : {
+                ...original,
+                job: {
+                  ...original.job,
+                  sampling: { ...original.job.sampling, denoisingStrength: 0.5 },
+                },
+                type: 'generate-illustrious-img2img' as const,
+              }
+        const expected = structuredClone(request)
+        const targetBefore = await readFile(request.job.target.path)
+        const pending = client.generate(request)
+        request.job.sampling.scheduler = 'euler_a'
+        const completed = await pending
+        assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), expected)
+        assert.deepEqual(completed, {
+          outputPath: expected.job.output.pngPath,
+          protocolVersion: '1',
+          requestId: expected.requestId,
+          seed: 0xff_ff_ff_ff,
+          type: 'generation-done',
+        })
+        assert.deepEqual(await readFile(expected.job.target.path), targetBefore)
+        // The controlled peer proves the client exchange, not trained output publication.
+        assert.equal(existsSync(expected.job.output.pngPath), false)
+      }
+    } finally {
+      await client.close()
+    }
+  })
+})
+
+for (const peerMode of ['euler-old-spoof', 'euler-missing-capability']) {
+  test(`${peerMode} refuses ordinary Euler txt2img, img2img and outpaint before path validation or wire`, async () => {
+    await withFixture(async (peer) => {
+      await withOutpaintConsumerFixture('illustrious', async (fixture) => {
+        const location = { ...peer.location, scratchBasePath: fixture.scratch }
+        const marker = path.join(peer.root, 'euler-payload.json')
+        const client = await GenerationWorkerClient.start(location, {
+          environment: { FAKE_MODE: peerMode, FAKE_PAYLOAD_MARKER: marker },
+        })
+        try {
+          const requestFixture = { ...peer, location }
+          const txt2img = await requestFor(requestFixture)
+          txt2img.job.sampling.scheduler = 'euler'
+          const image = await requestFor(requestFixture)
+          const img2img = {
+            ...image,
+            job: {
+              ...image.job,
+              sampling: {
+                ...image.job.sampling,
+                denoisingStrength: 0.5,
+                scheduler: 'euler' as const,
+              },
+            },
+            type: 'generate-illustrious-img2img' as const,
+          }
+          const provisionalRoot = await mkdtemp(path.join(fixture.scratch, 'illustrious-request-'))
+          const targetPath = path.join(provisionalRoot, 'target.png')
+          await writeFile(targetPath, fixture.target.composite.bytes)
+          const outpaint = buildQueuedOutpaintWorkerRequest({
+            infill: await fixture.infillResolver.resolveVerifiedOutpaintInfill(),
+            outputPath: path.join(provisionalRoot, 'result.png'),
+            payload: buildFrozenQueuedOutpaintV1(fixture.outpaintPrepared, randomUUID()),
+            provisionalRoot,
+            ready: OUTPAINT_READY,
+            requestId: randomUUID(),
+            targetPath,
+          })
+          assert.equal(outpaint.type, 'generate-illustrious-outpaint')
+          if (outpaint.type !== 'generate-illustrious-outpaint') {
+            throw new Error('The Illustrious fixture returned another command.')
+          }
+          outpaint.job.sampling.scheduler = 'euler'
+          const requests: GenerationWorkerRequest[] = [txt2img, img2img, outpaint]
+          // Observe the actual precondition method; no file validator or dispatch is substituted.
+          const pathClient = client as unknown as {
+            validateRequestPaths: (request: GenerationWorkerRequest) => Promise<void>
+          }
+          const pathInspection = mock.method(pathClient, 'validateRequestPaths')
+          try {
+            for (const request of requests) {
+              const expected = structuredClone(request)
+              const targetBefore = await readFile(request.job.target.path)
+              const scratchBefore = await readdir(request.job.output.stagingRoot)
+              await assert.rejects(client.generate(request), (error) => {
+                assert.ok(error instanceof GenerationWorkerError)
+                assert.equal(error.code, 'WORKER_VERSION_MISMATCH', request.type)
+                assert.equal(
+                  error.message,
+                  'The active worker has not qualified ordinary Illustrious Euler.',
+                )
+                return true
+              })
+              assert.equal(pathInspection.mock.callCount(), 0, request.type)
+              assert.equal(existsSync(marker), false, request.type)
+              assert.equal(existsSync(request.job.output.pngPath), false, request.type)
+              assert.deepEqual(await readFile(request.job.target.path), targetBefore)
+              assert.deepEqual(await readdir(request.job.output.stagingRoot), scratchBefore)
+              assert.deepEqual(request, expected)
+            }
+          } finally {
+            pathInspection.mock.restore()
+          }
+          // A refusal must release the client and retain the established Euler a path.
+          const neighbor = await requestFor(requestFixture)
+          const completed = await client.generate(neighbor)
+          assert.deepEqual(completed, {
+            outputPath: neighbor.job.output.pngPath,
+            protocolVersion: '1',
+            requestId: neighbor.requestId,
+            seed: 0xff_ff_ff_ff,
+            type: 'generation-done',
+          })
+          assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), neighbor)
+        } finally {
+          await client.close()
+        }
+      })
+    })
+  })
+}
+
+test('native Anima Euler txt2img and img2img do not require the Illustrious 0.13.0 capability', async () => {
+  await withAnimaDispatchClientFixture(async (fixture) => {
+    const client = await GenerationWorkerClient.start(fixture.location, {
+      environment: { MARKER: fixture.marker },
+    })
+    try {
+      assert.equal(client.ready.workerVersion, '0.11.0')
+      assert.equal(client.ready.capabilities.includes('illustrious-euler'), false)
+      const sent: GenerationWorkerRequest[] = []
+      for (const strength of [null, 0.5]) {
+        const request = await fixture.request('euler', strength)
+        const completed = await client.generate(request)
+        assert.deepEqual(completed, {
+          outputPath: request.job.output.pngPath,
+          protocolVersion: '1',
+          requestId: request.requestId,
+          seed: 0,
+          type: 'generation-done',
+        })
+        sent.push(request)
+      }
+      const received = (await readFile(fixture.marker, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      assert.deepEqual(received, sent)
+    } finally {
+      await client.close()
+    }
+  })
+})
 
 test('actual JSONL dispatch preserves rescale for 0.5.0, strips neutral zero for old peers and refuses nonneutral before sending', async () => {
   await withFixture(async (fixture) => {

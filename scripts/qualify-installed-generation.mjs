@@ -4494,10 +4494,9 @@ try {
   }
   if (vPredictionProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
-    assert.equal(
-      ready.workerVersion,
-      '0.12.0',
-      'V-prediction qualification requires an installed 0.12 worker.',
+    assert.ok(
+      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      'V-prediction qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
       'illustrious-txt2img',
@@ -4538,10 +4537,9 @@ try {
       'VAE Precision qualification must resume the same six-resource catalog.',
     )
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
-    assert.equal(
-      ready.workerVersion,
-      '0.12.0',
-      'VAE Precision qualification requires an installed 0.12 worker.',
+    assert.ok(
+      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      'VAE Precision qualification requires an installed qualified contribution worker.',
     )
     assert.ok(ready.capabilities.includes('illustrious-vae-precision'))
     assert.ok(ready.capabilities.includes('illustrious-txt2img'))
@@ -4556,10 +4554,9 @@ try {
       'External VAE qualification must resume the existing isolated catalog.',
     )
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
-    assert.equal(
-      ready.workerVersion,
-      '0.12.0',
-      'External VAE qualification requires an installed 0.12 worker.',
+    assert.ok(
+      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      'External VAE qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
       'illustrious-external-vae',
@@ -4578,10 +4575,9 @@ try {
   if (embeddingsProfile) {
     assert.equal(resume, true, 'Embedding qualification must resume the existing isolated catalog.')
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
-    assert.equal(
-      ready.workerVersion,
-      '0.12.0',
-      'Embedding qualification requires an installed 0.12 worker.',
+    assert.ok(
+      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      'Embedding qualification requires an installed qualified contribution worker.',
     )
     for (const capability of [
       'illustrious-embeddings',
@@ -5040,10 +5036,9 @@ try {
   })
   if (outpaintProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
-    assert.equal(
-      ready.workerVersion,
-      '0.12.0',
-      'Outpaint qualification requires an installed 0.12 worker.',
+    assert.ok(
+      ['0.12.0', '0.13.0'].includes(ready.workerVersion),
+      'Outpaint qualification requires an installed qualified contribution worker.',
     )
     for (const capability of ['illustrious-outpaint', 'anima-outpaint'])
       assert.ok(ready.capabilities.includes(capability))

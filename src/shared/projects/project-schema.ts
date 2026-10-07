@@ -221,7 +221,14 @@ const Txt2ImgRasterGenerationConfigurationV1Schema = v.strictObject({
   sampling: v.strictObject({
     actualSeed: UInt32Schema,
     cfgScale: v.pipe(FiniteNumberSchema, v.minValue(1), v.maxValue(30)),
-    invokeScheduler: v.picklist(['dpmpp_2m_k', 'dpmpp_2m', 'euler_a', 'dpmpp_sde_k', 'dpmpp_sde']),
+    invokeScheduler: v.picklist([
+      'dpmpp_2m_k',
+      'dpmpp_2m',
+      'euler_a',
+      'euler',
+      'dpmpp_sde_k',
+      'dpmpp_sde',
+    ]),
     requestedSeedPolicy: v.picklist(['fixed', 'random', 'reuse']),
     sampler: NonemptyTextSchema,
     scheduler: NonemptyTextSchema,

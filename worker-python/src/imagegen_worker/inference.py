@@ -49,11 +49,12 @@ from imagegen_worker.protocol import (
     GenerateIllustriousTxt2ImgCommand,
 )
 
-INFERENCE_WORKER_VERSION = "0.12.0"
+INFERENCE_WORKER_VERSION = "0.13.0"
 INFERENCE_RUNTIME_PROFILE = "linux-nvidia"
 INFERENCE_CAPABILITY = "illustrious-txt2img"
 INFERENCE_IMG2IMG_CAPABILITY = "illustrious-img2img"
 INFERENCE_OUTPAINT_CAPABILITY = "illustrious-outpaint"
+INFERENCE_EULER_CAPABILITY = "illustrious-euler"
 INFERENCE_LORA_CAPABILITY = "illustrious-lora"
 INFERENCE_VAE_PRECISION_CAPABILITY = "illustrious-vae-precision"
 INFERENCE_EXTERNAL_VAE_CAPABILITY = "illustrious-external-vae"
@@ -163,6 +164,7 @@ def qualify_ml_runtime() -> MLRuntime:
             "StableDiffusionXLImg2ImgPipeline",
             "DPMSolverMultistepScheduler",
             "DPMSolverSDEScheduler",
+            "EulerDiscreteScheduler",
             "EulerAncestralDiscreteScheduler",
             "CosmosTransformer3DModel",
             "AnimaTextConditioner",
@@ -351,6 +353,10 @@ def select_inference_scheduler(
         )
     diffusers = cast(Any, runtime.diffusers)
     config = pipeline.scheduler.config
+    if command.scheduler == "euler":
+        return diffusers.EulerDiscreteScheduler.from_config(
+            config, prediction_type=command.prediction_type
+        )
     if command.scheduler == "euler_a":
         return diffusers.EulerAncestralDiscreteScheduler.from_config(
             config, prediction_type=command.prediction_type

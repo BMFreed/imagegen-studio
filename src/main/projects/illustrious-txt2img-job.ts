@@ -3,6 +3,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
+  supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceImg2Img,
   supportsInferenceLora,
@@ -174,6 +175,12 @@ export async function withIllustriousGenerationRequest<T>(input: {
     throw new IllustriousJobError(
       'INFERENCE_UNAVAILABLE',
       'The active worker has not qualified Illustrious txt2img inference.',
+    )
+  }
+  if (context.sampling.invokeScheduler === 'euler' && !supportsInferenceEuler(input.ready)) {
+    throw new IllustriousJobError(
+      'INFERENCE_UNAVAILABLE',
+      'The active worker has not qualified ordinary Illustrious Euler.',
     )
   }
   if ((context.sampling.cfgRescale ?? 0) !== 0 && !supportsInferenceCFGRescale(input.ready)) {
