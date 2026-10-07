@@ -55,7 +55,7 @@ hash и source link. Любой CivitAI checkpoint поддерживаемог�
 Illustrious или Anima с поддерживаемым `.safetensors`-файлом можно установить
 после обычной проверки источника и целостности; SHA-256 определяет точные bytes
 и resource identity, но не служит списком разрешённых моделей.
-Для checkpoint, LoRA и embedding точная CivitAI source label `NoobAI` относится
+Для checkpoint, LoRA, embedding и standalone VAE точная CivitAI source label `NoobAI` относится
 к поддерживаемому семейству `illustrious`, как и `Illustrious`. Исходный
 `baseModel: NoobAI` сохраняется в preview и установленной source metadata;
 mapping не переименовывает source и не доказывает совместимость точных весов.
@@ -67,12 +67,12 @@ mapping не переименовывает source и не доказывает 
 SDXL в названии loader'а и проверки весов обозначает архитектуру Illustrious,
 а не третье семейство.
 
-Для standalone VAE type-aware mapping принимает source label `Illustrious` или
-`SDXL 1.0` как применимость компонента к Illustrious pipeline. Исходный `baseModel`
+Для standalone VAE type-aware mapping принимает source label `Illustrious`,
+`NoobAI` или `SDXL 1.0` как применимость компонента к Illustrious pipeline. Исходный `baseModel`
 сохраняется в source metadata; это не утверждение о lineage VAE и не расширение
-семейств checkpoint/LoRA. Другие source labels внешнего VAE, включая `NoobAI`,
-сейчас отвергаются: family mapping derivatives не заменяет отдельную политику
-применимости standalone VAE. Закреплённый Anima VAE сохраняет отдельную dependency
+семейств checkpoint/LoRA. Другие source labels внешнего VAE отвергаются;
+точная метка не заменяет структурную проверку standalone VAE или полное native
+loading. Закреплённый Anima VAE сохраняет отдельную dependency
 identity. Проверенная
 целостность установленного VAE не доказывает его ML compatibility: она требует
 структурной проверки и actual loading следующим pipeline checkpoint.

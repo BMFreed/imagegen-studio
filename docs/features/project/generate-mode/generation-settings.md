@@ -286,7 +286,7 @@ receipt, completed-seed cursor or saved `.igs`.
 [External VAE authoring evidence](../../../engineering/phase-2c-external-vae-authoring-research.md)
 connects Model Manager's CivitAI VAE installation/repair to a compact exact-version
 selector inside `Generation > Advanced Options`. Eligible source labels are
-`Illustrious` and `SDXL 1.0`; the latter describes a component applicable to the
+`Illustrious`, `NoobAI` and `SDXL 1.0`; the latter describes a component applicable to the
 Illustrious architecture, not a supported SDXL checkpoint family. The raw source
 label remains in library metadata. Anima continues to use its pinned companion
 VAE and does not offer an alternative selector at this checkpoint.

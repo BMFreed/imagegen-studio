@@ -325,19 +325,19 @@ function resourceType(input: string): ModelResourceType {
 }
 
 function baseModelFamily(input: string, type: ModelResourceType): BaseModelFamily {
-  // A standalone SDXL VAE is applicable to Illustrious; this never admits an SDXL checkpoint.
+  // Standalone VAE labels describe component applicability; this never admits an SDXL checkpoint.
   // Retain the raw source label in the preview and installed version metadata.
   if (type === 'vae') {
-    if (input === 'Illustrious' || input === 'SDXL 1.0') {
+    if (input === 'Illustrious' || input === 'NoobAI' || input === 'SDXL 1.0') {
       return 'illustrious'
     }
     throw new CivitaiClientError(
       'CIVITAI_UNSUPPORTED_FAMILY',
-      'Standalone VAE installation supports only Illustrious and SDXL 1.0 components. Anima uses its pinned VAE.',
+      'Standalone VAE installation supports only Illustrious, NoobAI and SDXL 1.0 components. Anima uses its pinned VAE.',
     )
   }
   // NoobAI derivatives use the supported Illustrious family; keep the source label intact.
-  // This exact-label mapping does not broaden standalone VAE applicability above.
+  // This does not admit generic SDXL checkpoints, LoRAs or embeddings.
   if (input === 'Illustrious' || input === 'NoobAI') {
     return 'illustrious'
   }

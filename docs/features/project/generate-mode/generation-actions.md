@@ -56,6 +56,27 @@ are not declared complete by this slice.
 
 ## Generate Action Area
 
+### Component incompatibility diagnostics (08.10.2026)
+
+Generate and frozen Retry preserve the Main component refusal code and project
+these three codes to fixed safe messages before the generic model fallback:
+
+| Code                           | Public message                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `MODEL_LORA_INCOMPATIBLE`      | The selected LoRA is incompatible with this image engine. Review this component in Model Manager.         |
+| `MODEL_EMBEDDING_INCOMPATIBLE` | The selected embedding is incompatible with this image engine. Review this component in Model Manager.    |
+| `MODEL_VAE_INCOMPATIBLE`       | The selected external VAE is incompatible with this image engine. Review this component in Model Manager. |
+
+Arbitrary resolver messages and local paths are not exposed. Changing the current
+draft does not repair a frozen Retry: review its exact component in Model Manager.
+These messages do not broaden admission or change refusal timing. Controlled
+public-controller evidence covers unchanged queue/receipts/seed/candidates,
+private inputs/staging/scratch, autosave shadow, Project and saved package, followed
+by a healthy Retry of the original context. It is recorded separately from
+trained inference in the [component research](../../../engineering/phase-2c-noobai-components-research.md).
+
+### Action bar
+
 In the current Project UI, generation commands live in a fixed action bar at the top of the left panel, above the independently scrolling settings stack. No separate `Create` header is shown. A compact target label appears only when generating into a Smart Patch:
 
 ```text

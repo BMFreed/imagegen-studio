@@ -33,7 +33,10 @@ import {
   illustriousEmbeddingFixture,
   publishIllustriousEmbeddingFixture,
 } from './test-fixtures/illustrious-embedding.js'
-import { publishIllustriousLoraFixture } from './test-fixtures/illustrious-lora.js'
+import {
+  illustriousLoraFixture,
+  publishIllustriousLoraFixture,
+} from './test-fixtures/illustrious-lora.js'
 import {
   illustriousVaeFixture,
   publishIllustriousVaeFixture,
@@ -1170,6 +1173,271 @@ for (const family of ['Illustrious', 'NoobAI'] as const) {
             'v_prediction',
           )
           assert.deepEqual(await readFile(restored.file.managedPath), bytes)
+        } finally {
+          await reopened.close()
+        }
+      },
+    )
+  })
+}
+
+// Actual source parser -> controlled HTTP -> installer/SQLite -> real Main component qualifiers.
+// Finite ordinary LoRA and dual-CLIP tensors / VAE anchors are header-compatible preflight fixtures;
+// they are not trained components or complete ML models, and no inference runs in these tests.
+for (const component of [
+  {
+    errorCode: 'MODEL_LORA_INCOMPATIBLE',
+    healthy: () => illustriousLoraFixture(),
+    invalid: () => {
+      const bytes = illustriousLoraFixture()
+      const headerLength = Number(bytes.readBigUInt64LE())
+      const header = bytes.subarray(8, 8 + headerLength).toString('utf8')
+      // Keep ranks, values and offsets; only the pinned module target changes.
+      assert.match(header, /down_blocks_1/)
+      Buffer.from(header.replaceAll('down_blocks_1', 'down_blocks_9')).copy(bytes, 8)
+      return bytes
+    },
+    kind: 'lora',
+    sourceType: 'LORA',
+  },
+  {
+    errorCode: 'MODEL_EMBEDDING_INCOMPATIBLE',
+    healthy: () => illustriousEmbeddingFixture(),
+    invalid: () => {
+      const bytes = illustriousEmbeddingFixture()
+      const headerLength = Number(bytes.readBigUInt64LE())
+      const header = JSON.parse(bytes.subarray(8, 8 + headerLength).toString('utf8')) as Record<
+        string,
+        { data_offsets: [number, number]; dtype: string; shape: number[] }
+      >
+      const clipG = header.clip_g
+      const extraVector = bytes.subarray(
+        8 + headerLength + clipG.data_offsets[0],
+        8 + headerLength + clipG.data_offsets[1],
+      )
+      // Keep both encoder widths/dtypes and contiguous complete ranges; only paired count differs.
+      clipG.shape[0] = 2
+      clipG.data_offsets[1] += extraVector.length
+      const json = Buffer.from(JSON.stringify(header))
+      const padded = Buffer.concat([json, Buffer.alloc((8 - (json.length % 8)) % 8, 0x20)])
+      const prefix = Buffer.alloc(8)
+      prefix.writeBigUInt64LE(BigInt(padded.length))
+      return Buffer.concat([prefix, padded, bytes.subarray(8 + headerLength), extraVector])
+    },
+    kind: 'embedding',
+    sourceType: 'TextualInversion',
+  },
+  {
+    errorCode: 'MODEL_VAE_INCOMPATIBLE',
+    healthy: () => illustriousVaeFixture('diffusers'),
+    invalid: () =>
+      illustriousVaeFixture('diffusers', (header) => {
+        header['quant_conv.bias'] = header['quant_conv.weight']
+        delete header['quant_conv.weight']
+      }),
+    kind: 'vae',
+    sourceType: 'VAE',
+  },
+] as const) {
+  test(`NoobAI ${component.kind} source install, real Prepare qualifier, exact repair and reopen preserve component identity`, async () => {
+    const bytes = component.healthy()
+    const invalidBytes = component.invalid()
+    const requests: { authorization: string | null; pathname: string }[] = []
+    const downloads: { authorization: string | null; url: string }[] = []
+    await withModelHarness(
+      civitaiApi({
+        family: 'NoobAI',
+        fileHash: sha256(bytes),
+        fileSizeKB: bytes.length / 1024,
+        requests,
+        secondVersionHash: sha256(invalidBytes),
+        secondVersionTrainedWords: ['source version two'],
+        type: component.sourceType,
+      }),
+      new ModelDownloader({
+        resolveAddresses: PUBLIC_ADDRESSES,
+        transport: async (url, init) => {
+          downloads.push({
+            authorization: new Headers(init?.headers).get('Authorization'),
+            url: String(url),
+          })
+          return new Response(
+            new Uint8Array(String(url).includes('/models/8?') ? invalidBytes : bytes),
+            { headers: { 'content-type': 'application/octet-stream' } },
+          )
+        },
+      }),
+      async ({ coordinator, repository, root, service }) => {
+        type Reference = Awaited<ReturnType<ModelService['resolveGenerationLora']>>
+        const selectExact = async (
+          owner: ModelService,
+          resourceId: string,
+          versionId: string,
+          token: string,
+        ): Promise<Reference> => {
+          if (component.kind === 'lora') {
+            return owner.resolveGenerationLora(resourceId, versionId)
+          }
+          if (component.kind === 'vae') {
+            return owner.resolveGenerationVae(resourceId, versionId)
+          }
+          const authored = await owner.resolveGenerationPromptEmbeddings({
+            modelFamily: 'illustrious',
+            prompt: { embeddingRefs: [], text: '' },
+            selection: { resourceId, token, versionId },
+            text: `a red ceramic cup, ${token}`,
+          })
+          assert.equal(authored.embeddingRefs.length, 1)
+          assert.equal(authored.embeddingRefs[0].token, token)
+          return authored.embeddingRefs[0].resource
+        }
+        const prepare = (owner: ModelService, saved: Reference) =>
+          component.kind === 'lora'
+            ? owner.resolveVerifiedGenerationLoraForPlan(saved)
+            : component.kind === 'vae'
+              ? owner.resolveVerifiedGenerationVaeForPlan(saved)
+              : owner.resolveVerifiedGenerationEmbeddingForPlan(saved)
+
+        const preview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(preview.resourceType, component.kind)
+        assert.equal(preview.baseModel, 'NoobAI')
+        assert.equal(preview.baseModelFamily, 'illustrious')
+        assert.equal('companions' in preview, false)
+        const installed = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(preview.previewId, 701, false),
+        )
+        assert.equal(installed.status, 'completed', installed.error?.message ?? '')
+        const firstInstalled = await repository.listInstalled()
+        assert.equal(firstInstalled.length, 1)
+        const [resource] = firstInstalled
+        assert.equal(resource.versions.length, 1)
+        const first = resource.versions[0]
+        assert.equal(resource.type, component.kind)
+        assert.deepEqual(resource.source, { kind: 'civitai', modelId: 42 })
+        assert.equal(resource.defaultVersionId, first.id)
+        assert.equal(first.civitaiVersionId, 7)
+        assert.equal(first.civitaiFileId, 701)
+        assert.equal(first.predictionType, null)
+        assert.deepEqual(first.sourceMetadata, { baseModel: 'NoobAI', trainedWords: ['portrait'] })
+        assert.ok(first.file.managedPath.startsWith(path.join(root, 'models') + path.sep))
+        assert.equal(first.file.sha256, sha256(bytes))
+        assert.equal(first.file.sizeBytes, bytes.length)
+        assert.deepEqual(await readFile(first.file.managedPath), bytes)
+        const selected = await selectExact(service, resource.id, first.id, '<selected>')
+        assert.deepEqual(selected, {
+          baseModelFamily: 'illustrious',
+          civitaiFileId: 701,
+          civitaiModelId: 42,
+          civitaiVersionId: 7,
+          displayName: 'Portrait Model',
+          fileSha256: sha256(bytes),
+          kind: component.kind,
+          localModelId: resource.id,
+          localVersionId: first.id,
+          predictionType: null,
+          versionName: 'v1',
+        })
+        const saved = {
+          ...selected,
+          displayName: 'Copied Project component',
+          versionName: 'Copied v1',
+        }
+        const healthy = await prepare(service, saved)
+        assert.equal(healthy.byteSize, bytes.length)
+        assert.equal(healthy.managedPath, first.file.managedPath)
+        assert.deepEqual(healthy.reference, saved)
+        assert.notEqual(healthy.reference, saved)
+
+        // Source applicability and verified installation deliberately do not imply Prepare support.
+        const laterPreview = selectedFilePreview(
+          await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
+        )
+        const laterInstall = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(laterPreview.previewId, 801, false),
+        )
+        assert.equal(laterInstall.status, 'completed', laterInstall.error?.message ?? '')
+        const afterVersionInstalled = await repository.listInstalled()
+        assert.equal(afterVersionInstalled.length, 1)
+        const [afterVersion] = afterVersionInstalled
+        assert.equal(afterVersion.versions.length, 2)
+        assert.equal(afterVersion.id, resource.id)
+        assert.equal(afterVersion.defaultVersionId, first.id)
+        const later = afterVersion.versions.find((item) => item.civitaiVersionId === 8)
+        assert.ok(later)
+        assert.equal(later.civitaiFileId, 801)
+        assert.equal(later.predictionType, null)
+        assert.deepEqual(later.sourceMetadata, {
+          baseModel: 'NoobAI',
+          trainedWords: ['source version two'],
+        })
+        const invalid = await selectExact(service, resource.id, later.id, '<new-version>')
+        assert.equal(invalid.fileSha256, sha256(invalidBytes))
+        assert.deepEqual(await readFile(later.file.managedPath), invalidBytes)
+        await assert.rejects(prepare(service, invalid), { code: component.errorCode })
+        await service.setDefaultVersion(resource.id, later.id)
+        const afterDefaultInstalled = await repository.listInstalled()
+        assert.equal(afterDefaultInstalled.length, 1)
+        assert.equal(afterDefaultInstalled[0].versions.length, 2)
+        assert.equal(afterDefaultInstalled[0].defaultVersionId, later.id)
+        assert.deepEqual(await prepare(service, saved), healthy)
+        for (const change of [
+          { civitaiModelId: 43 },
+          { civitaiVersionId: 8 },
+          { civitaiFileId: 801 },
+          { fileSha256: sha256(invalidBytes) },
+          { localVersionId: later.id },
+        ]) {
+          await assert.rejects(prepare(service, { ...saved, ...change }), {
+            code: 'MODEL_VERSION_MISMATCH',
+          })
+        }
+
+        await rm(first.file.managedPath)
+        await assert.rejects(prepare(service, saved), { code: 'MODEL_FILE_MISSING' })
+        const repairPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+        assert.equal(repairPreview.files[0]?.needsRepair, true)
+        const repaired = await waitForTerminalJob(coordinator, () =>
+          coordinator.startInstall(repairPreview.previewId, 701, false),
+        )
+        assert.equal(repaired.status, 'completed', repaired.error?.message ?? '')
+        const afterRepairInstalled = await repository.listInstalled()
+        assert.equal(afterRepairInstalled.length, 1)
+        assert.equal(afterRepairInstalled[0].versions.length, 2)
+        assert.equal(afterRepairInstalled[0].defaultVersionId, later.id)
+        assert.deepEqual(await prepare(service, saved), healthy)
+        assert.deepEqual(downloads, [
+          { authorization: `Bearer ${TOKEN}`, url: SELECTED_FILE_URL },
+          {
+            authorization: `Bearer ${TOKEN}`,
+            url: 'https://civitai.com/api/download/models/8?fileId=801',
+          },
+          { authorization: `Bearer ${TOKEN}`, url: SELECTED_FILE_URL },
+        ])
+        assert.ok(requests.every((request) => request.authorization === `Bearer ${TOKEN}`))
+
+        const reopened = openAppDatabase(root, migrations)
+        try {
+          const freshRepository = new ModelRepository(reopened.db)
+          const reopenedInstalled = await freshRepository.listInstalled()
+          assert.equal(reopenedInstalled.length, 1)
+          const [persisted] = reopenedInstalled
+          assert.equal(persisted.id, resource.id)
+          assert.equal(persisted.type, component.kind)
+          assert.equal(persisted.defaultVersionId, later.id)
+          assert.equal(persisted.versions.length, 2)
+          const restored = persisted.versions.find((item) => item.id === first.id)
+          assert.ok(restored)
+          assert.equal(restored.file.id, first.file.id)
+          assert.equal(restored.file.managedPath, first.file.managedPath)
+          assert.equal(restored.file.sha256, first.file.sha256)
+          assert.equal(restored.file.sizeBytes, bytes.length)
+          assert.equal(restored.civitaiVersionId, 7)
+          assert.equal(restored.civitaiFileId, 701)
+          assert.equal(restored.predictionType, null)
+          assert.deepEqual(restored.sourceMetadata, first.sourceMetadata)
+          const fresh = new ModelService(freshRepository, service.civitai, service.tokenStore)
+          assert.deepEqual(await prepare(fresh, saved), healthy)
+          await assert.rejects(prepare(fresh, invalid), { code: component.errorCode })
         } finally {
           await reopened.close()
         }

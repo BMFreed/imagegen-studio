@@ -1562,7 +1562,7 @@ result-to-preset остаются открытыми; фазы 2B/2C не объ
 
 ### NoobAI: полная поддержка в рамках MVP
 
-**Статус на 07.10.2026:** запланировано, не реализовано целиком. База —
+**Статус на 08.10.2026:** запланировано, не реализовано целиком. База —
 `86cb88e`: NoobAI admission и bounded Cyberfalafel v/epsilon qualification уже
 есть. [Обычный Euler](../engineering/phase-2c-euler-research.md) добавлен в
 authoring, frozen queue/Retry, native dispatch и portable accepted settings;
@@ -1574,8 +1574,14 @@ Cancel/refused/restored Retry и два source-grounded прогона 832×1216
 Новый [installed NoobAI mixed-alpha outpaint checkpoint](../engineering/phase-2c-noobai-outpaint-research.md)
 проверяет оба objectives на worker0.14: два source completions, два restored
 frozen outpaint Retry, шесть admissions, две actual Cancel и шесть preserving
-policy refusals. Следующий шаг 2C — component/type-aware matrix и новые Anima
-trained regressions на этом worker, затем dynamic multi-job batches. NoobAI не становится
+policy refusals. [Component source/Prepare checkpoint](../engineering/phase-2c-noobai-components-research.md)
+закрывает точный NoobAI standalone-VAE source gate, реальные controlled-source
+install/repair/reopen/qualifiers трёх компонентов и безопасную диагностику
+Generate/Retry. На unchanged installed worker0.14 отдельно проверены CPU загрузка
+обоих полных VAE layouts и finite trained dual-CLIP state; это не GPU conditioning
+или полная component matrix. Следующий шаг 2C — trained component/mode combinations
+на обоих NoobAI objectives и новые Anima regressions на этом worker, затем
+dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1635,9 +1641,11 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    `.igs` и Preset snapshots остаются advisory: новый Prepare использует текущую verified library
    policy. Поддерживаемые NoobAI checkpoints устанавливаются без SHA allowlist;
    совместимость весов проверяется отдельно. Пересмотреть type-aware matrix для
-   compatible LoRA, dual-CLIP embeddings и external VAE, включая нынешний отказ
-   standalone VAE с меткой NoobAI: применимость подтвердить структурой и loading,
-   а неизвестный компонент диагностировать явно. Обновить
+   compatible LoRA, dual-CLIP embeddings и external VAE. Source/Prepare часть
+   выполнена 08.10.2026: точная метка NoobAI допустима для standalone VAE,
+   реальные structural qualifiers и безопасные component refusals сохранены;
+   complete native CPU VAE loading отделено от ещё открытого trained GPU gate.
+   Неизвестный компонент диагностировать явно. Обновить
    [managed-model contract](../contracts/managed-model-library.md) и
    [generation settings](../features/project/generate-mode/generation-settings.md)
    до изменения этих границ.

@@ -332,7 +332,10 @@ test('checkpoint imports still exclude pickle files and unsupported model famili
       'Pony',
       'NoobAI XL',
       'noobai',
+      'NOOBAI',
+      ' NoobAI',
       'NoobAI ',
+      'NoobAI\t',
     ]) {
       const unsupportedFamily = fixtureTransport({ ...version, baseModel }, { ...model, type })
       await assert.rejects(
@@ -347,8 +350,8 @@ test('checkpoint imports still exclude pickle files and unsupported model famili
   }
 })
 
-test('standalone VAE preview maps only Illustrious and SDXL 1.0 applicability while retaining source labels', async () => {
-  for (const baseModel of ['Illustrious', 'SDXL 1.0']) {
+test('standalone VAE preview maps exact NoobAI, Illustrious and SDXL 1.0 applicability while retaining source labels', async () => {
+  for (const baseModel of ['NoobAI', 'Illustrious', 'SDXL 1.0']) {
     const { fetcher } = fixtureTransport({ ...version, baseModel }, { ...model, type: 'VAE' })
     const preview = await new CivitaiClient(fetcher).previewImport(
       'https://civitai.com/models/42?modelVersionId=7',
@@ -359,13 +362,40 @@ test('standalone VAE preview maps only Illustrious and SDXL 1.0 applicability wh
       assert.equal(preview.resourceType, 'vae')
       assert.equal(preview.baseModelFamily, 'illustrious')
       assert.equal(preview.baseModel, baseModel)
+      assert.equal(preview.modelId, 42)
+      assert.equal(preview.versionId, 7)
+      assert.deepEqual(preview.trainedWords, ['portrait'])
+      assert.deepEqual(
+        preview.files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })),
+        [
+          { fileId: 701, sha256: 'a'.repeat(64) },
+          { fileId: 702, sha256: 'b'.repeat(64) },
+        ],
+      )
       assert.deepEqual(
         preview.files.map((file) => file.name),
         ['full.safetensors', 'pruned.safetensors'],
       )
     }
   }
-  for (const baseModel of ['Anima', 'NoobAI', 'SD 1.5', 'SDXL', 'Pony', 'Other', '', null]) {
+})
+
+test('standalone VAE refuses unknown, case and whitespace source labels without normalization', async () => {
+  for (const baseModel of [
+    'Anima',
+    'SD 1.5',
+    'SDXL',
+    'Pony',
+    'Other',
+    'NoobAI XL',
+    'noobai',
+    'NOOBAI',
+    ' NoobAI',
+    'NoobAI ',
+    'NoobAI\t',
+    '',
+    null,
+  ]) {
     const { fetcher } = fixtureTransport({ ...version, baseModel }, { ...model, type: 'VAE' })
     await assert.rejects(
       new CivitaiClient(fetcher).previewImport(

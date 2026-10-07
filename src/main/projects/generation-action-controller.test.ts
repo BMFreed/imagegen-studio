@@ -4,7 +4,7 @@ import type { ProjectGenerationActionState } from '../../shared/projects/project
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -24,7 +24,7 @@ import { openAppDatabase } from '../db/database.js'
 import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore, type SafeStorageAdapter } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
-import { ModelService } from '../models/model-service.js'
+import { ModelService, ModelServiceError } from '../models/model-service.js'
 import { publishIllustriousEmbeddingFixture } from '../models/test-fixtures/illustrious-embedding.js'
 import { publishIllustriousLoraFixture } from '../models/test-fixtures/illustrious-lora.js'
 import { publishIllustriousVaeFixture } from '../models/test-fixtures/illustrious-vae.js'
@@ -2055,6 +2055,15 @@ test('Generate IPC error projection retains actionable owned refusals and hides 
     },
   )
   assert.deepEqual(
+    toProjectGenerationActionApiError(
+      new ModelServiceError('MODEL_FILE_CORRUPT', 'private /home/person/checkpoint.safetensors'),
+    ),
+    {
+      code: 'MODEL_FILE_CORRUPT',
+      message: 'The selected checkpoint could not be verified for generation.',
+    },
+  )
+  assert.deepEqual(
     toProjectGenerationActionApiError(new Error('private /home/person/weights.safetensors')),
     {
       code: 'GENERATION_FAILED',
@@ -3122,6 +3131,13 @@ const embeddingReady: InferenceWorkerReady = {
   workerVersion: '0.10.0',
 }
 
+type ComponentPrivateTree = {
+  children?: { name: string; tree: ComponentPrivateTree | null }[]
+  mode: number
+  sha256?: string
+  sizeBytes?: number
+}
+
 async function embeddingPrompt(
   fixture: Fixture,
   modelId: number,
@@ -3145,6 +3161,307 @@ async function embeddingPrompt(
     text: token,
   })
   return { file, prompt }
+}
+
+/** Snapshot actual tiny owner files, including extra entries and permission changes. */
+async function componentPrivateTree(directory: string): Promise<ComponentPrivateTree | null> {
+  let stat
+  try {
+    stat = await lstat(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
+  assert.equal(stat.isSymbolicLink(), false)
+  const mode = stat.mode & 0o777
+  if (stat.isDirectory()) {
+    const names = (await readdir(directory)).sort()
+    return {
+      children: await Promise.all(
+        names.map(async (name) => ({
+          name,
+          tree: await componentPrivateTree(path.join(directory, name)),
+        })),
+      ),
+      mode,
+    }
+  }
+  assert.equal(stat.isFile(), true)
+  const bytes = await readFile(directory)
+  return { mode, sha256: sha256(bytes), sizeBytes: bytes.length }
+}
+
+async function componentRefusalSnapshot(fixture: Fixture) {
+  return {
+    autosave: await componentPrivateTree(path.join(fixture.root, 'autosave')),
+    candidates: (await fixture.staging.listVerifiedCandidates(fixture.tabId)).sort((a, b) =>
+      a.candidateId.localeCompare(b.candidateId),
+    ),
+    cursor: await fixture.staging.readLastActualSeed(fixture.tabId, fixture.documentId),
+    document: structuredClone(
+      fixture.projects.getOpenDocumentForAcceptance(fixture.tabId)!.document,
+    ),
+    privateInputs: await componentPrivateTree(path.join(fixture.root, 'generation-inputs')),
+    queue: await fixture.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute(),
+    receipts: await fixture.database.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .orderBy('candidate_id')
+      .execute(),
+    savedBytes: await readFile(fixture.packagePath),
+    scratch: await componentPrivateTree(path.join(fixture.root, 'scratch')),
+    seeds: await fixture.database.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .orderBy('local_project_key')
+      .orderBy('document_id')
+      .execute(),
+    staging: await componentPrivateTree(path.join(fixture.root, 'recovery', 'generation-staging')),
+    tabs: structuredClone(fixture.projects.getOpenTabs()),
+    tombstones: await fixture.database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .orderBy('local_project_key')
+      .orderBy('staging_session_id')
+      .execute(),
+  }
+}
+
+// Public boundary: real controller, preparation, queue, staging, SQLite and Project owners.
+// Only ML output and the component resolver's explicit refusal are controlled. The healthy
+// resources pass the real Main qualifiers; these small fixtures do not claim trained inference.
+for (const component of [
+  {
+    code: 'MODEL_LORA_INCOMPATIBLE',
+    kind: 'LoRA',
+    message:
+      'The selected LoRA is incompatible with this image engine. Review this component in Model Manager.',
+    resolver: 'resolveVerifiedGenerationLoraForPlan',
+  },
+  {
+    code: 'MODEL_EMBEDDING_INCOMPATIBLE',
+    kind: 'embedding',
+    message:
+      'The selected embedding is incompatible with this image engine. Review this component in Model Manager.',
+    resolver: 'resolveVerifiedGenerationEmbeddingForPlan',
+  },
+  {
+    code: 'MODEL_VAE_INCOMPATIBLE',
+    kind: 'external VAE',
+    message:
+      'The selected external VAE is incompatible with this image engine. Review this component in Model Manager.',
+    resolver: 'resolveVerifiedGenerationVaeForPlan',
+  },
+] as const) {
+  test(`component incompatibility ${component.code} gives safe public Generate and frozen Retry diagnostics while preserving durable owners`, async () => {
+    await withFixture(async (fixture) => {
+      const { controller, documentId, modelService, projects, queue, runtime, staging, tabId } =
+        fixture
+      await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+      await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+      switch (component.kind) {
+        case 'embedding': {
+          const { prompt } = await embeddingPrompt(fixture, 9900, 9901, 'component.safetensors')
+          const owner = projects.getOpenDocumentForAcceptance(tabId)!
+          await owner.applyDocument({
+            ...owner.document,
+            generationDraft: { ...owner.document.generationDraft, positivePrompt: prompt },
+          })
+          break
+        }
+        case 'external VAE': {
+          const installed = await publishIllustriousVaeFixture(
+            modelService.repository,
+            fixture.root,
+            9910,
+            9911,
+          )
+          const reference = await modelService.resolveGenerationVae(
+            installed.resourceId,
+            installed.versionId,
+          )
+          await projects.setGenerationVae(tabId, async () => reference)
+          break
+        }
+        case 'LoRA': {
+          await addControllerLora(fixture)
+          break
+        }
+      }
+      runtime.ready = structuredClone(noiseReady)
+      await projects.save(tabId)
+      let refusing = false
+      let refusedCalls = 0
+      const privateMessage = `private /home/person/${component.kind}/weights.safetensors`
+      const refuseComponent = () => {
+        if (refusing) {
+          refusedCalls += 1
+          throw new ModelServiceError(component.code, privateMessage)
+        }
+      }
+      switch (component.resolver) {
+        case 'resolveVerifiedGenerationEmbeddingForPlan': {
+          const verify = modelService.resolveVerifiedGenerationEmbeddingForPlan.bind(modelService)
+          modelService.resolveVerifiedGenerationEmbeddingForPlan = async (reference) => {
+            refuseComponent()
+            return await verify(reference)
+          }
+          break
+        }
+        case 'resolveVerifiedGenerationLoraForPlan': {
+          const verify = modelService.resolveVerifiedGenerationLoraForPlan.bind(modelService)
+          modelService.resolveVerifiedGenerationLoraForPlan = async (reference) => {
+            refuseComponent()
+            return await verify(reference)
+          }
+          break
+        }
+        case 'resolveVerifiedGenerationVaeForPlan': {
+          const verify = modelService.resolveVerifiedGenerationVaeForPlan.bind(modelService)
+          modelService.resolveVerifiedGenerationVaeForPlan = async (reference) => {
+            refuseComponent()
+            return await verify(reference)
+          }
+          break
+        }
+      }
+      runtime.beforeGenerate = async () => {
+        if (runtime.generated.length === 2) {
+          throw new Error('Controlled second-job failure retains the first completed result.')
+        }
+      }
+      const initial = await controller.generate(tabId, { documentId, iterations: 2 })
+      assert.equal(initial.kind, 'queued')
+      if (initial.kind !== 'queued') {
+        assert.fail('Expected the healthy component to publish both durable jobs.')
+      }
+      assert.equal(initial.jobIds.length, 2)
+      await waitForState(controller, tabId, (state) => state.phase === 'idle' && !state.jobs.length)
+      const page = await controller.getQueue()
+      assert.equal(page.counts.completed, 1)
+      assert.equal(page.counts.failed, 1)
+      const source = page.items.find((item) => item.status === 'failed')!
+      const frozen = await queue.loadVerifiedInput(source.id)
+      assert.equal(frozen.payload.kind, 'illustrious-txt2img')
+      const sourceTarget = await readFile(frozen.targetPath)
+      const candidates = await staging.listVerifiedCandidates(tabId)
+      assert.equal(candidates.length, 1)
+      assert.equal(candidates[0].actualSeed, 42)
+      assert.equal(await staging.readLastActualSeed(tabId, documentId), 42)
+      await projects.flushAutosave(tabId)
+      const beforeGenerate = await componentRefusalSnapshot(fixture)
+      assert.equal(beforeGenerate.queue.length, 2)
+      assert.equal(beforeGenerate.receipts.length, 1)
+      assert.equal(beforeGenerate.seeds.length, 1)
+      assert.ok(beforeGenerate.privateInputs)
+      assert.ok(beforeGenerate.staging)
+      const impact = await controller.generate(tabId, { documentId, iterations: 1 })
+      assert.equal(impact.kind, 'confirmation-required')
+      if (impact.kind !== 'confirmation-required') {
+        assert.fail('Expected existing candidates to require concrete replacement review.')
+      }
+      refusing = true
+      await assert.rejects(
+        controller.generate(tabId, {
+          confirmation: {
+            candidateIds: impact.candidateIds,
+            unfinishedJobIds: impact.unfinishedJobIds,
+          },
+          documentId,
+          iterations: 1,
+        }),
+        { code: component.code, message: privateMessage },
+      )
+      const generateError = (await controller.getState(tabId)).error
+      assert.ok(generateError)
+      assert.equal(refusedCalls, 1)
+      assert.equal(runtime.generated.length, 2)
+      assert.deepEqual(await componentRefusalSnapshot(fixture), beforeGenerate)
+
+      // Draft removal is not a remedy for an already frozen Retry. The original selected
+      // component must still be verified, then restored without composing a new target.
+      const owner = projects.getOpenDocumentForAcceptance(tabId)!
+      await owner.applyDocument({
+        ...owner.document,
+        generationDraft: {
+          ...owner.document.generationDraft,
+          loras: [],
+          negativePrompt: { embeddingRefs: [], text: 'later negative prompt' },
+          positivePrompt: { embeddingRefs: [], text: 'later unrelated prompt' },
+          vae: null,
+        },
+      })
+      await projects.updateGenerationDraft(tabId, { kind: 'seed', policy: 'fixed', value: 99 })
+      await projects.setPrimaryBbox(tabId, { height: 64, width: 64, x: 123, y: -456 })
+      await projects.flushAutosave(tabId)
+      const beforeRetry = await componentRefusalSnapshot(fixture)
+      const compositions = runtime.composedTargets.length
+      await assert.rejects(controller.retryJob(source), {
+        code: component.code,
+        message: privateMessage,
+      })
+      const retryError = (await controller.getState(tabId)).error
+      assert.ok(retryError)
+      assert.equal(refusedCalls, 2)
+      assert.equal(runtime.generated.length, 2)
+      assert.equal(runtime.composedTargets.length, compositions)
+      assert.deepEqual(await componentRefusalSnapshot(fixture), beforeRetry)
+
+      refusing = false
+      runtime.beforeGenerate = null
+      await controller.retryJob(source)
+      await waitForState(controller, tabId, (state) => state.phase === 'idle' && !state.jobs.length)
+      assert.equal(runtime.generated.length, 3)
+      assert.equal(runtime.composedTargets.length, compositions)
+      const afterRetry = await controller.getQueue()
+      assert.equal(afterRetry.items.length, 3)
+      assert.equal(afterRetry.counts.completed, 2)
+      assert.equal(afterRetry.counts.failed, 1)
+      const retried = afterRetry.items.find((item) => !initial.jobIds.includes(item.id))!
+      assert.equal(retried.status, 'completed')
+      const restored = await queue.loadVerifiedInput(retried.id)
+      assert.deepEqual(restored.payload.context, frozen.payload.context)
+      assert.deepEqual(await readFile(restored.targetPath), sourceTarget)
+      assert.deepEqual((await queue.loadVerifiedInput(source.id)).payload, frozen.payload)
+      assert.deepEqual(await readFile(frozen.targetPath), sourceTarget)
+      const normalizeWorkerPaths = (job: IllustriousGenerationRequestV1['job']) => ({
+        ...job,
+        output: { pngPath: '<worker output>', stagingRoot: '<worker staging>' },
+        target: { ...job.target, path: '<worker target>' },
+      })
+      assert.deepEqual(
+        normalizeWorkerPaths(runtime.generated[2].job),
+        normalizeWorkerPaths(runtime.generated[1].job),
+      )
+      assert.equal(runtime.generated[2].job.sampling.seed, 43)
+      const after = await componentRefusalSnapshot(fixture)
+      assert.deepEqual(after.autosave, beforeRetry.autosave)
+      assert.deepEqual(after.document, beforeRetry.document)
+      assert.deepEqual(after.tabs, beforeRetry.tabs)
+      assert.deepEqual(after.savedBytes, beforeRetry.savedBytes)
+      assert.deepEqual(after.tombstones, beforeRetry.tombstones)
+      assert.deepEqual(
+        after.receipts.find((receipt) => receipt.candidate_id === candidates[0].candidateId),
+        beforeRetry.receipts[0],
+      )
+      assert.deepEqual(
+        after.candidates.find((candidate) => candidate.candidateId === candidates[0].candidateId),
+        candidates[0],
+      )
+      assert.equal(after.candidates.length, 2)
+      assert.equal(after.cursor, 43)
+      assert.deepEqual(generateError, { code: component.code, message: component.message })
+      assert.deepEqual(retryError, { code: component.code, message: component.message })
+      assert.equal(generateError.message.includes('/home/person/'), false)
+      assert.equal(retryError.message.includes('/home/person/'), false)
+    })
+  })
 }
 
 test('Generate freezes distinct per-polarity exact embeddings for every concrete dynamic branch through the real queue and staging', async () => {
