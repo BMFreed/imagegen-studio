@@ -100,9 +100,10 @@ cursor with the local Project key and open `.igs` `documentId`, then freezes
 the concrete `reuse` seed before enqueue. If the local cursor is absent, the
 saved `.igs` snapshot is used; if both are absent, Prepare stops explicitly.
 The Results IPC exposes the local cursor and explicit Save records its snapshot
-without marking the document dirty or adding Undo history. This does not yet
-implement renderer Generate, dynamic batch expansion in the production worker
-or a packaged Linux/NVIDIA release pipeline.
+without marking the document dirty or adding Undo history. Renderer Generate and
+installed dynamic batches were open at that historical checkpoint. The bounded
+installed-system follow-up below covers Anima; a packaged Linux/NVIDIA release
+pipeline remains unqualified.
 
 ## Production prepared-batch planning checkpoint
 
@@ -167,9 +168,33 @@ no-ops, captured values while updates are pending and crash-shadow recovery.
 Native Save with a dynamic update still pending and native busy/reload states
 are not separate reproduced scenarios in this slice.
 
-Renderer Generate, images-per-click wiring, transport/model qualification,
-full conditioning and release inference remain open. Successful expansion
-is not a generation-readiness check.
+Renderer Generate, images-per-click wiring and installed conditioning were open
+at this historical preview checkpoint. Successful preview expansion alone is
+not a generation-readiness check; the installed-system evidence below is separate.
+
+## Installed Anima dynamic-batch checkpoint
+
+[The bounded installed-system qualification](../../../engineering/phase-2c-anima-dynamic-batch-research.md)
+uses real renderer Generate, Main admission, SQLite queue, installed worker0.14
+and portable Add/Save/readback/reopen. Four weighted positive×negative pairs with
+two images use Fixed0/per-iteration seeds `0,1,0,1,0,1,0,1`; a recovered project
+uses local completed0 with Reuse/per-prompt seeds0…7. Current prompt/method/seed37/
+LoRA edits after admission leave frozen inputs and accepted configuration intact.
+
+A real completed/running/pending crash preserves candidate0 and local cursor0
+without a newer portable Save; reopening cancels unfinished jobs with APP_RESTART.
+Recovered0 and Reuse0/1 reproduce healthy same-execution pixels. An installed
+constant-noise-seed mutation causes pixel RED for seed1 before Add; restoration
+and fresh0/1 reproduce healthy pixels. Three saved/reopened packages contain19
+accepted layers with seed snapshots1,7,1. Independent raw SQLite/ZIP/Pillow checks
+separate normal, mutant, fresh and excluded setup/partial attempts.
+
+This finite evidence is Euler256×256/three steps/BF16 with an exact signed LoRA;
+it does not qualify the Illustrious/NoobAI counterpart, Random, wrap, max32 native
+inference, installed truncation, the full Fixed/per-prompt pair matrix, arbitrary
+formats/quality or release. Production admission cap32 is unchanged. The seed
+cursor identity contract is checked in source/integration tests; this installed
+sequence alone cannot distinguish every possible global-latest cursor mutation.
 
 ## Vue Prototype Coverage
 
