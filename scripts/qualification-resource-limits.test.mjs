@@ -41,8 +41,8 @@ function fixture({
       if (!files.has(file)) throw Object.assign(new Error(`Missing ${file}`), { code: 'ENOENT' })
       return files.get(file)
     },
-    execute: async (program, args) => {
-      commands.push({ program, args })
+    execute: async (program, args, options) => {
+      commands.push({ program, args, options })
       if (program === 'systemctl' && args.some((arg) => arg.startsWith('RuntimeMaxSec='))) {
         throw new Error('Active scope RuntimeMaxSec is immutable.')
       }
@@ -183,7 +183,7 @@ test('physical exit proof accepts absent identities and a reused PID belonging t
   )
 })
 
-test('deadline action stops the exact owned scope after rechecking identity and ControlGroup', async () => {
+test('deadline requests SIGKILL only for the exact verified owned scope without claiming physical exit', async () => {
   const f = fixture()
   const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
   f.commands.length = 0
@@ -191,8 +191,54 @@ test('deadline action stops the exact owned scope after rechecking identity and 
     { ...nativeIdentity, group: f.group },
     f.dependencies,
   )
-  assert.equal(evidence.stopped, true)
-  assert.equal(f.commands.at(-1).args.at(-1), `app-imagegen\\x2dstudio-${f.pid}.scope`)
+  assert.deepEqual(evidence, {
+    signalRequested: true,
+    signal: 'SIGKILL',
+    pid: f.pid,
+    start: nativeIdentity.start,
+    group: f.group,
+  })
+  assert.deepEqual(
+    f.commands.map(({ program, args }) => ({ program, args })),
+    [
+      {
+        program: 'systemctl',
+        args: [
+          '--user',
+          'show',
+          '--property=ControlGroup',
+          '--value',
+          `app-imagegen\\x2dstudio-${f.pid}.scope`,
+        ],
+      },
+      {
+        program: 'systemctl',
+        args: [
+          '--user',
+          'kill',
+          '--kill-whom=all',
+          '--signal=SIGKILL',
+          `app-imagegen\\x2dstudio-${f.pid}.scope`,
+        ],
+      },
+    ],
+  )
+  assert.ok(f.commands.at(-1).options.timeout > 0 && f.commands.at(-1).options.timeout <= 20_000)
+  assert.equal(Object.hasOwn(evidence, 'stopped'), false)
+  assert.equal(Object.hasOwn(evidence, 'confirmed'), false)
+  // A successful transport acknowledgment leaves both original processes alive in this fixture.
+  await assert.rejects(
+    confirmQualificationProcessExit(
+      [
+        {
+          processIdentities: [nativeIdentity],
+          groups: [{ group: f.group, ownedScope: true }],
+        },
+      ],
+      { ...f.dependencies, pause: async () => {} },
+    ),
+    /Owned native processes remain alive/,
+  )
 })
 
 test('an expired timer cannot stop a new process that reused its former PID', async () => {
@@ -200,17 +246,82 @@ test('an expired timer cannot stop a new process that reused its former PID', as
   const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
   f.reusePid()
   f.commands.length = 0
-  assert.equal(
-    (await stopExpiredQualificationProcess({ ...nativeIdentity, group: f.group }, f.dependencies))
-      .stopped,
-    false,
+  assert.deepEqual(
+    await stopExpiredQualificationProcess({ ...nativeIdentity, group: f.group }, f.dependencies),
+    { signalRequested: false },
   )
   assert.equal(f.commands.length, 0)
+})
+
+for (const code of ['ENOENT', 'ESRCH'])
+  test(`missing owned PID (${code}) refuses before any systemctl signal`, async () => {
+    const f = fixture()
+    const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
+    f.commands.length = 0
+    const evidence = await stopExpiredQualificationProcess(
+      { ...nativeIdentity, group: f.group },
+      {
+        ...f.dependencies,
+        read: async (file) => {
+          if (file === `/proc/${f.pid}/stat`) throw Object.assign(new Error('Gone'), { code })
+          return f.dependencies.read(file)
+        },
+      },
+    )
+    assert.deepEqual(evidence, { signalRequested: false })
+    assert.equal(f.commands.length, 0)
+  })
+
+test('an owned PID moved to another proc cgroup cannot transfer signal authority', async () => {
+  const f = fixture()
+  const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  f.files.set(`/proc/${f.pid}/cgroup`, '0::/user.slice/unrelated.scope\n')
+  assert.deepEqual(
+    await stopExpiredQualificationProcess({ ...nativeIdentity, group: f.group }, f.dependencies),
+    { signalRequested: false },
+  )
+  assert.equal(f.commands.length, 0)
+})
+
+test('a rejected SIGKILL request propagates failure instead of synthesizing exit evidence', async () => {
+  const f = fixture()
+  const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  await assert.rejects(
+    stopExpiredQualificationProcess(
+      { ...nativeIdentity, group: f.group },
+      {
+        ...f.dependencies,
+        execute: async (program, args, options) => {
+          const result = await f.dependencies.execute(program, args, options)
+          if (args.includes('kill')) throw new Error('Controlled SIGKILL transport rejection.')
+          return result
+        },
+      },
+    ),
+    /Controlled SIGKILL transport rejection/,
+  )
+  assert.equal(f.commands.filter(({ args }) => args.includes('kill')).length, 1)
+  assert.equal(
+    f.commands.some(({ args }) => args.includes('stop')),
+    false,
+  )
 })
 
 test('an unobserved child keeping the owned scope populated prevents disposal despite absent tracked PIDs', async () => {
   const f = fixture()
   const check = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  assert.equal(
+    (
+      await stopExpiredQualificationProcess(
+        { ...check.nativeIdentity, group: f.group },
+        f.dependencies,
+      )
+    ).signalRequested,
+    true,
+  )
   await assert.rejects(
     confirmQualificationProcessExit([check], {
       read: async (file) => {
@@ -229,7 +340,7 @@ test('an unobserved child keeping the owned scope populated prevents disposal de
   )
 })
 
-test('deadline refuses a mismatching ControlGroup without stopping the scope', async () => {
+test('deadline refuses a mismatching ControlGroup without signaling the scope', async () => {
   const f = fixture()
   const { nativeIdentity } = await boundQualificationProcess(f.pid, f.dependencies)
   f.wrongScope()
@@ -239,7 +350,7 @@ test('deadline refuses a mismatching ControlGroup without stopping the scope', a
     /Deadline scope no longer matches/,
   )
   assert.equal(
-    f.commands.some(({ args }) => args.includes('stop')),
+    f.commands.some(({ args }) => args.includes('kill') || args.includes('stop')),
     false,
   )
 })

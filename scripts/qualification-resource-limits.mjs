@@ -242,7 +242,7 @@ export async function confirmQualificationProcessExit(
   throw new Error(`Owned native processes remain alive: ${JSON.stringify(remaining)}.`)
 }
 
-/** Timer action may stop only the still-existing native identity whose scope was bounded. */
+/** Signal only the verified expired fixture scope; physical exit requires separate confirmation. */
 export async function stopExpiredQualificationProcess(
   { pid, start, group },
   { read = readFile, execute = exec } = {},
@@ -257,10 +257,12 @@ export async function stopExpiredQualificationProcess(
     throw new Error('Invalid owned deadline identity.')
   }
   try {
-    if (processStart(await read(`/proc/${pid}/stat`, 'utf8')) !== start) return { stopped: false }
-    if (cgroupPath(await read(`/proc/${pid}/cgroup`, 'utf8')) !== group) return { stopped: false }
+    if (processStart(await read(`/proc/${pid}/stat`, 'utf8')) !== start)
+      return { signalRequested: false }
+    if (cgroupPath(await read(`/proc/${pid}/cgroup`, 'utf8')) !== group)
+      return { signalRequested: false }
   } catch (error) {
-    if (['ENOENT', 'ESRCH'].includes(error.code)) return { stopped: false }
+    if (['ENOENT', 'ESRCH'].includes(error.code)) return { signalRequested: false }
     throw error
   }
   const shown = await execute(
@@ -270,8 +272,13 @@ export async function stopExpiredQualificationProcess(
   )
   if (shown.stdout.trim() !== group)
     throw new Error('Deadline scope no longer matches the owned cgroup.')
-  await execute('systemctl', ['--user', 'stop', unit], { timeout: 20_000, maxBuffer: 32 * 1024 })
-  return { stopped: true, pid, start, group }
+  // A dirty Electron document may refuse graceful stop until systemd's stop timeout.
+  // This fixture already exhausted its deadline; signal only its revalidated scope.
+  await execute('systemctl', ['--user', 'kill', '--kill-whom=all', '--signal=SIGKILL', unit], {
+    timeout: 10_000,
+    maxBuffer: 32 * 1024,
+  })
+  return { signalRequested: true, signal: 'SIGKILL', pid, start, group }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === '--deadline') {

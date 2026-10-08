@@ -311,6 +311,366 @@ function loraStackInput(input) {
     },
   }
 }
+const animaReady = {
+  ...noiseReady,
+  capabilities: [
+    ...noiseReady.capabilities,
+    'anima-txt2img',
+    'anima-img2img',
+    'anima-lora',
+    'anima-prompt-weighting',
+    'anima-flow-sampling',
+    'anima-outpaint',
+  ],
+}
+function animaInput(input) {
+  loraStackInput(input)
+  input.profile = 'anima-regression'
+  input.stage = 'sampling'
+  // Independent concrete descriptors; neither the live catalog nor the qualification helper
+  // supplies these expectations. Every source deliberately remains unreadable in this suite.
+  input.encoder = {
+    path: '/unread-original/anima/qwen_3_06b_base.safetensors',
+    sha256: 'cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba',
+    byteSize: 1192135096,
+    type: 'qwen3_encoder',
+    family: 'anima',
+    name: 'Qwen3 encoder',
+    versionName: 'Anima Qwen3 0.6B',
+    origin: {
+      kind: 'reference-artifact',
+      repository: 'circlestone-labs/Anima',
+      revision: 'f973fc41ec7545364ac9776c2440285f43ff2a30',
+      path: 'split_files/text_encoders/qwen_3_06b_base.safetensors',
+      url: 'https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/text_encoders/qwen_3_06b_base.safetensors',
+    },
+  }
+  input.vae = {
+    path: '/unread-original/anima/qwen_image_vae.safetensors',
+    sha256: 'a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f',
+    byteSize: 253806246,
+    type: 'vae',
+    family: 'anima',
+    name: 'Anima VAE',
+    versionName: 'Anima Qwen Image VAE',
+    origin: {
+      kind: 'reference-artifact',
+      repository: 'circlestone-labs/Anima',
+      revision: 'f973fc41ec7545364ac9776c2440285f43ff2a30',
+      path: 'split_files/vae/qwen_image_vae.safetensors',
+      url: 'https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/vae/qwen_image_vae.safetensors',
+    },
+  }
+  input.anima = {
+    path: '/unread-original/anima/Cyberfalafel.safetensors',
+    sha256: '0fc7507b222e52ac8cc5e2826786bc4caed05223df32d17aeb05a76cb4de9941',
+    byteSize: 4182275752,
+    type: 'checkpoint',
+    family: 'anima',
+    name: 'Cyberfalafel',
+    versionName: 'Cyberfalafel anima v1.0',
+    origin: {
+      kind: 'civitai-trained',
+      modelId: 1147756,
+      versionId: 3120487,
+      fileId: 3000817,
+      url: 'https://civitai.com/api/download/models/3120487?fileId=3000817',
+      creator: 'Knightus_Ai',
+      creditRequired: false,
+    },
+  }
+  input.animaLora = {
+    path: '/unread-original/anima/AnimaMythP0rtr4itStyleV1.safetensors',
+    sha256: 'cd9639b03d4458323e696e3792ff7535ae03f9f70368d6d0dc17fe86fa4f354f',
+    byteSize: 138663759,
+    type: 'lora',
+    family: 'anima',
+    name: 'Myth Portrait',
+    versionName: 'Anima Portrait Style',
+    origin: {
+      kind: 'civitai-trained',
+      modelId: 599757,
+      versionId: 3084665,
+      fileId: 2964030,
+      url: 'https://civitai.com/api/download/models/3084665?fileId=2964030',
+      creator: 'VelvetS',
+      creditRequired: false,
+    },
+  }
+}
+function animaImageSources(input) {
+  input.stage = 'image-modes'
+  input.commonSource = {
+    path: '/unread-original/anima/common.png',
+    sha256: 'd'.repeat(64),
+    byteSize: 4096,
+    pixelSha256: 'e'.repeat(64),
+    width: 256,
+    height: 256,
+    originQueueItemId: 'healthy-anima-euler-txt2img',
+  }
+  input.lama = {
+    path: '/unread-original/anima/lama.pt',
+    sha256: '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9',
+    byteSize: 205669692,
+  }
+}
+async function assertAnimaPreflightPreserved(appData, artifacts) {
+  assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+  await assert.rejects(fs.lstat(path.join(appData, 'database')), { code: 'ENOENT' })
+  await assert.rejects(fs.lstat(path.join(artifacts, 'electron-main.log')), { code: 'ENOENT' })
+  const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+  assert.equal(report.status, 'failed')
+  assert.equal(report.profile, 'anima-regression')
+  assert.deepEqual(report.models, [])
+  assert.deepEqual(report.generations, [])
+  assert.equal(report.nativeProcessPid, undefined)
+}
+for (const [name, mutate] of [
+  [
+    'unsupported stage',
+    (input) => {
+      input.stage = 'img2img'
+    },
+  ],
+  [
+    'missing stage',
+    (input) => {
+      delete input.stage
+    },
+  ],
+  [
+    'changed geometry',
+    (input) => {
+      input.side = 128
+    },
+  ],
+  [
+    'changed steps',
+    (input) => {
+      input.steps = 4
+    },
+  ],
+  [
+    'missing checkpoint',
+    (input) => {
+      delete input.anima
+    },
+  ],
+  [
+    'missing retained NoobAI source',
+    (input) => {
+      delete input.illustriousLoraSecond
+    },
+  ],
+  [
+    'changed pinned encoder hash',
+    (input) => {
+      input.encoder.sha256 = 'f'.repeat(64)
+    },
+  ],
+  [
+    'changed pinned VAE revision',
+    (input) => {
+      input.vae.origin.revision = '0'.repeat(40)
+    },
+  ],
+  [
+    'changed checkpoint family',
+    (input) => {
+      input.anima.family = 'illustrious'
+    },
+  ],
+  [
+    'split shared CivitAI owner alias',
+    (input) => {
+      input.anima.name = 'Cyberfalafel Anima'
+    },
+  ],
+  [
+    'changed checkpoint file identity',
+    (input) => {
+      input.anima.origin.fileId += 1
+    },
+  ],
+  [
+    'changed LoRA creator',
+    (input) => {
+      input.animaLora.origin.creator = 'unknown'
+    },
+  ],
+  [
+    'unexpected prediction type',
+    (input) => {
+      input.anima.predictionType = 'epsilon'
+    },
+  ],
+  [
+    'undeclared method selection',
+    (input) => {
+      input.selections = ['euler_a-txt2img']
+    },
+  ],
+  [
+    'image source in sampling stage',
+    (input) => {
+      animaImageSources(input)
+      input.stage = 'sampling'
+    },
+  ],
+  [
+    'missing common image source',
+    (input) => {
+      animaImageSources(input)
+      delete input.commonSource
+    },
+  ],
+  [
+    'changed common image geometry',
+    (input) => {
+      animaImageSources(input)
+      input.commonSource.width = 512
+    },
+  ],
+  [
+    'missing LaMa',
+    (input) => {
+      animaImageSources(input)
+      delete input.lama
+    },
+  ],
+  [
+    'changed LaMa hash',
+    (input) => {
+      animaImageSources(input)
+      input.lama.sha256 = 'a'.repeat(64)
+    },
+  ],
+  [
+    'restoration without healthy baselines',
+    (input) => {
+      animaImageSources(input)
+      input.stage = 'restored'
+    },
+  ],
+  [
+    'restoration with only one baseline',
+    (input) => {
+      animaImageSources(input)
+      input.stage = 'restored'
+      input.animaPixelBaselines = {
+        sampling: { reportPath: '/unread-original/report.json', reportSha256: 'a'.repeat(64) },
+      }
+    },
+  ],
+  [
+    'relative baseline path',
+    (input) => {
+      input.animaPixelBaselines = {
+        sampling: { reportPath: 'relative/report.json', reportSha256: 'a'.repeat(64) },
+      }
+    },
+  ],
+]) {
+  test(`Anima regression CLI rejects ${name} before sources, catalog publication or ML`, async () => {
+    // Boundary: execute the real CLI. Neighbor: the exact fixture below reaches resume.
+    // Mutation: skip descriptor/stage guards and start reading originals or publishing models.
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        animaInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        await assertAnimaPreflightPreserved(appData, artifacts)
+      },
+      {
+        ready: animaReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+}
+for (const [name, changeReady, changeInstalled] of [
+  [
+    'old worker',
+    (ready) => {
+      ready.workerVersion = '0.13.0'
+    },
+  ],
+  [
+    'wrong protocol',
+    (ready) => {
+      ready.protocolVersion = '2'
+    },
+  ],
+  [
+    'wrong platform',
+    (ready) => {
+      ready.runtimeProfile = 'linux-amd'
+    },
+  ],
+  ...[
+    'anima-txt2img',
+    'anima-img2img',
+    'anima-lora',
+    'anima-prompt-weighting',
+    'anima-flow-sampling',
+    'anima-outpaint',
+  ].map((capability) => [
+    `missing ${capability}`,
+    (ready) => {
+      ready.capabilities = ready.capabilities.filter((value) => value !== capability)
+    },
+  ]),
+  [
+    'unconfirmed prior worker exit',
+    undefined,
+    (installed) => {
+      installed.confirmedWorkerExit = false
+    },
+  ],
+  [
+    'unqualified installation',
+    undefined,
+    (installed) => {
+      installed.status = 'installed'
+    },
+  ],
+]) {
+  test(`Anima regression CLI rejects ${name} before original files and native startup`, async () => {
+    const ready = structuredClone(animaReady)
+    const installedReport = { confirmedWorkerExit: true, status: 'activated-qualified' }
+    changeReady?.(ready)
+    changeInstalled?.(installedReport)
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        animaInput(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        await assertAnimaPreflightPreserved(appData, artifacts)
+      },
+      { ready, installedReport },
+    )
+  })
+}
+test('valid Anima regression CLI requires canonical resume before source reads or publication', async () => {
+  // A complete fixture and qualified ready response stop at the actual operational reuse gate.
+  await fixture(
+    async ({ input, run, appData, artifacts }) => {
+      animaInput(input)
+      const refusal = await run()
+      assert.match(refusal.stderr, /must reuse the original canonical runtime\/catalog/)
+      assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+      await assertAnimaPreflightPreserved(appData, artifacts)
+    },
+    {
+      ready: animaReady,
+      installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+    },
+  )
+})
 for (const [name, mutate] of [
   [
     'img2img stage',
@@ -1046,7 +1406,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity or noobai-lora-stack/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity, noobai-lora-stack or anima-regression/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))

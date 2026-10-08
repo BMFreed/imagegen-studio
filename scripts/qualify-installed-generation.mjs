@@ -116,6 +116,17 @@ import {
   normalizeNoobaiLoraStackInputs,
   validateNoobaiLoraStackFixture,
 } from './noobai-lora-stack-qualification.mjs'
+import {
+  animaRegressionModelKeys,
+  animaRegressionPublicationIds,
+  assertAnimaRegressionCatalog,
+  assertAnimaRegressionCatalogPreserved,
+  assertAnimaRegressionConfiguration,
+  assertAnimaRegressionFrozen,
+  assertAnimaRegressionStageOutcome,
+  normalizeAnimaRegressionInputs,
+  validateAnimaRegressionFixture,
+} from './anima-regression-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -136,6 +147,7 @@ const noiseProfile = fixture.profile === 'noise-profile'
 const noobaiEncoderProfile = fixture.profile === 'noobai-vae-encoder'
 const noobaiPolarityProfile = fixture.profile === 'noobai-embedding-polarity'
 const noobaiLoraStackProfile = fixture.profile === 'noobai-lora-stack'
+const animaRegressionProfile = fixture.profile === 'anima-regression'
 const noobaiNineVersionProfile =
   noobaiEncoderProfile || noobaiPolarityProfile || noobaiLoraStackProfile
 const noobaiComponentsProfile = fixture.profile === 'noobai-components' || noobaiNineVersionProfile
@@ -151,14 +163,14 @@ const externalVaeKeys = [
   'externalVaeLdm',
   'externalVaeNative',
   'externalVaeControl',
-  ...(noobaiNineVersionProfile ? ['externalVaeEncoderControl'] : []),
+  ...(noobaiNineVersionProfile || animaRegressionProfile ? ['externalVaeEncoderControl'] : []),
 ]
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
 const componentModelKeys = [
   ...noiseModelKeys,
   ...embeddingKeys,
   ...externalVaeKeys,
-  ...(noobaiLoraStackProfile ? ['illustriousLoraSecond'] : []),
+  ...(noobaiLoraStackProfile || animaRegressionProfile ? ['illustriousLoraSecond'] : []),
 ]
 const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
 const embeddingControlSourceIds = { versionId: 700_111, fileId: 700_112 }
@@ -284,6 +296,13 @@ if (noobaiLoraStackProfile) {
     'Reuses the canonical worker0.14 and all nine exact existing model versions. One credited trained Lineless Illustrious LoRA may be adopted through Main ModelDownloader using the declared original file as controlled transport. DigitalArt and Lineless are distinct trained ordinary adapters; native per-target independent algebra is separate prior evidence.'
   report.boundary.limits =
     'TXT-only, one EPS or v_prediction objective per invocation, four AB/BA/B-enabled-zero/B-disabled cases at256px/three requested steps/seed0. Actual UI remove/re-add authors order; queued order and signed weights remain frozen after later live reorder/weight edits. Explicit Add, Save/readback/reopen and read-only ordered-stack comparison are required. B-zero and disabled pixels match; full stacks differ from these controls. No AB/BA pixel equality or inequality requirement, image quality, all formats, public delivery, Anima, dynamic batches or release claim.'
+}
+if (animaRegressionProfile) {
+  report.boundary.preconditions =
+    'Reuses the canonical worker0.14 and preserves all six prior resources/ten versions. Four exact local Anima files may add three owners and one Anima version to the existing CivitAI Cyber resource, preserving its NoobAI default and metadata. Native CUDA BF16, pinned Qwen3/Wan companions, exact source attribution and the ordinary Myth adapter are preconditions; no live CivitAI download or release installation claim.'
+  report.boundary.limits =
+    'Only the declared sampling, image-modes or restored stage at256px/three requested steps/CFG4/seed0/Myth LoRA-0.5. Six native TXT methods or bounded Euler IMG/OUT with genuine frozen Cancel/Retry, explicit Add/Save/readback/reopen and comparison. Image stages require an exact common trained PNG and pinned Main-owned LaMa. No derivative-author recipe, image quality, Invoke parity, arbitrary companions/LoRA formats, maximum geometry/VRAM, dynamic batch, public delivery, signed release or whole-MVP claim.'
+  report.animaStage = fixture.stage
 }
 async function hashFile(file) {
   const hash = createHash('sha256')
@@ -892,6 +911,14 @@ async function installArtifact(repository, value, id, dependencies, publication 
     'VAE Precision qualification must reuse existing exact managed resources without copies.',
   )
   assert.ok(
+    !animaRegressionProfile || animaRegressionModelKeys.some((key) => fixture[key] === value),
+    'Anima regression may publish only its four exact declared source files.',
+  )
+  if (animaRegressionProfile) {
+    const key = animaRegressionModelKeys.find((key) => fixture[key] === value)
+    assert.equal(id, animaRegressionPublicationIds[key].managedId)
+  }
+  assert.ok(
     !noobaiNineVersionProfile ||
       (noobaiLoraStackProfile && value === fixture.illustriousLoraSecond) ||
       (noobaiEncoderProfile && value === fixture.externalVaeEncoderControl),
@@ -1026,6 +1053,7 @@ let preservedExternalPriorCatalog = null
 let preservedEmbeddingPriorCatalog = null
 let preservedNoisePriorCatalog = null
 let preservedComponentPriorCatalog = null
+let preservedAnimaPriorCatalog = null
 const pendingComponentRollbacks = []
 async function ensureQualificationResourceLimits(phase) {
   report.resourceLimits = await boundQualificationProcess(report.nativeProcessPid)
@@ -1893,6 +1921,256 @@ function assertNativePrompt(compiled, raw, weightedText, weight) {
     version: 'anima-prompt-weighting-v1',
   })
 }
+const animaMethodLabels = {
+  euler: 'Euler',
+  heun: 'Heun',
+  dpmpp_2m: 'DPM++ 2M',
+  dpmpp_2m_sde: 'DPM++ 2M SDE',
+  er_sde: 'ER-SDE',
+  lcm: 'LCM',
+}
+async function assertAnimaPixelBaseline(choice, normalizedInputs, pixels, queueItemId) {
+  const key = choice.endsWith('-txt2img') ? 'sampling' : 'imageModes'
+  const baseline = report.animaPixelBaselineReports[key]
+  assert.ok(baseline, 'A declared same-mode healthy Anima reference is required.')
+  assert.equal(baseline.status, 'passed')
+  assert.equal(baseline.nativePhysicalExit.confirmed, true)
+  assert.deepEqual(baseline.sourceSha256, report.sourceSha256)
+  assert.deepEqual(baseline.bundleSha256, report.bundleSha256)
+  const healthy = baseline.generations.find(({ qualification }) => qualification.choice === choice)
+  assert.ok(healthy)
+  assert.deepEqual(normalizedInputs, healthy.qualification.normalizedInputs)
+  // This assertion precedes explicit Add: token-weight omission must be numerical RED,
+  // even when the mutant preserves all correct frozen input and finite candidate metadata.
+  assert.equal(
+    pixels.pixelSha256,
+    healthy.dimensions.pixelSha256,
+    'Installed Anima pixels differ from the retained healthy same-input reference.',
+  )
+  report.animaPixelBaselineChecks ??= []
+  report.animaPixelBaselineChecks.push({
+    choice,
+    queueItemId,
+    reportSha256: fixture.animaPixelBaselines[key].reportSha256,
+    baselineQueueItemId: healthy.queueItemId,
+    pixelSha256: pixels.pixelSha256,
+    beforeExplicitAdd: true,
+  })
+}
+async function compareAnimaRegression(project, layer, execution, caseName, packagePath) {
+  await settleComponentShadow(project, packagePath)
+  const before = await tab(project)
+  const packageSha256 = await hashFile(packagePath)
+  const recoveryBefore = await qualificationTreeSnapshot(path.join(fixture.appData, 'recovery'))
+  const autosaveBefore = await qualificationTreeSnapshot(path.join(fixture.appData, 'autosave'))
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
+    const row = (key) => comparison.locator(`[data-setting="${key}"]`)
+    const statuses = {}
+    for (const key of [
+      'sampling.animaMethod',
+      'seed.actual',
+      'prompt.text',
+      'negativePrompt.text',
+      'loras.stack',
+    ]) {
+      await expect(row(key)).toHaveAttribute('data-status', 'Changed')
+      statuses[key] = 'Changed'
+    }
+    await expect(row('sampling.animaMethod').locator('.comparison-values p')).toHaveText([
+      animaMethodLabels[execution.animaMethod],
+      animaMethodLabels[before.generationDraft.sampling.animaMethod],
+    ])
+    await expect(row('seed.actual').locator('.comparison-values p')).toHaveText(['0', '37'])
+    const weights = row('loras.stack').locator('.comparison-values p')
+    await expect(weights.nth(0)).toContainText('-0.5')
+    await expect(weights.nth(1)).toContainText('-0.25')
+    for (const key of [
+      'model.resource',
+      'anima.architecture',
+      'anima.checkpointByteSize',
+      'anima.qwen3Encoder',
+      'anima.vae',
+    ]) {
+      await expect(row(key)).toHaveAttribute('data-status', 'Same')
+      statuses[key] = 'Same'
+    }
+    for (const key of [
+      'model.predictionType',
+      'sampling.invokeScheduler',
+      'sampling.sampler',
+      'sampling.scheduler',
+    ])
+      await expect(row(key)).toHaveCount(0)
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return { readOnly: true, exactNativeBundleCompared: true, statuses, screenshot }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+    const after = await tab(project)
+    for (const key of [
+      'documentId',
+      'generationDraft',
+      'layers',
+      'primaryBbox',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ])
+      assert.deepEqual(after[key], before[key])
+    assert.equal(await hashFile(packagePath), packageSha256)
+    assert.deepEqual(
+      await qualificationTreeSnapshot(path.join(fixture.appData, 'recovery')),
+      recoveryBefore,
+    )
+    assert.deepEqual(
+      await qualificationTreeSnapshot(path.join(fixture.appData, 'autosave')),
+      autosaveBefore,
+    )
+  }
+}
+async function qualifyAnimaRegression() {
+  const plan = report.animaFixture
+  report.animaImports = []
+  const priorQueueIds = new Set(
+    (await database.db.selectFrom('generation_queue_item').select('id').execute()).map(
+      ({ id }) => id,
+    ),
+  )
+  const sourceBytes = fixture.commonSource ? await readFile(fixture.commonSource.path) : null
+  if (sourceBytes) {
+    assert.equal(sourceBytes.length, fixture.commonSource.byteSize)
+    assert.equal(sha256(sourceBytes), fixture.commonSource.sha256)
+    const sourceRow = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', fixture.commonSource.originQueueItemId)
+      .executeTakeFirstOrThrow()
+    assert.equal(sourceRow.status, 'completed')
+    assert.equal(sourceRow.operation, 'anima-txt2img')
+    const sourceFrozen = JSON.parse(sourceRow.frozen_payload_json)
+    assert.equal(sourceFrozen.context.model.checkpoint.reference.fileSha256, fixture.anima.sha256)
+    assert.equal(sourceFrozen.context.sampling.animaMethod, 'euler')
+    const sourceReceipt = await database.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .where('queue_item_id', '=', sourceRow.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(sourceReceipt.status, 'completed')
+    assert.equal(sourceReceipt.image_sha256, fixture.commonSource.sha256)
+    assert.equal(sourceReceipt.image_byte_size, fixture.commonSource.byteSize)
+    const sourceSaved = await readIgsPackage(sourceRow.canonical_project_path)
+    const sourceLayer = sourceSaved.project.layers.find(
+      ({ generationProvenance }) =>
+        generationProvenance?.executionResultContext.queueItemId === sourceRow.id,
+    )
+    assert.ok(
+      sourceLayer,
+      'The common PNG must originate from the actual accepted Euler TXT layer.',
+    )
+    assert.ok(sourceBytes.equals(await sourceSaved.readMember(sourceLayer.asset.path)))
+    report.animaCommonSourceAncestry = {
+      sourceQueueItemId: sourceRow.id,
+      sourcePackagePath: sourceRow.canonical_project_path,
+      sourceLayerId: sourceLayer.id,
+      sourcePackageSha256: await hashFile(sourceRow.canonical_project_path),
+    }
+    const decoded = await decodedImage(`data:image/png;base64,${sourceBytes.toString('base64')}`)
+    assert.equal(decoded.pixelSha256, fixture.commonSource.pixelSha256)
+    assert.equal(decoded.opaquePixels, 256 * 256)
+  }
+  for (const choice of plan.choices) {
+    const execution = plan.executions[choice]
+    const caseName = `anima-${fixture.stage}-${choice}`
+    await stage('Installed Anima worker0.14 regression case', { choice, execution })
+    const project = await createProject(fixture.anima, fixture.animaLora, caseName, execution)
+    if (execution.mode !== 'txt2img') {
+      await importMatchedExternalVaeSource(project, fixture.commonSource, 'anima-regression')
+      await setInput('Denoising Strength', 0.5)
+      if (execution.mode === 'outpaint') await prepareOutpaint(project, true)
+    }
+    await generateAndAccept(
+      project,
+      'anima',
+      execution.mode,
+      {
+        kind: 'anima-regression',
+        choice,
+        execution,
+        caseName,
+        commonSource: fixture.commonSource ?? null,
+        ...(execution.mode === 'outpaint'
+          ? {
+              outpaintSource: {
+                bytes: sourceBytes,
+                sha256: fixture.commonSource.sha256,
+                rect: { x: 0, y: 0, width: 256, height: 256 },
+              },
+            }
+          : {}),
+      },
+      fixture.stage === 'image-modes' && execution.mode === 'outpaint',
+    )
+    await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
+    await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  }
+  if (fixture.stage === 'sampling' && !fixture.animaPixelBaselines) {
+    const first = report.generations.find(
+      ({ qualification }) => qualification.choice === 'euler-txt2img',
+    )
+    const saved = await readIgsPackage(first.packagePath)
+    const layer = saved.project.layers.find(
+      ({ generationProvenance }) =>
+        generationProvenance?.executionResultContext.queueItemId === first.queueItemId,
+    )
+    assert.ok(layer)
+    const bytes = await saved.readMember(layer.asset.path)
+    const filename = path.join(fixture.artifacts, 'anima-common-source.png')
+    await writeFile(filename, bytes, { flag: 'wx' })
+    report.animaCommonSource = {
+      path: filename,
+      sha256: sha256(bytes),
+      byteSize: bytes.length,
+      pixelSha256: first.dimensions.pixelSha256,
+      width: 256,
+      height: 256,
+      originQueueItemId: first.queueItemId,
+    }
+  }
+  const rows = (await database.db.selectFrom('generation_queue_item').selectAll().execute()).filter(
+    ({ id }) => !priorQueueIds.has(id),
+  )
+  report.animaSummary = {
+    stage: fixture.stage,
+    finiteCompletions: report.generations.length,
+    actualAdmissions: rows.length,
+    canceledOriginals: rows.filter(({ status }) => status === 'canceled').length,
+    preservingRetryRefusals: 0,
+    fullMvpClaim: false,
+    combinedMatrixClaim: false,
+    choices: report.generations.map(({ qualification }) => qualification.choice),
+  }
+  assert.deepEqual(report.animaSummary.choices, plan.choices)
+  assertAnimaRegressionStageOutcome(report.animaSummary)
+  if (fixture.commonSource)
+    assert.equal(await hashFile(fixture.commonSource.path), fixture.commonSource.sha256)
+  await check(
+    'Finite installed Anima native sampling/image-mode regression and accepted Save/reopen complete',
+    report.animaSummary,
+  )
+}
 async function createProject(model, lora, caseName = '', execution = null) {
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: 'New Project', exact: true }).first().click()
@@ -1913,12 +2191,25 @@ async function createProject(model, lora, caseName = '', execution = null) {
   await expect(window.locator('input[aria-label="Images per click"]')).toHaveValue('1')
   await window.locator('[aria-label="Generation model"]').click()
   await window.getByText(model.name, { exact: true }).last().click()
+  if (animaRegressionProfile) {
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.model?.localModelId)
+      .toBe(model.installed.resourceId)
+    await expect(window.locator('[aria-label="Model version"]')).not.toHaveClass(
+      /n-select--disabled/,
+    )
+    await window.locator('[aria-label="Model version"]').click()
+    await window.getByText(model.versionName, { exact: true }).last().click()
+  }
   await expect
     .poll(async () => (await tab(project)).generationDraft.model?.localVersionId)
     .toBe(model.installed.versionId)
   if (model.family === 'anima') {
     await window.locator('[aria-label="Anima method"]').click()
-    await window.getByText('Euler', { exact: true }).last().click()
+    await window
+      .getByText(animaMethodLabels[execution?.animaMethod ?? 'euler'], { exact: true })
+      .last()
+      .click()
   } else {
     await window.locator('[aria-label="Sampler"]').click()
     await window
@@ -2934,11 +3225,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const externalQualification = qualification?.kind === 'external-vae'
   const embeddingQualification = qualification?.kind === 'embeddings'
   const noiseQualification = qualification?.kind === 'noise-profile'
+  const animaQualification = qualification?.kind === 'anima-regression'
+  let animaDraftAfterEdit = null
   const componentQualification = qualification?.kind === 'noobai-components'
   const predictionQualification =
     qualification?.kind === 'v-prediction' || noiseQualification || componentQualification
   const execution =
-    noiseQualification || componentQualification
+    noiseQualification || componentQualification || animaQualification
       ? qualification.execution
       : {
           width: fixture.side,
@@ -2950,9 +3243,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const checkpoint =
     noiseQualification || componentQualification
       ? fixture[qualification.modelKey]
-      : fixture.illustrious
+      : animaQualification
+        ? fixture.anima
+        : fixture.illustrious
   const modelKey =
-    noiseQualification || componentQualification ? qualification.modelKey : 'illustrious'
+    noiseQualification || componentQualification
+      ? qualification.modelKey
+      : animaQualification
+        ? 'anima'
+        : 'illustrious'
   const expectedComponents = componentQualification
     ? expectedComponentConfiguration(qualification.choice, mode, execution)
     : null
@@ -2968,7 +3267,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       precisionQualification ||
       externalQualification ||
       embeddingQualification ||
-      predictionQualification,
+      predictionQualification ||
+      animaQualification,
     'Unsupported qualification tag.',
   )
   const capturedCfgRescale = qualification?.cfgRescale ?? 0
@@ -3087,7 +3387,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    predictionQualification
+    predictionQualification ||
+    animaQualification
       ? await database.db
           .selectFrom('generation_seed_cursor')
           .selectAll()
@@ -3098,7 +3399,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    predictionQualification
+    predictionQualification ||
+    animaQualification
       ? (await api('listGenerationResults', project.id)).lastActualSeed
       : null
   const existingJobIds = new Set(previousRows.map(({ id }) => id))
@@ -3122,6 +3424,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const frozen = JSON.parse(admitted.frozen_payload_json)
   const requestedSeedPolicy =
     mode === 'txt2img' ||
+    animaQualification ||
     externalQualification ||
     embeddingQualification ||
     componentQualification ||
@@ -3214,6 +3517,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     else assert.equal(Object.hasOwn(frozen.workerJob, 'embeddings'), false)
     assert.equal(JSON.stringify(frozen.context.prompts).includes('igs_ti_private_'), false)
   }
+  if (animaQualification) assertAnimaRegressionFrozen(frozen, fixture, qualification.choice)
   if (noiseQualification) assertNoiseExecution(frozen, execution)
   if (componentQualification) assertCapturedComponentFrozen(frozen, qualification.choice)
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
@@ -3253,9 +3557,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
     nativePlan = frozen.workerJob.sampling
     const startStep = mode !== 'txt2img' ? Math.floor(0.5 * execution.steps) : 0
-    assert.equal(frozen.context.sampling.animaMethod, 'euler')
+    assert.equal(frozen.context.sampling.animaMethod, execution.animaMethod ?? 'euler')
     assert.equal(nativePlan.version, 'anima-flow-denoising-v1')
-    assert.equal(nativePlan.scheduler, 'euler')
+    assert.equal(nativePlan.scheduler, execution.animaMethod ?? 'euler')
     assert.equal(nativePlan.mode, mode === 'outpaint' ? 'img2img' : mode)
     assert.equal(nativePlan.steps, execution.steps)
     assert.equal(nativePlan.seed, 0)
@@ -3264,7 +3568,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(nativePlan.height, execution.height)
     assert.equal(nativePlan.strength, mode !== 'txt2img' ? 0.5 : null)
     assert.equal(nativePlan.startStep, startStep)
-    assert.equal(nativePlan.totalSteps, execution.steps - startStep)
+    assert.equal(
+      nativePlan.totalSteps,
+      execution.animaMethod === 'heun'
+        ? 2 * (execution.steps - startStep) - 1
+        : execution.steps - startStep,
+    )
     assert.equal(nativePlan.timesteps.length, nativePlan.totalSteps)
     assert.equal(nativePlan.sigmas.length, nativePlan.totalSteps + 1)
     assert.equal(nativePlan.sigmas.at(-1), 0)
@@ -3307,7 +3616,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       frozen.context.conditioning.keepMask.sha256,
       sha256(decodeTargetPngAlpha(targetBytes, execution.width, execution.height)),
     )
-    if (noiseQualification || componentQualification) {
+    if (noiseQualification || componentQualification || animaQualification) {
       assert.ok(qualification.outpaintSource)
       assert.equal(sha256(qualification.outpaintSource.bytes), qualification.outpaintSource.sha256)
       outpaintSourcePixels = await decodedRgba(qualification.outpaintSource.bytes)
@@ -3329,7 +3638,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
   }
   if (mode === 'img2img') {
-    if (externalQualification || embeddingQualification || predictionQualification)
+    if (
+      externalQualification ||
+      embeddingQualification ||
+      predictionQualification ||
+      animaQualification
+    )
       assert.equal(target.pixelSha256, qualification.commonSource.pixelSha256)
     else {
       const previous = report.generations.findLast(
@@ -3375,6 +3689,29 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       .poll(async () => (await tab(project)).generationDraft.positivePrompt.text)
       .toBe(changedPrompt)
   }
+  if (animaQualification) {
+    await window
+      .getByRole('textbox', { name: 'Negative prompt', exact: true })
+      .fill(`${before.generationDraft.negativePrompt.text}, later authoring edit`)
+    await window.locator('[aria-label="Anima method"]').click()
+    await window
+      .getByText(animaMethodLabels[execution.animaMethod === 'euler' ? 'heun' : 'euler'], {
+        exact: true,
+      })
+      .last()
+      .click()
+    await setInput('Generation seed', 37)
+    await setInput(`${fixture.animaLora.name} weight`, -0.25)
+    await expect.poll(async () => (await tab(project)).generationDraft.loras[0].weight).toBe(-0.25)
+    animaDraftAfterEdit = structuredClone((await tab(project)).generationDraft)
+    assertAnimaRegressionFrozen(
+      JSON.parse(
+        (await queueRows(project)).find(({ id }) => id === admitted.id).frozen_payload_json,
+      ),
+      fixture,
+      qualification.choice,
+    )
+  }
   let retry = null
   if (retryCase) {
     assert.ok(
@@ -3387,7 +3724,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     )
     const original = admitted
     let nativeChildrenBeforeCancel = null
-    if (embeddingQualification || predictionQualification) {
+    if (embeddingQualification || predictionQualification || animaQualification) {
       await expect
         .poll(
           async () => {
@@ -3413,6 +3750,37 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     const canceled = (await queueRows(project)).find(({ id }) => id === original.id)
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
+    if (animaQualification) {
+      await expect.poll(liveInstalledInferenceChildren).toEqual([])
+      assert.deepEqual(
+        await database.db
+          .selectFrom('generation_candidate_receipt')
+          .selectAll()
+          .where('queue_item_id', '=', original.id)
+          .execute(),
+        [],
+      )
+      assert.deepEqual(
+        await database.db
+          .selectFrom('generation_seed_cursor')
+          .selectAll()
+          .where('local_project_key', '=', project.id)
+          .executeTakeFirst(),
+        previousSeedCursor,
+      )
+      assert.equal(
+        (await api('listGenerationResults', project.id)).lastActualSeed,
+        previousLastActualSeed,
+      )
+      assert.deepEqual(await layerSnapshot((await tab(project)).layers), existingLayers)
+      assert.deepEqual((await tab(project)).generationDraft, animaDraftAfterEdit)
+      assert.deepEqual((await tab(project)).primaryBbox, before.primaryBbox)
+      assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
+      assert.deepEqual(
+        (await readIgsPackage(beforePackagePath)).project.layers,
+        previousAcceptedLayers,
+      )
+    }
     if (
       precisionQualification ||
       externalQualification ||
@@ -3581,6 +3949,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
         .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
         .toBe(0.25)
     }
+    if (animaQualification)
+      animaDraftAfterEdit = structuredClone((await tab(project)).generationDraft)
     await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
     const manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
     const retryButton = manager
@@ -3646,7 +4016,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
             nativeChildrenAfterCancel: [],
           }
         : {}),
-      ...(predictionQualification
+      ...(predictionQualification || animaQualification
         ? {
             capturedPredictionType,
             predictionRetryRefusal,
@@ -3662,18 +4032,20 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   let normalizedInputs = null
   if (qualification) {
-    normalizedInputs = componentQualification
-      ? noobaiLoraStackProfile
-        ? normalizeNoobaiLoraStackInputs(frozen, fixture, qualification.choice)
-        : noobaiPolarityProfile
-          ? normalizeNoobaiEmbeddingPolarityInputs(frozen, fixture, qualification.choice)
-          : normalizeNoobaiComponentInputs(
-              frozen,
-              noobaiEncoderProfile ? 'vae-control' : qualification.choice,
-            )
-      : embeddingQualification
-        ? normalizeEmbeddingInputs(frozen)
-        : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
+    normalizedInputs = animaQualification
+      ? normalizeAnimaRegressionInputs(frozen, fixture, qualification.choice)
+      : componentQualification
+        ? noobaiLoraStackProfile
+          ? normalizeNoobaiLoraStackInputs(frozen, fixture, qualification.choice)
+          : noobaiPolarityProfile
+            ? normalizeNoobaiEmbeddingPolarityInputs(frozen, fixture, qualification.choice)
+            : normalizeNoobaiComponentInputs(
+                frozen,
+                noobaiEncoderProfile ? 'vae-control' : qualification.choice,
+              )
+        : embeddingQualification
+          ? normalizeEmbeddingInputs(frozen)
+          : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
     // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
@@ -3705,7 +4077,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       delete normalizedInputs.context.vaePrecision
       delete normalizedInputs.workerJob.vaePrecision
       if (!retryCase) await setVaePrecision(project, currentVaePrecision)
-    } else {
+    } else if (!animaQualification) {
       delete normalizedInputs.context.sampling.cfgRescale
       delete normalizedInputs.workerJob.sampling.cfgRescale
       await setCfgRescale(project, 0.2)
@@ -3770,6 +4142,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   )
   assert.deepEqual(completedTab.primaryBbox, before.primaryBbox)
   assert.equal(completedTab.generationDraft.positivePrompt.text, changedPrompt)
+  if (animaQualification) assert.deepEqual(completedTab.generationDraft, animaDraftAfterEdit)
   if (componentQualification)
     assert.deepEqual(completedTab.generationDraft, componentDraftAfterEdit)
   if (cfgQualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
@@ -3811,7 +4184,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    predictionQualification
+    predictionQualification ||
+    animaQualification
   ) {
     assert.ok(
       (await readFile(targetPath)).equals(targetBytes),
@@ -3868,6 +4242,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, execution.width)
   assert.equal(pixels.height, execution.height)
+  if (animaQualification && fixture.animaPixelBaselines)
+    await assertAnimaPixelBaseline(qualification.choice, normalizedInputs, pixels, admitted.id)
   if (noobaiLoraStackProfile && fixture.loraPixelBaseline) {
     // The healthy prior execution is independent evidence; metadata alone cannot catch a
     // worker silently exchanging source-bound weights while preserving the frozen payload.
@@ -3904,7 +4280,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    (predictionQualification && mode !== 'outpaint')
+    (predictionQualification && mode !== 'outpaint') ||
+    (animaQualification && mode !== 'outpaint')
   )
     assert.equal(pixels.opaquePixels, execution.width * execution.height)
   let contributionAlpha8 = null
@@ -3922,7 +4299,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       targetBytes,
       outputBytes,
     )
-    if (noiseQualification || componentQualification)
+    if (noiseQualification || componentQualification || animaQualification)
       outpaintContributionPixels = await decodedRgba(outputBytes)
   }
   assert.ok(candidate.thumbnailUrl, 'actual worker thumbnail must be published')
@@ -3958,7 +4335,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await expect.poll(async () => (await tab(project)).layers.length).toBe(before.layers.length + 1)
   const accepted = await tab(project)
   const layer = accepted.layers[0]
-  if ((noiseQualification || componentQualification) && mode === 'outpaint')
+  if ((noiseQualification || componentQualification || animaQualification) && mode === 'outpaint')
     assertOutpaintLayerPlacement(layer, before.primaryBbox)
   const acceptedData = await api(
     'getRasterGenerationData',
@@ -4078,7 +4455,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   )
   if (family === 'anima') {
     const config = provenance.generationConfiguration
-    assert.equal(config.sampling.animaMethod, 'euler')
+    if (animaQualification)
+      assertAnimaRegressionConfiguration(config, frozen, fixture, qualification.choice)
+    assert.equal(config.sampling.animaMethod, execution.animaMethod ?? 'euler')
     assert.equal(config.model.predictionType, null)
     assert.equal(config.anima.architecture, 'anima-base-1.0')
     assert.equal(config.anima.checkpointByteSize, fixture.anima.byteSize)
@@ -4115,14 +4494,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     precisionQualification ||
     externalQualification ||
     embeddingQualification ||
-    predictionQualification
+    predictionQualification ||
+    animaQualification
   ) {
     assert.deepEqual(await layerSnapshot(accepted.layers.slice(1)), existingLayers)
     assert.deepEqual(saved.project.layers.slice(1), previousAcceptedLayers)
   }
   const savedLayer = saved.project.layers.find(({ id }) => id === layer.id)
   assert.ok(savedLayer)
-  if ((noiseQualification || componentQualification) && mode === 'outpaint')
+  if ((noiseQualification || componentQualification || animaQualification) && mode === 'outpaint')
     assertOutpaintLayerPlacement(savedLayer, before.primaryBbox)
   assert.equal(sha256(await saved.readMember(savedLayer.asset.path)), receipt.image_sha256)
   assert.equal(savedLayer.asset.bytes, receipt.image_byte_size)
@@ -4145,7 +4525,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(mergedPreview.height, previewRect.height)
     assert.equal(mergedPreview.opaquePixels, previewRect.width * previewRect.height)
     assert.notEqual(mergedPreview.pixelSha256, pixels.pixelSha256)
-    if (noiseQualification || componentQualification) {
+    if (noiseQualification || componentQualification || animaQualification) {
       outpaintPreservation.mergedPreview = assertOutpaintPreviewPixels({
         source: outpaintSourcePixels,
         sourceRect: qualification.outpaintSource.rect,
@@ -4216,7 +4596,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
   const reopened = await tab(project)
-  if ((noiseQualification || componentQualification) && mode === 'outpaint') {
+  if ((noiseQualification || componentQualification || animaQualification) && mode === 'outpaint') {
     const reopenedLayer = reopened.layers.find(({ id }) => id === layer.id)
     assert.ok(reopenedLayer)
     assertOutpaintLayerPlacement(reopenedLayer, before.primaryBbox)
@@ -4293,78 +4673,90 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = componentQualification
-    ? await compareNoobaiComponents(
+  if (animaQualification) {
+    assert.deepEqual(saved.project.generationDraft, animaDraftAfterEdit)
+    assert.deepEqual(reopened.generationDraft, animaDraftAfterEdit)
+  }
+  const comparison = animaQualification
+    ? await compareAnimaRegression(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        expectedComponents,
+        execution,
         caseName,
         packagePath,
       )
-    : noiseQualification
-      ? await compareNoiseProfile(
+    : componentQualification
+      ? await compareNoobaiComponents(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          execution.noiseProfile,
-          currentNoiseProfile,
-          qualification.caseName,
+          expectedComponents,
+          caseName,
           packagePath,
-          mode === 'outpaint'
-            ? {
-                capturedStrength,
-                currentStrength: reopened.generationDraft.sampling.denoisingStrength,
-              }
-            : null,
         )
-      : predictionQualification
-        ? await comparePrediction(
+      : noiseQualification
+        ? await compareNoiseProfile(
             project,
             reopened.layers.find(({ id }) => id === layer.id),
-            capturedPredictionType,
-            currentPredictionType,
-            caseName,
+            execution.noiseProfile,
+            currentNoiseProfile,
+            qualification.caseName,
             packagePath,
+            mode === 'outpaint'
+              ? {
+                  capturedStrength,
+                  currentStrength: reopened.generationDraft.sampling.denoisingStrength,
+                }
+              : null,
           )
-        : embeddingQualification
-          ? await compareEmbeddings(
+        : predictionQualification
+          ? await comparePrediction(
               project,
               reopened.layers.find(({ id }) => id === layer.id),
-              capturedEmbeddingPrompts,
+              capturedPredictionType,
+              currentPredictionType,
               caseName,
               packagePath,
             )
-          : externalQualification
-            ? await compareExternalVae(
+          : embeddingQualification
+            ? await compareEmbeddings(
                 project,
                 reopened.layers.find(({ id }) => id === layer.id),
-                capturedVaeReference,
-                currentVaeReference,
+                capturedEmbeddingPrompts,
                 caseName,
                 packagePath,
               )
-            : precisionQualification
-              ? await compareVaePrecision(
+            : externalQualification
+              ? await compareExternalVae(
                   project,
                   reopened.layers.find(({ id }) => id === layer.id),
-                  capturedVaePrecision,
-                  currentVaePrecision,
+                  capturedVaeReference,
+                  currentVaeReference,
                   caseName,
+                  packagePath,
                 )
-              : cfgQualification
-                ? await compareCfgRescale(
+              : precisionQualification
+                ? await compareVaePrecision(
                     project,
                     reopened.layers.find(({ id }) => id === layer.id),
-                    capturedCfgRescale,
+                    capturedVaePrecision,
+                    currentVaePrecision,
                     caseName,
                   )
-                : mode === 'outpaint'
-                  ? await compareOutpaint(
+                : cfgQualification
+                  ? await compareCfgRescale(
                       project,
                       reopened.layers.find(({ id }) => id === layer.id),
-                      retryCase,
+                      capturedCfgRescale,
                       caseName,
                     )
-                  : null
+                  : mode === 'outpaint'
+                    ? await compareOutpaint(
+                        project,
+                        reopened.layers.find(({ id }) => id === layer.id),
+                        retryCase,
+                        caseName,
+                      )
+                    : null
   const generation = {
     family,
     mode,
@@ -4567,6 +4959,23 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       },
     })
   }
+  if (animaQualification)
+    generation.qualification = {
+      kind: 'anima-regression',
+      choice: qualification.choice,
+      caseName,
+      outcome: 'completed-finite',
+      execution: structuredClone(execution),
+      frozen: structuredClone(frozen),
+      normalizedInputs,
+      actualPortableConfiguration: structuredClone(provenance.generationConfiguration),
+      currentDraft: animaDraftAfterEdit,
+      comparison,
+      retainedTargetUnchanged: true,
+      effectiveDenoisingEvaluations: progress.at(-1).current.totalSteps,
+      ...(mode === 'txt2img' ? {} : { commonSource: qualification.commonSource }),
+      ...(mode === 'outpaint' ? { outpaintPreservation } : {}),
+    }
   report.generations.push(generation)
   await check(
     `${qualification?.caseName ?? `${family} ${mode}`}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen${qualification ? '/comparison' : ''}`,
@@ -5074,15 +5483,17 @@ async function importMatchedExternalVaeSource(project, commonSource, profile = '
     controlled: 'OS chooser selects the single recorded real PNG only',
   }
   const imports =
-    profile === 'noobai-components'
-      ? report.componentImports
-      : profile === 'embeddings'
-        ? report.embeddingImports
-        : profile === 'v-prediction'
-          ? report.predictionImports
-          : profile === 'noise-profile'
-            ? report.noiseImports
-            : report.externalVaeImports
+    profile === 'anima-regression'
+      ? report.animaImports
+      : profile === 'noobai-components'
+        ? report.componentImports
+        : profile === 'embeddings'
+          ? report.embeddingImports
+          : profile === 'v-prediction'
+            ? report.predictionImports
+            : profile === 'noise-profile'
+              ? report.noiseImports
+              : report.externalVaeImports
   imports.push(evidence)
   await check(
     `${profile === 'embeddings' ? 'Embedding' : profile === 'v-prediction' ? 'Prediction' : 'External VAE'} matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels`,
@@ -6533,8 +6944,9 @@ try {
       embeddingsProfile ||
       vPredictionProfile ||
       noiseProfile ||
-      noobaiComponentsProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity or noobai-lora-stack.',
+      noobaiComponentsProfile ||
+      animaRegressionProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity, noobai-lora-stack or anima-regression.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -6558,6 +6970,67 @@ try {
   if (externalVaeProfile) validateExternalVaeFixture()
   if (embeddingsProfile) validateEmbeddingFixture()
   if (vPredictionProfile) validateVPredictionFixture()
+  if (animaRegressionProfile) {
+    const installed = JSON.parse(await readFile(provision.report, 'utf8'))
+    report.animaFixture = validateAnimaRegressionFixture(fixture, installed.ready)
+    assert.equal(
+      resume,
+      true,
+      'Anima regression must reuse the original canonical runtime/catalog.',
+    )
+    assert.equal(installed.confirmedWorkerExit, true)
+    assert.equal(installed.status, 'activated-qualified')
+    report.installedReady = installed.ready
+    report.launcherBounds = await assertUpgradeBounds()
+    report.animaSourceBindings = Object.fromEntries(
+      [...componentModelKeys, ...animaRegressionModelKeys].map((key) => [
+        key,
+        structuredClone(fixture[key]),
+      ]),
+    )
+    report.animaSourceFiles = []
+    for (const key of animaRegressionModelKeys) {
+      const value = fixture[key]
+      const entry = await lstat(value.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(value.path), value.path)
+      assert.equal(entry.size, value.byteSize)
+      assert.equal(await hashFile(value.path), value.sha256)
+      report.animaSourceFiles.push({
+        key,
+        descriptor: structuredClone(value),
+        sourceStat: {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+      })
+    }
+    if (fixture.stage !== 'sampling') {
+      const entry = await lstat(fixture.commonSource.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(fixture.commonSource.path), fixture.commonSource.path)
+      assert.equal(entry.size, fixture.commonSource.byteSize)
+      assert.equal(await hashFile(fixture.commonSource.path), fixture.commonSource.sha256)
+      report.animaCommonSourceFile = {
+        descriptor: structuredClone(fixture.commonSource),
+        sourceStat: {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+      }
+      await verifyInferenceAuxiliaryFile({
+        byteSize: fixture.lama.byteSize,
+        managedPath: fixture.lama.path,
+        sha256: fixture.lama.sha256,
+      })
+    }
+  }
   if (noobaiComponentsProfile) {
     const installed = JSON.parse(await readFile(provision.report, 'utf8'))
     report.componentFixture = (
@@ -6666,10 +7139,15 @@ try {
       sha256: fixture.lama.sha256,
     })
   }
-  const families = illustriousOnlyProfile ? ['illustrious'] : ['illustrious', 'anima']
+  const families = animaRegressionProfile
+    ? ['anima']
+    : illustriousOnlyProfile
+      ? ['illustrious']
+      : ['illustrious', 'anima']
   const allModelKeys = priorModelKeys
-  const modelKeys =
-    noiseProfile || noobaiComponentsProfile
+  const modelKeys = animaRegressionProfile
+    ? [...componentModelKeys, ...animaRegressionModelKeys]
+    : noiseProfile || noobaiComponentsProfile
       ? noiseModelKeys
       : illustriousOnlyProfile
         ? ['illustrious', 'illustriousLora']
@@ -6811,17 +7289,17 @@ try {
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
     workerLock: await hashFile('worker-python/uv.lock'),
-    ...(noiseProfile || noobaiComponentsProfile
+    ...(noiseProfile || noobaiComponentsProfile || animaRegressionProfile
       ? {
           noiseQualification: await hashFile('scripts/noobai-noise-qualification.mjs'),
           qualificationUpgrade: await hashFile('scripts/upgrade-qualification-worker.mjs'),
           localCivitaiTransport: await hashFile('scripts/qualification-local-civitai.mjs'),
-          ...(noobaiComponentsProfile
+          ...(noobaiComponentsProfile || animaRegressionProfile
             ? {
                 componentQualification: await hashFile(
                   'scripts/noobai-components-qualification.mjs',
                 ),
-                ...(noobaiNineVersionProfile
+                ...(noobaiNineVersionProfile || animaRegressionProfile
                   ? {
                       encoderQualification: await hashFile(
                         'scripts/noobai-vae-encoder-qualification.mjs',
@@ -6838,10 +7316,17 @@ try {
                       ),
                     }
                   : {}),
-                ...(noobaiLoraStackProfile
+                ...(noobaiLoraStackProfile || animaRegressionProfile
                   ? {
                       loraStackQualification: await hashFile(
                         'scripts/noobai-lora-stack-qualification.mjs',
+                      ),
+                    }
+                  : {}),
+                ...(animaRegressionProfile
+                  ? {
+                      animaQualification: await hashFile(
+                        'scripts/anima-regression-qualification.mjs',
                       ),
                     }
                   : {}),
@@ -6862,6 +7347,35 @@ try {
       ].map(async (file) => [file, await hashFile(file)]),
     ),
   )
+  if (animaRegressionProfile && fixture.animaPixelBaselines) {
+    report.animaPixelBaselineReports = {}
+    report.animaPixelBaselineBindings = structuredClone(fixture.animaPixelBaselines)
+    for (const [key, descriptor] of Object.entries(fixture.animaPixelBaselines)) {
+      const entry = await lstat(descriptor.reportPath)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(descriptor.reportPath), descriptor.reportPath)
+      assert.ok(entry.size > 0 && entry.size <= 32 * 1024 * 1024)
+      const bytes = await readFile(descriptor.reportPath)
+      assert.equal(sha256(bytes), descriptor.reportSha256)
+      const baseline = JSON.parse(bytes.toString('utf8'))
+      assert.equal(baseline.status, 'passed', 'Anima pixels require a qualified healthy report.')
+      assert.equal(baseline.nativePhysicalExit?.confirmed, true)
+      assert.equal(baseline.profile, 'anima-regression')
+      assert.equal(baseline.animaStage, key === 'sampling' ? 'sampling' : 'image-modes')
+      assert.equal(baseline.appData, fixture.appData)
+      assert.equal(baseline.runtimeId, pointer.runtimeId)
+      assert.equal(baseline.head, report.head)
+      assert.deepEqual(baseline.failures, [])
+      assert.deepEqual(baseline.sourceSha256, report.sourceSha256)
+      assert.deepEqual(baseline.bundleSha256, report.bundleSha256)
+      assert.deepEqual(baseline.animaSourceBindings, report.animaSourceBindings)
+      assertAnimaRegressionStageOutcome(baseline.animaSummary)
+      assert.equal(baseline.catalogReuse.finalResourceCount, 9)
+      assert.equal(baseline.catalogReuse.finalVersionCount, 14)
+      assert.equal(baseline.catalogReuse.originalIdentitiesPreserved, true)
+      report.animaPixelBaselineReports[key] = baseline
+    }
+  }
   database = openAppDatabase(fixture.appData, path.resolve('src/main/db/migrations'))
   const repository = new ModelRepository(database.db)
   const catalog = await repository.listInstalled()
@@ -6869,15 +7383,17 @@ try {
   else {
     // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
-    const declaredKeys = noobaiComponentsProfile
-      ? componentModelKeys
-      : vPredictionProfile || noiseProfile
-        ? modelKeys
-        : embeddingsProfile
-          ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
-          : externalVaeProfile
-            ? [...allModelKeys, ...externalVaeKeys]
-            : allModelKeys
+    const declaredKeys = animaRegressionProfile
+      ? modelKeys
+      : noobaiComponentsProfile
+        ? componentModelKeys
+        : vPredictionProfile || noiseProfile
+          ? modelKeys
+          : embeddingsProfile
+            ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
+            : externalVaeProfile
+              ? [...allModelKeys, ...externalVaeKeys]
+              : allModelKeys
     const hashes = new Set(
       declaredKeys.filter((key) => fixture[key]).map((key) => fixture[key].sha256),
     )
@@ -6885,6 +7401,20 @@ try {
       catalog.every((model) => model.versions.every((version) => hashes.has(version.file.sha256))),
       'resume may only reuse the same isolated qualification catalog',
     )
+    if (animaRegressionProfile) {
+      assert.equal(hashes.size, 14)
+      const present = assertAnimaRegressionCatalog(catalog, fixture, { adopting: true })
+      preservedAnimaPriorCatalog = structuredClone(catalog)
+      report.catalogReuse = {
+        initialResourceCount: catalog.length,
+        initialVersionCount: catalog.flatMap(({ versions }) => versions).length,
+        originalResourceCount: 6,
+        originalVersionCount: 10,
+        declaredIdentityCount: 14,
+        allowedAddedResources: 3,
+        maximumAdditionalManagedFiles: 4 - present.size,
+      }
+    }
     if (vPredictionProfile) {
       assert.equal(hashes.size, 2)
       assert.equal(
@@ -7136,213 +7666,312 @@ try {
       }
     }
   }
-  if (!illustriousOnlyProfile) {
-    for (const [key, pin] of [
-      ['encoder', ANIMA_QWEN3_0_6B_ENCODER],
-      ['vae', ANIMA_QWEN_IMAGE_VAE],
-    ]) {
-      assert.equal(fixture[key].sha256, pin.sha256)
-      assert.equal(fixture[key].byteSize, pin.sizeBytes)
-    }
-    const encoder = await installArtifact(repository, fixture.encoder, 700_010)
-    const vae = await installArtifact(repository, fixture.vae, 700_020)
-    fixture.encoder.installed = encoder
-    fixture.vae.installed = vae
-    fixture.anima.installed = await installArtifact(repository, fixture.anima, 700_030, [
-      { role: 'qwen3_encoder', existingVersionId: encoder.versionId },
-      { role: 'vae', existingVersionId: vae.versionId },
-    ])
-  }
-  fixture.illustrious.installed = await installArtifact(
-    repository,
-    fixture.illustrious,
-    700_040,
-    undefined,
-    vPredictionProfile || noiseProfile || noobaiComponentsProfile
-      ? {
-          sourceModelId: fixture.illustrious.origin.modelId,
-          sourceVersionId: fixture.illustrious.origin.versionId,
-          sourceFileId: fixture.illustrious.origin.fileId,
-          creator: fixture.illustrious.origin.creator,
-          resourceOrigin: fixture.illustrious.origin,
-          versionName: fixture.illustrious.versionName,
-        }
-      : null,
-  )
-  for (const [key, id] of [
-    ['animaLora', 700_050],
-    ['illustriousLora', 700_060],
-  ]) {
-    if (modelKeys.includes(key) && fixture[key])
-      fixture[key].installed = await installArtifact(
-        repository,
-        fixture[key],
-        id,
-        undefined,
-        vPredictionProfile || noiseProfile || noobaiComponentsProfile
-          ? { versionName: fixture[key].versionName }
-          : null,
+  if (animaRegressionProfile) {
+    report.animaPriorManagedFiles = []
+    for (const key of componentModelKeys) {
+      const value = fixture[key]
+      const matches = catalog.flatMap((resource) =>
+        resource.versions
+          .filter(({ file }) => file.sha256 === value.sha256)
+          .map((version) => ({ resource, version })),
       )
-  }
-  if (noiseProfile || noobaiComponentsProfile) {
-    const value = fixture.illustriousEpsilon
-    value.installed = await installArtifact(repository, value, 700_140, undefined, {
-      sourceModelId: value.origin.modelId,
-      sourceVersionId: value.origin.versionId,
-      sourceFileId: value.origin.fileId,
-      creator: value.origin.creator,
-      resourceOrigin: value.origin,
-      versionName: value.versionName,
-    })
-    if (noiseProfile) assertNoiseCatalog(await repository.listInstalled(), fixture)
-    if (noiseProfile) {
-      report.catalogReuse = {
-        initialResourceCount: catalog.length,
-        finalResourceCount: 3,
-        finalVersionCount: 3,
-        declaredIdentityCount: 3,
-        newManagedFiles: report.models.filter(
-          ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
-        ).length,
-        maximumAdditionalManagedFiles: 1,
-      }
-      assert.ok(report.catalogReuse.newManagedFiles <= 1)
+      assert.equal(
+        matches.length,
+        1,
+        'Every prior NoobAI version must already have one exact owner.',
+      )
+      const { resource, version } = matches[0]
+      const managedId =
+        key === 'illustrious'
+          ? 700_040
+          : key === 'illustriousEpsilon'
+            ? 700_140
+            : key === 'illustriousLora'
+              ? 700_060
+              : key === 'illustriousLoraSecond'
+                ? loraStackPublicationIds.managedId
+                : componentPublication(key).managedId
+      const managedPath = path.join(fixture.appData, 'models', `qualified-${managedId}.safetensors`)
+      assert.equal(version.file.managedPath, managedPath)
+      const entry = await lstat(managedPath)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(managedPath), managedPath)
+      assert.equal(entry.size, value.byteSize)
+      value.installed = { resourceId: resource.id, versionId: version.id, managedPath }
+      report.models.push({
+        ...report.animaSourceBindings[key],
+        managedPath,
+        reusedQualificationPrecondition: true,
+        verificationBoundary:
+          'Preserved exact prior catalog identity and canonical managed file stat; no repeated whole-file source hash.',
+      })
+      report.animaPriorManagedFiles.push({
+        key,
+        installed: structuredClone(value.installed),
+        sha256: value.sha256,
+        sourceStat: {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+      })
     }
-  }
-  if (noobaiComponentsProfile) {
-    if (noobaiLoraStackProfile) {
-      const value = fixture.illustriousLoraSecond
-      const ids = loraStackPublicationIds
-      const installed = await installArtifact(repository, value, ids.managedId, undefined, {
+    for (const key of animaRegressionModelKeys) {
+      const value = fixture[key]
+      const ids = animaRegressionPublicationIds[key]
+      const dependencies =
+        key === 'anima'
+          ? [
+              { role: 'qwen3_encoder', existingVersionId: fixture.encoder.installed.versionId },
+              { role: 'vae', existingVersionId: fixture.vae.installed.versionId },
+            ]
+          : undefined
+      const installed = await installArtifact(repository, value, ids.managedId, dependencies, {
         sourceModelId: ids.modelId,
         sourceVersionId: ids.versionId,
         sourceFileId: ids.fileId,
         versionName: value.versionName,
-        creator: value.origin.creator,
-        resourceOrigin: value.origin,
+        creator: key === 'anima' ? fixture.illustrious.origin.creator : value.origin.creator,
+        resourceOrigin: key === 'anima' ? fixture.illustrious.origin : value.origin,
       })
-      // Fresh publication includes file/dependency IDs; the reusable fixture contract contains
-      // only the same three verified identity fields returned by the resume path.
       value.installed = {
         resourceId: installed.resourceId,
         versionId: installed.versionId,
         managedPath: installed.managedPath,
       }
     }
-    for (const key of [...embeddingKeys, ...externalVaeKeys]) {
-      const ids = componentPublication(key)
-      fixture[key].installed = await installArtifact(
-        repository,
-        fixture[key],
-        ids.managedId,
-        undefined,
-        {
-          sourceModelId: ids.modelId,
-          sourceVersionId: ids.versionId,
-          sourceFileId: ids.fileId,
-          versionName: fixture[key].versionName,
-          ...(embeddingKeys.includes(key)
-            ? {
-                creator: fixture.embeddingTrained.origin.creator,
-                resourceOrigin: fixture.embeddingTrained.origin,
-              }
-            : {}),
-        },
-      )
-      if (embeddingKeys.includes(key))
-        await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
-    }
-    assertCapturedComponentCatalog(await repository.listInstalled())
+    const seeded = await repository.listInstalled()
+    assertAnimaRegressionCatalog(seeded, fixture)
     Object.assign(report.catalogReuse, {
-      finalResourceCount: noobaiLoraStackProfile ? 6 : 5,
-      finalVersionCount: noobaiLoraStackProfile ? 10 : noobaiNineVersionProfile ? 9 : 8,
+      finalResourceCount: seeded.length,
+      finalVersionCount: seeded.flatMap(({ versions }) => versions).length,
       newManagedFiles: report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
       ).length,
     })
+    assert.equal(report.catalogReuse.finalResourceCount, 9)
+    assert.equal(report.catalogReuse.finalVersionCount, 14)
     assert.ok(
       report.catalogReuse.newManagedFiles <= report.catalogReuse.maximumAdditionalManagedFiles,
     )
-  }
-  if (vPredictionProfile) {
-    const seeded = await repository.listInstalled()
-    assertPredictionCatalog(seeded)
-    if (!resume)
-      assert.equal(
-        seeded.find(({ type }) => type === 'checkpoint').versions[0].predictionType,
-        null,
+  } else {
+    if (!illustriousOnlyProfile) {
+      for (const [key, pin] of [
+        ['encoder', ANIMA_QWEN3_0_6B_ENCODER],
+        ['vae', ANIMA_QWEN_IMAGE_VAE],
+      ]) {
+        assert.equal(fixture[key].sha256, pin.sha256)
+        assert.equal(fixture[key].byteSize, pin.sizeBytes)
+      }
+      const encoder = await installArtifact(repository, fixture.encoder, 700_010)
+      const vae = await installArtifact(repository, fixture.vae, 700_020)
+      fixture.encoder.installed = encoder
+      fixture.vae.installed = vae
+      fixture.anima.installed = await installArtifact(repository, fixture.anima, 700_030, [
+        { role: 'qwen3_encoder', existingVersionId: encoder.versionId },
+        { role: 'vae', existingVersionId: vae.versionId },
+      ])
+    }
+    fixture.illustrious.installed = await installArtifact(
+      repository,
+      fixture.illustrious,
+      700_040,
+      undefined,
+      vPredictionProfile || noiseProfile || noobaiComponentsProfile
+        ? {
+            sourceModelId: fixture.illustrious.origin.modelId,
+            sourceVersionId: fixture.illustrious.origin.versionId,
+            sourceFileId: fixture.illustrious.origin.fileId,
+            creator: fixture.illustrious.origin.creator,
+            resourceOrigin: fixture.illustrious.origin,
+            versionName: fixture.illustrious.versionName,
+          }
+        : null,
+    )
+    for (const [key, id] of [
+      ['animaLora', 700_050],
+      ['illustriousLora', 700_060],
+    ]) {
+      if (modelKeys.includes(key) && fixture[key])
+        fixture[key].installed = await installArtifact(
+          repository,
+          fixture[key],
+          id,
+          undefined,
+          vPredictionProfile || noiseProfile || noobaiComponentsProfile
+            ? { versionName: fixture[key].versionName }
+            : null,
+        )
+    }
+    if (noiseProfile || noobaiComponentsProfile) {
+      const value = fixture.illustriousEpsilon
+      value.installed = await installArtifact(repository, value, 700_140, undefined, {
+        sourceModelId: value.origin.modelId,
+        sourceVersionId: value.origin.versionId,
+        sourceFileId: value.origin.fileId,
+        creator: value.origin.creator,
+        resourceOrigin: value.origin,
+        versionName: value.versionName,
+      })
+      if (noiseProfile) assertNoiseCatalog(await repository.listInstalled(), fixture)
+      if (noiseProfile) {
+        report.catalogReuse = {
+          initialResourceCount: catalog.length,
+          finalResourceCount: 3,
+          finalVersionCount: 3,
+          declaredIdentityCount: 3,
+          newManagedFiles: report.models.filter(
+            ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+          ).length,
+          maximumAdditionalManagedFiles: 1,
+        }
+        assert.ok(report.catalogReuse.newManagedFiles <= 1)
+      }
+    }
+    if (noobaiComponentsProfile) {
+      if (noobaiLoraStackProfile) {
+        const value = fixture.illustriousLoraSecond
+        const ids = loraStackPublicationIds
+        const installed = await installArtifact(repository, value, ids.managedId, undefined, {
+          sourceModelId: ids.modelId,
+          sourceVersionId: ids.versionId,
+          sourceFileId: ids.fileId,
+          versionName: value.versionName,
+          creator: value.origin.creator,
+          resourceOrigin: value.origin,
+        })
+        // Fresh publication includes file/dependency IDs; the reusable fixture contract contains
+        // only the same three verified identity fields returned by the resume path.
+        value.installed = {
+          resourceId: installed.resourceId,
+          versionId: installed.versionId,
+          managedPath: installed.managedPath,
+        }
+      }
+      for (const key of [...embeddingKeys, ...externalVaeKeys]) {
+        const ids = componentPublication(key)
+        fixture[key].installed = await installArtifact(
+          repository,
+          fixture[key],
+          ids.managedId,
+          undefined,
+          {
+            sourceModelId: ids.modelId,
+            sourceVersionId: ids.versionId,
+            sourceFileId: ids.fileId,
+            versionName: fixture[key].versionName,
+            ...(embeddingKeys.includes(key)
+              ? {
+                  creator: fixture.embeddingTrained.origin.creator,
+                  resourceOrigin: fixture.embeddingTrained.origin,
+                }
+              : {}),
+          },
+        )
+        if (embeddingKeys.includes(key))
+          await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
+      }
+      assertCapturedComponentCatalog(await repository.listInstalled())
+      Object.assign(report.catalogReuse, {
+        finalResourceCount: noobaiLoraStackProfile ? 6 : 5,
+        finalVersionCount: noobaiLoraStackProfile ? 10 : noobaiNineVersionProfile ? 9 : 8,
+        newManagedFiles: report.models.filter(
+          ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+        ).length,
+      })
+      assert.ok(
+        report.catalogReuse.newManagedFiles <= report.catalogReuse.maximumAdditionalManagedFiles,
       )
-    report.catalogReuse = {
-      initialResourceCount: catalog.length,
-      finalResourceCount: 2,
-      finalVersionCount: 2,
-      declaredIdentityCount: 2,
-      newManagedFiles: report.models.filter(
+    }
+    if (vPredictionProfile) {
+      const seeded = await repository.listInstalled()
+      assertPredictionCatalog(seeded)
+      if (!resume)
+        assert.equal(
+          seeded.find(({ type }) => type === 'checkpoint').versions[0].predictionType,
+          null,
+        )
+      report.catalogReuse = {
+        initialResourceCount: catalog.length,
+        finalResourceCount: 2,
+        finalVersionCount: 2,
+        declaredIdentityCount: 2,
+        newManagedFiles: report.models.filter(
+          ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+        ).length,
+      }
+    }
+    if (externalVaeProfile) {
+      for (const [key, id] of [
+        ['externalVaeLdm', 700_070],
+        ['externalVaeNative', 700_080],
+        ['externalVaeControl', 700_090],
+      ]) {
+        fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
+          sourceModelId: 700_070,
+          versionName: fixture[key].versionName,
+        })
+      }
+      assert.equal(new Set(externalVaeKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
+      const seeded = await repository.listInstalled()
+      assert.equal(seeded.length, 7)
+      assert.equal(seeded.flatMap(({ versions }) => versions).length, 9)
+      assert.ok(
+        seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')),
+      )
+      report.catalogReuse.finalResourceCount = 7
+      report.catalogReuse.finalVersionCount = 9
+      report.catalogReuse.newManagedFiles = report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
-      ).length,
+      ).length
     }
-  }
-  if (externalVaeProfile) {
-    for (const [key, id] of [
-      ['externalVaeLdm', 700_070],
-      ['externalVaeNative', 700_080],
-      ['externalVaeControl', 700_090],
-    ]) {
-      fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
-        sourceModelId: 700_070,
-        versionName: fixture[key].versionName,
-      })
+    if (embeddingsProfile) {
+      for (const [key, id] of [
+        ['embeddingTrained', 700_100],
+        ['embeddingControl', 700_110],
+      ]) {
+        const source = embeddingSourceIds(key)
+        fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
+          sourceModelId: source.modelId,
+          sourceVersionId: source.versionId,
+          sourceFileId: source.fileId,
+          versionName: fixture[key].versionName,
+          creator: fixture.embeddingTrained.origin.creator,
+          resourceOrigin: fixture.embeddingTrained.origin,
+        })
+        await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
+      }
+      assert.equal(new Set(embeddingKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
+      const seeded = await repository.listInstalled()
+      assert.equal(seeded.length, 8)
+      assert.equal(seeded.flatMap(({ versions }) => versions).length, 11)
+      assert.ok(
+        seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')),
+      )
+      report.catalogReuse.finalResourceCount = 8
+      report.catalogReuse.finalVersionCount = 11
+      report.catalogReuse.newManagedFiles = report.models.filter(
+        ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+      ).length
     }
-    assert.equal(new Set(externalVaeKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
-    const seeded = await repository.listInstalled()
-    assert.equal(seeded.length, 7)
-    assert.equal(seeded.flatMap(({ versions }) => versions).length, 9)
-    assert.ok(seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')))
-    report.catalogReuse.finalResourceCount = 7
-    report.catalogReuse.finalVersionCount = 9
-    report.catalogReuse.newManagedFiles = report.models.filter(
-      ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
-    ).length
-  }
-  if (embeddingsProfile) {
-    for (const [key, id] of [
-      ['embeddingTrained', 700_100],
-      ['embeddingControl', 700_110],
-    ]) {
-      const source = embeddingSourceIds(key)
-      fixture[key].installed = await installArtifact(repository, fixture[key], id, undefined, {
-        sourceModelId: source.modelId,
-        sourceVersionId: source.versionId,
-        sourceFileId: source.fileId,
-        versionName: fixture[key].versionName,
-        creator: fixture.embeddingTrained.origin.creator,
-        resourceOrigin: fixture.embeddingTrained.origin,
-      })
-      await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
-    }
-    assert.equal(new Set(embeddingKeys.map((key) => fixture[key].installed.resourceId)).size, 1)
-    const seeded = await repository.listInstalled()
-    assert.equal(seeded.length, 8)
-    assert.equal(seeded.flatMap(({ versions }) => versions).length, 11)
-    assert.ok(seeded.every(({ versions }) => versions.every(({ file }) => file.status === 'ready')))
-    report.catalogReuse.finalResourceCount = 8
-    report.catalogReuse.finalVersionCount = 11
-    report.catalogReuse.newManagedFiles = report.models.filter(
-      ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
-    ).length
   }
   await check(
-    embeddingsProfile
-      ? 'Same seven resources/nine versions retained; trained embedding and finite zero-tensor control cataloged as two exact versions with required creator credit'
-      : externalVaeProfile
-        ? 'Same six resources retained; three exact local VAE files cataloged as versions of one added qualification resource'
-        : vaePrecisionProfile
-          ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
-          : 'Real exact model files copied, verified and cataloged; source weights unchanged',
+    animaRegressionProfile
+      ? 'Four exact Anima versions verified in nine-resource/fourteen-version catalog; prior Cyber default and all ten NoobAI identities preserved'
+      : embeddingsProfile
+        ? 'Same seven resources/nine versions retained; trained embedding and finite zero-tensor control cataloged as two exact versions with required creator credit'
+        : externalVaeProfile
+          ? 'Same six resources retained; three exact local VAE files cataloged as versions of one added qualification resource'
+          : vaePrecisionProfile
+            ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
+            : 'Real exact model files copied, verified and cataloged; source weights unchanged',
   )
   if (
     outpaintProfile ||
-    ((noiseProfile || noobaiComponentsProfile) && fixture.stage === 'outpaint')
+    ((noiseProfile || noobaiComponentsProfile) && fixture.stage === 'outpaint') ||
+    (animaRegressionProfile && fixture.stage !== 'sampling')
   )
     await installQualificationLama()
   application = await electron.launch({
@@ -7447,7 +8076,9 @@ try {
   await check('Unmodified production Main qualifies activated real Linux/NVIDIA runtime', {
     runtime: runtime.value,
   })
-  if (noobaiComponentsProfile) {
+  if (animaRegressionProfile) {
+    await qualifyAnimaRegression()
+  } else if (noobaiComponentsProfile) {
     await qualifyNoobaiComponents()
   } else if (outpaintProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
@@ -7487,6 +8118,69 @@ try {
     await qualifyInstalledImport(lastProject)
   }
   assert.deepEqual(report.pageErrors, [])
+  if (animaRegressionProfile) {
+    const final = await repository.listInstalled()
+    assertAnimaRegressionCatalog(final, fixture)
+    report.catalogReuse.publicationTimestamps = assertAnimaRegressionCatalogPreserved(
+      final,
+      preservedAnimaPriorCatalog,
+      fixture,
+    )
+    for (const { descriptor, sourceStat } of report.animaSourceFiles) {
+      const entry = await lstat(descriptor.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(descriptor.path), descriptor.path)
+      assert.deepEqual(
+        {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+        sourceStat,
+      )
+      assert.equal(await hashFile(descriptor.path), descriptor.sha256)
+    }
+    for (const { installed, sourceStat } of report.animaPriorManagedFiles) {
+      const entry = await lstat(installed.managedPath)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(installed.managedPath), installed.managedPath)
+      assert.deepEqual(
+        {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+        sourceStat,
+      )
+    }
+    if (report.animaCommonSourceFile) {
+      const { descriptor, sourceStat } = report.animaCommonSourceFile
+      const entry = await lstat(descriptor.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(descriptor.path), descriptor.path)
+      assert.deepEqual(
+        {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+        sourceStat,
+      )
+      assert.equal(await hashFile(descriptor.path), descriptor.sha256)
+    }
+    Object.assign(report.catalogReuse, {
+      originalIdentitiesPreserved: true,
+      animaSourceFilesUnchanged: true,
+      priorManagedFileStatsUnchanged: true,
+      exactNineResourceFourteenVersionClosure: true,
+    })
+  }
   if (noobaiComponentsProfile) {
     const final = await repository.listInstalled()
     assertCapturedComponentCatalog(final)
