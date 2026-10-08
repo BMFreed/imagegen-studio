@@ -102,8 +102,8 @@ saved `.igs` snapshot is used; if both are absent, Prepare stops explicitly.
 The Results IPC exposes the local cursor and explicit Save records its snapshot
 without marking the document dirty or adding Undo history. Renderer Generate and
 installed dynamic batches were open at that historical checkpoint. The bounded
-installed-system follow-up below covers Anima; a packaged Linux/NVIDIA release
-pipeline remains unqualified.
+installed-system follow-ups below cover Anima and exact Illustrious/NoobAI EPS/V.
+A packaged Linux/NVIDIA release pipeline remains unqualified.
 
 ## Production prepared-batch planning checkpoint
 
@@ -195,6 +195,39 @@ inference, installed truncation, the full Fixed/per-prompt pair matrix, arbitrar
 formats/quality or release. Production admission cap32 is unchanged. The seed
 cursor identity contract is checked in source/integration tests; this installed
 sequence alone cannot distinguish every possible global-latest cursor mutation.
+The separate Illustrious/NoobAI counterpart is recorded below.
+
+## Installed Illustrious/NoobAI dynamic-batch checkpoint
+
+[The bounded EPS/V qualification](../../../engineering/phase-2c-illustrious-dynamic-batch-research.md)
+uses the real built application, installed worker0.14 and actual SQLite/PNG/.igs.
+Four weighted positive×negative pairs with two images use Fixed0/per-iteration
+`0,1,0,1,0,1,0,1`; crash-recovered local0 with Reuse/per-prompt uses0…7. Current
+prompt/sampler/seed37/LoRA edits preserve frozen/native/portable inputs. Same-seed
+positive-only and negative-only text changes affect pixels in both objectives.
+
+Both completed/running/pending crash cuts preserve candidate0/local0 without
+changing the saved package/null snapshot; startup cancels unfinished jobs with
+APP_RESTART. Recovered0 and Reuse0/1 reproduce healthy same-execution pixels.
+Both installed generation-RNG constant0 mutations leave seed metadata correct,
+retain GREEN0 and cause pixel RED on1 before Add/0 accepted. Byte-exact protected
+restoration and fresh0/1 reproduce healthy pixels through Add2/Save/reopen.
+Independent raw aggregate verifies58 admissions/42 completions/16 cancellations,
+six saved/reopened packages/38 layers and snapshots1,7,1 for each objective.
+A separate excluded UI selector failure admitted0 jobs; it is not inference
+or mutation evidence. Original catalog/defaults/prior220 rows/source43 survive.
+
+This evidence is256×256/three steps/CFG5, exact EPS/Euler a/non-ZTSNR or
+V/Euler/ZTSNR with leading spacing, signed Digital Art−0.5 and native external
+VAE FP32. It has no embedding sidecars. The next finite gate is installed dynamic
+embedding activation/subsets for EPS/V: ordinary, positive-only, negative-only,
+both, exact per-concrete captured/effective refs and a conditional negative-TI-zero
+mutation with ordinary GREEN and numerical RED before Add, then restored GREEN.
+Random, wrap, max32 native, installed truncation/full Fixed-per-prompt matrix,
+replacement-document identity, arbitrary formats/geometry/quality and release
+remain open. Production cap32 and PP statuses are unchanged. Shared flow now uses
+family adapters; this slice does not rerun installed Anima ML, and its historical
+evidence above is not expanded by these EPS/V results.
 
 ## Vue Prototype Coverage
 
