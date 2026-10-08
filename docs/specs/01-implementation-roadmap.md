@@ -1629,8 +1629,21 @@ backup absence подтверждены, fresh EPS pair2 GREEN. Final8 saved pac
 pixels/SQLite completed rows/receipt bytes/exact signed refs/settings/frozen0-
 current37 проверены; mutant pixels равны противоположным normal choices, fresh —
 своим. Main/worker idle подтверждён, прежние counts остаются отдельными.
-Следующий component gate — multiple-LoRA stack/order, затем trained Anima
-regressions на worker0.14 и dynamic multi-job batches. NoobAI не становится
+Последующий [native multiple-LoRA checkpoint](../engineering/phase-2c-noobai-lora-stack-native-research.md)
+подтвердил12 normal EPS/V loader variants/11832 all-target observations: каждый
+exact Digital Art−0.5/Lineless+0.75 source и union986 targets (UNet722/CLIP1 72/
+CLIP2 192), independent source/graph mapping и temporary FP32 CPU module algebra
+на half-loaded trained checkpoints. Source→adapter→weight/order, single/AB/BA/
+enabled-zero controls и unload restoration проверены; оба normal PID exits/43
+original sources подтверждены. Это0 UI jobs/images/receipts/conditioning/denoising,
+readonly catalog5/9/153queue без adoption/download/model/runtime copies.
+Installed weight-swap прошёл2 healthy single variants/1972 observations до точного
+AB numeric RED. Physical child exit/restored43/original inode/mode/mtime/bytes/
+backup absence подтверждены; fresh EPS6 GREEN/5916 observations воспроизводит
+normal base SHA. Final full catalog/queue row SHA5/9/153 и managed files не
+меняются, Main/worker idle; current delivered oracle SHA связывает все4 executions.
+Следующий component gate — настоящий multiple-LoRA UI→queue→Add/Save/readback/
+reopen/comparison, затем trained Anima worker0.14 и dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1783,8 +1796,22 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    pixels/SQLite completed rows/receipt bytes/exact signed refs/settings/frozen0-
    current37 verified: mutant pixels равны противоположным normal choices, fresh —
    своим. Main/worker idle подтверждён. Historical counts не меняются.
-   Следующий component gate — multiple-LoRA stack/order, затем trained Anima
-   worker0.14 regression и dynamic batches. All-layer/formats compatibility,
+   Отдельный [native multiple-LoRA checkpoint](../engineering/phase-2c-noobai-lora-stack-native-research.md)
+   прошёл12 normal EPS/V loader variants/11832 all-target observations:986/source
+   и986 union (UNet722/CLIP1 72/CLIP2 192), exact Digital−0.5/Lineless+.75,
+   half-loaded trained checkpoints/independent temporary FP32 CPU layer algebra.
+   Проверены source/adapter/weight/order, single/AB/BA/enabled-zero controls и unload
+   restoration; normal physical PID exits/43 original sources подтверждены.
+   Это0 UI jobs/images/receipts/conditioning/denoising, readonly5/9/153queue без
+   adoption/download/model/runtime copies. Installed weight-swap завершил2 healthy
+   single variants/1972 observations до точного AB numeric RED; physical child
+   exit/restored43/original inode/mode/mtime/bytes/backup absence подтверждены.
+   Fresh EPS6 GREEN/5916 observations воспроизводит normal base SHA; full catalog/
+   queue row SHA5/9/153 и managed files unchanged, Main/worker idle и current
+   delivered oracle SHA во всех4 executions проверены. Actual multiple-LoRA UI→queue→
+   Add/Save/readback/reopen/comparison остаётся следующим отдельным gate;
+   additive permutation equality не заменяет immutable recorded stack order.
+   Затем идут trained Anima worker0.14 regression и dynamic batches. All-layer/formats compatibility,
    качество/Invoke parity, public delivery и release открыты; one-literal TXT
    direction не квалифицирует arbitrary embedding formats/syntax или IMG/OUT
    polarity. Author-resolution results предыдущего checkpoint не расширяются
