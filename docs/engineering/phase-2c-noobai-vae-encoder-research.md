@@ -189,7 +189,38 @@ including17 imported-guard tests and actual CLI preflight refusals; typecheck an
 lint passed. The first bare-node focused invocation refused a TS import before
 the CLI suite executed; the supported tsx invocation passed and that setup error
 is excluded from qualification evidence.
-This slice does not qualify every encoder layer, arbitrary VAE formats/training
+This TXT/IMG slice does not qualify every encoder layer, arbitrary VAE formats/training
 lineage, new trained outpaint encoder behavior, polarity swap, multiple-adapter
 order, Anima worker0.14, dynamic batches, subjective quality, Invoke exact pixels
 or release installation. Whole-MVP readiness remains open.
+
+## Subsequent ordinary outpaint encoder checkpoint
+
+The separate [outpaint encoder checkpoint](./phase-2c-noobai-outpaint-encoder-research.md)
+now records four finite normal EPS/V OUT cycles in four admissions, with two
+matched pairs at256×256/three requested steps/FP32/seed0/strength0.5 and two
+effective native denoising evaluations. Each pair preserves contribution alpha,
+source layers and protected source pixels, and changes visible generated RGB
+and saved merged RGB at corresponding coordinates through actual
+Add/Save/independent readback/reopen/comparison. Accepted frozen0 remains distinct
+from the actual current draft37. Both native normal runs passed with confirmed
+physical exit; catalog5/9 is preserved with zero new managed files.
+
+The installed EPS-OUT encode-zero mutant completed two finite full UI cycles
+before the intended visible-generated-RGB RED. Physical exit and restoration of
+all43 source files with original inode/mode/mtime/bytes are confirmed; the
+protected backup is absent. The fresh restored pair passed two finite GREEN
+cycles with physical exit, reproducing both original EPS individual RGBA and
+saved merged pixels exactly. Final evidence accounts separately for four normal
+OUT cycles, two finite mutation cycles before causal RED and two fresh restored
+cycles. Independent Pillow decoding of saved `.igs` confirms exact alpha,
+protected source and corresponding visible/merged pixels; actual completed
+SQLite rows and receipt bytes are bound to all eight captured VAE refs and
+independently verified CPU control descriptors. Main/worker/nativeData are idle
+and all43 sources are exact. This separate OUT evidence leaves this note's
+historical eight normal TXT/IMG cases, two finite mutation cycles and two fresh
+restored cycles unchanged.
+The follow-up does not qualify all encoder layers, arbitrary formats, subjective
+quality, Invoke parity, public delivery or release. Embedding polarity swap and
+multiple-LoRA stack/order remain the next component gates, followed by trained
+Anima worker0.14 regression and dynamic batches. Whole-MVP readiness stays open.

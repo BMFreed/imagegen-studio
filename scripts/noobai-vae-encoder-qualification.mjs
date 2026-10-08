@@ -9,6 +9,7 @@ import {
   componentPublicationIds,
   normalizeNoobaiComponentInputs,
   validateNoobaiComponentsFixture,
+  visibleOutpaint,
 } from './noobai-components-qualification.mjs'
 import { noiseModelKeys } from './noobai-noise-qualification.mjs'
 
@@ -20,10 +21,13 @@ export const encoderPublicationIds = {
 }
 const encoderKey = 'externalVaeEncoderControl'
 const choices = ['fullstack', 'encoder-control']
-const stages = ['txt2img', 'img2img']
+const stages = ['txt2img', 'img2img', 'outpaint']
 
 function stagePlan(stage) {
-  assert.ok(stages.includes(stage), 'Encoder qualification requires txt2img or img2img.')
+  assert.ok(
+    stages.includes(stage),
+    'Encoder qualification requires txt2img, img2img or normal outpaint.',
+  )
   return {
     mode: stage,
     choices: [...choices],
@@ -57,7 +61,7 @@ function sha(value) {
 }
 function assertMode(frozen, mode) {
   assert.equal(frozen.kind, `illustrious-${mode}`)
-  if (mode === 'img2img') {
+  if (mode === 'img2img' || mode === 'outpaint') {
     assert.equal(frozen.context.sampling.denoisingStrength, 0.5)
     assert.equal(frozen.workerJob.sampling.denoisingStrength, 0.5)
   } else assert.equal(frozen.workerJob.sampling.denoisingStrength, undefined)
@@ -117,6 +121,28 @@ export function validateNoobaiVaeEncoderFixture(fixture, ready) {
   assert.equal(fixture.profile, 'noobai-vae-encoder')
   const plan = stagePlan(fixture.stage)
   assertEncoderSource(fixture)
+  if (fixture.stage === 'outpaint') {
+    // Qualification pin matches Main's LAMA_OUTPAINT_ARTIFACT in
+    // src/shared/projects/alpha-outpaint.ts; this helper remains native Node only.
+    const lama = fixture.lama
+    assert.ok(lama && typeof lama === 'object' && !Array.isArray(lama))
+    assert.deepEqual(
+      Object.keys(lama).sort(),
+      ['byteSize', 'path', 'sha256'],
+      'Encoder outpaint requires the exact pinned LaMa descriptor.',
+    )
+    assert.ok(
+      typeof lama.path === 'string' &&
+        path.isAbsolute(lama.path) &&
+        path.normalize(lama.path) === lama.path,
+    )
+    assert.equal(
+      lama.sha256,
+      '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9',
+      'Encoder outpaint requires the pinned LaMa SHA.',
+    )
+    assert.equal(lama.byteSize, 205_669_692)
+  }
   const base = validateNoobaiComponentsFixture(baseFixture(fixture), ready)
   return {
     ...base,
@@ -363,6 +389,10 @@ export function assertNoobaiVaeEncoderPixels(cases, mode) {
     'Only the selected VAE axis may differ; all neighboring frozen inputs must stay matched.',
   )
   assert.deepEqual(control.target, native.target, 'Encoder controls require one identical target.')
+  const visibleEvidence =
+    mode === 'outpaint'
+      ? visibleOutpaint(native, control, false, { requireCorrespondingChange: true })
+      : {}
   if (mode === 'txt2img')
     assert.equal(
       control.dimensions.pixelSha256,
@@ -373,9 +403,18 @@ export function assertNoobaiVaeEncoderPixels(cases, mode) {
     assert.notEqual(
       control.dimensions.pixelSha256,
       native.dimensions.pixelSha256,
-      'Selected VAE encoder must change nonzero img2img pixels while decoder and neighboring inputs stay matched.',
+      mode === 'outpaint'
+        ? 'Selected VAE encoder must change normal outpaint pixels while decoder and neighboring inputs stay matched.'
+        : 'Selected VAE encoder must change nonzero img2img pixels while decoder and neighboring inputs stay matched.',
     )
-  return [{ choice: 'encoder-control', mode, equal: mode === 'txt2img' }]
+  return [
+    {
+      choice: 'encoder-control',
+      mode,
+      equal: mode === 'txt2img',
+      ...visibleEvidence,
+    },
+  ]
 }
 
 export function assertNoobaiVaeEncoderStageOutcome(summary) {

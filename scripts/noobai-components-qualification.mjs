@@ -568,7 +568,7 @@ function rgbaImage(value) {
     value.rgba instanceof Uint8Array && value.rgba.length === value.width * value.height * 4,
   )
 }
-function visibleOutpaint(full, control, equal) {
+export function visibleOutpaint(full, control, equal, { requireCorrespondingChange = false } = {}) {
   for (const value of [full.contribution, control.contribution, full.preview, control.preview])
     rgbaImage(value)
   assert.deepEqual(control.bbox, full.bbox)
@@ -590,6 +590,7 @@ function visibleOutpaint(full, control, equal) {
   let visible = 0
   let rgbChanged = 0
   let mergedChanged = 0
+  let correspondingChanged = 0
   for (let y = 0; y < full.contribution.height; y++) {
     for (let x = 0; x < full.contribution.width; x++) {
       const offset = (y * full.contribution.width + x) * 4
@@ -600,14 +601,11 @@ function visibleOutpaint(full, control, equal) {
       )
       if (full.contribution.rgba[offset + 3] === 0) continue
       visible++
-      if (
-        [0, 1, 2].some(
-          (channel) =>
-            control.contribution.rgba[offset + channel] !==
-            full.contribution.rgba[offset + channel],
-        )
+      const contributionChanged = [0, 1, 2].some(
+        (channel) =>
+          control.contribution.rgba[offset + channel] !== full.contribution.rgba[offset + channel],
       )
-        rgbChanged++
+      if (contributionChanged) rgbChanged++
       const px = full.bbox.x + x - full.previewRect.x
       const py = full.bbox.y + y - full.previewRect.y
       assert.ok(
@@ -616,12 +614,11 @@ function visibleOutpaint(full, control, equal) {
       )
       const p = (py * full.preview.width + px) * 4
       assert.equal(control.preview.rgba[p + 3], full.preview.rgba[p + 3])
-      if (
-        [0, 1, 2].some(
-          (channel) => control.preview.rgba[p + channel] !== full.preview.rgba[p + channel],
-        )
+      const previewChanged = [0, 1, 2].some(
+        (channel) => control.preview.rgba[p + channel] !== full.preview.rgba[p + channel],
       )
-        mergedChanged++
+      if (previewChanged) mergedChanged++
+      if (contributionChanged && previewChanged) correspondingChanged++
     }
   }
   assert.ok(visible > 0)
@@ -645,11 +642,19 @@ function visibleOutpaint(full, control, equal) {
       mergedChanged > 0,
       'A component control must change visible generated pixels in the saved merged preview.',
     )
+    if (requireCorrespondingChange)
+      assert.ok(
+        correspondingChanged > 0,
+        'A visible generated RGB change must also change its corresponding saved merged RGB pixel.',
+      )
   }
   return {
     visiblePixels: visible,
     changedContributionPixels: rgbChanged,
     changedMergedPixels: mergedChanged,
+    ...(requireCorrespondingChange
+      ? { changedCorrespondingMergedPixels: correspondingChanged }
+      : {}),
   }
 }
 

@@ -1597,8 +1597,25 @@ Catalog5/9 сохраняет исходные восемь versions; local deri
 public delivery. EPS-img2img encode-zero mutation дала causal RED после двух
 finite cycles; physical exit/restored43/original inode/mode/mtime подтверждены,
 fresh restored pair прошла два finite GREEN cycles с physical exit.
-Следующие component gates — independent outpaint encoder, polarity swap и
-multiple-adapter stack/order. После них идут trained Anima regressions на
+Отдельный [outpaint encoder checkpoint](../engineering/phase-2c-noobai-outpaint-encoder-research.md)
+подтвердил четыре finite EPS/V normal OUT cycles/четыре admissions и две matched
+пары при256×256/трёх requested steps/FP32/seed0/strength0.5 с двумя effective
+native denoising evaluations. Exact contribution alpha/protected source и
+Add/Save/readback/reopen/comparison сохраняются; visible generated RGB и saved
+merged RGB меняются на соответствующих координатах. Catalog5/9 сохранён,
+newManagedFiles0; physical exit обоих native runs подтверждён. Installed EPS-OUT
+encode-zero mutant завершил два finite cycles до intended visible-RGB RED;
+physical exit/restored43/original inode/mode/mtime подтверждены. Fresh restored
+pair прошла два finite GREEN cycles с physical exit и exact original EPS RGBA/
+merged pixels. Final8 OUT cycles (4 normal +2 finite mutation cycles до causal
+RED +2 fresh GREEN) связаны с actual SQLite completed rows/receipt bytes и CPU
+control descriptors во всех frozen VAE refs; independent Pillow saved `.igs`
+decode проверяет alpha/protected source/corresponding visible/merged pixels.
+Main/worker/nativeData idle, restored43/original inode/mode/mtime/bytes, backup
+отсутствует. Прежние 8 normal +2 mutation +2 fresh TXT/IMG cases остаются отдельными. All-layer/formats/quality/Invoke parity, public
+delivery и release этим normal срезом не квалифицируются.
+Следующие component gates — embedding polarity swap и multiple-LoRA stack/order.
+После них идут trained Anima regressions на
 worker0.14, затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
@@ -1723,8 +1740,24 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    Add/Save/readback/reopen/comparison и actual current37/frozen0 provenance.
    Один installed EPS-img2img encode-zero mutant завершил два finite cycles
    до intended pixel RED и восстановлен с physical exit/restored43/original
-   inode/mode/mtime. Fresh restored pair прошла два finite GREEN cycles с physical exit. Outpaint encoder,
-   all-layer/formats compatibility, качество/Invoke parity, polarity swap,
+   inode/mode/mtime. Fresh restored pair прошла два finite GREEN cycles с physical exit.
+   Отдельный [outpaint encoder checkpoint](../engineering/phase-2c-noobai-outpaint-encoder-research.md)
+   добавил четыре normal finite EPS/V OUT cycles/четыре admissions и две matched
+   visible contribution/corresponding saved merged RGB пары с exact alpha и
+   protected source через Add/Save/readback/reopen/comparison. Bounded256×256,
+   три requested steps, FP32, seed0/strength0.5 дают два effective native
+   denoising evaluations; catalog5/9 сохранён, newManagedFiles0, оба native
+   physical exit подтверждены. Installed EPS-OUT encode-zero mutant дал intended
+   visible-RGB RED после двух finite cycles; physical exit/restored43/original
+   inode/mode/mtime подтверждены. Fresh restored pair прошла два finite GREEN
+   cycles с physical exit и exact original EPS RGBA/merged pixels. Final8 OUT
+   cycles (4 normal +2 finite mutation cycles до causal RED +2 fresh GREEN) связаны
+   с actual SQLite completed rows/receipt bytes и CPU control descriptors всех
+   frozen VAE refs; independent Pillow saved `.igs` decode подтверждает alpha,
+   protected source и corresponding visible/merged pixels. Main/worker/nativeData
+   idle, restored43/original inode/mode/mtime/bytes, backup отсутствует.
+   Исторические 8 normal +2 mutation +2 fresh TXT/IMG counts не расширяются.
+   All-layer/formats compatibility, качество/Invoke parity, polarity swap,
    multiple-adapter order, trained Anima worker0.14 regression, dynamic batches
    и release остаются отдельными gates; author-resolution results предыдущего
    checkpoint не расширяются этим трёхшаговым component срезом.

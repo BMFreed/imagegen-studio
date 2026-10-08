@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { test } from 'node:test'
 
-import { validateNoobaiComponentsFixture } from './noobai-components-qualification.mjs'
+import {
+  validateNoobaiComponentsFixture,
+  visibleOutpaint,
+} from './noobai-components-qualification.mjs'
 import {
   assertNoobaiVaeEncoderCatalog,
   assertNoobaiVaeEncoderCatalogPreserved,
@@ -195,7 +198,7 @@ function fixture(stage = 'txt2img', objective = 'epsilon') {
       },
     },
   }
-  if (stage === 'img2img')
+  if (stage === 'img2img' || stage === 'outpaint')
     value.commonSource = {
       path: '/owned/source.png',
       sha256: 'e'.repeat(64),
@@ -206,6 +209,12 @@ function fixture(stage = 'txt2img', objective = 'epsilon') {
       sourceQueueItemId: 'source-queue-id',
       sourcePackagePath: '/owned/source.igs',
       objective,
+    }
+  if (stage === 'outpaint')
+    value.lama = {
+      path: '/owned/lama.pt',
+      sha256: '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9',
+      byteSize: 205669692,
     }
   return value
 }
@@ -243,7 +252,7 @@ function frozen(value, choice = 'fullstack') {
   const vae = value[vaeKey]
   const lora = value.illustriousLora
   const policy = execution(value.objective)
-  const imageSampling = value.stage === 'img2img' ? { denoisingStrength: 0.5 } : {}
+  const imageSampling = value.stage === 'txt2img' ? {} : { denoisingStrength: 0.5 }
   const result = {
     kind: `illustrious-${value.stage}`,
     context: {
@@ -412,7 +421,7 @@ test('encoder fixture independently declares 5/9, two choices, both objectives a
     fileId: 700084,
   })
   for (const objective of ['epsilon', 'v_prediction'])
-    for (const stage of ['txt2img', 'img2img']) {
+    for (const stage of ['txt2img', 'img2img', 'outpaint']) {
       const source = fixture(stage, objective)
       const before = structuredClone(source)
       const plan = validateNoobaiVaeEncoderFixture(source, ready)
@@ -441,7 +450,7 @@ test('encoder fixture rejects altered origins, decoder transforms, aliases and u
       v.profile = 'noobai-components'
     },
     (v) => {
-      v.stage = 'outpaint'
+      v.stage = 'inpaint'
     },
     (v) => {
       v.stage = 'lifecycle'
@@ -665,7 +674,7 @@ test('encoder catalog refuses undeclared duplicates, Default substitution and in
 
 test('encoder frozen guards retain exact independent identities and do not replace actual owners', () => {
   for (const objective of ['epsilon', 'v_prediction'])
-    for (const mode of ['txt2img', 'img2img']) {
+    for (const mode of ['txt2img', 'img2img', 'outpaint']) {
       const value = installedFixture(mode, objective)
       for (const choice of ['fullstack', 'encoder-control']) {
         const job = frozen(value, choice)
@@ -892,11 +901,11 @@ test('encoder pixel controls retain hash shape, fixed order, count and real oper
     mutate(cases)
     assert.throws(() => assertNoobaiVaeEncoderPixels(cases, 'txt2img'))
   }
-  assert.throws(() => assertNoobaiVaeEncoderPixels(pixelCases(), 'outpaint'))
+  assert.throws(() => assertNoobaiVaeEncoderPixels(pixelCases(), 'inpaint'))
 })
 
 test('encoder stage outcomes independently require 2/2/0/0, one control and no broader claim', () => {
-  for (const stage of ['txt2img', 'img2img']) {
+  for (const stage of ['txt2img', 'img2img', 'outpaint']) {
     const summary = {
       stage,
       objective: 'epsilon',
@@ -1003,4 +1012,244 @@ test('encoder preservation forbids timestamp changes after the ninth version alr
   assert.deepEqual(assertNoobaiVaeEncoderCatalogPreserved(current, previous, value), [])
   current[4].sourceCheckedAt = '2026-10-08T10:06:00.000Z'
   assert.throws(() => assertNoobaiVaeEncoderCatalogPreserved(current, previous, value))
+})
+
+function outpaintPixelCases(objective = 'epsilon') {
+  const cases = pixelCases('outpaint', objective)
+  for (const value of cases) {
+    value.bbox = { x: 2, y: 1, width: 2, height: 2 }
+    value.previewRect = { x: 1, y: 0, width: 3, height: 3 }
+    value.frozen.context.bbox = structuredClone(value.bbox)
+    value.frozen.workerJob.bbox = structuredClone(value.bbox)
+    value.dimensions.width = 2
+    value.dimensions.height = 2
+    value.contribution = {
+      width: 2,
+      height: 2,
+      rgba: new Uint8Array([10, 20, 30, 0, 30, 40, 50, 255, 60, 70, 80, 128, 90, 100, 110, 255]),
+    }
+    value.preview = {
+      width: 3,
+      height: 3,
+      rgba: new Uint8Array([
+        10, 10, 10, 255, 10, 10, 10, 255, 10, 10, 10, 255, 10, 10, 10, 255, 10, 10, 10, 255, 10, 10,
+        10, 255, 10, 10, 10, 255, 10, 10, 10, 255, 10, 10, 10, 255,
+      ]),
+    }
+  }
+  // Contribution pixel (1,0) is world (3,1), hence saved-preview pixel (2,1).
+  cases[1].contribution.rgba[4] = 31
+  cases[1].preview.rgba[20] = 11
+  return cases
+}
+
+test('encoder outpaint fixture requires pinned LaMa descriptor and delegated native capability', () => {
+  for (const objective of ['epsilon', 'v_prediction']) {
+    const value = fixture('outpaint', objective)
+    const plan = validateNoobaiVaeEncoderFixture(value, ready)
+    assert.equal(plan.mode, 'outpaint')
+    assert.equal(plan.expectedCatalogResources, 5)
+    assert.equal(plan.expectedCatalogVersions, 9)
+    assert.deepEqual(plan.choices, ['fullstack', 'encoder-control'])
+    assert.deepEqual(plan.expectedOutcome, {
+      finiteCompletions: 2,
+      actualAdmissions: 2,
+      canceledOriginals: 0,
+      preservingRetryRefusals: 0,
+    })
+  }
+  for (const mutate of [
+    (v) => {
+      delete v.lama
+    },
+    (v) => {
+      v.lama.sha256 = '8'.repeat(64)
+    },
+    (v) => {
+      v.lama.byteSize--
+    },
+    (v) => {
+      v.lama.path = 'relative/lama.pt'
+    },
+    (v) => {
+      v.lama.extra = true
+    },
+    (v) => {
+      v.commonSource.objective = 'v_prediction'
+    },
+    (v) => {
+      v.externalVaeEncoderControl.origin.decoderBiasAdd = 0.5
+    },
+  ]) {
+    const value = fixture('outpaint')
+    mutate(value)
+    assert.throws(() => validateNoobaiVaeEncoderFixture(value, ready))
+  }
+  assert.throws(() =>
+    validateNoobaiVaeEncoderFixture(fixture('outpaint'), {
+      ...ready,
+      capabilities: ready.capabilities.filter((value) => value !== 'illustrious-outpaint'),
+    }),
+  )
+})
+
+test('encoder outpaint frozen guard requires actual outpaint kind and both captured strengths', () => {
+  const value = installedFixture('outpaint')
+  for (const choice of ['fullstack', 'encoder-control']) {
+    const valid = frozen(value, choice)
+    assertNoobaiVaeEncoderFrozen(valid, value, choice)
+    for (const mutate of [
+      (j) => {
+        j.kind = 'illustrious-img2img'
+      },
+      (j) => {
+        j.context.sampling.denoisingStrength = 0
+      },
+      (j) => {
+        j.workerJob.sampling.denoisingStrength = 0
+      },
+      (j) => {
+        delete j.workerJob.sampling.denoisingStrength
+      },
+    ]) {
+      const job = structuredClone(valid)
+      mutate(job)
+      assert.throws(() => assertNoobaiVaeEncoderFrozen(job, value, choice))
+    }
+  }
+})
+
+test('encoder outpaint pixels independently measure exact alpha and same-coordinate visible merged change', () => {
+  for (const objective of ['epsilon', 'v_prediction']) {
+    const cases = outpaintPixelCases(objective)
+    const before = structuredClone(cases)
+    assert.deepEqual(assertNoobaiVaeEncoderPixels(cases, 'outpaint'), [
+      {
+        choice: 'encoder-control',
+        mode: 'outpaint',
+        equal: false,
+        visiblePixels: 3,
+        changedContributionPixels: 1,
+        changedMergedPixels: 1,
+        changedCorrespondingMergedPixels: 1,
+      },
+    ])
+    assert.deepEqual(cases, before)
+  }
+})
+
+test('encoder outpaint visible guards reject invisible-only RGB, alpha changes and missing saved change', () => {
+  for (const [mutate, message] of [
+    [
+      (c) => {
+        c[1].contribution.rgba.set(c[0].contribution.rgba)
+        c[1].preview.rgba.set(c[0].preview.rgba)
+        c[1].dimensions.pixelSha256 = c[0].dimensions.pixelSha256
+      },
+      /A component control must change visible generated RGB, not only invisible RGB\./,
+    ],
+    [
+      (c) => {
+        c[1].contribution.rgba[4] = c[0].contribution.rgba[4]
+        c[1].contribution.rgba[0] = 11
+      },
+      /visible generated RGB/,
+    ],
+    [
+      (c) => {
+        c[1].contribution.rgba[7] = 254
+      },
+      /exact contribution alpha mask/,
+    ],
+    [
+      (c) => {
+        c[1].preview.rgba.set(c[0].preview.rgba)
+      },
+      /saved merged preview/,
+    ],
+    [
+      (c) => {
+        c[1].bbox.x++
+      },
+      undefined,
+    ],
+    [
+      (c) => {
+        c[1].previewRect.x++
+      },
+      undefined,
+    ],
+    [
+      (c) => {
+        for (const value of c) value.previewRect.x = 10
+      },
+      /covered by the saved merged preview/,
+    ],
+    [
+      (c) => {
+        c[1].preview.width = 2
+      },
+      undefined,
+    ],
+    [
+      (c) => {
+        c[1].dimensions.pixelSha256 = c[0].dimensions.pixelSha256
+      },
+      /Selected VAE encoder must change normal outpaint pixels/,
+    ],
+  ]) {
+    const cases = outpaintPixelCases()
+    mutate(cases)
+    if (message) assert.throws(() => assertNoobaiVaeEncoderPixels(cases, 'outpaint'), message)
+    else assert.throws(() => assertNoobaiVaeEncoderPixels(cases, 'outpaint'))
+  }
+})
+
+test('encoder outpaint rejects disjoint visible footprints without widening default component evidence', () => {
+  const cases = outpaintPixelCases()
+  // Move the saved change from generated (1,0) to generated (0,1), world (2,2).
+  cases[1].preview.rgba[20] = 10
+  cases[1].preview.rgba[28] = 11
+  assert.deepEqual(visibleOutpaint(cases[0], cases[1], false), {
+    visiblePixels: 3,
+    changedContributionPixels: 1,
+    changedMergedPixels: 1,
+  })
+  assert.throws(
+    () => assertNoobaiVaeEncoderPixels(cases, 'outpaint'),
+    /corresponding saved merged RGB pixel/,
+  )
+})
+
+test('encoder outpaint keeps seed, source, opposite polarity and decoder resource metadata matched', () => {
+  for (const mutate of [
+    (c) => {
+      c[1].frozen.context.sampling.seed = 37
+    },
+    (c) => {
+      c[1].frozen.workerJob.target.sha256 = '8'.repeat(64)
+    },
+    (c) => {
+      c[1].target.pixelSha256 = '8'.repeat(64)
+    },
+    (c) => {
+      c[1].frozen.context.vae.reference.displayName = 'different decoder resource'
+    },
+    (c) => {
+      c[1].frozen.context.embeddingRefs.negative[0].resource.fileSha256 = '8'.repeat(64)
+    },
+    (c) => {
+      c[1].frozen.workerJob.sampling.noiseProfile.timestepSpacing = 'trailing'
+    },
+    (c) => {
+      for (const value of c) value.frozen.kind = 'illustrious-img2img'
+    },
+    (c) => {
+      c[1].frozen.workerJob.sampling.denoisingStrength = 0
+    },
+  ]) {
+    const cases = outpaintPixelCases()
+    mutate(cases)
+    assert.throws(() => assertNoobaiVaeEncoderPixels(cases, 'outpaint'))
+  }
 })

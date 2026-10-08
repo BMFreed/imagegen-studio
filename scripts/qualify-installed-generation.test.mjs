@@ -285,9 +285,9 @@ function encoderInput(input) {
 }
 for (const [name, mutate] of [
   [
-    'outpaint stage',
+    'inpaint stage',
     (input) => {
-      input.stage = 'outpaint'
+      input.stage = 'inpaint'
     },
   ],
   [
@@ -365,6 +365,87 @@ test('valid NoobAI VAE encoder CLI input refuses an old worker before original f
     },
     {
       ready: { ...noiseReady, workerVersion: '0.13.0' },
+      installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+    },
+  )
+})
+function encoderOutpaintInput(input) {
+  encoderInput(input)
+  componentCommonSource(input)
+  input.stage = 'outpaint'
+  input.lama = {
+    path: '/unread-original/big-lama.pt',
+    sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+    byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+  }
+}
+for (const [name, mutate] of [
+  [
+    'missing LaMa',
+    (input) => {
+      delete input.lama
+    },
+  ],
+  [
+    'wrong LaMa hash',
+    (input) => {
+      input.lama.sha256 = 'e'.repeat(64)
+    },
+  ],
+  [
+    'wrong LaMa size',
+    (input) => {
+      input.lama.byteSize++
+    },
+  ],
+  [
+    'relative LaMa source',
+    (input) => {
+      input.lama.path = 'big-lama.pt'
+    },
+  ],
+  [
+    'undeclared LaMa field',
+    (input) => {
+      input.lama.ignored = true
+    },
+  ],
+]) {
+  test(`NoobAI outpaint encoder CLI rejects ${name} before source reads or native startup`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        encoderOutpaintInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+        assert.equal(report.status, 'failed')
+        assert.deepEqual(report.models, [])
+        assert.equal(report.nativeProcessPid, undefined)
+      },
+      {
+        ready: noiseReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+}
+test('valid NoobAI outpaint encoder CLI refuses missing outpaint capability before source reads', async () => {
+  await fixture(
+    async ({ input, run, appData }) => {
+      encoderOutpaintInput(input)
+      const refusal = await run({ resume: true })
+      assert.match(refusal.stderr, /requires illustrious-outpaint before source copy/)
+      assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    },
+    {
+      ready: {
+        ...noiseReady,
+        capabilities: noiseReady.capabilities.filter((v) => v !== 'illustrious-outpaint'),
+      },
       installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
     },
   )
