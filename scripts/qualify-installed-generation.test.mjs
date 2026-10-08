@@ -283,6 +283,118 @@ function encoderInput(input) {
     },
   }
 }
+function polarityInput(input) {
+  encoderInput(input)
+  input.profile = 'noobai-embedding-polarity'
+}
+for (const [name, mutate] of [
+  [
+    'img2img stage',
+    (input) => {
+      input.stage = 'img2img'
+    },
+  ],
+  [
+    'outpaint stage',
+    (input) => {
+      input.stage = 'outpaint'
+    },
+  ],
+  [
+    'lifecycle stage',
+    (input) => {
+      input.stage = 'lifecycle'
+    },
+  ],
+  [
+    'inpaint stage',
+    (input) => {
+      input.stage = 'inpaint'
+    },
+  ],
+  [
+    'missing retained ninth descriptor',
+    (input) => {
+      delete input.externalVaeEncoderControl
+    },
+  ],
+  [
+    'mixed decoder transform',
+    (input) => {
+      input.externalVaeEncoderControl.origin.decoderBiasAdd = 0.5
+    },
+  ],
+  [
+    'duplicate native identity',
+    (input) => {
+      input.externalVaeEncoderControl.sha256 = input.externalVaeNative.sha256
+    },
+  ],
+  [
+    'undeclared same-sign selections',
+    (input) => {
+      input.selections = ['fullstack', 'fullstack']
+    },
+  ],
+]) {
+  test(`NoobAI embedding polarity CLI rejects ${name} before source reads or native startup`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        polarityInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+        assert.equal(report.status, 'failed')
+        assert.deepEqual(report.models, [])
+        assert.equal(report.nativeProcessPid, undefined)
+        assert.equal(report.embeddingPolarityOracleInput, undefined)
+      },
+      {
+        ready: noiseReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+}
+for (const [name, ready, expected] of [
+  ['old worker', { ...noiseReady, workerVersion: '0.13.0' }, /worker0\.14 before source copy/],
+  [
+    'missing embedding capability',
+    {
+      ...noiseReady,
+      capabilities: noiseReady.capabilities.filter((value) => value !== 'illustrious-embeddings'),
+    },
+    /requires illustrious-embeddings before source copy/,
+  ],
+]) {
+  test(`valid NoobAI embedding polarity CLI refuses ${name} before original files or ML`, async () => {
+    await fixture(
+      async ({ input, run, appData }) => {
+        polarityInput(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, expected)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+      },
+      { ready },
+    )
+  })
+}
+test('valid NoobAI embedding polarity CLI requires read-only resume before original files or catalog mutation', async () => {
+  await fixture(
+    async ({ input, run, appData }) => {
+      polarityInput(input)
+      const refusal = await run()
+      assert.match(refusal.stderr, /must reuse the original canonical runtime\/catalog/)
+      assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    },
+    { ready: noiseReady },
+  )
+})
 for (const [name, mutate] of [
   [
     'inpaint stage',
@@ -827,7 +939,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components or noobai-vae-encoder/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder or noobai-embedding-polarity/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))

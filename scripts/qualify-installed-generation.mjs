@@ -95,6 +95,16 @@ import {
   encoderPublicationIds,
   validateNoobaiVaeEncoderFixture,
 } from './noobai-vae-encoder-qualification.mjs'
+import {
+  assertNoobaiEmbeddingPolarityCatalog,
+  assertNoobaiEmbeddingPolarityCatalogPreserved,
+  assertNoobaiEmbeddingPolarityFrozen,
+  assertNoobaiEmbeddingPolarityOracle,
+  assertNoobaiEmbeddingPolarityPixels,
+  assertNoobaiEmbeddingPolarityStageOutcome,
+  normalizeNoobaiEmbeddingPolarityInputs,
+  validateNoobaiEmbeddingPolarityFixture,
+} from './noobai-embedding-polarity-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -113,7 +123,9 @@ const embeddingsProfile = fixture.profile === 'embeddings'
 const vPredictionProfile = fixture.profile === 'v-prediction'
 const noiseProfile = fixture.profile === 'noise-profile'
 const noobaiEncoderProfile = fixture.profile === 'noobai-vae-encoder'
-const noobaiComponentsProfile = fixture.profile === 'noobai-components' || noobaiEncoderProfile
+const noobaiPolarityProfile = fixture.profile === 'noobai-embedding-polarity'
+const noobaiNineVersionProfile = noobaiEncoderProfile || noobaiPolarityProfile
+const noobaiComponentsProfile = fixture.profile === 'noobai-components' || noobaiNineVersionProfile
 const illustriousOnlyProfile =
   cfgRescaleProfile ||
   vaePrecisionProfile ||
@@ -126,7 +138,7 @@ const externalVaeKeys = [
   'externalVaeLdm',
   'externalVaeNative',
   'externalVaeControl',
-  ...(noobaiEncoderProfile ? ['externalVaeEncoderControl'] : []),
+  ...(noobaiNineVersionProfile ? ['externalVaeEncoderControl'] : []),
 ]
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
 const componentModelKeys = [...noiseModelKeys, ...embeddingKeys, ...externalVaeKeys]
@@ -241,7 +253,13 @@ if (noobaiEncoderProfile) {
   report.boundary.preconditions =
     'Reuses all eight exact versions in the canonical five-resource worker0.14 catalog. Only one explicitly artificial encoder-output-bias VAE version may be added. Independent source preparation proves all247 neighboring tensors, quantization, decoder and pinned config unchanged; actual native CPU posterior and identical-latent decode checks are separate evidence.'
   report.boundary.limits =
-    'One exact EPS or v_prediction objective and one txt2img/img2img stage per invocation; two complete finite UI Add/Save/readback/reopen/comparison cycles. TXT encoder-only control must preserve decoded pixels; common-source strength0.5 IMG must change them with other inputs matched. No new Cancel/refusal, trained outpaint encoder, arbitrary encoder layer/format, subjective quality, public delivery, Anima, dynamic or release claim.'
+    'One exact EPS or v_prediction objective and one txt2img/img2img/outpaint stage per invocation; two complete finite UI Add/Save/readback/reopen/comparison cycles. TXT encoder-only control must preserve decoded pixels; common-source strength0.5 IMG must change them with other inputs matched. Normal OUT additionally requires exact alpha/protected source and corresponding visible generated/saved merged RGB differences. No new Cancel/refusal, arbitrary encoder layer/format, subjective quality, public delivery, Anima, dynamic or release claim.'
+}
+if (noobaiPolarityProfile) {
+  report.boundary.preconditions =
+    'Read-only reuse of all nine exact versions in the canonical five-resource installed worker0.14 catalog; no model file or version publication. Existing trained/zero paired embeddings share the same literal; exact native VAE/FP32 and signed LoRA -0.5 remain unchanged. The unused ninth encoder-control descriptor is retained as a strict catalog dependency.'
+  report.boundary.limits =
+    'One exact EPS or v_prediction objective and TXT-only stage; exactly positive-zero (Z/T) and negative-zero (T/Z) complete finite UI Add/Save/readback/reopen/comparison cycles. Identical literal prompts and every neighboring input stay matched. Pixel inequality is supplemental; a separate bounded installed native oracle must independently verify all four signed hidden/pooled tensors and actual pipeline handoff using T/T,T/Z,Z/T,Z/Z assignments. Those native assignments are not additional image completions. No Cancel/refusal, common-source export, arbitrary embedding formats/quality, Invoke parity, multiple-LoRA order, Anima, dynamic, public delivery or release claim.'
 }
 async function hashFile(file) {
   const hash = createHash('sha256')
@@ -850,8 +868,11 @@ async function installArtifact(repository, value, id, dependencies, publication 
     'VAE Precision qualification must reuse existing exact managed resources without copies.',
   )
   assert.ok(
-    !noobaiEncoderProfile || value === fixture.externalVaeEncoderControl,
-    'VAE encoder qualification must reuse all eight existing managed files; only its ninth declared control may be added.',
+    !noobaiNineVersionProfile ||
+      (!noobaiPolarityProfile && value === fixture.externalVaeEncoderControl),
+    noobaiPolarityProfile
+      ? 'Embedding polarity qualification must reuse all nine existing managed files without publication.'
+      : 'VAE encoder qualification must reuse all eight existing managed files; only its ninth declared control may be added.',
   )
   assert.ok(
     !externalVaeProfile || publication !== null,
@@ -2393,11 +2414,14 @@ function componentPublication(key) {
   return key === 'externalVaeEncoderControl' ? encoderPublicationIds : componentPublicationIds[key]
 }
 function assertCapturedComponentFrozen(frozen, choice, mode = fixture.stage) {
-  if (noobaiEncoderProfile)
+  if (noobaiPolarityProfile)
+    assertNoobaiEmbeddingPolarityFrozen(frozen, { ...fixture, stage: mode }, choice)
+  else if (noobaiEncoderProfile)
     assertNoobaiVaeEncoderFrozen(frozen, { ...fixture, stage: mode }, choice)
   else assertNoobaiComponentFrozen(frozen, fixture, choice)
 }
 function assertCapturedComponentCatalog(catalog, options = {}) {
+  if (noobaiPolarityProfile) return assertNoobaiEmbeddingPolarityCatalog(catalog, fixture)
   if (noobaiEncoderProfile) return assertNoobaiVaeEncoderCatalog(catalog, fixture, options)
   return assertNoobaiComponentCatalog(catalog, fixture, options)
 }
@@ -3516,10 +3540,12 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   let normalizedInputs = null
   if (qualification) {
     normalizedInputs = componentQualification
-      ? normalizeNoobaiComponentInputs(
-          frozen,
-          noobaiEncoderProfile ? 'vae-control' : qualification.choice,
-        )
+      ? noobaiPolarityProfile
+        ? normalizeNoobaiEmbeddingPolarityInputs(frozen, fixture, qualification.choice)
+        : normalizeNoobaiComponentInputs(
+            frozen,
+            noobaiEncoderProfile ? 'vae-control' : qualification.choice,
+          )
       : embeddingQualification
         ? normalizeEmbeddingInputs(frozen)
         : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
@@ -5520,6 +5546,150 @@ async function verifyNoobaiCommonSource(commonSource, execution) {
   }
   return bytes
 }
+async function independentEmbeddingPolarityOracle(generations) {
+  await expect.poll(liveInstalledInferenceChildren).toEqual([])
+  await ensureQualificationResourceLimits('before independent installed embedding polarity oracle')
+  await assertUpgradeBounds()
+  const environmentRoot = path.dirname(path.dirname(pointer.pythonExecutable))
+  const configDir = path.join(environmentRoot, 'resources', 'sdxl-config')
+  await canonicalDirectory(environmentRoot)
+  await canonicalDirectory(configDir)
+  const packageRoots = []
+  for (const name of await readdir(path.join(environmentRoot, 'lib'))) {
+    if (!/^python\d+\.\d+$/.test(name)) continue
+    const candidate = path.join(environmentRoot, 'lib', name, 'site-packages', 'imagegen_worker')
+    const entry = await lstat(candidate).catch((error) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (entry) {
+      await canonicalDirectory(candidate)
+      packageRoots.push(candidate)
+    }
+  }
+  assert.equal(packageRoots.length, 1, 'Exactly one installed worker package must own the oracle.')
+  const workerRootPath = packageRoots[0]
+  const workerSourceFiles = {}
+  const collectPayload = async (directory) => {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )
+    for (const entry of entries) {
+      if (entry.name === '__pycache__' || entry.name.endsWith('.pyc')) continue
+      assert.equal(
+        entry.isSymbolicLink(),
+        false,
+        'Installed oracle payload must not contain aliases.',
+      )
+      const file = path.join(directory, entry.name)
+      if (entry.isDirectory()) await collectPayload(file)
+      else {
+        assert.ok(entry.isFile(), 'Installed oracle payload must contain only regular files.')
+        const stat = await lstat(file)
+        workerSourceFiles[path.relative(workerRootPath, file)] = {
+          sha256: await hashFile(file),
+          byteSize: stat.size,
+        }
+      }
+    }
+  }
+  await collectPayload(workerRootPath)
+  assert.equal(Object.keys(workerSourceFiles).length, 43)
+  const descriptor = (key) => ({
+    path: fixture[key].installed.managedPath,
+    sha256: fixture[key].sha256,
+    byteSize: fixture[key].byteSize,
+  })
+  const cases = []
+  for (const generation of generations) {
+    const frozen = generation.qualification.frozen
+    const job = structuredClone(frozen.workerJob)
+    const targetPath = generation.target.path
+    assert.ok(path.isAbsolute(targetPath) && path.normalize(targetPath) === targetPath)
+    const stagingRoot = path.dirname(targetPath)
+    assert.equal(
+      stagingRoot,
+      path.join(fixture.appData, 'generation-inputs', generation.queueItemId),
+    )
+    assert.equal(path.basename(targetPath), 'target.png')
+    assert.equal(await realpath(targetPath), targetPath)
+    const targetEntry = await lstat(targetPath)
+    assert.ok(targetEntry.isFile() && !targetEntry.isSymbolicLink())
+    assert.equal(targetEntry.size, job.target.byteSize)
+    assert.equal(generation.target.sha256, job.target.sha256)
+    assert.equal(generation.target.sha256, frozen.context.target.sha256)
+    assert.equal(sha256(await readFile(targetPath)), generation.target.sha256)
+    const pngPath = path.join(stagingRoot, 'result.png')
+    assert.ok(path.isAbsolute(pngPath))
+    assert.equal(path.dirname(pngPath), stagingRoot)
+    assert.notEqual(pngPath, targetPath)
+    // Main rehydrates these transient owners at dispatch. The oracle uses the actual retained
+    // queue target and an unused output owner; its handoff sentinel stops before any output write.
+    job.target.path = targetPath
+    job.output = { stagingRoot, pngPath }
+    cases.push({
+      choice: generation.qualification.choice,
+      // This queue item ID correlates the oracle with a completed UI job; it is not the original
+      // transient wire dispatch request ID. Semantic frozen inputs remain unchanged.
+      requestId: generation.queueItemId,
+      job,
+    })
+  }
+  const input = {
+    schemaVersion: 1,
+    workerRootPath,
+    workerSourceFiles,
+    configDir,
+    sources: {
+      checkpoint: descriptor(report.componentFixture.modelKey),
+      vae: descriptor('externalVaeNative'),
+      lora: descriptor('illustriousLora'),
+      embeddingTrained: descriptor('embeddingTrained'),
+      embeddingControl: descriptor('embeddingControl'),
+    },
+    cases,
+  }
+  report.embeddingPolarityOracleInput = input
+  report.embeddingPolarityOracleBounds = { timeoutMs: 300_000, maxBufferBytes: 256 * 1024 }
+  await checkpointEvidence()
+  let result
+  try {
+    const output = execFileSync(
+      pointer.pythonExecutable,
+      ['-I', path.resolve('scripts/noobai-embedding-polarity-oracle.py')],
+      {
+        input: JSON.stringify(input),
+        cwd: path.join(fixture.appData, 'runtime'),
+        env: {
+          LANG: 'C.UTF-8',
+          LC_ALL: 'C.UTF-8',
+          HF_HUB_OFFLINE: '1',
+          TRANSFORMERS_OFFLINE: '1',
+          TOKENIZERS_PARALLELISM: 'false',
+          CUDA_VISIBLE_DEVICES: process.env.CUDA_VISIBLE_DEVICES ?? '0',
+          OMP_NUM_THREADS: '1',
+          MKL_NUM_THREADS: '1',
+          OPENBLAS_NUM_THREADS: '1',
+        },
+        encoding: 'utf8',
+        timeout: 300_000,
+        killSignal: 'SIGKILL',
+        maxBuffer: 256 * 1024,
+      },
+    )
+    result = JSON.parse(output)
+  } finally {
+    await expect.poll(liveInstalledInferenceChildren).toEqual([])
+    await ensureQualificationResourceLimits('after independent installed embedding polarity oracle')
+  }
+  assertNoobaiEmbeddingPolarityOracle(result, input)
+  report.embeddingPolarityOracle = result
+  await check(
+    'Installed signed hidden/pooled conditioning and actual pipeline handoff match independent native trained/zero polarity references',
+    result,
+  )
+  return result
+}
 async function qualifyNoobaiComponents() {
   const plan = report.componentFixture
   assertNoiseReady(report.installedReady)
@@ -5606,19 +5776,21 @@ async function qualifyNoobaiComponents() {
     await window.getByRole('tab', { name: 'Home', exact: true }).click()
   }
   if (fixture.stage !== 'lifecycle') {
-    report.componentNumerics = (
-      noobaiEncoderProfile ? assertNoobaiVaeEncoderPixels : assertNoobaiComponentPixels
-    )(
-      generations.map(({ componentPixels }) => componentPixels),
-      plan.mode,
-    )
+    const pixels = generations.map(({ componentPixels }) => componentPixels)
+    report.componentNumerics = noobaiPolarityProfile
+      ? assertNoobaiEmbeddingPolarityPixels(pixels, fixture)
+      : (noobaiEncoderProfile ? assertNoobaiVaeEncoderPixels : assertNoobaiComponentPixels)(
+          pixels,
+          plan.mode,
+        )
     for (const generation of generations.slice(1))
       assert.ok(
         (await readFile(generation.target.path)).equals(await readFile(generations[0].target.path)),
         'Every matched component case must retain exactly the same materialized target bytes.',
       )
   }
-  if (fixture.stage === 'txt2img') {
+  if (noobaiPolarityProfile) await independentEmbeddingPolarityOracle(generations)
+  if (fixture.stage === 'txt2img' && !noobaiPolarityProfile) {
     const fullstack = generations[0]
     const saved = await readIgsPackage(fullstack.packagePath)
     const layer = saved.project.layers.find(
@@ -5641,7 +5813,7 @@ async function qualifyNoobaiComponents() {
       objective: fixture.objective,
     }
     await verifyNoobaiCommonSource(report.componentCommonSource, plan.execution)
-  } else {
+  } else if (fixture.stage !== 'txt2img') {
     assert.equal(await hashFile(fixture.commonSource.path), fixture.commonSource.sha256)
     assert.equal(
       await hashFile(fixture.commonSource.sourcePackagePath),
@@ -5686,8 +5858,15 @@ async function qualifyNoobaiComponents() {
     matchedPixelControlCases: plan.matchedPixelControlCases,
     fullMvpClaim: false,
     combinedMatrixClaim: false,
+    ...(noobaiPolarityProfile
+      ? {
+          directionalNativeAssignments: report.embeddingPolarityOracle.nativeAssignments,
+          directionalOraclePassed: report.embeddingPolarityOracle.status === 'passed',
+        }
+      : {}),
   }
-  if (noobaiEncoderProfile) assertNoobaiVaeEncoderStageOutcome(report.componentSummary)
+  if (noobaiPolarityProfile) assertNoobaiEmbeddingPolarityStageOutcome(report.componentSummary)
+  else if (noobaiEncoderProfile) assertNoobaiVaeEncoderStageOutcome(report.componentSummary)
   else assertNoobaiComponentStageOutcome(report.componentSummary)
   await check(
     'Exact combined component stage completes through real UI Add/Save/reopen with independent tuple and pixel controls',
@@ -6192,7 +6371,7 @@ try {
       vPredictionProfile ||
       noiseProfile ||
       noobaiComponentsProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components or noobai-vae-encoder.',
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder or noobai-embedding-polarity.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -6219,7 +6398,11 @@ try {
   if (noobaiComponentsProfile) {
     const installed = JSON.parse(await readFile(provision.report, 'utf8'))
     report.componentFixture = (
-      noobaiEncoderProfile ? validateNoobaiVaeEncoderFixture : validateNoobaiComponentsFixture
+      noobaiPolarityProfile
+        ? validateNoobaiEmbeddingPolarityFixture
+        : noobaiEncoderProfile
+          ? validateNoobaiVaeEncoderFixture
+          : validateNoobaiComponentsFixture
     )(fixture, installed.ready)
     assert.equal(
       resume,
@@ -6473,10 +6656,20 @@ try {
                 componentQualification: await hashFile(
                   'scripts/noobai-components-qualification.mjs',
                 ),
-                ...(noobaiEncoderProfile
+                ...(noobaiNineVersionProfile
                   ? {
                       encoderQualification: await hashFile(
                         'scripts/noobai-vae-encoder-qualification.mjs',
+                      ),
+                    }
+                  : {}),
+                ...(noobaiPolarityProfile
+                  ? {
+                      embeddingPolarityQualification: await hashFile(
+                        'scripts/noobai-embedding-polarity-qualification.mjs',
+                      ),
+                      embeddingPolarityOracle: await hashFile(
+                        'scripts/noobai-embedding-polarity-oracle.py',
                       ),
                     }
                   : {}),
@@ -6535,23 +6728,23 @@ try {
       preservedNoisePriorCatalog = structuredClone(catalog)
     }
     if (noobaiComponentsProfile) {
-      assert.equal(hashes.size, noobaiEncoderProfile ? 9 : 8)
+      assert.equal(hashes.size, noobaiNineVersionProfile ? 9 : 8)
       assertCapturedComponentCatalog(catalog, { adopting: true })
       const baseHashes = new Set(noiseModelKeys.map((key) => fixture[key].sha256))
       preservedComponentPriorCatalog = structuredClone(
-        noobaiEncoderProfile
+        noobaiNineVersionProfile
           ? catalog
           : catalog.filter(({ versions }) =>
               versions.some(({ file }) => baseHashes.has(file.sha256)),
             ),
       )
-      assert.equal(preservedComponentPriorCatalog.length, noobaiEncoderProfile ? 5 : 3)
+      assert.equal(preservedComponentPriorCatalog.length, noobaiNineVersionProfile ? 5 : 3)
       report.catalogReuse = {
         initialResourceCount: catalog.length,
-        originalResourceCount: noobaiEncoderProfile ? 5 : 3,
-        originalVersionCount: noobaiEncoderProfile ? 8 : 3,
-        declaredIdentityCount: noobaiEncoderProfile ? 9 : 8,
-        maximumAdditionalManagedFiles: noobaiEncoderProfile ? 1 : 5,
+        originalResourceCount: noobaiNineVersionProfile ? 5 : 3,
+        originalVersionCount: noobaiPolarityProfile ? 9 : noobaiEncoderProfile ? 8 : 3,
+        declaredIdentityCount: noobaiNineVersionProfile ? 9 : 8,
+        maximumAdditionalManagedFiles: noobaiPolarityProfile ? 0 : noobaiEncoderProfile ? 1 : 5,
       }
     }
     if (vaePrecisionProfile) {
@@ -6850,7 +7043,7 @@ try {
     assertCapturedComponentCatalog(await repository.listInstalled())
     Object.assign(report.catalogReuse, {
       finalResourceCount: 5,
-      finalVersionCount: noobaiEncoderProfile ? 9 : 8,
+      finalVersionCount: noobaiNineVersionProfile ? 9 : 8,
       newManagedFiles: report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
       ).length,
@@ -7093,7 +7286,13 @@ try {
             delete version[key]
       return value
     }
-    if (noobaiEncoderProfile)
+    if (noobaiPolarityProfile)
+      report.catalogReuse.publicationTimestamps = assertNoobaiEmbeddingPolarityCatalogPreserved(
+        final,
+        preservedComponentPriorCatalog,
+        fixture,
+      )
+    else if (noobaiEncoderProfile)
       report.catalogReuse.publicationTimestamps = assertNoobaiVaeEncoderCatalogPreserved(
         final,
         preservedComponentPriorCatalog,

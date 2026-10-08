@@ -1,5 +1,6 @@
 node_modules/
 dist/
+scripts/__pycache__/
 .idea/
 docs/prototypes/screenshots/
 docs/prototype-app/dist/

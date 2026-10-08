@@ -1614,9 +1614,23 @@ decode проверяет alpha/protected source/corresponding visible/merged pi
 Main/worker/nativeData idle, restored43/original inode/mode/mtime/bytes, backup
 отсутствует. Прежние 8 normal +2 mutation +2 fresh TXT/IMG cases остаются отдельными. All-layer/formats/quality/Invoke parity, public
 delivery и release этим normal срезом не квалифицируются.
-Следующие component gates — embedding polarity swap и multiple-LoRA stack/order.
-После них идут trained Anima regressions на
-worker0.14, затем dynamic multi-job batches. NoobAI не становится
+
+Текущий installed [embedding polarity gate](../engineering/phase-2c-noobai-embedding-polarity-research.md)
+прошёл четыре finite normal EPS/V TXT UI cycles/четыре admissions: Z/T и T/Z
+на objective, один literal в каждом sign, exact trained/zero versions, LoRA−0.5,
+native external VAE/FP32,256×256/три steps/seed0. Strict catalog5/9 сохраняется
+без публикации managed files. Три успешных independent native oracles проверили12
+direct T/T,T/Z,Z/T,Z/Z hidden/pooled/handoff assignments с branch isolation;
+это не generated jobs. Oracle использует rehydrated frozen queue jobs и queue
+ID для correlation; exact live dispatch проверяют настоящие UI cycles.
+Installed EPS sign-swap дал causal directional RED после двух finite UI cycles
+при unequal pixels; physical exit/restored43/original inode/mode/mtime/bytes/
+backup absence подтверждены, fresh EPS pair2 GREEN. Final8 saved packages/Pillow
+pixels/SQLite completed rows/receipt bytes/exact signed refs/settings/frozen0-
+current37 проверены; mutant pixels равны противоположным normal choices, fresh —
+своим. Main/worker idle подтверждён, прежние counts остаются отдельными.
+Следующий component gate — multiple-LoRA stack/order, затем trained Anima
+regressions на worker0.14 и dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1757,10 +1771,24 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    protected source и corresponding visible/merged pixels. Main/worker/nativeData
    idle, restored43/original inode/mode/mtime/bytes, backup отсутствует.
    Исторические 8 normal +2 mutation +2 fresh TXT/IMG counts не расширяются.
-   All-layer/formats compatibility, качество/Invoke parity, polarity swap,
-   multiple-adapter order, trained Anima worker0.14 regression, dynamic batches
-   и release остаются отдельными gates; author-resolution results предыдущего
-   checkpoint не расширяются этим трёхшаговым component срезом.
+   Отдельный [installed embedding polarity gate](../engineering/phase-2c-noobai-embedding-polarity-research.md)
+   прошёл четыре finite normal EPS/V TXT UI cycles/четыре admissions (Z/T,T/Z на
+   objective) при256×256/трёх steps/seed0, exact one-literal signed embeddings,
+   LoRA−0.5 и native external VAE/FP32; catalog5/9 сохранён без публикации файлов.
+   Три успешных native oracles независимо проверили12 direct hidden/pooled/handoff
+   assignments и branch isolation без generated jobs. Installed EPS resource-sign
+   swap завершил два finite UI cycles до directional RED при сохранённой pixel
+   inequality; physical exit/restored43/original inode/mode/mtime/bytes/backup
+   absence подтверждены, fresh EPS pair2 GREEN. Final8 saved packages/Pillow
+   pixels/SQLite completed rows/receipt bytes/exact signed refs/settings/frozen0-
+   current37 verified: mutant pixels равны противоположным normal choices, fresh —
+   своим. Main/worker idle подтверждён. Historical counts не меняются.
+   Следующий component gate — multiple-LoRA stack/order, затем trained Anima
+   worker0.14 regression и dynamic batches. All-layer/formats compatibility,
+   качество/Invoke parity, public delivery и release открыты; one-literal TXT
+   direction не квалифицирует arbitrary embedding formats/syntax или IMG/OUT
+   polarity. Author-resolution results предыдущего checkpoint не расширяются
+   этим трёхшаговым component срезом.
 
 **Выходная проверка шага 2C:** независимые oracles подтверждают prediction
 interpretation, zero-SNR transform, фактические timestep/sigma sequences и
