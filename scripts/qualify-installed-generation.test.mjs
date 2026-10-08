@@ -264,6 +264,111 @@ function componentCommonSource(input, objective = input.objective) {
     objective,
   }
 }
+function encoderInput(input) {
+  componentInput(input)
+  input.profile = 'noobai-vae-encoder'
+  input.externalVaeEncoderControl = {
+    path: '/unread-original/encoder-only.safetensors',
+    sha256: '9c382bfbbe48cd6f28fb61724087369b013ec6972ef1d298fee8ecf0544b1f9e',
+    byteSize: 167335502,
+    type: 'vae',
+    family: 'illustrious',
+    name: input.externalVaeNative.name,
+    versionName: 'Encoder-only control',
+    origin: {
+      kind: 'artificial-encoder-control',
+      sourceVaeSha256: input.externalVaeNative.sha256,
+      format: 'diffusers',
+      encoderOutputBiasAdd: 0.5,
+    },
+  }
+}
+for (const [name, mutate] of [
+  [
+    'outpaint stage',
+    (input) => {
+      input.stage = 'outpaint'
+    },
+  ],
+  [
+    'lifecycle stage',
+    (input) => {
+      input.stage = 'lifecycle'
+    },
+  ],
+  [
+    'mixed decoder transform',
+    (input) => {
+      input.externalVaeEncoderControl.origin.decoderBiasAdd = 0.5
+    },
+  ],
+  [
+    'wrong native parent',
+    (input) => {
+      input.externalVaeEncoderControl.origin.sourceVaeSha256 = input.externalVaeLdm.sha256
+    },
+  ],
+  [
+    'duplicate native identity',
+    (input) => {
+      input.externalVaeEncoderControl.sha256 = input.externalVaeNative.sha256
+    },
+  ],
+  [
+    'relative source',
+    (input) => {
+      input.externalVaeEncoderControl.path = 'encoder.safetensors'
+    },
+  ],
+  [
+    'wrong family',
+    (input) => {
+      input.externalVaeEncoderControl.family = 'anima'
+    },
+  ],
+  [
+    'undeclared source',
+    (input) => {
+      input.extraVae = input.externalVaeEncoderControl
+    },
+  ],
+]) {
+  test(`NoobAI VAE encoder CLI rejects ${name} before source reads or catalog mutation`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        encoderInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+        assert.equal(report.status, 'failed')
+        assert.deepEqual(report.models, [])
+        assert.equal(report.nativeProcessPid, undefined)
+      },
+      {
+        ready: noiseReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+}
+test('valid NoobAI VAE encoder CLI input refuses an old worker before original files or ML', async () => {
+  await fixture(
+    async ({ input, run, appData }) => {
+      encoderInput(input)
+      const refusal = await run({ resume: true })
+      assert.match(refusal.stderr, /worker0\.14 before source copy/)
+      assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    },
+    {
+      ready: { ...noiseReady, workerVersion: '0.13.0' },
+      installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+    },
+  )
+})
 for (const [name, mutate, expected] of [
   [
     'unknown stage',
@@ -641,7 +746,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile or noobai-components/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components or noobai-vae-encoder/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))

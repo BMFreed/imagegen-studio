@@ -89,6 +89,10 @@ Decoder-only control proves selected decoder effect; independent encoder
 ablation, multiple-adapter order and polarity-swap numerical proof are distinct
 gates and must not be inferred from pixel inequality alone.
 
+The subsequent [bounded encoder checkpoint](./phase-2c-noobai-vae-encoder-research.md)
+separately exercises selected encoder weights in txt2img/nonzero img2img; it does
+not broaden this decoder-control matrix or its historical mutation coverage.
+
 Two separate img2img lifecycle runs each require one completed restored Retry,
 two admissions, one genuinely canceled original and three preserving missing
 component refusals. Totals are two completions/four admissions/two Cancel/six
@@ -338,6 +342,21 @@ these component omissions for the exercised epsilon txt2img inputs. They do
 not extend installed mutation coverage to v-prediction, image-based modes or an
 independent VAE encoder ablation.
 
+The subsequent [bounded encoder checkpoint](./phase-2c-noobai-vae-encoder-research.md)
+passed eight EPS/V txt2img/strength0.5 img2img full finite UI cycles at256×256/three
+requested steps. Its artificial native control changes only the eight
+`encoder.conv_out.bias` values by the declared0.5; decoder/config and other
+tensors remain exact. Matched TXT pixels are equal and IMG pixels differ.
+The strict five-resource/nine-version catalog preserves the original eight
+versions; source derivation is a local precondition, separate from public delivery.
+Actual current draft37 remains unchanged by completion/Add/Save/reopen while
+immutable provenance retains frozen0 and exact selected VAE refs. One installed
+EPS-img2img encode-zero mutant completed two full finite cycles before the intended
+pixel RED; physical exit and restoration of all43 source files with original
+inode/mode/mtime are confirmed. Its fresh restored pair passed two finite GREEN cycles with native physical exit. Outpaint
+encoder, all-layer/format compatibility, quality/Invoke parity, polarity swap,
+multiple-LoRA order, Anima worker0.14, dynamic and release remain outside this proof.
+
 The fresh restored `native-restored-eps-txt2img` run passed all six finite full
 cycles and its matched controls, with native physical exit confirmed.
 `installed-mutation-results.json` is now `state: completed`. This restored
@@ -390,6 +409,6 @@ The final inventory records 21,616,783,360 allocated bytes under the artifact
 root (about 20.13 GiB), including 74,485,760 bytes of compact evidence and
 21,542,289,408 bytes in the one shared pool. Both soft budgets are satisfied.
 The pool, exact component sources, saved source packages, frozen input
-dependencies and raw RED/GREEN evidence remain pinned for independent encoder,
+dependencies and raw RED/GREEN evidence remain pinned for outpaint encoder and encoder expansion,
 polarity/order, Anima and dynamic follow-up; no additional runtime or checkpoint
 copy was created. Both run and shared-pool lifecycle records were updated.

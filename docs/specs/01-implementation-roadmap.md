@@ -1590,9 +1590,16 @@ finite Generate/Add/Save/readback/reopen cases каждая. Исходник в
 native physical exit. Final source evidence подтверждает 43 byte-exact worker
 source files, idle Main/worker и все пять restored mutation journals без backup
 с original inode/mode/mtime.
-Independent VAE encoder, polarity swap и multiple-adapter order остаются открытыми;
-следующий integration gate 2C — новые trained Anima regressions на worker0.14,
-затем dynamic multi-job batches. NoobAI не становится
+Последующий [bounded encoder checkpoint](../engineering/phase-2c-noobai-vae-encoder-research.md)
+завершил 8 EPS/V TXT/strength0.5 IMG full finite cycles: matched TXT pixels equal,
+IMG different при encoder-only bias control и unchanged decoder/config.
+Catalog5/9 сохраняет исходные восемь versions; local derived sources не доказывают
+public delivery. EPS-img2img encode-zero mutation дала causal RED после двух
+finite cycles; physical exit/restored43/original inode/mode/mtime подтверждены,
+fresh restored pair прошла два finite GREEN cycles с physical exit.
+Следующие component gates — independent outpaint encoder, polarity swap и
+multiple-adapter stack/order. После них идут trained Anima regressions на
+worker0.14, затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1709,7 +1716,15 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    source восстановлен между прогонами. Fresh restored EPS-txt2img normal прошёл
    шесть finite cycles с native physical exit; final source evidence подтверждает
    все 43 byte-exact worker source files, idle Main/worker и пять restored journals
-   без backup с original inode/mode/mtime. Independent VAE encoder, polarity swap,
+   без backup с original inode/mode/mtime. Следующий
+   [bounded encoder checkpoint](../engineering/phase-2c-noobai-vae-encoder-research.md)
+   завершил 8 EPS/V TXT/strength0.5 IMG full cycles при256×256/трёх шагах:
+   decoder/config unchanged, TXT equal/IMG different, exact5/9 catalog,
+   Add/Save/readback/reopen/comparison и actual current37/frozen0 provenance.
+   Один installed EPS-img2img encode-zero mutant завершил два finite cycles
+   до intended pixel RED и восстановлен с physical exit/restored43/original
+   inode/mode/mtime. Fresh restored pair прошла два finite GREEN cycles с physical exit. Outpaint encoder,
+   all-layer/formats compatibility, качество/Invoke parity, polarity swap,
    multiple-adapter order, trained Anima worker0.14 regression, dynamic batches
    и release остаются отдельными gates; author-resolution results предыдущего
    checkpoint не расширяются этим трёхшаговым component срезом.

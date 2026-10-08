@@ -131,7 +131,16 @@ worker source files byte-exact, idle Main/worker and all five mutation journals
 restored without backups, preserving original inode/mode/mtime. The earlier
 post-load `disable_lora()` attempt is excluded as
 noncausal; the exact source of its pixel difference remains unproven.
-Independent VAE encoder, polarity swap, multiple-adapter order,
+The subsequent [bounded encoder checkpoint](./phase-2c-noobai-vae-encoder-research.md)
+passed eight EPS/V txt2img/strength0.5 img2img full finite UI cycles: TXT equal/IMG
+different with an encoder-only bias control and unchanged decoder/config.
+Catalog5/9 preserves the original eight versions, exact frozen0 provenance and
+actual current draft37 through Add/Save/readback/reopen/comparison. One installed
+EPS-img2img encode-zero mutant completed two finite cycles before causal pixel
+RED, with physical exit/restored43/original inode/mode/mtime confirmed; fresh
+restored pair passed two finite GREEN cycles with native physical exit. This is separate from this source/Prepare evidence.
+Outpaint encoder, all-layer/formats compatibility, quality/Invoke parity,
+polarity swap, multiple-adapter order,
 trained Anima regression on worker0.14, dynamic batches and release remain open.
 No UI redesign, new worker/protocol field, NoobAI family, standalone SDXL
 support, public network delivery, engine Install/Repair or image-quality claim

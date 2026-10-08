@@ -86,6 +86,15 @@ import {
   componentPublicationIds,
   validateNoobaiComponentsFixture,
 } from './noobai-components-qualification.mjs'
+import {
+  assertNoobaiVaeEncoderCatalog,
+  assertNoobaiVaeEncoderCatalogPreserved,
+  assertNoobaiVaeEncoderFrozen,
+  assertNoobaiVaeEncoderPixels,
+  assertNoobaiVaeEncoderStageOutcome,
+  encoderPublicationIds,
+  validateNoobaiVaeEncoderFixture,
+} from './noobai-vae-encoder-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -103,7 +112,8 @@ const externalVaeProfile = fixture.profile === 'external-vae'
 const embeddingsProfile = fixture.profile === 'embeddings'
 const vPredictionProfile = fixture.profile === 'v-prediction'
 const noiseProfile = fixture.profile === 'noise-profile'
-const noobaiComponentsProfile = fixture.profile === 'noobai-components'
+const noobaiEncoderProfile = fixture.profile === 'noobai-vae-encoder'
+const noobaiComponentsProfile = fixture.profile === 'noobai-components' || noobaiEncoderProfile
 const illustriousOnlyProfile =
   cfgRescaleProfile ||
   vaePrecisionProfile ||
@@ -112,7 +122,12 @@ const illustriousOnlyProfile =
   vPredictionProfile ||
   noiseProfile ||
   noobaiComponentsProfile
-const externalVaeKeys = ['externalVaeLdm', 'externalVaeNative', 'externalVaeControl']
+const externalVaeKeys = [
+  'externalVaeLdm',
+  'externalVaeNative',
+  'externalVaeControl',
+  ...(noobaiEncoderProfile ? ['externalVaeEncoderControl'] : []),
+]
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
 const componentModelKeys = [...noiseModelKeys, ...embeddingKeys, ...externalVaeKeys]
 const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
@@ -221,6 +236,12 @@ if (noobaiComponentsProfile) {
   report.componentStage = fixture.stage
   report.componentObjective = fixture.objective
   report.authorRecipes = structuredClone(fixture.authorRecipes)
+}
+if (noobaiEncoderProfile) {
+  report.boundary.preconditions =
+    'Reuses all eight exact versions in the canonical five-resource worker0.14 catalog. Only one explicitly artificial encoder-output-bias VAE version may be added. Independent source preparation proves all247 neighboring tensors, quantization, decoder and pinned config unchanged; actual native CPU posterior and identical-latent decode checks are separate evidence.'
+  report.boundary.limits =
+    'One exact EPS or v_prediction objective and one txt2img/img2img stage per invocation; two complete finite UI Add/Save/readback/reopen/comparison cycles. TXT encoder-only control must preserve decoded pixels; common-source strength0.5 IMG must change them with other inputs matched. No new Cancel/refusal, trained outpaint encoder, arbitrary encoder layer/format, subjective quality, public delivery, Anima, dynamic or release claim.'
 }
 async function hashFile(file) {
   const hash = createHash('sha256')
@@ -827,6 +848,10 @@ async function installArtifact(repository, value, id, dependencies, publication 
     vaePrecisionProfile,
     false,
     'VAE Precision qualification must reuse existing exact managed resources without copies.',
+  )
+  assert.ok(
+    !noobaiEncoderProfile || value === fixture.externalVaeEncoderControl,
+    'VAE encoder qualification must reuse all eight existing managed files; only its ninth declared control may be added.',
   )
   assert.ok(
     !externalVaeProfile || publication !== null,
@@ -2352,20 +2377,34 @@ async function qualifyChangedPredictionRetryRefusal(
 function componentSelection(choice) {
   return {
     vae:
-      choice === 'ldm-layout'
-        ? 'externalVaeLdm'
-        : choice === 'vae-control'
-          ? 'externalVaeControl'
-          : 'externalVaeNative',
+      choice === 'encoder-control'
+        ? 'externalVaeEncoderControl'
+        : choice === 'ldm-layout'
+          ? 'externalVaeLdm'
+          : choice === 'vae-control'
+            ? 'externalVaeControl'
+            : 'externalVaeNative',
     positive: choice === 'positive-zero' ? 'embeddingControl' : 'embeddingTrained',
     negative: choice === 'negative-zero' ? 'embeddingControl' : 'embeddingTrained',
     enabled: choice !== 'lora-disabled',
   }
 }
+function componentPublication(key) {
+  return key === 'externalVaeEncoderControl' ? encoderPublicationIds : componentPublicationIds[key]
+}
+function assertCapturedComponentFrozen(frozen, choice, mode = fixture.stage) {
+  if (noobaiEncoderProfile)
+    assertNoobaiVaeEncoderFrozen(frozen, { ...fixture, stage: mode }, choice)
+  else assertNoobaiComponentFrozen(frozen, fixture, choice)
+}
+function assertCapturedComponentCatalog(catalog, options = {}) {
+  if (noobaiEncoderProfile) return assertNoobaiVaeEncoderCatalog(catalog, fixture, options)
+  return assertNoobaiComponentCatalog(catalog, fixture, options)
+}
 function componentResourceReference(key, predictionType = null) {
   const value = fixture[key]
   const ids =
-    componentPublicationIds[key] ??
+    componentPublication(key) ??
     (key === 'illustriousLora'
       ? { modelId: 700_060, versionId: 700_061, fileId: 700_062 }
       : value.origin)
@@ -3029,7 +3068,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(JSON.stringify(frozen.context.prompts).includes('igs_ti_private_'), false)
   }
   if (noiseQualification) assertNoiseExecution(frozen, execution)
-  if (componentQualification) assertNoobaiComponentFrozen(frozen, fixture, qualification.choice)
+  if (componentQualification) assertCapturedComponentFrozen(frozen, qualification.choice)
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
   if (predictionQualification && !componentQualification) {
     assert.equal(frozen.context.vaePrecision, 'FP32')
@@ -3477,7 +3516,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   let normalizedInputs = null
   if (qualification) {
     normalizedInputs = componentQualification
-      ? normalizeNoobaiComponentInputs(frozen, qualification.choice)
+      ? normalizeNoobaiComponentInputs(
+          frozen,
+          noobaiEncoderProfile ? 'vae-control' : qualification.choice,
+        )
       : embeddingQualification
         ? normalizeEmbeddingInputs(frozen)
         : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
@@ -3487,11 +3529,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     if (componentQualification) {
       if (!retryCase) await editComponentDraft(project)
       componentDraftAfterEdit = structuredClone((await tab(project)).generationDraft)
-      assertNoobaiComponentFrozen(
+      assertCapturedComponentFrozen(
         JSON.parse(
           (await queueRows(project)).find(({ id }) => id === admitted.id).frozen_payload_json,
         ),
-        fixture,
         qualification.choice,
       )
     } else if (noiseQualification) {
@@ -3711,11 +3752,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     await expect.poll(liveInstalledInferenceChildren).toEqual([])
     if (componentQualification) {
-      assertNoobaiComponentFrozen(
-        JSON.parse(row.frozen_payload_json),
-        fixture,
-        qualification.choice,
-      )
+      assertCapturedComponentFrozen(JSON.parse(row.frozen_payload_json), qualification.choice)
     } else if (noiseQualification) {
       currentNoiseProfile = {
         ...execution.noiseProfile,
@@ -5458,7 +5495,8 @@ async function verifyNoobaiCommonSource(commonSource, execution) {
   assert.equal(provenance.layerSourceContext.sourceDocumentId, row.document_id)
   assert.equal(provenance.layerSourceContext.sourceDocumentRevision, row.document_revision)
   const frozen = JSON.parse(row.frozen_payload_json)
-  assertNoobaiComponentFrozen(frozen, fixture, 'fullstack')
+  // The accepted source is TXT even when the current subject is an IMG encoder pair.
+  assertCapturedComponentFrozen(frozen, 'fullstack', 'txt2img')
   assert.deepEqual(frozen.context.prompts, {
     positive: authoredEmbeddingPrompt('positive', 'embeddingTrained', false),
     negative: authoredEmbeddingPrompt('negative', 'embeddingTrained', false),
@@ -5568,7 +5606,9 @@ async function qualifyNoobaiComponents() {
     await window.getByRole('tab', { name: 'Home', exact: true }).click()
   }
   if (fixture.stage !== 'lifecycle') {
-    report.componentNumerics = assertNoobaiComponentPixels(
+    report.componentNumerics = (
+      noobaiEncoderProfile ? assertNoobaiVaeEncoderPixels : assertNoobaiComponentPixels
+    )(
       generations.map(({ componentPixels }) => componentPixels),
       plan.mode,
     )
@@ -5647,7 +5687,8 @@ async function qualifyNoobaiComponents() {
     fullMvpClaim: false,
     combinedMatrixClaim: false,
   }
-  assertNoobaiComponentStageOutcome(report.componentSummary)
+  if (noobaiEncoderProfile) assertNoobaiVaeEncoderStageOutcome(report.componentSummary)
+  else assertNoobaiComponentStageOutcome(report.componentSummary)
   await check(
     'Exact combined component stage completes through real UI Add/Save/reopen with independent tuple and pixel controls',
     report.componentSummary,
@@ -6151,7 +6192,7 @@ try {
       vPredictionProfile ||
       noiseProfile ||
       noobaiComponentsProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile or noobai-components.',
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components or noobai-vae-encoder.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -6177,7 +6218,9 @@ try {
   if (vPredictionProfile) validateVPredictionFixture()
   if (noobaiComponentsProfile) {
     const installed = JSON.parse(await readFile(provision.report, 'utf8'))
-    report.componentFixture = validateNoobaiComponentsFixture(fixture, installed.ready)
+    report.componentFixture = (
+      noobaiEncoderProfile ? validateNoobaiVaeEncoderFixture : validateNoobaiComponentsFixture
+    )(fixture, installed.ready)
     assert.equal(
       resume,
       true,
@@ -6430,6 +6473,13 @@ try {
                 componentQualification: await hashFile(
                   'scripts/noobai-components-qualification.mjs',
                 ),
+                ...(noobaiEncoderProfile
+                  ? {
+                      encoderQualification: await hashFile(
+                        'scripts/noobai-vae-encoder-qualification.mjs',
+                      ),
+                    }
+                  : {}),
               }
             : {}),
         }
@@ -6485,19 +6535,23 @@ try {
       preservedNoisePriorCatalog = structuredClone(catalog)
     }
     if (noobaiComponentsProfile) {
-      assert.equal(hashes.size, 8)
-      assertNoobaiComponentCatalog(catalog, fixture, { adopting: true })
+      assert.equal(hashes.size, noobaiEncoderProfile ? 9 : 8)
+      assertCapturedComponentCatalog(catalog, { adopting: true })
       const baseHashes = new Set(noiseModelKeys.map((key) => fixture[key].sha256))
       preservedComponentPriorCatalog = structuredClone(
-        catalog.filter(({ versions }) => versions.some(({ file }) => baseHashes.has(file.sha256))),
+        noobaiEncoderProfile
+          ? catalog
+          : catalog.filter(({ versions }) =>
+              versions.some(({ file }) => baseHashes.has(file.sha256)),
+            ),
       )
-      assert.equal(preservedComponentPriorCatalog.length, 3)
+      assert.equal(preservedComponentPriorCatalog.length, noobaiEncoderProfile ? 5 : 3)
       report.catalogReuse = {
         initialResourceCount: catalog.length,
-        originalResourceCount: 3,
-        originalVersionCount: 3,
-        declaredIdentityCount: 8,
-        maximumAdditionalManagedFiles: 5,
+        originalResourceCount: noobaiEncoderProfile ? 5 : 3,
+        originalVersionCount: noobaiEncoderProfile ? 8 : 3,
+        declaredIdentityCount: noobaiEncoderProfile ? 9 : 8,
+        maximumAdditionalManagedFiles: noobaiEncoderProfile ? 1 : 5,
       }
     }
     if (vaePrecisionProfile) {
@@ -6771,7 +6825,7 @@ try {
   }
   if (noobaiComponentsProfile) {
     for (const key of [...embeddingKeys, ...externalVaeKeys]) {
-      const ids = componentPublicationIds[key]
+      const ids = componentPublication(key)
       fixture[key].installed = await installArtifact(
         repository,
         fixture[key],
@@ -6793,15 +6847,17 @@ try {
       if (embeddingKeys.includes(key))
         await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
     }
-    assertNoobaiComponentCatalog(await repository.listInstalled(), fixture)
+    assertCapturedComponentCatalog(await repository.listInstalled())
     Object.assign(report.catalogReuse, {
       finalResourceCount: 5,
-      finalVersionCount: 8,
+      finalVersionCount: noobaiEncoderProfile ? 9 : 8,
       newManagedFiles: report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
       ).length,
     })
-    assert.ok(report.catalogReuse.newManagedFiles <= 5)
+    assert.ok(
+      report.catalogReuse.newManagedFiles <= report.catalogReuse.maximumAdditionalManagedFiles,
+    )
   }
   if (vPredictionProfile) {
     const seeded = await repository.listInstalled()
@@ -7028,7 +7084,7 @@ try {
   assert.deepEqual(report.pageErrors, [])
   if (noobaiComponentsProfile) {
     const final = await repository.listInstalled()
-    assertNoobaiComponentCatalog(final, fixture)
+    assertCapturedComponentCatalog(final)
     const withoutAuthoredPolicy = (resource) => {
       const value = structuredClone(resource)
       if (value.type === 'checkpoint')
@@ -7037,12 +7093,19 @@ try {
             delete version[key]
       return value
     }
-    for (const previous of preservedComponentPriorCatalog)
-      assert.deepEqual(
-        withoutAuthoredPolicy(final.find(({ id }) => id === previous.id)),
-        withoutAuthoredPolicy(previous),
-        'Original managed IDs/defaults/bytes/source metadata remain unchanged apart from authored exact-file policies.',
+    if (noobaiEncoderProfile)
+      report.catalogReuse.publicationTimestamps = assertNoobaiVaeEncoderCatalogPreserved(
+        final,
+        preservedComponentPriorCatalog,
+        fixture,
       )
+    else
+      for (const previous of preservedComponentPriorCatalog)
+        assert.deepEqual(
+          withoutAuthoredPolicy(final.find(({ id }) => id === previous.id)),
+          withoutAuthoredPolicy(previous),
+          'Original managed IDs/defaults/bytes/source metadata remain unchanged apart from authored exact-file policies.',
+        )
     for (const { descriptor, sourceStat } of report.componentSourceFiles) {
       assert.equal(await hashFile(descriptor.path), descriptor.sha256)
       const entry = await lstat(descriptor.path)

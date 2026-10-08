@@ -19,7 +19,7 @@
     "app:smoke:anima-authoring": "pnpm run app:build && tsx scripts/smoke-anima-authoring.mjs",
     "app:smoke:generation": "pnpm run app:build && tsx scripts/smoke-generation-actions.mjs",
     "app:smoke:results": "pnpm run app:build && tsx scripts/smoke-generation-results.mjs",
-    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/renderer/components/*.test.ts src/shared/projects/*.test.ts scripts/provision-qualification-runtime.test.mjs scripts/qualify-installed-generation.test.mjs scripts/qualification-resource-limits.test.mjs scripts/upgrade-qualification-worker.test.mjs scripts/noobai-noise-qualification.test.mjs scripts/noobai-components-qualification.test.mjs scripts/qualification-local-civitai.test.mjs",
+    "app:test": "tsx --test src/main/db/*.test.ts src/main/models/*.test.ts src/main/projects/*.test.ts src/main/runtime/*.test.mjs src/renderer/components/*.test.ts src/shared/projects/*.test.ts scripts/provision-qualification-runtime.test.mjs scripts/qualify-installed-generation.test.mjs scripts/qualification-resource-limits.test.mjs scripts/upgrade-qualification-worker.test.mjs scripts/noobai-noise-qualification.test.mjs scripts/noobai-components-qualification.test.mjs scripts/noobai-vae-encoder-qualification.test.mjs scripts/qualification-local-civitai.test.mjs",
     "app:db-types": "tsx scripts/generate-db-types.ts",
     "prototype:dev": "vite --config docs/prototype-app/vite.config.ts --host 127.0.0.1",
     "prototype:build": "vite build --config docs/prototype-app/vite.config.ts",
