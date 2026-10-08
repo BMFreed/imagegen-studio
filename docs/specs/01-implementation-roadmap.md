@@ -1642,8 +1642,25 @@ AB numeric RED. Physical child exit/restored43/original inode/mode/mtime/bytes/
 backup absence подтверждены; fresh EPS6 GREEN/5916 observations воспроизводит
 normal base SHA. Final full catalog/queue row SHA5/9/153 и managed files не
 меняются, Main/worker idle; current delivered oracle SHA связывает все4 executions.
-Следующий component gate — настоящий multiple-LoRA UI→queue→Add/Save/readback/
-reopen/comparison, затем trained Anima worker0.14 и dynamic multi-job batches. NoobAI не становится
+Отдельный [multiple-LoRA UI checkpoint](../engineering/phase-2c-noobai-lora-stack-ui-research.md)
+подтвердил 8 normal EPS/V TXT full Add/Save/readback/reopen/comparison cycles в
+8 admissions: AB/BA/B-enabled-zero/B-disabled, 256×256/три steps/seed0/native
+external VAE FP32. Exact Digital−0.5/Lineless+.75 задаются настоящим Add и
+remove/re-add; configured и effective ordered tuples frozen после live reorder/
+weight edits; portable provenance сохраняет exact refs, включая CivitAI IDs.
+UI comparison проверяет ordered name/version/SHA/enabled/weight, без утверждения
+о проверке каждого rendered description field. B-zero==B-disabled pixels, оба
+full stacks отличаются от controls; AB/BA pixel relation не требуется. Strict6/10
+сохраняет original9; отдельный setup выполнил единственную171540060B Lineless
+adoption, normal/fresh runs добавили0 managed files. Installed weight-swap дал
+same-input pixel RED после1 finite provisional AB candidate до Add:0 accepted
+layers/0 полных saved mutant cycles. Physical exit/restored43/original inode/mode/
+mtime/bytes/backup absence подтверждены; fresh restored EPS4 GREEN воспроизводит
+healthy same-choice pixels. Independent SQLite/raw ZIP/Pillow aggregate PASS:
+12 qualified saved packages/cycles (8 normal+4 fresh),14 total admissions включают
+1 excluded saved setup partial и1 provisional mutant. Все prior model/queue rows
+сохранены, final Main/worker idle43 exact подтверждён. Следующий component gate —
+trained Anima worker0.14, затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1808,10 +1825,26 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    exit/restored43/original inode/mode/mtime/bytes/backup absence подтверждены.
    Fresh EPS6 GREEN/5916 observations воспроизводит normal base SHA; full catalog/
    queue row SHA5/9/153 и managed files unchanged, Main/worker idle и current
-   delivered oracle SHA во всех4 executions проверены. Actual multiple-LoRA UI→queue→
-   Add/Save/readback/reopen/comparison остаётся следующим отдельным gate;
-   additive permutation equality не заменяет immutable recorded stack order.
-   Затем идут trained Anima worker0.14 regression и dynamic batches. All-layer/formats compatibility,
+   delivered oracle SHA во всех4 executions проверены. Этот historical native
+   checkpoint не создавал UI jobs; additive permutation equality не заменяет
+   immutable recorded stack order. Отдельный [multiple-LoRA UI follow-up](../engineering/phase-2c-noobai-lora-stack-ui-research.md)
+   подтвердил 8 normal EPS/V TXT cycles/8 admissions с actual Add/Save/readback/
+   reopen/comparison: AB/BA/B-enabled-zero/B-disabled, exact Digital−0.5/Lineless+.75,
+   256×256/три steps/seed0/native external VAE FP32. Configured и effective order
+   frozen после настоящих current reorder/weight edits; оба full stacks меняют
+   pixels относительно равных B-zero/B-disabled controls, без AB/BA pixel relation
+   claim. Portable provenance проверяет exact refs/CivitAI IDs; UI comparison
+   проверяет ordered name/version/SHA/enabled/weight, не каждый description field.
+   Strict6/10 сохраняет original9; одна171540060B Lineless adoption выполнена в
+   отдельном setup, normal/fresh runs newManagedFiles0. Installed weight-swap дал
+   causal same-input pixel RED после1 finite provisional AB candidate до Add:
+   0 accepted layers/0 full saved mutant cycles. Physical exit/restored43/original
+   inode/mode/mtime/bytes/backup absence подтверждены; fresh restored EPS4 GREEN
+   воспроизводит все healthy same-choice pixels. Independent SQLite/raw ZIP/Pillow
+   aggregate PASS:12 qualified saved packages/cycles (8 normal+4 fresh),14 total
+   admissions включают1 excluded saved setup partial и1 provisional mutant. Все
+   prior model/queue rows сохранены, final Main/worker idle43 exact подтверждён.
+   Затем trained Anima worker0.14 regression и dynamic batches. All-layer/formats compatibility,
    качество/Invoke parity, public delivery и release открыты; one-literal TXT
    direction не квалифицирует arbitrary embedding formats/syntax или IMG/OUT
    polarity. Author-resolution results предыдущего checkpoint не расширяются

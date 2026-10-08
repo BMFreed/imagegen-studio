@@ -287,6 +287,113 @@ function polarityInput(input) {
   encoderInput(input)
   input.profile = 'noobai-embedding-polarity'
 }
+function loraStackInput(input) {
+  encoderInput(input)
+  input.profile = 'noobai-lora-stack'
+  input.illustriousLora.sha256 = 'c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9'
+  input.illustriousLora.byteSize = 114437420
+  input.illustriousLoraSecond = {
+    path: '/unread-original/Lineless_Digital_Painting_Style.safetensors',
+    sha256: '90f9f879ff2e27fcaec5723a2c3e5db53ec5ffbdd4c7df49159c0ccbfe63b1ca',
+    byteSize: 171540060,
+    type: 'lora',
+    family: 'illustrious',
+    name: 'Lineless Digital Painting',
+    versionName: 'Lineless Digital Painting Style',
+    origin: {
+      kind: 'civitai-trained',
+      modelId: 1795307,
+      versionId: 2031703,
+      fileId: 1934353,
+      url: 'https://civitai.com/api/download/models/2031703?fileId=1934353',
+      creator: 'Underdorks',
+      creditRequired: true,
+    },
+  }
+}
+for (const [name, mutate] of [
+  [
+    'img2img stage',
+    (input) => {
+      input.stage = 'img2img'
+    },
+  ],
+  [
+    'lifecycle stage',
+    (input) => {
+      input.stage = 'lifecycle'
+    },
+  ],
+  [
+    'missing second source',
+    (input) => {
+      delete input.illustriousLoraSecond
+    },
+  ],
+  [
+    'duplicate source',
+    (input) => {
+      input.illustriousLoraSecond.sha256 = input.illustriousLora.sha256
+    },
+  ],
+  [
+    'incorrect official file',
+    (input) => {
+      input.illustriousLoraSecond.origin.fileId += 1
+    },
+  ],
+  [
+    'missing creator credit',
+    (input) => {
+      input.illustriousLoraSecond.origin.creditRequired = false
+    },
+  ],
+  [
+    'undeclared choices',
+    (input) => {
+      input.selections = ['ab', 'ab']
+    },
+  ],
+  [
+    'invalid baseline descriptor',
+    (input) => {
+      input.loraPixelBaseline = { reportPath: 'relative/report.json', reportSha256: 'a'.repeat(64) }
+    },
+  ],
+]) {
+  test(`NoobAI multiple-LoRA CLI rejects ${name} before source reads, publication or ML`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        loraStackInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, /AssertionError/)
+        assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+        assert.equal(report.status, 'failed')
+        assert.deepEqual(report.models, [])
+        assert.equal(report.nativeProcessPid, undefined)
+      },
+      {
+        ready: noiseReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+}
+test('valid NoobAI multiple-LoRA CLI requires canonical resume before original files or publication', async () => {
+  await fixture(
+    async ({ input, run, appData }) => {
+      loraStackInput(input)
+      const refusal = await run()
+      assert.match(refusal.stderr, /must reuse the original canonical runtime\/catalog/)
+      assert.doesNotMatch(refusal.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError|ENOENT/)
+      assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+    },
+    { ready: noiseReady },
+  )
+})
 for (const [name, mutate] of [
   [
     'img2img stage',
@@ -939,7 +1046,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder or noobai-embedding-polarity/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity or noobai-lora-stack/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))

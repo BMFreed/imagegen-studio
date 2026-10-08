@@ -105,6 +105,17 @@ import {
   normalizeNoobaiEmbeddingPolarityInputs,
   validateNoobaiEmbeddingPolarityFixture,
 } from './noobai-embedding-polarity-qualification.mjs'
+import {
+  assertNoobaiLoraStackCatalog,
+  assertNoobaiLoraStackCatalogPreserved,
+  assertNoobaiLoraStackDescription,
+  assertNoobaiLoraStackFrozen,
+  assertNoobaiLoraStackPixels,
+  assertNoobaiLoraStackStageOutcome,
+  loraStackPublicationIds,
+  normalizeNoobaiLoraStackInputs,
+  validateNoobaiLoraStackFixture,
+} from './noobai-lora-stack-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -124,7 +135,9 @@ const vPredictionProfile = fixture.profile === 'v-prediction'
 const noiseProfile = fixture.profile === 'noise-profile'
 const noobaiEncoderProfile = fixture.profile === 'noobai-vae-encoder'
 const noobaiPolarityProfile = fixture.profile === 'noobai-embedding-polarity'
-const noobaiNineVersionProfile = noobaiEncoderProfile || noobaiPolarityProfile
+const noobaiLoraStackProfile = fixture.profile === 'noobai-lora-stack'
+const noobaiNineVersionProfile =
+  noobaiEncoderProfile || noobaiPolarityProfile || noobaiLoraStackProfile
 const noobaiComponentsProfile = fixture.profile === 'noobai-components' || noobaiNineVersionProfile
 const illustriousOnlyProfile =
   cfgRescaleProfile ||
@@ -141,7 +154,12 @@ const externalVaeKeys = [
   ...(noobaiNineVersionProfile ? ['externalVaeEncoderControl'] : []),
 ]
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
-const componentModelKeys = [...noiseModelKeys, ...embeddingKeys, ...externalVaeKeys]
+const componentModelKeys = [
+  ...noiseModelKeys,
+  ...embeddingKeys,
+  ...externalVaeKeys,
+  ...(noobaiLoraStackProfile ? ['illustriousLoraSecond'] : []),
+]
 const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
 const embeddingControlSourceIds = { versionId: 700_111, fileId: 700_112 }
 assert.equal(fixture.schemaVersion, 1)
@@ -260,6 +278,12 @@ if (noobaiPolarityProfile) {
     'Read-only reuse of all nine exact versions in the canonical five-resource installed worker0.14 catalog; no model file or version publication. Existing trained/zero paired embeddings share the same literal; exact native VAE/FP32 and signed LoRA -0.5 remain unchanged. The unused ninth encoder-control descriptor is retained as a strict catalog dependency.'
   report.boundary.limits =
     'One exact EPS or v_prediction objective and TXT-only stage; exactly positive-zero (Z/T) and negative-zero (T/Z) complete finite UI Add/Save/readback/reopen/comparison cycles. Identical literal prompts and every neighboring input stay matched. Pixel inequality is supplemental; a separate bounded installed native oracle must independently verify all four signed hidden/pooled tensors and actual pipeline handoff using T/T,T/Z,Z/T,Z/Z assignments. Those native assignments are not additional image completions. No Cancel/refusal, common-source export, arbitrary embedding formats/quality, Invoke parity, multiple-LoRA order, Anima, dynamic, public delivery or release claim.'
+}
+if (noobaiLoraStackProfile) {
+  report.boundary.preconditions =
+    'Reuses the canonical worker0.14 and all nine exact existing model versions. One credited trained Lineless Illustrious LoRA may be adopted through Main ModelDownloader using the declared original file as controlled transport. DigitalArt and Lineless are distinct trained ordinary adapters; native per-target independent algebra is separate prior evidence.'
+  report.boundary.limits =
+    'TXT-only, one EPS or v_prediction objective per invocation, four AB/BA/B-enabled-zero/B-disabled cases at256px/three requested steps/seed0. Actual UI remove/re-add authors order; queued order and signed weights remain frozen after later live reorder/weight edits. Explicit Add, Save/readback/reopen and read-only ordered-stack comparison are required. B-zero and disabled pixels match; full stacks differ from these controls. No AB/BA pixel equality or inequality requirement, image quality, all formats, public delivery, Anima, dynamic batches or release claim.'
 }
 async function hashFile(file) {
   const hash = createHash('sha256')
@@ -869,10 +893,13 @@ async function installArtifact(repository, value, id, dependencies, publication 
   )
   assert.ok(
     !noobaiNineVersionProfile ||
-      (!noobaiPolarityProfile && value === fixture.externalVaeEncoderControl),
-    noobaiPolarityProfile
-      ? 'Embedding polarity qualification must reuse all nine existing managed files without publication.'
-      : 'VAE encoder qualification must reuse all eight existing managed files; only its ninth declared control may be added.',
+      (noobaiLoraStackProfile && value === fixture.illustriousLoraSecond) ||
+      (noobaiEncoderProfile && value === fixture.externalVaeEncoderControl),
+    noobaiLoraStackProfile
+      ? 'Multiple-LoRA qualification must reuse all nine existing files; only the exact second trained adapter may be added.'
+      : noobaiPolarityProfile
+        ? 'Embedding polarity qualification must reuse all nine existing managed files without publication.'
+        : 'VAE encoder qualification must reuse all eight existing managed files; only its ninth declared control may be added.',
   )
   assert.ok(
     !externalVaeProfile || publication !== null,
@@ -884,11 +911,19 @@ async function installArtifact(repository, value, id, dependencies, publication 
   )
   assert.ok(
     !noobaiComponentsProfile ||
+      (noobaiLoraStackProfile && value === fixture.illustriousLoraSecond) ||
       [...embeddingKeys, ...externalVaeKeys].some((key) => fixture[key] === value),
     'NoobAI components must reuse all three original managed checkpoint/LoRA files; only the five declared component files may be added.',
   )
-  if (noiseProfile && value === fixture.illustriousEpsilon) {
-    assert.equal(id, 700_140, 'Only the one new official epsilon checkpoint may be adopted.')
+  if (
+    (noiseProfile && value === fixture.illustriousEpsilon) ||
+    (noobaiLoraStackProfile && value === fixture.illustriousLoraSecond)
+  ) {
+    assert.equal(
+      id,
+      noobaiLoraStackProfile ? 700_150 : 700_140,
+      'Only the exact declared new source may be adopted.',
+    )
     await assert.rejects(lstat(managed), { code: 'ENOENT' })
     const stagingDirectory = path.join(fixture.appData, 'models', `.qualification-epsilon-${runId}`)
     const {
@@ -909,7 +944,7 @@ async function installArtifact(repository, value, id, dependencies, publication 
     assert.equal(verified.sizeBytes, value.byteSize)
     await rename(verified.stagingPath, managed)
     await rm(stagingDirectory, { recursive: true })
-    report.epsilonAdoption = {
+    report[noobaiLoraStackProfile ? 'secondLoraAdoption' : 'epsilonAdoption'] = {
       source: value.origin,
       localTransportCalls,
       bytes: verified.sizeBytes,
@@ -2411,16 +2446,20 @@ function componentSelection(choice) {
   }
 }
 function componentPublication(key) {
+  if (key === 'illustriousLoraSecond') return loraStackPublicationIds
   return key === 'externalVaeEncoderControl' ? encoderPublicationIds : componentPublicationIds[key]
 }
 function assertCapturedComponentFrozen(frozen, choice, mode = fixture.stage) {
-  if (noobaiPolarityProfile)
+  if (noobaiLoraStackProfile)
+    assertNoobaiLoraStackFrozen(frozen, { ...fixture, stage: mode }, choice)
+  else if (noobaiPolarityProfile)
     assertNoobaiEmbeddingPolarityFrozen(frozen, { ...fixture, stage: mode }, choice)
   else if (noobaiEncoderProfile)
     assertNoobaiVaeEncoderFrozen(frozen, { ...fixture, stage: mode }, choice)
   else assertNoobaiComponentFrozen(frozen, fixture, choice)
 }
 function assertCapturedComponentCatalog(catalog, options = {}) {
+  if (noobaiLoraStackProfile) return assertNoobaiLoraStackCatalog(catalog, fixture, options)
   if (noobaiPolarityProfile) return assertNoobaiEmbeddingPolarityCatalog(catalog, fixture)
   if (noobaiEncoderProfile) return assertNoobaiVaeEncoderCatalog(catalog, fixture, options)
   return assertNoobaiComponentCatalog(catalog, fixture, options)
@@ -2465,13 +2504,15 @@ function expectedComponentConfiguration(choice, mode, execution) {
     vae: componentResourceReference(selected.vae),
     vaePrecision: 'FP32',
     cfgRescale: 0,
-    loras: [
-      {
-        enabled: selected.enabled,
-        resource: componentResourceReference('illustriousLora'),
-        weight: -0.5,
-      },
-    ],
+    loras: noobaiLoraStackProfile
+      ? expectedLoraStack(choice)
+      : [
+          {
+            enabled: selected.enabled,
+            resource: componentResourceReference('illustriousLora'),
+            weight: -0.5,
+          },
+        ],
     positivePrompt: prompt('positive'),
     negativePrompt: prompt('negative'),
     sampling: {
@@ -2512,9 +2553,77 @@ async function setComponentLoraEnabled(project, enabled) {
   })
   if ((await control.getAttribute('aria-checked')) !== String(enabled)) await control.click()
   await expect
-    .poll(async () => (await tab(project)).generationDraft.loras[0]?.enabled)
+    .poll(
+      async () =>
+        (await tab(project)).generationDraft.loras.find(
+          ({ resource }) => resource.fileSha256 === fixture.illustriousLora.sha256,
+        )?.enabled,
+    )
     .toBe(enabled)
-  assert.equal((await tab(project)).generationDraft.loras[0].weight, -0.5)
+  assert.equal(
+    (await tab(project)).generationDraft.loras.find(
+      ({ resource }) => resource.fileSha256 === fixture.illustriousLora.sha256,
+    ).weight,
+    -0.5,
+  )
+}
+function expectedLoraStack(choice) {
+  const first = {
+    enabled: true,
+    resource: componentResourceReference('illustriousLora'),
+    weight: -0.5,
+  }
+  const second = {
+    enabled: choice !== 'b-disabled',
+    resource: componentResourceReference('illustriousLoraSecond'),
+    weight: choice === 'b-zero' ? 0 : 0.75,
+  }
+  return choice === 'ba' ? [second, first] : [first, second]
+}
+async function authorLoraStackThroughUi(project, choice) {
+  const second = fixture.illustriousLoraSecond
+  await window.locator('[aria-label="Add LoRA"]').click()
+  await window.getByText(second.name, { exact: true }).last().click()
+  await setInput(`${second.name} weight`, choice === 'b-zero' ? 0 : 0.75)
+  if (choice === 'b-disabled') {
+    await window.getByRole('switch', { name: `Enable ${second.name}`, exact: true }).click()
+  }
+  if (choice === 'ba') {
+    // The current product changes order by explicit remove/add; it has no reorder control.
+    await window
+      .getByRole('button', { name: `Remove ${fixture.illustriousLora.name}`, exact: true })
+      .click()
+    await window.locator('[aria-label="Add LoRA"]').click()
+    await window.getByText(fixture.illustriousLora.name, { exact: true }).last().click()
+    await setInput(`${fixture.illustriousLora.name} weight`, -0.5)
+  }
+  await expect
+    .poll(async () => (await tab(project)).generationDraft.loras)
+    .toEqual(expectedLoraStack(choice))
+}
+async function editLoraStackDraftThroughUi(project) {
+  const before = structuredClone((await tab(project)).generationDraft.loras)
+  // Alter the live order and signed weights after admission. The queued/accepted tuple must stay frozen.
+  const moved = before[0].resource
+  await window.getByRole('button', { name: `Remove ${moved.displayName}`, exact: true }).click()
+  await window.locator('[aria-label="Add LoRA"]').click()
+  await window.getByText(moved.displayName, { exact: true }).last().click()
+  await setInput(`${fixture.illustriousLora.name} weight`, -0.25)
+  await setInput(`${fixture.illustriousLoraSecond.name} weight`, 0.125)
+  const edited = structuredClone((await tab(project)).generationDraft.loras)
+  assert.deepEqual(
+    edited.map(({ resource }) => resource.fileSha256),
+    [...before.slice(1), before[0]].map(({ resource }) => resource.fileSha256),
+  )
+  assert.equal(
+    edited.find(({ resource }) => resource.fileSha256 === fixture.illustriousLora.sha256).weight,
+    -0.25,
+  )
+  assert.equal(
+    edited.find(({ resource }) => resource.fileSha256 === fixture.illustriousLoraSecond.sha256)
+      .weight,
+    0.125,
+  )
 }
 async function editComponentDraft(project) {
   for (const polarity of ['positive', 'negative']) {
@@ -2530,7 +2639,8 @@ async function editComponentDraft(project) {
       .toEqual({ text, embeddingRefs: [] })
   }
   await setExternalVae(project, null)
-  await setComponentLoraEnabled(project, false)
+  if (noobaiLoraStackProfile) await editLoraStackDraftThroughUi(project)
+  else await setComponentLoraEnabled(project, false)
   await setInput('Generation seed', 37)
   await expect
     .poll(async () => (await tab(project)).generationDraft.seed)
@@ -2596,8 +2706,21 @@ async function compareNoobaiComponents(project, layer, expected, caseName, packa
     await expect(row('vae.resource').locator('.comparison-values p').nth(1)).toHaveText('Embedded')
     await expect(row('loras.stack')).toHaveAttribute(
       'data-status',
-      expected.loras[0].enabled ? 'Changed' : 'Same',
+      noobaiLoraStackProfile || expected.loras[0].enabled ? 'Changed' : 'Same',
     )
+    if (noobaiLoraStackProfile) {
+      const values = row('loras.stack').locator('.comparison-values p')
+      const stacks = [expected.loras, before.generationDraft.loras]
+      for (const [index, stack] of stacks.entries()) {
+        const text = await values.nth(index).innerText()
+        const names = stack.map(({ resource }) => resource.displayName)
+        assert.ok(
+          text.indexOf(names[0]) >= 0 && text.indexOf(names[1]) > text.indexOf(names[0]),
+          'Comparison must display both exact LoRAs in the recorded/current order.',
+        )
+        assertNoobaiLoraStackDescription(text, stack)
+      }
+    }
     await expect(row('vaePrecision.value')).toHaveAttribute('data-status', 'Same')
     await expect(row('vaePrecision.value').locator('.comparison-values p')).toHaveText([
       'FP32',
@@ -2613,7 +2736,7 @@ async function compareNoobaiComponents(project, layer, expected, caseName, packa
       positive: 'Removed',
       negative: 'Removed',
       vae: 'Removed',
-      lora: expected.loras[0].enabled ? 'Changed' : 'Same',
+      lora: noobaiLoraStackProfile || expected.loras[0].enabled ? 'Changed' : 'Same',
       screenshot,
     }
   } finally {
@@ -3540,12 +3663,14 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   let normalizedInputs = null
   if (qualification) {
     normalizedInputs = componentQualification
-      ? noobaiPolarityProfile
-        ? normalizeNoobaiEmbeddingPolarityInputs(frozen, fixture, qualification.choice)
-        : normalizeNoobaiComponentInputs(
-            frozen,
-            noobaiEncoderProfile ? 'vae-control' : qualification.choice,
-          )
+      ? noobaiLoraStackProfile
+        ? normalizeNoobaiLoraStackInputs(frozen, fixture, qualification.choice)
+        : noobaiPolarityProfile
+          ? normalizeNoobaiEmbeddingPolarityInputs(frozen, fixture, qualification.choice)
+          : normalizeNoobaiComponentInputs(
+              frozen,
+              noobaiEncoderProfile ? 'vae-control' : qualification.choice,
+            )
       : embeddingQualification
         ? normalizeEmbeddingInputs(frozen)
         : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
@@ -3743,6 +3868,38 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.equal(pixels.sha256, receipt.image_sha256)
   assert.equal(pixels.width, execution.width)
   assert.equal(pixels.height, execution.height)
+  if (noobaiLoraStackProfile && fixture.loraPixelBaseline) {
+    // The healthy prior execution is independent evidence; metadata alone cannot catch a
+    // worker silently exchanging source-bound weights while preserving the frozen payload.
+    const descriptor = fixture.loraPixelBaseline
+    assert.equal(await hashFile(descriptor.reportPath), descriptor.reportSha256)
+    const baseline = JSON.parse(await readFile(descriptor.reportPath, 'utf8'))
+    assert.equal(baseline.status, 'passed')
+    assert.equal(baseline.profile, fixture.profile)
+    assert.equal(baseline.componentObjective, fixture.objective)
+    assert.equal(baseline.nativePhysicalExit.confirmed, true)
+    assert.deepEqual(baseline.sourceSha256, report.sourceSha256)
+    assert.deepEqual(baseline.bundleSha256, report.bundleSha256)
+    const healthy = baseline.generations.find(
+      ({ qualification: captured }) => captured.choice === qualification.choice,
+    )
+    assert.ok(healthy)
+    assert.deepEqual(normalizedInputs, healthy.qualification.normalizedInputs)
+    assert.equal(
+      pixels.pixelSha256,
+      healthy.dimensions.pixelSha256,
+      'Installed multiple-LoRA pixels differ from the retained healthy same-input reference.',
+    )
+    report.loraPixelBaselineChecks ??= []
+    report.loraPixelBaselineChecks.push({
+      choice: qualification.choice,
+      queueItemId: admitted.id,
+      reportSha256: descriptor.reportSha256,
+      baselineQueueItemId: healthy.queueItemId,
+      pixelSha256: pixels.pixelSha256,
+      beforeExplicitAdd: true,
+    })
+  }
   if (
     precisionQualification ||
     externalQualification ||
@@ -3879,8 +4036,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     acceptedData.generationConfiguration.positivePrompt.text,
     before.generationDraft.positivePrompt.text,
   )
-  assert.equal(acceptedData.generationConfiguration.loras[0].weight, -0.5)
-  assert.equal(acceptedData.generationConfiguration.loras[0].resource.fileSha256, lora.sha256)
+  if (!noobaiLoraStackProfile) {
+    assert.equal(acceptedData.generationConfiguration.loras[0].weight, -0.5)
+    assert.equal(acceptedData.generationConfiguration.loras[0].resource.fileSha256, lora.sha256)
+  }
   assert.equal(
     acceptedData.generationConfiguration.negativePrompt.text,
     frozen.context.prompts.negative,
@@ -5739,7 +5898,8 @@ async function qualifyNoobaiComponents() {
     await setExternalVae(project, selected.vae)
     await authorEmbeddingThroughUi(project, 'positive', selected.positive)
     await authorEmbeddingThroughUi(project, 'negative', selected.negative)
-    await setComponentLoraEnabled(project, selected.enabled)
+    if (noobaiLoraStackProfile) await authorLoraStackThroughUi(project, choice)
+    else await setComponentLoraEnabled(project, selected.enabled)
     if (fixture.stage === 'lifecycle') {
       report.componentDefaultPrecondition = {
         embedding: await setEmbeddingDefaultThroughUi(project, 'embeddingTrained'),
@@ -5777,12 +5937,14 @@ async function qualifyNoobaiComponents() {
   }
   if (fixture.stage !== 'lifecycle') {
     const pixels = generations.map(({ componentPixels }) => componentPixels)
-    report.componentNumerics = noobaiPolarityProfile
-      ? assertNoobaiEmbeddingPolarityPixels(pixels, fixture)
-      : (noobaiEncoderProfile ? assertNoobaiVaeEncoderPixels : assertNoobaiComponentPixels)(
-          pixels,
-          plan.mode,
-        )
+    report.componentNumerics = noobaiLoraStackProfile
+      ? assertNoobaiLoraStackPixels(pixels, fixture)
+      : noobaiPolarityProfile
+        ? assertNoobaiEmbeddingPolarityPixels(pixels, fixture)
+        : (noobaiEncoderProfile ? assertNoobaiVaeEncoderPixels : assertNoobaiComponentPixels)(
+            pixels,
+            plan.mode,
+          )
     for (const generation of generations.slice(1))
       assert.ok(
         (await readFile(generation.target.path)).equals(await readFile(generations[0].target.path)),
@@ -5790,7 +5952,7 @@ async function qualifyNoobaiComponents() {
       )
   }
   if (noobaiPolarityProfile) await independentEmbeddingPolarityOracle(generations)
-  if (fixture.stage === 'txt2img' && !noobaiPolarityProfile) {
+  if (fixture.stage === 'txt2img' && !noobaiPolarityProfile && !noobaiLoraStackProfile) {
     const fullstack = generations[0]
     const saved = await readIgsPackage(fullstack.packagePath)
     const layer = saved.project.layers.find(
@@ -5865,7 +6027,8 @@ async function qualifyNoobaiComponents() {
         }
       : {}),
   }
-  if (noobaiPolarityProfile) assertNoobaiEmbeddingPolarityStageOutcome(report.componentSummary)
+  if (noobaiLoraStackProfile) assertNoobaiLoraStackStageOutcome(report.componentSummary)
+  else if (noobaiPolarityProfile) assertNoobaiEmbeddingPolarityStageOutcome(report.componentSummary)
   else if (noobaiEncoderProfile) assertNoobaiVaeEncoderStageOutcome(report.componentSummary)
   else assertNoobaiComponentStageOutcome(report.componentSummary)
   await check(
@@ -6371,7 +6534,7 @@ try {
       vPredictionProfile ||
       noiseProfile ||
       noobaiComponentsProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder or noobai-embedding-polarity.',
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile, noobai-components, noobai-vae-encoder, noobai-embedding-polarity or noobai-lora-stack.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -6398,11 +6561,13 @@ try {
   if (noobaiComponentsProfile) {
     const installed = JSON.parse(await readFile(provision.report, 'utf8'))
     report.componentFixture = (
-      noobaiPolarityProfile
-        ? validateNoobaiEmbeddingPolarityFixture
-        : noobaiEncoderProfile
-          ? validateNoobaiVaeEncoderFixture
-          : validateNoobaiComponentsFixture
+      noobaiLoraStackProfile
+        ? validateNoobaiLoraStackFixture
+        : noobaiPolarityProfile
+          ? validateNoobaiEmbeddingPolarityFixture
+          : noobaiEncoderProfile
+            ? validateNoobaiVaeEncoderFixture
+            : validateNoobaiComponentsFixture
     )(fixture, installed.ready)
     assert.equal(
       resume,
@@ -6673,6 +6838,13 @@ try {
                       ),
                     }
                   : {}),
+                ...(noobaiLoraStackProfile
+                  ? {
+                      loraStackQualification: await hashFile(
+                        'scripts/noobai-lora-stack-qualification.mjs',
+                      ),
+                    }
+                  : {}),
               }
             : {}),
         }
@@ -6728,7 +6900,7 @@ try {
       preservedNoisePriorCatalog = structuredClone(catalog)
     }
     if (noobaiComponentsProfile) {
-      assert.equal(hashes.size, noobaiNineVersionProfile ? 9 : 8)
+      assert.equal(hashes.size, noobaiLoraStackProfile ? 10 : noobaiNineVersionProfile ? 9 : 8)
       assertCapturedComponentCatalog(catalog, { adopting: true })
       const baseHashes = new Set(noiseModelKeys.map((key) => fixture[key].sha256))
       preservedComponentPriorCatalog = structuredClone(
@@ -6738,13 +6910,34 @@ try {
               versions.some(({ file }) => baseHashes.has(file.sha256)),
             ),
       )
-      assert.equal(preservedComponentPriorCatalog.length, noobaiNineVersionProfile ? 5 : 3)
+      assert.equal(
+        preservedComponentPriorCatalog.length,
+        noobaiLoraStackProfile ? catalog.length : noobaiNineVersionProfile ? 5 : 3,
+      )
       report.catalogReuse = {
         initialResourceCount: catalog.length,
-        originalResourceCount: noobaiNineVersionProfile ? 5 : 3,
-        originalVersionCount: noobaiPolarityProfile ? 9 : noobaiEncoderProfile ? 8 : 3,
-        declaredIdentityCount: noobaiNineVersionProfile ? 9 : 8,
-        maximumAdditionalManagedFiles: noobaiPolarityProfile ? 0 : noobaiEncoderProfile ? 1 : 5,
+        originalResourceCount: noobaiLoraStackProfile
+          ? catalog.length
+          : noobaiNineVersionProfile
+            ? 5
+            : 3,
+        originalVersionCount: noobaiLoraStackProfile
+          ? catalog.flatMap(({ versions }) => versions).length
+          : noobaiPolarityProfile
+            ? 9
+            : noobaiEncoderProfile
+              ? 8
+              : 3,
+        declaredIdentityCount: noobaiLoraStackProfile ? 10 : noobaiNineVersionProfile ? 9 : 8,
+        maximumAdditionalManagedFiles: noobaiLoraStackProfile
+          ? catalog.length === 5
+            ? 1
+            : 0
+          : noobaiPolarityProfile
+            ? 0
+            : noobaiEncoderProfile
+              ? 1
+              : 5,
       }
     }
     if (vaePrecisionProfile) {
@@ -7017,6 +7210,25 @@ try {
     }
   }
   if (noobaiComponentsProfile) {
+    if (noobaiLoraStackProfile) {
+      const value = fixture.illustriousLoraSecond
+      const ids = loraStackPublicationIds
+      const installed = await installArtifact(repository, value, ids.managedId, undefined, {
+        sourceModelId: ids.modelId,
+        sourceVersionId: ids.versionId,
+        sourceFileId: ids.fileId,
+        versionName: value.versionName,
+        creator: value.origin.creator,
+        resourceOrigin: value.origin,
+      })
+      // Fresh publication includes file/dependency IDs; the reusable fixture contract contains
+      // only the same three verified identity fields returned by the resume path.
+      value.installed = {
+        resourceId: installed.resourceId,
+        versionId: installed.versionId,
+        managedPath: installed.managedPath,
+      }
+    }
     for (const key of [...embeddingKeys, ...externalVaeKeys]) {
       const ids = componentPublication(key)
       fixture[key].installed = await installArtifact(
@@ -7042,8 +7254,8 @@ try {
     }
     assertCapturedComponentCatalog(await repository.listInstalled())
     Object.assign(report.catalogReuse, {
-      finalResourceCount: 5,
-      finalVersionCount: noobaiNineVersionProfile ? 9 : 8,
+      finalResourceCount: noobaiLoraStackProfile ? 6 : 5,
+      finalVersionCount: noobaiLoraStackProfile ? 10 : noobaiNineVersionProfile ? 9 : 8,
       newManagedFiles: report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
       ).length,
@@ -7286,7 +7498,13 @@ try {
             delete version[key]
       return value
     }
-    if (noobaiPolarityProfile)
+    if (noobaiLoraStackProfile)
+      report.catalogReuse.publicationTimestamps = assertNoobaiLoraStackCatalogPreserved(
+        final,
+        preservedComponentPriorCatalog,
+        fixture,
+      )
+    else if (noobaiPolarityProfile)
       report.catalogReuse.publicationTimestamps = assertNoobaiEmbeddingPolarityCatalogPreserved(
         final,
         preservedComponentPriorCatalog,

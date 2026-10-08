@@ -84,6 +84,25 @@ test('wrong hash is a real downloader refusal and removes its partial staging fi
   })
 })
 
+test('second pinned LoRA URL enters the genuine downloader with unchanged local bytes', async () => {
+  await fixture(async ({ bytes, source, stagingDirectory }) => {
+    const url = 'https://civitai.com/api/download/models/2031703?fileId=1934353'
+    const observed = []
+    const result = await stageLocalCivitaiQualification({
+      ModelDownloader,
+      source: { ...source, url },
+      stagingDirectory,
+      onTransport: (event) => observed.push(event),
+    })
+    assert.deepEqual(observed, [{ url, authorization: `Bearer ${localQualificationToken}` }])
+    assert.equal(result.transportCalls, 1)
+    assert.equal(result.verified.sizeBytes, bytes.length)
+    assert.equal(result.verified.sha256, source.sha256)
+    assert.ok((await fs.readFile(result.verified.stagingPath)).equals(bytes))
+    assert.ok((await fs.readFile(source.path)).equals(bytes))
+  })
+})
+
 test('unpinned file URL refuses before creating staging or invoking any transport', async () => {
   await fixture(async ({ source, stagingDirectory }) => {
     let calls = 0
@@ -94,9 +113,28 @@ test('unpinned file URL refuses before creating staging or invoking any transpor
         stagingDirectory,
         onTransport: () => calls++,
       }),
-      /pinned exact epsilon/,
+      /pinned exact qualification/,
     )
     assert.equal(calls, 0)
     await assert.rejects(fs.lstat(stagingDirectory), { code: 'ENOENT' })
   })
+})
+
+test('neighboring LoRA file ID refuses before any local source read or staging', async () => {
+  let calls = 0
+  await assert.rejects(
+    stageLocalCivitaiQualification({
+      ModelDownloader,
+      source: {
+        path: '/unread-source.bin',
+        url: 'https://civitai.com/api/download/models/2031703?fileId=1934354',
+        byteSize: 100,
+        sha256: 'a'.repeat(64),
+      },
+      stagingDirectory: '/uncreated-staging',
+      onTransport: () => calls++,
+    }),
+    /pinned exact qualification/,
+  )
+  assert.equal(calls, 0)
 })

@@ -8,6 +8,10 @@ import { Readable } from 'node:stream'
 import { officialEpsilonIdentity } from './noobai-noise-qualification.mjs'
 
 export const localQualificationToken = 'imagegen-local-qualification-only-not-an-account-token'
+const pinnedQualificationUrls = [
+  officialEpsilonIdentity.origin.url,
+  'https://civitai.com/api/download/models/2031703?fileId=1934353',
+]
 
 /**
  * Caller passes the production ModelDownloader constructor. The actual downloader still owns
@@ -21,10 +25,9 @@ export async function stageLocalCivitaiQualification({
   stagingDirectory,
   onTransport = () => {},
 }) {
-  assert.equal(
-    source.url,
-    officialEpsilonIdentity.origin.url,
-    'Local adoption must use the pinned exact epsilon CivitAI file URL.',
+  assert.ok(
+    pinnedQualificationUrls.includes(source.url),
+    'Local adoption must use a pinned exact qualification CivitAI file URL.',
   )
   assert.ok(path.isAbsolute(source.path) && path.normalize(source.path) === source.path)
   const entry = await lstat(source.path)
