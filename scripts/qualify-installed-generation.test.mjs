@@ -91,7 +91,11 @@ async function fixture(use, options = {}) {
     mode: 0o700,
   })
   const runtimeReport = path.join(root, 'installed-runtime-report.json')
-  if (options.ready) await fs.writeFile(runtimeReport, JSON.stringify({ ready: options.ready }))
+  if (options.ready)
+    await fs.writeFile(
+      runtimeReport,
+      JSON.stringify({ ready: options.ready, ...(options.installedReport ?? {}) }),
+    )
   const marker = JSON.stringify({
     status: 'passed',
     appData,
@@ -165,6 +169,241 @@ const noiseReady = {
     'illustrious-noise-profile',
   ],
 }
+function componentInput(input) {
+  noiseInput(input)
+  Object.assign(input, { profile: 'noobai-components', stage: 'txt2img', objective: 'epsilon' })
+  const embeddingOrigin = {
+    kind: 'civitai-trained',
+    modelId: 2360940,
+    versionId: 2655289,
+    fileId: 2542976,
+    url: 'https://civitai.com/api/download/models/2655289?fileId=2542976',
+    creator: 'CautionMergeAhead',
+    creditRequired: true,
+  }
+  input.embeddingTrained = {
+    path: '/unread-original/trained/illustriousphoto.safetensors',
+    sha256: '91a95b244b8ba01d905d32ced7e3cc20eb74b4da8f519de3764505500d386c36',
+    byteSize: 49736,
+    type: 'embedding',
+    family: 'illustrious',
+    name: 'IllustriousPhoto',
+    versionName: 'Trained',
+    origin: embeddingOrigin,
+  }
+  input.embeddingControl = {
+    path: '/unread-original/zero/illustriousphoto.safetensors',
+    sha256: 'b736cd9c1f9ee07795c5917825baa95ae14bac6383bdddff5530dfefa4bece0d',
+    byteSize: 49552,
+    type: 'embedding',
+    family: 'illustrious',
+    name: 'IllustriousPhoto',
+    versionName: 'Zero control',
+    origin: {
+      kind: 'artificial-zero-control',
+      sourceEmbeddingSha256: input.embeddingTrained.sha256,
+    },
+  }
+  for (const [key, sha256, byteSize, versionName, format] of [
+    [
+      'externalVaeLdm',
+      '642ca8780b893744a5a66f9dc762768186bb3c4d7a4b17fde2de3845377b7481',
+      167333366,
+      'LDM',
+      'original-ldm',
+    ],
+    [
+      'externalVaeNative',
+      'f09b42f799d82812ef38461205c4764ecb3e10384bb6ee198321124dbc59e9b7',
+      167335542,
+      'Native',
+      'diffusers',
+    ],
+    [
+      'externalVaeControl',
+      '3ba90e86a596d52f3000cd5bd586034dddd016b94d466bda2cf53348d9f54b21',
+      167335598,
+      'Decoder control',
+      'diffusers',
+    ],
+  ])
+    input[key] = {
+      path: `/unread-original/${key}.safetensors`,
+      sha256,
+      byteSize,
+      type: 'vae',
+      family: 'illustrious',
+      name: 'NoobAI EPS VAE',
+      versionName,
+      origin:
+        key === 'externalVaeControl'
+          ? {
+              kind: 'artificial-causal-control',
+              sourceVaeSha256: input.externalVaeNative.sha256,
+              format,
+              decoderBiasAdd: 0.15,
+            }
+          : {
+              kind: 'checkpoint-extraction',
+              checkpointSha256: input.illustriousEpsilon.sha256,
+              format,
+            },
+    }
+}
+function componentCommonSource(input, objective = input.objective) {
+  input.stage = 'img2img'
+  input.commonSource = {
+    path: '/unread-original/common.png',
+    sha256: 'd'.repeat(64),
+    byteSize: 4096,
+    pixelSha256: 'e'.repeat(64),
+    width: 256,
+    height: 256,
+    sourceQueueItemId: 'prior-fullstack-job',
+    sourcePackagePath: '/unread-original/source.igs',
+    objective,
+  }
+}
+for (const [name, mutate, expected] of [
+  [
+    'unknown stage',
+    (input) => {
+      input.stage = 'all'
+    },
+    /declared component qualification stage/,
+  ],
+  [
+    'unknown objective',
+    (input) => {
+      input.objective = 'v-prediction'
+    },
+    /exact trained objective/,
+  ],
+  [
+    'undeclared source',
+    (input) => {
+      input.anima = input.illustrious
+    },
+    /five-resource\/eight-version closure/,
+  ],
+  [
+    'epsilon interpretation of v-trained bytes',
+    (input) => {
+      input.illustriousEpsilon = structuredClone(input.illustrious)
+    },
+    /v_prediction/,
+  ],
+  [
+    'embedding filename changes its literal',
+    (input) => {
+      input.embeddingControl.path = '/unread-original/zero/other.safetensors'
+    },
+    /illustriousphoto|other/,
+  ],
+  [
+    'VAE extraction from Cyber instead of official EPS',
+    (input) => {
+      input.externalVaeNative.origin.checkpointSha256 = input.illustrious.sha256
+    },
+    /checkpointSha256/,
+  ],
+  [
+    'encoder plus decoder artificial control',
+    (input) => {
+      input.externalVaeControl.origin.encoderBiasAdd = 0.1
+    },
+    /encoderBiasAdd/,
+  ],
+  [
+    'mixed objective common source',
+    (input) => {
+      componentCommonSource(input, 'v_prediction')
+    },
+    /v_prediction|epsilon/,
+  ],
+  [
+    'missing common source',
+    (input) => {
+      input.stage = 'outpaint'
+    },
+    /five-resource\/eight-version closure/,
+  ],
+])
+  test(`NoobAI component CLI ${name} refuses before source reads, managed copies or worker launch`, async () => {
+    await fixture(
+      async ({ input, run, appData, artifacts }) => {
+        componentInput(input)
+        mutate(input)
+        const refusal = await run({ resume: true })
+        assert.match(refusal.stderr, expected)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+        const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))
+        assert.equal(report.status, 'failed')
+        assert.deepEqual(report.models, [])
+        assert.equal(report.nativeProcessPid, undefined)
+      },
+      {
+        ready: noiseReady,
+        installedReport: { confirmedWorkerExit: true, status: 'activated-qualified' },
+      },
+    )
+  })
+for (const [name, ready, installedReport, resume, expected] of [
+  [
+    'fresh catalog',
+    noiseReady,
+    { confirmedWorkerExit: true, status: 'activated-qualified' },
+    false,
+    /must reuse the original canonical runtime\/catalog/,
+  ],
+  [
+    'unconfirmed worker exit',
+    noiseReady,
+    { confirmedWorkerExit: false, status: 'activated-qualified' },
+    true,
+    /confirmed prior worker exit/,
+  ],
+  [
+    'unqualified activation',
+    noiseReady,
+    { confirmedWorkerExit: true, status: 'ready' },
+    true,
+    /activated-qualified installed runtime/,
+  ],
+  [
+    'old worker',
+    { ...noiseReady, workerVersion: '0.13.0' },
+    {},
+    true,
+    /worker0\.14 before source copy/,
+  ],
+  ...[
+    'illustrious-euler',
+    'illustrious-noise-profile',
+    'illustrious-embeddings',
+    'illustrious-external-vae',
+  ].map((capability) => [
+    `missing ${capability}`,
+    {
+      ...noiseReady,
+      capabilities: noiseReady.capabilities.filter((value) => value !== capability),
+    },
+    {},
+    true,
+    new RegExp(`requires ${capability} before source copy`),
+  ]),
+])
+  test(`NoobAI component CLI ${name} refuses before original bytes or managed catalog mutation`, async () => {
+    await fixture(
+      async ({ input, run, appData }) => {
+        componentInput(input)
+        const refusal = await run({ resume })
+        assert.match(refusal.stderr, expected)
+        assert.deepEqual(await fs.readdir(path.join(appData, 'models')), [])
+      },
+      { ready, installedReport },
+    )
+  })
 for (const [name, ready, expected] of [
   [
     'old installed worker',
@@ -402,7 +641,7 @@ test('unknown or malformed explicit profiles refuse before catalog and worker se
       const refusal = await run()
       assert.match(
         refusal.stderr,
-        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction or noise-profile/,
+        /Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile or noobai-components/,
       )
       assert.doesNotMatch(refusal.stderr, /Qualification image side must be/)
       const report = JSON.parse(await fs.readFile(path.join(artifacts, 'report.json'), 'utf8'))

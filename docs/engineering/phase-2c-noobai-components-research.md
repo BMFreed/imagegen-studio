@@ -112,13 +112,30 @@ shapes may coincide; source labels or shape anchors are not training-lineage
 proof. Our exact-label applicability policy and complete worker loading remain
 separate, without importing broader adapter formats or checkpoint families.
 
-## Remaining gates
+## Remaining gates at the source/Prepare checkpoint
 
-New-worker trained component execution on both NoobAI objectives, actual matched
-pixel controls, full component/mode combinations, Anima regression and dynamic
-batches remain open until executed. No UI redesign, new worker/protocol field,
-NoobAI family, standalone SDXL support, network install/release readiness or
-image quality claim is introduced. Execution, mutations, cleanup and their evidence are recorded below.
+Trained component execution, matched pixel controls and combined modes had not
+executed at this source/Prepare checkpoint. The subsequent
+[installed component checkpoint](./phase-2c-noobai-component-inference-research.md)
+completed 36 finite EPS/V txt/img/normal-outpaint cases in 36 admissions at
+256×256/three requested steps, plus two restored Retry completions in four
+lifecycle admissions with two actual Cancel and six preserving missing-component
+refusals after real current seed37/Default/component/prompt edits. Frozen seed0,
+exact refs/target and portable Add/Save/readback/reopen/comparison are checked
+separately from this earlier source admission and CPU loading evidence.
+Four subsequent installed EPS-txt2img component mutations each completed six
+finite Generate/Add/Save/readback/reopen cases before the intended causal pixel
+RED. Source was restored between runs; fresh restored EPS-txt2img normal passed
+six finite cycles with native physical exit. Final evidence confirms all 43
+worker source files byte-exact, idle Main/worker and all five mutation journals
+restored without backups, preserving original inode/mode/mtime. The earlier
+post-load `disable_lora()` attempt is excluded as
+noncausal; the exact source of its pixel difference remains unproven.
+Independent VAE encoder, polarity swap, multiple-adapter order,
+trained Anima regression on worker0.14, dynamic batches and release remain open.
+No UI redesign, new worker/protocol field, NoobAI family, standalone SDXL
+support, public network delivery, engine Install/Repair or image-quality claim
+is introduced. This checkpoint's execution, mutations and cleanup follow below.
 
 ## Implemented and executed boundary (08.10.2026)
 
@@ -132,8 +149,15 @@ No worker/schema/capability or third family was added.
 Public Generate/Retry now give fixed LoRA, embedding and external-VAE messages
 for the three incompatibility codes. The shared safe projection also serves
 Main IPC. Raw private messages remain hidden; the ordinary checkpoint fallback
-is unchanged. Missing/corrupt component files still use their pre-existing
-generic model fallback: this slice fixes the three incompatibility codes only.
+was unchanged at this checkpoint. Missing/corrupt component files retained
+their pre-existing generic fallback; this source/Prepare slice fixed only the
+three incompatibility codes. The subsequent
+[installed component checkpoint](./phase-2c-noobai-component-inference-research.md)
+also fixes `MODEL_FILE_MISSING/CORRUPT` to a neutral resource message. Six causal
+public-controller RED cases use actual missing/same-size-corrupt managed files,
+with preserved owners and healthy restored frozen Retry; they are separate
+from the installed missing-only lifecycle and the subsequent four installed
+EPS-txt2img numerical mutation REDs.
 
 ### Real controlled-source and public-controller tests
 

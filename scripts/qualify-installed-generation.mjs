@@ -37,6 +37,7 @@ import {
   ANIMA_QWEN_IMAGE_VAE,
 } from '../src/main/models/anima-manifest.ts'
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { ProjectShadowStore } from '../src/main/projects/project-shadow.ts'
 import { assertOutpaintContribution } from '../src/main/projects/outpaint-contribution.ts'
 import { decodeTargetPngAlpha } from '../src/main/projects/target-png-mode.ts'
 import { createLamaAuxiliaryInstaller } from '../src/main/runtime/inference-auxiliary-installer.ts'
@@ -52,6 +53,7 @@ import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
+  stopExpiredQualificationProcess,
 } from './qualification-resource-limits.mjs'
 import { assertUpgradeBounds } from './upgrade-qualification-worker.mjs'
 import { stageLocalCivitaiQualification } from './qualification-local-civitai.mjs'
@@ -75,6 +77,15 @@ import {
   normalizeNoiseInputs,
   validateNoiseProfileFixture,
 } from './noobai-noise-qualification.mjs'
+import {
+  assertNoobaiComponentCatalog,
+  assertNoobaiComponentFrozen,
+  assertNoobaiComponentPixels,
+  assertNoobaiComponentStageOutcome,
+  normalizeNoobaiComponentInputs,
+  componentPublicationIds,
+  validateNoobaiComponentsFixture,
+} from './noobai-components-qualification.mjs'
 
 assert.deepEqual(process.argv.slice(2, 3), ['--fixture'])
 assert.ok(
@@ -92,15 +103,18 @@ const externalVaeProfile = fixture.profile === 'external-vae'
 const embeddingsProfile = fixture.profile === 'embeddings'
 const vPredictionProfile = fixture.profile === 'v-prediction'
 const noiseProfile = fixture.profile === 'noise-profile'
+const noobaiComponentsProfile = fixture.profile === 'noobai-components'
 const illustriousOnlyProfile =
   cfgRescaleProfile ||
   vaePrecisionProfile ||
   externalVaeProfile ||
   embeddingsProfile ||
   vPredictionProfile ||
-  noiseProfile
+  noiseProfile ||
+  noobaiComponentsProfile
 const externalVaeKeys = ['externalVaeLdm', 'externalVaeNative', 'externalVaeControl']
 const embeddingKeys = ['embeddingTrained', 'embeddingControl']
+const componentModelKeys = [...noiseModelKeys, ...embeddingKeys, ...externalVaeKeys]
 const priorModelKeys = ['encoder', 'vae', 'anima', 'illustrious', 'animaLora', 'illustriousLora']
 const embeddingControlSourceIds = { versionId: 700_111, fileId: 700_112 }
 assert.equal(fixture.schemaVersion, 1)
@@ -197,6 +211,15 @@ if (noiseProfile) {
   report.boundary.limits =
     'Only the explicitly selected bounded, bounded-lifecycle, author or outpaint stage is qualified. Bounded-lifecycle covers four lifecycle completions and five admissions, without the five trained matched pixel controls or a full bounded claim. Bounded 256px/three-step causal controls do not prove author-resolution execution. Author 832x1216/28-step runs are separate. Normal outpaint uses fixed local LaMa; no authored masks, Regional Guidance, Smart Patch, dynamic batches, Invoke pixel parity, subjective quality, live CivitAI delivery, release Install/Repair or full component matrix.'
   report.noiseStage = fixture.stage
+  report.authorRecipes = structuredClone(fixture.authorRecipes)
+}
+if (noobaiComponentsProfile) {
+  report.boundary.preconditions =
+    'Reuses the canonical qualified worker 0.14 and the three original managed NoobAI checkpoint/LoRA identities. One credited trained dual-CLIP embedding and its finite zero-tensor control form one resource with two versions; three standalone VAE versions extracted from the official EPS parent form one additional resource. Exact source attribution, independently checked native/LDM tensor equivalence and decoder-only artificial control bytes are prepared preconditions.'
+  report.boundary.limits =
+    'One objective and one explicit txt2img/img2img/outpaint/lifecycle stage per invocation. Six matched mode cases or one genuine Cancel/restored frozen Retry with three missing-component refusals, through UI Add/Save/readback/reopen and read-only comparison. 256 pixels, three requested steps, FP32 external VAE, signed LoRA -0.5, separately bound trained positive/negative embedding literals. Common-source image modes require a prior fullstack txt2img package for the same objective. Native/LDM equality refers only to the same official EPS-parent VAE tensors; no Cyber embedded-VAE equality, image-quality, full matrix, live download or release qualification claim.'
+  report.componentStage = fixture.stage
+  report.componentObjective = fixture.objective
   report.authorRecipes = structuredClone(fixture.authorRecipes)
 }
 async function hashFile(file) {
@@ -701,13 +724,14 @@ async function withDeadline(operation, milliseconds, description) {
   }
 }
 async function closeNativeQualification() {
-  if (!application) return
+  if (!application || report.nativeExit) return
   if (report.status !== 'failed') {
     await application.close()
     return
   }
-  const child = application.process()
-  const closing = application.close()
+  const child = nativeProcess
+  assert.ok(child, 'Failed qualification cleanup requires the child retained at launch.')
+  const closing = Promise.resolve().then(() => application.close())
   try {
     await withDeadline(closing, 30_000, 'Failed qualification native close exceeded 30 seconds.')
     return
@@ -761,6 +785,20 @@ async function closeNativeQualification() {
       report.cleanup.exitConfirmationError = String(cause)
     },
   )
+  if (child.exitCode === null && child.signalCode === null) {
+    const checks = report.resourceLimitChecks ?? []
+    const identity = checks
+      .flatMap(({ processIdentities }) => processIdentities)
+      .find(({ pid }) => pid === child.pid)
+    const owned = checks
+      .flatMap(({ groups }) => groups)
+      .find(({ ownedScope, pids }) => ownedScope && pids.includes(child.pid))
+    assert.ok(identity && owned, 'Failed native cleanup needs the observed owned scope identity.')
+    report.cleanup.ownedScopeStop = await stopExpiredQualificationProcess({
+      ...identity,
+      group: owned.group,
+    })
+  }
   report.cleanup.forcedExit = child.exitCode !== null || child.signalCode !== null
   await checkpointEvidence()
 }
@@ -797,6 +835,11 @@ async function installArtifact(repository, value, id, dependencies, publication 
   assert.ok(
     !embeddingsProfile || value.type === 'embedding',
     'Embedding qualification must reuse the seven existing resources without new copies.',
+  )
+  assert.ok(
+    !noobaiComponentsProfile ||
+      [...embeddingKeys, ...externalVaeKeys].some((key) => fixture[key] === value),
+    'NoobAI components must reuse all three original managed checkpoint/LoRA files; only the five declared component files may be added.',
   )
   if (noiseProfile && value === fixture.illustriousEpsilon) {
     assert.equal(id, 700_140, 'Only the one new official epsilon checkpoint may be adopted.')
@@ -894,12 +937,15 @@ async function installArtifact(repository, value, id, dependencies, publication 
   return { ...published, managedPath: managed }
 }
 let application
+let nativeProcess
 let window
 let database
 let mainLog
 let preservedExternalPriorCatalog = null
 let preservedEmbeddingPriorCatalog = null
 let preservedNoisePriorCatalog = null
+let preservedComponentPriorCatalog = null
+const pendingComponentRollbacks = []
 async function ensureQualificationResourceLimits(phase) {
   report.resourceLimits = await boundQualificationProcess(report.nativeProcessPid)
   report.resourceLimitChecks ??= []
@@ -965,7 +1011,24 @@ async function captureScreenshot(file, surface = null) {
       )
       .toBe(true)
   }
-  await window.screenshot({ path: file })
+  const pageId = await application.evaluate(({ BrowserWindow }) => {
+    const windows = BrowserWindow.getAllWindows()
+    if (windows.length !== 1) throw new Error('Expected one qualification window.')
+    return windows[0].id
+  })
+  const png = await withDeadline(
+    application.evaluate(async ({ BrowserWindow }, id) => {
+      const nativeWindow = BrowserWindow.fromId(id)
+      if (!nativeWindow || nativeWindow.isDestroyed())
+        throw new Error('The qualification window is unavailable.')
+      const image = await nativeWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      if (image.isEmpty()) throw new Error('The qualification screenshot is empty.')
+      return image.toPNG().toString('base64')
+    }, pageId),
+    30_000,
+    'Native qualification capture exceeded 30 seconds.',
+  )
+  await writeFile(file, Buffer.from(png, 'base64'))
 }
 async function setCfgRescale(project, value) {
   const input = window.locator('input[aria-label="CFG Rescale"]')
@@ -1815,7 +1878,8 @@ async function createProject(model, lora, caseName = '', execution = null) {
 async function setPredictionThroughUi(project, predictionType, modelKey = 'illustrious') {
   assert.ok(['epsilon', 'v_prediction'].includes(predictionType))
   const before = await tab(project)
-  const packagePath = noiseProfile ? await qualificationPackagePath(project) : null
+  const packagePath =
+    noiseProfile || noobaiComponentsProfile ? await qualificationPackagePath(project) : null
   const packageSha256 = packagePath ? await hashFile(packagePath) : null
   const catalogBefore = await window.evaluate(() => window.api.models.getCatalog())
   assert.equal(catalogBefore.ok, true)
@@ -1876,7 +1940,7 @@ async function setPredictionThroughUi(project, predictionType, modelKey = 'illus
     )
   await expect(window.getByText(`Prediction: ${predictionType}`, { exact: false })).toBeVisible()
   let sql = null
-  if (noiseProfile) {
+  if (noiseProfile || noobaiComponentsProfile) {
     sql = await database.db
       .selectFrom('checkpoint_prediction_override')
       .selectAll()
@@ -1895,7 +1959,7 @@ async function setPredictionThroughUi(project, predictionType, modelKey = 'illus
     predictionType,
     source: 'user',
     throughUi: true,
-    ...(noiseProfile ? { sql, packageUnchanged: true } : {}),
+    ...(noiseProfile || noobaiComponentsProfile ? { sql, packageUnchanged: true } : {}),
   }
 }
 async function comparePrediction(project, layer, captured, current, caseName, packagePath) {
@@ -2285,6 +2349,395 @@ async function qualifyChangedPredictionRetryRefusal(
   await checkpointEvidence()
   return evidence
 }
+function componentSelection(choice) {
+  return {
+    vae:
+      choice === 'ldm-layout'
+        ? 'externalVaeLdm'
+        : choice === 'vae-control'
+          ? 'externalVaeControl'
+          : 'externalVaeNative',
+    positive: choice === 'positive-zero' ? 'embeddingControl' : 'embeddingTrained',
+    negative: choice === 'negative-zero' ? 'embeddingControl' : 'embeddingTrained',
+    enabled: choice !== 'lora-disabled',
+  }
+}
+function componentResourceReference(key, predictionType = null) {
+  const value = fixture[key]
+  const ids =
+    componentPublicationIds[key] ??
+    (key === 'illustriousLora'
+      ? { modelId: 700_060, versionId: 700_061, fileId: 700_062 }
+      : value.origin)
+  return {
+    baseModelFamily: 'illustrious',
+    civitaiFileId: ids.fileId,
+    civitaiModelId: ids.modelId,
+    civitaiVersionId: ids.versionId,
+    displayName: value.name,
+    fileSha256: value.sha256,
+    kind: value.type,
+    localModelId: value.installed.resourceId,
+    localVersionId: value.installed.versionId,
+    predictionType,
+    versionName: value.versionName,
+  }
+}
+// This record is built from the prepared source fixture and declared case, independently of
+// the queue/provenance subject. Equality therefore also catches dropped or substituted fields.
+function expectedComponentConfiguration(choice, mode, execution) {
+  const selected = componentSelection(choice)
+  const prompt = (polarity) => ({
+    text: authoredEmbeddingPrompt(polarity, selected[polarity], false),
+    embeddingRefs: [
+      {
+        token: embeddingActivationToken(path.basename(fixture[selected[polarity]].path)),
+        resource: componentResourceReference(selected[polarity]),
+      },
+    ],
+  })
+  return {
+    mode,
+    model: componentResourceReference(report.componentFixture.modelKey, execution.predictionType),
+    vae: componentResourceReference(selected.vae),
+    vaePrecision: 'FP32',
+    cfgRescale: 0,
+    loras: [
+      {
+        enabled: selected.enabled,
+        resource: componentResourceReference('illustriousLora'),
+        weight: -0.5,
+      },
+    ],
+    positivePrompt: prompt('positive'),
+    negativePrompt: prompt('negative'),
+    sampling: {
+      actualSeed: 0,
+      cfgScale: execution.cfgScale,
+      invokeScheduler: execution.sampler,
+      requestedSeedPolicy: 'fixed',
+      seedBehavior: 'per-iteration',
+      sampler: execution.sampler === 'euler' ? 'Euler' : 'Euler a',
+      scheduler: 'Normal',
+      steps: execution.steps,
+      noiseProfile: structuredClone(execution.noiseProfile),
+      ...(mode === 'txt2img' ? {} : { denoisingStrength: 0.5 }),
+    },
+    size: { width: execution.width, height: execution.height },
+  }
+}
+function assertPortableComponentConfiguration(actual, expected) {
+  assert.deepEqual(
+    actual,
+    expected,
+    'All captured component identities and numeric policies must match the independent fixture record.',
+  )
+  const serialized = JSON.stringify(actual)
+  assert.equal(serialized.includes('igs_ti_private_'), false)
+  for (const key of componentModelKeys)
+    for (const filename of [fixture[key].path, fixture[key].installed.managedPath])
+      assert.equal(
+        serialized.includes(filename),
+        false,
+        'Portable component provenance must not contain source or managed paths.',
+      )
+}
+async function setComponentLoraEnabled(project, enabled) {
+  const control = window.getByRole('switch', {
+    name: `Enable ${fixture.illustriousLora.name}`,
+    exact: true,
+  })
+  if ((await control.getAttribute('aria-checked')) !== String(enabled)) await control.click()
+  await expect
+    .poll(async () => (await tab(project)).generationDraft.loras[0]?.enabled)
+    .toBe(enabled)
+  assert.equal((await tab(project)).generationDraft.loras[0].weight, -0.5)
+}
+async function editComponentDraft(project) {
+  for (const polarity of ['positive', 'negative']) {
+    const text = `${embeddingBasePrompts[polarity]}, later authoring edit`
+    await window
+      .getByRole('textbox', {
+        name: polarity === 'positive' ? 'Positive prompt' : 'Negative prompt',
+        exact: true,
+      })
+      .fill(text)
+    await expect
+      .poll(async () => (await tab(project)).generationDraft[`${polarity}Prompt`])
+      .toEqual({ text, embeddingRefs: [] })
+  }
+  await setExternalVae(project, null)
+  await setComponentLoraEnabled(project, false)
+  await setInput('Generation seed', 37)
+  await expect
+    .poll(async () => (await tab(project)).generationDraft.seed)
+    .toEqual({
+      policy: 'fixed',
+      value: 37,
+    })
+}
+async function settleComponentShadow(project, packagePath) {
+  await api('sealPromptHistory', project.id)
+  const current = await tab(project)
+  assert.equal(current.autosaveError, null)
+  const shadow = new ProjectShadowStore(path.join(fixture.appData, 'autosave'))
+  const savedPackage = await readIgsPackage(packagePath)
+  await expect
+    .poll(
+      async () => {
+        const inspection = await shadow.inspect({ projectPath: packagePath, savedPackage })
+        if (!current.dirty) return ['absent', 'clean'].includes(inspection.status)
+        if (inspection.status !== 'recoverable') return false
+        const document = inspection.document
+        return (
+          document.documentId === current.documentId &&
+          JSON.stringify(document.generationDraft) === JSON.stringify(current.generationDraft) &&
+          JSON.stringify(document.primaryBbox) === JSON.stringify(current.primaryBbox) &&
+          JSON.stringify(document.layers.map(({ id }) => id)) ===
+            JSON.stringify(current.layers.map(({ id }) => id))
+        )
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+}
+async function compareNoobaiComponents(project, layer, expected, caseName, packagePath) {
+  await settleComponentShadow(project, packagePath)
+  const before = await tab(project)
+  const packageSha256 = await hashFile(packagePath)
+  const recoveryBefore = await qualificationTreeSnapshot(path.join(fixture.appData, 'recovery'))
+  const autosaveBefore = await qualificationTreeSnapshot(path.join(fixture.appData, 'autosave'))
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
+  const comparison = window.getByRole('dialog', {
+    name: 'Compare generation settings',
+    exact: true,
+  })
+  try {
+    await expect(comparison).toBeVisible()
+    await expect(comparison.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
+    await comparison.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
+    const row = (key) => comparison.locator(`[data-setting="${key}"]`)
+    for (const polarity of ['positive', 'negative']) {
+      const value = row(`${polarity === 'positive' ? 'prompt' : 'negativePrompt'}.embeddings`)
+      await expect(value).toHaveAttribute('data-status', 'Removed')
+      await expect(value.locator('.comparison-values p').nth(0)).toContainText(
+        expected[`${polarity}Prompt`].embeddingRefs[0].resource.versionName,
+      )
+      await expect(value.locator('.comparison-values p').nth(1)).toHaveText('None')
+    }
+    await expect(row('vae.resource')).toHaveAttribute('data-status', 'Removed')
+    await expect(row('vae.resource').locator('.comparison-values p').nth(0)).toContainText(
+      expected.vae.versionName,
+    )
+    await expect(row('vae.resource').locator('.comparison-values p').nth(1)).toHaveText('Embedded')
+    await expect(row('loras.stack')).toHaveAttribute(
+      'data-status',
+      expected.loras[0].enabled ? 'Changed' : 'Same',
+    )
+    await expect(row('vaePrecision.value')).toHaveAttribute('data-status', 'Same')
+    await expect(row('vaePrecision.value').locator('.comparison-values p')).toHaveText([
+      'FP32',
+      'FP32',
+    ])
+    await expect(row('model.predictionType')).toHaveAttribute('data-status', 'Same')
+    const screenshot = path.join(fixture.artifacts, `${caseName}-comparison.png`)
+    await captureScreenshot(screenshot, comparison)
+    report.screenshots.push(screenshot)
+    return {
+      readOnly: true,
+      tupleCompared: true,
+      positive: 'Removed',
+      negative: 'Removed',
+      vae: 'Removed',
+      lora: expected.loras[0].enabled ? 'Changed' : 'Same',
+      screenshot,
+    }
+  } finally {
+    await comparison
+      .getByRole('button', { name: 'Close generation settings comparison', exact: true })
+      .click()
+    await expect(comparison).toBeHidden()
+    const after = await tab(project)
+    for (const key of [
+      'documentId',
+      'generationDraft',
+      'layers',
+      'primaryBbox',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ])
+      assert.deepEqual(after[key], before[key])
+    assert.equal(await hashFile(packagePath), packageSha256)
+    assert.deepEqual(
+      await qualificationTreeSnapshot(path.join(fixture.appData, 'recovery')),
+      recoveryBefore,
+      'Read-only comparison must preserve generation recovery bytes.',
+    )
+    assert.deepEqual(
+      await qualificationTreeSnapshot(path.join(fixture.appData, 'autosave')),
+      autosaveBefore,
+      'Read-only comparison must preserve the actual autosave shadow bytes.',
+    )
+  }
+}
+async function qualifyMissingComponentRetryRefusal(
+  project,
+  original,
+  targetBytes,
+  packagePath,
+  key,
+  caseName,
+) {
+  assert.equal(original.status, 'canceled')
+  await expect.poll(liveInstalledInferenceChildren).toEqual([])
+  const managed = fixture[key].installed.managedPath
+  assert.notEqual(
+    managed,
+    fixture[key].path,
+    'Lifecycle must mutate only managed qualification bytes, never the original source.',
+  )
+  const backup = `${managed}.qualification-missing-${runId}`
+  await assert.rejects(lstat(backup), { code: 'ENOENT' })
+  await rename(managed, backup)
+  const rollback = {
+    key,
+    managedPath: managed,
+    backupPath: backup,
+    sha256: fixture[key].sha256,
+    restored: false,
+  }
+  pendingComponentRollbacks.push(rollback)
+  report.componentManagedRollbacks = pendingComponentRollbacks
+  let manager
+  try {
+    await settleComponentShadow(project, packagePath)
+    const before = await tab(project)
+    assert.deepEqual(before.generationDraft.seed, { policy: 'fixed', value: 37 })
+    assert.equal(before.generationDraft.vae, null)
+    assert.deepEqual(before.generationDraft.positivePrompt.embeddingRefs, [])
+    assert.deepEqual(before.generationDraft.negativePrompt.embeddingRefs, [])
+    assert.equal(before.generationDraft.loras.length, 1)
+    assert.equal(before.generationDraft.loras[0].enabled, false)
+    const layers = await layerSnapshot(before.layers)
+    const rows = await database.db.selectFrom('generation_queue_item').selectAll().execute()
+    const receipts = await database.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .execute()
+    const cursors = await database.db.selectFrom('generation_seed_cursor').selectAll().execute()
+    const tombstones = await database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .execute()
+    const results = await api('listGenerationResults', project.id)
+    const packageSha256 = await hashFile(packagePath)
+    const inputParent = path.join(fixture.appData, 'generation-inputs')
+    const recoveryParent = path.join(fixture.appData, 'recovery')
+    const scratchParent = path.join(fixture.appData, 'scratch')
+    const autosaveParent = path.join(fixture.appData, 'autosave')
+    const inputs = await qualificationTreeSnapshot(inputParent)
+    const recovery = await qualificationTreeSnapshot(recoveryParent)
+    const scratch = await qualificationTreeSnapshot(scratchParent)
+    const autosave = await qualificationTreeSnapshot(autosaveParent)
+    await window.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+    manager = window.getByRole('dialog', { name: 'Queue Manager', exact: true })
+    const button = manager
+      .locator(`[data-testid="queue-job-row"][data-job-id="${original.id}"]`)
+      .getByRole('button', { name: 'Retry job', exact: true })
+    await expect(button).toBeEnabled({ timeout: 180_000 })
+    await ensureQualificationResourceLimits('before missing-component Retry')
+    await button.click()
+    const message =
+      'The selected model resource could not be verified for generation. Review it in Model Manager.'
+    await expect(manager.getByText(message, { exact: true })).toBeVisible()
+    await expect
+      .poll(async () => (await api('getGenerationState', project.id)).error)
+      .toEqual({ code: 'MODEL_FILE_MISSING', message })
+    await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
+    await expect.poll(liveInstalledInferenceChildren).toEqual([])
+    await settleComponentShadow(project, packagePath)
+    assert.deepEqual(
+      await database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      rows,
+    )
+    assert.deepEqual(
+      await database.db.selectFrom('generation_candidate_receipt').selectAll().execute(),
+      receipts,
+    )
+    assert.deepEqual(
+      await database.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+      cursors,
+    )
+    assert.deepEqual(
+      await database.db.selectFrom('generation_staging_discarded_session').selectAll().execute(),
+      tombstones,
+    )
+    assert.deepEqual(await api('listGenerationResults', project.id), results)
+    assert.deepEqual(
+      await qualificationTreeSnapshot(inputParent),
+      inputs,
+      'Refused Retry must not publish any input sibling or orphan.',
+    )
+    assert.deepEqual(await qualificationTreeSnapshot(recoveryParent), recovery)
+    assert.deepEqual(await qualificationTreeSnapshot(scratchParent), scratch)
+    assert.deepEqual(await qualificationTreeSnapshot(autosaveParent), autosave)
+    assert.equal(await hashFile(packagePath), packageSha256)
+    assert.ok(
+      (await readFile(path.join(inputParent, original.id, 'target.png'))).equals(targetBytes),
+    )
+    const after = await tab(project)
+    for (const field of [
+      'documentId',
+      'generationDraft',
+      'primaryBbox',
+      'dirty',
+      'canUndo',
+      'canRedo',
+      'lastActualSeedSnapshot',
+    ])
+      assert.deepEqual(after[field], before[field])
+    assert.deepEqual(await layerSnapshot(after.layers), layers)
+    const evidence = {
+      key,
+      sourceQueueItemId: original.id,
+      code: 'MODEL_FILE_MISSING',
+      currentDraftAtRefusal: structuredClone(before.generationDraft),
+      managedBytesRestored: false,
+      sourceSequenceUnchanged: true,
+      inputParentUnchanged: true,
+      recoveryParentUnchanged: true,
+      autosaveParentUnchanged: true,
+      scratchParentUnchanged: true,
+      stagingTombstonesUnchanged: true,
+      receiptAndSeedUnchanged: true,
+      projectAndPackageUnchanged: true,
+      noInferenceChild: true,
+    }
+    report.componentRetryRefusals.push(evidence)
+    await check(
+      `${caseName}: missing ${key} refuses public frozen Retry without admission or publication`,
+      evidence,
+    )
+    return evidence
+  } finally {
+    try {
+      if (manager && (await manager.isVisible()))
+        await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+    } finally {
+      // /proc observation does not depend on the browser. If physical exit cannot be proven
+      // here, retain the explicit rollback for the outer confirmed native-exit finalizer.
+      await expect.poll(liveInstalledInferenceChildren).toEqual([])
+      await rename(backup, managed)
+      assert.equal(await hashFile(managed), fixture[key].sha256)
+      rollback.restored = true
+      rollback.physicalInferenceExitConfirmed = true
+      const evidence = report.componentRetryRefusals.findLast((entry) => entry.key === key)
+      if (evidence) evidence.managedBytesRestored = true
+    }
+  }
+}
 async function generateAndAccept(project, family, mode, qualification = null, retryCase = false) {
   // Images-per-click is transient UI state and resets when this script closes/reopens a tab.
   // Set the declared single-job qualification input for every click, including img2img.
@@ -2295,18 +2748,29 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const externalQualification = qualification?.kind === 'external-vae'
   const embeddingQualification = qualification?.kind === 'embeddings'
   const noiseQualification = qualification?.kind === 'noise-profile'
-  const predictionQualification = qualification?.kind === 'v-prediction' || noiseQualification
-  const execution = noiseQualification
-    ? qualification.execution
-    : {
-        width: fixture.side,
-        height: fixture.side,
-        steps: fixture.steps,
-        cfgScale: 4,
-        sampler: 'euler_a',
-      }
-  const checkpoint = noiseQualification ? fixture[qualification.modelKey] : fixture.illustrious
-  const modelKey = noiseQualification ? qualification.modelKey : 'illustrious'
+  const componentQualification = qualification?.kind === 'noobai-components'
+  const predictionQualification =
+    qualification?.kind === 'v-prediction' || noiseQualification || componentQualification
+  const execution =
+    noiseQualification || componentQualification
+      ? qualification.execution
+      : {
+          width: fixture.side,
+          height: fixture.side,
+          steps: fixture.steps,
+          cfgScale: 4,
+          sampler: 'euler_a',
+        }
+  const checkpoint =
+    noiseQualification || componentQualification
+      ? fixture[qualification.modelKey]
+      : fixture.illustrious
+  const modelKey =
+    noiseQualification || componentQualification ? qualification.modelKey : 'illustrious'
+  const expectedComponents = componentQualification
+    ? expectedComponentConfiguration(qualification.choice, mode, execution)
+    : null
+  let componentDraftAfterEdit = null
   let currentNoiseProfile = null
   let outpaintSourcePixels = null
   let outpaintContributionPixels = null
@@ -2328,13 +2792,14 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       ? 'FP32'
       : null
   const currentVaePrecision = precisionQualification ? qualification.currentVaePrecision : null
-  const capturedVaeReference = externalQualification
-    ? structuredClone(before.generationDraft.vae)
-    : null
+  const capturedVaeReference =
+    externalQualification || componentQualification
+      ? structuredClone(before.generationDraft.vae)
+      : null
   const capturedVaeKey = externalQualification ? qualification.vaeKey : null
   const capturedStrength = externalQualification && mode === 'img2img' ? 0 : 0.5
   const capturedPredictionType = predictionQualification
-    ? noiseQualification
+    ? noiseQualification || componentQualification
       ? execution.predictionType
       : qualification.predictionType
     : checkpoint.predictionType
@@ -2347,12 +2812,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   let currentPredictionChange = null
   let currentVaeReference = null
   let libraryDefaultChange = null
-  const capturedEmbeddingPrompts = embeddingQualification
-    ? {
-        positive: structuredClone(before.generationDraft.positivePrompt),
-        negative: structuredClone(before.generationDraft.negativePrompt),
-      }
-    : null
+  const capturedEmbeddingPrompts =
+    embeddingQualification || componentQualification
+      ? {
+          positive: structuredClone(before.generationDraft.positivePrompt),
+          negative: structuredClone(before.generationDraft.negativePrompt),
+        }
+      : null
   if (cfgQualification) {
     assert.equal(family, 'illustrious')
     assert.equal(
@@ -2397,7 +2863,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     if (mode === 'txt2img') assert.deepEqual(before.layers, [])
   }
   const existingLayers = await layerSnapshot(before.layers)
-  if (predictionQualification) {
+  if (componentQualification) {
+    assert.deepEqual(before.generationDraft.model, {
+      ...expectedComponents.model,
+      predictionType: before.generationDraft.model.predictionType,
+    })
+    assert.deepEqual(before.generationDraft.vae, expectedComponents.vae)
+    assert.equal(before.generationDraft.vaePrecision, 'FP32')
+    assert.equal(before.generationDraft.cfgRescale, 0)
+    assert.deepEqual(before.generationDraft.loras, expectedComponents.loras)
+    assert.deepEqual(before.generationDraft.positivePrompt, expectedComponents.positivePrompt)
+    assert.deepEqual(before.generationDraft.negativePrompt, expectedComponents.negativePrompt)
+  }
+  if (predictionQualification && !componentQualification) {
     assert.equal(family, 'illustrious')
     assert.equal(before.generationDraft.vae, null)
     assert.equal(before.generationDraft.vaePrecision, 'FP32')
@@ -2460,6 +2938,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     mode === 'txt2img' ||
     externalQualification ||
     embeddingQualification ||
+    componentQualification ||
     (predictionQualification && mode !== 'outpaint')
       ? 'fixed'
       : 'reuse'
@@ -2550,18 +3029,21 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(JSON.stringify(frozen.context.prompts).includes('igs_ti_private_'), false)
   }
   if (noiseQualification) assertNoiseExecution(frozen, execution)
+  if (componentQualification) assertNoobaiComponentFrozen(frozen, fixture, qualification.choice)
   const lora = fixture[family === 'anima' ? 'animaLora' : 'illustriousLora']
-  if (predictionQualification) {
+  if (predictionQualification && !componentQualification) {
     assert.equal(frozen.context.vaePrecision, 'FP32')
     assert.equal(frozen.workerJob.vaePrecision, 'FP32')
     assert.equal(frozen.context.vae, null)
     assert.equal(frozen.workerJob.vae, null)
   }
-  assert.equal(frozen.context.loras.length, 1)
-  assert.equal(frozen.context.loras[0].reference.fileSha256, lora.sha256)
-  assert.equal(frozen.context.loras[0].weight, -0.5)
-  assert.equal(frozen.workerJob.loras[0].sha256, lora.sha256)
-  assert.equal(frozen.workerJob.loras[0].weight, -0.5)
+  if (!componentQualification) {
+    assert.equal(frozen.context.loras.length, 1)
+    assert.equal(frozen.context.loras[0].reference.fileSha256, lora.sha256)
+    assert.equal(frozen.context.loras[0].weight, -0.5)
+    assert.equal(frozen.workerJob.loras[0].sha256, lora.sha256)
+    assert.equal(frozen.workerJob.loras[0].weight, -0.5)
+  }
   let nativePlan = null
   if (family === 'anima') {
     assert.equal(frozen.context.model.checkpoint.reference.fileSha256, fixture.anima.sha256)
@@ -2639,7 +3121,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       frozen.context.conditioning.keepMask.sha256,
       sha256(decodeTargetPngAlpha(targetBytes, execution.width, execution.height)),
     )
-    if (noiseQualification) {
+    if (noiseQualification || componentQualification) {
       assert.ok(qualification.outpaintSource)
       assert.equal(sha256(qualification.outpaintSource.bytes), qualification.outpaintSource.sha256)
       outpaintSourcePixels = await decodedRgba(qualification.outpaintSource.bytes)
@@ -2676,12 +3158,15 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   // Change current authoring only after durable admission; the accepted record must retain click input.
   const changedPrompt =
-    predictionQualification && !(noiseQualification && mode === 'outpaint' && retryCase)
+    predictionQualification &&
+    !componentQualification &&
+    !(noiseQualification && mode === 'outpaint' && retryCase)
       ? before.generationDraft.positivePrompt.text
-      : `${embeddingQualification ? embeddingBasePrompts.positive : before.generationDraft.positivePrompt.text}, later authoring edit`
-  const changedNegativePrompt = embeddingQualification
-    ? `${embeddingBasePrompts.negative}, later authoring edit`
-    : null
+      : `${embeddingQualification || componentQualification ? embeddingBasePrompts.positive : before.generationDraft.positivePrompt.text}, later authoring edit`
+  const changedNegativePrompt =
+    embeddingQualification || componentQualification
+      ? `${embeddingBasePrompts.negative}, later authoring edit`
+      : null
   const removeLiveEmbeddingPrompts = async () => {
     for (const polarity of ['positive', 'negative']) {
       const field = polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
@@ -2766,7 +3251,52 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       )
       await expect.poll(liveInstalledInferenceChildren).toEqual([])
       assert.equal(capturedVaePrecision, 'FP32')
-      if (predictionQualification) {
+      if (componentQualification) {
+        assert.equal(
+          (await api('listGenerationResults', project.id)).lastActualSeed,
+          previousLastActualSeed,
+        )
+        const canceledTab = await tab(project)
+        assert.deepEqual(await layerSnapshot(canceledTab.layers), existingLayers)
+        assert.deepEqual(canceledTab.generationDraft, before.generationDraft)
+        assert.equal(await hashFile(beforePackagePath), beforePackageSha256)
+        libraryDefaultChange = {
+          embedding: await setEmbeddingDefaultThroughUi(project, 'embeddingControl'),
+          vae: await setExternalVaeDefaultThroughUi(project, 'externalVaeControl'),
+        }
+        assert.equal(
+          libraryDefaultChange.embedding.defaultVersionId,
+          fixture.embeddingControl.installed.versionId,
+        )
+        assert.equal(
+          libraryDefaultChange.vae.defaultVersionId,
+          fixture.externalVaeControl.installed.versionId,
+        )
+        assert.notEqual(
+          libraryDefaultChange.embedding.previousVersionId,
+          libraryDefaultChange.embedding.defaultVersionId,
+        )
+        assert.notEqual(
+          libraryDefaultChange.vae.previousVersionId,
+          libraryDefaultChange.vae.defaultVersionId,
+        )
+        assert.deepEqual((await tab(project)).generationDraft, before.generationDraft)
+        await editComponentDraft(project)
+        componentDraftAfterEdit = structuredClone((await tab(project)).generationDraft)
+        // Refuse against changed live authoring and Defaults, preserving the frozen job.
+        predictionRetryRefusal = []
+        for (const key of ['illustriousLora', 'externalVaeNative', 'embeddingTrained'])
+          predictionRetryRefusal.push(
+            await qualifyMissingComponentRetryRefusal(
+              project,
+              canceled,
+              targetBytes,
+              beforePackagePath,
+              key,
+              qualification.caseName,
+            ),
+          )
+      } else if (predictionQualification) {
         assert.equal(
           capturedPredictionType,
           noiseQualification ? execution.predictionType : 'v_prediction',
@@ -2946,13 +3476,25 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   let normalizedInputs = null
   if (qualification) {
-    normalizedInputs = embeddingQualification
-      ? normalizeEmbeddingInputs(frozen)
-      : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
+    normalizedInputs = componentQualification
+      ? normalizeNoobaiComponentInputs(frozen, qualification.choice)
+      : embeddingQualification
+        ? normalizeEmbeddingInputs(frozen)
+        : structuredClone({ context: frozen.context, workerJob: frozen.workerJob })
     // Different fresh Projects require distinct identities; remove only the selected policy.
     delete normalizedInputs.context.documentId
     delete normalizedInputs.context.documentRevision
-    if (noiseQualification) {
+    if (componentQualification) {
+      if (!retryCase) await editComponentDraft(project)
+      componentDraftAfterEdit = structuredClone((await tab(project)).generationDraft)
+      assertNoobaiComponentFrozen(
+        JSON.parse(
+          (await queueRows(project)).find(({ id }) => id === admitted.id).frozen_payload_json,
+        ),
+        fixture,
+        qualification.choice,
+      )
+    } else if (noiseQualification) {
       normalizedInputs = normalizeNoiseInputs(frozen)
     } else if (predictionQualification) {
       delete normalizedInputs.context.model.reference.predictionType
@@ -3036,6 +3578,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   )
   assert.deepEqual(completedTab.primaryBbox, before.primaryBbox)
   assert.equal(completedTab.generationDraft.positivePrompt.text, changedPrompt)
+  if (componentQualification)
+    assert.deepEqual(completedTab.generationDraft, componentDraftAfterEdit)
   if (cfgQualification) assert.equal(completedTab.generationDraft.cfgRescale, 0.2)
   if (precisionQualification)
     assert.equal(completedTab.generationDraft.vaePrecision, currentVaePrecision)
@@ -3112,8 +3656,9 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   if (progress.length > 0)
     assert.equal(progress.at(-1).current.step, progress.at(-1).current.totalSteps)
-  if (noiseQualification && mode === 'txt2img') assertNoiseTxt2ImgProgress(progress, execution)
-  if (noiseQualification && mode === 'outpaint')
+  if ((noiseQualification || componentQualification) && mode === 'txt2img')
+    assertNoiseTxt2ImgProgress(progress, execution)
+  if ((noiseQualification && mode === 'outpaint') || (componentQualification && mode !== 'txt2img'))
     assertNoiseImageBasedProgress(progress, qualification.effectiveDenoisingOracle)
   if ((embeddingQualification || predictionQualification) && mode === 'img2img')
     assert.ok(
@@ -3153,7 +3698,8 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       targetBytes,
       outputBytes,
     )
-    if (noiseQualification) outpaintContributionPixels = await decodedRgba(outputBytes)
+    if (noiseQualification || componentQualification)
+      outpaintContributionPixels = await decodedRgba(outputBytes)
   }
   assert.ok(candidate.thumbnailUrl, 'actual worker thumbnail must be published')
   const thumbnail = await decodedImage(candidate.thumbnailUrl)
@@ -3164,7 +3710,13 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   if (predictionQualification) {
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     await expect.poll(liveInstalledInferenceChildren).toEqual([])
-    if (noiseQualification) {
+    if (componentQualification) {
+      assertNoobaiComponentFrozen(
+        JSON.parse(row.frozen_payload_json),
+        fixture,
+        qualification.choice,
+      )
+    } else if (noiseQualification) {
       currentNoiseProfile = {
         ...execution.noiseProfile,
         rescaleBetasZeroSnr: !execution.noiseProfile.rescaleBetasZeroSnr,
@@ -3186,7 +3738,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   await expect.poll(async () => (await tab(project)).layers.length).toBe(before.layers.length + 1)
   const accepted = await tab(project)
   const layer = accepted.layers[0]
-  if (noiseQualification && mode === 'outpaint')
+  if ((noiseQualification || componentQualification) && mode === 'outpaint')
     assertOutpaintLayerPlacement(layer, before.primaryBbox)
   const acceptedData = await api(
     'getRasterGenerationData',
@@ -3200,7 +3752,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     requestedSeedPolicy,
   )
   assert.equal(acceptedData.generationConfiguration.model.baseModelFamily, family)
-  if (predictionQualification) {
+  if (predictionQualification && !componentQualification) {
     assert.equal(acceptedData.generationConfiguration.model.predictionType, capturedPredictionType)
     assert.equal(acceptedData.generationConfiguration.vaePrecision, 'FP32')
     assert.equal(acceptedData.generationConfiguration.vae, null)
@@ -3256,6 +3808,10 @@ async function generateAndAccept(project, family, mode, qualification = null, re
       embeddingRefs: [],
     })
   }
+  if (componentQualification) {
+    assertPortableComponentConfiguration(acceptedData.generationConfiguration, expectedComponents)
+    assert.deepEqual(accepted.generationDraft, componentDraftAfterEdit)
+  }
   assert.equal(
     acceptedData.generationConfiguration.positivePrompt.text,
     before.generationDraft.positivePrompt.text,
@@ -3296,7 +3852,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.deepEqual(provenance.layerSourceContext.bbox, before.primaryBbox)
   assertAcceptedCheckpointIdentity(
     provenance.generationConfiguration,
-    noiseQualification ? checkpoint : fixture[family],
+    noiseQualification || componentQualification ? checkpoint : fixture[family],
   )
   if (family === 'anima') {
     const config = provenance.generationConfiguration
@@ -3344,7 +3900,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   }
   const savedLayer = saved.project.layers.find(({ id }) => id === layer.id)
   assert.ok(savedLayer)
-  if (noiseQualification && mode === 'outpaint')
+  if ((noiseQualification || componentQualification) && mode === 'outpaint')
     assertOutpaintLayerPlacement(savedLayer, before.primaryBbox)
   assert.equal(sha256(await saved.readMember(savedLayer.asset.path)), receipt.image_sha256)
   assert.equal(savedLayer.asset.bytes, receipt.image_byte_size)
@@ -3367,7 +3923,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(mergedPreview.height, previewRect.height)
     assert.equal(mergedPreview.opaquePixels, previewRect.width * previewRect.height)
     assert.notEqual(mergedPreview.pixelSha256, pixels.pixelSha256)
-    if (noiseQualification) {
+    if (noiseQualification || componentQualification) {
       outpaintPreservation.mergedPreview = assertOutpaintPreviewPixels({
         source: outpaintSourcePixels,
         sourceRect: qualification.outpaintSource.rect,
@@ -3385,7 +3941,7 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   assert.ok(previewThumbnail.bytes > 0 && previewThumbnail.width > 0 && previewThumbnail.height > 0)
   assert.equal(saved.project.lastActualSeedSnapshot, 0)
   assert.equal(saved.project.generationDraft.positivePrompt.text, changedPrompt)
-  if (predictionQualification) {
+  if (predictionQualification && !componentQualification) {
     assert.equal(provenance.generationConfiguration.model.predictionType, capturedPredictionType)
     assert.equal(provenance.generationConfiguration.vaePrecision, 'FP32')
     assert.equal(provenance.generationConfiguration.vae, null)
@@ -3429,12 +3985,16 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     assert.equal(saved.project.generationDraft.vaePrecision, 'FP32')
     assert.equal(saved.project.generationDraft.vae, null)
   }
+  if (componentQualification) {
+    assertPortableComponentConfiguration(provenance.generationConfiguration, expectedComponents)
+    assert.deepEqual(saved.project.generationDraft, componentDraftAfterEdit)
+  }
   await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
   await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
   const reopened = await tab(project)
-  if (noiseQualification && mode === 'outpaint') {
+  if ((noiseQualification || componentQualification) && mode === 'outpaint') {
     const reopenedLayer = reopened.layers.find(({ id }) => id === layer.id)
     assert.ok(reopenedLayer)
     assertOutpaintLayerPlacement(reopenedLayer, before.primaryBbox)
@@ -3469,6 +4029,19 @@ async function generateAndAccept(project, family, mode, qualification = null, re
     provenance.generationConfiguration,
   )
   const reopenedPackage = await readIgsPackage(packagePath)
+  if (componentQualification) {
+    assert.deepEqual(reopened.generationDraft, componentDraftAfterEdit)
+    assertPortableComponentConfiguration(
+      (await api('getRasterGenerationData', project.id, reopened.documentId, layer.id))
+        .generationConfiguration,
+      expectedComponents,
+    )
+    assertPortableComponentConfiguration(
+      reopenedPackage.project.layers.find(({ id }) => id === layer.id).generationProvenance
+        .generationConfiguration,
+      expectedComponents,
+    )
+  }
   assert.deepEqual(
     reopenedPackage.project.layers.find(({ id }) => id === layer.id).generationProvenance,
     provenance,
@@ -3498,70 +4071,78 @@ async function generateAndAccept(project, family, mode, qualification = null, re
   const screenshot = path.join(fixture.artifacts, `${caseName}.png`)
   await captureScreenshot(screenshot)
   report.screenshots.push(screenshot)
-  const comparison = noiseQualification
-    ? await compareNoiseProfile(
+  const comparison = componentQualification
+    ? await compareNoobaiComponents(
         project,
         reopened.layers.find(({ id }) => id === layer.id),
-        execution.noiseProfile,
-        currentNoiseProfile,
-        qualification.caseName,
+        expectedComponents,
+        caseName,
         packagePath,
-        mode === 'outpaint'
-          ? {
-              capturedStrength,
-              currentStrength: reopened.generationDraft.sampling.denoisingStrength,
-            }
-          : null,
       )
-    : predictionQualification
-      ? await comparePrediction(
+    : noiseQualification
+      ? await compareNoiseProfile(
           project,
           reopened.layers.find(({ id }) => id === layer.id),
-          capturedPredictionType,
-          currentPredictionType,
-          caseName,
+          execution.noiseProfile,
+          currentNoiseProfile,
+          qualification.caseName,
           packagePath,
+          mode === 'outpaint'
+            ? {
+                capturedStrength,
+                currentStrength: reopened.generationDraft.sampling.denoisingStrength,
+              }
+            : null,
         )
-      : embeddingQualification
-        ? await compareEmbeddings(
+      : predictionQualification
+        ? await comparePrediction(
             project,
             reopened.layers.find(({ id }) => id === layer.id),
-            capturedEmbeddingPrompts,
+            capturedPredictionType,
+            currentPredictionType,
             caseName,
             packagePath,
           )
-        : externalQualification
-          ? await compareExternalVae(
+        : embeddingQualification
+          ? await compareEmbeddings(
               project,
               reopened.layers.find(({ id }) => id === layer.id),
-              capturedVaeReference,
-              currentVaeReference,
+              capturedEmbeddingPrompts,
               caseName,
               packagePath,
             )
-          : precisionQualification
-            ? await compareVaePrecision(
+          : externalQualification
+            ? await compareExternalVae(
                 project,
                 reopened.layers.find(({ id }) => id === layer.id),
-                capturedVaePrecision,
-                currentVaePrecision,
+                capturedVaeReference,
+                currentVaeReference,
                 caseName,
+                packagePath,
               )
-            : cfgQualification
-              ? await compareCfgRescale(
+            : precisionQualification
+              ? await compareVaePrecision(
                   project,
                   reopened.layers.find(({ id }) => id === layer.id),
-                  capturedCfgRescale,
+                  capturedVaePrecision,
+                  currentVaePrecision,
                   caseName,
                 )
-              : mode === 'outpaint'
-                ? await compareOutpaint(
+              : cfgQualification
+                ? await compareCfgRescale(
                     project,
                     reopened.layers.find(({ id }) => id === layer.id),
-                    retryCase,
+                    capturedCfgRescale,
                     caseName,
                   )
-                : null
+                : mode === 'outpaint'
+                  ? await compareOutpaint(
+                      project,
+                      reopened.layers.find(({ id }) => id === layer.id),
+                      retryCase,
+                      caseName,
+                    )
+                  : null
   const generation = {
     family,
     mode,
@@ -3719,6 +4300,51 @@ async function generateAndAccept(project, family, mode, qualification = null, re
           }
         : {}),
     }
+  if (componentQualification) {
+    generation.qualification = {
+      kind: 'noobai-components',
+      caseName,
+      choice: qualification.choice,
+      objective: fixture.objective,
+      modelKey,
+      execution: structuredClone(execution),
+      outcome: 'completed-finite',
+      frozen: structuredClone(frozen),
+      expectedConfiguration: expectedComponents,
+      frozenPayloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
+      normalizedInputs,
+      actualPortableConfiguration: structuredClone(provenance.generationConfiguration),
+      currentDraft: componentDraftAfterEdit,
+      comparison,
+      libraryDefaultChange,
+      preservingRetryRefusals: predictionRetryRefusal ?? [],
+      retainedTargetUnchanged: true,
+      ...(mode === 'txt2img'
+        ? {}
+        : {
+            commonSource: qualification.commonSource,
+            effectiveDenoisingOracle: qualification.effectiveDenoisingOracle,
+            effectiveDenoisingEvaluations: progress.at(-1).current.totalSteps,
+          }),
+      ...(mode === 'outpaint' ? { outpaintPreservation } : {}),
+    }
+    Object.defineProperty(generation, 'componentPixels', {
+      value: {
+        choice: qualification.choice,
+        frozen: structuredClone(frozen),
+        target,
+        dimensions: pixels,
+        ...(mode === 'outpaint'
+          ? {
+              contribution: outpaintContributionPixels,
+              preview: await decodedRgba(mergedPreviewBytes),
+              bbox: before.primaryBbox,
+              previewRect,
+            }
+          : {}),
+      },
+    })
+  }
   report.generations.push(generation)
   await check(
     `${qualification?.caseName ?? `${family} ${mode}`}: UI Generate -> trained installed worker -> staging -> explicit Add -> Save/reopen${qualification ? '/comparison' : ''}`,
@@ -3897,7 +4523,7 @@ async function prepareImg2Img(project) {
     .toBe(0.5)
   await stage('Image-based input prepared', { projectKey: project.id })
 }
-async function prepareOutpaint(project) {
+async function prepareOutpaint(project, fixedSeed = false) {
   await stage('Prepare outpaint: capture original bbox', { projectKey: project.id })
   const before = await tab(project)
   const beforeLayers = await layerSnapshot(before.layers)
@@ -3919,7 +4545,14 @@ async function prepareOutpaint(project) {
   })
   assert.deepEqual(moved.primaryBbox, { ...before.primaryBbox, x: before.primaryBbox.x + 64 })
   assert.deepEqual(await layerSnapshot(moved.layers), beforeLayers)
-  await prepareImg2Img(project)
+  if (fixedSeed) {
+    await setInput('Generation seed', 0)
+    await setInput('Denoising Strength', 0.5)
+    await expect.poll(async () => (await tab(project)).generationDraft.seed.policy).toBe('fixed')
+    await expect
+      .poll(async () => (await tab(project)).generationDraft.sampling.denoisingStrength)
+      .toBe(0.5)
+  } else await prepareImg2Img(project)
   const state = await api('getGenerationState', project.id)
   assert.equal(
     state[
@@ -4219,13 +4852,15 @@ async function importMatchedExternalVaeSource(project, commonSource, profile = '
     controlled: 'OS chooser selects the single recorded real PNG only',
   }
   const imports =
-    profile === 'embeddings'
-      ? report.embeddingImports
-      : profile === 'v-prediction'
-        ? report.predictionImports
-        : profile === 'noise-profile'
-          ? report.noiseImports
-          : report.externalVaeImports
+    profile === 'noobai-components'
+      ? report.componentImports
+      : profile === 'embeddings'
+        ? report.embeddingImports
+        : profile === 'v-prediction'
+          ? report.predictionImports
+          : profile === 'noise-profile'
+            ? report.noiseImports
+            : report.externalVaeImports
   imports.push(evidence)
   await check(
     `${profile === 'embeddings' ? 'Embedding' : profile === 'v-prediction' ? 'Prediction' : 'External VAE'} matched img2img source: genuine UI import/installed normalization/Save preserves exact pixels`,
@@ -4779,6 +5414,245 @@ async function assertMatchedNoiseControls(cases) {
     )
   }
 }
+async function verifyNoobaiCommonSource(commonSource, execution) {
+  assert.equal(commonSource.objective, fixture.objective)
+  assert.ok(
+    commonSource.sourcePackagePath.startsWith(path.join(fixture.appData, 'workspaces') + path.sep),
+  )
+  for (const filename of [commonSource.path, commonSource.sourcePackagePath]) {
+    const entry = await lstat(filename)
+    assert.ok(entry.isFile() && !entry.isSymbolicLink())
+    assert.equal(await realpath(filename), filename)
+  }
+  const bytes = await readFile(commonSource.path)
+  assert.equal(bytes.length, commonSource.byteSize)
+  assert.equal(sha256(bytes), commonSource.sha256)
+  const pixels = await decodedImage(`data:image/png;base64,${bytes.toString('base64')}`)
+  assert.equal(pixels.pixelSha256, commonSource.pixelSha256)
+  assert.equal(pixels.width, execution.width)
+  assert.equal(pixels.height, execution.height)
+  assert.equal(pixels.opaquePixels, execution.width * execution.height)
+  const sourcePackage = await readIgsPackage(commonSource.sourcePackagePath)
+  const sourceLayer = sourcePackage.project.layers.find(
+    ({ generationProvenance }) =>
+      generationProvenance?.executionResultContext.queueItemId === commonSource.sourceQueueItemId,
+  )
+  assert.ok(sourceLayer, 'The declared source queue ID must own an actual accepted source layer.')
+  const provenance = sourceLayer.generationProvenance
+  assert.equal(provenance.kind, 'illustrious-txt2img')
+  assert.equal(provenance.executionResultContext.output.sha256, commonSource.sha256)
+  assert.equal(provenance.executionResultContext.output.byteSize, commonSource.byteSize)
+  assert.ok((await sourcePackage.readMember(sourceLayer.asset.path)).equals(bytes))
+  assertPortableComponentConfiguration(
+    provenance.generationConfiguration,
+    expectedComponentConfiguration('fullstack', 'txt2img', execution),
+  )
+  const row = await database.db
+    .selectFrom('generation_queue_item')
+    .selectAll()
+    .where('id', '=', commonSource.sourceQueueItemId)
+    .executeTakeFirstOrThrow()
+  assert.equal(row.status, 'completed')
+  assert.equal(row.operation, 'illustrious-txt2img')
+  assert.equal(row.document_id, sourcePackage.project.documentId)
+  assert.equal(provenance.layerSourceContext.sourceDocumentId, row.document_id)
+  assert.equal(provenance.layerSourceContext.sourceDocumentRevision, row.document_revision)
+  const frozen = JSON.parse(row.frozen_payload_json)
+  assertNoobaiComponentFrozen(frozen, fixture, 'fullstack')
+  assert.deepEqual(frozen.context.prompts, {
+    positive: authoredEmbeddingPrompt('positive', 'embeddingTrained', false),
+    negative: authoredEmbeddingPrompt('negative', 'embeddingTrained', false),
+  })
+  const receipt = await database.db
+    .selectFrom('generation_candidate_receipt')
+    .selectAll()
+    .where('queue_item_id', '=', row.id)
+    .executeTakeFirstOrThrow()
+  assert.equal(receipt.image_sha256, commonSource.sha256)
+  assert.equal(receipt.image_byte_size, commonSource.byteSize)
+  assert.equal(receipt.candidate_id, provenance.executionResultContext.candidateId)
+  report.componentCommonSourceProof = {
+    objective: fixture.objective,
+    sourceQueueItemId: row.id,
+    actualAcceptedPackage: true,
+    actualCompletedQueue: true,
+    fullstackTupleMatches: true,
+    receiptMatches: true,
+    sourcePackageSha256: await hashFile(commonSource.sourcePackagePath),
+  }
+  return bytes
+}
+async function qualifyNoobaiComponents() {
+  const plan = report.componentFixture
+  assertNoiseReady(report.installedReady)
+  report.componentImports = []
+  report.componentRetryRefusals = []
+  const priorQueueIds = new Set(
+    (await database.db.selectFrom('generation_queue_item').select('id').execute()).map(
+      ({ id }) => id,
+    ),
+  )
+  const oracle = await independentNoiseScheduleOracle([
+    { ...plan.execution, ...(plan.mode === 'txt2img' ? {} : { denoisingStrength: 0.5 }) },
+  ])
+  const effectiveDenoisingOracle = plan.mode === 'txt2img' ? null : oracle.results[0].imageBased
+  if (effectiveDenoisingOracle) {
+    assert.equal(effectiveDenoisingOracle.denoisingStrength, 0.5)
+    assert.equal(effectiveDenoisingOracle.effectiveDenoisingEvaluations, 2)
+    assert.deepEqual(effectiveDenoisingOracle.nativeTimesteps, [667, 334, 1])
+    assert.deepEqual(effectiveDenoisingOracle.selectedTimesteps, [334, 1])
+  }
+  let sourceBytes = null
+  if (plan.mode !== 'txt2img')
+    sourceBytes = await verifyNoobaiCommonSource(fixture.commonSource, plan.execution)
+  const generations = []
+  for (const choice of plan.choices) {
+    const caseName = `components-${fixture.objective}-${fixture.stage}-${choice}`
+    await stage('Installed combined NoobAI component case', {
+      choice,
+      caseName,
+      mode: plan.mode,
+      objective: fixture.objective,
+    })
+    const project = await createProject(
+      fixture[plan.modelKey],
+      fixture.illustriousLora,
+      caseName,
+      plan.execution,
+    )
+    if (plan.mode !== 'txt2img') {
+      await importMatchedExternalVaeSource(project, fixture.commonSource, 'noobai-components')
+      await setInput('Denoising Strength', 0.5)
+      if (plan.mode === 'outpaint') await prepareOutpaint(project, true)
+    }
+    const authored = await authorNoiseExecution(project, plan.modelKey, plan.execution)
+    await setCfgRescale(project, 0)
+    const selected = componentSelection(choice)
+    await setExternalVae(project, selected.vae)
+    await authorEmbeddingThroughUi(project, 'positive', selected.positive)
+    await authorEmbeddingThroughUi(project, 'negative', selected.negative)
+    await setComponentLoraEnabled(project, selected.enabled)
+    if (fixture.stage === 'lifecycle') {
+      report.componentDefaultPrecondition = {
+        embedding: await setEmbeddingDefaultThroughUi(project, 'embeddingTrained'),
+        vae: await setExternalVaeDefaultThroughUi(project, 'externalVaeNative'),
+      }
+    }
+    const generation = await generateAndAccept(
+      project,
+      'illustrious',
+      plan.mode,
+      {
+        kind: 'noobai-components',
+        choice,
+        modelKey: plan.modelKey,
+        execution: plan.execution,
+        authored,
+        caseName,
+        commonSource: fixture.commonSource ?? null,
+        effectiveDenoisingOracle,
+        ...(plan.mode === 'outpaint'
+          ? {
+              outpaintSource: {
+                bytes: sourceBytes,
+                sha256: fixture.commonSource.sha256,
+                rect: { x: 0, y: 0, width: plan.execution.width, height: plan.execution.height },
+              },
+            }
+          : {}),
+      },
+      fixture.stage === 'lifecycle',
+    )
+    generations.push(generation)
+    await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
+    await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  }
+  if (fixture.stage !== 'lifecycle') {
+    report.componentNumerics = assertNoobaiComponentPixels(
+      generations.map(({ componentPixels }) => componentPixels),
+      plan.mode,
+    )
+    for (const generation of generations.slice(1))
+      assert.ok(
+        (await readFile(generation.target.path)).equals(await readFile(generations[0].target.path)),
+        'Every matched component case must retain exactly the same materialized target bytes.',
+      )
+  }
+  if (fixture.stage === 'txt2img') {
+    const fullstack = generations[0]
+    const saved = await readIgsPackage(fullstack.packagePath)
+    const layer = saved.project.layers.find(
+      ({ generationProvenance }) =>
+        generationProvenance?.executionResultContext.queueItemId === fullstack.queueItemId,
+    )
+    assert.ok(layer)
+    const bytes = await saved.readMember(layer.asset.path)
+    const sourcePath = path.join(fixture.artifacts, `component-common-${fixture.objective}.png`)
+    await writeFile(sourcePath, bytes, { flag: 'wx' })
+    report.componentCommonSource = {
+      path: sourcePath,
+      sha256: sha256(bytes),
+      byteSize: bytes.length,
+      pixelSha256: fullstack.dimensions.pixelSha256,
+      width: plan.execution.width,
+      height: plan.execution.height,
+      sourceQueueItemId: fullstack.queueItemId,
+      sourcePackagePath: fullstack.packagePath,
+      objective: fixture.objective,
+    }
+    await verifyNoobaiCommonSource(report.componentCommonSource, plan.execution)
+  } else {
+    assert.equal(await hashFile(fixture.commonSource.path), fixture.commonSource.sha256)
+    assert.equal(
+      await hashFile(fixture.commonSource.sourcePackagePath),
+      report.componentCommonSourceProof.sourcePackageSha256,
+    )
+  }
+  const retryGenerations = generations.filter(({ retry }) => retry !== null)
+  const admittedRows = (
+    await database.db.selectFrom('generation_queue_item').selectAll().execute()
+  ).filter(({ id }) => !priorQueueIds.has(id))
+  assert.deepEqual(
+    admittedRows.map(({ id }) => id).sort(),
+    generations
+      .flatMap((generation) =>
+        generation.retry
+          ? [generation.queueItemId, generation.retry.originalQueueItemId]
+          : [generation.queueItemId],
+      )
+      .sort(),
+  )
+  assert.deepEqual(
+    admittedRows
+      .filter(({ status }) => status === 'completed')
+      .map(({ id }) => id)
+      .sort(),
+    generations.map(({ queueItemId }) => queueItemId).sort(),
+  )
+  assert.deepEqual(
+    admittedRows
+      .filter(({ status }) => status === 'canceled')
+      .map(({ id }) => id)
+      .sort(),
+    retryGenerations.map(({ retry }) => retry.originalQueueItemId).sort(),
+  )
+  report.componentSummary = {
+    stage: fixture.stage,
+    objective: fixture.objective,
+    finiteCompletions: generations.length,
+    actualAdmissions: admittedRows.length,
+    canceledOriginals: admittedRows.filter(({ status }) => status === 'canceled').length,
+    preservingRetryRefusals: report.componentRetryRefusals.length,
+    matchedPixelControlCases: plan.matchedPixelControlCases,
+    fullMvpClaim: false,
+    combinedMatrixClaim: false,
+  }
+  assertNoobaiComponentStageOutcome(report.componentSummary)
+  await check(
+    'Exact combined component stage completes through real UI Add/Save/reopen with independent tuple and pixel controls',
+    report.componentSummary,
+  )
+}
 async function qualifyNoiseProfile() {
   assertNoiseReady(report.installedReady)
   report.noiseImports = []
@@ -5275,8 +6149,9 @@ try {
       externalVaeProfile ||
       embeddingsProfile ||
       vPredictionProfile ||
-      noiseProfile,
-    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction or noise-profile.',
+      noiseProfile ||
+      noobaiComponentsProfile,
+    'Qualification profile must be omitted or exactly cfg-rescale, outpaint, vae-precision, external-vae, embeddings, v-prediction, noise-profile or noobai-components.',
   )
   assert.ok(
     Number.isInteger(fixture.side) &&
@@ -5300,6 +6175,54 @@ try {
   if (externalVaeProfile) validateExternalVaeFixture()
   if (embeddingsProfile) validateEmbeddingFixture()
   if (vPredictionProfile) validateVPredictionFixture()
+  if (noobaiComponentsProfile) {
+    const installed = JSON.parse(await readFile(provision.report, 'utf8'))
+    report.componentFixture = validateNoobaiComponentsFixture(fixture, installed.ready)
+    assert.equal(
+      resume,
+      true,
+      'NoobAI components must reuse the original canonical runtime/catalog.',
+    )
+    assert.equal(
+      installed.confirmedWorkerExit,
+      true,
+      'NoobAI components require confirmed prior worker exit.',
+    )
+    assert.equal(
+      installed.status,
+      'activated-qualified',
+      'NoobAI components require the activated-qualified installed runtime.',
+    )
+    report.installedReady = installed.ready
+    report.launcherBounds = await assertUpgradeBounds()
+    report.componentSourceFiles = []
+    for (const key of componentModelKeys) {
+      const value = fixture[key]
+      const entry = await lstat(value.path)
+      assert.ok(entry.isFile() && !entry.isSymbolicLink())
+      assert.equal(await realpath(value.path), value.path)
+      assert.equal(entry.size, value.byteSize)
+      assert.equal(await hashFile(value.path), value.sha256)
+      if (embeddingKeys.includes(key)) await qualifyIllustriousEmbedding(value.path)
+      report.componentSourceFiles.push({
+        key,
+        descriptor: structuredClone(value),
+        sourceStat: {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+      })
+    }
+    if (fixture.stage === 'outpaint')
+      await verifyInferenceAuxiliaryFile({
+        byteSize: fixture.lama.byteSize,
+        managedPath: fixture.lama.path,
+        sha256: fixture.lama.sha256,
+      })
+  }
   if (noiseProfile) {
     const installed = JSON.parse(await readFile(provision.report, 'utf8'))
     report.noiseFixture = validateNoiseProfileFixture(fixture, installed.ready)
@@ -5354,11 +6277,12 @@ try {
   }
   const families = illustriousOnlyProfile ? ['illustrious'] : ['illustrious', 'anima']
   const allModelKeys = priorModelKeys
-  const modelKeys = noiseProfile
-    ? noiseModelKeys
-    : illustriousOnlyProfile
-      ? ['illustrious', 'illustriousLora']
-      : allModelKeys
+  const modelKeys =
+    noiseProfile || noobaiComponentsProfile
+      ? noiseModelKeys
+      : illustriousOnlyProfile
+        ? ['illustrious', 'illustriousLora']
+        : allModelKeys
   for (const family of families) {
     assert.equal(fixture[family]?.type, 'checkpoint')
     assert.equal(fixture[family]?.family, family)
@@ -5496,11 +6420,18 @@ try {
   report.sourceSha256 = {
     script: await hashFile('scripts/qualify-installed-generation.mjs'),
     workerLock: await hashFile('worker-python/uv.lock'),
-    ...(noiseProfile
+    ...(noiseProfile || noobaiComponentsProfile
       ? {
           noiseQualification: await hashFile('scripts/noobai-noise-qualification.mjs'),
           qualificationUpgrade: await hashFile('scripts/upgrade-qualification-worker.mjs'),
           localCivitaiTransport: await hashFile('scripts/qualification-local-civitai.mjs'),
+          ...(noobaiComponentsProfile
+            ? {
+                componentQualification: await hashFile(
+                  'scripts/noobai-components-qualification.mjs',
+                ),
+              }
+            : {}),
         }
       : {}),
   }
@@ -5523,8 +6454,9 @@ try {
   else {
     // An Illustrious-only fixture may declare the previous six-resource catalog while executing
     // only Illustrious. Unlisted installed identities still refuse; no extra resources are copied.
-    const declaredKeys =
-      vPredictionProfile || noiseProfile
+    const declaredKeys = noobaiComponentsProfile
+      ? componentModelKeys
+      : vPredictionProfile || noiseProfile
         ? modelKeys
         : embeddingsProfile
           ? [...allModelKeys, ...externalVaeKeys, ...embeddingKeys]
@@ -5551,6 +6483,22 @@ try {
       assert.equal(hashes.size, 3)
       assertNoiseCatalog(catalog, fixture, { adopting: true })
       preservedNoisePriorCatalog = structuredClone(catalog)
+    }
+    if (noobaiComponentsProfile) {
+      assert.equal(hashes.size, 8)
+      assertNoobaiComponentCatalog(catalog, fixture, { adopting: true })
+      const baseHashes = new Set(noiseModelKeys.map((key) => fixture[key].sha256))
+      preservedComponentPriorCatalog = structuredClone(
+        catalog.filter(({ versions }) => versions.some(({ file }) => baseHashes.has(file.sha256))),
+      )
+      assert.equal(preservedComponentPriorCatalog.length, 3)
+      report.catalogReuse = {
+        initialResourceCount: catalog.length,
+        originalResourceCount: 3,
+        originalVersionCount: 3,
+        declaredIdentityCount: 8,
+        maximumAdditionalManagedFiles: 5,
+      }
     }
     if (vaePrecisionProfile) {
       assert.equal(
@@ -5770,7 +6718,7 @@ try {
     fixture.illustrious,
     700_040,
     undefined,
-    vPredictionProfile || noiseProfile
+    vPredictionProfile || noiseProfile || noobaiComponentsProfile
       ? {
           sourceModelId: fixture.illustrious.origin.modelId,
           sourceVersionId: fixture.illustrious.origin.versionId,
@@ -5791,10 +6739,12 @@ try {
         fixture[key],
         id,
         undefined,
-        vPredictionProfile || noiseProfile ? { versionName: fixture[key].versionName } : null,
+        vPredictionProfile || noiseProfile || noobaiComponentsProfile
+          ? { versionName: fixture[key].versionName }
+          : null,
       )
   }
-  if (noiseProfile) {
+  if (noiseProfile || noobaiComponentsProfile) {
     const value = fixture.illustriousEpsilon
     value.installed = await installArtifact(repository, value, 700_140, undefined, {
       sourceModelId: value.origin.modelId,
@@ -5804,18 +6754,54 @@ try {
       resourceOrigin: value.origin,
       versionName: value.versionName,
     })
-    assertNoiseCatalog(await repository.listInstalled(), fixture)
-    report.catalogReuse = {
-      initialResourceCount: catalog.length,
-      finalResourceCount: 3,
-      finalVersionCount: 3,
-      declaredIdentityCount: 3,
+    if (noiseProfile) assertNoiseCatalog(await repository.listInstalled(), fixture)
+    if (noiseProfile) {
+      report.catalogReuse = {
+        initialResourceCount: catalog.length,
+        finalResourceCount: 3,
+        finalVersionCount: 3,
+        declaredIdentityCount: 3,
+        newManagedFiles: report.models.filter(
+          ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
+        ).length,
+        maximumAdditionalManagedFiles: 1,
+      }
+      assert.ok(report.catalogReuse.newManagedFiles <= 1)
+    }
+  }
+  if (noobaiComponentsProfile) {
+    for (const key of [...embeddingKeys, ...externalVaeKeys]) {
+      const ids = componentPublicationIds[key]
+      fixture[key].installed = await installArtifact(
+        repository,
+        fixture[key],
+        ids.managedId,
+        undefined,
+        {
+          sourceModelId: ids.modelId,
+          sourceVersionId: ids.versionId,
+          sourceFileId: ids.fileId,
+          versionName: fixture[key].versionName,
+          ...(embeddingKeys.includes(key)
+            ? {
+                creator: fixture.embeddingTrained.origin.creator,
+                resourceOrigin: fixture.embeddingTrained.origin,
+              }
+            : {}),
+        },
+      )
+      if (embeddingKeys.includes(key))
+        await qualifyIllustriousEmbedding(fixture[key].installed.managedPath)
+    }
+    assertNoobaiComponentCatalog(await repository.listInstalled(), fixture)
+    Object.assign(report.catalogReuse, {
+      finalResourceCount: 5,
+      finalVersionCount: 8,
       newManagedFiles: report.models.filter(
         ({ reusedQualificationPrecondition }) => !reusedQualificationPrecondition,
       ).length,
-      maximumAdditionalManagedFiles: 1,
-    }
-    assert.ok(report.catalogReuse.newManagedFiles <= 1)
+    })
+    assert.ok(report.catalogReuse.newManagedFiles <= 5)
   }
   if (vPredictionProfile) {
     const seeded = await repository.listInstalled()
@@ -5893,29 +6879,48 @@ try {
           ? 'Same six-resource catalog retained; exact Illustrious checkpoint and signed LoRA reused without new copies'
           : 'Real exact model files copied, verified and cataloged; source weights unchanged',
   )
-  if (outpaintProfile || (noiseProfile && fixture.stage === 'outpaint'))
+  if (
+    outpaintProfile ||
+    ((noiseProfile || noobaiComponentsProfile) && fixture.stage === 'outpaint')
+  )
     await installQualificationLama()
-  application = await electron.launch({ args: ['.'], cwd: process.cwd(), env })
-  report.nativeProcessPid = application.process().pid
+  application = await electron.launch({
+    args: [
+      '--ozone-platform=x11',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '.',
+    ],
+    cwd: process.cwd(),
+    env,
+  })
+  nativeProcess = application.process()
+  report.nativeProcessPid = nativeProcess.pid
   await ensureQualificationResourceLimits('native-launch')
   mainLog = createWriteStream(path.join(fixture.artifacts, 'electron-main.log'), { flags: 'wx' })
-  application.process().stderr.pipe(mainLog, { end: false })
-  application.process().on('exit', (code, signal) => {
+  nativeProcess.stderr.pipe(mainLog, { end: false })
+  nativeProcess.on('exit', (code, signal) => {
     report.nativeExit = { code, signal, at: new Date().toISOString() }
   })
   await application.evaluate(({ app }) => {
-    app.on('before-quit', () => console.error('QUALIFICATION before-quit'))
+    app.on('before-quit', () =>
+      console.error('QUALIFICATION before-quit', new Date().toISOString()),
+    )
     const quit = app.quit.bind(app)
     app.quit = () => {
-      console.error('QUALIFICATION app.quit', new Error().stack)
+      console.error('QUALIFICATION app.quit', new Date().toISOString(), new Error().stack)
       quit()
     }
   })
   window = await isolateNativeSmokeWindow(application)
   await application.evaluate(({ BrowserWindow }) => {
     for (const nativeWindow of BrowserWindow.getAllWindows()) {
-      nativeWindow.on('close', () => console.error('QUALIFICATION window close'))
-      nativeWindow.on('closed', () => console.error('QUALIFICATION window closed'))
+      nativeWindow.on('close', () =>
+        console.error('QUALIFICATION window close', new Date().toISOString(), new Error().stack),
+      )
+      nativeWindow.on('closed', () =>
+        console.error('QUALIFICATION window closed', new Date().toISOString()),
+      )
       nativeWindow.webContents.on('render-process-gone', (_event, details) =>
         console.error('QUALIFICATION renderer gone', details),
       )
@@ -5923,14 +6928,50 @@ try {
   })
   // Long CUDA qualification must not compete with the user's desktop focus or window controls.
   // The actual native renderer/compositor and public IPC remain in use for all interactions.
-  await application.evaluate(({ BrowserWindow }) => {
-    for (const nativeWindow of BrowserWindow.getAllWindows()) nativeWindow.hide()
+  await application.evaluate(({ BrowserWindow, screen }) => {
+    const displays = screen.getAllDisplays()
+    for (const nativeWindow of BrowserWindow.getAllWindows()) {
+      const isolate = () => {
+        const { width, height } = nativeWindow.getBounds()
+        nativeWindow.setPosition(
+          Math.min(...displays.map(({ bounds }) => bounds.x)) - width - 1000,
+          Math.min(...displays.map(({ bounds }) => bounds.y)) - height - 1000,
+        )
+      }
+      nativeWindow.setFocusable(false)
+      nativeWindow.setSkipTaskbar(true)
+      nativeWindow.on('show', isolate)
+      isolate()
+      nativeWindow.showInactive()
+    }
   })
-  report.nativeWindowIsolation = 'Hidden native Electron window; real renderer and IPC'
+  report.nativeWindowIsolation =
+    'Visible native X11 renderer outside every physical display; no focus/taskbar; real IPC'
   window.on('crash', () => console.error('QUALIFICATION renderer crash'))
   window.on('close', () => console.error('QUALIFICATION renderer page close'))
   window.on('pageerror', (error) => report.pageErrors.push(String(error)))
   await window.getByRole('tab', { name: 'Home', exact: true }).waitFor()
+  assert.equal(
+    await application.evaluate(({ BrowserWindow, screen }) =>
+      BrowserWindow.getAllWindows().every((nativeWindow) => {
+        const windowBounds = nativeWindow.getBounds()
+        return (
+          nativeWindow.isVisible() &&
+          screen
+            .getAllDisplays()
+            .every(
+              ({ bounds }) =>
+                windowBounds.x + windowBounds.width <= bounds.x ||
+                bounds.x + bounds.width <= windowBounds.x ||
+                windowBounds.y + windowBounds.height <= bounds.y ||
+                bounds.y + bounds.height <= windowBounds.y,
+            )
+        )
+      }),
+    ),
+    true,
+    'Native qualification windows must remain visible outside every physical display.',
+  )
   // Observe genuine public preload notifications before any admitted job can emit progress.
   await window.evaluate(() => {
     window.__installedQualificationProgress = []
@@ -5945,7 +6986,9 @@ try {
   await check('Unmodified production Main qualifies activated real Linux/NVIDIA runtime', {
     runtime: runtime.value,
   })
-  if (outpaintProfile) {
+  if (noobaiComponentsProfile) {
+    await qualifyNoobaiComponents()
+  } else if (outpaintProfile) {
     const ready = JSON.parse(await readFile(provision.report, 'utf8')).ready
     assert.ok(
       ['0.12.0', '0.13.0', '0.14.0'].includes(ready.workerVersion),
@@ -5983,6 +7026,40 @@ try {
     await qualifyInstalledImport(lastProject)
   }
   assert.deepEqual(report.pageErrors, [])
+  if (noobaiComponentsProfile) {
+    const final = await repository.listInstalled()
+    assertNoobaiComponentCatalog(final, fixture)
+    const withoutAuthoredPolicy = (resource) => {
+      const value = structuredClone(resource)
+      if (value.type === 'checkpoint')
+        for (const version of value.versions)
+          for (const key of ['predictionType', 'predictionTypeSource', 'noiseProfile'])
+            delete version[key]
+      return value
+    }
+    for (const previous of preservedComponentPriorCatalog)
+      assert.deepEqual(
+        withoutAuthoredPolicy(final.find(({ id }) => id === previous.id)),
+        withoutAuthoredPolicy(previous),
+        'Original managed IDs/defaults/bytes/source metadata remain unchanged apart from authored exact-file policies.',
+      )
+    for (const { descriptor, sourceStat } of report.componentSourceFiles) {
+      assert.equal(await hashFile(descriptor.path), descriptor.sha256)
+      const entry = await lstat(descriptor.path)
+      assert.deepEqual(
+        {
+          dev: entry.dev,
+          ino: entry.ino,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          ctimeMs: entry.ctimeMs,
+        },
+        sourceStat,
+      )
+    }
+    report.catalogReuse.allSourceFilesUnchanged = true
+    report.catalogReuse.originalIdentitiesPreserved = true
+  }
   if (noiseProfile) {
     const final = await repository.listInstalled()
     assertNoiseCatalog(final, fixture)
@@ -6127,6 +7204,19 @@ try {
   await finalize('native physical exit', async () => {
     if (report.resourceLimitChecks?.length)
       report.nativePhysicalExit = await confirmQualificationProcessExit(report.resourceLimitChecks)
+  })
+  await finalize('component managed rollback after physical exit', async () => {
+    for (const rollback of pendingComponentRollbacks.filter(({ restored }) => !restored)) {
+      assert.ok(
+        report.nativePhysicalExit,
+        'Managed rollback requires confirmed native physical exit.',
+      )
+      assert.deepEqual(await liveInstalledInferenceChildren(), [])
+      await rename(rollback.backupPath, rollback.managedPath)
+      assert.equal(await hashFile(rollback.managedPath), rollback.sha256)
+      rollback.restored = true
+      rollback.physicalInferenceExitConfirmed = true
+    }
   })
   await finalize('database close', async () => {
     if (database) await database.close()

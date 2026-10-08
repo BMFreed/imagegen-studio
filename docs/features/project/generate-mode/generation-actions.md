@@ -75,6 +75,14 @@ private inputs/staging/scratch, autosave shadow, Project and saved package, foll
 by a healthy Retry of the original context. It is recorded separately from
 trained inference in the [component research](../../../engineering/phase-2c-noobai-components-research.md).
 
+`MODEL_FILE_MISSING` and `MODEL_FILE_CORRUPT` can describe a checkpoint or any
+selected component. Both use the fixed resource-neutral message: “The selected
+model resource could not be verified for generation. Review it in Model Manager.”
+The original code and preserving refusal behavior remain unchanged. Actual
+managed-file missing and same-size corruption evidence for LoRA, embedding and
+external VAE is recorded in the
+[combined component research](../../../engineering/phase-2c-noobai-component-inference-research.md).
+
 ### Action bar
 
 In the current Project UI, generation commands live in a fixed action bar at the top of the left panel, above the independently scrolling settings stack. No separate `Create` header is shown. A compact target label appears only when generating into a Smart Patch:

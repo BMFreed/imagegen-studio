@@ -1578,10 +1578,21 @@ policy refusals. [Component source/Prepare checkpoint](../engineering/phase-2c-n
 закрывает точный NoobAI standalone-VAE source gate, реальные controlled-source
 install/repair/reopen/qualifiers трёх компонентов и безопасную диагностику
 Generate/Retry. На unchanged installed worker0.14 отдельно проверены CPU загрузка
-обоих полных VAE layouts и finite trained dual-CLIP state; это не GPU conditioning
-или полная component matrix. Следующий шаг 2C — trained component/mode combinations
-на обоих NoobAI objectives и новые Anima regressions на этом worker, затем
-dynamic multi-job batches. NoobAI не становится
+обоих полных VAE layouts и finite trained dual-CLIP state. Последующий
+[installed component checkpoint](../engineering/phase-2c-noobai-component-inference-research.md)
+завершил 36 finite EPS/V txt/img/outpaint cases в 36 admissions при256×256/трёх
+requested steps и два lifecycle: два completed restored Retry, четыре admissions,
+две actual Cancel и шесть preserving missing-component refusals. Current draft37
+и Default/component/prompt edits не меняют frozen seed0/resources/target.
+Четыре installed EPS-txt2img component mutations дали causal RED после шести
+finite Generate/Add/Save/readback/reopen cases каждая. Исходник восстановлен
+между прогонами; fresh restored EPS-txt2img normal прошёл шесть finite cycles с
+native physical exit. Final source evidence подтверждает 43 byte-exact worker
+source files, idle Main/worker и все пять restored mutation journals без backup
+с original inode/mode/mtime.
+Independent VAE encoder, polarity swap и multiple-adapter order остаются открытыми;
+следующий integration gate 2C — новые trained Anima regressions на worker0.14,
+затем dynamic multi-job batches. NoobAI не становится
 третьим семейством или отдельным backend.
 
 **Основание:** [официальный NoobAI XL 1.0](https://huggingface.co/Laxhar/noobai-XL-1.0)
@@ -1606,9 +1617,10 @@ controls (их partial report завершился oracle-launcher setup error),
 refusals и два author-parameter cases. Три installed CPU mutations независимо
 ловят ignored ZTSNR, spacing и Euler dispatch; source bytes восстановлены.
 Один canonical reusable environment обновлён до worker0.14 с native startup/exit
-и свежим manifest; исторический worker0.12 provision report сохранён. Полная
-component/type-aware matrix и новые Anima trained regressions на этом worker
-остаются открытыми. Последующий outpaint checkpoint независимо проверяет shifted
+и свежим manifest; исторический worker0.12 provision report сохранён. Component
+combinations оставались открытыми на этом author checkpoint; последующий bounded
+36-case component checkpoint описан выше. Independent component gates и новые
+Anima trained regressions на worker0.14 остаются открытыми. Последующий outpaint checkpoint независимо проверяет shifted
 source RGB, protected preview pixels, effective timestep cutoff и placement после
 Add/Save/readback/reopen. Исправлена диагностика смены exact checkpoint/noise
 policy при frozen outpaint Retry: сохраняющий отказ теперь сообщает
@@ -1644,7 +1656,9 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    compatible LoRA, dual-CLIP embeddings и external VAE. Source/Prepare часть
    выполнена 08.10.2026: точная метка NoobAI допустима для standalone VAE,
    реальные structural qualifiers и безопасные component refusals сохранены;
-   complete native CPU VAE loading отделено от ещё открытого trained GPU gate.
+   complete native CPU VAE loading отделено от последующего trained GPU evidence
+   в bounded36-case component checkpoint. Exact local source/catalog preparation
+   остаётся precondition; оно не квалифицирует live public delivery или Install/Repair.
    Неизвестный компонент диагностировать явно. Обновить
    [managed-model contract](../contracts/managed-model-library.md) и
    [generation settings](../features/project/generate-mode/generation-settings.md)
@@ -1680,6 +1694,25 @@ evidence, а не full NoobAI/MVP или release qualification; пункты н�
    и явный Add/Save/reopen/comparison. Bounded smoke дополнить заранее ограниченным
    прогоном с авторскими steps/resolution, фиксируя окружение и источник recipe;
    finite output сам по себе не доказывает правильность расписания или качество.
+   **Component checkpoint 08.10.2026:** оба declared EPS/V recipes завершили
+   bounded256×256/three-step matrix: 36 finite completions/36 admissions,
+   шесть choices для каждого txt/img/normal-outpaint mode. Common-source image
+   modes используют один full-stack txt2img PNG на objective. Два отдельных
+   lifecycle дали два restored Retry completions/четыре admissions/две Cancel/
+   шесть preserving missing-component refusals после Default/component/prompt/
+   current seed37 edits, сохранив frozen0 и exact target. Actual Add/Save,
+   independent readback/reopen и read-only comparison проверяют portable tuple
+   и pixels. Exact five-resource/eight-version catalog и sources — declared
+   local preconditions; это не live CivitAI delivery или engine Install/Repair.
+   Четыре installed EPS-txt2img ignored-component mutations дали causal pixel RED
+   после шести finite Generate/Add/Save/readback/reopen cases каждая;
+   source восстановлен между прогонами. Fresh restored EPS-txt2img normal прошёл
+   шесть finite cycles с native physical exit; final source evidence подтверждает
+   все 43 byte-exact worker source files, idle Main/worker и пять restored journals
+   без backup с original inode/mode/mtime. Independent VAE encoder, polarity swap,
+   multiple-adapter order, trained Anima worker0.14 regression, dynamic batches
+   и release остаются отдельными gates; author-resolution results предыдущего
+   checkpoint не расширяются этим трёхшаговым component срезом.
 
 **Выходная проверка шага 2C:** независимые oracles подтверждают prediction
 interpretation, zero-SNR transform, фактические timestep/sigma sequences и

@@ -4,7 +4,17 @@ import type { ProjectGenerationActionState } from '../../shared/projects/project
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -2060,6 +2070,29 @@ test('Generate IPC error projection retains actionable owned refusals and hides 
     ),
     {
       code: 'MODEL_FILE_CORRUPT',
+      message:
+        'The selected model resource could not be verified for generation. Review it in Model Manager.',
+    },
+  )
+  assert.deepEqual(
+    toProjectGenerationActionApiError(
+      new ModelServiceError('MODEL_FILE_MISSING', 'private /home/person/embedding.safetensors'),
+    ),
+    {
+      code: 'MODEL_FILE_MISSING',
+      message:
+        'The selected model resource could not be verified for generation. Review it in Model Manager.',
+    },
+  )
+  assert.deepEqual(
+    toProjectGenerationActionApiError(
+      new ModelServiceError(
+        'MODEL_CHECKPOINT_INCOMPATIBLE',
+        'private /home/person/checkpoint.safetensors',
+      ),
+    ),
+    {
+      code: 'MODEL_CHECKPOINT_INCOMPATIBLE',
       message: 'The selected checkpoint could not be verified for generation.',
     },
   )
@@ -3462,6 +3495,230 @@ for (const component of [
       assert.equal(retryError.message.includes('/home/person/'), false)
     })
   })
+}
+
+async function selectControllerComponentFile(
+  fixture: Fixture,
+  component: 'embedding' | 'external VAE' | 'LoRA',
+) {
+  const { modelService, projects, tabId } = fixture
+  await projects.updateGenerationDraft(tabId, { kind: 'positive-prompt', text: 'a lantern' })
+  await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+  switch (component) {
+    case 'embedding': {
+      const { file, prompt } = await embeddingPrompt(fixture, 9920, 9921, 'file-owner.safetensors')
+      const owner = projects.getOpenDocumentForAcceptance(tabId)!
+      await owner.applyDocument({
+        ...owner.document,
+        generationDraft: { ...owner.document.generationDraft, positivePrompt: prompt },
+      })
+      return { bytes: file.bytes, managedPath: file.managedPath }
+    }
+    case 'external VAE': {
+      const file = await publishIllustriousVaeFixture(
+        modelService.repository,
+        fixture.root,
+        9930,
+        9931,
+      )
+      const reference = await modelService.resolveGenerationVae(file.resourceId, file.versionId)
+      await projects.setGenerationVae(tabId, async () => reference)
+      return { bytes: file.bytes, managedPath: file.managedPath }
+    }
+    case 'LoRA': {
+      const reference = await addControllerLora(fixture)
+      const verified = await modelService.resolveVerifiedGenerationLoraForPlan(reference)
+      return { bytes: await readFile(verified.managedPath), managedPath: verified.managedPath }
+    }
+  }
+  assert.fail('Unsupported managed component fixture.')
+}
+
+// Actual ModelService owns both exact-byte refusals; no component resolver is replaced. Tiny
+// managed fixtures pass Main's real qualifiers, while inference output remains controlled.
+for (const component of ['LoRA', 'embedding', 'external VAE'] as const) {
+  for (const fault of ['missing', 'corrupt'] as const) {
+    test(`managed component ${component} ${fault} gives resource diagnostics through public Generate and frozen Retry without changing durable owners`, async () => {
+      await withFixture(async (fixture) => {
+        const { controller, documentId, projects, queue, runtime, staging, tabId } = fixture
+        const ownedFile = await selectControllerComponentFile(fixture, component)
+        const originalFile = await lstat(ownedFile.managedPath)
+        assert.equal(originalFile.isFile(), true)
+        assert.equal(originalFile.isSymbolicLink(), false)
+        assert.equal(originalFile.size, ownedFile.bytes.length)
+        assert.deepEqual(await readFile(ownedFile.managedPath), ownedFile.bytes)
+        runtime.ready = structuredClone(noiseReady)
+        await projects.save(tabId)
+        runtime.beforeGenerate = async () => {
+          if (runtime.generated.length === 2) {
+            throw new Error('Controlled second-job failure retains the healthy first candidate.')
+          }
+        }
+        const initial = await controller.generate(tabId, { documentId, iterations: 2 })
+        assert.equal(initial.kind, 'queued')
+        if (initial.kind !== 'queued') {
+          assert.fail('Healthy managed components must publish jobs.')
+        }
+        assert.equal(initial.jobIds.length, 2)
+        await waitForState(
+          controller,
+          tabId,
+          (state) => state.phase === 'idle' && !state.jobs.length,
+        )
+        const healthy = await controller.getQueue()
+        assert.equal(healthy.counts.completed, 1)
+        assert.equal(healthy.counts.failed, 1)
+        const source = healthy.items.find((item) => item.status === 'failed')!
+        const frozen = await queue.loadVerifiedInput(source.id)
+        const sourceTarget = await readFile(frozen.targetPath)
+        const candidates = await staging.listVerifiedCandidates(tabId)
+        assert.equal(candidates.length, 1)
+        assert.equal(candidates[0].actualSeed, 42)
+        await projects.updateGenerationDraft(tabId, { kind: 'sampling-cfg-scale', value: 8.5 })
+        await projects.flushAutosave(tabId)
+        const beforeGenerate = await componentRefusalSnapshot(fixture)
+        assert.equal(beforeGenerate.queue.length, 2)
+        assert.equal(beforeGenerate.receipts.length, 1)
+        assert.equal(beforeGenerate.seeds.length, 1)
+        assert.ok(beforeGenerate.autosave)
+        assert.ok(beforeGenerate.privateInputs)
+        assert.ok(beforeGenerate.staging)
+        const impact = await controller.generate(tabId, { documentId, iterations: 1 })
+        assert.equal(impact.kind, 'confirmation-required')
+        if (impact.kind !== 'confirmation-required') {
+          assert.fail('The completed neighboring candidate requires concrete replacement review.')
+        }
+        const code = fault === 'missing' ? 'MODEL_FILE_MISSING' : 'MODEL_FILE_CORRUPT'
+        const backupPath = `${ownedFile.managedPath}.owned-test-backup`
+        let backedUp = false
+        let generateError: ProjectGenerationActionState['error'] = null
+        let retryError: ProjectGenerationActionState['error'] = null
+        let beforeRetry: Awaited<ReturnType<typeof componentRefusalSnapshot>> | undefined
+        let compositions = runtime.composedTargets.length
+        try {
+          // Rename preserves the original file owner/inode. Corruption changes one payload byte
+          // in a same-size replacement, so the real hash check, not size/header checks, refuses it.
+          await rename(ownedFile.managedPath, backupPath)
+          backedUp = true
+          if (fault === 'corrupt') {
+            const corrupted = Buffer.from(ownedFile.bytes)
+            corrupted[corrupted.length - 1] ^= 0xff
+            await writeFile(ownedFile.managedPath, corrupted, {
+              flag: 'wx',
+              mode: originalFile.mode & 0o777,
+            })
+            assert.equal((await lstat(ownedFile.managedPath)).size, originalFile.size)
+          }
+          await assert.rejects(
+            controller.generate(tabId, {
+              confirmation: {
+                candidateIds: impact.candidateIds,
+                unfinishedJobIds: impact.unfinishedJobIds,
+              },
+              documentId,
+              iterations: 1,
+            }),
+            { code },
+          )
+          generateError = (await controller.getState(tabId)).error
+          assert.ok(generateError)
+          assert.equal(runtime.generated.length, 2)
+          // New Generate may compose its owned target before exact component materialization
+          // refuses it. Cleanup must preserve the durable snapshot; Retry reuses frozen pixels.
+          assert.equal(runtime.composedTargets.length, compositions + 1)
+          compositions = runtime.composedTargets.length
+          assert.deepEqual(await componentRefusalSnapshot(fixture), beforeGenerate)
+
+          // Today's draft no longer selects this component; frozen Retry must still inspect
+          // the captured exact managed file, without replacing it or composing another target.
+          const owner = projects.getOpenDocumentForAcceptance(tabId)!
+          await owner.applyDocument({
+            ...owner.document,
+            generationDraft: {
+              ...owner.document.generationDraft,
+              loras: [],
+              negativePrompt: { embeddingRefs: [], text: 'later negative prompt' },
+              positivePrompt: { embeddingRefs: [], text: 'later unrelated prompt' },
+              vae: null,
+            },
+          })
+          await projects.updateGenerationDraft(tabId, { kind: 'seed', policy: 'fixed', value: 99 })
+          await projects.setPrimaryBbox(tabId, { height: 64, width: 64, x: 123, y: -456 })
+          await projects.flushAutosave(tabId)
+          beforeRetry = await componentRefusalSnapshot(fixture)
+          await assert.rejects(controller.retryJob(source), { code })
+          retryError = (await controller.getState(tabId)).error
+          assert.ok(retryError)
+          assert.equal(runtime.generated.length, 2)
+          assert.equal(runtime.composedTargets.length, compositions)
+          assert.deepEqual(await componentRefusalSnapshot(fixture), beforeRetry)
+        } finally {
+          if (backedUp) {
+            await rm(ownedFile.managedPath, { force: true })
+            await rename(backupPath, ownedFile.managedPath)
+          }
+        }
+        assert.deepEqual(await readFile(ownedFile.managedPath), ownedFile.bytes)
+        const restoredFile = await lstat(ownedFile.managedPath)
+        assert.equal(restoredFile.ino, originalFile.ino)
+        assert.equal(restoredFile.dev, originalFile.dev)
+        assert.equal(restoredFile.mode, originalFile.mode)
+        assert.ok(beforeRetry)
+        runtime.beforeGenerate = null
+        await controller.retryJob(source)
+        await waitForState(
+          controller,
+          tabId,
+          (state) => state.phase === 'idle' && !state.jobs.length,
+        )
+        assert.equal(runtime.generated.length, 3)
+        assert.equal(runtime.composedTargets.length, compositions)
+        const afterRetry = await controller.getQueue()
+        assert.equal(afterRetry.items.length, 3)
+        assert.equal(afterRetry.counts.completed, 2)
+        assert.equal(afterRetry.counts.failed, 1)
+        const retried = afterRetry.items.find((item) => !initial.jobIds.includes(item.id))!
+        assert.equal(retried.status, 'completed')
+        const restored = await queue.loadVerifiedInput(retried.id)
+        assert.deepEqual(restored.payload.context, frozen.payload.context)
+        assert.deepEqual(await readFile(restored.targetPath), sourceTarget)
+        assert.deepEqual((await queue.loadVerifiedInput(source.id)).payload, frozen.payload)
+        assert.deepEqual(await readFile(frozen.targetPath), sourceTarget)
+        const normalizeWorkerPaths = (job: IllustriousGenerationRequestV1['job']) => ({
+          ...job,
+          output: { pngPath: '<worker output>', stagingRoot: '<worker staging>' },
+          target: { ...job.target, path: '<worker target>' },
+        })
+        assert.deepEqual(
+          normalizeWorkerPaths(runtime.generated[2].job),
+          normalizeWorkerPaths(runtime.generated[1].job),
+        )
+        assert.equal(runtime.generated[2].job.sampling.seed, 43)
+        const after = await componentRefusalSnapshot(fixture)
+        for (const field of ['autosave', 'document', 'tabs', 'savedBytes', 'tombstones'] as const) {
+          assert.deepEqual(after[field], beforeRetry[field])
+        }
+        assert.deepEqual(
+          after.receipts.find((receipt) => receipt.candidate_id === candidates[0].candidateId),
+          beforeRetry.receipts[0],
+        )
+        assert.deepEqual(
+          after.candidates.find((candidate) => candidate.candidateId === candidates[0].candidateId),
+          candidates[0],
+        )
+        assert.equal(after.candidates.length, 2)
+        assert.equal(after.cursor, 43)
+        assert.ok(generateError)
+        assert.ok(retryError)
+        const message =
+          'The selected model resource could not be verified for generation. Review it in Model Manager.'
+        assert.deepEqual(generateError, { code, message })
+        assert.deepEqual(retryError, { code, message })
+        assert.equal(generateError.message.includes(fixture.root), false)
+        assert.equal(retryError.message.includes(fixture.root), false)
+      })
+    })
+  }
 }
 
 test('Generate freezes distinct per-polarity exact embeddings for every concrete dynamic branch through the real queue and staging', async () => {

@@ -1374,6 +1374,9 @@ function safeGenerationErrorMessage(error: unknown, code: string): string {
   if (code === 'QUEUE_ITEM_NOT_FOUND') {
     return 'The queue item is no longer available. Refresh the queue.'
   }
+  if (code === 'MODEL_FILE_MISSING' || code === 'MODEL_FILE_CORRUPT') {
+    return 'The selected model resource could not be verified for generation. Review it in Model Manager.'
+  }
   if (code === 'MODEL_LORA_INCOMPATIBLE') {
     return 'The selected LoRA is incompatible with this image engine. Review this component in Model Manager.'
   }
