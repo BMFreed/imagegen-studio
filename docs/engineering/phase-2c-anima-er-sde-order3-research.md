@@ -184,3 +184,7 @@ full Invoke parity, public installation or release readiness. PP-004/005/007/008
 remain «Пока не обещать». The next bounded gate is **installed Anima Heun opaque
 IMG / mixed-alpha OUT**, with separate corrector/mask controls; the rest of the
 phase 2C exit criteria remain open.
+
+The later [installed Heun IMG/OUT qualification](./phase-2c-anima-heun-image-research.md)
+closes that finite next gate; the remaining image methods/full matrix/release
+stay open. Historical ER-SDE counts and claims above are unchanged.

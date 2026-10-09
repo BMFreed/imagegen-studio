@@ -275,7 +275,7 @@ def _report(events: list[tuple[int, int]]) -> Callable[[int, int], None]:
 
 
 @pytest.mark.parametrize("scheduler", SCHEDULERS)
-@pytest.mark.parametrize("strength", (0.0, 0.2, 0.75, 1.0))
+@pytest.mark.parametrize("strength", (0.0, 0.2, 0.5, 0.75, 1.0))
 def test_native_masked_loop_matches_external_oracle_model_inputs_scheduler_samples_and_pixels(
     native: Any,
     monkeypatch: pytest.MonkeyPatch,

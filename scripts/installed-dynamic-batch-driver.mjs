@@ -46,6 +46,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     typeof adapter.cfgScale === 'function' ? adapter.cfgScale(fixture) : adapter.cfgScale
   const inferenceSteps = adapter.inferenceSteps ? adapter.inferenceSteps(fixture) : 3
   assert.ok(Number.isSafeInteger(inferenceSteps) && inferenceSteps > 0 && inferenceSteps <= 1000)
+  const observedSteps = adapter.observedSteps ? adapter.observedSteps(fixture) : inferenceSteps
+  assert.ok(Number.isSafeInteger(observedSteps) && observedSteps > 0 && observedSteps <= 2000)
   const provisionalOnly = adapter.provisionalOnly ? adapter.provisionalOnly(fixture) : false
   assert.equal(typeof provisionalOnly, 'boolean')
   const completionTimeoutMs = adapter.completionTimeoutMs
@@ -128,6 +130,9 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
 
   let database, repository, application, window, nativeProcess, mainLog, reportHandle
   let initialCatalog, initialQueue, initialCursors, workerSources, managedFiles, originalSources
+  let inputSource = null
+  const extraInputFiles = []
+  let sourceLayers = []
   let initialUnfinished = []
   let baseline = null,
     crashSource = null
@@ -151,6 +156,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     launcherBounds,
     completionTimeoutMs,
     inferenceSteps,
+    observedSteps,
     provisionalOnly,
     sourceSha256,
     bundleSha256,
@@ -428,47 +434,55 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     }
     return result
   }
-  async function decodedImage(url) {
-    const result = await window.evaluate(async (imageUrl) => {
-      const inline = imageUrl.match(/^data:(image\/(?:png|webp));base64,(.+)$/)
-      const response = inline ? null : await fetch(imageUrl)
-      const bytes = inline
-        ? Uint8Array.from(atob(inline[2]), (character) => character.charCodeAt(0))
-        : new Uint8Array(await response.arrayBuffer())
-      const image = new Image()
-      let binary = ''
-      for (let offset = 0; offset < bytes.length; offset += 8192)
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192))
-      image.src = `data:${inline?.[1] ?? response.headers.get('content-type')};base64,${btoa(binary)}`
-      await image.decode()
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const context = canvas.getContext('2d', { willReadFrequently: true })
-      if (!context) throw new Error('Cannot decode the actual image.')
-      context.drawImage(image, 0, 0)
-      const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data
-      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', rgba))
-      let opaquePixels = 0,
-        transparentPixels = 0
-      for (let index = 3; index < rgba.length; index += 4) {
-        if (rgba[index] === 255) opaquePixels += 1
-        if (rgba[index] === 0) transparentPixels += 1
-      }
-      return {
-        encoded: Array.from(bytes),
-        width: image.naturalWidth,
-        height: image.naturalHeight,
-        status: response?.status ?? 200,
-        mime: inline?.[1] ?? response.headers.get('content-type'),
-        pixelSha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-        opaquePixels,
-        transparentPixels,
-      }
-    }, url)
-    const { encoded, ...dimensions } = result
+  async function decodedImage(url, { includeRgba = Boolean(adapter.prepareInput) } = {}) {
+    const result = await window.evaluate(
+      async ({ imageUrl, includeRgba }) => {
+        const inline = imageUrl.match(/^data:(image\/(?:png|webp));base64,(.+)$/)
+        const response = inline ? null : await fetch(imageUrl)
+        const bytes = inline
+          ? Uint8Array.from(atob(inline[2]), (character) => character.charCodeAt(0))
+          : new Uint8Array(await response.arrayBuffer())
+        const image = new Image()
+        let binary = ''
+        for (let offset = 0; offset < bytes.length; offset += 8192)
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192))
+        image.src = `data:${inline?.[1] ?? response.headers.get('content-type')};base64,${btoa(binary)}`
+        await image.decode()
+        const canvas = document.createElement('canvas')
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (!context) throw new Error('Cannot decode the actual image.')
+        context.drawImage(image, 0, 0)
+        const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', rgba))
+        let opaquePixels = 0,
+          transparentPixels = 0
+        for (let index = 3; index < rgba.length; index += 4) {
+          if (rgba[index] === 255) opaquePixels += 1
+          if (rgba[index] === 0) transparentPixels += 1
+        }
+        return {
+          encoded: Array.from(bytes),
+          ...(includeRgba ? { rgba: Array.from(rgba) } : {}),
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          status: response?.status ?? 200,
+          mime: inline?.[1] ?? response.headers.get('content-type'),
+          pixelSha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+          opaquePixels,
+          transparentPixels,
+        }
+      },
+      { imageUrl: url, includeRgba },
+    )
+    const { encoded, rgba, ...dimensions } = result
     const bytes = Buffer.from(encoded)
-    return { bytes, dimensions: { ...dimensions, bytes: bytes.length, sha256: sha256(bytes) } }
+    return {
+      bytes,
+      dimensions: { ...dimensions, bytes: bytes.length, sha256: sha256(bytes) },
+      ...(rgba ? { rgba: Buffer.from(rgba) } : {}),
+    }
   }
   async function screenshot(name, surface = null) {
     const filename = path.join(fixture.artifacts, name)
@@ -709,6 +723,77 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await window.getByRole('button', { name: 'Save Project', exact: true }).click()
     await expect.poll(async () => (await tab(project)).dirty).toBe(false)
     return await packageFor(project)
+  }
+  async function importSource(project, source) {
+    assert.ok(inputSource, 'An image profile must verify its source before native launch.')
+    assert.equal(source.path, inputSource.path)
+    assert.equal(source.sha256, inputSource.sha256)
+    assert.equal(source.byteSize, inputSource.size)
+    const before = await tab(project)
+    assert.equal(before.layers.length, 0, 'The bounded image profile imports one source only.')
+    await application.evaluate(({ dialog }, selectedPath) => {
+      globalThis.__dynamicQualificationOpenDialog = dialog.showOpenDialog
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+    }, source.path)
+    try {
+      await window
+        .getByRole('button', { name: 'Import image as Raster Layer', exact: true })
+        .click()
+      await expect.poll(async () => (await tab(project)).layers.length).toBe(1)
+    } finally {
+      await application.evaluate(({ dialog }) => {
+        dialog.showOpenDialog = globalThis.__dynamicQualificationOpenDialog
+        delete globalThis.__dynamicQualificationOpenDialog
+      })
+    }
+    const imported = await tab(project)
+    assert.deepEqual(imported.primaryBbox, before.primaryBbox)
+    const layer = imported.layers[0]
+    assert.deepEqual(layer.transform, { ...layer.transform, x: 0, y: 0 })
+    assert.equal(layer.width, 256)
+    assert.equal(layer.height, 256)
+    const response = await application.evaluate(async ({ net }, url) => {
+      const result = await net.fetch(url)
+      return {
+        status: result.status,
+        mime: result.headers.get('content-type'),
+        bytes: Array.from(new Uint8Array(await result.arrayBuffer())),
+      }
+    }, layer.imageUrl)
+    assert.equal(response.status, 200)
+    const sourceUrl = `data:${response.mime};base64,${Buffer.from(response.bytes).toString('base64')}`
+    const legacyDecoded = await decodedImage(sourceUrl, { includeRgba: false })
+    assert.equal(Object.hasOwn(legacyDecoded, 'rgba'), false)
+    const decoded = await decodedImage(sourceUrl)
+    assert.deepEqual(legacyDecoded.dimensions, decoded.dimensions)
+    assert.deepEqual(legacyDecoded.bytes, decoded.bytes)
+    report.decoderCompatibility = {
+      legacyRgbaAbsent: true,
+      imageRgbaPresent: decoded.rgba.length === 256 * 256 * 4,
+      identicalDimensionsAndEncodedBytes: true,
+      actualSerializedRendererCallback: true,
+    }
+    assert.equal(decoded.dimensions.pixelSha256, source.pixelSha256)
+    assert.equal(decoded.dimensions.opaquePixels, 256 * 256)
+    const saved = await save(project)
+    await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeEnabled()
+    assert.equal(saved.saved.project.layers.length, 1)
+    assert.equal(saved.saved.project.lastActualSeedSnapshot, null)
+    const stored = saved.saved.project.layers[0]
+    assert.equal(stored.generationProvenance, undefined)
+    const bytes = await saved.saved.readMember(stored.asset.path)
+    assert.equal(sha256(bytes), stored.asset.sha256)
+    const raw = await decodedImage(`data:image/png;base64,${bytes.toString('base64')}`)
+    assert.equal(raw.dimensions.pixelSha256, source.pixelSha256)
+    assert.equal(await hashFile(source.path), source.sha256)
+    return {
+      source,
+      layerId: stored.id,
+      layer: stored,
+      image: raw.dimensions,
+      savedPackage: { path: saved.path, sha256: saved.sha256 },
+      controlledBoundary: 'Only the OS chooser selects the single real pinned PNG.',
+    }
   }
   async function effectTree(directory) {
     let entry
@@ -964,7 +1049,18 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       const decoded = await decodedImage(
         `data:image/png;base64,${(await readFile(targetPath)).toString('base64')}`,
       )
-      assert.equal(decoded.dimensions.transparentPixels, 256 * 256)
+      if (adapter.assertTarget)
+        report.admissions[index].targetEvidence = await adapter.assertTarget({
+          frozen,
+          decoded,
+          window,
+          decodedImage,
+          fixture,
+          plan,
+          reference,
+          sourceInput: report.inputPrecondition,
+        })
+      else assert.equal(decoded.dimensions.transparentPixels, 256 * 256)
       report.admissions[index].target = target
     }
     await checkpoint()
@@ -1003,7 +1099,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     assert.equal(image.dimensions.bytes, receipt.image_byte_size)
     assert.equal(image.dimensions.width, 256)
     assert.equal(image.dimensions.height, 256)
-    assert.equal(image.dimensions.opaquePixels, 256 * 256)
+    if (!adapter.assertOutput) assert.equal(image.dimensions.opaquePixels, 256 * 256)
     assert.ok(candidate.thumbnailUrl)
     const thumbnail = await decodedImage(candidate.thumbnailUrl)
     assert.equal(thumbnail.dimensions.status, 200)
@@ -1014,7 +1110,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     )
     assert.ok(progress.length > 0, 'Actual public preload must observe native denoising.')
     for (const [index, snapshot] of progress.entries()) {
-      assert.equal(snapshot.current.totalSteps, inferenceSteps)
+      assert.equal(snapshot.current.totalSteps, observedSteps)
       assert.equal(snapshot.current.documentId, before.documentId)
       assert.equal(snapshot.current.projectKey, project.id)
       assert.equal(snapshot.current.statusSequence, receipt.expected_status_sequence)
@@ -1024,7 +1120,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         assert.ok(snapshot.current.step > progress[index - 1].current.step)
       }
     }
-    assert.equal(progress.at(-1).current.step, inferenceSteps)
+    assert.equal(progress.at(-1).current.step, observedSteps)
     assert.equal(
       await hashFile(portable.path),
       portable.sha256,
@@ -1059,6 +1155,19 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     report.generations.push(generation)
     completionById.set(row.id, generation)
     await checkpoint()
+    if (adapter.assertOutput) {
+      generation.outputEvidence = await adapter.assertOutput({
+        frozen,
+        decoded: image,
+        window,
+        decodedImage,
+        fixture,
+        plan,
+        reference,
+        sourceInput: report.inputPrecondition,
+      })
+      await checkpoint()
+    }
     if (baseline) {
       // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
       // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
@@ -1143,7 +1252,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       .click()
     await expect
       .poll(async () => (await tab(project)).layers.length)
-      .toBe(count + (fixture.stage === 'reuse' && count === 8 ? 1 : 0))
+      .toBe(count + sourceLayers.length + (fixture.stage === 'reuse' && count === 8 ? 1 : 0))
   }
   async function compare(project, layer, packagePath, generation = null) {
     const before = await tab(project)
@@ -1208,7 +1317,15 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     const accepted = await tab(project)
     const savedPackage = await save(project)
     const evidence = [...extra, ...report.generations]
-    assert.equal(savedPackage.saved.project.layers.length, evidence.length)
+    assert.equal(savedPackage.saved.project.layers.length, evidence.length + sourceLayers.length)
+    for (const source of sourceLayers) {
+      const stored = savedPackage.saved.project.layers.find(({ id }) => id === source.id)
+      assert.deepEqual(stored, source, 'Acceptance/Save must preserve the imported source layer.')
+      assert.equal(
+        sha256(await savedPackage.saved.readMember(stored.asset.path)),
+        source.asset.sha256,
+      )
+    }
     assert.equal(savedPackage.saved.project.lastActualSeedSnapshot, plan.items.at(-1).seed)
     assert.deepEqual(savedPackage.saved.project.generationDraft, currentDraft)
     const provenanceById = new Map()
@@ -1246,9 +1363,23 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     const merged = await decodedImage(
       `data:image/png;base64,${(await savedPackage.saved.readMember('preview/merged.png')).toString('base64')}`,
     )
-    assert.equal(merged.dimensions.width, 256)
-    assert.equal(merged.dimensions.height, 256)
-    assert.equal(merged.dimensions.opaquePixels, 256 * 256)
+    if (adapter.assertSaved)
+      report.savedEvidence = await adapter.assertSaved({
+        savedPackage,
+        merged,
+        sourceInput: report.inputPrecondition,
+        generations: evidence,
+        window,
+        decodedImage,
+        fixture,
+        plan,
+        reference,
+      })
+    else {
+      assert.equal(merged.dimensions.width, 256)
+      assert.equal(merged.dimensions.height, 256)
+      assert.equal(merged.dimensions.opaquePixels, 256 * 256)
+    }
     await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
     await window.getByRole('tab', { name: 'Home', exact: true }).click()
     await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
@@ -1256,8 +1387,13 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     const reopened = await tab(project)
     assert.equal(reopened.documentId, project.documentId)
     assert.deepEqual(reopened.generationDraft, currentDraft)
-    assert.equal(reopened.layers.length, evidence.length)
+    assert.equal(reopened.layers.length, evidence.length + sourceLayers.length)
     const readback = await readIgsPackage(savedPackage.path)
+    for (const source of sourceLayers) {
+      const stored = readback.project.layers.find(({ id }) => id === source.id)
+      assert.deepEqual(stored, source)
+      assert.equal(sha256(await readback.readMember(stored.asset.path)), source.asset.sha256)
+    }
     for (const [layerId, provenance] of provenanceById) {
       assert.deepEqual(
         (await api('getRasterGenerationData', project.id, project.documentId, layerId))
@@ -1275,6 +1411,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       sha256: savedPackage.sha256,
       documentId: project.documentId,
       acceptedLayers: evidence.length,
+      sourceLayers: sourceLayers.length,
+      totalLayers: evidence.length + sourceLayers.length,
       lastActualSeedSnapshot: readback.project.lastActualSeedSnapshot,
       mergedPreview: merged.dimensions,
       reopened: true,
@@ -1490,6 +1628,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         )
     for (const record of [...managedFiles, ...originalSources])
       assert.deepEqual(await fileSnapshot(record.path, record.sha256), record)
+    if (inputSource)
+      assert.deepEqual(await fileSnapshot(inputSource.path, inputSource.sha256), inputSource)
+    for (const record of extraInputFiles)
+      assert.deepEqual(await fileSnapshot(record.path, record.sha256), record)
     assert.deepEqual(await workerSnapshot(), workerSources)
     assert.deepEqual(await readJson(path.join(appData, 'runtime/current-runtime.json')), pointer)
     report.catalogReuse = {
@@ -1640,6 +1782,16 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       assert.equal(file.size, reference[key].byteSize)
       originalSources.push({ ...file })
     }
+    if (adapter.prepareInput) {
+      inputSource = await fileSnapshot(fixture.sourceImage.path, fixture.sourceImage.sha256)
+      assert.equal(inputSource.size, fixture.sourceImage.byteSize)
+    }
+    if (adapter.extraInputFiles)
+      for (const descriptor of adapter.extraInputFiles(fixture, reference)) {
+        const file = await fileSnapshot(descriptor.path, descriptor.sha256)
+        assert.equal(file.size, descriptor.byteSize)
+        extraInputFiles.push(file)
+      }
     if (fixture.baseline) {
       baseline = await readPinnedJson(fixture.baseline)
       assert.equal(baseline.status, 'passed')
@@ -1689,6 +1841,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       installedWorkerSources: workerSources,
       managedFiles,
       originalSources,
+      ...(inputSource ? { sourceImage: inputSource } : {}),
+      ...(extraInputFiles.length ? { extraInputFiles } : {}),
     }
     await stage('Canonical installed runtime/catalog/source/bundle preconditions verified')
     await launch()
@@ -1701,6 +1855,29 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.recoveredGeneration = recovered.recovered
     } else project = await createProject()
     await author(project, plan)
+    if (adapter.prepareInput) {
+      report.inputPrecondition = await adapter.prepareInput({
+        window,
+        expect,
+        application,
+        api,
+        tab,
+        project,
+        fixture,
+        plan,
+        reference,
+        setInput,
+        save,
+        screenshot,
+        decodedImage,
+        importSource,
+      })
+      const prepared = await packageFor(project)
+      sourceLayers = structuredClone(prepared.saved.project.layers)
+      assert.equal(sourceLayers.length, 1)
+      assert.equal(sourceLayers[0].id, report.inputPrecondition.layerId)
+      await checkpoint()
+    }
     report.authoredDraft = structuredClone((await tab(project)).generationDraft)
     report.project = project
     if (fixture.stage === 'crash') {
@@ -1757,7 +1934,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       if (provisionalOnly) {
         assert.equal(report.generations.length, plan.expectedCompletions)
         assert.ok(report.generations.every(({ accepted }) => accepted === false))
-        assert.equal((await tab(project)).layers.length, 0)
+        assert.deepEqual(
+          semanticLayers((await tab(project)).layers),
+          semanticLayers(captured.before.layers),
+        )
         assert.equal(await hashFile(captured.portable.path), captured.portable.sha256)
         report.provisionalControl = {
           acceptedLayers: 0,
