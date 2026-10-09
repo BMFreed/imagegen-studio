@@ -44,6 +44,15 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     typeof adapter.operation === 'function' ? adapter.operation(fixture) : adapter.operation
   const cfgScale =
     typeof adapter.cfgScale === 'function' ? adapter.cfgScale(fixture) : adapter.cfgScale
+  const completionTimeoutMs = adapter.completionTimeoutMs
+    ? adapter.completionTimeoutMs(fixture)
+    : 1_200_000
+  assert.ok(
+    Number.isSafeInteger(completionTimeoutMs) &&
+      completionTimeoutMs > 0 &&
+      completionTimeoutMs <= 1_600_000,
+    'Completion polling must retain a finite timeout no larger than1600 seconds.',
+  )
   if (fixture.stage === 'reuse')
     assert.ok(
       fixture.baseline,
@@ -136,6 +145,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     runtimeId: pointer.runtimeId,
     installedReady: installed.ready,
     launcherBounds,
+    completionTimeoutMs,
     sourceSha256,
     bundleSha256,
     literalPlan: plan,
@@ -615,7 +625,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         .getByRole('textbox', { name: 'Negative prompt', exact: true })
         .fill(currentPlan.sourcePrompts.negative)
     }
-    await setDynamic(project, currentPlan.maxPrompts, currentPlan.seedBehavior)
+    await setDynamic(project, currentPlan.maxPrompts, currentPlan.seedBehavior, {
+      purpose: 'authored',
+      currentPlan,
+    })
     await setInput('Images per click', currentPlan.iterations)
     if (currentPlan.requestedSeedPolicy === 'reuse')
       await window.getByRole('button', { name: 'Reuse last seed', exact: true }).click()
@@ -642,7 +655,12 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     if (adapter.assertAuthored)
       adapter.assertAuthored((await tab(project)).generationDraft, reference, fixture, currentPlan)
   }
-  async function setDynamic(project, maxPrompts, seedBehavior) {
+  async function setDynamic(
+    project,
+    maxPrompts,
+    seedBehavior,
+    { purpose = 'edited', currentPlan = plan } = {},
+  ) {
     await window
       .getByRole('region', { name: 'Positive prompt editor', exact: true })
       .getByRole('button', { name: 'Preview dynamic prompt' })
@@ -658,6 +676,26 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await expect
       .poll(async () => (await tab(project)).generationDraft.dynamicPrompt)
       .toEqual({ maxPrompts, seedBehavior })
+    if (adapter.assertPreview) {
+      report.dynamicPreviewChecks ??= []
+      const evidence = await adapter.assertPreview({
+        window,
+        expect,
+        dialog,
+        project,
+        fixture,
+        plan: currentPlan,
+        purpose,
+        maxPrompts,
+        seedBehavior,
+        observationIndex: report.dynamicPreviewChecks.length,
+        screenshot,
+      })
+      if (evidence !== undefined) {
+        report.dynamicPreviewChecks.push({ purpose, maxPrompts, seedBehavior, evidence })
+        await checkpoint()
+      }
+    }
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(dialog).toBeHidden()
   }
@@ -665,6 +703,111 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await window.getByRole('button', { name: 'Save Project', exact: true }).click()
     await expect.poll(async () => (await tab(project)).dirty).toBe(false)
     return await packageFor(project)
+  }
+  async function effectTree(directory) {
+    let entry
+    try {
+      entry = await lstat(directory)
+    } catch (error) {
+      if (error.code === 'ENOENT') return { root: directory, exists: false, entries: [] }
+      throw error
+    }
+    assert.ok(entry.isDirectory() && !entry.isSymbolicLink())
+    assert.equal(await realpath(directory), directory)
+    const entries = []
+    const visit = async (current) => {
+      for (const child of (await readdir(current, { withFileTypes: true })).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      )) {
+        assert.equal(child.isSymbolicLink(), false, 'Effect snapshots cannot follow symlinks.')
+        const filename = path.join(current, child.name)
+        if (child.isDirectory()) {
+          entries.push({ path: filename, kind: 'directory' })
+          await visit(filename)
+        } else {
+          assert.ok(child.isFile(), 'Effect snapshots require ordinary owned files.')
+          entries.push({ kind: 'file', ...(await fileSnapshot(filename)) })
+        }
+      }
+    }
+    await visit(directory)
+    return { root: directory, exists: true, entries }
+  }
+  async function captureAdmissionEffects(project, label) {
+    assert.match(label, /^[a-z0-9-]{1,64}$/)
+    await expect.poll(runtimeUsers).toEqual([])
+    const current = await tab(project)
+    const portable = await packageFor(project)
+    const tableRows = {}
+    for (const [table, orderKey] of [
+      ['generation_queue_item', 'id'],
+      ['generation_candidate_receipt', 'queue_item_id'],
+      ['generation_seed_cursor', 'local_project_key'],
+      ['generation_staging_discarded_session', 'staging_session_id'],
+      ['generation_acceptance_journal', 'operation_id'],
+    ])
+      tableRows[table] = await database.db.selectFrom(table).selectAll().orderBy(orderKey).execute()
+    const projection = {}
+    for (const key of [
+      'documentId',
+      'generationDraft',
+      'layers',
+      'primaryBbox',
+      'dirty',
+      'canUndo',
+      'canRedo',
+    ])
+      projection[key] = structuredClone(current[key])
+    const effects = {
+      tableRows,
+      tab: projection,
+      portable: {
+        file: await fileSnapshot(portable.path, portable.sha256),
+        project: portable.saved.project,
+        manifest: portable.saved.manifest,
+      },
+      results: await api('listGenerationResults', project.id),
+      progress: await window.evaluate(() => structuredClone(window.__dynamicQualificationProgress)),
+      privateTrees: [],
+    }
+    for (const directory of [
+      path.join(appData, 'autosave', project.id),
+      path.join(appData, 'generation-inputs'),
+      path.join(appData, 'recovery', 'generation-staging'),
+      path.join(appData, 'scratch'),
+    ])
+      effects.privateTrees.push(await effectTree(directory))
+    const filename = path.join(fixture.artifacts, `${label}-state.json`)
+    const bytes = Buffer.from(
+      JSON.stringify({ schemaVersion: 1, label, project, effects }, null, 2) + '\n',
+    )
+    await writeFile(filename, bytes, { flag: 'wx' })
+    const packageCopy = path.join(fixture.artifacts, `${label}-project.igs`)
+    const packageBytes = await readFile(portable.path)
+    assert.equal(sha256(packageBytes), portable.sha256)
+    await writeFile(packageCopy, packageBytes, { flag: 'wx' })
+    return {
+      effects,
+      proof: {
+        path: filename,
+        sha256: sha256(bytes),
+        byteSize: bytes.length,
+        packageCopy: { path: packageCopy, sha256: portable.sha256, byteSize: packageBytes.length },
+        counts: Object.fromEntries(
+          Object.entries(tableRows).map(([table, rows]) => [table, rows.length]),
+        ),
+        projectCandidateCount: effects.results.candidates.length,
+        lastActualSeed: effects.results.lastActualSeed,
+        layerCount: effects.tab.layers.length,
+      },
+    }
+  }
+  function assertAdmissionEffectsUnchanged(before, after) {
+    assert.deepEqual(
+      after.effects,
+      before.effects,
+      'Refused Generate must preserve prior queue/receipt/cursor/results, Project history, .igs, shadow and private files.',
+    )
   }
   async function mutateCurrentAuthoring(project) {
     await window
@@ -819,6 +962,18 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.admissions[index].target = target
     }
     await checkpoint()
+    if (adapter.assertQueuedNotice) {
+      report.queuedNotice = await adapter.assertQueuedNotice({
+        window,
+        expect,
+        fixture,
+        plan,
+        project,
+        admitted,
+        screenshot,
+      })
+      await checkpoint()
+    }
     return { before, admitted, portable }
   }
   async function observeCompleted(project, row, expectedItem, before, portable) {
@@ -960,7 +1115,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
           }
           return report.generations.length
         },
-        { timeout: 1_200_000, intervals: [1000, 2000, 5000] },
+        { timeout: completionTimeoutMs, intervals: [1000, 2000, 5000] },
       )
       .toBe(plan.expectedCompletions)
     const results = await api('listGenerationResults', project.id)
@@ -1546,7 +1701,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.savedPrecondition = { path: saved.path, sha256: saved.sha256, snapshot: null }
     }
     const captured = await admit(project)
-    const currentDraft = await mutateCurrentAuthoring(project)
+    let currentDraft = await mutateCurrentAuthoring(project)
     report.currentDraftAfterAdmission = currentDraft
     for (const row of captured.admitted)
       assert.equal(
@@ -1556,6 +1711,35 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     if (fixture.stage === 'crash') await crash(project, captured, currentDraft)
     else {
       await awaitCompletions(project, captured)
+      if (adapter.afterCompletions) {
+        report.afterCompletions = await adapter.afterCompletions({
+          window,
+          expect,
+          application,
+          api,
+          tab,
+          project,
+          fixture,
+          plan,
+          currentDraft,
+          report,
+          setInput,
+          setDynamic,
+          save,
+          captureAdmissionEffects,
+          assertAdmissionEffectsUnchanged,
+          runtimeUsers,
+          screenshot,
+          checkpoint,
+        })
+        if (report.afterCompletions !== undefined) {
+          const originalEditedDraft = currentDraft
+          currentDraft = await mutateCurrentAuthoring(project)
+          assert.deepEqual(currentDraft, originalEditedDraft)
+          report.currentDraftAfterCompletions = currentDraft
+          await checkpoint()
+        }
+      }
       await addAll(project, plan.expectedCompletions)
       await verifySaved(project, currentDraft, extra)
       report.outcome = 'finite-accepted-saved-reopened'

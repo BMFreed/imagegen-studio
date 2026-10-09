@@ -286,9 +286,48 @@ fresh 6 reproduced healthy MAX/0 pixels. All 42 per-layer comparisons passed.
 Original 302 queue rows/186 cursors/249 receipts, catalog 9/14/defaults and eight
 original sources remain unchanged; final physical idleness is confirmed.
 
-The next finite gate is cap 32/bounded truncation. This does not qualify the full policy/mode matrix, maximum 32 native
-inference, arbitrary geometry/formats/quality, replacement-document identity,
-public delivery/release or full MVP. PP statuses remain unchanged.
+Cap32/bounded truncation was the next finite gate at this seed checkpoint;
+the completed bounded follow-up is recorded below. The full policy/mode matrix,
+arbitrary geometry/formats/quality, replacement-document identity, public delivery/
+release and full MVP remain open. PP statuses remain unchanged.
+
+## Installed cap32 and bounded truncation gate
+
+[The bounded installed-system follow-up](../../../engineering/phase-2c-generation-batch-cap-research.md)
+qualified Anima and exact Illustrious-family EPS/V TXT at 256×256/three steps.
+The full four weighted positive×negative pairs × eight iterations use Fixed0/
+per-iteration, with 32 outputs and no truncation. The first three pairs × two
+iterations use Fixed0/per-prompt, with six outputs and explicit truncation.
+Literal pair-major seeds are 0..7 per boundary pair and 0,1,2,3,4,5 for the prefix.
+All 18 selected-prefix outputs match same-native-input boundary pixels at
+indices 0,1,10,11,20,21. After the standard cross-Project omission of
+documentId/documentRevision, only seedBehavior is excluded among generation-
+setting metadata; requested Fixed policy and every executed input remain
+asserted, while each actual policy/behavior is checked separately.
+
+Independent aggregate PASS confirms 114 admissions/114 finite/114 accepted
+saved layers/114 per-layer comparisons and six accepted saved/reopened packages.
+Three actual confirmed 33-job UI refusals preserve all 32 temporary results,
+queue/receipts/cursor/staging/private shadow/saved package and Project DTO,
+including Undo/Redo availability; internal Undo-stack contents are not inspected.
+The typed getGenerationState error after the UI request is an observation,
+not the Generate response. Three empty pre-refusal Saves and six proof copies
+are separate from the six accepted packages. Original 360 queue/202 cursors/
+298 receipts, catalog9/14/defaults,43 installed source/assets and eight model
+sources remain unchanged; final physical idleness is confirmed.
+
+Five actual-source semantic mutants were killed: 204 executed tests/22 failures,
+baseline/fresh restored each 52/52 GREEN, zero skipped. Negative-side
+saturation, asymmetric pair order and exact negative31/32/33 are source-level
+controls, distinct from installed ML evidence. Focused349/typecheck/build pass.
+Earlier interrupted/excluded/partial source-harness attempts remain separately
+classified in the research note and do not contribute semantic failures.
+
+The next finite gate is Anima ER-SDE order3: five-step TXT versus a three-step
+neighbor, omission of only dd_x0 correction, causal RED and restored fresh GREEN.
+The complete seed-policy/mode matrix, non-Euler IMG/OUT, arbitrary geometry/
+formats/quality, public delivery/release and full MVP remain open; PP statuses
+are unchanged. Historical counts above retain their original scope.
 
 ## Vue Prototype Coverage
 

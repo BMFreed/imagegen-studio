@@ -195,6 +195,221 @@ test('bounded prefix planning handles an astronomical Cartesian product without 
   assert.equal(plan.truncated, true)
 })
 
+test('negative-side saturated expansion keeps the whole prefix on the first positive alternative', () => {
+  // Boundary: actual parser/planner; maxPrompts bounds negative expansion before pair selection.
+  // Neighbor: moving the large product to negative must retain the positive-outer order.
+  // Mutation: decrement a saturated negative radix, which assigns the last prefix row to blue.
+  const source = input({
+    iterations: 2,
+    maxJobs: 32,
+    maxPrompts: 3,
+    negativePrompt: '{soft|hard}'.repeat(128),
+    positivePrompt: '{red|blue}',
+  })
+  const plan = planGenerationBatch(source)
+  assert.equal(plan.truncated, true)
+  assert.deepEqual(
+    plan.items.map(({ iteration, promptPairIndex, prompts, seed }) => ({
+      iteration,
+      promptPairIndex,
+      prompts,
+      seed,
+    })),
+    [
+      {
+        iteration: 0,
+        promptPairIndex: 0,
+        prompts: { negative: 'soft'.repeat(128), positive: 'red' },
+        seed: 100,
+      },
+      {
+        iteration: 1,
+        promptPairIndex: 0,
+        prompts: { negative: 'soft'.repeat(128), positive: 'red' },
+        seed: 101,
+      },
+      {
+        iteration: 0,
+        promptPairIndex: 1,
+        prompts: { negative: `${'soft'.repeat(127)}hard`, positive: 'red' },
+        seed: 100,
+      },
+      {
+        iteration: 1,
+        promptPairIndex: 1,
+        prompts: { negative: `${'soft'.repeat(127)}hard`, positive: 'red' },
+        seed: 101,
+      },
+      {
+        iteration: 0,
+        promptPairIndex: 2,
+        prompts: { negative: `${'soft'.repeat(126)}hardsoft`, positive: 'red' },
+        seed: 100,
+      },
+      {
+        iteration: 1,
+        promptPairIndex: 2,
+        prompts: { negative: `${'soft'.repeat(126)}hardsoft`, positive: 'red' },
+        seed: 101,
+      },
+    ],
+  )
+})
+
+test('asymmetric positive/negative products select the pair prefix before iterations', () => {
+  // Different radices expose a swapped-sign index even when symmetric 2×2 examples appear valid.
+  const positiveThree = input({
+    baseSeed: 0,
+    maxJobs: 32,
+    maxPrompts: 5,
+    negativePrompt: '{soft|hard}',
+    positivePrompt: '{red|green|blue}',
+    seedBehavior: 'per-prompt',
+  })
+  const plan = planGenerationBatch(positiveThree)
+  assert.equal(plan.truncated, true)
+  assert.deepEqual(
+    plan.items.map(({ prompts, seed }) => [prompts.positive, prompts.negative, seed]),
+    [
+      ['red', 'soft', 0],
+      ['red', 'hard', 1],
+      ['green', 'soft', 2],
+      ['green', 'hard', 3],
+      ['blue', 'soft', 4],
+    ],
+  )
+  const complete = planGenerationBatch({ ...positiveThree, maxPrompts: 6 })
+  assert.equal(complete.truncated, false)
+  assert.deepEqual(complete.items.at(-1)?.prompts, { negative: 'hard', positive: 'blue' })
+
+  const negativeFour = planGenerationBatch(
+    input({
+      iterations: 2,
+      maxJobs: 32,
+      maxPrompts: 5,
+      negativePrompt: '{soft|hard|grain|blur}',
+      positivePrompt: '{red|blue}',
+    }),
+  )
+  assert.equal(negativeFour.truncated, true)
+  assert.deepEqual(
+    negativeFour.items.map(({ prompts, seed }) => [prompts.positive, prompts.negative, seed]),
+    [
+      ['red', 'soft', 100],
+      ['red', 'soft', 101],
+      ['red', 'hard', 100],
+      ['red', 'hard', 101],
+      ['red', 'grain', 100],
+      ['red', 'grain', 101],
+      ['red', 'blur', 100],
+      ['red', 'blur', 101],
+      ['blue', 'soft', 100],
+      ['blue', 'soft', 101],
+    ],
+  )
+})
+
+test('negative cardinality31/32/33 preserves the cap32 radix with unsaturated neighbors', async (t) => {
+  // Boundary: actual bounded count and pair selection at maxPrompts=maxJobs=32.
+  // Mutation: subtract Number(negativeCount.truncated) from the negative radix. N33 then maps
+  // row32 to blue/n00, while independently checked N31/N32 remain green.
+  const alternatives = [
+    'n00',
+    'n01',
+    'n02',
+    'n03',
+    'n04',
+    'n05',
+    'n06',
+    'n07',
+    'n08',
+    'n09',
+    'n10',
+    'n11',
+    'n12',
+    'n13',
+    'n14',
+    'n15',
+    'n16',
+    'n17',
+    'n18',
+    'n19',
+    'n20',
+    'n21',
+    'n22',
+    'n23',
+    'n24',
+    'n25',
+    'n26',
+    'n27',
+    'n28',
+    'n29',
+    'n30',
+    'n31',
+    'n32',
+  ]
+  const first31 = [
+    ['red', 'n00', 0],
+    ['red', 'n01', 1],
+    ['red', 'n02', 2],
+    ['red', 'n03', 3],
+    ['red', 'n04', 4],
+    ['red', 'n05', 5],
+    ['red', 'n06', 6],
+    ['red', 'n07', 7],
+    ['red', 'n08', 8],
+    ['red', 'n09', 9],
+    ['red', 'n10', 10],
+    ['red', 'n11', 11],
+    ['red', 'n12', 12],
+    ['red', 'n13', 13],
+    ['red', 'n14', 14],
+    ['red', 'n15', 15],
+    ['red', 'n16', 16],
+    ['red', 'n17', 17],
+    ['red', 'n18', 18],
+    ['red', 'n19', 19],
+    ['red', 'n20', 20],
+    ['red', 'n21', 21],
+    ['red', 'n22', 22],
+    ['red', 'n23', 23],
+    ['red', 'n24', 24],
+    ['red', 'n25', 25],
+    ['red', 'n26', 26],
+    ['red', 'n27', 27],
+    ['red', 'n28', 28],
+    ['red', 'n29', 29],
+    ['red', 'n30', 30],
+  ]
+  for (const [negativeCount, last] of [
+    [31, ['blue', 'n00', 31]],
+    [32, ['red', 'n31', 31]],
+    [33, ['red', 'n31', 31]],
+  ] as const) {
+    await t.test(`negative${negativeCount}: literal row32`, () => {
+      const plan = planGenerationBatch(
+        input({
+          baseSeed: 0,
+          iterations: 1,
+          maxJobs: 32,
+          maxPrompts: 32,
+          negativePrompt: `{${alternatives.slice(0, negativeCount).join('|')}}`,
+          positivePrompt: '{red|blue}',
+          seedBehavior: 'per-prompt',
+        }),
+      )
+      assert.equal(plan.items.length, 32)
+      assert.equal(plan.truncated, true)
+      assert.deepEqual(
+        plan.items.map(({ prompts, seed }) => [prompts.positive, prompts.negative, seed]),
+        [...first31, last],
+      )
+      assert.equal(plan.items[31].promptPairIndex, 31)
+      assert.equal(plan.items[31].iteration, 0)
+    })
+  }
+})
+
 test('caller job bound refuses overflow before returning a partial plan and permits exact capacity', () => {
   const source = input({
     iterations: 2,

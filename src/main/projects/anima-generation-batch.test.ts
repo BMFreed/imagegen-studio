@@ -137,3 +137,30 @@ test('Anima rejects cap32 overflow, invalid iterations and bad selected concrete
     assert.throws(() => prepareAnimaGenerationBatch({ iterations: 1, prepared }))
   })
 })
+
+test('Anima exact33 refuses while exact32 under a one-pair prefix remains valid', async () => {
+  // Boundary: actual Main Anima preparation/compiler, no durable admission or ML execution.
+  // Neighbor: the authored full 2×2 templates and maxPrompts1 remain fixed; only images change.
+  // Mutation: use a33-job bound, which incorrectly admits the immediately adjacent overflow.
+  await withAnimaBatchFixture(async ({ prepared }) => {
+    prepared.context.dynamic = { maxPrompts: 1, seedBehavior: 'per-iteration' }
+    prepared.context.generationDraft.dynamicPrompt = { ...prepared.context.dynamic }
+    const original = structuredClone(prepared.context)
+    assert.throws(() => prepareAnimaGenerationBatch({ iterations: 33, prepared }), {
+      code: 'BATCH_TOO_LARGE',
+    })
+    assert.deepEqual(prepared.context, original)
+    const boundary = prepareAnimaGenerationBatch({ iterations: 32, prepared })
+    assert.equal(boundary.items.length, 32)
+    assert.equal(boundary.truncated, true)
+    assert.equal(boundary.items[0].seed, 0)
+    assert.equal(boundary.items[31].seed, 31)
+    assert.ok(boundary.items.every(({ promptPairIndex }) => promptPairIndex === 0))
+    assert.ok(
+      boundary.items.every(
+        ({ prompts }) => prompts.positive === '(cat:2)' && prompts.negative === '(bad:0.5)',
+      ),
+    )
+    assert.deepEqual(prepared.context, original)
+  })
+})
