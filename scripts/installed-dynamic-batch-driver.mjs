@@ -44,6 +44,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     typeof adapter.operation === 'function' ? adapter.operation(fixture) : adapter.operation
   const cfgScale =
     typeof adapter.cfgScale === 'function' ? adapter.cfgScale(fixture) : adapter.cfgScale
+  const inferenceSteps = adapter.inferenceSteps ? adapter.inferenceSteps(fixture) : 3
+  assert.ok(Number.isSafeInteger(inferenceSteps) && inferenceSteps > 0 && inferenceSteps <= 1000)
+  const provisionalOnly = adapter.provisionalOnly ? adapter.provisionalOnly(fixture) : false
+  assert.equal(typeof provisionalOnly, 'boolean')
   const completionTimeoutMs = adapter.completionTimeoutMs
     ? adapter.completionTimeoutMs(fixture)
     : 1_200_000
@@ -146,6 +150,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     installedReady: installed.ready,
     launcherBounds,
     completionTimeoutMs,
+    inferenceSteps,
+    provisionalOnly,
     sourceSha256,
     bundleSha256,
     literalPlan: plan,
@@ -579,7 +585,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     }
     await setSelect(sampling.label, sampling.value)
     if (sampling.scheduler) await setSelect('Scheduler', sampling.scheduler)
-    await setInput('Steps', 3)
+    await setInput('Steps', inferenceSteps)
     await setInput('CFG scale', cfgScale)
     const random = window.getByRole('switch', { name: 'Random seed switch' })
     if ((await random.getAttribute('aria-checked')) === 'true') await random.click()
@@ -1008,7 +1014,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     )
     assert.ok(progress.length > 0, 'Actual public preload must observe native denoising.')
     for (const [index, snapshot] of progress.entries()) {
-      assert.equal(snapshot.current.totalSteps, 3)
+      assert.equal(snapshot.current.totalSteps, inferenceSteps)
       assert.equal(snapshot.current.documentId, before.documentId)
       assert.equal(snapshot.current.projectKey, project.id)
       assert.equal(snapshot.current.statusSequence, receipt.expected_status_sequence)
@@ -1018,7 +1024,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         assert.ok(snapshot.current.step > progress[index - 1].current.step)
       }
     }
-    assert.equal(progress.at(-1).current.step, 3)
+    assert.equal(progress.at(-1).current.step, inferenceSteps)
     assert.equal(
       await hashFile(portable.path),
       portable.sha256,
@@ -1500,7 +1506,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   async function closeNative() {
     if (!application) return
     if (!report.nativePhysicalExit?.confirmed) {
-      if (report.status === 'failed') await signalOwnedScope('failed-qualified-fixture-cleanup')
+      if (report.status === 'failed' || provisionalOnly)
+        await signalOwnedScope(
+          provisionalOnly ? 'provisional-control-cleanup' : 'failed-qualified-fixture-cleanup',
+        )
       else {
         await bounds('before-native-close')
         await application.close()
@@ -1701,6 +1710,11 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.savedPrecondition = { path: saved.path, sha256: saved.sha256, snapshot: null }
     }
     const captured = await admit(project)
+    report.admissionPrecondition = {
+      path: captured.portable.path,
+      sha256: captured.portable.sha256,
+      layerCount: captured.before.layers.length,
+    }
     let currentDraft = await mutateCurrentAuthoring(project)
     report.currentDraftAfterAdmission = currentDraft
     for (const row of captured.admitted)
@@ -1740,9 +1754,23 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
           await checkpoint()
         }
       }
-      await addAll(project, plan.expectedCompletions)
-      await verifySaved(project, currentDraft, extra)
-      report.outcome = 'finite-accepted-saved-reopened'
+      if (provisionalOnly) {
+        assert.equal(report.generations.length, plan.expectedCompletions)
+        assert.ok(report.generations.every(({ accepted }) => accepted === false))
+        assert.equal((await tab(project)).layers.length, 0)
+        assert.equal(await hashFile(captured.portable.path), captured.portable.sha256)
+        report.provisionalControl = {
+          acceptedLayers: 0,
+          unchangedSavedPackage: captured.portable,
+          finiteCompletions: report.generations.length,
+        }
+        report.outcome = 'finite-provisional-only'
+        await checkpoint()
+      } else {
+        await addAll(project, plan.expectedCompletions)
+        await verifySaved(project, currentDraft, extra)
+        report.outcome = 'finite-accepted-saved-reopened'
+      }
     }
     assert.deepEqual(report.pageErrors, [])
     await closeNative()
@@ -1750,7 +1778,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     report.summary = {
       finiteCompletions: report.generations.length,
       actualAdmissions: report.admissions.length,
-      acceptedLayers: fixture.stage === 'crash' ? 0 : report.savedPackage.acceptedLayers,
+      acceptedLayers:
+        fixture.stage === 'crash' || provisionalOnly ? 0 : report.savedPackage.acceptedLayers,
       crashConfirmed: fixture.stage === 'crash',
       fullMvpClaim: false,
       randomClaim: false,

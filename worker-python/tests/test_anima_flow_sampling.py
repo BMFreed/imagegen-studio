@@ -576,6 +576,18 @@ def test_nonfinite_native_result_fails_before_progress_and_next_request_restores
     )
 
 
+def test_real_er_three_steps_preserves_the_exact_lower_order_neighbor(native: Any) -> None:
+    torch, _diffusers, _models, _tokenizers = native
+    short = inputs(scheduler="er_sde", steps=3)
+    order_three, pixels, reference_events = _reference(short, native)
+    order_two, lower_order_pixels, lower_order_events = _reference(short, native, er_order=2)
+    assert torch.equal(order_three, order_two) and pixels == lower_order_pixels
+    events: list[tuple[int, int]] = []
+    actual = run(short, native, progress=_report(events))
+    assert torch.equal(actual.latents, order_three) and actual.image.tobytes() == pixels
+    assert events == reference_events == lower_order_events == [(1, 3), (2, 3), (3, 3)]
+
+
 def test_real_er_third_order_nonterminal_correction_has_a_distinct_neighbor(native: Any) -> None:
     torch, _diffusers, _models, _tokenizers = native
     # Sigma-one history forces lower order until evaluation four. At N4 that
