@@ -34,11 +34,16 @@ import { assertUpgradeBounds } from './upgrade-qualification-worker.mjs'
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
   const expect = baseExpect.configure({ timeout: 120_000 })
   const fixture = await readJson(fixturePath, 64 * 1024)
-  const plan = adapter.validateFixture(fixture)
+  let plan = adapter.validateFixture(fixture)
   assert.equal(fixture.profile, adapter.profile)
   const sampling = adapter.sampling(fixture)
   const selectedModelKey = adapter.modelKey(fixture)
-  const selectedLoraKey = adapter.loraKey
+  const selectedLoraKey =
+    typeof adapter.loraKey === 'function' ? adapter.loraKey(fixture) : adapter.loraKey
+  const operation =
+    typeof adapter.operation === 'function' ? adapter.operation(fixture) : adapter.operation
+  const cfgScale =
+    typeof adapter.cfgScale === 'function' ? adapter.cfgScale(fixture) : adapter.cfgScale
   if (fixture.stage === 'reuse')
     assert.ok(
       fixture.baseline,
@@ -93,6 +98,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     'scripts/qualification-resource-limits.mjs',
     'scripts/upgrade-qualification-worker.mjs',
     'worker-python/uv.lock',
+    ...(adapter.sourceDependencies ?? []),
   ]
   const sourceSha256 = {}
   for (const file of sourceFiles) sourceSha256[file] = await hashFile(file)
@@ -112,6 +118,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   let initialUnfinished = []
   let baseline = null,
     crashSource = null
+  let admissionObservation
   const completionById = new Map()
   const report = {
     schemaVersion: 1,
@@ -563,10 +570,12 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await setSelect(sampling.label, sampling.value)
     if (sampling.scheduler) await setSelect('Scheduler', sampling.scheduler)
     await setInput('Steps', 3)
-    await setInput('CFG scale', adapter.cfgScale)
+    await setInput('CFG scale', cfgScale)
     const random = window.getByRole('switch', { name: 'Random seed switch' })
     if ((await random.getAttribute('aria-checked')) === 'true') await random.click()
     await setInput('Generation seed', 0)
+    if (adapter.authorSeed)
+      await adapter.authorSeed({ window, expect, tab, project, currentPlan, setInput, fixture })
     const current = await tab(project)
     if (current.generationDraft.loras.length === 0) {
       await window.locator('[aria-label="Add LoRA"]').click()
@@ -574,7 +583,16 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     }
     await setInput(`${reference[selectedLoraKey].name} weight`, -0.5)
     if (adapter.authorComponents)
-      await adapter.authorComponents({ window, expect, tab, project, reference, setSelect })
+      await adapter.authorComponents({
+        window,
+        expect,
+        tab,
+        project,
+        reference,
+        setSelect,
+        currentPlan,
+        fixture,
+      })
     if (adapter.authorPrompts)
       await adapter.authorPrompts({
         window,
@@ -622,7 +640,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         method: sampling.code,
       })
     if (adapter.assertAuthored)
-      adapter.assertAuthored((await tab(project)).generationDraft, reference)
+      adapter.assertAuthored((await tab(project)).generationDraft, reference, fixture, currentPlan)
   }
   async function setDynamic(project, maxPrompts, seedBehavior) {
     await window
@@ -633,11 +651,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await expect(dialog).toBeVisible()
     await dialog.locator('input[aria-label="Maximum dynamic prompts"]').fill(String(maxPrompts))
     await dialog.locator('input[aria-label="Maximum dynamic prompts"]').press('Enter')
-    await dialog.locator('[aria-label="Dynamic prompt seed behavior"]').click()
-    await window
-      .getByText(seedBehavior === 'per-prompt' ? 'Per prompt' : 'Per iteration', { exact: true })
-      .last()
-      .click()
+    await setSelect(
+      'Dynamic prompt seed behavior',
+      seedBehavior === 'per-prompt' ? 'Per prompt' : 'Per iteration',
+    )
     await expect
       .poll(async () => (await tab(project)).generationDraft.dynamicPrompt)
       .toEqual({ maxPrompts, seedBehavior })
@@ -737,6 +754,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     const button = window.getByRole('button', { name: 'Generate', exact: true })
     await expect(button).toBeEnabled({ timeout: 180_000 })
     await bounds('before-Generate')
+    if (adapter.beforeAdmission)
+      admissionObservation = await adapter.beforeAdmission({ application, fixture, plan, report })
     await button.click()
     let admitted
     await expect
@@ -750,6 +769,30 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       .toBe(plan.expectedAdmissions)
     assert.equal(new Set(admitted.map(({ batch_id }) => batch_id)).size, 1)
     assert.equal(new Set(admitted.map(({ staging_session_id }) => staging_session_id)).size, 1)
+    // Retain genuine publication even if an observer or late-bound seed assertion fails.
+    report.admissions = admitted.map((row, index) => ({
+      index,
+      row,
+      frozen: JSON.parse(row.frozen_payload_json),
+      expectedItem: plan.items[index],
+    }))
+    await checkpoint()
+    if (adapter.afterAdmission) {
+      report.seedAdmissionObservation = await adapter.afterAdmission({
+        application,
+        fixture,
+        plan,
+        admitted,
+        handle: admissionObservation,
+      })
+      admissionObservation = undefined
+    }
+    if (adapter.resolveAdmissionPlan) {
+      const resolved = adapter.resolveAdmissionPlan({ plan, admitted, baseline, fixture })
+      plan = resolved.plan
+      report.resolvedPlan = plan
+      report.seedPlanResolution = resolved.evidence
+    }
     report.admissions = admitted.map((row, index) => ({
       index,
       row,
@@ -764,7 +807,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       assert.equal(row.document_revision, before.documentRevision)
       assert.equal(frozen.context.documentId, before.documentId)
       assert.equal(frozen.context.documentRevision, before.documentRevision)
-      assert.equal(row.operation, adapter.operation)
+      assert.equal(row.operation, operation)
       assert.deepEqual(frozen.context.bbox, before.primaryBbox)
       const targetPath = path.join(appData, 'generation-inputs', row.id, 'target.png')
       const target = await fileSnapshot(targetPath, frozen.context.target.sha256)
@@ -859,8 +902,9 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
       // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
       if (fixture.stage !== 'reuse' || expectedItem.promptPairIndex === 0) {
-        const normalizer =
-          fixture.stage === 'reuse'
+        const normalizer = adapter.normalizeReferenceInputs
+          ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
+          : fixture.stage === 'reuse'
             ? adapter.normalizeExecutionInputs
             : adapter.normalizeNativeInputs
         const inputs = normalizer(frozen)
@@ -875,8 +919,11 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
           beforeExplicitAdd: true,
           expectedPixelSha256: matched.dimensions.pixelSha256,
           actualPixelSha256: generation.dimensions.pixelSha256,
-          allowedMetadataDifferences:
-            fixture.stage === 'reuse' ? ['requestedSeedPolicy', 'seedBehavior'] : [],
+          allowedMetadataDifferences: adapter.baselineMetadataDifferences
+            ? adapter.baselineMetadataDifferences(fixture)
+            : fixture.stage === 'reuse'
+              ? ['requestedSeedPolicy', 'seedBehavior']
+              : [],
         }
         await checkpoint()
         assert.equal(
@@ -948,12 +995,16 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('.comparison-scroll')).toHaveAttribute('aria-busy', 'false')
     await dialog.getByRole('checkbox', { name: 'Show unchanged settings', exact: true }).check()
-    for (const key of adapter.comparisonChanged)
+    for (const key of typeof adapter.comparisonChanged === 'function'
+      ? adapter.comparisonChanged(fixture)
+      : adapter.comparisonChanged)
       await expect(dialog.locator(`[data-setting="${key}"]`)).toHaveAttribute(
         'data-status',
         'Changed',
       )
-    for (const key of adapter.comparisonSame)
+    for (const key of typeof adapter.comparisonSame === 'function'
+      ? adapter.comparisonSame(fixture)
+      : adapter.comparisonSame)
       await expect(dialog.locator(`[data-setting="${key}"]`)).toHaveAttribute('data-status', 'Same')
     const additional = adapter.assertComparison
       ? await adapter.assertComparison({
@@ -1428,7 +1479,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     if (fixture.baseline) {
       baseline = await readPinnedJson(fixture.baseline)
       assert.equal(baseline.status, 'passed')
-      assert.equal(baseline.stage, 'iteration')
+      assert.equal(
+        baseline.stage,
+        adapter.expectedBaselineStage ? adapter.expectedBaselineStage(fixture) : 'iteration',
+      )
       assert.equal(baseline.profile, fixture.profile)
       assert.equal(baseline.objective, fixture.objective)
       assert.equal(baseline.nativePhysicalExit?.confirmed, true)
@@ -1518,6 +1572,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       randomClaim: false,
       uint32WrapClaim: false,
       max32InferenceClaim: false,
+      ...(adapter.summaryClaims ? adapter.summaryClaims({ fixture, plan, report }) : {}),
     }
     report.status = 'passed'
     await check(
@@ -1548,6 +1603,10 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         report.status = 'failed'
       }
     }
+    await finalize('admission observation restoration', async () => {
+      if (admissionObservation && application && adapter.restoreAdmissionObservation)
+        await adapter.restoreAdmissionObservation({ application, handle: admissionObservation })
+    })
     await finalize('native physical closure', closeNative)
     await finalize('database close', async () => {
       if (database) await database.close()

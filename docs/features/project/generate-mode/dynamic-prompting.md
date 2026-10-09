@@ -249,10 +249,46 @@ makes raw totals24/16/8 and is not a mutation success. Qualified launcher/native
 combined limits are2/≤12/14GiB, swap0; measured combined peak~9.65GiB.
 
 Joint CLIP L/G zeroing does not independently qualify each encoder, scalar-weight
-correctness or image quality. No new Anima ML run occurred. Next finite gate is
-installed Random/uint32 seed boundaries; max32 native, broader caps/truncation,
+correctness or image quality. No new Anima ML run occurred in that embedding
+checkpoint. The separate seed follow-up below includes Anima; max32 native,
+broader caps/truncation,
 full Fixed/per-prompt combinations, replacement identity, arbitrary formats/
 geometry/quality/public delivery/release and full MVP remain open.
+
+## Installed Random and uint32 seed-boundary gate
+
+[The bounded installed-system follow-up](../../../engineering/phase-2c-generation-seed-boundary-research.md)
+qualified the bounded existing seed contract in Anima and exact Illustrious-family EPS/V.
+The actual Random switch selected one original Main cryptographic base per batch;
+observation returned the same producer Buffer and restored its function identity.
+Only the first admitted frozen seed supplies the numerical base, independently
+checked against that real pick. Later rows are checked against the ordered table.
+Two selected prompt pairs with two images use base/next/base/next per iteration.
+Fixed numeric replay preserves seed behavior and every native input, while saved
+requested policy remains Random versus Fixed.
+
+Fixed MAX/per-prompt uses 4294967295/0/1/2; fresh controls select the first pair
+with MAX/0. Full authored templates are retained. An installed mutation changes
+high-bit consumption only at the generation-noise producer, preserving declared
+seed metadata; same-input pixel RED is required before Add and protected source
+restoration/physical exit precede fresh controls. Current authoring edits must
+preserve queued and portable values; each accepted layer has its own read-only
+comparison. Valid actual completion seeds differing from scheduled seeds remain
+supported by the general production receipt/provenance contract.
+
+Independent raw SQLite/ZIP/Pillow aggregate PASS (15,006 checks) confirms 54 qualified
+admissions/45 finite outputs (36 normal, 3 provisional mutant, 6 fresh)/42 accepted
+saved layers/12 reopened packages/9 APP_RESTART. Raw 58/49/46/13/9 separately include
+a superseded healthy EPS Random run with 4 admissions/4 outputs/4 saved layers/one
+package. Two excluded setup 0/0 attempts are not semantic RED. All three high-bit
+mutants gave pixel RED before Add/0 accepted; protected 43-file restoration and
+fresh 6 reproduced healthy MAX/0 pixels. All 42 per-layer comparisons passed.
+Original 302 queue rows/186 cursors/249 receipts, catalog 9/14/defaults and eight
+original sources remain unchanged; final physical idleness is confirmed.
+
+The next finite gate is cap 32/bounded truncation. This does not qualify the full policy/mode matrix, maximum 32 native
+inference, arbitrary geometry/formats/quality, replacement-document identity,
+public delivery/release or full MVP. PP statuses remain unchanged.
 
 ## Vue Prototype Coverage
 
