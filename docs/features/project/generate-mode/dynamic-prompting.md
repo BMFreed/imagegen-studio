@@ -219,15 +219,40 @@ or mutation evidence. Original catalog/defaults/prior220 rows/source43 survive.
 
 This evidence is256×256/three steps/CFG5, exact EPS/Euler a/non-ZTSNR or
 V/Euler/ZTSNR with leading spacing, signed Digital Art−0.5 and native external
-VAE FP32. It has no embedding sidecars. The next finite gate is installed dynamic
-embedding activation/subsets for EPS/V: ordinary, positive-only, negative-only,
-both, exact per-concrete captured/effective refs and a conditional negative-TI-zero
-mutation with ordinary GREEN and numerical RED before Add, then restored GREEN.
+VAE FP32. This historical checkpoint has no embedding sidecars; its completed
+embedding follow-up is recorded below.
 Random, wrap, max32 native, installed truncation/full Fixed-per-prompt matrix,
 replacement-document identity, arbitrary formats/geometry/quality and release
 remain open. Production cap32 and PP statuses are unchanged. Shared flow now uses
 family adapters; this slice does not rerun installed Anima ML, and its historical
 evidence above is not expanded by these EPS/V results.
+
+## Installed dynamic embedding-subset checkpoint
+
+[Bounded EPS/V follow-up](../../../engineering/phase-2c-illustrious-dynamic-embeddings-research.md)
+authors both full templates and exact trained IllustriousPhoto refs through real
+focused completion. Four ordinary/negative/positive/both pairs use Fixed0,
+one image each/per-iteration. Frozen context retains full authored signed refs;
+each native job and accepted record keeps only the effective concrete subset.
+Ordinary wire omits embeddings. Current removal and sampler/seed37/LoRA/dynamic
+edits do not change execution or saved provenance. Restored maxPrompts2 uses the
+same full source/refs and selects ordinary/negative, a representative ordered
+2-of4 truncation, not general cap/seed-policy coverage.
+
+Independent SQLite/raw ZIP/Pillow aggregate5802 verifies20 qualified admissions,
+16 finite outputs,4 APP_RESTART,4 saved/reopened packages/12 layers/snapshots0,
+all12 per-layer comparisons and prior278/catalog9/14/defaults/source43 preservation.
+Both negative-alias tensor-zero mutants retain GREEN ordinary and give same-input
+pixel RED before Add/0 accepted; fresh4 reproduce healthy pixels after protected
+restoration/physical exit. A separate watchdog4-admission/0-output exclusion
+makes raw totals24/16/8 and is not a mutation success. Qualified launcher/native/
+combined limits are2/≤12/14GiB, swap0; measured combined peak~9.65GiB.
+
+Joint CLIP L/G zeroing does not independently qualify each encoder, scalar-weight
+correctness or image quality. No new Anima ML run occurred. Next finite gate is
+installed Random/uint32 seed boundaries; max32 native, broader caps/truncation,
+full Fixed/per-prompt combinations, replacement identity, arbitrary formats/
+geometry/quality/public delivery/release and full MVP remain open.
 
 ## Vue Prototype Coverage
 

@@ -47,6 +47,19 @@ embedding проверки переиспользовали каталог/runti
    датированный каталог. Отдельная mutable копия нужна, если именно её изменение
    проверяет тест; hardlink к оригиналу для такого теста недопустим.
 
+Тяжёлый qualification также требует реестра настоящих process/cgroup boundaries.
+`memory.current` включает файловый кеш от проверки SHA больших весов, поэтому
+два отдельных лимита12GiB не означают общий лимит12GiB. Если KDE вынес native
+Main/worker в отдельный owned scope, launcher может иметь меньший бюджет;
+подтвердить реальные группы и их владельцев до выбора лимитов. Сохранять
+`memory.stat` (как минимум anon/file), zero-swap, deadline и общий watchdog,
+не увеличивать совокупный потолок только ради кеша. Ограничение
+`MemoryMax<=12G` в guard задаёт максимум, а не обязательный размер launcher.
+Прерванный watchdog запуск учитывается отдельно от semantic mutation:
+сохранить исходный незавершённый report, независимый physical-exit proof и
+фактические queue/receipt counts перед повтором. См.
+[bounded dynamic embedding run](./phase-2c-illustrious-dynamic-embeddings-research.md).
+
 Для будущих окружений подходит стабильный layout:
 
 ```text

@@ -91,7 +91,9 @@ one polarity a literal has one binding. Matching stays case-sensitive, with
 word-side boundaries and longest-first overlap selection, including saved custom
 literals. Worker-private aliases never enter the draft or accepted metadata.
 
-Every dynamic branch freezes only its effective refs. Expanded known tokens
+Every dynamic branch keeps the captured authored refs separately from its
+effective concrete subset. Native jobs receive only that subset; ordinary wire
+omits embeddings. Expanded known tokens
 without stored identity refuse before batch publication; Generate never auto-links
 resources. Retry verifies those frozen files again, ignores unused branches and
 later Project/default changes. Accepted records contain concrete prompts and
@@ -144,3 +146,23 @@ These are installed development results for one declared trained file and its
 artificial control. Live CivitAI install/repair, arbitrary formats, image
 quality, Anima embeddings, Preset handoff, dynamic multi-job qualification,
 full conditioning-budget capacity and release qualification remain open.
+
+## Installed dynamic subset checkpoint (09.10.2026)
+
+[Exact EPS/V dynamic subsets](../../../engineering/phase-2c-illustrious-dynamic-embeddings-research.md)
+uses both full source templates/one exact trained ref per sign and four concrete
+ordinary/negative/positive/both pairs at Fixed0/per-iteration, one image each.
+Authored capture, concrete native subsets and portable refs survive real current
+removal, Add/Save/readback/reopen and all12 per-layer Same/Removed comparisons.
+Restored maxPrompts2 retains both full authored refs while only ordinary/negative
+execute. The zero-control file is not selected; Defaults remain unchanged.
+
+Both installed negative-alias tensor-zero mutations keep ordinary GREEN and fail
+same-input pixels before Add,0 accepted mutant layers. Exact43 source restoration,
+physical exit and fresh4 same-input GREEN are independently checked. Raw aggregate
+5802 confirms20 qualified admissions/16 finite/4 cancellations,4 saved packages/
+12 layers/snapshot0; raw24/16/8 includes a separate watchdog4/0 exclusion.
+This proves joint negative learned-vector sensitivity, not independent CLIP L/G,
+scalar weighting, broad formats/counts/quality or Anima embedding support.
+Next finite gate is installed Random/uint32 seed boundaries; Preset handoff,
+broader caps/seed combinations and public delivery/release stay open.

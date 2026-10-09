@@ -575,12 +575,28 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await setInput(`${reference[selectedLoraKey].name} weight`, -0.5)
     if (adapter.authorComponents)
       await adapter.authorComponents({ window, expect, tab, project, reference, setSelect })
-    await window
-      .getByRole('textbox', { name: 'Positive prompt', exact: true })
-      .fill(currentPlan.sourcePrompts.positive)
-    await window
-      .getByRole('textbox', { name: 'Negative prompt', exact: true })
-      .fill(currentPlan.sourcePrompts.negative)
+    if (adapter.authorPrompts)
+      await adapter.authorPrompts({
+        window,
+        expect,
+        tab,
+        project,
+        reference,
+        currentPlan,
+        async recordAuthoringFailure(evidence) {
+          report.promptAuthoringFailures ??= []
+          report.promptAuthoringFailures.push(evidence)
+          await checkpoint()
+        },
+      })
+    else {
+      await window
+        .getByRole('textbox', { name: 'Positive prompt', exact: true })
+        .fill(currentPlan.sourcePrompts.positive)
+      await window
+        .getByRole('textbox', { name: 'Negative prompt', exact: true })
+        .fill(currentPlan.sourcePrompts.negative)
+    }
     await setDynamic(project, currentPlan.maxPrompts, currentPlan.seedBehavior)
     await setInput('Images per click', currentPlan.iterations)
     if (currentPlan.requestedSeedPolicy === 'reuse')
@@ -664,7 +680,9 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await expect
       .poll(async () => (await tab(project)).generationDraft.sampling[sampling.draftKey])
       .toBe(sampling.editedCode)
-    return structuredClone((await tab(project)).generationDraft)
+    const draft = structuredClone((await tab(project)).generationDraft)
+    if (adapter.assertEdited) adapter.assertEdited(draft, reference)
+    return draft
   }
   function semanticLayers(layers) {
     return layers.map(({ imageUrl: _imageUrl, thumbnailUrl: _thumbnailUrl, ...layer }) => layer)
@@ -919,7 +937,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       .poll(async () => (await tab(project)).layers.length)
       .toBe(count + (fixture.stage === 'reuse' && count === 8 ? 1 : 0))
   }
-  async function compare(project, layer, packagePath) {
+  async function compare(project, layer, packagePath, generation = null) {
     const before = await tab(project)
     const portableSha256 = await hashFile(packagePath)
     await window
@@ -937,7 +955,21 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       )
     for (const key of adapter.comparisonSame)
       await expect(dialog.locator(`[data-setting="${key}"]`)).toHaveAttribute('data-status', 'Same')
-    const image = await screenshot('comparison.png', dialog)
+    const additional = adapter.assertComparison
+      ? await adapter.assertComparison({
+          window,
+          expect,
+          dialog,
+          layer,
+          generation,
+          reference,
+          currentDraft: before.generationDraft,
+        })
+      : undefined
+    const image = await screenshot(
+      generation ? `comparison-${generation.queueItemId}.png` : 'comparison.png',
+      dialog,
+    )
     await dialog
       .getByRole('button', { name: 'Close generation settings comparison', exact: true })
       .click()
@@ -954,7 +986,11 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     ])
       assert.deepEqual(after[key], before[key])
     assert.equal(await hashFile(packagePath), portableSha256)
-    return { readOnly: true, screenshot: image }
+    return {
+      readOnly: true,
+      screenshot: image,
+      ...(generation ? { layerId: layer.id, queueItemId: generation.queueItemId, additional } : {}),
+    }
   }
   async function verifySaved(project, currentDraft, extra = []) {
     const accepted = await tab(project)
@@ -1031,7 +1067,15 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       mergedPreview: merged.dimensions,
       reopened: true,
     }
-    report.comparison = await compare(project, reopened.layers[0], savedPackage.path)
+    if (adapter.assertComparison) {
+      report.comparisons = []
+      for (const generation of evidence) {
+        const layer = reopened.layers.find(({ id }) => id === generation.layerId)
+        assert.ok(layer, 'Every saved generation must retain its own comparison layer.')
+        report.comparisons.push(await compare(project, layer, savedPackage.path, generation))
+      }
+      report.comparison = report.comparisons[0]
+    } else report.comparison = await compare(project, reopened.layers[0], savedPackage.path)
     await screenshot('reopened.png')
     assert.equal(accepted.documentId, reopened.documentId)
     await checkpoint()
@@ -1439,6 +1483,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.recoveredGeneration = recovered.recovered
     } else project = await createProject()
     await author(project, plan)
+    report.authoredDraft = structuredClone((await tab(project)).generationDraft)
     report.project = project
     if (fixture.stage === 'crash') {
       const saved = await save(project)
