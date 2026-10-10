@@ -231,9 +231,16 @@ IMG/OUT for this V sampler/profile, arbitrary checkpoints/geometry/formats/seed
 policies, subjective quality, trained-output identity with Invoke, full NoobAI/
 MVP/public installation and release remain outside this claim.
 
-The next bounded gate is V/true-ZTSNR/leading DPM++ 2M Normal/Karras opaque
-nonzero IMG and existing normal mixed-alpha OUT on one pinned full-stack TXT
-source. Its finite count, strength/grid, independent oracle, contribution alpha,
-merged preview and budgets must be frozen separately before execution. The
-current V validator intentionally accepts TXT only. The Karras trained mutated
-pixel comparison remains an explicit gap. No new product decision is required.
+The subsequent finite image gate is recorded separately in
+[NoobAI V DPM++ 2M common-source IMG/OUT qualification](./phase-2c-noobai-vpred-dpm-image-research.md).
+It preserves these historical8 admissions/7 completions/5 accepted packages and
+uses a separate callback-history reset, not the wrong-EPS axis. The original
+Karras wrong-EPS trained pixel comparison and exact original failure cause
+remain explicit gaps; the later image mutation does not close them.
+
+At this TXT checkpoint the next bounded gate was V/true-ZTSNR/leading DPM++ 2M
+Normal/Karras opaque nonzero IMG and existing normal mixed-alpha OUT on one
+pinned full-stack TXT source. Its finite count, strength/grid, independent oracle,
+contribution alpha, merged preview and budgets required a separate freeze.
+The TXT validator intentionally remains TXT-only; the image gate uses a distinct
+opt-in profile. No new product decision was required.

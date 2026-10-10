@@ -128,12 +128,16 @@ def _reference_image_class(native: Any, state: Any) -> Any:
     return ReferenceImagePipeline
 
 
-def _observe_native_call(native: Any, callback: Any) -> tuple[Any, list[Any], list[Any]]:
+def _observe_native_call(
+    native: Any, callback: Any, *, timesteps: list[Any] | None = None
+) -> tuple[Any, list[Any], list[Any]]:
     predictions: list[Any] = []
     decoded: list[Any] = []
 
     def observe_unet(_module: Any, args: Any, _kwargs: Any) -> None:
         predictions.append(args[0].detach().clone())
+        if timesteps is not None:
+            timesteps.append(args[1].detach().clone())
 
     def observe_decode(_module: Any, args: Any) -> None:
         decoded.append(args[0].detach().clone())
@@ -401,3 +405,170 @@ def test_vpred_dpm_txt_matches_native_grid_unet_inputs_and_pixels(
     assert events == expected_events == [(1, 4), (2, 4), (3, 4), (4, 4)]
     assert native.source.tobytes() == source_bytes
     assert native.pipeline._igs_outpaint_state is None
+
+
+@pytest.mark.parametrize("mode", ("img", "out"))
+@pytest.mark.parametrize(
+    "name,strength,full_timesteps,active_timesteps,neighbor",
+    [
+        pytest.param(
+            "dpmpp_2m", 0.5, (801, 601, 401, 201), (401, 201), True,
+            id="normal-neighbor",
+        ),
+        pytest.param(
+            "dpmpp_2m", 0.75, (801, 601, 401, 201), (601, 401, 201), False,
+            id="normal-history",
+        ),
+        pytest.param(
+            "dpmpp_2m_k", 0.9, (999, 994, 892, 0), (892, 0), True,
+            id="karras-neighbor",
+        ),
+        pytest.param(
+            "dpmpp_2m_k", 0.995, (999, 994, 892, 0), (994, 892, 0), False,
+            id="karras-history",
+        ),
+    ],
+)
+def test_vpred_dpm_image_matches_native_grid_history_and_mask(
+    native: Any,
+    tmp_path: Path,
+    name: str,
+    strength: float,
+    full_timesteps: tuple[int, ...],
+    active_timesteps: tuple[int, ...],
+    neighbor: bool,
+    mode: str,
+) -> None:
+    """Actual V/true-ZTSNR/leading image loop against fresh native reference.
+
+    Boundary: production selector, img2img preparation, native UNet/VAE and
+    worker progress/mask callback. The reference constructs its own scheduler
+    and image loop; masked cases run the independently pinned Invoke guidance.
+    Frozen N4 grids select two first-order updates for neighbors and three
+    updates with a second-order middle step for history-sensitive cases. Karras
+    uses .9/.995: its legacy .75 strength selects only one update, not history.
+
+    A semantic mutation that clears scheduler.lower_order_nums in the actual
+    progress callback must fail history decoded-latent equality and preserve
+    both first-order neighbors. A fresh order-1 native reference independently
+    demonstrates that distinction before the worker call. These opaque RGB
+    native decoder outputs compare as full RGBA, but publishing contribution
+    alpha/merged previews and trained-checkpoint quality belong to other tests.
+    """
+    torch = native.torch
+    native.conditioning = replace(native.conditioning, negative_length=4)
+    source_bytes = native.source.tobytes()
+    source_rgba = native.source.convert("RGBA").tobytes()
+    assert native.source.mode == "RGB" and native.source.size == (64, 64)
+    assert set(native.source.convert("RGBA").getchannel("A").tobytes()) == {255}
+    keep_mask = _mask()
+    mask_bytes = keep_mask.tobytes()
+    assert set(mask_bytes) == {0, 128, 255}
+
+    expected, expected_predictions, expected_decoded, expected_events = _reference_run(
+        native, name, mode, strength, prediction="v_prediction", rescale=True, cfg_scale=4
+    )
+    lower, lower_predictions, lower_decoded, lower_events = _reference_run(
+        native,
+        name,
+        mode,
+        strength,
+        lower_policy=True,
+        prediction="v_prediction",
+        rescale=True,
+        cfg_scale=4,
+    )
+    assert torch.isfinite(expected_decoded[0]).all()
+    assert torch.isfinite(lower_decoded[0]).all()
+    assert torch.equal(expected_decoded[0], lower_decoded[0]) == neighbor
+    assert len(expected_predictions) == len(lower_predictions) == len(active_timesteps)
+    if neighbor:
+        assert expected.convert("RGBA").tobytes() == lower.convert("RGBA").tobytes()
+        assert all(
+            torch.equal(a, b)
+            for a, b in zip(expected_predictions, lower_predictions, strict=True)
+        )
+    else:
+        # The first two evaluations precede the second-order history update.
+        assert all(
+            torch.equal(a, b)
+            for a, b in zip(expected_predictions[:2], lower_predictions[:2], strict=True)
+        )
+        assert not torch.equal(expected_predictions[2], lower_predictions[2])
+
+    reference = _reference_scheduler(native, name, prediction="v_prediction", rescale=True)
+    reference.set_timesteps(4, device="cpu")
+    assert reference.timesteps.tolist() == list(full_timesteps)
+    cutoff = round(1000 * strength)
+    begin = len([value for value in full_timesteps if value >= cutoff])
+    assert full_timesteps[begin:] == active_timesteps
+
+    command = replace(
+        illustrious_command(tmp_path),
+        scheduler=cast(Any, name),
+        steps=4,
+        seed=0,
+        prediction_type="v_prediction",
+        noise_profile=IllustriousNoiseProfile(True, "leading"),
+    )
+    pipeline = native.pipeline
+    # An EPS/false-ZTSNR loader scheduler must not override the exact request.
+    pipeline.scheduler = _reference_scheduler(native, name)
+    selected = select_inference_scheduler(
+        command, pipeline, MLRuntime(torch, native.diffusers, ModuleType("unused_compel"))
+    )
+    pipeline.scheduler = selected
+    selected.set_timesteps(4, device="cpu")
+    torch.testing.assert_close(
+        selected.alphas_cumprod, independent_alphas(torch, True), rtol=1e-5, atol=1e-7
+    )
+    assert selected.alphas_cumprod[-1].item() == 2**-24
+    assert torch.isfinite(selected.sigmas).all()
+    assert torch.equal(selected.sigmas, reference.sigmas)
+    assert torch.equal(selected.timesteps, reference.timesteps)
+    events: list[tuple[int, int]] = []
+    observed_timesteps: list[Any] = []
+
+    def report_progress(step: int, total: int) -> None:
+        events.append((step, total))
+
+    options: dict[str, Any] = {
+        "width": 64,
+        "height": 64,
+        "steps": 4,
+        "cfg_scale": 4,
+        "generator": torch.Generator(device="cpu").manual_seed(0),
+        "torch": torch,
+        "on_progress": report_progress,
+        "image": native.source,
+        "denoising_strength": strength,
+    }
+
+    def call() -> Any:
+        if mode == "out":
+            return run_sdxl_outpaint_pipeline(
+                pipeline, native.conditioning, keep_mask=keep_mask, **options
+            )
+        return run_sdxl_pipeline(pipeline, native.conditioning, **options)
+
+    actual, predictions, decoded = _observe_native_call(
+        native, call, timesteps=observed_timesteps
+    )
+    assert torch.isfinite(decoded[0]).all()
+    assert torch.equal(decoded[0], expected_decoded[0])
+    assert actual.convert("RGBA").tobytes() == expected.convert("RGBA").tobytes()
+    assert len(predictions) == len(expected_predictions) == len(active_timesteps)
+    assert all(torch.equal(a, b) for a, b in zip(predictions, expected_predictions, strict=True))
+    assert [value.item() for value in observed_timesteps] == list(active_timesteps)
+    assert selected.begin_index == begin
+    assert selected.step_index == len(full_timesteps)
+    assert torch.equal(selected.sigmas, reference.sigmas)
+    assert torch.equal(selected.timesteps, reference.timesteps)
+    total = len(active_timesteps)
+    assert events == expected_events == lower_events == [
+        (index + 1, total) for index in range(total)
+    ]
+    assert native.source.tobytes() == source_bytes
+    assert native.source.convert("RGBA").tobytes() == source_rgba
+    assert keep_mask.tobytes() == mask_bytes
+    assert pipeline._igs_outpaint_state is None

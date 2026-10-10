@@ -198,6 +198,14 @@ export function validateNoobaiVpredDpmFixture(fixture) {
   return validateDpmFixture(fixture, 'noobai-vpred-dpm', fixture.objective)
 }
 
+/** Separate V image envelope; TXT and EPS qualifications keep their original contracts. */
+export function validateNoobaiVpredDpmImageFixture(fixture) {
+  assert.equal(fixture?.objective, 'v_prediction')
+  assert.equal(fixture?.algorithm, 'dpmpp_2m')
+  assert.ok(['img2img', 'outpaint'].includes(fixture?.mode))
+  return validateDpmFixture(fixture, 'noobai-vpred-dpm-image', 'v_prediction')
+}
+
 function validateDpmFixture(fixture, profile, objective) {
   const imageFields = fixture?.mode === 'txt2img' ? [] : ['sourceImage']
   const outpaintFields = fixture?.mode === 'outpaint' ? ['lamaSource'] : []
@@ -206,7 +214,7 @@ function validateDpmFixture(fixture, profile, objective) {
     [
       'schemaVersion',
       'profile',
-      ...(profile === 'noobai-vpred-dpm' ? ['objective'] : []),
+      ...(profile.startsWith('noobai-vpred-dpm') ? ['objective'] : []),
       'algorithm',
       'schedule',
       'mode',
@@ -289,8 +297,7 @@ export function literalIllustriousDpmPlan(
   assert.ok(['epsilon', 'v_prediction'].includes(objective))
   if (objective === 'v_prediction') {
     assert.equal(algorithm, 'dpmpp_2m')
-    assert.equal(mode, 'txt2img')
-    assert.equal(caseName, 'history')
+    if (mode === 'txt2img') assert.equal(caseName, 'history')
   }
   assert.ok(['baseline', 'control', 'restored'].includes(stage), 'Unknown DPM qualification stage.')
   assert.ok(['txt2img', 'img2img', 'outpaint'].includes(mode), 'Unknown DPM generation mode.')
@@ -304,14 +311,21 @@ export function literalIllustriousDpmPlan(
     caseName !== 'neighbor' || stage !== 'restored',
     'The finite neighbor has baseline/control stages only.',
   )
+  // Actual V/true-ZTSNR N4 Karras grid is [999,994,892,0]. The worker's rounded
+  // strength cutoff leaves 3 updates at .995 and 2 at .9; EPS .75/.5 would both
+  // leave only [0]. Keep that finite image recipe separate from EPS and V TXT.
   const strength =
     mode === 'txt2img'
       ? undefined
       : caseName === 'neighbor'
         ? algorithm === 'dpmpp_2m'
-          ? 0.5
+          ? objective === 'v_prediction' && schedule === 'Karras'
+            ? 0.9
+            : 0.5
           : 0.05
-        : 0.75
+        : objective === 'v_prediction' && schedule === 'Karras'
+          ? 0.995
+          : 0.75
   const observedSteps =
     mode === 'txt2img'
       ? pair.txtObservedSteps

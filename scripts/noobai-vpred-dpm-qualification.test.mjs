@@ -406,8 +406,9 @@ test('V envelope rejects unsupported scope, extra fields, source overlap and inc
   assert.throws(() => validateNoobaiVpredDpmFixture(wrapper('epsilon', 'Normal', 'restored')))
   for (const args of [
     ['baseline', 'dpmpp_sde', 'Normal', 'txt2img', 'history', 'v_prediction'],
-    ['baseline', 'dpmpp_2m', 'Normal', 'img2img', 'history', 'v_prediction'],
-    ['baseline', 'dpmpp_2m', 'Karras', 'outpaint', 'history', 'v_prediction'],
+    ['baseline', 'dpmpp_sde', 'Normal', 'img2img', 'history', 'v_prediction'],
+    ['baseline', 'dpmpp_2m', 'Karras', 'outpaint', 'neighbor', 'v_prediction'],
+    ['restored', 'dpmpp_2m', 'Normal', 'img2img', 'neighbor', 'v_prediction'],
     ['baseline', 'dpmpp_2m', 'Normal', 'txt2img', 'history', 'sample'],
   ])
     assert.throws(() => literalIllustriousDpmPlan(...args))
