@@ -31,6 +31,16 @@ import {
 } from './qualification-resource-limits.mjs'
 import { assertUpgradeBounds } from './upgrade-qualification-worker.mjs'
 
+/** A reversed stack may author a different first weight; legacy one-adapter profiles retain −0.5. */
+export function authoredFirstLoraWeight(adapter, fixture) {
+  const value = adapter.authoredFirstLoraWeight ? adapter.authoredFirstLoraWeight(fixture) : -0.5
+  assert.ok(
+    typeof value === 'number' && Number.isFinite(value),
+    'Authored first LoRA weight must be finite.',
+  )
+  return value
+}
+
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
   const expect = baseExpect.configure({ timeout: 120_000 })
   const fixture = await readJson(fixturePath, 64 * 1024)
@@ -675,7 +685,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         negative: currentPlan.sourcePrompts.negative,
         dynamic: { maxPrompts: currentPlan.maxPrompts, seedBehavior: currentPlan.seedBehavior },
         seedPolicy: currentPlan.requestedSeedPolicy,
-        loraWeight: -0.5,
+        loraWeight: authoredFirstLoraWeight(adapter, fixture),
         method: sampling.code,
       })
     if (adapter.assertAuthored)

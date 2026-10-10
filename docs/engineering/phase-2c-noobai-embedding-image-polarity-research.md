@@ -335,7 +335,12 @@ mutation causality, trained-pixel parity with Invoke, public delivery or release
 It does not close the historical V Karras wrong-EPS TXT pixel-RED gap, and
 unsupported V DPM++ SDE plus true-ZTSNR remains an explicit preserving refusal.
 
-Next: multiple-LoRA common-source opaque IMG/normal mixed-alpha OUT for EPS/V,
+The subsequent multiple-LoRA image gate is recorded separately in
+[NoobAI multiple-LoRA IMG/OUT qualification](./phase-2c-noobai-lora-stack-image-research.md).
+The following next-step description is historical at this signed-image checkpoint;
+its original counts and unclosed V sign-swap/Karras TXT wrong-EPS criteria remain unchanged.
+
+At this checkpoint the next step was: multiple-LoRA common-source opaque IMG/normal mixed-alpha OUT for EPS/V,
 with exact ordered configured/effective AB/BA, B-enabled-zero/B-disabled,
 resource-specific weight mutation, disabled neighboring controls and fresh
 restoration. Freeze its own literal matrix, sources and resource budgets before

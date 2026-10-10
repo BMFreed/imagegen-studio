@@ -600,9 +600,7 @@ export function assertNoobaiEmbeddingPolarityImageConfiguration(config, expected
 
 /** Retain all executed semantics; cross-Project replay omits only document identity/revision. */
 export function normalizeNoobaiEmbeddingPolarityImageNativeInputs(frozen) {
-  assert.ok(
-    ['illustrious-img2img', 'illustrious-outpaint'].includes(frozen?.kind),
-  )
+  assert.ok(['illustrious-img2img', 'illustrious-outpaint'].includes(frozen?.kind))
   assert.ok(['euler', 'euler_a'].includes(frozen?.workerJob?.sampling?.scheduler))
   assert.equal(frozen.context?.sampling?.invokeScheduler, frozen.workerJob.sampling.scheduler)
   assert.equal(
