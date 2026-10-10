@@ -419,7 +419,10 @@ explicitly refused. Spacing follows native method semantics: DPM++ 2M Karras
 builds its own grid independently of spacing. Non-neutral profiles require worker
 0.14 and `illustrious-noise-profile`; baseline false/leading may be adapted to
 older qualified peers without rewriting durable metadata. Old accepted absence
-stays Unavailable. Trained author-recipe qualification remains subsequent work.
+stays Unavailable. The later
+[trained author-recipe qualification](../../../engineering/phase-2c-noobai-author-recipe-research.md)
+checks the pinned EPS/V recipes and single-axis controls; it does not qualify
+every checkpoint/profile or all sampler/mode combinations.
 
 ## Acceptance Criteria
 

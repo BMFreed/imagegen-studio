@@ -30,6 +30,7 @@ const planFor = (fixture) =>
     fixture.schedule,
     fixture.mode,
     fixture.case,
+    fixture.objective,
   )
 async function sourcePixels({ fixture, decodedImage }) {
   assert.notEqual(fixture.mode, 'txt2img')
@@ -108,10 +109,11 @@ export const illustriousDpmProfile = Object.freeze({
     assert.equal(draft.sampling.cfgScale, 4)
     assert.equal(draft.sampling.sampler, plan.sampler)
     assert.equal(draft.sampling.scheduler, fixture.schedule)
-    assert.equal(draft.model.localModelId, reference.illustriousEpsilon.installed.resourceId)
-    assert.equal(draft.model.localVersionId, reference.illustriousEpsilon.installed.versionId)
-    assert.equal(draft.model.fileSha256, reference.illustriousEpsilon.sha256)
-    assert.equal(draft.model.predictionType, 'epsilon')
+    const checkpoint = reference[plan.modelKey]
+    assert.equal(draft.model.localModelId, checkpoint.installed.resourceId)
+    assert.equal(draft.model.localVersionId, checkpoint.installed.versionId)
+    assert.equal(draft.model.fileSha256, checkpoint.sha256)
+    assert.equal(draft.model.predictionType, plan.objective)
     assert.equal(draft.vaePrecision, 'FP32')
     assert.equal(draft.vae.localModelId, reference.externalVaeNative.installed.resourceId)
     assert.equal(draft.vae.localVersionId, reference.externalVaeNative.installed.versionId)

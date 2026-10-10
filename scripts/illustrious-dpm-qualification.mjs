@@ -1,4 +1,4 @@
-/** Independent finite EPS DPM oracle; no filesystem, native solver or production compiler calls. */
+/** Independent finite EPS/V DPM oracle; no filesystem, native solver or compiler calls. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
@@ -18,6 +18,16 @@ import { literalAnimaHeunImageTargetAlpha } from './anima-heun-image-qualificati
 const artifactRoot = path.join(homedir(), '.codex/artifacts/imagegen-studio')
 const icc = '113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1'
 const sources = {
+  illustrious: {
+    byteSize: 6938040794,
+    sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
+    type: 'checkpoint',
+    managedId: 700040,
+    modelId: 1147756,
+    versionId: 2679856,
+    fileId: 2566634,
+    trainedObjective: 'v_prediction',
+  },
   illustriousEpsilon: {
     byteSize: 6938040416,
     sha256: 'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
@@ -172,6 +182,23 @@ function reference(value, fields) {
 
 /** Envelope validation precedes every external read; the runner verifies physical containment. */
 export function validateIllustriousDpmFixture(fixture) {
+  return validateDpmFixture(fixture, 'illustrious-dpm', 'epsilon')
+}
+
+/** Separate opt-in V profile and unchanged EPS neighbor; old EPS envelopes stay strict. */
+export function validateNoobaiVpredDpmFixture(fixture) {
+  assert.ok(['v_prediction', 'epsilon'].includes(fixture?.objective))
+  assert.equal(fixture?.algorithm, 'dpmpp_2m')
+  assert.equal(fixture?.mode, 'txt2img')
+  assert.equal(fixture?.case, 'history')
+  if (fixture.objective === 'epsilon') {
+    assert.equal(fixture.schedule, 'Normal')
+    assert.notEqual(fixture.stage, 'restored')
+  }
+  return validateDpmFixture(fixture, 'noobai-vpred-dpm', fixture.objective)
+}
+
+function validateDpmFixture(fixture, profile, objective) {
   const imageFields = fixture?.mode === 'txt2img' ? [] : ['sourceImage']
   const outpaintFields = fixture?.mode === 'outpaint' ? ['lamaSource'] : []
   exactKeys(
@@ -179,6 +206,7 @@ export function validateIllustriousDpmFixture(fixture) {
     [
       'schemaVersion',
       'profile',
+      ...(profile === 'noobai-vpred-dpm' ? ['objective'] : []),
       'algorithm',
       'schedule',
       'mode',
@@ -193,13 +221,14 @@ export function validateIllustriousDpmFixture(fixture) {
     ['baseline', 'mutation'],
   )
   assert.equal(fixture.schemaVersion, 1)
-  assert.equal(fixture.profile, 'illustrious-dpm')
+  assert.equal(fixture.profile, profile)
   const plan = literalIllustriousDpmPlan(
     fixture.stage,
     fixture.algorithm,
     fixture.schedule,
     fixture.mode,
     fixture.case,
+    objective,
   )
   artifactPath(fixture.artifacts)
   reference(fixture.referenceFixture, ['path', 'sha256'])
@@ -249,7 +278,20 @@ export function validateIllustriousDpmFixture(fixture) {
 }
 
 /** One signed Fixed0 case, independent of production prompt expansion and inference output. */
-export function literalIllustriousDpmPlan(stage, algorithm, schedule, mode, caseName) {
+export function literalIllustriousDpmPlan(
+  stage,
+  algorithm,
+  schedule,
+  mode,
+  caseName,
+  objective = 'epsilon',
+) {
+  assert.ok(['epsilon', 'v_prediction'].includes(objective))
+  if (objective === 'v_prediction') {
+    assert.equal(algorithm, 'dpmpp_2m')
+    assert.equal(mode, 'txt2img')
+    assert.equal(caseName, 'history')
+  }
   assert.ok(['baseline', 'control', 'restored'].includes(stage), 'Unknown DPM qualification stage.')
   assert.ok(['txt2img', 'img2img', 'outpaint'].includes(mode), 'Unknown DPM generation mode.')
   assert.ok(['history', 'neighbor'].includes(caseName), 'Unknown DPM finite case.')
@@ -282,7 +324,7 @@ export function literalIllustriousDpmPlan(stage, algorithm, schedule, mode, case
     seed: 0,
     requestedSeedPolicy: 'fixed',
     seedBehavior: 'per-iteration',
-    objective: 'epsilon',
+    objective,
     algorithm,
     schedule,
     sampler: pair.sampler,
@@ -299,8 +341,8 @@ export function literalIllustriousDpmPlan(stage, algorithm, schedule, mode, case
     schedule,
     mode,
     case: caseName,
-    objective: 'epsilon',
-    modelKey: 'illustriousEpsilon',
+    objective,
+    modelKey: objective === 'v_prediction' ? 'illustrious' : 'illustriousEpsilon',
     sampler: pair.sampler,
     invokeScheduler: pair.invokeScheduler,
     steps: pair.steps,
@@ -330,8 +372,9 @@ function assertExpectedItem(expected) {
       expected?.schedule,
       expected?.mode,
       expected?.case,
+      expected?.objective,
     ).items[0],
-    'The expected item must be the complete independent finite EPS DPM case.',
+    'The expected item must be the complete independent finite EPS/V DPM case.',
   )
 }
 
@@ -358,9 +401,11 @@ function workerFile(fixture, key) {
   return { byteSize: source.byteSize, path: source.installed.managedPath, sha256: source.sha256 }
 }
 
-function assertInstalledSources(fixture) {
+function assertInstalledSources(fixture, objective) {
   absolute(fixture.appData)
-  for (const [key, pinned] of Object.entries(sources)) {
+  const checkpointKey = objective === 'v_prediction' ? 'illustrious' : 'illustriousEpsilon'
+  for (const key of [checkpointKey, 'illustriousLora', 'externalVaeNative']) {
+    const pinned = sources[key]
     const source = fixture[key]
     assert.ok(source, `The exact ${key} descriptor is required.`)
     for (const field of ['byteSize', 'sha256', 'type']) assert.equal(source[field], pinned[field])
@@ -382,11 +427,11 @@ function assertInstalledSources(fixture) {
   }
 }
 
-function noiseProfile() {
+function noiseProfile(objective) {
   return {
     schemaVersion: 1,
     baseSchedule: 'sdxl-scaled-linear-v1',
-    rescaleBetasZeroSnr: false,
+    rescaleBetasZeroSnr: objective === 'v_prediction',
     timestepSpacing: 'leading',
   }
 }
@@ -396,7 +441,7 @@ function sampling(expected, portable = false) {
     cfgRescale: 0,
     cfgScale: 4,
     invokeScheduler: expected.invokeScheduler,
-    noiseProfile: noiseProfile(),
+    noiseProfile: noiseProfile(expected.objective),
     requestedSeedPolicy: 'fixed',
     sampler: expected.sampler,
     scheduler: expected.schedule,
@@ -435,7 +480,8 @@ function assertConditioning(conditioning, target, bbox) {
 
 export function assertIllustriousDpmFrozen(frozen, expected, fixture) {
   assertExpectedItem(expected)
-  assertInstalledSources(fixture)
+  assertInstalledSources(fixture, expected.objective)
+  const checkpointKey = expected.objective === 'v_prediction' ? 'illustrious' : 'illustriousEpsilon'
   exactKeys(frozen, ['schemaVersion', 'originRequestId', 'kind', 'context', 'workerJob'])
   assert.equal(frozen.schemaVersion, 1)
   assert.equal(frozen.kind, `illustrious-${expected.mode}`)
@@ -484,20 +530,20 @@ export function assertIllustriousDpmFrozen(frozen, expected, fixture) {
   assert.deepEqual(job.sampling, {
     cfgRescale: 0,
     cfgScale: 4,
-    noiseProfile: noiseProfile(),
+    noiseProfile: noiseProfile(expected.objective),
     scheduler: expected.invokeScheduler,
     seed: 0,
     steps: expected.steps,
     ...(expected.mode === 'txt2img' ? {} : { denoisingStrength: expected.denoisingStrength }),
   })
   assert.deepEqual(context.model, {
-    managedPath: fixture.illustriousEpsilon.installed.managedPath,
-    reference: selectedReference(fixture, 'illustriousEpsilon'),
+    managedPath: fixture[checkpointKey].installed.managedPath,
+    reference: selectedReference(fixture, checkpointKey),
   })
   assert.deepEqual(job.checkpoint, {
-    path: fixture.illustriousEpsilon.installed.managedPath,
-    predictionType: 'epsilon',
-    sha256: fixture.illustriousEpsilon.sha256,
+    path: fixture[checkpointKey].installed.managedPath,
+    predictionType: expected.objective,
+    sha256: fixture[checkpointKey].sha256,
   })
   const lora = selectedReference(fixture, 'illustriousLora')
   assert.deepEqual(context.loraStack, [{ enabled: true, resource: lora, weight: -0.5 }])
@@ -552,7 +598,8 @@ export function assertIllustriousDpmFrozen(frozen, expected, fixture) {
 
 export function assertIllustriousDpmConfiguration(config, expected, fixture) {
   assertExpectedItem(expected)
-  assertInstalledSources(fixture)
+  assertInstalledSources(fixture, expected.objective)
+  const checkpointKey = expected.objective === 'v_prediction' ? 'illustrious' : 'illustriousEpsilon'
   const { cfgRescale: _rescale, ...portableSampling } = sampling(expected, true)
   assert.deepEqual(
     config,
@@ -562,7 +609,7 @@ export function assertIllustriousDpmConfiguration(config, expected, fixture) {
         { enabled: true, resource: selectedReference(fixture, 'illustriousLora'), weight: -0.5 },
       ],
       mode: expected.mode,
-      model: selectedReference(fixture, 'illustriousEpsilon'),
+      model: selectedReference(fixture, checkpointKey),
       negativePrompt: { embeddingRefs: [], text: prompts.negative },
       positivePrompt: { embeddingRefs: [], text: prompts.positive },
       sampling: { actualSeed: 0, ...portableSampling },
@@ -570,10 +617,10 @@ export function assertIllustriousDpmConfiguration(config, expected, fixture) {
       vae: selectedReference(fixture, 'externalVaeNative'),
       vaePrecision: 'FP32',
     },
-    'Accepted configuration must preserve exact EPS/native sampler/schedule/strength/resources.',
+    'Accepted configuration must preserve exact objective/native sampler/schedule/strength/resources.',
   )
   const serialized = JSON.stringify(config)
-  for (const key of Object.keys(sources)) {
+  for (const key of [checkpointKey, 'illustriousLora', 'externalVaeNative']) {
     assert.equal(serialized.includes(fixture[key].installed.managedPath), false)
     if (fixture[key].path) assert.equal(serialized.includes(fixture[key].path), false)
   }

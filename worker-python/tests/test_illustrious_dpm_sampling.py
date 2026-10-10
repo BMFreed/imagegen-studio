@@ -16,7 +16,9 @@ import pytest
 from imagegen_worker.inference import MLRuntime, run_sdxl_pipeline, select_inference_scheduler
 from imagegen_worker.protocol import IllustriousNoiseProfile
 from imagegen_worker.sdxl_outpaint import run_sdxl_outpaint_pipeline
+from test_illustrious_noise_profile import independent_alphas
 from test_inference_boundary import illustrious_command
+
 # Reuse the pinned independent test oracle rather than duplicating its source extraction.
 from test_sdxl_outpaint import _mask, _upstream_guidance  # pyright: ignore[reportPrivateUsage]
 from test_sdxl_outpaint import native as native_fixture
@@ -26,7 +28,14 @@ _SCHEDULERS = ("dpmpp_2m", "dpmpp_2m_k", "dpmpp_sde", "dpmpp_sde_k")
 _CASES = ("txt", "img-neighbor", "img-sensitive", "out-neighbor", "out-sensitive")
 
 
-def _reference_scheduler(native: Any, name: str, *, lower_policy: bool = False) -> Any:
+def _reference_scheduler(
+    native: Any,
+    name: str,
+    *,
+    lower_policy: bool = False,
+    prediction: str = "epsilon",
+    rescale: bool = False,
+) -> Any:
     """Independent constructor values; never call the production selector."""
     options: dict[str, Any] = {
         "num_train_timesteps": 1000,
@@ -35,10 +44,11 @@ def _reference_scheduler(native: Any, name: str, *, lower_policy: bool = False) 
         "beta_schedule": "scaled_linear",
         "steps_offset": 1,
         "timestep_spacing": "leading",
-        "prediction_type": "epsilon",
+        "prediction_type": prediction,
         "use_karras_sigmas": name.endswith("_k"),
     }
     if name.startswith("dpmpp_sde"):
+        assert not rescale, "Native SDE has no zero-SNR transform."
         return native.diffusers.DPMSolverSDEScheduler(
             **options, noise_sampler_seed=0x9E3779B9 if lower_policy else 0
         )
@@ -46,7 +56,7 @@ def _reference_scheduler(native: Any, name: str, *, lower_policy: bool = False) 
         **options,
         algorithm_type="dpmsolver++",
         solver_order=1 if lower_policy else 2,
-        rescale_betas_zero_snr=False,
+        rescale_betas_zero_snr=rescale,
     )
 
 
@@ -142,12 +152,22 @@ def _observe_native_call(native: Any, callback: Any) -> tuple[Any, list[Any], li
 
 
 def _reference_run(
-    native: Any, name: str, mode: str, strength: float | None, *, lower_policy: bool = False
+    native: Any,
+    name: str,
+    mode: str,
+    strength: float | None,
+    *,
+    lower_policy: bool = False,
+    prediction: str = "epsilon",
+    rescale: bool = False,
+    cfg_scale: float = 5,
 ) -> tuple[Any, list[Any], list[Any], list[tuple[int, int]]]:
     """Fresh native denoising; no worker loop, callback or selection in the oracle."""
     torch = native.torch
     state = SimpleNamespace(original=None, noise=None, timesteps=None)
-    scheduler = _reference_scheduler(native, name, lower_policy=lower_policy)
+    scheduler = _reference_scheduler(
+        native, name, lower_policy=lower_policy, prediction=prediction, rescale=rescale
+    )
     pipeline_type = (
         native.diffusers.StableDiffusionXLPipeline
         if mode == "txt"
@@ -204,7 +224,7 @@ def _reference_run(
             negative_crops_coords_top_left=(0, 0),
             num_inference_steps=4,
             num_images_per_prompt=1,
-            guidance_scale=5,
+            guidance_scale=cfg_scale,
             guidance_rescale=0,
             generator=torch.Generator(device="cpu").manual_seed(0),
             callback_on_step_end=reference_callback,
@@ -293,5 +313,91 @@ def test_production_selected_dpm_loop_matches_independent_native_pixels_and_hist
     else:
         total = 4 if mode == "txt" else 2 if neighbor else 3
     assert events == expected_events == [(index + 1, total) for index in range(total)]
+    assert native.source.tobytes() == source_bytes
+    assert native.pipeline._igs_outpaint_state is None
+
+
+@pytest.mark.parametrize("name", ("dpmpp_2m", "dpmpp_2m_k"))
+def test_vpred_dpm_txt_matches_native_grid_unet_inputs_and_pixels(
+    native: Any, tmp_path: Path, name: str
+) -> None:
+    """Real V/true-ZTSNR selector and loop; EPS interpretation alone must change pixels.
+
+    Boundary: actual worker selector -> native 2M pipeline -> worker callback ->
+    decoded pixels. The independent oracle constructs a separate native scheduler
+    and loop. The wrong-interpretation control keeps the same true-ZTSNR/leading
+    grid and changes only prediction_type. Existing EPS Normal TXT is the neighbor
+    for an actual-selector mutation that forces epsilon only in the 2M branch.
+    Tiny 64px model objects qualify numerics, not trained-checkpoint image quality.
+    """
+    torch = native.torch
+    native.conditioning = replace(native.conditioning, negative_length=4)
+    source_bytes = native.source.tobytes()
+    expected, expected_predictions, expected_decoded, expected_events = _reference_run(
+        native, name, "txt", None, prediction="v_prediction", rescale=True, cfg_scale=4
+    )
+    wrong, _wrong_predictions, wrong_decoded, _wrong_events = _reference_run(
+        native, name, "txt", None, prediction="epsilon", rescale=True, cfg_scale=4
+    )
+    assert torch.isfinite(expected_decoded[0]).all()
+    assert torch.isfinite(wrong_decoded[0]).all()
+    assert not torch.equal(expected_decoded[0], wrong_decoded[0])
+    assert expected.tobytes() != wrong.tobytes()
+
+    reference = _reference_scheduler(native, name, prediction="v_prediction", rescale=True)
+    wrong_reference = _reference_scheduler(native, name, prediction="epsilon", rescale=True)
+    reference.set_timesteps(4, device="cpu")
+    wrong_reference.set_timesteps(4, device="cpu")
+    assert torch.equal(reference.sigmas, wrong_reference.sigmas)
+    assert torch.equal(reference.timesteps, wrong_reference.timesteps)
+    if name == "dpmpp_2m":
+        assert reference.timesteps.tolist() == [801, 601, 401, 201]
+
+    command = replace(
+        illustrious_command(tmp_path),
+        scheduler=cast(Any, name),
+        steps=4,
+        seed=0,
+        prediction_type="v_prediction",
+        noise_profile=IllustriousNoiseProfile(True, "leading"),
+    )
+    # A native EPS/false-ZTSNR loader scheduler cannot override this exact request.
+    pipeline = _new_pipeline(
+        native, native.diffusers.StableDiffusionXLPipeline, _reference_scheduler(native, name)
+    )
+    selected = select_inference_scheduler(
+        command, pipeline, MLRuntime(torch, native.diffusers, ModuleType("unused_compel"))
+    )
+    pipeline.scheduler = selected
+    selected.set_timesteps(4, device="cpu")
+    torch.testing.assert_close(
+        selected.alphas_cumprod, independent_alphas(torch, True), rtol=1e-5, atol=1e-7
+    )
+    assert selected.alphas_cumprod[-1].item() == 2**-24
+    assert torch.isfinite(selected.sigmas).all()
+    assert torch.equal(selected.sigmas, reference.sigmas)
+    assert torch.equal(selected.timesteps, reference.timesteps)
+    events: list[tuple[int, int]] = []
+
+    def call() -> Any:
+        return run_sdxl_pipeline(
+            pipeline,
+            native.conditioning,
+            width=64,
+            height=64,
+            steps=4,
+            cfg_scale=4,
+            generator=torch.Generator(device="cpu").manual_seed(0),
+            torch=torch,
+            on_progress=lambda step, total: events.append((step, total)),
+        )
+
+    actual, predictions, decoded = _observe_native_call(native, call)
+    assert torch.isfinite(decoded[0]).all()
+    assert torch.equal(decoded[0], expected_decoded[0])
+    assert actual.tobytes() == expected.tobytes()
+    assert len(predictions) == len(expected_predictions) == 4
+    assert all(torch.equal(a, b) for a, b in zip(predictions, expected_predictions, strict=True))
+    assert events == expected_events == [(1, 4), (2, 4), (3, 4), (4, 4)]
     assert native.source.tobytes() == source_bytes
     assert native.pipeline._igs_outpaint_state is None

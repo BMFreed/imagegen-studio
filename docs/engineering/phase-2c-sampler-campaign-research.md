@@ -295,7 +295,13 @@ remaining Advanced options, authored masks/inpaint, Regional Guidance,
 Smart Patch/variants, general quality/parity, public delivery and release remain
 open. Full MVP and PP-004/005/007/008 remain «Пока не обещать».
 
-The next bounded gate is the installed v-prediction/profile interaction for
+The V TXT follow-up is now recorded in
+[NoobAI V DPM++ 2M research](./phase-2c-noobai-vpred-dpm-research.md), including
+its failed-before-output Karras control and separately reproduced numerical
+validity failure. It does not change these historical68/43 counts.
+
+At this campaign checkpoint, the next bounded gate was the installed
+v-prediction/profile interaction for
 DPM++ 2M Normal/Karras TXT on the existing exact Cyberfalafel NoobAI derivative,
 with ZTSNR=true, leading spacing,256×256/four authored steps/Fixed0. Research
 must freeze its finite job count and resource budget before execution, without
