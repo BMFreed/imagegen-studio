@@ -128,7 +128,9 @@ def _ordinary(data: dict[str, Any], native: Any, source: Image.Image) -> Any:
     )
 
 
-def _fresh_schedule(data: dict[str, Any], native: Any) -> tuple[Any, list[float], Any, int]:
+def _fresh_schedule(
+    data: dict[str, Any], native: Any, *, er_order: int = 3, dpm_order: int = 2
+) -> tuple[Any, list[float], Any, int]:
     """Derive fresh actual native schedules from authored steps/strength only."""
     _torch, diffusers, _models, _tokenizers = native
     authored = data["plan"]
@@ -147,7 +149,7 @@ def _fresh_schedule(data: dict[str, Any], native: Any) -> tuple[Any, list[float]
             prediction_type="flow_prediction",
             use_flow_sigmas=True,
             flow_shift=3,
-            solver_order=2,
+            solver_order=dpm_order,
             algorithm_type="sde-dpmsolver++" if name.endswith("sde") else "dpmsolver++",
             solver_type="midpoint",
             lower_order_final=True,
@@ -159,7 +161,7 @@ def _fresh_schedule(data: dict[str, Any], native: Any) -> tuple[Any, list[float]
             prediction_type="flow_prediction",
             use_flow_sigmas=True,
             flow_shift=3,
-            solver_order=3,
+            solver_order=er_order,
             stochastic=True,
         )
     else:
@@ -181,10 +183,15 @@ def _reference(
     source: Image.Image,
     mask: Image.Image,
     loras: Any = (),
+    er_order: int = 3,
+    dpm_order: int = 2,
+    restart_step_rng: bool = False,
 ) -> tuple[Any, bytes, list[Any], list[Any]]:
     torch, _diffusers, models, tokenizers = native
     authored = data["plan"]
-    scheduler, sigmas, timesteps, _begin = _fresh_schedule(data, native)
+    scheduler, sigmas, timesteps, _begin = _fresh_schedule(
+        data, native, er_order=er_order, dpm_order=dpm_order
+    )
     name, width, height, seed = (
         authored["scheduler"],
         authored["width"],
@@ -254,6 +261,8 @@ def _reference(
                 else:
                     if name == "heun":
                         complete = not scheduler.state_in_first_order or following == 0
+                    if restart_step_rng:
+                        step_generator.manual_seed(seed)
                     latents = scheduler.step(
                         flow, timestep, latents, generator=step_generator
                     ).prev_sample.to(dtype=dtype)
@@ -321,6 +330,41 @@ def test_native_masked_loop_matches_external_oracle_model_inputs_scheduler_sampl
         assert all(torch.equal(a, b) for a, b in zip(samples, expected_samples, strict=True))
     assert events == [(i + 1, len(expected_predictions)) for i in range(len(expected_predictions))]
     assert actual.total_steps == len(expected_predictions)
+
+
+@pytest.mark.parametrize("scheduler", ("dpmpp_2m_sde", "er_sde", "lcm"))
+@pytest.mark.parametrize("strength", (0.5, 0.75), ids=("neighbor", "sensitive"))
+def test_clipped_masked_history_and_step_noise_match_external_reference(
+    native: Any, scheduler: str, strength: float
+) -> None:
+    """Actual image-mode loop versus fresh solvers and pinned external mask math."""
+    torch = native[0]
+    steps = 5 if scheduler == "er_sde" else 4
+    data = inputs(scheduler=scheduler, steps=steps, mode="img2img", strength=strength, seed=0)
+    source, mask = _source(), _mask()
+    source_bytes, mask_bytes = source.tobytes(), mask.tobytes()
+    expected, pixels, predictions, _samples = _reference(data, native, source=source, mask=mask)
+    lower_policy: dict[str, Any] = (
+        {"er_order": 2}
+        if scheduler == "er_sde"
+        else {"dpm_order": 1}
+        if scheduler == "dpmpp_2m_sde"
+        else {"restart_step_rng": True}
+    )
+    lower, _lower_pixels, _predictions, _samples = _reference(
+        data, native, source=source, mask=mask, **lower_policy
+    )
+    assert torch.equal(expected, lower) == (strength == 0.5)
+    events: list[tuple[int, int]] = []
+    actual = _run(data, native, source=source, mask=mask, progress=_report(events))
+    assert torch.isfinite(actual.latents).all()
+    assert torch.equal(actual.latents, expected) and actual.image.tobytes() == pixels
+    total = (
+        (3 if strength == 0.5 else 4) if scheduler == "er_sde" else (2 if strength == 0.5 else 3)
+    )
+    assert actual.total_steps == len(predictions) == total
+    assert events == [(index + 1, total) for index in range(total)]
+    assert source.tobytes() == source_bytes and mask.tobytes() == mask_bytes
 
 
 @pytest.mark.parametrize("scheduler", SCHEDULERS)

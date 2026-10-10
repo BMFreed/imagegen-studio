@@ -150,3 +150,8 @@ and mixed-alpha OUT strength0.75, four authored steps, CFG4, Fixed0 and Myth−0
 models/geometry/options, authored masks, other methods, full policy/format/
 quality parity and release remain open. PP-004/005/007/008 remain «Пока не
 обещать». The next bounded gate is installed Anima DPM++ 2M SDE IMG/OUT.
+
+The later [combined five-sampler campaign](./phase-2c-sampler-campaign-research.md)
+closes that selected SDE IMG/OUT gate together with the declared Anima ER-SDE/LCM
+and EPS Illustrious-family DPM++ 2M/SDE Normal/Karras cases. The eight-run
+counts and limits above remain historical; full MVP and release remain open.

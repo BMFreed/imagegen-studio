@@ -114,6 +114,8 @@ def _reference(
     source: Image.Image | None = None,
     loras: Any = (),
     er_order: int = 3,
+    dpm_order: int = 2,
+    restart_step_rng: bool = False,
 ) -> tuple[Any, bytes, list[tuple[int, int]]]:
     """Build fresh independent solvers from authored values, not compiled schedule fields."""
     torch, diffusers, models, tokenizers = fixture
@@ -124,7 +126,7 @@ def _reference(
     if name == "dpmpp_2m_sde":
         scheduler = diffusers.DPMSolverMultistepScheduler(
             num_train_timesteps=1000,
-            solver_order=2,
+            solver_order=dpm_order,
             algorithm_type="sde-dpmsolver++",
             solver_type="midpoint",
             lower_order_final=True,
@@ -196,6 +198,8 @@ def _reference(
                     if len(predicted) == 1
                     else predicted[1] + authored["guidanceScale"] * (predicted[0] - predicted[1])
                 )
+                if restart_step_rng:
+                    step_generator.manual_seed(seed)
                 latents = scheduler.step(
                     flow, timestep, latents, generator=step_generator
                 ).prev_sample.to(dtype=dtype)
@@ -602,6 +606,43 @@ def test_real_er_third_order_nonterminal_correction_has_a_distinct_neighbor(nati
     assert not torch.equal(order_three, order_two)
     actual = run(long, native)
     assert torch.equal(actual.latents, order_three) and actual.image.tobytes() == pixels
+
+
+@pytest.mark.parametrize("scheduler", _NEW_SCHEDULERS)
+@pytest.mark.parametrize("strength", (0.5, 0.75), ids=("neighbor", "sensitive"))
+def test_clipped_image_history_and_step_noise_match_independent_native_reference(
+    native: Any, scheduler: str, strength: float
+) -> None:
+    """A fresh clipped request retains history and continues its seeded noise stream.
+
+    The .5 neighbor has no effective third/second-history correction or second
+    nonterminal LCM draw. The .75 case exercises that numerical distinction.
+    """
+    torch = native[0]
+    steps = 5 if scheduler == "er_sde" else 4
+    source = Image.new("RGB", (64, 64), (64, 128, 255))
+    source_bytes = source.tobytes()
+    data = inputs(scheduler=scheduler, steps=steps, mode="img2img", strength=strength, seed=0)
+    expected, pixels, expected_events = _reference(data, native, source=source)
+    lower_policy: dict[str, Any] = (
+        {"er_order": 2}
+        if scheduler == "er_sde"
+        else {"dpm_order": 1}
+        if scheduler == "dpmpp_2m_sde"
+        else {"restart_step_rng": True}
+    )
+    lower, _lower_pixels, _lower_events = _reference(data, native, source=source, **lower_policy)
+    assert torch.equal(expected, lower) == (strength == 0.5)
+    events: list[tuple[int, int]] = []
+    actual = run(data, native, source_image=source, progress=_report(events))
+    assert torch.isfinite(actual.latents).all()
+    assert torch.equal(actual.latents, expected) and actual.image.tobytes() == pixels
+    total = (
+        (3 if strength == 0.5 else 4) if scheduler == "er_sde" else (2 if strength == 0.5 else 3)
+    )
+    assert actual.total_steps == total
+    assert events == expected_events == [(index + 1, total) for index in range(total)]
+    assert source.tobytes() == source_bytes
 
 
 def test_new_version_preserves_three_legacy_native_neighbors(native: Any) -> None:

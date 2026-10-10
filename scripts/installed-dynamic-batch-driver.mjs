@@ -50,6 +50,12 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   assert.ok(Number.isSafeInteger(observedSteps) && observedSteps > 0 && observedSteps <= 2000)
   const provisionalOnly = adapter.provisionalOnly ? adapter.provisionalOnly(fixture) : false
   assert.equal(typeof provisionalOnly, 'boolean')
+  const requiresSourceImage =
+    typeof adapter.requiresSourceImage === 'function'
+      ? adapter.requiresSourceImage(fixture)
+      : Boolean(adapter.prepareInput)
+  assert.equal(typeof requiresSourceImage, 'boolean')
+  if (requiresSourceImage) assert.equal(typeof adapter.prepareInput, 'function')
   const completionTimeoutMs = adapter.completionTimeoutMs
     ? adapter.completionTimeoutMs(fixture)
     : 1_200_000
@@ -1782,7 +1788,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       assert.equal(file.size, reference[key].byteSize)
       originalSources.push({ ...file })
     }
-    if (adapter.prepareInput) {
+    if (requiresSourceImage) {
       inputSource = await fileSnapshot(fixture.sourceImage.path, fixture.sourceImage.sha256)
       assert.equal(inputSource.size, fixture.sourceImage.byteSize)
     }
@@ -1855,7 +1861,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       report.recoveredGeneration = recovered.recovered
     } else project = await createProject()
     await author(project, plan)
-    if (adapter.prepareInput) {
+    if (requiresSourceImage) {
       report.inputPrecondition = await adapter.prepareInput({
         window,
         expect,
