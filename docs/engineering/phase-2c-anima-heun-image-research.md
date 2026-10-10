@@ -150,3 +150,7 @@ strength0.5, CFG4, Fixed0 and Myth−0.5. It does not establish arbitrary models
 geometry, authored masks, full mode/policy/format/quality parity or a release.
 PP-004/005/007/008 remain «Пока не обещать». The next bounded gate is installed
 Anima DPM++ 2M IMG/OUT.
+
+The later [installed DPM++ 2M IMG/OUT qualification](./phase-2c-anima-dpmpp2m-image-research.md)
+closes that next finite gate. The Heun counts and claims above remain historical;
+the full image/method/policy matrix and release remain open.

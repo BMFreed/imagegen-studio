@@ -218,6 +218,7 @@ def test_real_plan_capture_refuses_same_length_numeric_schedule_drift(field: str
         ("(bright hair:2)", "dark blur", 1.0, "txt2img", None),
         ("bright hair", "(dark blur)--", 4.0, "txt2img", None),
         ("(bright hair:2)", "(dark blur)--", 4.0, "img2img", 0.5),
+        ("(bright hair:2)", "(dark blur)--", 4.0, "img2img", 0.75),
     ],
 )
 def test_actual_ts_native_sampling_matches_independent_weighted_flow_and_pixels(
