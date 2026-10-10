@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+
 from imagegen_worker.inference import (
     build_sdxl_conditioning,
     run_sdxl_pipeline,

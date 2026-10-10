@@ -230,7 +230,12 @@ exception. No universal checkpoint/policy/strength/geometry coverage, image
 quality, exact trained-pixel parity with Invoke, Cancel/Retry/embedding matrix,
 V DPM++ SDE plus ZTSNR, full NoobAI/MVP or release qualification is claimed.
 
-Next is a separately frozen finite signed-embedding directional IMG/normal OUT
+The subsequent signed-embedding image gate is recorded separately in
+[NoobAI signed embedding IMG/OUT directional qualification](./phase-2c-noobai-embedding-image-polarity-research.md).
+The following next-step description is historical at this V image checkpoint;
+its original counts and unclosed Karras TXT wrong-EPS pixel criterion remain unchanged.
+
+At this checkpoint the next step was a separately frozen finite signed-embedding directional IMG/normal OUT
 qualification. Prior one-literal TXT direction and ordinary embedding-use image
 results do not prove that image positive/negative branches receive the intended
 exact versions. No new product decision is required for that research step.
