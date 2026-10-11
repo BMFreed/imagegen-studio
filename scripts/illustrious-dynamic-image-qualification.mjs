@@ -640,7 +640,7 @@ export function expectedIllustriousDynamicImageLoraStack(fixture) {
 /** All saved pixels, in bottom-to-top document order; raw Pillow equality is checked separately. */
 export function assertIllustriousDynamicImageSavedPixels({ source, contributions, preview, mode }) {
   assert.ok(['img2img', 'outpaint'].includes(mode))
-  assert.ok([2, 8].includes(contributions.length))
+  assert.ok([1, 2, 8].includes(contributions.length))
   const width = mode === 'outpaint' ? 320 : 256
   assert.equal(source.width, 256)
   assert.equal(source.height, 256)

@@ -406,9 +406,10 @@ remain unchanged; prior report hashes/plaintext are preserved with explicit
 lineage for the four changed qualification helpers. No trained mutation/crash
 jobs were added. Exact executed outcomes and limits live in the new research note.
 
-Image Random → numeric Fixed replay is now qualified in the separate follow-up
-below. Image Reuse/crash, wrap/cap32, image embedding subsets, Anima image batches
-and broader geometry/formats/quality remain open. PP-004/005/007/008 remain
+Image Random → numeric Fixed replay, Reuse/crash and the bounded MAX→0 wrap
+are qualified in the separate follow-ups below. Image cap32, image embedding
+subsets, Anima image batches and broader geometry/formats/quality remain open.
+PP-004/005/007/008 remain
 «Пока не обещать»; fullMVP/Invoke trained-pixel parity/public release are not claimed.
 
 ## Installed image Random → Fixed replay gate
@@ -433,9 +434,9 @@ identities. Baseline-hook and seedBehavior harness mutations give1+4 semantic RE
 with neighboring/fresh restored GREEN; no new trained mutation/crash jobs.
 
 This qualifies only256×256/Normal N3/two progress updates and the declared sources,
-resources and geometry. Its image Reuse/crash follow-up is recorded below.
-Image wrap/cap32,
-image embedding subsets, Anima image batches and broader formats/quality/release
+resources and geometry. Its separate image Reuse/crash and bounded MAX→0 wrap
+follow-ups are recorded below. Image cap32, image embedding subsets, Anima image
+batches and broader formats/quality/release
 remain open. Public promise statuses do not change.
 
 ## Installed image Reuse after crash gate
@@ -461,9 +462,39 @@ unsaved shadow layer is excluded. Combined raw attempts47/37/10 contain36 saved
 accepted layers plus1 unsaved layer. Actual Main Reuse0/stale91 tests distinguish
 valid zero from absence: isolated nullish-to-truthy mutation gives4 semantic RED,
 8 neighboring GREEN and12 fresh restored GREEN, without installed mutation.
-This is the declared256×256/Normal N3 finite image boundary; manifest-first
-recovery, snapshot fallback, image wrap/cap32, Anima image, trained quality and
+This is the declared256×256/Normal N3 Reuse/crash boundary; its own run did not
+exercise wrap. The separate bounded MAX→0 wrap gate follows below. Manifest-first
+recovery, snapshot fallback, image cap32, Anima image, trained quality and
 full release readiness remain separate.
+
+## Installed image uint32 wrap gate
+
+[The finite16-job MAX→0 gate](../../../engineering/phase-2c-illustrious-image-seed-wrap-research.md) uses four EPS/V × common-source IMG/normal
+mixed-alpha OUT scopes. Each standalone numeric Fixed MAX and numeric Fixed0
+control creates one result in its own project; the same weighted pair with
+two iterations/per-prompt produces literal `[4294967295, 0]`. All16 admissions,
+completions and accepted layers are saved/reopened in12 packages. All8 wrap
+outputs match their own numeric controls in wholeRGBA before Add; four MAX/zero
+same-prompt pixel contrasts are separate from cross-prompt effects.
+
+Control matching preserves every executed context/worker input except portable
+document identity/revision. Both requests keep Fixed/per-prompt; later prompt,
+Fixed37/per-iteration and LoRA edits remain a separate current draft. All16
+portable configurations and sibling source contexts, owning comparisons,12
+cursor/Save snapshots, original11 tables and43 worker identities survive.
+Independent raw SQLite/ZIP/Pillow readback passes 8178 checks;28 full
+source keys and five bundles remain bound. After single-control Add, preview
+preparation preserves the existing revision because no visibility edit is
+needed; one/two-contribution source-over previews are checked independently.
+
+Actual Main modulo mutation gives4 overflow semantic RED,8 nonoverflow
+neighbors GREEN and12 fresh restored GREEN;137 focused tests pass. The
+installed worker was not mutated. Previous installed TXT high-bit mutations
+remain historical evidence. This gate qualifies only256×256/Normal N3/two
+observed updates/exact resources and native MAX→0. Native1/2/cross-pair wrap,
+image cap32, Anima image, quality/Invoke pixel parity/fullMVP/release remain
+separate. The next finite gate is image cap32; public promise statuses do not
+change.
 
 ## Vue Prototype Coverage
 

@@ -185,6 +185,22 @@ this Project, and editing that number changes the policy to Fixed. Reuse cannot
 be newly selected without a completed seed; an already selected Reuse policy
 can still be turned off when the cursor is unavailable.
 
+## Installed image uint32 wrap checkpoint
+
+[The bounded installed gate](../../../engineering/phase-2c-illustrious-image-seed-wrap-research.md) connects the public numeric Fixed MAX/0
+controls to worker0.14 in EPS/V common-source IMG and normal mixed-alpha OUT.
+A single weighted pair × two images/per-prompt wraps MAX to0; each output
+matches its own standalone numeric control before Add. Sixteen accepted
+results survive12 Save/reopen packages with exact Fixed policy, actual seed,
+behavior, resources and source context; each layer has its own read-only
+comparison. Operational cursor and Save snapshot preserve zero.
+
+Only256×256/Normal N3/two actual updates/exact resources are qualified.
+Native1/2/cross-pair wrap and installed-worker high-bit mutation are not part
+of this gate; quality/fullMVP/release readiness remain separate. Detailed
+proof and next image cap32 boundary live in
+[Dynamic Prompting](./dynamic-prompting.md#installed-image-uint32-wrap-gate).
+
 ## Production CFG Rescale checkpoint
 
 [CFG Rescale evidence](../../../engineering/phase-2c-cfg-rescale-research.md)

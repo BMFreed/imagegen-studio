@@ -206,13 +206,22 @@ const ready = {
 
 /** Real Main preparation → orchestrator → SQLite; no worker inference or Add/Save claim. */
 export async function produce(reference, objective, mode, policy, seed = null, options = {}) {
+  const batch = options.batch ?? {
+    iterations: options.crash === true ? 3 : 2,
+    maxPrompts: options.crash === true ? 1 : 4,
+    seedBehavior: 'per-prompt',
+  }
+  const concretePair = options.concretePair === true || options.crash === true
   const document = createEmptyProjectDocumentV1({
     title: 'Image seed/recovery production boundary',
   })
   document.primaryBbox = { x: mode === 'outpaint' ? 64 : 0, y: 0, width: 256, height: 256 }
   document.generationDraft = authoring(reference, objective, mode, policy, seed)
-  if (options.crash === true) {
-    document.generationDraft.dynamicPrompt.maxPrompts = 1
+  document.generationDraft.dynamicPrompt = {
+    maxPrompts: batch.maxPrompts,
+    seedBehavior: batch.seedBehavior,
+  }
+  if (concretePair) {
     document.generationDraft.positivePrompt.text =
       'a (red:1.3) ceramic cup on a wooden table, studio photograph'
     document.generationDraft.negativePrompt.text = '(blurry:0.7), low quality'
@@ -300,25 +309,18 @@ export async function produce(reference, objective, mode, policy, seed = null, o
       mode === 'outpaint'
         ? orchestrator.enqueuePreparedOutpaintBatch.bind(orchestrator)
         : orchestrator.enqueuePreparedBatch.bind(orchestrator)
-    )(
-      tabId,
-      prepared,
-      {
-        iterations: options.crash === true ? 3 : 2,
-        maxPrompts: options.crash === true ? 1 : 4,
-        seedBehavior: 'per-prompt',
-      },
-      { ready: structuredClone(ready) },
-      async () => {
-        edits++
-        document.generationDraft.seed = { policy: 'fixed', value: 37 }
-        prepared.context.sampling.seed = 37
-        prepared.context.sampling.requestedSeedPolicy = 'fixed'
-        document.generationDraft.positivePrompt.text = 'late edit'
-      },
-    )
+    )(tabId, prepared, batch, { ready: structuredClone(ready) }, async () => {
+      edits++
+      document.generationDraft.seed = { policy: 'fixed', value: 37 }
+      prepared.context.sampling.seed = 37
+      prepared.context.sampling.requestedSeedPolicy = 'fixed'
+      document.generationDraft.positivePrompt.text = 'late edit'
+    })
     assert.equal(edits, 1)
-    assert.equal(admitted.items.length, options.crash === true ? 3 : 8)
+    assert.equal(
+      admitted.items.length,
+      batch.iterations * (concretePair ? 1 : Math.min(4, batch.maxPrompts)),
+    )
     const rows = []
     const configs = []
     for (const [index, queued] of admitted.items.entries()) {

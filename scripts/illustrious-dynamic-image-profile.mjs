@@ -202,7 +202,8 @@ export const illustriousDynamicImageProfile = Object.freeze({
     }
     const after = structuredClone((await tab(project)).layers)
     const final = stableLayerViews(after, project.id)
-    assert.notEqual(final.revision, initial.revision)
+    if (shownLayerIds.length === 0) assert.equal(final.revision, initial.revision)
+    else assert.notEqual(final.revision, initial.revision)
     assert.deepEqual(
       final.views,
       initial.views.map((layer) => (sourceIds.has(layer.id) ? layer : { ...layer, visible: true })),

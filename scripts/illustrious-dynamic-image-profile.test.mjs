@@ -281,6 +281,7 @@ function visibilityInput(count, sideEffect = () => {}) {
     visible: index === 0,
     opacity: 1,
     transform: { x: 64, y: 0, scaleX: 1, scaleY: 1, rotationDegrees: 0 },
+    generationProvenance: { immutableControl: `provenance-${index}` },
   }))
   const layers = [...generated, source]
   let revision = 0
@@ -323,7 +324,7 @@ function visibilityInput(count, sideEffect = () => {}) {
 }
 
 test('full-stack preview preparation respects Add anchor-only visibility and explicitly shows hidden variants', async () => {
-  for (const count of [2, 8]) {
+  for (const count of [1, 2, 8]) {
     const { ctx, layers, clicks, source, layerId } = visibilityInput(count)
     const before = structuredClone(layers)
     const result = await profile.afterAcceptance(ctx)
@@ -341,7 +342,8 @@ test('full-stack preview preparation respects Add anchor-only visibility and exp
     )
     assert.deepEqual(layers.at(-1), source)
     for (let index = 0; index < before.length; index++)
-      assert.notEqual(result.after[index].imageUrl, before[index].imageUrl)
+      if (count === 1) assert.equal(result.after[index].imageUrl, before[index].imageUrl)
+      else assert.notEqual(result.after[index].imageUrl, before[index].imageUrl)
     assert.equal(result.beforeExplicitSave, true)
   }
   for (const sideEffect of [
@@ -383,6 +385,30 @@ test('full-stack preview preparation respects Add anchor-only visibility and exp
   }
 })
 
+test('single accepted control preserves its revision and provenance without a synthetic visibility edit', async () => {
+  for (const mutate of [
+    (layers) => {
+      layers[0].generationProvenance.immutableControl = 'substituted'
+    },
+    (layers) => {
+      layers[0].imageUrl = layers[0].imageUrl.replace(
+        '00000000-0000-4000-8000-000000000100',
+        '00000000-0000-4000-8000-000000000101',
+      )
+    },
+  ]) {
+    const { ctx, layers, clicks } = visibilityInput(1)
+    const original = ctx.tab
+    let reads = 0
+    ctx.tab = async (project) => {
+      if (++reads === 2) mutate(layers)
+      return await original(project)
+    }
+    await assert.rejects(() => profile.afterAcceptance(ctx))
+    assert.deepEqual(clicks, [])
+  }
+})
+
 function solid(width, color) {
   const rgba = Buffer.alloc(width * 256 * 4)
   for (let pixel = 0; pixel < width * 256; pixel++) rgba.set([...color, 255], pixel * 4)
@@ -393,6 +419,10 @@ test('batch Save pixel guard checks all layers in order and cannot retain the bo
   const lower = solid(256, [40, 80, 120])
   const upper = solid(256, [200, 160, 20])
   const input = { source, contributions: [lower, upper], preview: upper, mode: 'img2img' }
+  const single = { ...input, contributions: [upper] }
+  assert.equal(savedPixels(single).allBrowserPixelsChecked, 65536)
+  assert.throws(() => savedPixels({ ...single, preview: source }), /composition RGB/)
+  assert.throws(() => savedPixels({ ...single, contributions: [] }))
   assert.deepEqual(savedPixels(input), {
     width: 256,
     height: 256,
@@ -432,6 +462,13 @@ test('browser OUT allowance is confined to soft RGB and cannot excuse protected/
       preview.rgba.set([color, color, color, 255], (y * 320 + x) * 4)
     }
   const input = { source, contributions: [lower, upper], preview, mode: 'outpaint' }
+  // A single 50%200 contribution over100 is150; it cannot use the two-layer135 preview.
+  const singlePreview = structuredClone(preview)
+  for (let y = 0; y < 256; y++)
+    for (let x = 217; x < 232; x++) singlePreview.rgba.set([150, 150, 150, 255], (y * 320 + x) * 4)
+  const single = { ...input, contributions: [upper], preview: singlePreview }
+  assert.equal(savedPixels(single).browserSoftRgbTolerance, 1)
+  assert.throws(() => savedPixels({ ...single, preview }), /composition RGB/)
   const result = savedPixels(input)
   assert.equal(result.allBrowserPixelsChecked, 81920)
   assert.equal(result.softPixels, 3840)
