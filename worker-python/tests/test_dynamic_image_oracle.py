@@ -9,8 +9,10 @@ modules prove mechanics; installed trained image qualification is separate.
 Expected prompts are handwritten native Compel literals, never produced by the
 worker normalizer. Expected seeds and first noise draws come from a separate
 literal table, never command.seed or the subject generator. Four batch subjects
-cover each positive/negative pair with seeds 0 and 1. Four seed-0/blurry neighbors
-remain valid under both the constant-0 and negative-collapse semantic mutations.
+cover each positive/negative pair with seeds 0 and 1. Four additional subjects
+consume the distinct per-prompt seeds 0 through 7; a modulo-2 generator mutation
+cannot hide behind the original seed-0/1 schedule. Four seed-0/blurry neighbors
+remain valid under the constant-0, modulo-2 and negative-collapse mutations.
 """
 
 from __future__ import annotations
@@ -90,6 +92,11 @@ NATIVE_PAIRS = (
     ),
 )
 EXPECTED_SEEDS = (0, 1, 0, 1, 0, 1, 0, 1)
+
+# Main owns planning. These separate literal command and oracle tables only
+# verify consumption by the public worker, independently of the Main planner.
+PER_PROMPT_WIRE_SEEDS = (0, 1, 2, 3, 4, 5, 6, 7)
+PER_PROMPT_EXPECTED_SEEDS = (0, 1, 2, 3, 4, 5, 6, 7)
 
 
 def digest(data: bytes) -> str:
@@ -468,6 +475,59 @@ def test_dynamic_image_batch_preserves_weighted_pair_and_seed(
         assert torch.equal(baseline["initialNoise"], neighbor["initialNoise"])
         assert not torch.equal(baseline["signedHidden"], neighbor["signedHidden"])
         assert not torch.equal(baseline["decoder"], neighbor["decoder"])
+
+
+@pytest.mark.parametrize(("objective", "mode"), SCOPES, ids=SCOPE_IDS)
+def test_per_prompt_dynamic_image_batch_consumes_every_literal_seed(
+    tmp_path: Path,
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    objective: Objective,
+    mode: Mode,
+) -> None:
+    """Public image inference must consume seeds beyond the neighboring 0/1 pair.
+
+    Semantic mutation: seed the actual worker generator with command.seed % 2.
+    The literal generator-state/first-noise oracle fails on the seed-2 job;
+    test_seed_zero_baseline_prompt_neighbor_is_reproducible remains valid.
+    This checks concrete consumption, not Main expansion or trained quality.
+    """
+    wire, config, prepared = frozen_image_wire(tmp_path, objective, mode)
+    torch = native[0]
+    outputs: list[dict[str, Any]] = []
+    for index, (input_seed, expected_seed) in enumerate(
+        zip(PER_PROMPT_WIRE_SEEDS, PER_PROMPT_EXPECTED_SEEDS, strict=True)
+    ):
+        concrete = copy.deepcopy(wire)
+        concrete["requestId"] = f"per-prompt-dynamic-native-{index}"
+        concrete["job"]["prompts"] = dict(
+            zip(("positive", "negative"), WIRE_PAIRS[index // 2], strict=True)
+        )
+        concrete["job"]["sampling"]["seed"] = input_seed
+        concrete["job"]["output"]["pngPath"] = str(
+            tmp_path / "staging" / f"per-prompt-output-{index}.png"
+        )
+        outputs.append(
+            execute_and_observe(
+                concrete,
+                config,
+                prepared,
+                native,
+                mode,
+                NATIVE_PAIRS[index // 2],
+                expected_seed,
+                monkeypatch,
+            )
+        )
+    assert len(outputs) == 8
+    # Only within-pair contrasts isolate seed consumption: both signed prompts
+    # are unchanged. Pair-to-pair contrasts change both prompt and seed.
+    for first, second in zip(outputs[::2], outputs[1::2], strict=True):
+        assert torch.equal(first["signedHidden"], second["signedHidden"])
+        assert torch.equal(first["signedPooled"], second["signedPooled"])
+        assert not torch.equal(first["initialNoise"], second["initialNoise"])
+        assert not torch.equal(first["decoder"], second["decoder"])
+        assert first["rgba"] != second["rgba"]
 
 
 @pytest.mark.parametrize(("objective", "mode"), SCOPES, ids=SCOPE_IDS)

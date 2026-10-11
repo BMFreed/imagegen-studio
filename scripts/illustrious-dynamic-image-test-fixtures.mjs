@@ -5,13 +5,37 @@ import { installedFixture, resource } from './noobai-lora-stack-image-test-fixtu
 import { literalIllustriousDynamicImagePlan } from './illustrious-dynamic-image-qualification.mjs'
 export { installedFixture, resource }
 const root = path.join(homedir(), '.codex/artifacts/imagegen-studio/runs/dynamic-image-unit')
-export function installedEnvelope(stage = 'baseline', objective = 'epsilon', mode = 'img2img') {
+export function installedEnvelope(
+  stage = 'baseline',
+  objective = 'epsilon',
+  mode = 'img2img',
+  seedBehavior = 'per-iteration',
+) {
   return {
     schemaVersion: 1,
     profile: 'illustrious-dynamic-image',
     stage,
     objective,
     mode,
+    ...(seedBehavior === 'per-iteration' ? {} : { seedBehavior }),
+    ...(seedBehavior === 'per-prompt'
+      ? {
+          baselineSourceSnapshots: Object.fromEntries(
+            [
+              'scripts/illustrious-dynamic-image-qualification.mjs',
+              'scripts/illustrious-dynamic-image-profile.mjs',
+              'scripts/installed-dynamic-batch-driver.mjs',
+              'scripts/qualification-resource-limits.mjs',
+            ].map((source, index) => [
+              source,
+              {
+                path: path.join(root, `prior-source-${index}.mjs`),
+                sha256: String(index + 2).repeat(64),
+              },
+            ]),
+          ),
+        }
+      : {}),
     referenceFixture: { path: path.join(root, 'reference.json'), sha256: 'a'.repeat(64) },
     workerBaseline: { path: path.join(root, 'worker.json'), sha256: 'b'.repeat(64) },
     artifacts: path.join(root, `${stage}-${objective}-${mode}`),
@@ -30,7 +54,7 @@ export function installedEnvelope(stage = 'baseline', objective = 'epsilon', mod
           },
         }
       : {}),
-    ...(stage !== 'baseline'
+    ...(stage !== 'baseline' || seedBehavior === 'per-prompt'
       ? {
           baseline: {
             reportPath: path.join(root, 'healthy/report.json'),
@@ -49,13 +73,18 @@ export function installedEnvelope(stage = 'baseline', objective = 'epsilon', mod
       : {}),
   }
 }
-export function authored(stage = 'baseline', objective = 'epsilon', mode = 'img2img') {
+export function authored(
+  stage = 'baseline',
+  objective = 'epsilon',
+  mode = 'img2img',
+  seedBehavior = 'per-iteration',
+) {
   const reference = installedFixture()
-  const fixture = installedEnvelope(stage, objective, mode)
-  const plan = literalIllustriousDynamicImagePlan(stage, objective, mode)
+  const fixture = installedEnvelope(stage, objective, mode, seedBehavior)
+  const plan = literalIllustriousDynamicImagePlan(stage, objective, mode, seedBehavior)
   const draft = {
     seed: { policy: 'fixed', value: 0 },
-    dynamicPrompt: { maxPrompts: plan.maxPrompts, seedBehavior: 'per-iteration' },
+    dynamicPrompt: { maxPrompts: plan.maxPrompts, seedBehavior: plan.seedBehavior },
     sampling: {
       steps: 3,
       cfgScale: 5,

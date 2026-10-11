@@ -1,6 +1,7 @@
 /** Actual adapter and pixel guards with explicit UI/decoded-input doubles; no Electron claim. */
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { invokeComparisonAdapter } from './installed-dynamic-batch-driver.mjs'
 import { authored } from './illustrious-dynamic-image-test-fixtures.mjs'
 import { illustriousDpmProfile } from './illustrious-dpm-profile.mjs'
 import { noobaiVpredDpmProfile } from './noobai-vpred-dpm-profile.mjs'
@@ -9,16 +10,14 @@ import {
   assertIllustriousDynamicImageSavedPixels as savedPixels,
   validateIllustriousDynamicImageFixture,
   normalizeIllustriousDynamicImageNativeInputs,
+  normalizeIllustriousDynamicImageReferenceInputs,
 } from './illustrious-dynamic-image-qualification.mjs'
 
 test('finite image adapter keeps genuine durable hooks and requires each exact authored precondition', () => {
   assert.equal(profile.validateFixture, validateIllustriousDynamicImageFixture)
-  for (const key of [
-    'normalizeNativeInputs',
-    'normalizeExecutionInputs',
-    'normalizeReferenceInputs',
-  ])
+  for (const key of ['normalizeNativeInputs', 'normalizeExecutionInputs'])
     assert.equal(profile[key], normalizeIllustriousDynamicImageNativeInputs)
+  assert.equal(profile.normalizeReferenceInputs, normalizeIllustriousDynamicImageReferenceInputs)
   for (const key of ['prepareInput', 'assertTarget', 'assertOutput', 'extraInputFiles'])
     assert.equal(profile[key], illustriousDpmProfile[key])
   assert.equal(profile.authorComponents, noobaiVpredDpmProfile.authorComponents)
@@ -71,12 +70,15 @@ test('finite image adapter keeps genuine durable hooks and requires each exact a
       }
 })
 
-function comparison(objective, mode, itemIndex) {
-  const { reference, fixture, plan, draft } = authored('baseline', objective, mode)
+function comparison(objective, mode, itemIndex, seedBehavior = 'per-iteration') {
+  const { reference, fixture, plan, draft } = authored('baseline', objective, mode, seedBehavior)
   const item = plan.items[itemIndex]
   draft.seed.value = 37
   draft.loras[0].weight = -0.25
-  draft.dynamicPrompt = { maxPrompts: 3, seedBehavior: 'per-prompt' }
+  draft.dynamicPrompt = {
+    maxPrompts: 3,
+    seedBehavior: seedBehavior === 'per-prompt' ? 'per-iteration' : 'per-prompt',
+  }
   draft.positivePrompt.text = 'a (green:1.1) glass bowl, later authoring edit'
   draft.negativePrompt.text = '(grainy:0.8), later authoring edit'
   const lora = draft.loras[0].resource
@@ -90,7 +92,7 @@ function comparison(objective, mode, itemIndex) {
     'denoisingStrength.value': ['0.5', '0.5'],
     'seed.actual': [String(item.seed), '37'],
     'seed.policy': ['fixed', 'fixed'],
-    'seed.behavior': ['per-iteration', 'per-prompt'],
+    'seed.behavior': [seedBehavior, draft.dynamicPrompt.seedBehavior],
     'prompt.text': [item.prompts.positive, draft.positivePrompt.text],
     'negativePrompt.text': [item.prompts.negative, draft.negativePrompt.text],
     'prompt.embeddings': ['None', 'None'],
@@ -149,14 +151,16 @@ function comparison(objective, mode, itemIndex) {
 test('every concrete result compares its own weighted pair/seed with the later draft and frozen behavior', async () => {
   for (const objective of ['epsilon', 'v_prediction'])
     for (const mode of ['img2img', 'outpaint'])
-      for (let item = 0; item < 8; item++) {
-        const { rows, seen, ctx } = comparison(objective, mode, item)
-        const proof = await profile.assertComparison(ctx)
-        assert.deepEqual(Object.keys(proof).sort(), Object.keys(rows).sort())
-        assert.deepEqual(seen.sort(), Object.keys(rows).sort())
-        assert.equal(proof['seed.behavior'].status, 'Changed')
-        assert.equal(proof['context.mode'].status, mode === 'outpaint' ? 'Changed' : 'Same')
-      }
+      for (const seedBehavior of ['per-iteration', 'per-prompt'])
+        for (let item = 0; item < 8; item++) {
+          const { rows, seen, ctx } = comparison(objective, mode, item, seedBehavior)
+          const { fixture, ...inputs } = ctx
+          const proof = await invokeComparisonAdapter(profile, fixture, inputs)
+          assert.deepEqual(Object.keys(proof).sort(), Object.keys(rows).sort())
+          assert.deepEqual(seen.sort(), Object.keys(rows).sort())
+          assert.equal(proof['seed.behavior'].status, 'Changed')
+          assert.equal(proof['context.mode'].status, mode === 'outpaint' ? 'Changed' : 'Same')
+        }
   for (const mutate of [
     ({ rows }) => {
       rows['seed.actual'].values[0] = '37'
@@ -182,7 +186,82 @@ test('every concrete result compares its own weighted pair/seed with the later d
   ]) {
     const input = comparison('epsilon', 'outpaint', 1)
     mutate(input)
-    await assert.rejects(() => profile.assertComparison(input.ctx))
+    const { fixture, ...inputs } = input.ctx
+    await assert.rejects(() => invokeComparisonAdapter(profile, fixture, inputs))
+  }
+})
+
+test('healthy per-prompt adapter binds exact authored0..7, first-pair references and opposite later behavior', () => {
+  for (const objective of ['epsilon', 'v_prediction'])
+    for (const mode of ['img2img', 'outpaint']) {
+      const { draft, reference, fixture, plan } = authored(
+        'baseline',
+        objective,
+        mode,
+        'per-prompt',
+      )
+      assert.deepEqual(profile.validateFixture(fixture), plan)
+      profile.assertAuthored(draft, reference, fixture, plan)
+      assert.equal(profile.provisionalOnly(fixture), false)
+      assert.deepEqual(
+        plan.items.map(({ seed }) => seed),
+        [0, 1, 2, 3, 4, 5, 6, 7],
+      )
+      assert.deepEqual(
+        plan.items.map((expectedItem) => profile.shouldCompareBaseline({ fixture, expectedItem })),
+        [true, true, false, false, false, false, false, false],
+      )
+      assert.deepEqual(profile.baselineMetadataDifferences(fixture), ['seedBehavior'])
+      assert.deepEqual(profile.baselineSourceChanges(fixture), [
+        'scripts/illustrious-dynamic-image-qualification.mjs',
+        'scripts/illustrious-dynamic-image-profile.mjs',
+        'scripts/installed-dynamic-batch-driver.mjs',
+        'scripts/qualification-resource-limits.mjs',
+      ])
+      for (const mutate of [
+        (value) => {
+          value.dynamicPrompt.seedBehavior = 'per-iteration'
+        },
+        (value) => {
+          value.dynamicPrompt.maxPrompts = 1
+        },
+        (value) => {
+          value.seed.value = 1
+        },
+      ]) {
+        const wrong = structuredClone(draft)
+        mutate(wrong)
+        assert.throws(() => profile.assertAuthored(wrong, reference, fixture, plan))
+      }
+      const report = { generations: plan.items.map(() => ({ accepted: true })) }
+      assert.equal(
+        profile.summaryClaims({ fixture, plan, report }).installedPerPromptSeedClaim,
+        true,
+      )
+      assert.equal(profile.summaryClaims({ fixture, plan, report }).imageReuseClaim, false)
+      const late = structuredClone(draft)
+      late.seed.value = 37
+      late.loras[0].weight = -0.25
+      late.dynamicPrompt = { maxPrompts: 3, seedBehavior: 'per-iteration' }
+      late.positivePrompt.text = 'a (green:1.1) glass bowl, later authoring edit'
+      late.negativePrompt.text = '(grainy:0.8), later authoring edit'
+      profile.assertEdited(late, reference, fixture)
+      const unflipped = structuredClone(late)
+      unflipped.dynamicPrompt.seedBehavior = 'per-prompt'
+      assert.throws(() => profile.assertEdited(unflipped, reference, fixture))
+    }
+  for (const stage of ['baseline', 'control', 'restored']) {
+    const { fixture, plan } = authored(stage)
+    assert.ok(
+      plan.items.every((expectedItem) => profile.shouldCompareBaseline({ fixture, expectedItem })),
+    )
+    assert.deepEqual(profile.baselineMetadataDifferences(fixture), [])
+    assert.deepEqual(profile.baselineSourceChanges(fixture), [])
+    const report = { generations: plan.items.map(() => ({ accepted: stage !== 'control' })) }
+    assert.equal(
+      profile.summaryClaims({ fixture, plan, report }).installedPerPromptSeedClaim,
+      false,
+    )
   }
 })
 

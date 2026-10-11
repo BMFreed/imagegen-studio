@@ -11,12 +11,19 @@ import {
   assertIllustriousDynamicImagePixels,
   assertIllustriousDynamicImageSavedPixels,
   expectedIllustriousDynamicImageLoraStack,
+  expectedIllustriousDynamicImageBaselineSourceChanges,
   literalIllustriousDynamicImagePlan,
   normalizeIllustriousDynamicImageNativeInputs,
+  normalizeIllustriousDynamicImageReferenceInputs,
   validateIllustriousDynamicImageFixture,
 } from './illustrious-dynamic-image-qualification.mjs'
 const planFor = (fixture) =>
-  literalIllustriousDynamicImagePlan(fixture.stage, fixture.objective, fixture.mode)
+  literalIllustriousDynamicImagePlan(
+    fixture.stage,
+    fixture.objective,
+    fixture.mode,
+    fixture.seedBehavior,
+  )
 const rgba = (decoded) => ({
   width: decoded.dimensions.width,
   height: decoded.dimensions.height,
@@ -52,9 +59,12 @@ const editedPrompts = {
   negative: '(grainy:0.8), later authoring edit',
 }
 
-function assertEdited(draft, reference) {
+function assertEdited(draft, reference, fixture) {
   assert.deepEqual(draft.seed, { policy: 'fixed', value: 37 })
-  assert.deepEqual(draft.dynamicPrompt, { maxPrompts: 3, seedBehavior: 'per-prompt' })
+  assert.deepEqual(draft.dynamicPrompt, {
+    maxPrompts: 3,
+    seedBehavior: fixture?.seedBehavior === 'per-prompt' ? 'per-iteration' : 'per-prompt',
+  })
   for (const polarity of ['positive', 'negative'])
     assert.deepEqual(draft[`${polarity}Prompt`], {
       text: editedPrompts[polarity],
@@ -83,7 +93,12 @@ export const illustriousDynamicImageProfile = Object.freeze({
   assertConfiguration: assertIllustriousDynamicImageConfiguration,
   normalizeNativeInputs: normalizeIllustriousDynamicImageNativeInputs,
   normalizeExecutionInputs: normalizeIllustriousDynamicImageNativeInputs,
-  normalizeReferenceInputs: normalizeIllustriousDynamicImageNativeInputs,
+  normalizeReferenceInputs: normalizeIllustriousDynamicImageReferenceInputs,
+  shouldCompareBaseline: ({ fixture, expectedItem }) =>
+    fixture.seedBehavior !== 'per-prompt' || expectedItem.promptPairIndex === 0,
+  baselineMetadataDifferences: (fixture) =>
+    fixture.seedBehavior === 'per-prompt' ? ['seedBehavior'] : [],
+  baselineSourceChanges: expectedIllustriousDynamicImageBaselineSourceChanges,
   inferenceSteps: () => 3,
   observedSteps: () => 2,
   cfgScale: 5,
@@ -113,7 +128,7 @@ export const illustriousDynamicImageProfile = Object.freeze({
     assert.deepEqual(draft.seed, { policy: 'fixed', value: 0 })
     assert.deepEqual(draft.dynamicPrompt, {
       maxPrompts: plan.maxPrompts,
-      seedBehavior: 'per-iteration',
+      seedBehavior: plan.seedBehavior,
     })
     assert.equal(draft.sampling.steps, 3)
     assert.equal(draft.sampling.cfgScale, 5)
@@ -286,9 +301,9 @@ export const illustriousDynamicImageProfile = Object.freeze({
     'negativePrompt.embeddings',
     ...(fixture.mode === 'img2img' ? ['context.mode'] : []),
   ],
-  async assertComparison({ expect, dialog, generation, reference, currentDraft }) {
+  async assertComparison({ expect, dialog, generation, reference, currentDraft, fixture }) {
     const item = generation.expectedItem
-    assertEdited(currentDraft, reference)
+    assertEdited(currentDraft, reference, fixture)
     assert.equal(currentDraft.sampling.sampler, item.sampler)
     assert.equal(currentDraft.sampling.scheduler, 'Normal')
     assert.equal(currentDraft.sampling.denoisingStrength, 0.5)
@@ -302,7 +317,7 @@ export const illustriousDynamicImageProfile = Object.freeze({
       'denoisingStrength.value': ['0.5', '0.5'],
       'seed.actual': [String(item.seed), '37'],
       'seed.policy': ['fixed', 'fixed'],
-      'seed.behavior': ['per-iteration', 'per-prompt'],
+      'seed.behavior': [item.seedBehavior, currentDraft.dynamicPrompt.seedBehavior],
       'prompt.text': [item.prompts.positive, editedPrompts.positive],
       'negativePrompt.text': [item.prompts.negative, editedPrompts.negative],
       'prompt.embeddings': ['None', 'None'],
@@ -342,7 +357,7 @@ export const illustriousDynamicImageProfile = Object.freeze({
       provisionalMutationControl: fixture.stage === 'control',
       exactRawPreviewClaim: false,
       imageReuseClaim: false,
-      installedPerPromptSeedClaim: false,
+      installedPerPromptSeedClaim: fixture.seedBehavior === 'per-prompt',
       fullMvpClaim: false,
     }
   },
@@ -350,8 +365,8 @@ export const illustriousDynamicImageProfile = Object.freeze({
     actual:
       'Built Electron common-source image batch Generate -> installed worker -> provisional candidates -> explicit batch Add/Save/readback/reopen and every owning comparison.',
     preconditions:
-      'Exact EPS/V common-source checkpoints, one opaque256 image per objective, signed Digital Art−0.5, external native VAE FP32, Normal N3 CFG5 strength.5 Fixed0/per-iteration; OUT x64 exact LaMa/policy.',
+      'Exact EPS/V common-source checkpoints, one opaque256 image per objective, signed Digital Art−0.5, external native VAE FP32, Normal N3 CFG5 strength.5 Fixed0 with explicitly selected per-iteration or healthy per-prompt; OUT x64 exact LaMa/policy.',
     limits:
-      'Four weighted positive/negative pairs with two iterations baseline, same-template maxPrompts1 prefix controls/restoration. Browser full-preview soft RGB allowance is not exact raw Pillow proof. No installed image Reuse/per-prompt/Random/wrap/cap32, quality, full MVP or release claim.',
+      'Four weighted positive/negative pairs with two iterations baseline, same-template maxPrompts1 prefix controls/restoration for per-iteration only. Healthy per-prompt has seeds0..7 and only first-pair0/1 same-input pixel references; cross-pair prompt effects are not isolated. Browser full-preview soft RGB allowance is not exact raw Pillow proof. No installed image Reuse/Random/wrap/cap32, quality, full MVP or release claim.',
   },
 })

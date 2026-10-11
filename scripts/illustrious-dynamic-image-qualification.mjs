@@ -77,6 +77,12 @@ const policy = {
   version: 1,
 }
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const baselineSourceKeys = Object.freeze([
+  'scripts/illustrious-dynamic-image-qualification.mjs',
+  'scripts/illustrious-dynamic-image-profile.mjs',
+  'scripts/installed-dynamic-batch-driver.mjs',
+  'scripts/qualification-resource-limits.mjs',
+])
 
 function freeze(value) {
   if (value && typeof value === 'object') {
@@ -145,11 +151,20 @@ export function validateIllustriousDynamicImageFixture(fixture) {
       'sourceImage',
       ...(fixture?.mode === 'outpaint' ? ['lamaSource'] : []),
     ],
-    ['baseline', 'mutation'],
+    ['baseline', 'mutation', 'seedBehavior', 'baselineSourceSnapshots'],
   )
   assert.equal(fixture.schemaVersion, 1)
   assert.equal(fixture.profile, 'illustrious-dynamic-image')
-  const plan = literalIllustriousDynamicImagePlan(fixture.stage, fixture.objective, fixture.mode)
+  const plan = literalIllustriousDynamicImagePlan(
+    fixture.stage,
+    fixture.objective,
+    fixture.mode,
+    fixture.seedBehavior,
+  )
+  if (Object.hasOwn(fixture, 'seedBehavior')) {
+    assert.equal(fixture.seedBehavior, 'per-prompt')
+    assert.equal(fixture.stage, 'baseline', 'The per-prompt extension admits healthy batches only.')
+  }
   artifactPath(fixture.artifacts)
   reference(fixture.referenceFixture, ['path', 'sha256'])
   reference(fixture.workerBaseline, ['path', 'sha256'])
@@ -167,6 +182,15 @@ export function validateIllustriousDynamicImageFixture(fixture) {
     fixture.workerBaseline.path,
     fixture.sourceImage.path,
   ]
+  if (Object.hasOwn(fixture, 'baselineSourceSnapshots')) {
+    assert.equal(fixture.stage, 'baseline')
+    assert.equal(fixture.seedBehavior, 'per-prompt')
+    exactKeys(fixture.baselineSourceSnapshots, baselineSourceKeys)
+    for (const key of baselineSourceKeys) {
+      reference(fixture.baselineSourceSnapshots[key], ['path', 'sha256'])
+      inputs.push(fixture.baselineSourceSnapshots[key].path)
+    }
+  }
   if (fixture.mode === 'outpaint') {
     exactKeys(fixture.lamaSource, ['path', 'sha256', 'byteSize'])
     artifactPath(fixture.lamaSource.path)
@@ -174,9 +198,13 @@ export function validateIllustriousDynamicImageFixture(fixture) {
     assert.equal(fixture.lamaSource.byteSize, lama.byteSize)
     inputs.push(fixture.lamaSource.path)
   }
-  if (fixture.stage === 'baseline') assert.equal(Object.hasOwn(fixture, 'baseline'), false)
+  if (fixture.stage === 'baseline' && plan.seedBehavior === 'per-iteration')
+    assert.equal(Object.hasOwn(fixture, 'baseline'), false)
   else {
-    assert.ok(fixture.baseline, 'Control/restored requires a healthy same-input baseline.')
+    assert.ok(
+      fixture.baseline,
+      'Control/restored and per-prompt require a pinned healthy same-input reference.',
+    )
     reference(fixture.baseline, ['reportPath', 'reportSha256'])
     inputs.push(fixture.baseline.reportPath)
   }
@@ -589,6 +617,18 @@ export function normalizeIllustriousDynamicImageNativeInputs(frozen) {
   return normalized
 }
 
+/** Same executed first-pair inputs; only the explicitly changed authoring metadata is omitted. */
+export function normalizeIllustriousDynamicImageReferenceInputs(frozen, { fixture } = {}) {
+  const normalized = normalizeIllustriousDynamicImageNativeInputs(frozen)
+  if (fixture?.seedBehavior === 'per-prompt') delete normalized.context.sampling.seedBehavior
+  return normalized
+}
+
+/** Only frozen qualification helpers may differ from the earlier healthy producer-bound report. */
+export function expectedIllustriousDynamicImageBaselineSourceChanges(fixture) {
+  return fixture?.seedBehavior === 'per-prompt' ? [...baselineSourceKeys] : []
+}
+
 /** Exact signed single-LoRA precondition, independent from current authoring edits. */
 export function expectedIllustriousDynamicImageLoraStack(fixture) {
   assertExactSources(fixture, ['illustriousLora'])
@@ -685,6 +725,13 @@ export function assertIllustriousDynamicImagePixels(generations, plan) {
       'Every batch item uses the same frozen image target/resources.',
     )
     assert.equal(generation.rgba.length, 256 * 256 * 4)
+    if (plan.seedBehavior === 'per-prompt')
+      for (let at = 3; at < generation.rgba.length; at += 4)
+        assert.equal(
+          generation.rgba[at],
+          generations[0].rgba[at],
+          'Dynamic changes cannot alter contribution alpha.',
+        )
   }
   const visibleDifference = (left, right) => {
     let changed = 0
@@ -710,11 +757,12 @@ export function assertIllustriousDynamicImagePixels(generations, plan) {
     positiveAlternatives: [],
     negativeAlternatives: [],
     combinedAlternatives: [],
-    pairwiseDistinct: plan.stage === 'baseline',
+    pairwiseDistinct: plan.stage === 'baseline' && plan.seedBehavior === 'per-iteration',
   }
   for (let pair = 0; pair < (plan.stage === 'baseline' ? 4 : 1); pair++)
     evidence.iterationSeed.push(visibleDifference(generations[pair * 2], generations[pair * 2 + 1]))
-  if (plan.stage === 'baseline')
+  // Per-prompt changes the seed between pairs. Those contrasts cannot isolate a prompt effect.
+  if (plan.stage === 'baseline' && plan.seedBehavior === 'per-iteration')
     for (let seed = 0; seed < 2; seed++) {
       evidence.positiveAlternatives.push(
         visibleDifference(generations[seed], generations[4 + seed]),

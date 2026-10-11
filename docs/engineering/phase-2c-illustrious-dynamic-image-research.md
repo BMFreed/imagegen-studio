@@ -392,11 +392,19 @@ Final pool verification confirmed physical idle and all 43 exact original
 worker bytes/identities. Git publication is reported separately from local
 evidence.
 
-The next finite installed plan remains Fixed0/per-prompt on the same four
-EPS/V × IMG/OUT common-source scopes, four weighted pairs × two iterations,
-literal seeds `0,1,2,3,4,5,6,7` in each scope: 32 healthy jobs and four packages.
-It requires its own frozen plan and budgets before execution;
-additional mutation/crash cases are outside that healthy scope. Image
-Random/Reuse/wrap/cap32/crash, broader geometry/formats/quality, Invoke trained-pixel
-parity, full MVP and public delivery/release remain unqualified. PP-004/005/007/008
-retain «Пока не обещать».
+The previously proposed Fixed0/per-prompt common-source image follow-up is now
+recorded in [its separate research note](./phase-2c-illustrious-dynamic-image-per-prompt-research.md):
+the same four EPS/V × IMG/OUT scopes, four weighted pairs × two iterations,
+literal seeds0…7, 32 admissions/completions/accepted layers and four packages.
+Eight first-pair0/1 wholeRGBA references match this historical gate; 16 within-pair
+seed contrasts are separate from this gate's 48 same-seed prompt contrasts.
+The earlier48/40/eight-package evidence and all original hashes above remain
+unchanged. No trained mutation/crash cases were added for that healthy follow-up.
+
+The next finite proposal is image Random → numeric Fixed replay on those four
+scopes, observing the original Main base seed and binding identical executed
+inputs while preserving requested policy metadata. It is unexecuted; exact
+counts, plan and budgets must be frozen before a run. Image Reuse/crash, wrap,
+cap32, dynamic image embedding subsets, Anima image batches, broader geometry/
+formats/quality, Invoke trained-pixel parity, full MVP and public delivery/release
+remain unqualified. PP-004/005/007/008 retain «Пока не обещать».

@@ -63,6 +63,49 @@ export async function awaitVerifiedCompletions({ waitForCompleted, admitted, obs
   for (const [index, row] of admitted.entries()) await observeCompleted(row, index)
 }
 
+/** Bind explicit historical harness changes without allowing native producer changes. */
+export function assertReferenceSourceLineage(prior, current, allowed = [], snapshots = {}) {
+  assert.deepEqual(Object.keys(prior).sort(), Object.keys(current).sort())
+  const harnessSources = new Set([
+    'scripts/illustrious-dynamic-image-qualification.mjs',
+    'scripts/illustrious-dynamic-image-profile.mjs',
+    'scripts/installed-dynamic-batch-driver.mjs',
+    'scripts/qualification-resource-limits.mjs',
+  ])
+  assert.ok(Array.isArray(allowed) && new Set(allowed).size === allowed.length)
+  assert.ok(allowed.every((source) => harnessSources.has(source)))
+  const changed = Object.keys(prior).filter((source) => prior[source] !== current[source])
+  assert.deepEqual(Object.keys(snapshots).sort(), [...changed].sort())
+  return changed.map((source) => {
+    assert.ok(allowed.includes(source), `Undeclared reference source change: ${source}`)
+    assert.match(prior[source], /^[a-f0-9]{64}$/)
+    assert.match(current[source], /^[a-f0-9]{64}$/)
+    const snapshot = snapshots[source]
+    assert.deepEqual(Object.keys(snapshot).sort(), ['path', 'sha256'])
+    assert.equal(snapshot.sha256, prior[source])
+    assert.ok(path.isAbsolute(snapshot.path) && path.resolve(snapshot.path) === snapshot.path)
+    assert.ok(
+      snapshot.path.startsWith(path.join(homedir(), '.codex/artifacts/imagegen-studio') + path.sep),
+    )
+    return { source, snapshot, currentSha256: current[source] }
+  })
+}
+
+/** Adapter opt-in must be an explicit boolean; legacy reference decisions stay unchanged. */
+export function shouldCompareCompletionBaseline(adapter, fixture, expectedItem) {
+  if (!Object.hasOwn(adapter, 'shouldCompareBaseline'))
+    return fixture.stage !== 'reuse' || expectedItem.promptPairIndex === 0
+  assert.equal(typeof adapter.shouldCompareBaseline, 'function')
+  const compare = adapter.shouldCompareBaseline({ fixture, expectedItem })
+  assert.equal(typeof compare, 'boolean')
+  return compare
+}
+
+/** Preserve the captured scenario when invoking a result's comparison oracle. */
+export function invokeComparisonAdapter(adapter, fixture, inputs) {
+  return adapter.assertComparison?.({ ...inputs, fixture })
+}
+
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
   const expect = baseExpect.configure({ timeout: 120_000 })
   const fixture = await readJson(fixturePath, 64 * 1024)
@@ -970,7 +1013,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       .poll(async () => (await tab(project)).generationDraft.sampling[sampling.draftKey])
       .toBe(sampling.editedCode)
     const draft = structuredClone((await tab(project)).generationDraft)
-    if (adapter.assertEdited) adapter.assertEdited(draft, reference)
+    if (adapter.assertEdited) adapter.assertEdited(draft, reference, fixture)
     return draft
   }
   function semanticLayers(layers) {
@@ -1208,7 +1251,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       if (baseline) {
         // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
         // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
-        if (fixture.stage !== 'reuse' || expectedItem.promptPairIndex === 0) {
+        if (shouldCompareCompletionBaseline(adapter, fixture, expectedItem)) {
           const normalizer = adapter.normalizeReferenceInputs
             ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
             : fixture.stage === 'reuse'
@@ -1311,17 +1354,15 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       ? adapter.comparisonSame(fixture)
       : adapter.comparisonSame)
       await expect(dialog.locator(`[data-setting="${key}"]`)).toHaveAttribute('data-status', 'Same')
-    const additional = adapter.assertComparison
-      ? await adapter.assertComparison({
-          window,
-          expect,
-          dialog,
-          layer,
-          generation,
-          reference,
-          currentDraft: before.generationDraft,
-        })
-      : undefined
+    const additional = await invokeComparisonAdapter(adapter, fixture, {
+      window,
+      expect,
+      dialog,
+      layer,
+      generation,
+      reference,
+      currentDraft: before.generationDraft,
+    })
     const image = await screenshot(
       generation ? `comparison-${generation.queueItemId}.png` : 'comparison.png',
       dialog,
@@ -1701,13 +1742,34 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   async function assertReferenceBindings(retained, descriptor, label) {
     assert.deepEqual(retained.bundleSha256, bundleSha256)
     const driver = adapter.entrySource
+    assert.ok(Object.hasOwn(retained.sourceSha256, driver))
+    assert.match(retained.sourceSha256[driver], /^[a-f0-9]{64}$/)
+    assert.match(sourceSha256[driver], /^[a-f0-9]{64}$/)
     assert.ok(
       Object.hasOwn(retained.sourceSha256, 'scripts/installed-dynamic-batch-driver.mjs'),
       'Historical reports from before the shared-driver extraction require a separately qualified baseline.',
     )
     const { [driver]: prior, ...priorDependencies } = retained.sourceSha256
     const { [driver]: current, ...currentDependencies } = sourceSha256
-    assert.deepEqual(priorDependencies, currentDependencies)
+    const allowedChanges = adapter.baselineSourceChanges?.(fixture) ?? []
+    const lineage = assertReferenceSourceLineage(
+      priorDependencies,
+      currentDependencies,
+      allowedChanges,
+      label === 'baseline' ? fixture.baselineSourceSnapshots : undefined,
+    )
+    for (const change of lineage) {
+      const retainedSnapshot = await fileSnapshot(change.snapshot.path, change.snapshot.sha256)
+      report.referenceHarnessSources ??= {}
+      report.referenceHarnessSources[label] ??= []
+      report.referenceHarnessSources[label].push({
+        source: change.source,
+        retained: retainedSnapshot,
+        currentSha256: change.currentSha256,
+        boundary:
+          'Explicit pinned harness lineage only; application bundles, native producer and complete same-execution inputs remain unchanged.',
+      })
+    }
     if (prior !== current) {
       // The UI qualification client is not the numerical producer. Preserve its
       // exact earlier source; all oracles/dependencies, bundle and native inputs

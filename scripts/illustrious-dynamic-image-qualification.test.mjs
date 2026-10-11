@@ -27,6 +27,7 @@ import {
   assertIllustriousDynamicImageFrozen as assertFrozen,
   literalIllustriousDynamicImagePlan as planFor,
   normalizeIllustriousDynamicImageNativeInputs as normalize,
+  normalizeIllustriousDynamicImageReferenceInputs as referenceInputs,
   validateIllustriousDynamicImageFixture as validate,
   assertIllustriousDynamicImageConfiguration as assertConfiguration,
   assertIllustriousDynamicImagePixels as assertPixels,
@@ -305,6 +306,49 @@ async function assertProduction(objective, mode, seedBehavior) {
       const detached = normalize(frozen)
       assert.equal(Object.hasOwn(detached.context, 'documentId'), false)
       assert.deepEqual(detached.workerJob, frozen.workerJob)
+      if (seedBehavior === 'per-prompt') {
+        const sameExecution = structuredClone(frozen)
+        sameExecution.context.sampling.seedBehavior = 'per-iteration'
+        const perPromptFixture = installedEnvelope('baseline', objective, mode, 'per-prompt')
+        assert.deepEqual(
+          referenceInputs(frozen, { fixture: perPromptFixture }),
+          referenceInputs(sameExecution, { fixture: perPromptFixture }),
+        )
+        assert.notDeepEqual(normalize(frozen), normalize(sameExecution))
+        assert.equal(frozen.context.sampling.seedBehavior, 'per-prompt')
+        assert.equal(sameExecution.context.sampling.seedBehavior, 'per-iteration')
+        assert.deepEqual(
+          referenceInputs(sameExecution, { fixture: installedEnvelope() }),
+          normalize(sameExecution),
+        )
+        for (const mutate of [
+          (value) => {
+            value.context.sampling.requestedSeedPolicy = 'reuse'
+          },
+          (value) => {
+            value.context.sampling.seed++
+            value.workerJob.sampling.seed++
+          },
+          (value) => {
+            value.context.prompts.negative = 'wrong negative'
+            value.workerJob.prompts.negative = 'wrong negative'
+          },
+          (value) => {
+            value.context.target.sha256 = 'a'.repeat(64)
+            value.workerJob.target.sha256 = 'a'.repeat(64)
+          },
+          (value) => {
+            value.workerJob.checkpoint.sha256 = 'b'.repeat(64)
+          },
+        ]) {
+          const differentExecution = structuredClone(sameExecution)
+          mutate(differentExecution)
+          assert.notDeepEqual(
+            referenceInputs(frozen, { fixture: perPromptFixture }),
+            referenceInputs(differentExecution, { fixture: perPromptFixture }),
+          )
+        }
+      }
       // Acceptance projection is real; candidate/image verification preconditions are set up here.
       // This does not dispatch worker inference or call the Add/Save UI.
       const imagePngBytes =
@@ -530,4 +574,151 @@ test('visible-axis guard distinguishes signed prompt/seed changes from lost comm
   const wrongAlpha = structuredClone(healthy)
   wrongAlpha[1].rgba[3] = 1
   assert.throws(() => assertPixels(wrongAlpha, plan), /contribution alpha/)
+})
+
+test('healthy per-prompt envelope declares exactly four8-job scopes and keeps prior fixture defaults', () => {
+  let jobs = 0
+  for (const objective of ['epsilon', 'v_prediction'])
+    for (const mode of ['img2img', 'outpaint']) {
+      const fixture = installedEnvelope('baseline', objective, mode, 'per-prompt')
+      const plan = validate(fixture)
+      assert.equal(plan.stage, 'baseline')
+      assert.equal(plan.expectedAdmissions, 8)
+      assert.equal(plan.expectedCompletions, 8)
+      assert.equal(plan.maxPrompts, 4)
+      assert.equal(plan.iterations, 2)
+      assert.deepEqual(
+        plan.items.map(({ seed }) => seed),
+        [0, 1, 2, 3, 4, 5, 6, 7],
+      )
+      assert.ok(
+        plan.items.every(
+          (item) => item.requestedSeedPolicy === 'fixed' && item.seedBehavior === 'per-prompt',
+        ),
+      )
+      assert.deepEqual(
+        plan.items.slice(0, 2).map(({ seedBehavior, ...item }) => item),
+        planFor('baseline', objective, mode)
+          .items.slice(0, 2)
+          .map(({ seedBehavior, ...item }) => item),
+      )
+      jobs += plan.expectedAdmissions
+      for (const mutate of [
+        (value) => {
+          delete value.baseline
+        },
+        (value) => {
+          value.stage = 'control'
+        },
+        (value) => {
+          value.stage = 'restored'
+        },
+        (value) => {
+          value.seedBehavior = 'per-iteration'
+        },
+        (value) => {
+          value.seedBehavior = 'random'
+        },
+        (value) => {
+          value.baseline.reportSha256 = 'invalid'
+        },
+        (value) => {
+          value.baseline.reportPath = value.artifacts
+        },
+        (value) => {
+          value.baselineSourceSnapshots['src/main/projects/generation-orchestrator.ts'] =
+            value.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs']
+        },
+        (value) => {
+          delete value.baselineSourceSnapshots['scripts/qualification-resource-limits.mjs']
+        },
+        (value) => {
+          value.baselineSourceSnapshots['scripts/qualification-resource-limits.mjs'].path =
+            '/tmp/unowned-source.mjs'
+        },
+        (value) => {
+          value.baselineSourceSnapshots['scripts/qualification-resource-limits.mjs'].path =
+            value.artifacts
+        },
+        (value) => {
+          value.baselineSourceSnapshots['scripts/qualification-resource-limits.mjs'].sha256 =
+            'wrong'
+        },
+      ]) {
+        const wrong = structuredClone(fixture)
+        mutate(wrong)
+        assert.throws(() => validate(wrong))
+      }
+    }
+  assert.equal(jobs, 32)
+  for (const stage of ['baseline', 'control', 'restored']) {
+    const fixture = installedEnvelope(stage)
+    assert.equal(Object.hasOwn(fixture, 'seedBehavior'), false)
+    assert.equal(Object.hasOwn(fixture, 'baselineSourceSnapshots'), false)
+    const wrong = structuredClone(fixture)
+    wrong.baselineSourceSnapshots = installedEnvelope(
+      'baseline',
+      'epsilon',
+      'img2img',
+      'per-prompt',
+    ).baselineSourceSnapshots
+    assert.throws(() => validate(wrong))
+  }
+})
+
+test('per-prompt pixel guard isolates seed effects within pairs and does not invent cross-seed prompt causality', () => {
+  const plan = planFor('baseline', 'epsilon', 'outpaint', 'per-prompt')
+  const generations = plan.items.map((item) => {
+    const rgba = Buffer.alloc(65536 * 4)
+    for (let pixel = 0; pixel < 65536; pixel++) {
+      // Repeating colors across pairs is allowed: no cross-pair same-seed reference exists.
+      rgba[pixel * 4] = item.iteration * 100
+      rgba[pixel * 4 + 3] = pixel % 256 >= 168 ? 255 : 0
+    }
+    return {
+      expectedItem: item,
+      rgba,
+      frozen: {
+        kind: 'illustrious-outpaint',
+        context: {
+          documentId: 'document',
+          documentRevision: 'revision',
+          target: { sha256: 'common' },
+          prompts: item.prompts,
+          sampling: {
+            seed: item.seed,
+            seedBehavior: 'per-prompt',
+            sampler: 'Euler a',
+            invokeScheduler: 'euler_a',
+            scheduler: 'Normal',
+          },
+        },
+        workerJob: { prompts: item.prompts, sampling: { seed: item.seed, scheduler: 'euler_a' } },
+      },
+    }
+  })
+  assert.deepEqual(assertPixels(generations, plan), {
+    iterationSeed: Array(4).fill(88 * 256),
+    positiveAlternatives: [],
+    negativeAlternatives: [],
+    combinedAlternatives: [],
+    pairwiseDistinct: false,
+  })
+  const sameSeedPixels = structuredClone(generations)
+  sameSeedPixels[7].rgba = Buffer.from(sameSeedPixels[6].rgba)
+  assert.throws(() => assertPixels(sameSeedPixels, plan), /visible RGB/)
+  const hiddenOnly = structuredClone(generations)
+  hiddenOnly[3].rgba = Buffer.from(hiddenOnly[2].rgba)
+  hiddenOnly[3].rgba[0] = 100
+  assert.throws(() => assertPixels(hiddenOnly, plan), /visible RGB/)
+  const changedTarget = structuredClone(generations)
+  changedTarget[5].frozen.context.target.sha256 = 'different composition'
+  assert.throws(() => assertPixels(changedTarget, plan), /same frozen image target/)
+  const wrongLiteral = structuredClone(generations)
+  wrongLiteral[6].expectedItem.seed = 0
+  assert.throws(() => assertPixels(wrongLiteral, plan))
+  const changedPairAlpha = structuredClone(generations)
+  changedPairAlpha[4].rgba[3] = 1
+  changedPairAlpha[5].rgba[3] = 1
+  assert.throws(() => assertPixels(changedPairAlpha, plan), /contribution alpha/)
 })

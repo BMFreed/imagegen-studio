@@ -382,13 +382,34 @@ unchanged. Qualified 48 completions/40 accepted remain separate from raw 56/48
 including the failed first attempt; its package is not one of the eight qualified
 packages and the original failure remains recorded.
 
-The proposed finite follow-up is Fixed0/per-prompt
-on those same four EPS/V × IMG/OUT scopes and unchanged weighted pairs × two iterations:
-literal seeds `0,1,2,3,4,5,6,7`, 32 healthy jobs/four packages. Freeze the plan and
-budgets before execution; replay first-pair seed 0/1 against the current reference,
-check actual later-pair seed ownership and complete OUT compositing, and retain
-late draft edits separately from immutable accepted settings. Additional mutation
-or crash cases are outside that 32-job healthy scope. This follow-up is unexecuted.
+## Installed Illustrious/NoobAI per-prompt IMG and OUT gate
+
+[The finite follow-up](../../../engineering/phase-2c-illustrious-dynamic-image-per-prompt-research.md)
+qualifies the same four EPS/V × common-source IMG/normal mixed-alpha OUT scopes
+with four weighted positive×negative pairs × two iterations, Fixed0/per-prompt
+and literal seeds `0,1,2,3,4,5,6,7`: 32 admissions/completions/accepted layers and
+four saved/reopened packages. Eight first-pair seed0/1 wholeRGBA references match
+the prior per-iteration reports; 16 within-pair seed contrasts isolate seed
+changes. Later pairs use new seeds2…7 and have no trained same-input reference.
+Cross-pair prompt causality is not claimed; the earlier per-iteration same-seed
+prompt evidence remains separate.
+
+Authored source templates/concrete weighted prompts, Fixed0/per-prompt and
+LoRA−0.5 remain frozen in queued and accepted settings. Later green-bowl/grainy
+prompts, Fixed37/per-iteration, maxPrompts3 and LoRA−0.25 survive Save/reopen as
+current draft separately. Every accepted layer has its own comparison, and
+actual Add's anchor-only visibility default remains unchanged. The qualifier
+explicitly shows hidden variants before checking all saved OUT source-over
+contributions. All43 native worker source identities and application bundles
+remain unchanged; prior report hashes/plaintext are preserved with explicit
+lineage for the four changed qualification helpers. No trained mutation/crash
+jobs were added. Exact executed outcomes and limits live in the new research note.
+
+The next finite proposal is image Random → numeric Fixed replay in these same
+four EPS/V × IMG/OUT scopes: observe the original Main base seed and compare
+wholeRGBA for identical executed inputs while preserving requested-policy
+metadata. This proposal is unexecuted; freeze its exact counts, plan and budgets
+before running. Image Reuse/crash, wrap and cap32 remain separate follow-ups.
 Installed image Random/Reuse/wrap/cap32/crash, dynamic embedding subsets in image
 modes, Anima image batches and broader geometry/formats/quality remain open.
 FullMVP/Invoke trained-pixel parity/public delivery/release are not claimed;
