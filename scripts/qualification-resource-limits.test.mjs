@@ -354,3 +354,190 @@ test('deadline refuses a mismatching ControlGroup without signaling the scope', 
     false,
   )
 })
+
+/** Transport double only: the actual exported guard owns every exit decision. */
+function exitedNativeRead(f, observeGroup) {
+  return async (file) => {
+    if ([f.pid, f.pid + 100].some((pid) => file === `/proc/${pid}/stat`)) {
+      throw Object.assign(new Error('Observed native identity physically absent'), {
+        code: 'ENOENT',
+      })
+    }
+    if (file === `/sys/fs/cgroup${f.group}/cgroup.events`) return observeGroup()
+    return f.dependencies.read(file)
+  }
+}
+
+for (const finalObservation of ['missing', 'empty'])
+  test(`a removed cgroup read ENODEV retries until actual ${finalObservation} evidence`, async () => {
+    const f = fixture()
+    const check = await boundQualificationProcess(f.pid, f.dependencies)
+    f.commands.length = 0
+    let groupReads = 0
+    let pauses = 0
+    const result = await confirmQualificationProcessExit([check], {
+      read: exitedNativeRead(f, async () => {
+        groupReads++
+        if (groupReads === 1)
+          throw Object.assign(new Error('Open kernfs descriptor was deactivated'), {
+            code: 'ENODEV',
+          })
+        if (finalObservation === 'missing')
+          throw Object.assign(new Error('Actual cgroup removed'), { code: 'ENOENT' })
+        return 'populated 0\nfrozen 0\n'
+      }),
+      execute: f.dependencies.execute,
+      pause: async () => {
+        pauses++
+      },
+    })
+    assert.equal(result.confirmed, true)
+    assert.deepEqual(result.identities, check.processIdentities)
+    assert.deepEqual(result.confirmedOwnedScopeExit, [f.group])
+    assert.ok(groupReads >= 2, 'ENODEV alone cannot establish an empty scope.')
+    assert.ok(pauses > 0, 'Confirmation must wait for an independent later observation.')
+    assert.equal(
+      f.commands.filter(({ args }) => args.includes('stop')).length,
+      result.stoppedDeadlineTimers.length,
+    )
+    assert.ok(result.stoppedDeadlineTimers.length > 0)
+    assert.deepEqual(result.stoppedDeadlineTimers, [check.groups[0].deadlineTimer])
+    assert.deepEqual(
+      f.commands.map(({ program, args }) => ({ program, args })),
+      [
+        {
+          program: 'systemctl',
+          args: ['--user', 'stop', `${check.groups[0].deadlineTimer}.timer`],
+        },
+      ],
+    )
+    assert.equal(
+      f.commands.some(({ args }) => args.includes('kill')),
+      false,
+    )
+  })
+
+test('persistent cgroup ENODEV remains unconfirmed and stops no deadline timers', async () => {
+  const f = fixture()
+  const check = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  let groupReads = 0
+  await assert.rejects(
+    confirmQualificationProcessExit([check], {
+      read: exitedNativeRead(f, async () => {
+        groupReads++
+        assert.ok(groupReads <= 50, 'Unavailable-group confirmation must remain bounded.')
+        throw Object.assign(new Error('Cgroup observation remains unavailable'), { code: 'ENODEV' })
+      }),
+      execute: f.dependencies.execute,
+      pause: async () => {},
+    }),
+    (error) =>
+      /Owned native processes remain alive/.test(error.message) && /ENODEV/.test(error.message),
+  )
+  assert.ok(
+    groupReads > 1,
+    'Unavailable observations are retried without synthesizing zero population.',
+  )
+  assert.deepEqual(f.commands, [])
+})
+
+test('ENODEV followed by an unobserved child population prevents exit despite absent tracked PIDs', async () => {
+  const f = fixture()
+  const check = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  let groupReads = 0
+  await assert.rejects(
+    confirmQualificationProcessExit([check], {
+      read: exitedNativeRead(f, async () => {
+        groupReads++
+        assert.ok(groupReads <= 50, 'Populated-group confirmation must remain bounded.')
+        if (groupReads === 1)
+          throw Object.assign(new Error('Deactivated descriptor race'), { code: 'ENODEV' })
+        return 'populated 1\nfrozen 0\n'
+      }),
+      execute: f.dependencies.execute,
+      pause: async () => {},
+    }),
+    /Owned native processes remain alive/,
+  )
+  assert.ok(groupReads > 1)
+  assert.deepEqual(f.commands, [])
+})
+
+test('a tracked worker remains a blocker after transient ENODEV and actual cgroup disappearance', async () => {
+  const f = fixture()
+  const check = await boundQualificationProcess(f.pid, f.dependencies)
+  f.commands.length = 0
+  let groupReads = 0
+  await assert.rejects(
+    confirmQualificationProcessExit([check], {
+      read: async (file) => {
+        if (file === `/proc/${f.pid}/stat`)
+          throw Object.assign(new Error('Main physically absent'), { code: 'ENOENT' })
+        if (file === `/sys/fs/cgroup${f.group}/cgroup.events`) {
+          groupReads++
+          assert.ok(groupReads <= 50, 'Live-worker confirmation must remain bounded.')
+          throw Object.assign(new Error('Removed group'), {
+            code: groupReads === 1 ? 'ENODEV' : 'ENOENT',
+          })
+        }
+        return f.dependencies.read(file)
+      },
+      execute: f.dependencies.execute,
+      pause: async () => {},
+    }),
+    /Owned native processes remain alive/,
+  )
+  assert.ok(groupReads > 1)
+  assert.deepEqual(f.commands, [])
+})
+
+for (const code of ['EACCES', 'EIO'])
+  test(`unknown cgroup observation error ${code} propagates unchanged and stops no timers`, async () => {
+    const f = fixture()
+    const check = await boundQualificationProcess(f.pid, f.dependencies)
+    f.commands.length = 0
+    const observationFailure = Object.assign(new Error('Actual cgroup observation failed'), {
+      code,
+    })
+    await assert.rejects(
+      confirmQualificationProcessExit([check], {
+        read: exitedNativeRead(f, async () => {
+          throw observationFailure
+        }),
+        execute: f.dependencies.execute,
+        pause: async () => {},
+      }),
+      (error) => error === observationFailure,
+    )
+    assert.deepEqual(f.commands, [])
+  })
+
+for (const code of ['ENODEV', 'EACCES', 'EIO'])
+  test(`native process identity error ${code} remains unknown and cannot borrow cgroup disappearance`, async () => {
+    const f = fixture()
+    const check = await boundQualificationProcess(f.pid, f.dependencies)
+    f.commands.length = 0
+    const identityFailure = Object.assign(new Error('Owned native identity cannot be inspected'), {
+      code,
+    })
+    let groupReads = 0
+    await assert.rejects(
+      confirmQualificationProcessExit([check], {
+        read: async (file) => {
+          if (file === `/proc/${f.pid}/stat`) throw identityFailure
+          if (file.endsWith('/cgroup.events')) {
+            groupReads++
+            throw Object.assign(new Error('Actual cgroup absent'), { code: 'ENOENT' })
+          }
+          return f.dependencies.read(file)
+        },
+        execute: f.dependencies.execute,
+        pause: async () => {},
+      }),
+      (error) => error === identityFailure,
+    )
+    assert.equal(groupReads, 0)
+    assert.deepEqual(f.commands, [])
+  })

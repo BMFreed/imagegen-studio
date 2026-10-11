@@ -323,11 +323,76 @@ controls, distinct from installed ML evidence. Focused349/typecheck/build pass.
 Earlier interrupted/excluded/partial source-harness attempts remain separately
 classified in the research note and do not contribute semantic failures.
 
-The next finite gate is Anima ER-SDE order3: five-step TXT versus a three-step
-neighbor, omission of only dd_x0 correction, causal RED and restored fresh GREEN.
-The complete seed-policy/mode matrix, non-Euler IMG/OUT, arbitrary geometry/
-formats/quality, public delivery/release and full MVP remain open; PP statuses
-are unchanged. Historical counts above retain their original scope.
+Anima ER-SDE order3 was the next finite gate at this cap checkpoint; its
+[completed finite follow-up](../../../engineering/phase-2c-anima-er-sde-order3-research.md)
+and later finite image-sampler checkpoints are recorded in the
+[implementation roadmap](../../../specs/01-implementation-roadmap.md#installed-dynamic-img-and-out-for-illustrious).
+The complete seed-policy/mode matrix, arbitrary geometry/formats/quality,
+public delivery/release and full MVP remain open; PP statuses are unchanged.
+Historical counts above retain their original scope.
+
+## Installed Illustrious/NoobAI dynamic IMG and OUT gate
+
+The [current qualification](../../../engineering/phase-2c-illustrious-dynamic-image-research.md)
+has a confirmed finite gate, including independent reader PASS (10,833 checks).
+Its corrected frozen R2
+plan reuses each objective's source PNG across IMG/normal mixed-alpha OUT for EPS/V,
+four weighted positive×negative pairs ×
+two iterations, Fixed0/per-iteration and literal seeds `0,1,0,1,0,1,0,1`.
+Normal N3/CFG5/strength0.5, Digital Art−0.5 and native external VAE FP32 are
+fixed; two actual updates and captured target/resource ownership were observed.
+Authored templates, concrete pairs, seeds and accepted settings remained frozen
+after late draft edits; the later drafts survived explicit Save.
+
+R2 produced 48 admissions/completions: 32 healthy, 8 provisional controls and
+8 fresh restored, with 40 accepted layers in 8 saved/reopened packages.
+The protected generation-noise-seed→0 mutation gave four seed 1 causal pixel RED
+before Add, four seed 0 wholeRGBA neighbor GREEN and eight fresh restored
+wholeRGBA matches. All six same-seed contrasts among four prompt pairs, including
+diagonal pairs, passed in both seeds across the four scopes: 48 prompt contrasts.
+Independent raw SQLite/ZIP readback composed every visible saved contribution over
+its source; the four OUT previews preserved soft alpha and 222,208 protected-source
+pixels. The reader also confirmed all 43 original source identities restored.
+
+One control's original native report retains an ENODEV cleanup race while reading
+the disappearing cgroup. Separate source-bound PID/start/cgroup closure evidence
+confirms its native and launcher exits; the race is not a numerical mutation RED.
+After that original-source reader PASS, the fresh system proof passed 820 checks.
+The env/cwd cleanup-guard component refused exactly its own controlled process;
+mutating only the real predicate gave semantic RED, followed by verified physical
+closure and fresh original PASS. The control used its own 128 MiB, zero-swap,
+20-second unit. This component test supplements the actual cleanup proof.
+Guarded disposal completed for nine R0 paths (9,117,696 allocated bytes) and seven
+R2 paths (7,651,328 allocated bytes), retaining all 43 original source identities.
+
+The ENODEV repair was then applied after original-source readback and cleanup.
+An isolated complete copy of the two actual subject/test files gave 30 baseline
+GREEN, four semantic RED with 26 neighboring GREEN, and 30 fresh restored GREEN.
+Copied inode/mode/mtime/SHA identities were restored exactly. No ML jobs were
+rerun for this helper repair; the original native error and closure supplements
+remain recorded separately.
+
+The excluded first EPS IMG attempt produced/saved 8 accepted layers but the
+profile failed on its all-visible assumption. Actual Add initially shows one
+selected generated anchor. The qualifier now explicitly shows hidden variants
+through the application UI before Save and checks that only their visibility
+changed. Sticky completion-verification failure is also repaired in the shared
+test driver. These are harness changes; application Add/worker/Save behavior is
+unchanged. Qualified 48 completions/40 accepted remain separate from raw 56/48
+including the failed first attempt; its package is not one of the eight qualified
+packages and the original failure remains recorded.
+
+The proposed finite follow-up is Fixed0/per-prompt
+on those same four EPS/V × IMG/OUT scopes and unchanged weighted pairs × two iterations:
+literal seeds `0,1,2,3,4,5,6,7`, 32 healthy jobs/four packages. Freeze the plan and
+budgets before execution; replay first-pair seed 0/1 against the current reference,
+check actual later-pair seed ownership and complete OUT compositing, and retain
+late draft edits separately from immutable accepted settings. Additional mutation
+or crash cases are outside that 32-job healthy scope. This follow-up is unexecuted.
+Installed image Random/Reuse/wrap/cap32/crash, dynamic embedding subsets in image
+modes, Anima image batches and broader geometry/formats/quality remain open.
+FullMVP/Invoke trained-pixel parity/public delivery/release are not claimed;
+PP-004/005/007/008 remain «Пока не обещать».
 
 ## Vue Prototype Coverage
 

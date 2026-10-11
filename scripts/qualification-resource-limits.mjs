@@ -215,7 +215,13 @@ export async function confirmQualificationProcessExit(
         const events = await read(`/sys/fs/cgroup${group}/cgroup.events`, 'utf8')
         if (!/^populated 0$/m.test(events)) remaining.push({ group, populated: true })
       } catch (error) {
-        if (!['ENOENT', 'ESRCH'].includes(error.code)) throw error
+        if (error.code === 'ENODEV') {
+          // A removed kernfs descriptor can fail before its pathname disappears.
+          // Keep the scope unconfirmed until a later real empty/absent observation.
+          remaining.push({ group, observation: 'unavailable', code: 'ENODEV' })
+        } else if (!['ENOENT', 'ESRCH'].includes(error.code)) {
+          throw error
+        }
       }
     }
     if (remaining.length === 0) {

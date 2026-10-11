@@ -41,6 +41,28 @@ export function authoredFirstLoraWeight(adapter, fixture) {
   return value
 }
 
+/** Poll retries must await the original verification, including its sticky rejection. */
+export function createStickyCompletionCache() {
+  const observed = new Map()
+  return Object.freeze({
+    observe(id, collectAndVerify) {
+      assert.ok(typeof id === 'string' && id.length > 0)
+      assert.equal(typeof collectAndVerify, 'function')
+      if (!observed.has(id)) observed.set(id, Promise.resolve().then(collectAndVerify))
+      return observed.get(id)
+    },
+  })
+}
+
+/** Poll only terminal status; numerical verification rejects directly before acceptance. */
+export async function awaitVerifiedCompletions({ waitForCompleted, admitted, observeCompleted }) {
+  assert.equal(typeof waitForCompleted, 'function')
+  assert.equal(typeof observeCompleted, 'function')
+  assert.ok(Array.isArray(admitted) && admitted.length > 0)
+  await waitForCompleted()
+  for (const [index, row] of admitted.entries()) await observeCompleted(row, index)
+}
+
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
   const expect = baseExpect.configure({ timeout: 120_000 })
   const fixture = await readJson(fixturePath, 64 * 1024)
@@ -153,7 +175,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   let baseline = null,
     crashSource = null
   let admissionObservation
-  const completionById = new Map()
+  const completionById = createStickyCompletionCache()
   const report = {
     schemaVersion: 1,
     status: 'running',
@@ -1095,160 +1117,157 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     return { before, admitted, portable }
   }
   async function observeCompleted(project, row, expectedItem, before, portable) {
-    if (completionById.has(row.id)) return completionById.get(row.id)
-    const results = await api('listGenerationResults', project.id)
-    const candidate = results.candidates.find(({ queueItemId }) => queueItemId === row.id)
-    assert.ok(candidate, 'A completed row must expose its genuine verified public candidate.')
-    const receipt = await receiptFor(row)
-    assert.equal(receipt?.status, 'completed')
-    assert.equal(receipt.actual_seed, expectedItem.seed)
-    assert.equal(candidate.actualSeed, expectedItem.seed)
-    assert.equal(receipt.frozen_payload_sha256, sha256(Buffer.from(row.frozen_payload_json)))
-    const currentRow = (await queueRows(project)).find(({ id }) => id === row.id)
-    assert.equal(currentRow.status, 'completed')
-    assert.equal(currentRow.frozen_payload_json, row.frozen_payload_json)
-    const frozen = JSON.parse(row.frozen_payload_json)
-    adapter.assertFrozen(frozen, expectedItem, reference)
-    const image = await decodedImage(candidate.imageUrl)
-    assert.equal(image.dimensions.status, 200)
-    assert.equal(image.dimensions.sha256, receipt.image_sha256)
-    assert.equal(image.dimensions.bytes, receipt.image_byte_size)
-    assert.equal(image.dimensions.width, 256)
-    assert.equal(image.dimensions.height, 256)
-    if (!adapter.assertOutput) assert.equal(image.dimensions.opaquePixels, 256 * 256)
-    assert.ok(candidate.thumbnailUrl)
-    const thumbnail = await decodedImage(candidate.thumbnailUrl)
-    assert.equal(thumbnail.dimensions.status, 200)
-    assert.equal(thumbnail.dimensions.mime, 'image/webp')
-    const progress = await window.evaluate(
-      (id) => window.__dynamicQualificationProgress.filter(({ current }) => current.jobId === id),
-      row.id,
-    )
-    assert.ok(progress.length > 0, 'Actual public preload must observe native denoising.')
-    for (const [index, snapshot] of progress.entries()) {
-      assert.equal(snapshot.current.totalSteps, observedSteps)
-      assert.equal(snapshot.current.documentId, before.documentId)
-      assert.equal(snapshot.current.projectKey, project.id)
-      assert.equal(snapshot.current.statusSequence, receipt.expected_status_sequence)
-      assert.equal(snapshot.current.statusSequence + 1, currentRow.status_sequence)
-      if (index > 0) {
-        assert.ok(snapshot.revision > progress[index - 1].revision)
-        assert.ok(snapshot.current.step > progress[index - 1].current.step)
-      }
-    }
-    assert.equal(progress.at(-1).current.step, observedSteps)
-    assert.equal(
-      await hashFile(portable.path),
-      portable.sha256,
-      'Completion cannot Save the portable project.',
-    )
-    assert.deepEqual(
-      semanticLayers((await tab(project)).layers),
-      semanticLayers(before.layers),
-      'Completion cannot alter Project layers.',
-    )
-    const outputPath = path.join(fixture.artifacts, `${row.id}.png`)
-    await writeFile(outputPath, image.bytes, { flag: 'wx' })
-    const generation = {
-      queueItemId: row.id,
-      candidateId: candidate.candidateId,
-      projectKey: project.id,
-      expectedItem,
-      frozen,
-      row: currentRow,
-      receipt,
-      dimensions: image.dimensions,
-      thumbnail: thumbnail.dimensions,
-      progress,
-      outputPath,
-      qualification: {
-        normalizedInputs: adapter.normalizeNativeInputs(frozen),
-        beforeExplicitAdd: true,
-      },
-      accepted: false,
-    }
-    // Retain a finite provisional completion even when its same-input numerical check fails.
-    report.generations.push(generation)
-    completionById.set(row.id, generation)
-    await checkpoint()
-    if (adapter.assertOutput) {
-      generation.outputEvidence = await adapter.assertOutput({
-        frozen,
-        decoded: image,
-        window,
-        decodedImage,
-        fixture,
-        plan,
-        reference,
-        sourceInput: report.inputPrecondition,
-      })
-      await checkpoint()
-    }
-    if (baseline) {
-      // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
-      // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
-      if (fixture.stage !== 'reuse' || expectedItem.promptPairIndex === 0) {
-        const normalizer = adapter.normalizeReferenceInputs
-          ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
-          : fixture.stage === 'reuse'
-            ? adapter.normalizeExecutionInputs
-            : adapter.normalizeNativeInputs
-        const inputs = normalizer(frozen)
-        const matched = baseline.generations.find(
-          ({ frozen: retained }) => JSON.stringify(normalizer(retained)) === JSON.stringify(inputs),
-        )
-        assert.ok(matched, 'A source/bundle-bound healthy same-input baseline is required.')
-        generation.baseline = {
-          reportPath: fixture.baseline.reportPath,
-          reportSha256: fixture.baseline.reportSha256,
-          queueItemId: matched.queueItemId,
-          beforeExplicitAdd: true,
-          expectedPixelSha256: matched.dimensions.pixelSha256,
-          actualPixelSha256: generation.dimensions.pixelSha256,
-          allowedMetadataDifferences: adapter.baselineMetadataDifferences
-            ? adapter.baselineMetadataDifferences(fixture)
-            : fixture.stage === 'reuse'
-              ? ['requestedSeedPolicy', 'seedBehavior']
-              : [],
+    return completionById.observe(row.id, async () => {
+      const results = await api('listGenerationResults', project.id)
+      const candidate = results.candidates.find(({ queueItemId }) => queueItemId === row.id)
+      assert.ok(candidate, 'A completed row must expose its genuine verified public candidate.')
+      const receipt = await receiptFor(row)
+      assert.equal(receipt?.status, 'completed')
+      assert.equal(receipt.actual_seed, expectedItem.seed)
+      assert.equal(candidate.actualSeed, expectedItem.seed)
+      assert.equal(receipt.frozen_payload_sha256, sha256(Buffer.from(row.frozen_payload_json)))
+      const currentRow = (await queueRows(project)).find(({ id }) => id === row.id)
+      assert.equal(currentRow.status, 'completed')
+      assert.equal(currentRow.frozen_payload_json, row.frozen_payload_json)
+      const frozen = JSON.parse(row.frozen_payload_json)
+      adapter.assertFrozen(frozen, expectedItem, reference)
+      const image = await decodedImage(candidate.imageUrl)
+      assert.equal(image.dimensions.status, 200)
+      assert.equal(image.dimensions.sha256, receipt.image_sha256)
+      assert.equal(image.dimensions.bytes, receipt.image_byte_size)
+      assert.equal(image.dimensions.width, 256)
+      assert.equal(image.dimensions.height, 256)
+      if (!adapter.assertOutput) assert.equal(image.dimensions.opaquePixels, 256 * 256)
+      assert.ok(candidate.thumbnailUrl)
+      const thumbnail = await decodedImage(candidate.thumbnailUrl)
+      assert.equal(thumbnail.dimensions.status, 200)
+      assert.equal(thumbnail.dimensions.mime, 'image/webp')
+      const progress = await window.evaluate(
+        (id) => window.__dynamicQualificationProgress.filter(({ current }) => current.jobId === id),
+        row.id,
+      )
+      assert.ok(progress.length > 0, 'Actual public preload must observe native denoising.')
+      for (const [index, snapshot] of progress.entries()) {
+        assert.equal(snapshot.current.totalSteps, observedSteps)
+        assert.equal(snapshot.current.documentId, before.documentId)
+        assert.equal(snapshot.current.projectKey, project.id)
+        assert.equal(snapshot.current.statusSequence, receipt.expected_status_sequence)
+        assert.equal(snapshot.current.statusSequence + 1, currentRow.status_sequence)
+        if (index > 0) {
+          assert.ok(snapshot.revision > progress[index - 1].revision)
+          assert.ok(snapshot.current.step > progress[index - 1].current.step)
         }
-        await checkpoint()
-        assert.equal(
-          generation.dimensions.pixelSha256,
-          matched.dimensions.pixelSha256,
-          'Installed dynamic-batch pixels differ from retained healthy same-input reference.',
-        )
       }
-    }
-    return generation
+      assert.equal(progress.at(-1).current.step, observedSteps)
+      assert.equal(
+        await hashFile(portable.path),
+        portable.sha256,
+        'Completion cannot Save the portable project.',
+      )
+      assert.deepEqual(
+        semanticLayers((await tab(project)).layers),
+        semanticLayers(before.layers),
+        'Completion cannot alter Project layers.',
+      )
+      const outputPath = path.join(fixture.artifacts, `${row.id}.png`)
+      await writeFile(outputPath, image.bytes, { flag: 'wx' })
+      const generation = {
+        queueItemId: row.id,
+        candidateId: candidate.candidateId,
+        projectKey: project.id,
+        expectedItem,
+        frozen,
+        row: currentRow,
+        receipt,
+        dimensions: image.dimensions,
+        thumbnail: thumbnail.dimensions,
+        progress,
+        outputPath,
+        qualification: {
+          normalizedInputs: adapter.normalizeNativeInputs(frozen),
+          beforeExplicitAdd: true,
+        },
+        accepted: false,
+      }
+      // Retain a finite provisional completion even when its same-input numerical check fails.
+      report.generations.push(generation)
+      await checkpoint()
+      if (adapter.assertOutput) {
+        generation.outputEvidence = await adapter.assertOutput({
+          frozen,
+          decoded: image,
+          window,
+          decodedImage,
+          fixture,
+          plan,
+          reference,
+          sourceInput: report.inputPrecondition,
+        })
+        await checkpoint()
+      }
+      if (baseline) {
+        // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
+        // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
+        if (fixture.stage !== 'reuse' || expectedItem.promptPairIndex === 0) {
+          const normalizer = adapter.normalizeReferenceInputs
+            ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
+            : fixture.stage === 'reuse'
+              ? adapter.normalizeExecutionInputs
+              : adapter.normalizeNativeInputs
+          const inputs = normalizer(frozen)
+          const matched = baseline.generations.find(
+            ({ frozen: retained }) =>
+              JSON.stringify(normalizer(retained)) === JSON.stringify(inputs),
+          )
+          assert.ok(matched, 'A source/bundle-bound healthy same-input baseline is required.')
+          generation.baseline = {
+            reportPath: fixture.baseline.reportPath,
+            reportSha256: fixture.baseline.reportSha256,
+            queueItemId: matched.queueItemId,
+            beforeExplicitAdd: true,
+            expectedPixelSha256: matched.dimensions.pixelSha256,
+            actualPixelSha256: generation.dimensions.pixelSha256,
+            allowedMetadataDifferences: adapter.baselineMetadataDifferences
+              ? adapter.baselineMetadataDifferences(fixture)
+              : fixture.stage === 'reuse'
+                ? ['requestedSeedPolicy', 'seedBehavior']
+                : [],
+          }
+          await checkpoint()
+          assert.equal(
+            generation.dimensions.pixelSha256,
+            matched.dimensions.pixelSha256,
+            'Installed dynamic-batch pixels differ from retained healthy same-input reference.',
+          )
+        }
+      }
+      return generation
+    })
   }
   async function awaitCompletions(project, captured) {
-    await expect
-      .poll(
-        async () => {
-          const rows = (await queueRows(project)).filter(({ id }) =>
-            captured.admitted.some((item) => item.id === id),
-          )
-          assert.ok(
-            rows.every(({ status }) => !['failed', 'canceled'].includes(status)),
-            JSON.stringify(
-              rows.map(({ id, status, error_message }) => ({ id, status, error_message })),
-            ),
-          )
-          for (const [index, original] of captured.admitted.entries()) {
-            if (rows.find(({ id }) => id === original.id)?.status === 'completed')
-              await observeCompleted(
-                project,
-                original,
-                plan.items[index],
-                captured.before,
-                captured.portable,
+    await awaitVerifiedCompletions({
+      admitted: captured.admitted,
+      observeCompleted: (original, index) =>
+        observeCompleted(project, original, plan.items[index], captured.before, captured.portable),
+      waitForCompleted: () =>
+        expect
+          .poll(
+            async () => {
+              const rows = (await queueRows(project)).filter(({ id }) =>
+                captured.admitted.some((item) => item.id === id),
               )
-          }
-          return report.generations.length
-        },
-        { timeout: completionTimeoutMs, intervals: [1000, 2000, 5000] },
-      )
-      .toBe(plan.expectedCompletions)
+              assert.ok(
+                rows.every(({ status }) => !['failed', 'canceled'].includes(status)),
+                JSON.stringify(
+                  rows.map(({ id, status, error_message }) => ({ id, status, error_message })),
+                ),
+              )
+              return rows.filter(({ status }) => status === 'completed').length
+            },
+            { timeout: completionTimeoutMs, intervals: [1000, 2000, 5000] },
+          )
+          .toBe(plan.expectedCompletions),
+    })
     const results = await api('listGenerationResults', project.id)
     assert.equal(results.lastActualSeed, plan.items.at(-1).seed)
     report.lastActualSeed = results.lastActualSeed
@@ -1964,6 +1983,18 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         await checkpoint()
       } else {
         await addAll(project, plan.expectedCompletions)
+        if (adapter.afterAcceptance) {
+          report.afterAcceptance = await adapter.afterAcceptance({
+            window,
+            expect,
+            project,
+            tab,
+            sourceLayers,
+            fixture,
+            plan,
+          })
+          await checkpoint()
+        }
         await verifySaved(project, currentDraft, extra)
         report.outcome = 'finite-accepted-saved-reopened'
       }
