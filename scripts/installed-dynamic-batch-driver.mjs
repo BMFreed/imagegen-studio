@@ -69,6 +69,8 @@ export function assertReferenceSourceLineage(prior, current, allowed = [], snaps
   const harnessSources = new Set([
     'scripts/illustrious-dynamic-image-qualification.mjs',
     'scripts/illustrious-dynamic-image-profile.mjs',
+    'scripts/illustrious-image-seed-replay-qualification.mjs',
+    'scripts/illustrious-image-seed-replay-profile.mjs',
     'scripts/installed-dynamic-batch-driver.mjs',
     'scripts/qualification-resource-limits.mjs',
   ])
@@ -111,6 +113,27 @@ export async function invokeBaselineAdapter(adapter, inputs) {
   if (!Object.hasOwn(adapter, 'assertBaseline')) return
   assert.equal(typeof adapter.assertBaseline, 'function')
   await adapter.assertBaseline(inputs)
+}
+
+/** Image recovery supplies its source-layer contract; legacy TXT retains its empty target. */
+export function invokeCrashLayersAdapter(adapter, inputs) {
+  if (!Object.hasOwn(adapter, 'assertCrashLayers')) {
+    assert.deepEqual(inputs.layers, [])
+    assert.deepEqual(inputs.sourceLayers, [])
+    return
+  }
+  assert.equal(typeof adapter.assertCrashLayers, 'function')
+  assert.equal(
+    adapter.assertCrashLayers(inputs),
+    undefined,
+    'Crash layer assertions must complete synchronously.',
+  )
+}
+
+/** Recovered image inputs must be verified in place, without importing or saving a new source. */
+export async function invokeRecoveredInputAdapter(adapter, inputs) {
+  assert.equal(typeof adapter.prepareRecoveredInput, 'function')
+  return await adapter.prepareRecoveredInput(inputs)
 }
 
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
@@ -1256,8 +1279,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         await checkpoint()
       }
       if (baseline) {
-        // Reuse's first pair repeats Fixed0/1 while preserving its different requested metadata.
-        // Subsequent pairs use new seeds, so they have no same-input baseline in this finite gate.
+        // Legacy TXT Reuse compares its first pair against Fixed0/1.
+        // Image profiles can compare every completion through this adapter hook.
         if (shouldCompareCompletionBaseline(adapter, fixture, expectedItem)) {
           const normalizer = adapter.normalizeReferenceInputs
             ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
@@ -1325,6 +1348,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await expect.poll(runtimeUsers).toEqual([])
   }
   async function addAll(project, count) {
+    const beforeLayerCount = (await tab(project)).layers.length
     await window.getByRole('button', { name: 'Result selection actions', exact: true }).click()
     await window
       .getByRole('menuitem', { name: 'Select all completed across all sessions', exact: true })
@@ -1335,9 +1359,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         exact: true,
       })
       .click()
-    await expect
-      .poll(async () => (await tab(project)).layers.length)
-      .toBe(count + sourceLayers.length + (fixture.stage === 'reuse' && count === 8 ? 1 : 0))
+    await expect.poll(async () => (await tab(project)).layers.length).toBe(beforeLayerCount + count)
   }
   async function compare(project, layer, packagePath, generation = null) {
     const before = await tab(project)
@@ -1559,9 +1581,21 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         { timeout: 600_000, intervals: [100, 250, 500] },
       )
       .toBe(true)
-    assert.equal((await api('listGenerationResults', project.id)).lastActualSeed, 0)
-    assert.equal((await tab(project)).layers.length, 0)
-    assert.deepEqual((await tab(project)).generationDraft, currentDraft)
+    assert.equal(
+      (await api('listGenerationResults', project.id)).lastActualSeed,
+      plan.items[0].seed,
+    )
+    const beforeCrash = await tab(project)
+    assert.deepEqual(semanticLayers(beforeCrash.layers), semanticLayers(captured.before.layers))
+    invokeCrashLayersAdapter(adapter, {
+      layers: beforeCrash.layers,
+      sourceLayers,
+      fixture,
+      plan,
+      reference,
+      inputPrecondition: report.inputPrecondition,
+    })
+    assert.deepEqual(beforeCrash.generationDraft, currentDraft)
     report.crashCut = cut
     await checkpoint()
     await signalOwnedScope('intentional-qualified-native-crash')
@@ -1577,7 +1611,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     assert.equal(await receiptFor(rows[2]), undefined)
     const saved = await readIgsPackage(captured.portable.path)
     assert.equal(saved.project.lastActualSeedSnapshot ?? null, null)
-    assert.equal(saved.project.layers.length, 0)
+    assert.deepEqual(saved.project.layers, sourceLayers)
     assert.equal(await hashFile(captured.portable.path), captured.portable.sha256)
     report.crash = {
       outcome: 'crash-confirmed',
@@ -1587,6 +1621,9 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       packagePath: captured.portable.path,
       packageSha256: captured.portable.sha256,
       savedSnapshot: null,
+      sourceLayers: structuredClone(sourceLayers),
+      sourceLayerViews: structuredClone(beforeCrash.layers),
+      bbox: structuredClone(beforeCrash.primaryBbox),
       currentDraft,
       rows,
       candidate: report.generations[0],
@@ -1616,7 +1653,24 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await window.getByRole('tab', { name: project.title, exact: true }).waitFor()
     const reopened = await tab(project)
     assert.equal(reopened.documentId, project.documentId)
-    assert.deepEqual(reopened.layers, [])
+    const originalSaved = await readIgsPackage(captured.packagePath)
+    assert.equal(originalSaved.project.lastActualSeedSnapshot ?? null, null)
+    sourceLayers = structuredClone(originalSaved.project.layers)
+    assert.deepEqual(sourceLayers, captured.sourceLayers ?? [])
+    assert.deepEqual(
+      semanticLayers(reopened.layers),
+      semanticLayers(captured.sourceLayerViews ?? []),
+      'Recovery must preserve every original source layer.',
+    )
+    if (captured.bbox) assert.deepEqual(reopened.primaryBbox, captured.bbox)
+    invokeCrashLayersAdapter(adapter, {
+      layers: reopened.layers,
+      sourceLayers,
+      fixture,
+      plan,
+      reference,
+      inputPrecondition: crashSource.inputPrecondition,
+    })
     assert.deepEqual(
       reopened.generationDraft,
       captured.currentDraft,
@@ -1635,29 +1689,67 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     }
     const results = await api('listGenerationResults', project.id)
     assert.equal(results.candidates.length, 1)
-    assert.equal(results.lastActualSeed, 0)
+    assert.equal(results.lastActualSeed, captured.candidate.expectedItem.seed)
+    assert.equal(results.lastActualSeed, plan.items[0].seed)
     const candidate = results.candidates[0]
     assert.equal(candidate.candidateId, captured.candidate.candidateId)
     assert.equal(candidate.queueItemId, captured.candidate.queueItemId)
     const pixels = await decodedImage(candidate.imageUrl)
     assert.equal(pixels.dimensions.sha256, captured.candidate.dimensions.sha256)
     assert.equal(pixels.dimensions.pixelSha256, captured.candidate.dimensions.pixelSha256)
+    const recoveryNormalizer = adapter.normalizeReferenceInputs
+      ? (value) => adapter.normalizeReferenceInputs(value, { fixture, plan })
+      : adapter.normalizeExecutionInputs
     const control = baseline.generations.find(
       ({ frozen }) =>
-        JSON.stringify(adapter.normalizeExecutionInputs(frozen)) ===
-        JSON.stringify(adapter.normalizeExecutionInputs(captured.candidate.frozen)),
+        JSON.stringify(recoveryNormalizer(frozen)) ===
+        JSON.stringify(recoveryNormalizer(captured.candidate.frozen)),
     )
-    assert.ok(control, 'Recovered seed0 requires its healthy same-execution control.')
+    assert.ok(control, 'Recovered seed requires its healthy same-execution control.')
     assert.equal(pixels.dimensions.pixelSha256, control.dimensions.pixelSha256)
     const saved = await readIgsPackage(captured.packagePath)
     assert.equal(saved.project.lastActualSeedSnapshot ?? null, null)
     await addAll(project, 1)
     const accepted = await tab(project)
-    const layer = accepted.layers[0]
+    const acceptedShadow = await settledDirtyShadow(project, captured.currentDraft)
+    const acceptedDocument = await readJson(
+      path.join(
+        appData,
+        'autosave',
+        project.id,
+        'snapshots',
+        acceptedShadow.manifest.snapshotId,
+        'project.json',
+      ),
+      16 * 1024 * 1024,
+    )
+    const recoveredLayers = acceptedDocument.layers.filter(
+      ({ generationProvenance }) =>
+        generationProvenance?.executionResultContext.candidateId === candidate.candidateId &&
+        generationProvenance.executionResultContext.queueItemId === candidate.queueItemId,
+    )
+    assert.equal(recoveredLayers.length, 1)
+    const recoveredLayer = recoveredLayers[0]
+    assert.equal(recoveredLayer.asset.sha256, captured.candidate.receipt.image_sha256)
+    adapter.assertConfiguration(
+      recoveredLayer.generationProvenance.generationConfiguration,
+      captured.candidate.expectedItem,
+      reference,
+    )
+    const layer = accepted.layers.find(({ id }) => id === recoveredLayer.id)
     assert.ok(layer)
-    // Keep genuine recovered pixels/provenance while returning normal target composition to TXT.
+    assert.ok(!sourceLayers.some(({ id }) => id === layer.id))
+    // Preserve recovered provenance while restoring the original TXT or image target composition.
     await window.getByRole('button', { name: `Hide ${layer.name}`, exact: true }).click()
-    await expect.poll(async () => (await tab(project)).layers[0].visible).toBe(false)
+    await expect
+      .poll(async () => (await tab(project)).layers.find(({ id }) => id === layer.id)?.visible)
+      .toBe(false)
+    const prepared = await tab(project)
+    assert.deepEqual(
+      semanticLayers(prepared.layers.filter(({ id }) => id !== layer.id)),
+      semanticLayers(reopened.layers),
+      'Hiding the recovered result must preserve every original source layer.',
+    )
     assert.equal(await hashFile(captured.packagePath), captured.packageSha256)
     assert.equal(
       (await readIgsPackage(captured.packagePath)).project.lastActualSeedSnapshot ?? null,
@@ -1668,13 +1760,19 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       rows,
       candidateId: candidate.candidateId,
       queueItemId: candidate.queueItemId,
-      lastActualSeed: 0,
+      lastActualSeed: results.lastActualSeed,
       portableSnapshot: null,
       recoveredLayerId: layer.id,
       recoveredLayerHidden: true,
       unchangedPackageSha256: captured.packageSha256,
+      sourceLayers: structuredClone(sourceLayers),
+      acceptedShadow,
+      recoveredProvenance: recoveredLayer.generationProvenance,
     }
-    return { project, recovered: captured.candidate }
+    return {
+      project,
+      recovered: { ...structuredClone(captured.candidate), layerId: layer.id },
+    }
   }
   async function preserveInputs() {
     assert.deepEqual(
@@ -1961,7 +2059,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     } else project = await createProject()
     await author(project, plan)
     if (requiresSourceImage) {
-      report.inputPrecondition = await adapter.prepareInput({
+      const inputContext = {
         window,
         expect,
         application,
@@ -1975,10 +2073,16 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         save,
         screenshot,
         decodedImage,
-        importSource,
-      })
-      const prepared = await packageFor(project)
-      sourceLayers = structuredClone(prepared.saved.project.layers)
+        sourceLayers,
+        crashSource,
+      }
+      if (fixture.stage === 'reuse')
+        report.inputPrecondition = await invokeRecoveredInputAdapter(adapter, inputContext)
+      else {
+        report.inputPrecondition = await adapter.prepareInput({ ...inputContext, importSource })
+        const prepared = await packageFor(project)
+        sourceLayers = structuredClone(prepared.saved.project.layers)
+      }
       assert.equal(sourceLayers.length, 1)
       assert.equal(sourceLayers[0].id, report.inputPrecondition.layerId)
       await checkpoint()
@@ -1988,7 +2092,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     if (fixture.stage === 'crash') {
       const saved = await save(project)
       assert.equal(saved.saved.project.lastActualSeedSnapshot ?? null, null)
-      assert.equal(saved.saved.project.layers.length, 0)
+      assert.deepEqual(saved.saved.project.layers, sourceLayers)
       report.savedPrecondition = { path: saved.path, sha256: saved.sha256, snapshot: null }
     }
     const captured = await admit(project)
@@ -2060,6 +2164,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
             project,
             tab,
             sourceLayers,
+            recoveredGeneration: extra[0] ?? null,
             fixture,
             plan,
           })

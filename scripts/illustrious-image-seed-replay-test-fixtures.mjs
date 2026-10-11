@@ -61,6 +61,36 @@ export function envelope(
           },
         }
       : {}),
+    ...(['crash', 'reuse'].includes(stage)
+      ? {
+          baseSeed: replaySeed,
+          baseline: {
+            reportPath: path.join(root, `replay-${objective}-${mode}/report.json`),
+            reportSha256: 'e'.repeat(64),
+          },
+          baselineSourceSnapshots: Object.fromEntries(
+            [
+              'scripts/installed-dynamic-batch-driver.mjs',
+              'scripts/illustrious-image-seed-replay-profile.mjs',
+              'scripts/illustrious-image-seed-replay-qualification.mjs',
+            ].map((source, index) => [
+              source,
+              {
+                path: path.join(root, 'baseline-harness-sources', path.basename(source)),
+                sha256: String(index + 1).repeat(64),
+              },
+            ]),
+          ),
+          ...(stage === 'reuse'
+            ? {
+                crashSource: {
+                  reportPath: path.join(root, `crash-${objective}-${mode}/report.json`),
+                  reportSha256: 'f'.repeat(64),
+                },
+              }
+            : {}),
+        }
+      : {}),
   }
 }
 
@@ -68,7 +98,7 @@ export function envelope(
 export function authoring(reference, objective, mode, policy = 'random', seed = null) {
   const key = objective === 'epsilon' ? 'illustriousEpsilon' : 'illustrious'
   return {
-    seed: { policy, value: seed },
+    seed: { policy, value: policy === 'reuse' ? null : seed },
     dynamicPrompt: { maxPrompts: 4, seedBehavior: 'per-prompt' },
     sampling: {
       steps: 3,
@@ -175,12 +205,18 @@ const ready = {
 }
 
 /** Real Main preparation → orchestrator → SQLite; no worker inference or Add/Save claim. */
-export async function produce(reference, objective, mode, policy, seed = null) {
+export async function produce(reference, objective, mode, policy, seed = null, options = {}) {
   const document = createEmptyProjectDocumentV1({
-    title: 'Image Random/replay production boundary',
+    title: 'Image seed/recovery production boundary',
   })
   document.primaryBbox = { x: mode === 'outpaint' ? 64 : 0, y: 0, width: 256, height: 256 }
   document.generationDraft = authoring(reference, objective, mode, policy, seed)
+  if (options.crash === true) {
+    document.generationDraft.dynamicPrompt.maxPrompts = 1
+    document.generationDraft.positivePrompt.text =
+      'a (red:1.3) ceramic cup on a wooden table, studio photograph'
+    document.generationDraft.negativePrompt.text = '(blurry:0.7), low quality'
+  }
   const bytes =
     mode === 'outpaint'
       ? await outpaintPngFromAlpha(alpha(false), 256, 256)
@@ -190,7 +226,7 @@ export async function produce(reference, objective, mode, policy, seed = null) {
     documentId: document.documentId,
     documentRevision: document.documentRevision,
     generationDraft: document.generationDraft,
-    lastActualSeedSnapshot: null,
+    lastActualSeedSnapshot: options.lastActualSeedSnapshot ?? null,
     mode,
     composite: {
       bytes,
@@ -208,6 +244,7 @@ export async function produce(reference, objective, mode, policy, seed = null) {
     mode === 'outpaint' ? prepareNormalOutpaintGeneration : prepareNormalGeneration
   )({
     target,
+    lastActualSeed: options.lastActualSeed ?? null,
     modelService: models,
     randomUint32: () => {
       picks++
@@ -266,7 +303,11 @@ export async function produce(reference, objective, mode, policy, seed = null) {
     )(
       tabId,
       prepared,
-      { iterations: 2, maxPrompts: 4, seedBehavior: 'per-prompt' },
+      {
+        iterations: options.crash === true ? 3 : 2,
+        maxPrompts: options.crash === true ? 1 : 4,
+        seedBehavior: 'per-prompt',
+      },
       { ready: structuredClone(ready) },
       async () => {
         edits++
@@ -277,7 +318,7 @@ export async function produce(reference, objective, mode, policy, seed = null) {
       },
     )
     assert.equal(edits, 1)
-    assert.equal(admitted.items.length, 8)
+    assert.equal(admitted.items.length, options.crash === true ? 3 : 8)
     const rows = []
     const configs = []
     for (const [index, queued] of admitted.items.entries()) {

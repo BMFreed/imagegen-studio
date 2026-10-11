@@ -17,6 +17,108 @@ import {
 } from './illustrious-image-seed-replay-test-fixtures.mjs'
 
 for (const objective of ['epsilon', 'v_prediction'])
+  for (const mode of ['img2img', 'outpaint']) {
+    test(`${objective}/${mode}: real Reuse preparation preserves operational seed zero over stale saved snapshot91`, async () => {
+      const reference = installedFixture()
+      const actual = await produce(reference, objective, mode, 'reuse', null, {
+        lastActualSeed: 0,
+        lastActualSeedSnapshot: 91,
+      })
+      const fixture = envelope('reuse', objective, mode, 0)
+      const plan = resolve(validate(fixture), actual.rows)
+      assert.equal(actual.preparedSeed, 0)
+      assert.equal(actual.picks, 0)
+      assert.deepEqual(
+        plan.items.map(({ seed }) => seed),
+        [0, 1, 2, 3, 4, 5, 6, 7],
+      )
+      for (const [index, row] of actual.rows.entries()) {
+        const payload = JSON.parse(row.frozen_payload_json)
+        frozen(payload, plan.items[index], reference)
+        configuration(actual.configs[index], plan.items[index], reference)
+        assert.equal(payload.context.sampling.requestedSeedPolicy, 'reuse')
+        assert.equal(payload.context.sampling.seedBehavior, 'per-prompt')
+        assert.equal(actual.configs[index].sampling.requestedSeedPolicy, 'reuse')
+        const context = { fixture, plan }
+        const projected = native(payload)
+        delete projected.context.sampling.requestedSeedPolicy
+        assert.deepEqual(execution(payload, context), projected)
+        assert.equal(execution(payload, context).context.sampling.seedBehavior, 'per-prompt')
+        assert.deepEqual(execution(payload, context).workerJob, payload.workerJob)
+      }
+      const changed = JSON.parse(actual.rows[0].frozen_payload_json)
+      changed.context.sampling.requestedSeedPolicy = 'fixed'
+      assert.throws(() => frozen(changed, plan.items[0], reference))
+      const changedConfig = structuredClone(actual.configs[0])
+      changedConfig.sampling.actualSeed = 91
+      assert.throws(() => configuration(changedConfig, plan.items[0], reference))
+      const changedBehavior = JSON.parse(actual.rows[0].frozen_payload_json)
+      changedBehavior.context.sampling.seedBehavior = 'per-iteration'
+      assert.notDeepEqual(
+        execution(changedBehavior, { fixture, plan }),
+        execution(JSON.parse(actual.rows[0].frozen_payload_json), { fixture, plan }),
+      )
+    })
+
+    test(`${objective}/${mode}: neighboring real Reuse nonzero31 retains the same snapshot91 precedence`, async () => {
+      const reference = installedFixture()
+      const actual = await produce(reference, objective, mode, 'reuse', null, {
+        lastActualSeed: 31,
+        lastActualSeedSnapshot: 91,
+      })
+      const fixture = envelope('reuse', objective, mode, 31)
+      const plan = resolve(validate(fixture), actual.rows)
+      assert.equal(actual.preparedSeed, 31)
+      assert.equal(actual.picks, 0)
+      assert.deepEqual(
+        plan.items.map(({ seed }) => seed),
+        [31, 32, 33, 34, 35, 36, 37, 38],
+      )
+      for (const [index, row] of actual.rows.entries()) {
+        frozen(JSON.parse(row.frozen_payload_json), plan.items[index], reference)
+        configuration(actual.configs[index], plan.items[index], reference)
+      }
+    })
+
+    test(`${objective}/${mode}: neighboring real Fixed zero ignores operational31 and saved snapshot91`, async () => {
+      const reference = installedFixture()
+      const actual = await produce(reference, objective, mode, 'fixed', 0, {
+        lastActualSeed: 31,
+        lastActualSeedSnapshot: 91,
+      })
+      const plan = resolve(literal('replay', objective, mode, 0), actual.rows)
+      assert.equal(actual.preparedSeed, 0)
+      assert.equal(actual.picks, 0)
+      for (const [index, row] of actual.rows.entries()) {
+        frozen(JSON.parse(row.frozen_payload_json), plan.items[index], reference)
+        configuration(actual.configs[index], plan.items[index], reference)
+      }
+    })
+
+    test(`${objective}/${mode}: real three-admission crash precondition freezes one concrete pair and B+0..2`, async () => {
+      const reference = installedFixture()
+      const actual = await produce(reference, objective, mode, 'fixed', 37, { crash: true })
+      const plan = resolve(validate(envelope('crash', objective, mode, 37)), actual.rows)
+      assert.equal(actual.picks, 0)
+      assert.equal(plan.expectedAdmissions, 3)
+      assert.equal(plan.expectedCompletions, 1)
+      assert.equal(plan.expectedCanceled, 2)
+      assert.deepEqual(
+        plan.items.map(({ iteration, seed }) => [iteration, seed]),
+        [
+          [0, 37],
+          [1, 38],
+          [2, 39],
+        ],
+      )
+      for (const [index, row] of actual.rows.entries()) {
+        frozen(JSON.parse(row.frozen_payload_json), plan.items[index], reference)
+        configuration(actual.configs[index], plan.items[index], reference)
+      }
+    })
+  }
+
+for (const objective of ['epsilon', 'v_prediction'])
   for (const mode of ['img2img', 'outpaint'])
     test(`${objective}/${mode}: actual crypto Random preparation and numeric Fixed admission retain policy and exact native inputs`, async () => {
       const reference = installedFixture()
@@ -295,4 +397,81 @@ test('resolved numeric item identity includes actual base, requested stage, poli
     tampered.items[3].seed = baseSeed
     assert.throws(() => resolve(tampered, admissions))
   }
+})
+
+test('crash/Reuse schema pins an exact baseline, base, three harness snapshots and crashSource without broadening Random/replay', () => {
+  let admissions = 0,
+    completions = 0,
+    canceled = 0
+  for (const stage of ['crash', 'reuse'])
+    for (const objective of ['epsilon', 'v_prediction'])
+      for (const mode of ['img2img', 'outpaint']) {
+        const plan = validate(envelope(stage, objective, mode, 37))
+        admissions += plan.expectedAdmissions
+        completions += plan.expectedCompletions
+        canceled += plan.expectedCanceled
+        assert.equal(plan.requestedSeedPolicy, stage === 'reuse' ? 'reuse' : 'fixed')
+        assert.equal(plan.baseSeed, 37)
+        assert.equal(plan.fixedSeed, stage === 'reuse' ? null : 37)
+        assert.equal(plan.seedBehavior, 'per-prompt')
+      }
+  assert.equal(admissions, 44)
+  assert.equal(completions, 36)
+  assert.equal(canceled, 8)
+  for (const stage of ['crash', 'reuse'])
+    for (const mutate of [
+      (v) => {
+        delete v.baseSeed
+      },
+      (v) => {
+        v.baseSeed = -1
+      },
+      (v) => {
+        v.replaySeed = v.baseSeed
+      },
+      (v) => {
+        delete v.baseline
+      },
+      (v) => {
+        delete v.baselineSourceSnapshots
+      },
+      (v) => {
+        delete v.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs']
+      },
+      (v) => {
+        v.baselineSourceSnapshots['src/main/projects/project-generation-preparation.ts'] =
+          v.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs']
+      },
+      (v) => {
+        v.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs'].path = v.artifacts
+      },
+      (v) => {
+        v.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs'].sha256 = 'not-a-sha'
+      },
+    ]) {
+      const fixture = envelope(stage)
+      mutate(fixture)
+      assert.throws(() => validate(fixture))
+    }
+  for (const mutate of [
+    (v) => {
+      delete v.crashSource
+    },
+    (v) => {
+      v.crashSource.reportPath = '/tmp/unowned'
+    },
+    (v) => {
+      v.crashSource.reportPath = v.artifacts
+    },
+    (v) => {
+      v.crashSource.reportSha256 = 'wrong'
+    },
+  ]) {
+    const fixture = envelope('reuse')
+    mutate(fixture)
+    assert.throws(() => validate(fixture))
+  }
+  const undeclared = envelope('crash')
+  undeclared.crashSource = envelope('reuse').crashSource
+  assert.throws(() => validate(undeclared))
 })

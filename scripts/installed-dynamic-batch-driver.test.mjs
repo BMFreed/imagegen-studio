@@ -7,9 +7,104 @@ import {
   assertReferenceSourceLineage,
   awaitVerifiedCompletions,
   createStickyCompletionCache,
+  invokeCrashLayersAdapter,
   invokeComparisonAdapter,
+  invokeRecoveredInputAdapter,
   shouldCompareCompletionBaseline,
 } from './installed-dynamic-batch-driver.mjs'
+
+test('recovered image layer assertions receive their actual owner and cannot disappear into TXT defaults', () => {
+  const inputs = {
+    layers: [{ id: 'source', visible: true }],
+    sourceLayers: [{ id: 'source', asset: { sha256: 'a'.repeat(64) } }],
+    fixture: { stage: 'reuse' },
+    plan: { items: [{ seed: 73 }] },
+    reference: { installed: true },
+    inputPrecondition: { layerId: 'source' },
+  }
+  let observed
+  invokeCrashLayersAdapter(
+    {
+      assertCrashLayers: (context) => {
+        observed = context
+      },
+    },
+    inputs,
+  )
+  assert.equal(observed, inputs)
+  assert.equal(observed.layers, inputs.layers)
+  assert.equal(observed.sourceLayers, inputs.sourceLayers)
+  invokeCrashLayersAdapter({}, { layers: [], sourceLayers: [] })
+  assert.throws(() => invokeCrashLayersAdapter({}, inputs))
+  assert.throws(() =>
+    invokeCrashLayersAdapter({}, { layers: [], sourceLayers: inputs.sourceLayers }),
+  )
+  const changedSource = new Error('original source visibility changed')
+  assert.throws(
+    () =>
+      invokeCrashLayersAdapter(
+        {
+          assertCrashLayers: () => {
+            throw changedSource
+          },
+        },
+        inputs,
+      ),
+    (error) => error === changedSource,
+  )
+  for (const value of [undefined, null, false, 'assertion'])
+    assert.throws(() => invokeCrashLayersAdapter({ assertCrashLayers: value }, inputs))
+  assert.throws(() =>
+    invokeCrashLayersAdapter({ assertCrashLayers: () => Promise.resolve() }, inputs),
+  )
+})
+
+test('recovered input verification is mandatory and awaits its retained source result before proceeding', async () => {
+  const inputs = {
+    sourceLayers: [{ id: 'source' }],
+    crashSource: { inputPrecondition: { layerId: 'source' } },
+    project: { id: 'recovered-project' },
+  }
+  let release
+  const barrier = new Promise((resolve) => {
+    release = resolve
+  })
+  let observed
+  let finished = false
+  const verification = invokeRecoveredInputAdapter(
+    {
+      prepareRecoveredInput: async (context) => {
+        observed = context
+        await barrier
+        return context.crashSource.inputPrecondition
+      },
+    },
+    inputs,
+  ).then((value) => {
+    finished = true
+    return value
+  })
+  await Promise.resolve()
+  assert.equal(observed, inputs)
+  assert.equal(finished, false)
+  release()
+  assert.equal(await verification, inputs.crashSource.inputPrecondition)
+  assert.equal(finished, true)
+  const changedTarget = new Error('recovered image target changed')
+  await assert.rejects(
+    invokeRecoveredInputAdapter(
+      {
+        prepareRecoveredInput: async () => {
+          throw changedTarget
+        },
+      },
+      inputs,
+    ),
+    (error) => error === changedTarget,
+  )
+  for (const value of [undefined, null, false, 'verification'])
+    await assert.rejects(invokeRecoveredInputAdapter({ prepareRecoveredInput: value }, inputs))
+})
 
 test('comparison receives the captured scenario separately from result and current draft inputs', async () => {
   const fixture = { seedBehavior: 'per-prompt' }
@@ -80,6 +175,50 @@ test('historical harness lineage pins prior bytes and refuses native producer dr
   )
   assert.throws(() =>
     assertReferenceSourceLineage(prior, { [harness]: current[harness] }, [harness], snapshots),
+  )
+})
+
+test('image seed replay lineage permits only explicitly pinned profile and oracle changes', () => {
+  const profile = 'scripts/illustrious-image-seed-replay-profile.mjs'
+  const oracle = 'scripts/illustrious-image-seed-replay-qualification.mjs'
+  const producer = 'src/main/projects/project-generation-preparation.ts'
+  const prior = {
+    [profile]: 'a'.repeat(64),
+    [oracle]: 'b'.repeat(64),
+    [producer]: 'c'.repeat(64),
+  }
+  const current = { ...prior, [profile]: 'd'.repeat(64), [oracle]: 'e'.repeat(64) }
+  const snapshots = Object.fromEntries(
+    [profile, oracle].map((source) => [
+      source,
+      {
+        path: path.join(
+          homedir(),
+          '.codex/artifacts/imagegen-studio/runs/lineage',
+          path.basename(source),
+        ),
+        sha256: prior[source],
+      },
+    ]),
+  )
+  assert.equal(assertReferenceSourceLineage(prior, current, [profile, oracle], snapshots).length, 2)
+  assert.throws(() => assertReferenceSourceLineage(prior, current, [profile], snapshots))
+  assert.throws(() => assertReferenceSourceLineage(prior, current, [profile, oracle], {}))
+  assert.throws(() =>
+    assertReferenceSourceLineage(
+      prior,
+      { ...current, [producer]: 'f'.repeat(64) },
+      [profile, oracle],
+      snapshots,
+    ),
+  )
+  assert.throws(() =>
+    assertReferenceSourceLineage(
+      prior,
+      { ...current, 'scripts/new-hook.mjs': 'f'.repeat(64) },
+      [profile, oracle],
+      snapshots,
+    ),
   )
 })
 

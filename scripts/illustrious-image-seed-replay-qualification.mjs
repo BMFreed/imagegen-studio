@@ -1,5 +1,7 @@
-/** Finite image Random/replay oracle; no production planners, RNG or filesystem reads. */
+/** Finite image seed/recovery oracle; no production planners, RNG or filesystem reads. */
 import assert from 'node:assert/strict'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import {
   assertIllustriousDynamicImageConfiguration,
   assertIllustriousDynamicImageFrozen,
@@ -10,6 +12,11 @@ import {
 } from './illustrious-dynamic-image-qualification.mjs'
 
 const modulus = 0x1_0000_0000
+export const imageSeedReplayBaselineSources = Object.freeze([
+  'scripts/installed-dynamic-batch-driver.mjs',
+  'scripts/illustrious-image-seed-replay-profile.mjs',
+  'scripts/illustrious-image-seed-replay-qualification.mjs',
+])
 function uint32(value) {
   assert.ok(Number.isSafeInteger(value) && value >= 0 && value < modulus)
 }
@@ -27,20 +34,34 @@ function exactKeys(value, required) {
 
 /** Handwritten offsets0..7 are pair-major; later queue rows never supply expected seeds. */
 export function literalIllustriousImageSeedReplayPlan(stage, objective, mode, replaySeed = null) {
-  assert.ok(['random', 'replay'].includes(stage))
-  if (stage === 'replay') uint32(replaySeed)
+  assert.ok(['random', 'replay', 'crash', 'reuse'].includes(stage))
+  if (stage !== 'random') uint32(replaySeed)
   else assert.equal(replaySeed, null)
   const exemplar = literalIllustriousDynamicImagePlan('baseline', objective, mode, 'per-prompt')
-  const policy = stage === 'random' ? 'random' : 'fixed'
+  const policy = stage === 'random' ? 'random' : stage === 'reuse' ? 'reuse' : 'fixed'
   const offsets = [0, 1, 2, 3, 4, 5, 6, 7]
+  const items =
+    stage === 'crash'
+      ? [0, 1, 2].map((iteration) => ({ ...structuredClone(exemplar.items[0]), iteration }))
+      : exemplar.items
   return freeze({
     ...structuredClone(exemplar),
     stage,
     requestedSeedPolicy: policy,
-    fixedSeed: replaySeed,
+    fixedSeed: stage === 'reuse' ? null : replaySeed,
     baseSeed: replaySeed,
     randomBaseSource: null,
-    items: exemplar.items.map((item, index) => ({
+    ...(stage === 'crash'
+      ? {
+          iterations: 3,
+          maxPrompts: 1,
+          sourcePrompts: structuredClone(exemplar.items[0].prompts),
+          expectedCompletions: 1,
+          expectedAdmissions: 3,
+          expectedCanceled: 2,
+        }
+      : {}),
+    items: items.map((item, index) => ({
       ...structuredClone(item),
       stage,
       baseSeed: replaySeed,
@@ -64,6 +85,10 @@ export function validateIllustriousImageSeedReplayFixture(fixture) {
     'sourceImage',
     ...(fixture?.mode === 'outpaint' ? ['lamaSource'] : []),
     ...(fixture?.stage === 'replay' ? ['baseline', 'replaySeed'] : []),
+    ...(['crash', 'reuse'].includes(fixture?.stage)
+      ? ['baseline', 'baseSeed', 'baselineSourceSnapshots']
+      : []),
+    ...(fixture?.stage === 'reuse' ? ['crashSource'] : []),
   ])
   assert.equal(fixture.schemaVersion, 1)
   assert.equal(fixture.profile, 'illustrious-image-seed-replay')
@@ -71,9 +96,16 @@ export function validateIllustriousImageSeedReplayFixture(fixture) {
     fixture.stage,
     fixture.objective,
     fixture.mode,
-    fixture.replaySeed ?? null,
+    fixture.replaySeed ?? fixture.baseSeed ?? null,
   )
-  const { baseline, replaySeed: _seed, ...image } = fixture
+  const {
+    baseline,
+    replaySeed: _seed,
+    baseSeed: _base,
+    baselineSourceSnapshots,
+    crashSource,
+    ...image
+  } = fixture
   // The legacy restored envelope validates a required pinned reference without opening it.
   validateIllustriousDynamicImageFixture({
     ...image,
@@ -81,6 +113,28 @@ export function validateIllustriousImageSeedReplayFixture(fixture) {
     stage: baseline ? 'restored' : 'baseline',
     ...(baseline ? { baseline } : {}),
   })
+  const artifactRoot = `${path.join(homedir(), '.codex/artifacts/imagegen-studio')}${path.sep}`
+  const checkReference = (descriptor, fields) => {
+    exactKeys(descriptor, fields)
+    const filename = descriptor[fields[0]]
+    assert.ok(
+      typeof filename === 'string' &&
+        path.resolve(filename) === filename &&
+        filename.startsWith(artifactRoot),
+    )
+    assert.ok(
+      filename !== fixture.artifacts &&
+        !filename.startsWith(`${fixture.artifacts}${path.sep}`) &&
+        !fixture.artifacts.startsWith(`${filename}${path.sep}`),
+    )
+    assert.match(descriptor[fields[1]], /^[a-f0-9]{64}$/)
+  }
+  if (['crash', 'reuse'].includes(fixture.stage)) {
+    exactKeys(baselineSourceSnapshots, imageSeedReplayBaselineSources)
+    for (const descriptor of Object.values(baselineSourceSnapshots))
+      checkReference(descriptor, ['path', 'sha256'])
+  }
+  if (fixture.stage === 'reuse') checkReference(crashSource, ['reportPath', 'reportSha256'])
   return plan
 }
 
@@ -112,7 +166,7 @@ function assertResolvedPlan(plan) {
     plan.stage,
     plan.objective,
     plan.mode,
-    plan.stage === 'replay' ? plan.fixedSeed : null,
+    plan.stage === 'random' ? null : plan.baseSeed,
   )
   const expected =
     plan.stage === 'random'
@@ -127,13 +181,13 @@ export function resolveIllustriousImageSeedReplayPlan(plan, admitted) {
     plan.stage,
     plan.objective,
     plan.mode,
-    plan.stage === 'replay' ? plan.fixedSeed : null,
+    plan.stage === 'random' ? null : plan.baseSeed,
   )
   if (plan.stage !== 'random' || plan.baseSeed === null) assert.deepEqual(plan, original)
   else assertResolvedPlan(plan)
   assert.ok(Array.isArray(admitted))
-  assert.equal(admitted.length, 8)
-  assert.equal(new Set(admitted.map(({ id }) => id)).size, 8)
+  assert.equal(admitted.length, original.expectedAdmissions)
+  assert.equal(new Set(admitted.map(({ id }) => id)).size, original.expectedAdmissions)
   const first = frozenOf(admitted[0])
   const resolved =
     plan.stage === 'random'
@@ -156,19 +210,20 @@ export function resolveIllustriousImageSeedReplayPlan(plan, admitted) {
 
 /** Check the pinned Random producer and saved outcome before the first replay native launch. */
 export function assertIllustriousImageSeedReplayBaseline({ baseline, fixture, plan }) {
-  assert.equal(fixture.stage, 'replay')
+  assert.ok(['replay', 'crash', 'reuse'].includes(fixture.stage))
   assert.deepEqual(plan, validateIllustriousImageSeedReplayFixture(fixture))
   assert.equal(baseline.status, 'passed')
   assert.equal(baseline.profile, fixture.profile)
-  assert.equal(baseline.stage, 'random')
+  const expectedStage = fixture.stage === 'replay' ? 'random' : 'replay'
+  assert.equal(baseline.stage, expectedStage)
   assert.equal(baseline.objective, fixture.objective)
   const random = assertResolvedPlan(baseline.resolvedPlan)
-  assert.equal(random.stage, 'random')
+  assert.equal(random.stage, expectedStage)
   assert.equal(random.objective, fixture.objective)
   assert.equal(random.mode, fixture.mode)
   assert.equal(
     random.baseSeed,
-    fixture.replaySeed,
+    fixture.replaySeed ?? fixture.baseSeed,
     'Numeric replay must use the pinned actual Random base.',
   )
   assert.equal(baseline.nativePhysicalExit?.confirmed, true)
@@ -177,16 +232,18 @@ export function assertIllustriousImageSeedReplayBaseline({ baseline, fixture, pl
   assert.equal(baseline.savedPackage?.totalLayers, 9)
   assert.equal(baseline.savedPackage?.reopened, true)
   assert.equal(baseline.savedPackage?.lastActualSeedSnapshot, random.items.at(-1).seed)
-  const observation = baseline.seedAdmissionObservation
-  assert.equal(observation?.producer, 'Main node:crypto.randomBytes(4).readUInt32LE(0)')
-  assert.equal(observation.outputSubstitution, false)
-  assert.equal(observation.originalIdentityRestored, true)
-  assert.equal(observation.calls.length, 1)
-  assert.equal(observation.calls[0].seed, random.baseSeed)
-  assert.equal(observation.calls[0].argumentCount, 1)
-  assert.equal(observation.calls[0].byteSize, 4)
-  assert.equal(observation.calls[0].synchronous, true)
-  assert.equal(observation.firstAdmittedQueueItemId, random.randomBaseSource.queueItemId)
+  if (expectedStage === 'random') {
+    const observation = baseline.seedAdmissionObservation
+    assert.equal(observation?.producer, 'Main node:crypto.randomBytes(4).readUInt32LE(0)')
+    assert.equal(observation.outputSubstitution, false)
+    assert.equal(observation.originalIdentityRestored, true)
+    assert.equal(observation.calls.length, 1)
+    assert.equal(observation.calls[0].seed, random.baseSeed)
+    assert.equal(observation.calls[0].argumentCount, 1)
+    assert.equal(observation.calls[0].byteSize, 4)
+    assert.equal(observation.calls[0].synchronous, true)
+    assert.equal(observation.firstAdmittedQueueItemId, random.randomBaseSource.queueItemId)
+  }
   assert.equal(baseline.admissions.length, 8)
   assert.equal(baseline.generations.length, 8)
   assert.equal(baseline.comparisons.length, 8)
@@ -198,10 +255,10 @@ export function assertIllustriousImageSeedReplayBaseline({ baseline, fixture, pl
     assert.equal(generation.row.status, 'completed')
     assert.equal(generation.frozen.context.sampling.seed, random.items[index].seed)
     assert.equal(generation.frozen.workerJob.sampling.seed, random.items[index].seed)
-    assert.equal(generation.frozen.context.sampling.requestedSeedPolicy, 'random')
+    assert.equal(generation.frozen.context.sampling.requestedSeedPolicy, random.requestedSeedPolicy)
     assert.equal(
       generation.provenance.generationConfiguration.sampling.requestedSeedPolicy,
-      'random',
+      random.requestedSeedPolicy,
     )
     assert.equal(
       generation.provenance.generationConfiguration.sampling.actualSeed,
@@ -210,19 +267,23 @@ export function assertIllustriousImageSeedReplayBaseline({ baseline, fixture, pl
     assert.equal(baseline.comparisons[index].queueItemId, generation.queueItemId)
     assert.equal(baseline.comparisons[index].readOnly, true)
   }
-  assert.equal(baseline.generations[0].queueItemId, random.randomBaseSource.queueItemId)
-  return { pinnedRandomBaseSeed: random.baseSeed, allEightOwningResultsVerified: true }
+  if (expectedStage === 'random')
+    assert.equal(baseline.generations[0].queueItemId, random.randomBaseSource.queueItemId)
+  return {
+    [expectedStage === 'random' ? 'pinnedRandomBaseSeed' : 'pinnedFixedBaseSeed']: random.baseSeed,
+    allEightOwningResultsVerified: true,
+  }
 }
 
 function adaptedItem(expected) {
   uint32(expected?.baseSeed)
   const literal = literalIllustriousImageSeedReplayPlan(
-    'replay',
+    expected.stage === 'random' ? 'replay' : expected.stage,
     expected.objective,
     expected.mode,
     expected.baseSeed,
   )
-  assert.ok(['random', 'replay'].includes(expected.stage))
+  assert.ok(['random', 'replay', 'crash', 'reuse'].includes(expected.stage))
   const index = literal.items.findIndex(
     (item) =>
       item.promptPairIndex === expected.promptPairIndex && item.iteration === expected.iteration,
@@ -231,15 +292,17 @@ function adaptedItem(expected) {
   const actual = {
     ...literal.items[index],
     stage: expected.stage,
-    requestedSeedPolicy: expected.stage === 'random' ? 'random' : 'fixed',
+    requestedSeedPolicy:
+      expected.stage === 'random' ? 'random' : expected.stage === 'reuse' ? 'reuse' : 'fixed',
   }
   assert.deepEqual(expected, actual)
-  return literalIllustriousDynamicImagePlan(
+  const canonical = literalIllustriousDynamicImagePlan(
     'baseline',
     expected.objective,
     expected.mode,
     'per-prompt',
-  ).items[index]
+  ).items
+  return canonical[expected.stage === 'crash' ? Math.min(expected.iteration, 1) : index]
 }
 
 /** Real seed/policy are checked first; the legacy DTO oracle only receives canonical metadata. */
@@ -267,12 +330,12 @@ export function assertIllustriousImageSeedReplayConfiguration(config, expected, 
 export function normalizeIllustriousImageSeedReplayNativeInputs(frozen) {
   return normalizeIllustriousDynamicImageNativeInputs(frozen)
 }
-/** Only a declared numeric replay omits requested policy; actual seed/behavior remain exact. */
+/** Only declared seed replay/recovery comparisons omit policy; actual seed/behavior stay exact. */
 export function normalizeIllustriousImageSeedReplayReferenceInputs(frozen, { fixture, plan }) {
   const value = normalizeIllustriousImageSeedReplayNativeInputs(frozen)
-  assert.equal(fixture.stage, 'replay')
-  assert.equal(plan.stage, 'replay')
-  assert.ok(['random', 'fixed'].includes(value.context.sampling.requestedSeedPolicy))
+  assert.ok(['replay', 'crash', 'reuse'].includes(fixture.stage))
+  assert.equal(plan.stage, fixture.stage)
+  assert.ok(['random', 'fixed', 'reuse'].includes(value.context.sampling.requestedSeedPolicy))
   delete value.context.sampling.requestedSeedPolicy
   return value
 }

@@ -433,10 +433,37 @@ identities. Baseline-hook and seedBehavior harness mutations give1+4 semantic RE
 with neighboring/fresh restored GREEN; no new trained mutation/crash jobs.
 
 This qualifies only256×256/Normal N3/two progress updates and the declared sources,
-resources and geometry. The next finite cut is image Reuse after crash; exact
-counts, crash points and budgets must be frozen before execution. Image wrap/cap32,
+resources and geometry. Its image Reuse/crash follow-up is recorded below.
+Image wrap/cap32,
 image embedding subsets, Anima image batches and broader formats/quality/release
 remain open. Public promise statuses do not change.
+
+## Installed image Reuse after crash gate
+
+[The finite44-admission follow-up](../../../engineering/phase-2c-illustrious-image-reuse-crash-research.md)
+uses four EPS/V × common-source IMG/normal mixed-alpha OUT scopes. Each Fixed B
+crash cut preserves completed/running/pending raw state; Home Recover restores
+the edited draft, source layer, candidate and document-scoped operational B while
+the source-only explicit Save snapshot remains null. Startup cancels two
+unpublished jobs with APP_RESTART. Add accepts the recovered candidate, which is
+hidden before public Reuse submits B+0…B+7/per-prompt.
+
+Independent readonly SQLite/ZIP/Pillow readback confirms44 admissions,
+36 completions,8 cancellations,36 accepted saved layers and4 reopened packages
+with source1 + hidden recovered1 + new8. All32 Reuse and4 crash outputs match
+their own retained Fixed controls in wholeRGBA. Fixed/Reuse policies, concrete
+prompts, actual seeds, LoRA/resource settings and sibling layer-source contexts
+survive Add/Save/reopen and every owning comparison. Later authoring remains
+separate. All11 original tables and43 worker identities are preserved.
+
+One decoder setup3-admission/1-completion/2-cancellation attempt with1 accepted
+unsaved shadow layer is excluded. Combined raw attempts47/37/10 contain36 saved
+accepted layers plus1 unsaved layer. Actual Main Reuse0/stale91 tests distinguish
+valid zero from absence: isolated nullish-to-truthy mutation gives4 semantic RED,
+8 neighboring GREEN and12 fresh restored GREEN, without installed mutation.
+This is the declared256×256/Normal N3 finite image boundary; manifest-first
+recovery, snapshot fallback, image wrap/cap32, Anima image, trained quality and
+full release readiness remain separate.
 
 ## Vue Prototype Coverage
 
