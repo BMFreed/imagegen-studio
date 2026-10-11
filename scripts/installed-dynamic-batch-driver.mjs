@@ -106,6 +106,13 @@ export function invokeComparisonAdapter(adapter, fixture, inputs) {
   return adapter.assertComparison?.({ ...inputs, fixture })
 }
 
+/** Validate an adapter's pinned baseline before admitting a new native batch. */
+export async function invokeBaselineAdapter(adapter, inputs) {
+  if (!Object.hasOwn(adapter, 'assertBaseline')) return
+  assert.equal(typeof adapter.assertBaseline, 'function')
+  await adapter.assertBaseline(inputs)
+}
+
 export async function runInstalledDynamicBatchQualification(adapter, fixturePath) {
   const expect = baseExpect.configure({ timeout: 120_000 })
   const fixture = await readJson(fixturePath, 64 * 1024)
@@ -1902,6 +1909,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       assert.equal(baseline.appData, appData)
       assert.equal(baseline.runtimeId, pointer.runtimeId)
       await assertReferenceBindings(baseline, fixture.baseline, 'baseline')
+      await invokeBaselineAdapter(adapter, { baseline, fixture, plan, reference })
       report.baseline = fixture.baseline
     }
     if (fixture.crashSource) {

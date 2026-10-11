@@ -394,8 +394,9 @@ changes. Later pairs use new seeds2…7 and have no trained same-input reference
 Cross-pair prompt causality is not claimed; the earlier per-iteration same-seed
 prompt evidence remains separate.
 
-Authored source templates/concrete weighted prompts, Fixed0/per-prompt and
-LoRA−0.5 remain frozen in queued and accepted settings. Later green-bowl/grainy
+Concrete weighted prompts, Fixed0/per-prompt and LoRA−0.5 remain frozen in
+queued and accepted settings. Original templates/maxPrompts are captured in the
+pre-admission draft/report; accepted provenance does not include them. Later green-bowl/grainy
 prompts, Fixed37/per-iteration, maxPrompts3 and LoRA−0.25 survive Save/reopen as
 current draft separately. Every accepted layer has its own comparison, and
 actual Add's anchor-only visibility default remains unchanged. The qualifier
@@ -405,15 +406,37 @@ remain unchanged; prior report hashes/plaintext are preserved with explicit
 lineage for the four changed qualification helpers. No trained mutation/crash
 jobs were added. Exact executed outcomes and limits live in the new research note.
 
-The next finite proposal is image Random → numeric Fixed replay in these same
-four EPS/V × IMG/OUT scopes: observe the original Main base seed and compare
-wholeRGBA for identical executed inputs while preserving requested-policy
-metadata. This proposal is unexecuted; freeze its exact counts, plan and budgets
-before running. Image Reuse/crash, wrap and cap32 remain separate follow-ups.
-Installed image Random/Reuse/wrap/cap32/crash, dynamic embedding subsets in image
-modes, Anima image batches and broader geometry/formats/quality remain open.
-FullMVP/Invoke trained-pixel parity/public delivery/release are not claimed;
-PP-004/005/007/008 remain «Пока не обещать».
+Image Random → numeric Fixed replay is now qualified in the separate follow-up
+below. Image Reuse/crash, wrap/cap32, image embedding subsets, Anima image batches
+and broader geometry/formats/quality remain open. PP-004/005/007/008 remain
+«Пока не обещать»; fullMVP/Invoke trained-pixel parity/public release are not claimed.
+
+## Installed image Random → Fixed replay gate
+
+[The finite64-job follow-up](../../../engineering/phase-2c-illustrious-image-seed-replay-research.md)
+uses four EPS/V × common-source IMG/normal mixed-alpha OUT scopes, each with a
+Random batch and numeric Fixed replay of four weighted positive×negative pairs
+× two iterations/per-prompt. All64 admissions/completions are explicitly accepted
+and saved/reopened in eight packages. All32 replay images match their Random
+counterparts in wholeRGBA. Four original Main cryptographic picks are observed
+without replacement; the handwritten offsets0…7 bind all later seeds.
+
+Every accepted result retains its concrete executed prompts, actual seed,
+per-prompt behavior and Random versus Fixed requested policy. Original templates
+and maxPrompts remain pre-admission draft/report evidence. Later green-bowl/grainy
+prompts, Fixed37/per-iteration, maxPrompts3 and LoRA−0.25 stay separate after Save.
+The native comparison retains all executed context/worker fields except requested
+policy and portable document identity/revision, excluding the transport envelope.
+Independent SQLite/ZIP/Pillow readback checks raw rows, provenance, owning settings
+comparisons, cursor/Save snapshot, source-over previews and unchanged43 worker
+identities. Baseline-hook and seedBehavior harness mutations give1+4 semantic RED
+with neighboring/fresh restored GREEN; no new trained mutation/crash jobs.
+
+This qualifies only256×256/Normal N3/two progress updates and the declared sources,
+resources and geometry. The next finite cut is image Reuse after crash; exact
+counts, crash points and budgets must be frozen before execution. Image wrap/cap32,
+image embedding subsets, Anima image batches and broader formats/quality/release
+remain open. Public promise statuses do not change.
 
 ## Vue Prototype Coverage
 
