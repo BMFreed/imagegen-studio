@@ -407,8 +407,9 @@ lineage for the four changed qualification helpers. No trained mutation/crash
 jobs were added. Exact executed outcomes and limits live in the new research note.
 
 Image Random → numeric Fixed replay, Reuse/crash, bounded MAX→0 wrap and cap32
-are qualified in the separate follow-ups below. Image dynamic embedding
-subsets, Anima image batches and broader geometry/formats/quality remain open.
+are qualified in the separate follow-ups below, including the finite image
+embedding subset gate. Broader embedding permutations, Anima image batches
+and broader geometry/formats/quality remain open.
 PP-004/005/007/008 remain
 «Пока не обещать»; fullMVP/Invoke trained-pixel parity/public release are not claimed.
 
@@ -435,8 +436,8 @@ with neighboring/fresh restored GREEN; no new trained mutation/crash jobs.
 
 This qualifies only256×256/Normal N3/two progress updates and the declared sources,
 resources and geometry. Its separate image Reuse/crash, bounded MAX→0 wrap and
-cap32 follow-ups are recorded below. Image dynamic embedding subsets, Anima
-image batches and broader formats/quality/release
+cap32 and finite image embedding subset follow-ups are recorded below. Broader
+embedding permutations, Anima image batches and broader formats/quality/release
 remain open. Public promise statuses do not change.
 
 ## Installed image Reuse after crash gate
@@ -464,8 +465,8 @@ valid zero from absence: isolated nullish-to-truthy mutation gives4 semantic RED
 8 neighboring GREEN and12 fresh restored GREEN, without installed mutation.
 This is the declared256×256/Normal N3 Reuse/crash boundary; its own run did not
 exercise wrap or cap32. The separate bounded MAX→0 wrap and cap32 gates follow
-below. Manifest-first recovery, snapshot fallback, image dynamic embedding
-subsets, Anima image, trained quality and
+below, together with the finite image embedding subset gate. Manifest-first
+recovery, snapshot fallback, broader embedding permutations, Anima image, trained quality and
 full release readiness remain separate.
 
 ## Installed image uint32 wrap gate
@@ -544,14 +545,42 @@ DigitalArt−.5/external native FP32 VAE and exact EPS/V IMG/LaMa OUT resources,
 finite seeds0…7, cap32 and first-three-pair truncation only. MAX cross-pair
 wrap, other Cartesian permutations/caps/method policies, Anima image, broader
 geometry/formats, quality/Invoke pixel parity/fullMVP/release remain separate.
-The next finite gate is image dynamic embedding subsets for the accepted
-Illustrious-family EPS/V IMG/OUT scope. Public promise statuses do not change.
+At this cap checkpoint image dynamic embedding subsets were next; the
+completed finite subset gate is recorded below. Public promise statuses do not change.
 
 A later [raw imported-source guard supplement](../../../engineering/phase-2c-illustrious-image-batch-cap-research.md#raw-imported-source-guard-supplement)
 fixes a vacuous native-view provenance check:271 final tests pass, actual guard
 sensitivity gives1 semantic RED/26 GREEN across27 executions, and the updated
 guard passes all8 original raw before/after captures. Original native reports,
 worker/app bytes and qualified152/8/24/4 counts remain unchanged.
+
+## Installed image dynamic embedding subsets gate
+
+[The finite image subset gate](../../../engineering/phase-2c-illustrious-dynamic-embeddings-image-research.md)
+qualifies EPS/V × common-source IMG/normal mixed-alpha OUT at Fixed0/per-iteration:
+24 admissions/completions/accepted layers,8 Save/reopen packages and8 wholeRGBA
+matches against each scope's own baseline. Baseline4/prefix2 use the literal
+ordinary/negative-only/positive-only/both order, with only the first two selected
+in prefix. Full weighted templates and exact refs stay authored/frozen; native
+and portable records contain only the effective signed subsets. Ordinary wire
+omits `embeddings`. Prefix literal/resolved plans declare truncation; this gate
+does not assert UI notice rendering.
+
+Independent raw readback passes18,641 checks: all24 owning comparisons,
+source layers,8 cursor/Save snapshots0, complete ZIP/member/configuration/source
+context,11 old tables and43 original worker identities. Four full OUT previews
+preserve222,208 source pixels. Later prompt/ref/seed37/LoRA edits remain separate
+current drafts.28 visible contrasts change text and vectors together and do not
+prove embedding-only causality.
+
+118 focused tests pass0skip. Fresh Main source sensitivity gives16 semantic
+RED/32 GREEN across48 executions;547 copied source members are exactly restored
+and guarded-cleaned. No new installed-worker tensor mutation. Historical TXT
+negative-vector and signed image tensor evidence are not counted as new.
+Only256×256/Normal N3/two observed updates/exact resources are qualified.
+Anima dynamic image foundation is next; other permutations/geometry/formats,
+scalar/per-encoder correctness, quality/fullMVP/release remain separate. Public
+PP-004/005/007/008 statuses remain «Пока не обещать».
 
 ## Vue Prototype Coverage
 

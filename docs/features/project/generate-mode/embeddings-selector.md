@@ -164,5 +164,33 @@ physical exit and fresh4 same-input GREEN are independently checked. Raw aggrega
 12 layers/snapshot0; raw24/16/8 includes a separate watchdog4/0 exclusion.
 This proves joint negative learned-vector sensitivity, not independent CLIP L/G,
 scalar weighting, broad formats/counts/quality or Anima embedding support.
-Next finite gate is installed Random/uint32 seed boundaries; Preset handoff,
+At this historical TXT checkpoint Random/uint32 boundaries were next; Preset handoff,
 broader caps/seed combinations and public delivery/release stay open.
+
+## Installed image dynamic subset checkpoint (12.10.2026)
+
+[The finite image subset gate](../../../engineering/phase-2c-illustrious-dynamic-embeddings-image-research.md)
+qualifies EPS/V × common-source IMG/normal mixed-alpha OUT at Fixed0/per-iteration:
+24 admissions/completions/accepted layers,8 Save/reopen packages and8 wholeRGBA
+matches against each scope's own baseline. Baseline4/prefix2 use the literal
+ordinary/negative-only/positive-only/both order, with only the first two selected
+in prefix. Full weighted templates and exact refs stay authored/frozen; native
+and portable records contain only the effective signed subsets. Ordinary wire
+omits `embeddings`. Prefix literal/resolved plans declare truncation; this gate
+does not assert UI notice rendering.
+
+Independent raw readback passes18,641 checks: all24 owning comparisons,
+source layers,8 cursor/Save snapshots0, complete ZIP/member/configuration/source
+context,11 old tables and43 original worker identities. Four full OUT previews
+preserve222,208 source pixels. Later prompt/ref/seed37/LoRA edits remain separate
+current drafts.28 visible contrasts change text and vectors together and do not
+prove embedding-only causality.
+
+118 focused tests pass0skip. Fresh Main source sensitivity gives16 semantic
+RED/32 GREEN across48 executions;547 copied source members are exactly restored
+and guarded-cleaned. No new installed-worker tensor mutation. Historical TXT
+negative-vector and signed image tensor evidence are not counted as new.
+Only256×256/Normal N3/two observed updates/exact resources are qualified.
+Anima dynamic image foundation is next; other permutations/geometry/formats,
+scalar/per-encoder correctness, quality/fullMVP/release remain separate. Public
+PP-004/005/007/008 statuses remain «Пока не обещать».

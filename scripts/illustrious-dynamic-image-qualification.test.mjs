@@ -518,7 +518,7 @@ test('strict installed envelope pins the finite48-job plan and rejects undeclare
   }
 })
 
-test('six and32accepted image contributions retain full composition and cannot substitute source/final layer', () => {
+test('four,six and32accepted image contributions retain full composition and cannot substitute source/final layer', () => {
   const solid = (width, color) => {
     const rgba = Buffer.alloc(width * 256 * 4)
     for (let pixel = 0; pixel < width * 256; pixel++)
@@ -526,7 +526,7 @@ test('six and32accepted image contributions retain full composition and cannot s
     return { width, height: 256, rgba }
   }
   const source = solid(256, 100)
-  for (const count of [6, 32]) {
+  for (const count of [4, 6, 32]) {
     const contributions = Array.from({ length: count }, (_, index) => solid(256, index + 1))
     const preview = solid(256, count)
     const input = { source, contributions, preview, mode: 'img2img' }
