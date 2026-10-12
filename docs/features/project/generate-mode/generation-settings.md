@@ -215,7 +215,7 @@ Native seeds0…7, cap32 and the selected prefix are qualified only for the
 stated256×256/Normal N3/two actual updates/exact resources. MAX cross-pair wrap,
 Anima image, other caps/method policies and quality/fullMVP/release readiness
 remain separate. The subsequent image dynamic embedding subset gate is
-qualified24/8/8; the next finite gate is Anima dynamic image foundation.
+qualified24/8/8; [Installed Anima dynamic image foundation](../../../engineering/phase-2c-anima-dynamic-image-research.md) is qualified; Anima image Fixed/per-prompt is next.
 Details and limitations live in
 [Dynamic Prompting](./dynamic-prompting.md#installed-image-dynamic-embedding-subsets-gate).
 
@@ -586,3 +586,9 @@ full frozen Main batch/admission/queue/Retry/accepted provenance remain open.
 SD-only CLIP Skip, CFG Rescale, manual VAE precision, external VAE replacement
 and embeddings are explicitly refused by this wire. Runtime installation,
 trained-model quality and Linux/NVIDIA release qualification remain separate.
+
+## Installed Anima dynamic image foundation
+
+[Installed Anima dynamic image foundation](../../../engineering/phase-2c-anima-dynamic-image-research.md): Euler × common-source IMG/normal mixed-alpha OUT:20 admissions/completions/accepted layers,4 Save/reopen packages и4 own same-input wholeRGBA prefix controls. Четыре weighted positive×negative пары × две iterations; Fixed0/per-iteration seeds0/1, full authored templates и selected first-pair prefix. Полные compiled strings/spans остаются в frozen worker inputs; portable provenance содержит concrete raw weighted prompts без compiled arrays/templates/maxPrompts. Independent raw readback PASS18128:20 owning comparisons,4 cursor/Save snapshots1,11 old tables,43 worker identities и2 OUT previews/111104 protected source pixels. 75 focused tests PASS0skip;18 actual Main source executions дают4 semantic RED/14 GREEN. 34 visible joint-input contrasts не доказывают scalar-weight/tensor causality; новых installed-worker mutations нет. Только256×256/Euler N3/two actual updates/exact resources; quality/fullMVP/release не заявлены.
+
+Следующий finite gate — Anima Fixed0/per-prompt common-source IMG/normal mixed-alpha OUT: четыре weighted positive×negative пары × две iterations, literal seeds0…7 и собственные numeric controls. Counts/resources/budgets фиксируются отдельно перед запуском. Anima embedding actions остаются неподдерживаемыми. PP-004/005/007/008 сохраняют «Пока не обещать».
