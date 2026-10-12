@@ -10,6 +10,14 @@ const memoryCeiling = 12 * 1024 ** 3
 const launchedIdentities = new Map()
 const deadlineTimers = new Map()
 
+/** Finite harness allowance; ordinary qualifications retain their 1800-second default. */
+export function validateQualificationDeadlineSeconds(value, label = 'deadlineSeconds') {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 2700) {
+    throw new Error(`${label} must be a finite positive integer no larger than 2700.`)
+  }
+  return value
+}
+
 function processStart(stat) {
   const value = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
   if (!/^\d+$/.test(value ?? '')) throw new Error('Cannot identify the owned native process.')
@@ -39,14 +47,20 @@ function finiteLimit(text, ceiling) {
  */
 export async function boundQualificationProcess(
   pid,
-  { read = readFile, entries = readdir, execute = exec } = {},
+  { read = readFile, entries = readdir, execute = exec, deadlineSeconds = 1800 } = {},
 ) {
+  validateQualificationDeadlineSeconds(deadlineSeconds)
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid owned Electron PID.')
   const processFile = (id, name) => `/proc/${id}/${name}`
   const initialStat = await read(processFile(pid, 'stat'), 'utf8')
   const start = processStart(initialStat)
   if (launchedIdentities.has(pid) && launchedIdentities.get(pid) !== start) {
     throw new Error('Owned Electron PID was reused after launch.')
+  }
+  const deadlineKey = `${pid}:${start}`
+  const previousDeadline = deadlineTimers.get(deadlineKey)
+  if (previousDeadline && previousDeadline.deadlineSeconds !== deadlineSeconds) {
+    throw new Error('Owned Electron deadline cannot change for the same PID/start identity.')
   }
   launchedIdentities.set(pid, start)
 
@@ -90,6 +104,9 @@ export async function boundQualificationProcess(
     const unit = path.basename(group)
     const ownedScope = unit === `app-imagegen\\x2dstudio-${pid}.scope`
     if (ownedScope) {
+      if (previousDeadline && previousDeadline.group !== group) {
+        throw new Error('Owned Electron deadline scope changed for the same PID/start identity.')
+      }
       const showGroup = async () =>
         (
           await execute(
@@ -129,15 +146,14 @@ export async function boundQualificationProcess(
     if (ownedScope) {
       // RuntimeMaxSec is immutable on an already active KDE scope. A separate systemd
       // timer survives launcher termination; its action revalidates PID/starttime/unit.
-      const key = `${pid}:${start}`
       const timer = `igs-qualification-deadline-${pid}-${start}`
-      if (!deadlineTimers.has(key)) {
+      if (!deadlineTimers.has(deadlineKey)) {
         await execute(
           'systemd-run',
           [
             '--user',
             `--unit=${timer}`,
-            '--on-active=1800s',
+            `--on-active=${deadlineSeconds}s`,
             '-p',
             'MemoryMax=128M',
             '-p',
@@ -154,7 +170,7 @@ export async function boundQualificationProcess(
           ],
           { timeout: 10_000, maxBuffer: 32 * 1024 },
         )
-        deadlineTimers.set(key, timer)
+        deadlineTimers.set(deadlineKey, { timer, group, deadlineSeconds })
       }
       evidence.at(-1).deadlineTimer = timer
     }
@@ -171,7 +187,7 @@ export async function boundQualificationProcess(
     processIdentities,
     memoryCeilingPerGroup: memoryCeiling,
     zeroSwap: true,
-    ownedScopeDeadlineSeconds: 1800,
+    ownedScopeDeadlineSeconds: deadlineSeconds,
     groups: evidence,
   }
 }

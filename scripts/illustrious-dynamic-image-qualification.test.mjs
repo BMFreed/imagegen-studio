@@ -31,6 +31,7 @@ import {
   validateIllustriousDynamicImageFixture as validate,
   assertIllustriousDynamicImageConfiguration as assertConfiguration,
   assertIllustriousDynamicImagePixels as assertPixels,
+  assertIllustriousDynamicImageSavedPixels as assertSavedPixels,
 } from './illustrious-dynamic-image-qualification.mjs'
 const root = path.join(
   homedir(),
@@ -515,6 +516,63 @@ test('strict installed envelope pins the finite48-job plan and rejects undeclare
     delete missing.baseline
     assert.throws(() => validate(missing))
   }
+})
+
+test('six and32accepted image contributions retain full composition and cannot substitute source/final layer', () => {
+  const solid = (width, color) => {
+    const rgba = Buffer.alloc(width * 256 * 4)
+    for (let pixel = 0; pixel < width * 256; pixel++)
+      rgba.set([color, color, color, 255], pixel * 4)
+    return { width, height: 256, rgba }
+  }
+  const source = solid(256, 100)
+  for (const count of [6, 32]) {
+    const contributions = Array.from({ length: count }, (_, index) => solid(256, index + 1))
+    const preview = solid(256, count)
+    const input = { source, contributions, preview, mode: 'img2img' }
+    assert.equal(assertSavedPixels(input).allBrowserPixelsChecked, 65536)
+    assert.throws(() => assertSavedPixels({ ...input, preview: source }), /composition RGB/)
+    assert.throws(
+      () => assertSavedPixels({ ...input, contributions: [...contributions].reverse() }),
+      /composition RGB/,
+    )
+    for (const contribution of contributions)
+      for (let y = 0; y < 256; y++)
+        for (let x = 0; x < 256; x++)
+          contribution.rgba[(y * 256 + x) * 4 + 3] = x < 153 ? 0 : x < 168 ? 128 : 255
+    // Independent constant-color recurrence in the15soft columns; every opaque last pixel is count.
+    let soft = 100
+    for (let color = 1; color <= count; color++) soft = Math.round((color * 128 + soft * 127) / 255)
+    const out = solid(320, 100)
+    for (let y = 0; y < 256; y++)
+      for (let x = 217; x < 320; x++) {
+        const color = x < 232 ? soft : count
+        out.rgba.set([color, color, color, 255], (y * 320 + x) * 4)
+      }
+    const outInput = { source, contributions, preview: out, mode: 'outpaint' }
+    const evidence = assertSavedPixels(outInput)
+    assert.equal(evidence.protectedPixels, 217 * 256)
+    assert.equal(evidence.softPixels, 15 * 256)
+    assert.equal(evidence.browserSoftRgbTolerance, count)
+    for (const [at, delta] of [
+      [0, 1],
+      [232 * 4, 1],
+      [217 * 4, count + 1],
+      [217 * 4 + 3, -1],
+    ]) {
+      const wrong = { ...out, rgba: Buffer.from(out.rgba) }
+      wrong.rgba[at] += delta
+      assert.throws(() => assertSavedPixels({ ...outInput, preview: wrong }))
+    }
+  }
+  assert.throws(() =>
+    assertSavedPixels({
+      source,
+      contributions: Array(5).fill(source),
+      preview: source,
+      mode: 'img2img',
+    }),
+  )
 })
 
 test('visible-axis guard distinguishes signed prompt/seed changes from lost common targets and hidden OUT RGB', () => {

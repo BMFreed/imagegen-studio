@@ -71,25 +71,69 @@ async function assertQueuedNotice({ window, expect, plan }) {
   }
 }
 
+/** Qualification-only: validate the actual saved source entity, not its native view. */
+export function assertBatchCapImportedSource(before, inputPrecondition) {
+  const source = inputPrecondition?.layer
+  assert.ok(
+    source && source.kind === 'raster',
+    'The import precondition must contain its raw raster layer.',
+  )
+  assert.equal(
+    source.id,
+    inputPrecondition.layerId,
+    'The raw import precondition must own the recorded source ID.',
+  )
+  assert.equal(
+    source.generationProvenance,
+    undefined,
+    'The imported source precondition must have no generation provenance.',
+  )
+  const layers = before?.effects?.portable?.project?.layers
+  assert.ok(Array.isArray(layers), 'The actual saved Project layer list is required.')
+  assert.equal(
+    layers.length,
+    1,
+    'The saved Project must contain only the imported source before Add.',
+  )
+  assert.equal(layers[0].id, source.id, 'The saved raw source must own the imported layer ID.')
+  assert.equal(
+    layers[0].generationProvenance,
+    undefined,
+    'The saved imported source must have no generation provenance.',
+  )
+  assert.deepEqual(
+    layers[0],
+    source,
+    'Every saved raw source attribute must remain unchanged from import.',
+  )
+}
+
 /** One real confirmed 33-job UI refusal preserves all32 genuine temporary results before Add. */
-async function afterCompletions({
-  window,
-  expect,
-  api,
-  tab,
-  project,
-  fixture,
-  plan,
-  report,
-  setInput,
-  setDynamic,
-  save,
-  captureAdmissionEffects,
-  assertAdmissionEffectsUnchanged,
-  runtimeUsers,
-  screenshot,
-  checkpoint,
-}) {
+export async function assertBatchCapConfirmedRefusal(
+  {
+    window,
+    expect,
+    api,
+    tab,
+    project,
+    fixture,
+    plan,
+    report,
+    setInput,
+    setDynamic,
+    save,
+    captureAdmissionEffects,
+    assertAdmissionEffectsUnchanged,
+    runtimeUsers,
+    screenshot,
+    checkpoint,
+  },
+  expectedSourceLayerCount = 0,
+) {
+  assert.ok(
+    [0, 1].includes(expectedSourceLayerCount),
+    'Refusal source count must be explicitly TXT0 or image1.',
+  )
   if (fixture.stage !== 'boundary') return undefined
   const refusalPlan = { ...plan, maxPrompts: 1, iterations: 33 }
   for (const [label, text] of [
@@ -122,7 +166,12 @@ async function afterCompletions({
   report.refusal33 = evidence
   await checkpoint()
   assert.equal(before.proof.projectCandidateCount, 32)
-  assert.equal(before.proof.layerCount, 0)
+  assert.equal(before.proof.layerCount, expectedSourceLayerCount)
+  if (expectedSourceLayerCount === 1) {
+    assert.equal(before.effects.tab.layers.length, 1)
+    assert.equal(before.effects.tab.layers[0].id, report.inputPrecondition?.layerId)
+    assertBatchCapImportedSource(before, report.inputPrecondition)
+  }
   assert.deepEqual(evidence.uiRequest.generationDraft.seed, { policy: 'fixed', value: 0 })
   const generate = window.getByRole('button', { name: 'Generate', exact: true })
   await expect(generate).toBeEnabled()
@@ -207,7 +256,7 @@ export const generationBatchCapProfile = Object.freeze({
   assertComparison: familyChoices.assertComparison,
   assertPreview,
   assertQueuedNotice,
-  afterCompletions,
+  afterCompletions: assertBatchCapConfirmedRefusal,
   summaryClaims: ({ fixture, report }) => {
     if (fixture.stage === 'boundary') assert.equal(report.refusal33?.unchanged, true)
     return {

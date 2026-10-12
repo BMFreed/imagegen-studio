@@ -1,0 +1,170 @@
+{
+  "credit": {
+    "kind": "actual-native-saved-layer-metadata-only",
+    "sourceRun": "illustrious-image-batch-cap/20261012-checks",
+    "packageSha256": "6c30f99f66e30d73e860b234646c5c49900dfce4916e3fa578957104163118db",
+    "originalReportSha256": "27dec56211ff8ae8ef2021cbc87605154319c2d7845aeea70787a975018b77fe",
+    "qualifiedNativeClaim": false,
+    "reason": "R0 completed and saved32 outputs, but its1800-second qualification deadline expired during comparisons. These fixtures prove entity shape only, not inference or reopen quality."
+  },
+  "sourceLayer": {
+    "asset": {
+      "bytes": 126872,
+      "path": "assets/layers/4dbe6f8f-781c-458e-a643-812123d3dbea.png",
+      "sha256": "ba6f6f52e9afad026008de5eed57b07b5eb8f961bb78dbbda63c642863410c61",
+      "height": 256,
+      "width": 256
+    },
+    "blendMode": "normal",
+    "id": "4dbe6f8f-781c-458e-a643-812123d3dbea",
+    "kind": "raster",
+    "locked": false,
+    "name": "common-source-epsilon",
+    "opacity": 1,
+    "sourceIccProfile": {
+      "bytes": 588,
+      "path": "assets/profiles/113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1.icc",
+      "sha256": "113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1"
+    },
+    "transform": {
+      "rotationDegrees": 0,
+      "scaleX": 1,
+      "scaleY": 1,
+      "x": 0,
+      "y": 0
+    },
+    "visible": true
+  },
+  "generatedLayer": {
+    "asset": {
+      "bytes": 109707,
+      "path": "assets/layers/7eeddfbc-c9ec-48ff-933f-8d9c491697f8.png",
+      "sha256": "23e21be234d92f6616d92d24c9b7bac53c96f76e7d6097191a4031911b3a2654",
+      "height": 256,
+      "width": 256
+    },
+    "blendMode": "normal",
+    "generationProvenance": {
+      "executionResultContext": {
+        "acceptedAt": "2026-10-11T22:57:34.993Z",
+        "candidateId": "090489fd-8acc-4d44-bc6c-bb7420dfbae7",
+        "completedAt": "2026-10-11T22:34:04.390Z",
+        "output": {
+          "byteSize": 109707,
+          "colorSpace": "srgb",
+          "format": "png",
+          "height": 256,
+          "iccSha256": "113f72e7a61626408bf3c95ddbb295aea396a2bbf7c8644b4f373994cc25a3b1",
+          "sha256": "23e21be234d92f6616d92d24c9b7bac53c96f76e7d6097191a4031911b3a2654",
+          "width": 256
+        },
+        "queueItemId": "090489fd-8acc-4d44-bc6c-bb7420dfbae7"
+      },
+      "generationConfiguration": {
+        "cfgRescale": 0,
+        "loras": [
+          {
+            "enabled": true,
+            "resource": {
+              "baseModelFamily": "illustrious",
+              "civitaiFileId": 700062,
+              "civitaiModelId": 700060,
+              "civitaiVersionId": 700061,
+              "displayName": "Digital Art",
+              "fileSha256": "c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9",
+              "kind": "lora",
+              "localModelId": "4e7021e3-682f-41b5-8f35-326ca3369f81",
+              "localVersionId": "a06b507f-2a9f-49ad-87c9-a774c7a5e314",
+              "predictionType": null,
+              "versionName": "Illustrious-XL v0.1"
+            },
+            "weight": -0.5
+          }
+        ],
+        "mode": "img2img",
+        "model": {
+          "baseModelFamily": "illustrious",
+          "civitaiFileId": 928571,
+          "civitaiModelId": 833294,
+          "civitaiVersionId": 1022833,
+          "displayName": "NoobAI-XL (NAI-XL)",
+          "fileSha256": "ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1",
+          "kind": "checkpoint",
+          "localModelId": "7810ce45-78a3-4ed2-97ba-c7a7f18d9f41",
+          "localVersionId": "7d45fde1-5317-4a2b-931c-a4edbd333856",
+          "predictionType": "epsilon",
+          "versionName": "Epsilon-pred 1.0-Version"
+        },
+        "negativePrompt": {
+          "embeddingRefs": [],
+          "text": "(blurry:0.7), low quality"
+        },
+        "positivePrompt": {
+          "embeddingRefs": [],
+          "text": "a (red:1.3) ceramic cup on a wooden table, studio photograph"
+        },
+        "sampling": {
+          "actualSeed": 0,
+          "cfgScale": 5,
+          "invokeScheduler": "euler_a",
+          "noiseProfile": {
+            "baseSchedule": "sdxl-scaled-linear-v1",
+            "rescaleBetasZeroSnr": false,
+            "schemaVersion": 1,
+            "timestepSpacing": "leading"
+          },
+          "requestedSeedPolicy": "fixed",
+          "sampler": "Euler a",
+          "scheduler": "Normal",
+          "seedBehavior": "per-iteration",
+          "steps": 3,
+          "denoisingStrength": 0.5
+        },
+        "size": {
+          "height": 256,
+          "width": 256
+        },
+        "vae": {
+          "baseModelFamily": "illustrious",
+          "civitaiFileId": 700082,
+          "civitaiModelId": 700070,
+          "civitaiVersionId": 700081,
+          "displayName": "NoobAI EPS derived VAE",
+          "fileSha256": "f09b42f799d82812ef38461205c4764ecb3e10384bb6ee198321124dbc59e9b7",
+          "kind": "vae",
+          "localModelId": "08dc5f34-f2d1-45bb-b5cf-a5bc593a8dbf",
+          "localVersionId": "6432fd7d-822f-463d-94cc-4ad22464431f",
+          "predictionType": null,
+          "versionName": "Official EPS extracted native"
+        },
+        "vaePrecision": "FP32"
+      },
+      "kind": "illustrious-img2img",
+      "layerSourceContext": {
+        "bbox": {
+          "height": 256,
+          "width": 256,
+          "x": 0,
+          "y": 0
+        },
+        "sourceDocumentId": "5e3e8473-4ae5-4442-8235-6e6949508eb1",
+        "sourceDocumentRevision": "08e08d5a-ba5b-4302-9cd5-3f93dd938fee",
+        "sourceTargetSha256": "ba6f6f52e9afad026008de5eed57b07b5eb8f961bb78dbbda63c642863410c61"
+      },
+      "schemaVersion": 1
+    },
+    "id": "7eeddfbc-c9ec-48ff-933f-8d9c491697f8",
+    "kind": "raster",
+    "locked": false,
+    "name": "Generated 770",
+    "opacity": 1,
+    "transform": {
+      "rotationDegrees": 0,
+      "scaleX": 1,
+      "scaleY": 1,
+      "x": 0,
+      "y": 0
+    },
+    "visible": true
+  }
+}

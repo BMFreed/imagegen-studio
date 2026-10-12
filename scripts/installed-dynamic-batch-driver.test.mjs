@@ -7,11 +7,123 @@ import {
   assertReferenceSourceLineage,
   awaitVerifiedCompletions,
   createStickyCompletionCache,
+  createInstalledDynamicBatchDeadlineBounds,
   invokeCrashLayersAdapter,
   invokeComparisonAdapter,
   invokeRecoveredInputAdapter,
   shouldCompareCompletionBaseline,
 } from './installed-dynamic-batch-driver.mjs'
+import { illustriousImageBatchCapProfile } from './illustrious-image-batch-cap-profile.mjs'
+import { illustriousImageSeedWrapProfile } from './illustrious-image-seed-wrap-profile.mjs'
+
+// Only proc/cgroup/systemd observations are doubled. Both guards and actual profile selection run.
+// Mutation: replace either forwarded seconds option with1800; the2700 boundary becomes RED while
+// the ordinary profile and cap prefix remain GREEN. Inference, apps and signals are not launched.
+let nextDeadlinePid = 980_000_000
+for (const [adapter, stage, expectedSeconds] of [
+  [illustriousImageBatchCapProfile, 'boundary', 2700],
+  [illustriousImageBatchCapProfile, 'prefix', 1800],
+  [illustriousImageSeedWrapProfile, 'wrap', 1800],
+])
+  test(`the real driver binds ${stage}/${expectedSeconds}s to launcher readback and every native timer`, async () => {
+    const fixture = { stage }
+    const bounded = createInstalledDynamicBatchDeadlineBounds(adapter, fixture)
+    assert.equal(bounded.seconds, expectedSeconds)
+    assert.equal(Object.isFrozen(bounded), true)
+    // Later authoring cannot make the native scope disagree with its launcher allowance.
+    fixture.stage = 'later-edit'
+    const launcherPid = nextDeadlinePid++
+    const launcherGroup =
+      '/user.slice/user-1000.slice/user@1000.service/app.slice/driver-launcher.service'
+    const launcherFiles = new Map([
+      [`/proc/${launcherPid}/cgroup`, `0::${launcherGroup}\n`],
+      [`/sys/fs/cgroup${launcherGroup}/memory.max`, '2147483648'],
+      [`/sys/fs/cgroup${launcherGroup}/memory.swap.max`, '0'],
+    ])
+    let launcher
+    await assert.doesNotReject(async () => {
+      launcher = await bounded.launcher({
+        pid: launcherPid,
+        maxRuntimeSeconds: 1,
+        read: async (filename) => {
+          assert.ok(
+            launcherFiles.has(filename),
+            'Only the actual launcher guard reads its declared boundary.',
+          )
+          return launcherFiles.get(filename)
+        },
+        exec: async (program, args) => {
+          assert.equal(program, 'systemctl')
+          assert.ok(args.includes('show'))
+          assert.ok(args.includes('--property=RuntimeMaxUSec'))
+          return { stdout: `ControlGroup=${launcherGroup}\nRuntimeMaxUSec=${expectedSeconds}s\n` }
+        },
+      })
+    }, 'The actual launcher must accept its selected finite profile allowance.')
+    assert.equal(launcher.runtimeMaxSeconds, expectedSeconds)
+    assert.equal(launcher.memoryMax, '2147483648')
+    assert.equal(launcher.swapMax, '0')
+    const nativePid = nextDeadlinePid++
+    const nativeGroup = `/user.slice/user-1000.slice/user@1000.service/app.slice/app-imagegen\\x2dstudio-${nativePid}.scope`
+    const commands = []
+    const nativeFiles = new Map([
+      [`/proc/${nativePid}/stat`, `${nativePid} (electron) S ${'0 '.repeat(18)}123456 0`],
+      [`/proc/${nativePid}/status`, 'PPid:\t1\n'],
+      [`/proc/${nativePid}/cgroup`, `0::${nativeGroup}\n`],
+      [`/sys/fs/cgroup${nativeGroup}/memory.max`, '12884901888'],
+      [`/sys/fs/cgroup${nativeGroup}/memory.swap.max`, '0'],
+      [`/sys/fs/cgroup${nativeGroup}/memory.peak`, '62345678'],
+    ])
+    const native = await bounded.native(nativePid, {
+      deadlineSeconds: 1,
+      entries: async () => [String(nativePid)],
+      read: async (filename) => {
+        assert.ok(
+          nativeFiles.has(filename),
+          'Only actual native guard boundary observations are provided.',
+        )
+        return nativeFiles.get(filename)
+      },
+      execute: async (program, args) => {
+        commands.push({ program, args })
+        return { stdout: args.includes('show') ? `${nativeGroup}\n` : '' }
+      },
+    })
+    assert.equal(native.ownedScopeDeadlineSeconds, expectedSeconds)
+    assert.equal(native.memoryCeilingPerGroup, 12 * 1024 ** 3)
+    assert.equal(native.zeroSwap, true)
+    const timer = commands.filter(({ program }) => program === 'systemd-run')
+    assert.equal(timer.length, 1)
+    assert.ok(timer[0].args.includes(`--on-active=${expectedSeconds}s`))
+    assert.ok(timer[0].args.includes('MemorySwapMax=0'))
+    assert.ok(timer[0].args.includes('RuntimeMaxSec=30'))
+    assert.ok(
+      commands.some(
+        ({ args }) => args.includes('MemoryMax=12G') && args.includes('MemorySwapMax=0'),
+      ),
+    )
+    assert.equal(
+      commands.some(({ args }) => args.includes('kill') || args.includes('stop')),
+      false,
+    )
+  })
+
+test('driver deadline opt-in rejects malformed or unbounded allowances before any launch', () => {
+  assert.equal(createInstalledDynamicBatchDeadlineBounds({}, {}).seconds, 1800)
+  for (const value of [0, -1, NaN, Infinity, 2701, 2700.5, '2700', null, undefined])
+    assert.throws(
+      () =>
+        createInstalledDynamicBatchDeadlineBounds(
+          { qualificationDeadlineSeconds: () => value },
+          {},
+        ),
+      /qualificationDeadlineSeconds must be a finite positive integer no larger than 2700/,
+    )
+  for (const value of [null, undefined, false, 2700])
+    assert.throws(() =>
+      createInstalledDynamicBatchDeadlineBounds({ qualificationDeadlineSeconds: value }, {}),
+    )
+})
 
 test('recovered image layer assertions receive their actual owner and cannot disappear into TXT defaults', () => {
   const inputs = {

@@ -28,8 +28,26 @@ import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
   stopExpiredQualificationProcess,
+  validateQualificationDeadlineSeconds,
 } from './qualification-resource-limits.mjs'
 import { assertUpgradeBounds } from './upgrade-qualification-worker.mjs'
+
+/** Resolve once; the actual launcher readback and every native scope use one finite allowance. */
+export function createInstalledDynamicBatchDeadlineBounds(adapter, fixture) {
+  let seconds = 1800
+  if (Object.hasOwn(adapter, 'qualificationDeadlineSeconds')) {
+    assert.equal(typeof adapter.qualificationDeadlineSeconds, 'function')
+    seconds = adapter.qualificationDeadlineSeconds(fixture)
+  }
+  validateQualificationDeadlineSeconds(seconds, 'qualificationDeadlineSeconds')
+  return Object.freeze({
+    seconds,
+    launcher: (dependencies = {}) =>
+      assertUpgradeBounds({ ...dependencies, maxRuntimeSeconds: seconds }),
+    native: (pid, dependencies = {}) =>
+      boundQualificationProcess(pid, { ...dependencies, deadlineSeconds: seconds }),
+  })
+}
 
 /** A reversed stack may author a different first weight; legacy one-adapter profiles retain −0.5. */
 export function authoredFirstLoraWeight(adapter, fixture) {
@@ -201,7 +219,8 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   assert.equal(installed.status, 'activated-qualified')
   assert.equal(installed.confirmedWorkerExit, true)
   validateAnimaRegressionFixture(reference, installed.ready)
-  const launcherBounds = await assertUpgradeBounds()
+  const deadlineBounds = createInstalledDynamicBatchDeadlineBounds(adapter, fixture)
+  const launcherBounds = await deadlineBounds.launcher()
   const workerRoot = installed.installed.workerRoot
   await canonicalDirectory(workerRoot)
   assert.ok(workerRoot.startsWith(path.join(appData, 'runtime') + path.sep))
@@ -266,6 +285,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     installedReady: installed.ready,
     launcherBounds,
     completionTimeoutMs,
+    qualificationDeadlineSeconds: deadlineBounds.seconds,
     inferenceSteps,
     observedSteps,
     provisionalOnly,
@@ -522,7 +542,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     throw new Error('Project package was not found by its actual document identity.')
   }
   async function bounds(phase) {
-    const observed = await boundQualificationProcess(nativeProcess.pid)
+    const observed = await deadlineBounds.native(nativeProcess.pid)
     report.resourceLimitChecks.push({ phase, ...observed })
     return observed
   }

@@ -406,8 +406,8 @@ remain unchanged; prior report hashes/plaintext are preserved with explicit
 lineage for the four changed qualification helpers. No trained mutation/crash
 jobs were added. Exact executed outcomes and limits live in the new research note.
 
-Image Random → numeric Fixed replay, Reuse/crash and the bounded MAX→0 wrap
-are qualified in the separate follow-ups below. Image cap32, image embedding
+Image Random → numeric Fixed replay, Reuse/crash, bounded MAX→0 wrap and cap32
+are qualified in the separate follow-ups below. Image dynamic embedding
 subsets, Anima image batches and broader geometry/formats/quality remain open.
 PP-004/005/007/008 remain
 «Пока не обещать»; fullMVP/Invoke trained-pixel parity/public release are not claimed.
@@ -434,9 +434,9 @@ identities. Baseline-hook and seedBehavior harness mutations give1+4 semantic RE
 with neighboring/fresh restored GREEN; no new trained mutation/crash jobs.
 
 This qualifies only256×256/Normal N3/two progress updates and the declared sources,
-resources and geometry. Its separate image Reuse/crash and bounded MAX→0 wrap
-follow-ups are recorded below. Image cap32, image embedding subsets, Anima image
-batches and broader formats/quality/release
+resources and geometry. Its separate image Reuse/crash, bounded MAX→0 wrap and
+cap32 follow-ups are recorded below. Image dynamic embedding subsets, Anima
+image batches and broader formats/quality/release
 remain open. Public promise statuses do not change.
 
 ## Installed image Reuse after crash gate
@@ -463,8 +463,9 @@ accepted layers plus1 unsaved layer. Actual Main Reuse0/stale91 tests distinguis
 valid zero from absence: isolated nullish-to-truthy mutation gives4 semantic RED,
 8 neighboring GREEN and12 fresh restored GREEN, without installed mutation.
 This is the declared256×256/Normal N3 Reuse/crash boundary; its own run did not
-exercise wrap. The separate bounded MAX→0 wrap gate follows below. Manifest-first
-recovery, snapshot fallback, image cap32, Anima image, trained quality and
+exercise wrap or cap32. The separate bounded MAX→0 wrap and cap32 gates follow
+below. Manifest-first recovery, snapshot fallback, image dynamic embedding
+subsets, Anima image, trained quality and
 full release readiness remain separate.
 
 ## Installed image uint32 wrap gate
@@ -491,10 +492,66 @@ Actual Main modulo mutation gives4 overflow semantic RED,8 nonoverflow
 neighbors GREEN and12 fresh restored GREEN;137 focused tests pass. The
 installed worker was not mutated. Previous installed TXT high-bit mutations
 remain historical evidence. This gate qualifies only256×256/Normal N3/two
-observed updates/exact resources and native MAX→0. Native1/2/cross-pair wrap,
-image cap32, Anima image, quality/Invoke pixel parity/fullMVP/release remain
-separate. The next finite gate is image cap32; public promise statuses do not
-change.
+observed updates/exact resources and native MAX→0. Its own run did not qualify
+native1/2/cross-pair wrap or cap32. The subsequent finite cap/prefix gate below
+qualifies seeds0…7; MAX cross-pair wrap, image dynamic embedding subsets, Anima
+image, quality/Invoke pixel parity/fullMVP/release remain separate. At this
+historical checkpoint image cap32 was next; public promise statuses do not change.
+
+## Installed image cap32 and selected-prefix gate
+
+[The finite152-job cap gate](../../../engineering/phase-2c-illustrious-image-batch-cap-research.md) uses four EPS/V × common-source IMG/normal
+mixed-alpha OUT scopes. Boundary selects four weighted pairs × eight iterations
+at Fixed0/per-iteration:32 outputs with seeds0…7 in each pair. Prefix selects
+the first three pairs × two iterations at Fixed0/per-prompt:6 outputs with
+seeds0…5 and explicit preview/queued truncation notices. All24 prefix images
+match their own boundary slots0,1,10,11,20,21 in wholeRGBA before Add. Only
+seedBehavior authoring metadata and portable document IDs/revisions differ.
+
+All152 admissions/completions/accepted layers survive eight Save/reopen
+packages, with one imported source plus32 or6 accepted layers per project.
+All152 exact configurations and sibling source contexts have owning read-only
+comparisons; all8 cursors and Save snapshots retain last actual seed7/5.
+Four real confirmed33-job replacement attempts return BATCH_TOO_LARGE before
+Add and preserve every32 temporary candidates, source layer, prior queue/receipt/
+cursor state and the whole paired captures/save copies. No new jobs/receipts
+are admitted. Undo/Redo availability flags are checked; hidden Undo-stack
+content and later historical private-tree rehash are not claimed.
+
+Independent stdlib/Pillow readback passes 104613 recorded checks,
+including all ZIP/member digests and full32/six-contribution source-over
+previews, all11 old tables,43 original worker identities,34 current source keys
+and five unchanged bundles. Historical R0 actual Main faults give16 semantic
+RED and84 GREEN across100 executions; these subjects are byte-unchanged in R2.
+Fresh deadline DI faults give4 RED and371 GREEN across375 executions. Both
+536-source copies are exactly restored and guarded-cleaned; preexecution261 focused
+tests pass with0skips. Original195 and pre-split259 passing suites remain
+historical evidence. Resource/candidate/staging
+preconditions in these Main tests are doubles; actual native UI retention
+and pixel comparisons remain separate evidence. No installed-worker mutant
+or new runtime/model copy is involved.
+
+The previous R0 attempt exhausted its1800s deadline after32 actual accepted
+outputs and one retained package, before all owning comparisons/reopen checks
+finished; it has zero qualified stages/packages. Its unchanged report and
+all original rows remain historical. The new R2 counts exclude those32; raw
+across both attempts is184, with152 newly qualified here. Boundary deadlines
+are explicitly2700s; prefixes retain1800s. Native12GiB/launcher2GiB/combined
+14GiB, zero-swap and1600s completion poll remain unchanged.
+
+This qualifies the stated256×256/Normal N3/two actual updates/CFG5/strength.5,
+DigitalArt−.5/external native FP32 VAE and exact EPS/V IMG/LaMa OUT resources,
+finite seeds0…7, cap32 and first-three-pair truncation only. MAX cross-pair
+wrap, other Cartesian permutations/caps/method policies, Anima image, broader
+geometry/formats, quality/Invoke pixel parity/fullMVP/release remain separate.
+The next finite gate is image dynamic embedding subsets for the accepted
+Illustrious-family EPS/V IMG/OUT scope. Public promise statuses do not change.
+
+A later [raw imported-source guard supplement](../../../engineering/phase-2c-illustrious-image-batch-cap-research.md#raw-imported-source-guard-supplement)
+fixes a vacuous native-view provenance check:271 final tests pass, actual guard
+sensitivity gives1 semantic RED/26 GREEN across27 executions, and the updated
+guard passes all8 original raw before/after captures. Original native reports,
+worker/app bytes and qualified152/8/24/4 counts remain unchanged.
 
 ## Vue Prototype Coverage
 

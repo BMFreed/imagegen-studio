@@ -1,10 +1,14 @@
 /** Real profile mechanics with lightweight adapters; these are not installed UI/ML evidence. */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { generationBatchCapProfile as profile } from './generation-batch-cap-profile.mjs'
+import {
+  generationBatchCapProfile as profile,
+  assertBatchCapConfirmedRefusal,
+} from './generation-batch-cap-profile.mjs'
 import {
   assertBatchCapConfiguration,
   assertBatchCapFrozen,
@@ -14,6 +18,10 @@ import {
   validateBatchCapFixture,
 } from './generation-batch-cap-qualification.mjs'
 import { generationSeedBoundaryProfile as familyChoices } from './generation-seed-boundary-profile.mjs'
+
+const capturedSourceLayer = JSON.parse(
+  readFileSync(new URL('./fixtures/image-cap-source-layer-metadata.json', import.meta.url), 'utf8'),
+).sourceLayer
 
 const root = path.join(homedir(), '.codex/artifacts/imagegen-studio/runs/cap-profile-mechanics')
 const red = 'a (red:1.3) ceramic cup on a wooden table, studio photograph'
@@ -327,6 +335,9 @@ function refusalAdapter({
   reviewCount = 32,
   errorCode = 'BATCH_TOO_LARGE',
   alterAfter = false,
+  sourceLayerCount = 0,
+  alterSourceAfter = false,
+  alterRawSourceAfter = false,
 } = {}) {
   const events = []
   const draft = {
@@ -376,7 +387,15 @@ function refusalAdapter({
     fixture: fixture(),
     plan: literalBatchCapPlan('boundary', 'epsilon'),
     project: { id: 'mechanical-project' },
-    report: {},
+    report:
+      sourceLayerCount === 1
+        ? {
+            inputPrecondition: {
+              layerId: capturedSourceLayer.id,
+              layer: structuredClone(capturedSourceLayer),
+            },
+          }
+        : {},
     window: {
       getByRole(role, options) {
         assert.equal(options.exact, true)
@@ -443,9 +462,18 @@ function refusalAdapter({
       const candidates = Array.from({ length: 32 }, (_, index) => ({
         candidateId: `candidate-${index}`,
       }))
+      const layers = Array.from({ length: sourceLayerCount }, (_, index) => ({
+        id: index === 0 ? capturedSourceLayer.id : `unexpected-source-${index}`,
+        visible: true,
+        imageUrl: 'declared-source-image-view',
+        transform: { x: label === 'after-ui-refusal' && alterSourceAfter ? 1 : 0, y: 0 },
+      }))
+      const rawSourceLayers = sourceLayerCount === 1 ? [structuredClone(capturedSourceLayer)] : []
+      if (label === 'after-ui-refusal' && alterRawSourceAfter && rawSourceLayers.length)
+        rawSourceLayers[0].asset.sha256 = 'b'.repeat(64)
       return {
         effects: {
-          tab: { generationDraft: structuredClone(draft), layers: [] },
+          tab: { generationDraft: structuredClone(draft), layers },
           results: { candidates, lastActualSeed: 7 },
           tableRows: {
             generation_queue_item: [
@@ -455,10 +483,10 @@ function refusalAdapter({
               },
             ],
           },
-          portable: { sha256: 'opaque-saved-package' },
+          portable: { sha256: 'opaque-saved-package', project: { layers: rawSourceLayers } },
           privateTrees: [{ sha256: 'opaque-staging-proof' }],
         },
-        proof: { path: label, projectCandidateCount: 32, layerCount: 0 },
+        proof: { path: label, projectCandidateCount: 32, layerCount: sourceLayerCount },
       }
     },
     assertAdmissionEffectsUnchanged(before, after) {
@@ -537,6 +565,34 @@ test('refusal hook rejects prior durable-state changes and retains both raw proo
   await assert.rejects(profile.afterCompletions(context))
   assert.equal(context.report.refusal33.before.path, 'before-ui-refusal')
   assert.equal(context.report.refusal33.after.path, 'after-ui-refusal')
+  assert.equal(context.report.refusal33.unchanged, false)
+  assert.equal(events.includes('Keep results'), false)
+})
+
+test('shared confirmed33 refusal preserves the genuine imported source beside32temporary image candidates', async () => {
+  const { context, events } = refusalAdapter({ sourceLayerCount: 1 })
+  const evidence = await assertBatchCapConfirmedRefusal(context, 1)
+  assert.equal(evidence.unchanged, true)
+  assert.equal(evidence.before.layerCount, 1)
+  assert.equal(evidence.after.layerCount, 1)
+  assert.equal(evidence.reviewedCandidateIds.length, 32)
+  assert.equal(events.at(-1), 'Keep results')
+  const wrongCount = refusalAdapter({ sourceLayerCount: 0 })
+  await assert.rejects(() => assertBatchCapConfirmedRefusal(wrongCount.context, 1))
+  assert.equal(wrongCount.events.includes('Generate'), false)
+  const wrongSource = refusalAdapter({ sourceLayerCount: 1 })
+  wrongSource.context.report.inputPrecondition.layerId = 'another-source'
+  await assert.rejects(() => assertBatchCapConfirmedRefusal(wrongSource.context, 1))
+  assert.equal(wrongSource.events.includes('Generate'), false)
+  const changed = refusalAdapter({ sourceLayerCount: 1, alterSourceAfter: true })
+  await assert.rejects(() => assertBatchCapConfirmedRefusal(changed.context, 1))
+  assert.equal(changed.context.report.refusal33.unchanged, false)
+  assert.equal(changed.events.includes('Keep results'), false)
+})
+
+test('shared source guard sees raw saved source changes even when native presentation remains unchanged', async () => {
+  const { context, events } = refusalAdapter({ sourceLayerCount: 1, alterRawSourceAfter: true })
+  await assert.rejects(() => assertBatchCapConfirmedRefusal(context, 1))
   assert.equal(context.report.refusal33.unchanged, false)
   assert.equal(events.includes('Keep results'), false)
 })

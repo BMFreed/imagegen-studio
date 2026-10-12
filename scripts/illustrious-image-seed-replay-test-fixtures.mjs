@@ -1,7 +1,7 @@
 /** Test preconditions only; actual preparation/admission/provenance are imported production owners. */
 import assert from 'node:assert/strict'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { installedFixture, resource } from './illustrious-dynamic-image-test-fixtures.mjs'
@@ -273,6 +273,7 @@ export async function produce(reference, objective, mode, policy, seed = null, o
     const tabId = localProjectRecoveryKey(projectPath)
     const queue = new GenerationQueueRepository(database.db, temporary)
     await queue.recoverAfterRestart()
+    let capacityPreflights = 0
     const orchestrator = new GenerationOrchestrator(
       {
         getOpenDocumentId: (id) => (id === tabId ? document.documentId : null),
@@ -289,7 +290,12 @@ export async function produce(reference, objective, mode, policy, seed = null, o
       },
       models,
       queue,
-      { assertReadyForPublication: () => undefined, preflightBatchCapacity: async () => undefined },
+      {
+        assertReadyForPublication: () => undefined,
+        preflightBatchCapacity: async () => {
+          capacityPreflights++
+        },
+      },
       {
         cancelAndWait: async () => assert.fail('No cancellation.'),
         runOne: async () => assert.fail('No inference.'),
@@ -305,17 +311,83 @@ export async function produce(reference, objective, mode, policy, seed = null, o
       },
     )
     let edits = 0
-    const admitted = await (
-      mode === 'outpaint'
-        ? orchestrator.enqueuePreparedOutpaintBatch.bind(orchestrator)
-        : orchestrator.enqueuePreparedBatch.bind(orchestrator)
-    )(tabId, prepared, batch, { ready: structuredClone(ready) }, async () => {
-      edits++
-      document.generationDraft.seed = { policy: 'fixed', value: 37 }
-      prepared.context.sampling.seed = 37
-      prepared.context.sampling.requestedSeedPolicy = 'fixed'
-      document.generationDraft.positivePrompt.text = 'late edit'
-    })
+    const admissionState = async () => {
+      const tables = {}
+      for (const [name, order] of [
+        ['generation_queue_item', 'id'],
+        ['generation_candidate_receipt', 'queue_item_id'],
+        ['generation_seed_cursor', 'local_project_key'],
+        ['generation_staging_discarded_session', 'staging_session_id'],
+        ['generation_acceptance_journal', 'operation_id'],
+      ])
+        tables[name] = await database.db.selectFrom(name).selectAll().orderBy(order).execute()
+      const privateFiles = {}
+      const inspect = async (filename, relative) => {
+        let metadata
+        try {
+          metadata = await lstat(filename)
+        } catch (error) {
+          if (error.code === 'ENOENT') {
+            privateFiles[relative] = { kind: 'absent' }
+            return
+          }
+          throw error
+        }
+        if (metadata.isSymbolicLink()) {
+          privateFiles[relative] = { kind: 'symlink', target: await readlink(filename) }
+          return
+        }
+        if (metadata.isDirectory()) {
+          privateFiles[relative] = { kind: 'directory' }
+          for (const name of (await readdir(filename)).sort())
+            await inspect(path.join(filename, name), `${relative}/${name}`)
+          return
+        }
+        assert.ok(metadata.isFile(), 'Admission effects must have an observable regular file kind.')
+        privateFiles[relative] = {
+          kind: 'file',
+          byteSize: metadata.size,
+          sha256: digest(await readFile(filename)),
+        }
+      }
+      for (const relative of ['scratch', 'generation-inputs', 'recovery/generation-staging'])
+        await inspect(path.join(temporary, relative), relative)
+      return {
+        tables,
+        privateFiles,
+        // This physical file supplies queue identity; it is not a valid saved .igs package.
+        projectIdentitySha256: digest(await readFile(projectPath)),
+        // Caller-owned source document, not a ProjectService/Undo/Save ownership claim.
+        document: structuredClone(document),
+      }
+    }
+    const admissionStateBefore =
+      options.observeRefusal === true ? await admissionState() : undefined
+    let admitted
+    try {
+      admitted = await (
+        mode === 'outpaint'
+          ? orchestrator.enqueuePreparedOutpaintBatch.bind(orchestrator)
+          : orchestrator.enqueuePreparedBatch.bind(orchestrator)
+      )(tabId, prepared, batch, { ready: structuredClone(ready) }, async () => {
+        edits++
+        document.generationDraft.seed = { policy: 'fixed', value: 37 }
+        prepared.context.sampling.seed = 37
+        prepared.context.sampling.requestedSeedPolicy = 'fixed'
+        document.generationDraft.positivePrompt.text = 'late edit'
+      })
+    } catch (error) {
+      if (options.observeRefusal !== true) throw error
+      return {
+        refusal: { name: error.name, code: error.code, message: error.message },
+        admissionStateBefore,
+        admissionStateAfter: await admissionState(),
+        preparedSeed,
+        picks,
+        edits,
+        capacityPreflights,
+      }
+    }
     assert.equal(edits, 1)
     assert.equal(
       admitted.items.length,
@@ -362,7 +434,22 @@ export async function produce(reference, objective, mode, policy, seed = null, o
         }).generationConfiguration,
       )
     }
-    return { rows, configs, preparedSeed, picks }
+    return {
+      rows,
+      configs,
+      preparedSeed,
+      picks,
+      plan: admitted.plan,
+      edits,
+      capacityPreflights,
+      ...(options.observeRefusal === true
+        ? {
+            refusal: null,
+            admissionStateBefore,
+            admissionStateAfter: await admissionState(),
+          }
+        : {}),
+    }
   } finally {
     await database?.close()
     await rm(temporary, { force: true, recursive: true })

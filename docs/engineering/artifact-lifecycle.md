@@ -60,6 +60,12 @@ Main/worker в отдельный owned scope, launcher может иметь м
 фактические queue/receipt counts перед повтором. См.
 [bounded dynamic embedding run](./phase-2c-illustrious-dynamic-embeddings-research.md).
 
+Если bounded-контроллер сам создаёт `<name>.log`, его stdout/stderr сохранять
+отдельно, например в `<name>.wrapper.log`. Два writer того же файла могут
+перезаписать начало TAP и продублировать footer; такое повреждение evidence
+не считается semantic RED. Для машинного чтения тестов явно задавать TAP и
+проверять единственный полный footer и конкретную причину падения.
+
 Для будущих окружений подходит стабильный layout:
 
 ```text

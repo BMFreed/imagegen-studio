@@ -80,6 +80,121 @@ test('KDE-moved Main and worker are checked in their actual scope, with finite k
   )
 })
 
+// Boundary: actual proc/cgroup/systemd guard; transports alone are controlled.
+// Mutation: hard-code1800 in the real timer command. Explicit2700 fails; default1800 stays green.
+test('explicit2700 schedules the actual owned timer and preserves every RAM/swap bound', async () => {
+  for (const seconds of [1800, 2700]) {
+    const f = fixture()
+    const evidence = await boundQualificationProcess(f.pid, {
+      ...f.dependencies,
+      ...(seconds === 2700 ? { deadlineSeconds: seconds } : {}),
+    })
+    assert.equal(evidence.ownedScopeDeadlineSeconds, seconds)
+    assert.equal(evidence.memoryCeilingPerGroup, 12 * 1024 ** 3)
+    assert.equal(evidence.zeroSwap, true)
+    assert.equal(evidence.groups[0].memoryMax, '12884901888')
+    assert.equal(evidence.groups[0].swapMax, '0')
+    const timers = f.commands.filter(({ program }) => program === 'systemd-run')
+    assert.equal(timers.length, 1)
+    assert.ok(timers[0].args.includes(`--on-active=${seconds}s`))
+    assert.ok(timers[0].args.includes('MemoryMax=128M'))
+    assert.ok(timers[0].args.includes('MemorySwapMax=0'))
+    assert.ok(timers[0].args.includes('RuntimeMaxSec=30'))
+    assert.equal(
+      evidence.groups[0].deadlineTimer,
+      `igs-qualification-deadline-${f.pid}-${evidence.nativeIdentity.start}`,
+    )
+    assert.ok(
+      f.commands.some(
+        ({ program, args }) =>
+          program === 'systemctl' &&
+          args.includes('MemoryMax=12G') &&
+          args.includes('MemorySwapMax=0'),
+      ),
+    )
+  }
+})
+
+test('an owned timer can be reobserved but never extended or shortened at the same PID/start', async () => {
+  for (const original of [1800, 2700]) {
+    const f = fixture()
+    const dependencies = { ...f.dependencies, deadlineSeconds: original }
+    const first = await boundQualificationProcess(f.pid, dependencies)
+    const again = await boundQualificationProcess(f.pid, dependencies)
+    assert.equal(again.groups[0].deadlineTimer, first.groups[0].deadlineTimer)
+    assert.equal(f.commands.filter(({ program }) => program === 'systemd-run').length, 1)
+    f.commands.length = 0
+    await assert.rejects(
+      boundQualificationProcess(f.pid, {
+        ...f.dependencies,
+        deadlineSeconds: original === 1800 ? 2700 : 1800,
+      }),
+      /deadline cannot change for the same PID\/start/,
+    )
+    assert.deepEqual(f.commands, [], 'A changed allowance must refuse before any unit mutation.')
+  }
+})
+
+test('invalid explicit deadlines refuse before proc discovery or unit mutation', async () => {
+  for (const deadlineSeconds of [0, -1, NaN, Infinity, 2701, 2700.5, '2700', null]) {
+    const f = fixture()
+    await assert.rejects(
+      boundQualificationProcess(f.pid, {
+        deadlineSeconds,
+        read: async () => assert.fail('Invalid deadline must not read proc/cgroup.'),
+        entries: async () => assert.fail('Invalid deadline must not discover processes.'),
+        execute: async () => assert.fail('Invalid deadline must not mutate units.'),
+      }),
+      /deadlineSeconds must be a finite positive integer no larger than 2700/,
+    )
+  }
+})
+
+test('extended2700 still requires actual native PID and cgroup exit before stopping its timer', async () => {
+  const f = fixture()
+  const bounded = await boundQualificationProcess(f.pid, {
+    ...f.dependencies,
+    deadlineSeconds: 2700,
+  })
+  f.commands.length = 0
+  await assert.rejects(
+    confirmQualificationProcessExit([bounded], {
+      read: f.dependencies.read,
+      execute: f.dependencies.execute,
+      pause: async () => {},
+    }),
+    /Owned native processes remain alive/,
+  )
+  assert.deepEqual(f.commands, [], 'A live original PID cannot authorize stopping its deadline.')
+  await assert.rejects(
+    confirmQualificationProcessExit([bounded], {
+      read: exitedNativeRead(f, async () => 'populated 1\nfrozen 0\n'),
+      execute: f.dependencies.execute,
+      pause: async () => {},
+    }),
+    /Owned native processes remain alive/,
+  )
+  assert.deepEqual(f.commands, [], 'Absent tracked PIDs cannot authorize a still-populated scope.')
+  const exited = await confirmQualificationProcessExit([bounded], {
+    read: exitedNativeRead(f, async () => 'populated 0\nfrozen 0\n'),
+    execute: f.dependencies.execute,
+    pause: async () => {},
+  })
+  assert.equal(exited.confirmed, true)
+  assert.deepEqual(exited.identities, bounded.processIdentities)
+  assert.deepEqual(exited.confirmedOwnedScopeExit, [f.group])
+  assert.deepEqual(exited.stoppedDeadlineTimers, [bounded.groups[0].deadlineTimer])
+  assert.deepEqual(
+    f.commands.map(({ program, args }) => ({ program, args })),
+    [
+      {
+        program: 'systemctl',
+        args: ['--user', 'stop', `${bounded.groups[0].deadlineTimer}.timer`],
+      },
+    ],
+  )
+})
+
 test('mismatching user-unit ControlGroup refuses before any limit mutation', async () => {
   const f = fixture()
   f.wrongScope()

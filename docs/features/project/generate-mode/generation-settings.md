@@ -198,8 +198,25 @@ comparison. Operational cursor and Save snapshot preserve zero.
 Only256×256/Normal N3/two actual updates/exact resources are qualified.
 Native1/2/cross-pair wrap and installed-worker high-bit mutation are not part
 of this gate; quality/fullMVP/release readiness remain separate. Detailed
-proof and next image cap32 boundary live in
+proof and the subsequent cap32 gate/current gaps live in
 [Dynamic Prompting](./dynamic-prompting.md#installed-image-uint32-wrap-gate).
+
+## Installed image cap32 and selected-prefix checkpoint
+
+[The bounded installed cap gate](../../../engineering/phase-2c-illustrious-image-batch-cap-research.md) connects the public image preview/
+Generate flow to32-job boundary batches and six-result first-three-pair
+truncated prefixes in EPS/V IMG and normal mixed-alpha OUT. Four confirmed
+33-job replacement refusals preserve all32 completed temporary candidates and
+the imported source before Add; no new job is admitted. All152 accepted results
+survive eight Save/reopen packages and their owning comparison, exact Fixed
+policy/actual seeds/behavior/resources/source context and cursor snapshots.
+
+Native seeds0…7, cap32 and the selected prefix are qualified only for the
+stated256×256/Normal N3/two actual updates/exact resources. MAX cross-pair wrap,
+Anima image, other caps/method policies and quality/fullMVP/release readiness
+remain separate. The next finite gate is image dynamic embedding subsets
+within Illustrious-family EPS/V IMG/OUT. Details and limitations live in
+[Dynamic Prompting](./dynamic-prompting.md#installed-image-cap32-and-selected-prefix-gate).
 
 ## Production CFG Rescale checkpoint
 

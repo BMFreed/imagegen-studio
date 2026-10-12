@@ -688,6 +688,70 @@ test('deadline, memory and actual cgroup readback are required before bounded wo
   assert.throws(() => systemdDeadlineSeconds('0'), /RuntimeMaxSec/)
 })
 
+// Boundary: real launcher guard parses actual-value transport; it never edits the inherited unit.
+// Mutation: ignore maxRuntimeSeconds and use1800. Explicit2700 must fail; ordinary1800 stays green.
+test('an explicit2700 launcher allowance keeps the default1800 ceiling and RAM/swap checks', async () => {
+  const group = '/user.slice/extended-qualification.service'
+  const files = new Map([
+    ['/proc/101/cgroup', `0::${group}\n`],
+    [`/sys/fs/cgroup${group}/memory.max`, '2147483648'],
+    [`/sys/fs/cgroup${group}/memory.swap.max`, '0'],
+  ])
+  let deadline = '45min'
+  const dependencies = {
+    pid: 101,
+    read: async (file) => files.get(file),
+    exec: async () => ({ stdout: `ControlGroup=${group}\nRuntimeMaxUSec=${deadline}\n` }),
+  }
+  let actual
+  await assert.doesNotReject(async () => {
+    actual = await assertUpgradeBounds({ ...dependencies, maxRuntimeSeconds: 2700 })
+  }, 'The explicitly bounded45-minute launcher must be admitted.')
+  assert.equal(actual.runtimeMaxSeconds, 2700)
+  assert.equal(actual.group, group)
+  assert.equal(actual.memoryMax, '2147483648')
+  assert.equal(actual.swapMax, '0')
+  await assert.rejects(assertUpgradeBounds(dependencies), /RuntimeMaxSec <= 1800/)
+  deadline = '2701s'
+  await assert.rejects(
+    assertUpgradeBounds({ ...dependencies, maxRuntimeSeconds: 2700 }),
+    /RuntimeMaxSec <= 2700/,
+  )
+  deadline = '30min'
+  assert.equal((await assertUpgradeBounds(dependencies)).runtimeMaxSeconds, 1800)
+  files.set(`/sys/fs/cgroup${group}/memory.max`, '12884901889')
+  await assert.rejects(
+    assertUpgradeBounds({ ...dependencies, maxRuntimeSeconds: 2700 }),
+    /MemoryMax/,
+  )
+  files.set(`/sys/fs/cgroup${group}/memory.max`, '2147483648')
+  files.set(`/sys/fs/cgroup${group}/memory.swap.max`, '1')
+  await assert.rejects(
+    assertUpgradeBounds({ ...dependencies, maxRuntimeSeconds: 2700 }),
+    /MemorySwapMax/,
+  )
+  assert.equal(systemdDeadlineSeconds('2700000000us', 2700), 2700)
+  assert.throws(() => systemdDeadlineSeconds('2700000000us'), /RuntimeMaxSec <= 1800/)
+  assert.throws(() => systemdDeadlineSeconds('0', 2700), /RuntimeMaxSec/)
+})
+
+test('invalid explicit launcher ceilings refuse before reading a unit or process', async () => {
+  for (const maxRuntimeSeconds of [0, -1, NaN, Infinity, 2701, 2700.5, '2700', null]) {
+    await assert.rejects(
+      assertUpgradeBounds({
+        maxRuntimeSeconds,
+        read: async () => assert.fail('Invalid maximum must not read proc/cgroup.'),
+        exec: async () => assert.fail('Invalid maximum must not observe a unit.'),
+      }),
+      /maxRuntimeSeconds must be a finite positive integer no larger than 2700/,
+    )
+    assert.throws(
+      () => systemdDeadlineSeconds('1800s', maxRuntimeSeconds),
+      /maxRuntimeSeconds must be a finite positive integer no larger than 2700/,
+    )
+  }
+})
+
 test('physical-use guard sees a live owned interpreter and an app-data consumer without signalling either', async () => {
   const appData = '/owned/data'
   const ownedPython = '/owned/data/runtime/python/managed'

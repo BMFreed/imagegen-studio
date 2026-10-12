@@ -1,7 +1,8 @@
 /**
  * Opt-in, worker-only developer qualification update. Reuses the canonical installed runtime; it is
  * not the release installer/repair mechanism. Run inside an inherited systemd service with
- * MemoryMax<=12G, MemorySwapMax=0 and 0<RuntimeMaxSec<=1800. No models or environment are copied.
+ * MemoryMax<=12G, MemorySwapMax=0 and the ordinary RuntimeMaxSec<=1800 default. A qualification may
+ * explicitly allow at most2700 seconds. No models or environment are copied.
  */
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
@@ -15,7 +16,10 @@ import { promisify } from 'node:util'
 
 import { tsImport } from 'tsx/esm/api'
 
-import { boundQualificationProcess } from './qualification-resource-limits.mjs'
+import {
+  boundQualificationProcess,
+  validateQualificationDeadlineSeconds,
+} from './qualification-resource-limits.mjs'
 
 const execute = promisify(execFile)
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -163,14 +167,15 @@ function equal(actual, expected, description) {
   }
 }
 
-export function systemdDeadlineSeconds(value) {
+export function systemdDeadlineSeconds(value, maxRuntimeSeconds = 1800) {
+  validateQualificationDeadlineSeconds(maxRuntimeSeconds, 'maxRuntimeSeconds')
   const match = /^(\d+(?:\.\d+)?)(us|ms|s|min|h|d)?$/.exec(value.trim())
   if (!match) throw new Error('Qualification requires a finite inherited systemd deadline.')
   const seconds =
     Number(match[1]) *
     { us: 0.000001, ms: 0.001, s: 1, min: 60, h: 3600, d: 86400 }[match[2] ?? 's']
-  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 1800) {
-    throw new Error('Qualification requires 0 < inherited RuntimeMaxSec <= 1800.')
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > maxRuntimeSeconds) {
+    throw new Error(`Qualification requires 0 < inherited RuntimeMaxSec <= ${maxRuntimeSeconds}.`)
   }
   return seconds
 }
@@ -179,7 +184,9 @@ export async function assertUpgradeBounds({
   read = fs.readFile,
   exec = execute,
   pid = process.pid,
+  maxRuntimeSeconds = 1800,
 } = {}) {
+  validateQualificationDeadlineSeconds(maxRuntimeSeconds, 'maxRuntimeSeconds')
   const group = (await read(`/proc/${pid}/cgroup`, 'utf8'))
     .trim()
     .split('\n')
@@ -217,7 +224,7 @@ export async function assertUpgradeBounds({
     unit,
     memoryMax,
     swapMax,
-    runtimeMaxSeconds: systemdDeadlineSeconds(properties.RuntimeMaxUSec ?? ''),
+    runtimeMaxSeconds: systemdDeadlineSeconds(properties.RuntimeMaxUSec ?? '', maxRuntimeSeconds),
   }
 }
 
