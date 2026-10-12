@@ -183,11 +183,10 @@ Final inventory: root29111824384B,pool28082589696B,compact1029234688B,
 free disk47722778624B. Both30GiB/1GiB soft budgets are satisfied; temporary
 exception release condition is resolved. Reports/logs/fixtures, four `.igs`,
 candidate PNG evidence and the sole compatible worker/catalog remain retained
-for the next finite Anima image Random→Fixed replay. No environment/weights/
+for the then-next finite Anima image Random→Fixed replay, subsequently qualified below. No environment/weights/
 common-source fixture copies or downloads. Source copy is disposed; its restoration
 and removal manifests remain evidence, not a claim that it can still be read.
 
-Next: Anima image Random→numeric Fixed replay with genuine entropy picks and its
-own frozen finite plan. Recovered Reuse,uint32 wrap/refusal/cap32 and remaining
+Subsequent [Anima Random → Fixed checkpoint](phase-2c-anima-image-seed-replay-research.md):32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA replays and2 unmodified original Main crypto returns. These counts remain separate from this historical80/4/16 gate. Next: recovered Anima image Reuse. uint32 wrap/refusal/cap32 and remaining
 method/input/format/geometry/Advanced/quality/public delivery/release combinations
 remain open; masks/Regional Guidance/Smart Patch remain phase4.

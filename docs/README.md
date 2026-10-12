@@ -31,6 +31,8 @@
   - [features/project/generate-mode/tag-autocomplete.md](./features/project/generate-mode/tag-autocomplete.md) — Danbooru-style tag autocomplete для prompt editor.
 - [open-questions.md](./open-questions.md) — решения, которые лучше закрыть до или во время ранней разработки.
 
+Текущий generation checkpoint: [Installed Anima image Random → Fixed](engineering/phase-2c-anima-image-seed-replay-research.md): Euler256 IMG/normal mixed-alpha OUT,32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA Random→numeric Fixed matches. Два исходных crypto-return Main наблюдались без подмены; full DTO сохраняет raw/compiled prompts, источники и uint32 seed/step/posterior. Matching исключает только3 owner IDs и проверенную policy; per-prompt сохраняется. Independent raw readback PASS19737:32 owning comparisons,4 chronological cursor/Save snapshots,11 old tables,43 worker identities,2 OUT previews/111104 protected pixels.161 focused tests PASS0skip; actual source18/2 RED/16 GREEN. Нет новой native mutation, deliberate wrap/cap32-refusal/Reuse/quality/fullMVP/release claim. Следующий finite gate — Anima image Reuse после recovery.
+
 ## Vue/Naive Prototype App
 
 - [prototype-app](./prototype-app/) — текущий источник истины для интерактивных Home, Project, Model Manager и preset-system прототипов на реальных компонентах Naive UI.

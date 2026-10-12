@@ -154,6 +154,16 @@ function finiteRecipe(value, stage) {
   return { iterations: value.iterations, seedBehavior: value.seedBehavior }
 }
 
+/** Optional authored seed input only; production still owns resolving and scheduling it. */
+function capturedSeed(value) {
+  if (value === undefined) return { policy: 'fixed', value: 0 }
+  assert.deepEqual(Object.keys(value).sort(), ['policy', 'value'])
+  assert.ok(value.policy === 'fixed' || value.policy === 'random')
+  if (value.policy === 'random') assert.equal(value.value, null)
+  else assert.ok(Number.isSafeInteger(value.value) && value.value >= 0 && value.value <= 4294967295)
+  return { policy: value.policy, value: value.value }
+}
+
 /** Handwritten templates enter production; neither an oracle nor a planner constructs this input. */
 export function authoring(reference, stage, mode, options = {}) {
   assert.ok(['baseline', 'prefix'].includes(stage))
@@ -169,7 +179,7 @@ export function authoring(reference, stage, mode, options = {}) {
       embeddingRefs: [],
     },
     negativePrompt: { text: '{(blurry:0.7)|(noisy:0.7)}, low quality', embeddingRefs: [] },
-    seed: { policy: 'fixed', value: 0 },
+    seed: capturedSeed(options.seed),
     dynamicPrompt: {
       maxPrompts: stage === 'baseline' ? 4 : 1,
       seedBehavior: recipe?.seedBehavior ?? 'per-iteration',
@@ -260,10 +270,24 @@ function controlledResourceResolvers(reference, resolutionChecks) {
  * expanded pair, compiled span, frozen row, candidate receipt or projected accepted configuration.
  */
 export async function produced(reference, stage, mode, options = {}) {
+  // Snapshot finite caller inputs before PNG construction, qualification or any other await.
+  const selectedSeed = capturedSeed(options.seed)
+  const controlledRandomSeed = options.randomSeed
+  if (selectedSeed.policy === 'random')
+    assert.ok(
+      Number.isSafeInteger(controlledRandomSeed) &&
+        controlledRandomSeed >= 0 &&
+        controlledRandomSeed <= 4294967295,
+      'Random CPU boundary requires an explicitly controlled uint32 draw.',
+    )
+  else assert.equal(controlledRandomSeed, undefined)
   const document = createEmptyProjectDocumentV1({ title: 'Anima image Main boundary' })
   document.primaryBbox = { x: mode === 'outpaint' ? 64 : 0, y: 0, width: 256, height: 256 }
   const recipe = finiteRecipe(options.recipe, stage)
-  document.generationDraft = authoring(reference, stage, mode, { recipe: options.recipe })
+  document.generationDraft = authoring(reference, stage, mode, {
+    recipe: options.recipe,
+    seed: selectedSeed,
+  })
   const iterations = options.plain === true ? 1 : (recipe?.iterations ?? 2)
   const lateDynamic = recipe
     ? {
@@ -304,6 +328,7 @@ export async function produced(reference, stage, mode, options = {}) {
   const resolutionChecks = []
   const models = controlledResourceResolvers(reference, resolutionChecks)
   let picks = 0
+  const controlledDraws = []
   const prepared = await (
     mode === 'outpaint' ? prepareAnimaOutpaintGeneration : prepareAnimaGeneration
   )({
@@ -311,7 +336,9 @@ export async function produced(reference, stage, mode, options = {}) {
     modelService: models,
     randomUint32: () => {
       picks++
-      assert.fail('Fixed0 preparation must not draw a Random seed.')
+      assert.equal(selectedSeed.policy, 'random', 'Fixed preparation must not draw a Random seed.')
+      controlledDraws.push({ callIndex: picks - 1, seed: controlledRandomSeed })
+      return controlledRandomSeed
     },
   })
   const originalPrepared = structuredClone(prepared.context)
@@ -555,6 +582,12 @@ export async function produced(reference, stage, mode, options = {}) {
       edits,
       capacityPreflights: capacityChecks.length,
       picks,
+      entropyObservation: {
+        producer: 'controlled CPU uint32 collaborator',
+        outputSubstitution: selectedSeed.policy === 'random',
+        nativeCryptoClaim: false,
+        calls: controlledDraws,
+      },
       sourceIdentity: {
         sha256: digest(sourceBytes),
         byteSize: sourceBytes.length,
