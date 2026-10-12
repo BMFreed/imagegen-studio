@@ -139,6 +139,48 @@ test('strict Anima image envelope rejects unsupported stages/modes, metadata exc
   delete out.lamaSource
   assert.throws(() => validate(out))
 })
+test('independent DTO providers preserve the foundation defaults and every unprojected field', async () => {
+  const reference = installedFixture(),
+    actual = await produced(reference, 'baseline', 'img2img')
+  const item = literal('baseline', 'img2img').items[1],
+    frozen = JSON.parse(actual.rows[1].frozen_payload_json)
+  const seen = []
+  const validateItem = (value) => {
+    seen.push('item')
+    assert.deepEqual(value, item)
+  }
+  const options = {
+    assertExpectedItem: validateItem,
+    nativePlanForSeed: (seed) => {
+      seen.push('plan')
+      return nativePlan(seed)
+    },
+  }
+  assertFrozen(frozen, item, reference)
+  assertFrozen(frozen, item, reference, options)
+  assert.deepEqual(seen, ['item', 'plan'])
+  assertConfiguration(actual.configs[1], item, reference, { assertExpectedItem: validateItem })
+  const wrong = structuredClone(frozen)
+  wrong.workerJob.model.vae.sha256 = '9'.repeat(64)
+  assert.throws(() => assertFrozen(wrong, item, reference, options))
+  const portable = structuredClone(actual.configs[1])
+  portable.positivePrompt.compiled = item.compiledPrompts.positive
+  assert.throws(() =>
+    assertConfiguration(portable, item, reference, { assertExpectedItem: validateItem }),
+  )
+  assert.throws(() => assertFrozen(frozen, { ...item, seed: 2 }, reference), /tuple membership/)
+  assert.throws(
+    () =>
+      assertConfiguration(actual.configs[1], { ...item, seedBehavior: 'per-prompt' }, reference),
+    /tuple membership/,
+  )
+  assert.throws(() =>
+    assertFrozen(frozen, item, reference, {
+      assertExpectedItem: validateItem,
+      nativePlanForSeed: (seed) => ({ ...nativePlan(seed), posteriorSeed: 37 }),
+    }),
+  )
+})
 for (const mode of ['img2img', 'outpaint'])
   test(`${mode}: actual Main raw/compiled branches and clipped Euler plans pass full structural oracle`, async () => {
     const reference = installedFixture()

@@ -157,10 +157,12 @@ and final-handoff-sources.json. This is source-informed self-review with a separ
 raw reader, not a blind product audit. No new model/runtime/common-source PNG
 copy/download or installed worker mutation occurred.
 
-Следующий finite gate — Anima Fixed0/per-prompt common-source IMG/normal mixed-alpha OUT: четыре weighted positive×negative пары × две iterations, literal seeds0…7 и собственные numeric controls. Counts/resources/budgets фиксируются отдельно перед запуском.
+На завершении этого исторического20/4/4 checkpoint следующим был Anima Fixed0/per-prompt common-source IMG/normal mixed-alpha OUT: четыре weighted positive×negative пары × две iterations, literal seeds0…7 и собственные numeric controls. Последующий результат80/4/16 приведён отдельно ниже; исходные counts этого foundation не меняются.
 
 Remaining scope: Random/Reuse/wrap/cap32, other methods,
 arbitrary shapes/formats/counts/masks, scalar/per-encoder correctness, embeddings,
 Regional Guidance, Smart Patch, quality/Invoke pixel parity/fullMVP/release do not
 follow this finite gate. New counts must exclude all historical evidence and
 any failed setup, interrupted inference or metadata/observer failure.
+
+Subsequent checkpoint: [Installed Anima image per-prompt](phase-2c-anima-image-per-prompt-research.md) completed80 admissions/completions/accepted layers,4 Save/reopen packages and16 own numeric-control RGBA matches. Its counts are separate from this historical20/4/4 foundation. Current next finite gate: Anima image Random → Fixed replay; remaining Reuse/wrap/cap/quality/fullMVP/release scope stays open.

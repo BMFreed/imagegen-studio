@@ -138,10 +138,27 @@ export function resource(reference, key) {
   }
 }
 
+function finiteRecipe(value, stage) {
+  if (value === undefined) return null
+  assert.equal(
+    stage,
+    'baseline',
+    'Optional numeric-control/per-prompt recipes retain all four pairs.',
+  )
+  assert.deepEqual(Object.keys(value).sort(), ['iterations', 'seedBehavior'])
+  assert.ok(
+    (value.iterations === 8 && value.seedBehavior === 'per-iteration') ||
+      (value.iterations === 2 && value.seedBehavior === 'per-prompt'),
+    'Only the declared finite PI32 and PP8 image recipes are supplied.',
+  )
+  return { iterations: value.iterations, seedBehavior: value.seedBehavior }
+}
+
 /** Handwritten templates enter production; neither an oracle nor a planner constructs this input. */
-export function authoring(reference, stage, mode) {
+export function authoring(reference, stage, mode, options = {}) {
   assert.ok(['baseline', 'prefix'].includes(stage))
   assert.ok(['img2img', 'outpaint'].includes(mode))
+  const recipe = finiteRecipe(options.recipe, stage)
   return {
     model: resource(reference, 'anima'),
     vae: null,
@@ -153,7 +170,10 @@ export function authoring(reference, stage, mode) {
     },
     negativePrompt: { text: '{(blurry:0.7)|(noisy:0.7)}, low quality', embeddingRefs: [] },
     seed: { policy: 'fixed', value: 0 },
-    dynamicPrompt: { maxPrompts: stage === 'baseline' ? 4 : 1, seedBehavior: 'per-iteration' },
+    dynamicPrompt: {
+      maxPrompts: stage === 'baseline' ? 4 : 1,
+      seedBehavior: recipe?.seedBehavior ?? 'per-iteration',
+    },
     sampling: {
       animaMethod: 'euler',
       steps: 3,
@@ -242,8 +262,15 @@ function controlledResourceResolvers(reference, resolutionChecks) {
 export async function produced(reference, stage, mode, options = {}) {
   const document = createEmptyProjectDocumentV1({ title: 'Anima image Main boundary' })
   document.primaryBbox = { x: mode === 'outpaint' ? 64 : 0, y: 0, width: 256, height: 256 }
-  document.generationDraft = authoring(reference, stage, mode)
-  const iterations = options.plain === true ? 1 : 2
+  const recipe = finiteRecipe(options.recipe, stage)
+  document.generationDraft = authoring(reference, stage, mode, { recipe: options.recipe })
+  const iterations = options.plain === true ? 1 : (recipe?.iterations ?? 2)
+  const lateDynamic = recipe
+    ? {
+        maxPrompts: 3,
+        seedBehavior: recipe.seedBehavior === 'per-prompt' ? 'per-iteration' : 'per-prompt',
+      }
+    : { maxPrompts: 1, seedBehavior: 'per-prompt' }
   if (options.plain === true) {
     document.generationDraft.positivePrompt.text =
       'a red ceramic cup on a wooden table, studio photograph'
@@ -297,7 +324,7 @@ export async function produced(reference, stage, mode, options = {}) {
   const batchOptions = {
     iterations,
     maxPrompts: authoredDraft.dynamicPrompt.maxPrompts,
-    seedBehavior: 'per-iteration',
+    seedBehavior: authoredDraft.dynamicPrompt.seedBehavior,
   }
   const temporary = await mkdtemp(path.join(tmpdir(), 'igs-anima-dynamic-image-main-'))
   let database
@@ -361,7 +388,7 @@ export async function produced(reference, stage, mode, options = {}) {
       document.generationDraft.seed = { policy: 'fixed', value: 37 }
       document.generationDraft.positivePrompt.text = 'late ordinary positive'
       document.generationDraft.negativePrompt.text = 'late ordinary negative'
-      document.generationDraft.dynamicPrompt = { maxPrompts: 1, seedBehavior: 'per-prompt' }
+      document.generationDraft.dynamicPrompt = { ...lateDynamic }
       document.generationDraft.sampling.animaMethod = 'heun'
       document.generationDraft.sampling.steps = 9
       document.generationDraft.sampling.denoisingStrength = 0.9
@@ -377,7 +404,7 @@ export async function produced(reference, stage, mode, options = {}) {
       prepared.context.generationDraft.positivePrompt.text = 'late prepared positive'
       prepared.context.generationDraft.negativePrompt.text = 'late prepared negative'
       prepared.context.generationDraft.seed = { policy: 'fixed', value: 37 }
-      prepared.context.dynamic = { maxPrompts: 1, seedBehavior: 'per-prompt' }
+      prepared.context.dynamic = { ...lateDynamic }
       prepared.targetPngBytes.fill(0)
       target.composite.bytes.fill(0)
       if (preparedBatch) {
@@ -393,7 +420,7 @@ export async function produced(reference, stage, mode, options = {}) {
       callerReady.capabilities.length = 0
       batchOptions.iterations = 7
       batchOptions.maxPrompts = 1
-      batchOptions.seedBehavior = 'per-prompt'
+      batchOptions.seedBehavior = lateDynamic.seedBehavior
     }
     const admitted = await (mode === 'outpaint'
       ? orchestrator.enqueuePreparedOutpaintBatch(

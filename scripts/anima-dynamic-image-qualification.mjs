@@ -360,8 +360,14 @@ function assertConditioning(conditioning, target, bbox) {
   })
 }
 /** Whole frozen envelope; no Euler→Heun projection or producer plan can hide a semantic field. */
-export function assertAnimaDynamicImageFrozen(frozen, item, fixture) {
-  assertItem(item)
+export function assertAnimaDynamicImageFrozen(frozen, item, fixture, oracle = {}) {
+  exactKeys(oracle, [], ['assertExpectedItem', 'nativePlanForSeed'])
+  const validateItem = oracle.assertExpectedItem ?? assertItem
+  const nativePlan = oracle.nativePlanForSeed ?? literalAnimaDynamicImageNativePlan
+  assert.equal(typeof validateItem, 'function')
+  assert.equal(typeof nativePlan, 'function')
+  // A specialized independent table must validate the whole item before any DTO is inspected.
+  validateItem(item)
   assertSources(fixture)
   exactKeys(frozen, ['schemaVersion', 'originRequestId', 'kind', 'context', 'workerJob'])
   assert.equal(frozen.schemaVersion, 1)
@@ -403,10 +409,10 @@ export function assertAnimaDynamicImageFrozen(frozen, item, fixture) {
     denoisingStrength: 0.5,
     requestedSeedPolicy: 'fixed',
     seed: item.seed,
-    seedBehavior: 'per-iteration',
+    seedBehavior: item.seedBehavior,
     steps: 3,
   })
-  assert.deepEqual(job.sampling, literalAnimaDynamicImageNativePlan(item.seed))
+  assert.deepEqual(job.sampling, nativePlan(item.seed))
   assert.deepEqual(context.model, {
     architecture: 'anima-base-1.0',
     checkpoint: {
@@ -464,8 +470,11 @@ export function assertAnimaDynamicImageFrozen(frozen, item, fixture) {
   if (Object.hasOwn(context, 'vaePrecision')) assert.equal(context.vaePrecision, 'Auto')
   if (item.mode === 'outpaint') assertConditioning(context.conditioning, context.target, bbox)
 }
-export function assertAnimaDynamicImageConfiguration(config, item, fixture) {
-  assertItem(item)
+export function assertAnimaDynamicImageConfiguration(config, item, fixture, oracle = {}) {
+  exactKeys(oracle, [], ['assertExpectedItem'])
+  const validateItem = oracle.assertExpectedItem ?? assertItem
+  assert.equal(typeof validateItem, 'function')
+  validateItem(item)
   assertSources(fixture)
   assert.deepEqual(
     config,
@@ -489,7 +498,7 @@ export function assertAnimaDynamicImageConfiguration(config, item, fixture) {
         cfgScale: 4,
         denoisingStrength: 0.5,
         requestedSeedPolicy: 'fixed',
-        seedBehavior: 'per-iteration',
+        seedBehavior: item.seedBehavior,
         steps: 3,
       },
       size: { height: 256, width: 256 },
