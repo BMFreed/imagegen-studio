@@ -9,12 +9,15 @@ import {
   literalAnimaImageSeedReplayPlan as literal,
   normalizeAnimaImageSeedReplayNativeInputs,
   normalizeAnimaImageSeedReplayReferenceInputs,
+  animaImageSeedReplayBaselineSources,
 } from './anima-image-seed-replay-qualification.mjs'
 import {
   createInstalledDynamicBatchDeadlineBounds,
   invokeBaselineAdapter,
   invokeComparisonAdapter,
   shouldCompareCompletionBaseline,
+  invokeCrashLayersAdapter,
+  invokeRecoveredInputAdapter,
 } from './installed-dynamic-batch-driver.mjs'
 import {
   authored,
@@ -23,22 +26,20 @@ import {
   produced,
   retainedBaseline,
   testBaseSeed,
+  envelope,
 } from './anima-image-seed-replay-test-fixtures.mjs'
+import {
+  authoring as recoveryAuthoring,
+  produced as recoveryProduced,
+} from './anima-image-reuse-crash-main-fixtures.mjs'
 
 test('Random/Fixed image profile injects unchanged entropy/image hooks and keeps all numerical inputs in own references', () => {
-  for (const hook of [
-    'authorSeed',
-    'beforeAdmission',
-    'afterAdmission',
-    'restoreAdmissionObservation',
-  ])
+  for (const hook of ['beforeAdmission', 'afterAdmission', 'restoreAdmissionObservation'])
     assert.equal(profile[hook], seeds[hook])
   for (const hook of [
     'prepareInput',
     'assertTarget',
     'assertOutput',
-    'afterAcceptance',
-    'assertSaved',
     'sampling',
     'modelKey',
     'loraKey',
@@ -273,5 +274,401 @@ test('summary requires every own accepted resolved tuple and replay permits poli
     assert.throws(() =>
       profile.summaryClaims({ fixture: { ...scope.fixture, mode: 'outpaint' }, plan, report }),
     )
+  }
+})
+
+// Owned lexical descriptors and UI views are disclosed peers; actual rows come from Main fixtures.
+function recoveryEnvelope(stage, mode = 'img2img', baseSeed = 31) {
+  const fixture = envelope('replay', mode, baseSeed)
+  delete fixture.replaySeed
+  return {
+    ...fixture,
+    stage,
+    baseSeed,
+    artifacts: fixture.artifacts.replace('replay-', `${stage}-`),
+    baseline: {
+      ...fixture.baseline,
+      reportPath: fixture.baseline.reportPath.replace('random-', 'replay-'),
+    },
+    baselineSourceSnapshots: Object.fromEntries(
+      animaImageSeedReplayBaselineSources.map((source) => [
+        source,
+        {
+          path: fixture.referenceFixture.path.replace(
+            'reference.json',
+            `prior-${source.split('/').at(-1)}`,
+          ),
+          sha256: 'd'.repeat(64),
+        },
+      ]),
+    ),
+    ...(stage === 'reuse'
+      ? {
+          crashSource: {
+            reportPath: fixture.referenceFixture.path.replace(
+              'reference.json',
+              `crash-${mode}/report.json`,
+            ),
+            reportSha256: 'e'.repeat(64),
+          },
+        }
+      : {}),
+  }
+}
+
+test('recovery authoring preserves genuine Reuse policy, delegates ordinary seed inputs and binds three exact historical harness sources', async () => {
+  for (const mode of ['img2img', 'outpaint'])
+    for (const stage of ['crash', 'reuse']) {
+      const reference = authored().reference,
+        fixture = recoveryEnvelope(stage, mode),
+        plan = literal(stage, mode, 31),
+        draft = recoveryAuthoring(reference, stage, mode, 31)
+      profile.assertAuthored(draft, reference, fixture, plan)
+      assert.equal(profile.expectedBaselineStage(fixture), 'replay')
+      assert.deepEqual(profile.baselineSourceChanges(fixture), animaImageSeedReplayBaselineSources)
+      assert.equal(profile.provisionalOnly(fixture), false)
+      assert.equal(createInstalledDynamicBatchDeadlineBounds(profile, fixture).seconds, 1800)
+      if (stage === 'reuse') {
+        await profile.authorSeed({
+          currentPlan: plan,
+          window: {
+            getByRole() {
+              assert.fail('Driver alone authors public Reuse; no numeric substitute')
+            },
+          },
+        })
+        assert.deepEqual(draft.seed, { policy: 'reuse', value: null })
+      } else assert.deepEqual(draft.seed, { policy: 'fixed', value: 31 })
+      const wrong = structuredClone(draft)
+      wrong.seed = { policy: 'fixed', value: 31 }
+      if (stage === 'reuse')
+        assert.throws(() => profile.assertAuthored(wrong, reference, fixture, plan))
+    }
+  // Exercise the reused actual authorSeed body with an explicit DOM peer, without UI claims.
+  const state = { seed: { policy: 'fixed', value: 0 } },
+    calls = []
+  const expect = (node) => ({
+    toHaveAttribute: async (attribute, value) => {
+      assert.equal(attribute, 'aria-checked')
+      assert.equal(await node.getAttribute(), value)
+    },
+    toBeEnabled: async () => {},
+  })
+  expect.poll = (read) => ({ toEqual: async (value) => assert.deepEqual(await read(), value) })
+  const context = {
+    currentPlan: literal('crash', 'img2img', 31),
+    window: { getByRole: () => ({ getAttribute: async () => 'false' }), locator: () => ({}) },
+    expect,
+    tab: async () => ({ generationDraft: state }),
+    project: {},
+    setInput: async (name, value) => {
+      calls.push([name, value])
+      state.seed = { policy: 'fixed', value }
+    },
+  }
+  await profile.authorSeed(context)
+  assert.deepEqual(calls, [['Generation seed', 31]])
+})
+
+test('crash layers keep the ordinary source and current full source view decoder preserves the hidden recovered layer', async () => {
+  const fixture = recoveryEnvelope('reuse'),
+    plan = literal('reuse', 'img2img', 31)
+  const source = {
+    id: 'd765a0f5-37af-4399-9db1-2b4044fde758',
+    kind: 'raster',
+    name: 'Imported source',
+    locked: false,
+    visible: true,
+    transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotationDegrees: 0 },
+    opacity: 1,
+    blendMode: 'normal',
+    asset: {
+      path: 'assets/source.img',
+      sha256: 'a'.repeat(64),
+      bytes: 47531,
+      width: 256,
+      height: 256,
+    },
+    sourceIccProfile: { path: 'profiles/source.icc', sha256: 'b'.repeat(64), bytes: 524 },
+  }
+  // Two distinct production DTO shapes from RasterLayerSchema and ProjectRasterLayerView.
+  const sourceView = {
+    id: source.id,
+    name: source.name,
+    locked: source.locked,
+    visible: source.visible,
+    transform: structuredClone(source.transform),
+    opacity: source.opacity,
+    blendMode: source.blendMode,
+    width: 256,
+    height: 256,
+    imageUrl: 'igs-layer://current-source',
+  }
+  const input = {
+    layerId: source.id,
+    bbox: plan.bbox,
+    source: fixture.sourceImage,
+    sourceRect: { x: 0, y: 0, width: 256, height: 256 },
+  }
+  const crash = {
+    layers: [structuredClone(sourceView)],
+    sourceLayers: [source],
+    plan,
+    inputPrecondition: input,
+  }
+  invokeCrashLayersAdapter(profile, crash)
+  assert.equal(Object.hasOwn(sourceView, 'asset'), false)
+  assert.equal(Object.hasOwn(sourceView, 'kind'), false)
+  assert.equal(Object.hasOwn(source, 'width'), false)
+  assert.equal(Object.hasOwn(source, 'imageUrl'), false)
+  for (const mutate of [
+    (v) => {
+      v.layers[0].id = 'other-source'
+    },
+    (v) => {
+      v.layers[0].name = 'Renamed source'
+    },
+    (v) => {
+      v.layers[0].locked = true
+    },
+    (v) => {
+      v.layers[0].width = 255
+    },
+    (v) => {
+      v.layers[0].height = 255
+    },
+    (v) => {
+      v.layers[0].opacity = 0.5
+    },
+    (v) => {
+      v.layers[0].blendMode = 'multiply'
+    },
+    (v) => {
+      v.sourceLayers[0].kind = 'smart-patch'
+    },
+    (v) => {
+      v.sourceLayers[0].generationProvenance = {}
+    },
+    (v) => {
+      v.layers[0].visible = false
+    },
+    (v) => {
+      v.layers[0].transform.x = 1
+    },
+    (v) => {
+      v.layers.push(v.layers[0])
+    },
+  ]) {
+    const wrong = structuredClone(crash)
+    mutate(wrong)
+    assert.throws(() => invokeCrashLayersAdapter(profile, wrong))
+  }
+  const current = {
+      layers: [{ id: 'recovered', visible: false }, structuredClone(sourceView)],
+      primaryBbox: plan.bbox,
+      generationDraft: { sampling: { denoisingStrength: 0.5 } },
+    },
+    seen = []
+  const ctx = {
+    fixture,
+    plan,
+    sourceLayers: [source],
+    crashSource: {
+      stage: 'crash',
+      literalPlan: literal('crash', 'img2img', 31),
+      inputPrecondition: input,
+    },
+    project: {},
+    tab: async () => current,
+    window: {
+      evaluate: async (_body, url) => {
+        seen.push(url)
+        return { width: 256, height: 256, pixelSha256: fixture.sourceImage.pixelSha256 }
+      },
+    },
+    expect: { poll: (read) => ({ toBe: async (value) => assert.equal(await read(), value) }) },
+  }
+  const result = await invokeRecoveredInputAdapter(profile, ctx)
+  assert.deepEqual(result, input)
+  assert.deepEqual(seen, [sourceView.imageUrl])
+  assert.equal(current.layers[0].visible, false)
+  for (const mutate of [
+    (v) => {
+      v.layers[0].visible = true
+    },
+    (v) => {
+      v.layers[1].transform.x = 1
+    },
+    (v) => {
+      v.primaryBbox.x = 1
+    },
+  ]) {
+    const wrong = structuredClone(current)
+    mutate(wrong)
+    await assert.rejects(() =>
+      invokeRecoveredInputAdapter(profile, { ...ctx, tab: async () => wrong }),
+    )
+  }
+  await assert.rejects(() =>
+    invokeRecoveredInputAdapter(profile, {
+      ...ctx,
+      window: { evaluate: async () => ({ width: 256, height: 256, pixelSha256: 'f'.repeat(64) }) },
+    }),
+  )
+})
+
+test('reuse batch visibility changes only new variants and keeps original source plus recovered candidate unchanged', async () => {
+  const fixture = recoveryEnvelope('reuse'),
+    plan = literal('reuse', 'img2img', 31),
+    source = { id: 'source', name: 'source', visible: true },
+    recovered = { id: 'recovered', name: 'recovered', visible: false }
+  let views = [
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `new${index}`,
+      name: `new${index}`,
+      visible: index === 0,
+    })),
+    recovered,
+    source,
+  ]
+  const original = structuredClone(views),
+    clicked = []
+  const ctx = {
+    fixture,
+    plan,
+    sourceLayers: [source],
+    recoveredGeneration: { layerId: recovered.id, expectedItem: { stage: 'crash' } },
+    project: {},
+    tab: async () => ({ layers: views }),
+    window: {
+      getByRole: (_role, { name }) => ({
+        click: async () => {
+          clicked.push(name)
+          const view = views.find(({ name: layerName }) => name === `Show ${layerName}`)
+          assert.ok(view)
+          view.visible = true
+        },
+      }),
+    },
+    expect: { poll: (read) => ({ toBe: async (value) => assert.equal(await read(), value) }) },
+  }
+  const evidence = await profile.afterAcceptance(ctx)
+  assert.equal(clicked.length, 7)
+  assert.equal(evidence.recoveredLayerHidden, true)
+  assert.deepEqual(evidence.initialGeneratedVisibleIds, ['new0'])
+  assert.deepEqual(views.slice(-2), original.slice(-2))
+  views = structuredClone(original)
+  views[8].visible = true
+  await assert.rejects(() => profile.afterAcceptance(ctx))
+})
+
+test('owning Reuse comparisons include the recovered Fixed crash layer and every actual local cursor0/31 branch', async () => {
+  for (const mode of ['img2img', 'outpaint'])
+    for (const baseSeed of [0, 31]) {
+      const old = authored('replay', mode, baseSeed),
+        fixture = recoveryEnvelope('reuse', mode, baseSeed),
+        scope = {
+          ...old,
+          fixture,
+          draft: recoveryAuthoring(old.reference, 'reuse', mode, baseSeed),
+        }
+      const actual = await recoveryProduced(old.reference, 'reuse', mode, { baseSeed }),
+        plan = literal('reuse', mode, baseSeed)
+      for (const item of plan.items) {
+        const peer = comparisonInput(scope, item),
+          { fixture: active, ...inputs } = peer.context
+        const observed = await invokeComparisonAdapter(profile, active, inputs)
+        assert.equal(observed['seed.policy'].status, 'Changed')
+        assert.equal(observed['seed.actual'].status, item.seed === 37 ? 'Same' : 'Changed')
+      }
+      const crash = await recoveryProduced(old.reference, 'crash', mode, { baseSeed }),
+        item = resolve(literal('crash', mode, baseSeed), crash.rows).items[0]
+      const peer = comparisonInput(scope, item),
+        { fixture: active, ...inputs } = peer.context
+      const observed = await invokeComparisonAdapter(profile, active, inputs)
+      assert.equal(observed['seed.policy'].status, 'Same')
+      const wrong = structuredClone(actual.rows[0])
+      wrong.frozen_payload_json = JSON.stringify({
+        ...JSON.parse(wrong.frozen_payload_json),
+        context: {
+          ...JSON.parse(wrong.frozen_payload_json).context,
+          sampling: { ...JSON.parse(wrong.frozen_payload_json).context.sampling, seed: 91 },
+        },
+      })
+      assert.throws(() => resolve(plan, [wrong, ...actual.rows.slice(1)]))
+    }
+})
+
+test('recovery summaries keep old immutable crash candidate unaccepted until later explicit Add and require exact ten-layer save', async () => {
+  const reference = authored().reference,
+    baseSeed = 31
+  for (const stage of ['crash', 'reuse']) {
+    const fixture = recoveryEnvelope(stage, 'img2img', baseSeed),
+      plan = literal(stage, 'img2img', baseSeed),
+      actual = await recoveryProduced(reference, stage, 'img2img', { baseSeed })
+    const all = generations(actual, plan, stage !== 'crash'),
+      report = { generations: stage === 'crash' ? all.slice(0, 1) : all }
+    for (const generation of report.generations)
+      generation.baseline = {
+        reportPath: fixture.baseline.reportPath,
+        reportSha256: fixture.baseline.reportSha256,
+        beforeExplicitAdd: true,
+        allowedMetadataDifferences: ['requestedSeedPolicy'],
+        actualPixelSha256: generation.dimensions.pixelSha256,
+        expectedPixelSha256: generation.dimensions.pixelSha256,
+      }
+    if (stage === 'crash') {
+      report.outcome = 'crash-confirmed'
+      report.crash = {
+        rows: [{ status: 'completed' }, { status: 'running' }, { status: 'pending' }],
+        physicalExit: { confirmed: true },
+        savedSnapshot: null,
+      }
+    } else {
+      report.recovery = {
+        lastActualSeed: baseSeed,
+        recoveredLayerHidden: true,
+        portableSnapshot: null,
+      }
+      report.savedPackage = {
+        acceptedLayers: 9,
+        sourceLayers: 1,
+        totalLayers: 10,
+        reopened: true,
+        lastActualSeedSnapshot: 38,
+      }
+    }
+    const summary = profile.summaryClaims({ fixture, plan, report })
+    assert.equal(summary.acceptedSavedReopenedClaim, stage === 'reuse')
+    assert.equal(summary.crashRecoveredReuseClaim, stage === 'reuse')
+    for (const mutate of [
+      (v) => {
+        v.generations[0].accepted = stage === 'crash'
+      },
+      ...(stage === 'crash'
+        ? [
+            (v) => {
+              v.crash.rows[1].status = 'completed'
+            },
+            (v) => {
+              v.crash.savedSnapshot = 31
+            },
+          ]
+        : [
+            (v) => {
+              v.savedPackage.totalLayers = 9
+            },
+            (v) => {
+              v.recovery.recoveredLayerHidden = false
+            },
+            (v) => {
+              v.recovery.portableSnapshot = 31
+            },
+          ]),
+    ]) {
+      const wrong = structuredClone(report)
+      mutate(wrong)
+      assert.throws(() => profile.summaryClaims({ fixture, plan, report: wrong }))
+    }
   }
 })

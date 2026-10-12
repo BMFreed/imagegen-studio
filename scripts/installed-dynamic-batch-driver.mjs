@@ -89,6 +89,8 @@ export function assertReferenceSourceLineage(prior, current, allowed = [], snaps
     'scripts/illustrious-dynamic-image-profile.mjs',
     'scripts/illustrious-image-seed-replay-qualification.mjs',
     'scripts/illustrious-image-seed-replay-profile.mjs',
+    'scripts/anima-image-seed-replay-qualification.mjs',
+    'scripts/anima-image-seed-replay-profile.mjs',
     'scripts/installed-dynamic-batch-driver.mjs',
     'scripts/qualification-resource-limits.mjs',
   ])

@@ -334,6 +334,51 @@ test('image seed replay lineage permits only explicitly pinned profile and oracl
   )
 })
 
+test('Anima recovery lineage binds both prior harness snapshots without admitting producer drift', () => {
+  const sources = [
+    'scripts/anima-image-seed-replay-profile.mjs',
+    'scripts/anima-image-seed-replay-qualification.mjs',
+  ]
+  const producer = 'src/main/projects/anima-generation-preparation.ts'
+  const prior = Object.fromEntries([...sources, producer].map((source) => [source, 'a'.repeat(64)]))
+  const current = {
+    ...prior,
+    ...Object.fromEntries(sources.map((source) => [source, 'b'.repeat(64)])),
+  }
+  const snapshots = Object.fromEntries(
+    sources.map((source) => [
+      source,
+      {
+        path: path.join(
+          homedir(),
+          '.codex/artifacts/imagegen-studio/runs/lineage',
+          path.basename(source),
+        ),
+        sha256: prior[source],
+      },
+    ]),
+  )
+  assert.equal(assertReferenceSourceLineage(prior, current, sources, snapshots).length, 2)
+  assert.throws(() => assertReferenceSourceLineage(prior, current, sources, {}))
+  assert.throws(() => assertReferenceSourceLineage(prior, current, sources.slice(0, 1), snapshots))
+  assert.throws(() =>
+    assertReferenceSourceLineage(
+      prior,
+      { ...current, [producer]: 'c'.repeat(64) },
+      sources,
+      snapshots,
+    ),
+  )
+  assert.throws(() =>
+    assertReferenceSourceLineage(
+      prior,
+      { ...current, 'scripts/new-hook.mjs': 'c'.repeat(64) },
+      sources,
+      snapshots,
+    ),
+  )
+})
+
 test('completion reference opt-in cannot silently replace legacy selection or return truthy values', () => {
   for (const stage of ['baseline', 'control', 'restored'])
     for (const promptPairIndex of [0, 1, 2, 3])

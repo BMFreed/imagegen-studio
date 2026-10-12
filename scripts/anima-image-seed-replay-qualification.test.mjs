@@ -13,6 +13,7 @@ import {
   normalizeAnimaImageSeedReplayReferenceInputs as referenceInputs,
   resolveAnimaImageSeedReplayPlan as resolve,
   validateAnimaImageSeedReplayFixture as validate,
+  animaImageSeedReplayBaselineSources,
 } from './anima-image-seed-replay-qualification.mjs'
 import { assertAnimaDynamicImageFrozen as oldFrozen } from './anima-dynamic-image-qualification.mjs'
 import {
@@ -23,6 +24,211 @@ import {
   pixelGenerations,
   testBaseSeed,
 } from './anima-image-seed-replay-test-fixtures.mjs'
+import { produced as recoveryProduced } from './anima-image-reuse-crash-main-fixtures.mjs'
+
+// Lexical report descriptors below are declared peers, never actual native/recovery evidence.
+function recoveryEnvelope(stage, mode, baseSeed) {
+  const fixture = envelope('replay', mode, baseSeed)
+  delete fixture.replaySeed
+  return {
+    ...fixture,
+    stage,
+    baseSeed,
+    artifacts: fixture.artifacts.replace('replay-', `${stage}-`),
+    baseline: {
+      ...fixture.baseline,
+      reportPath: fixture.baseline.reportPath.replace('random-', 'replay-'),
+    },
+    baselineSourceSnapshots: Object.fromEntries(
+      animaImageSeedReplayBaselineSources.map((source) => [
+        source,
+        {
+          path: fixture.referenceFixture.path.replace(
+            'reference.json',
+            `prior-${source.split('/').at(-1)}`,
+          ),
+          sha256: 'd'.repeat(64),
+        },
+      ]),
+    ),
+    ...(stage === 'reuse'
+      ? {
+          crashSource: {
+            reportPath: fixture.referenceFixture.path.replace(
+              'reference.json',
+              `crash-${mode}/report.json`,
+            ),
+            reportSha256: 'e'.repeat(64),
+          },
+        }
+      : {}),
+  }
+}
+
+test('finite crash3/Reuse8 scopes retain exact prior Fixed controls and typed policy without broadening Random/replay fixtures', () => {
+  let admissions = 0,
+    completions = 0,
+    canceled = 0
+  for (const mode of ['img2img', 'outpaint'])
+    for (const stage of ['crash', 'reuse']) {
+      const fixture = recoveryEnvelope(stage, mode, 31),
+        plan = validate(fixture)
+      assert.equal(plan.baseSeed, 31)
+      assert.equal(plan.fixedSeed, stage === 'reuse' ? null : 31)
+      assert.equal(plan.requestedSeedPolicy, stage === 'reuse' ? 'reuse' : 'fixed')
+      assert.equal(plan.maxPrompts, stage === 'crash' ? 1 : 4)
+      assert.deepEqual(
+        plan.items.map(({ seed }) => seed),
+        stage === 'crash' ? [31, 32, 33] : [31, 32, 33, 34, 35, 36, 37, 38],
+      )
+      assert.deepEqual(
+        plan.items.map(({ promptPairIndex }) => promptPairIndex),
+        stage === 'crash' ? [0, 0, 0] : [0, 0, 1, 1, 2, 2, 3, 3],
+      )
+      assert.deepEqual(
+        plan.sourcePrompts,
+        stage === 'crash' ? plan.items[0].prompts : literal('replay', mode, 31).sourcePrompts,
+      )
+      admissions += plan.expectedAdmissions
+      completions += plan.expectedCompletions
+      canceled += plan.expectedCanceled
+      for (const mutate of [
+        (v) => {
+          delete v.baselineSourceSnapshots
+        },
+        (v) => {
+          delete v.baselineSourceSnapshots['scripts/installed-dynamic-batch-driver.mjs']
+        },
+        (v) => {
+          v.baselineSourceSnapshots['src/main/projects/anima-generation-preparation.ts'] =
+            Object.values(v.baselineSourceSnapshots)[0]
+        },
+        (v) => {
+          Object.values(v.baselineSourceSnapshots)[0].sha256 = 'bad'
+        },
+        (v) => {
+          Object.values(v.baselineSourceSnapshots)[0].path = v.artifacts
+        },
+        (v) => {
+          v.replaySeed = 31
+        },
+      ]) {
+        const wrong = structuredClone(fixture)
+        mutate(wrong)
+        assert.throws(() => validate(wrong))
+      }
+      if (stage === 'reuse') {
+        const wrong = structuredClone(fixture)
+        delete wrong.crashSource
+        assert.throws(() => validate(wrong))
+      }
+    }
+  assert.deepEqual([admissions, completions, canceled], [22, 18, 4])
+  assert.throws(() =>
+    validate({
+      ...envelope(),
+      baselineSourceSnapshots: recoveryEnvelope('crash', 'img2img', 31).baselineSourceSnapshots,
+    }),
+  )
+})
+
+for (const mode of ['img2img', 'outpaint'])
+  test(`${mode}: genuine Main Fixed first-pair3 and Reuse8 rows retain complete native/raw/compiled domains without physical-crash claims`, async () => {
+    const reference = installedFixture()
+    for (const [stage, baseSeed] of [
+      ['crash', 31],
+      ['reuse', 0],
+      ['reuse', 31],
+    ]) {
+      const actual = await recoveryProduced(reference, stage, mode, { baseSeed }),
+        plan = literal(stage, mode, baseSeed)
+      assert.deepEqual(resolve(plan, actual.rows), plan)
+      for (const [index, row] of actual.rows.entries()) {
+        const frozen = JSON.parse(row.frozen_payload_json),
+          item = plan.items[index]
+        assertFrozen(frozen, item, reference)
+        assertConfiguration(actual.configs[index], item, reference)
+        assert.equal(
+          frozen.context.sampling.requestedSeedPolicy,
+          stage === 'reuse' ? 'reuse' : 'fixed',
+        )
+        assert.equal(frozen.workerJob.sampling.posteriorSeed, nativePlan(item.seed).posteriorSeed)
+        for (const mutate of [
+          (v) => {
+            v.context.sampling.requestedSeedPolicy = stage === 'reuse' ? 'fixed' : 'reuse'
+          },
+          (v) => {
+            v.context.sampling.seed = 91
+          },
+          (v) => {
+            v.workerJob.sampling.posteriorSeed = 0
+          },
+          (v) => {
+            v.workerJob.prompts.negative.spans[0].weight = 1
+          },
+        ]) {
+          const wrong = structuredClone(frozen)
+          mutate(wrong)
+          assert.throws(() => assertFrozen(wrong, item, reference))
+        }
+        const wrong = structuredClone(item)
+        wrong.iteration = 7
+        assert.throws(() => assertItem(wrong))
+      }
+      const fixture = recoveryEnvelope(stage, mode, baseSeed)
+      const fixed = await produced(reference, 'replay', mode, { baseSeed }),
+        fixedPlan = literal('replay', mode, baseSeed)
+      const baseline = {
+        status: 'passed',
+        profile: 'anima-image-seed-replay',
+        stage: 'replay',
+        literalPlan: fixedPlan,
+        resolvedPlan: fixedPlan,
+        nativePhysicalExit: { confirmed: true },
+        savedPackage: {
+          acceptedLayers: 8,
+          sourceLayers: 1,
+          totalLayers: 9,
+          reopened: true,
+          lastActualSeedSnapshot: fixedPlan.items.at(-1).seed,
+        },
+        admissions: fixed.rows.map((row) => ({ row })),
+        generations: fixed.rows.map((row, index) => ({
+          queueItemId: row.id,
+          expectedItem: fixedPlan.items[index],
+          frozen: JSON.parse(row.frozen_payload_json),
+          row: { status: 'completed' },
+          accepted: true,
+          provenance: { generationConfiguration: fixed.configs[index] },
+          dimensions: { pixelSha256: 'f'.repeat(64) },
+        })),
+        comparisons: fixed.rows.map(({ id }) => ({ queueItemId: id, readOnly: true })),
+      }
+      assertBaseline({ baseline, fixture, plan, reference })
+      assert.deepEqual(
+        referenceInputs(JSON.parse(actual.rows[0].frozen_payload_json)),
+        referenceInputs(JSON.parse(fixed.rows[0].frozen_payload_json)),
+      )
+      for (const mutate of [
+        (v) => {
+          v.stage = 'random'
+        },
+        (v) => {
+          v.savedPackage.lastActualSeedSnapshot = baseSeed
+        },
+        (v) => {
+          v.generations[7].provenance.generationConfiguration.sampling.requestedSeedPolicy = 'reuse'
+        },
+        (v) => {
+          v.comparisons[7].queueItemId = v.comparisons[0].queueItemId
+        },
+      ]) {
+        const wrong = structuredClone(baseline)
+        mutate(wrong)
+        assert.throws(() => assertBaseline({ baseline: wrong, fixture, plan, reference }))
+      }
+    }
+  })
 
 test('finite32/4/16 Random/Fixed scope keeps unknown entropy until admission and independently defines uint32 native domains', () => {
   let jobs = 0,

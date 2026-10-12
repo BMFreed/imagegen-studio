@@ -14,6 +14,11 @@ import {
 export { expectedAnimaDynamicImageLoraStack } from './anima-dynamic-image-qualification.mjs'
 const modulus = 4294967296
 const offsets = Object.freeze([0, 1, 2, 3, 4, 5, 6, 7])
+export const animaImageSeedReplayBaselineSources = Object.freeze([
+  'scripts/installed-dynamic-batch-driver.mjs',
+  'scripts/anima-image-seed-replay-profile.mjs',
+  'scripts/anima-image-seed-replay-qualification.mjs',
+])
 function uint32(value) {
   assert.ok(Number.isSafeInteger(value) && value >= 0 && value < modulus, 'Expected uint32.')
 }
@@ -29,19 +34,33 @@ function exactKeys(value, fields) {
   assert.deepEqual(Object.keys(value).sort(), [...fields].sort())
 }
 export function literalAnimaImageSeedReplayPlan(stage, mode, replaySeed = null) {
-  assert.ok(['random', 'replay'].includes(stage))
+  assert.ok(['random', 'replay', 'crash', 'reuse'].includes(stage))
   if (stage === 'random') assert.equal(replaySeed, null)
   else uint32(replaySeed)
   const source = fixedPlan('per-prompt', mode)
-  const policy = stage === 'random' ? 'random' : 'fixed'
+  const policy = stage === 'random' ? 'random' : stage === 'reuse' ? 'reuse' : 'fixed'
+  const items =
+    stage === 'crash'
+      ? [0, 1, 2].map((iteration) => ({ ...structuredClone(source.items[0]), iteration }))
+      : source.items
   return freeze({
     ...structuredClone(source),
     stage,
     requestedSeedPolicy: policy,
-    fixedSeed: replaySeed,
+    fixedSeed: stage === 'reuse' ? null : replaySeed,
     baseSeed: replaySeed,
     randomBaseSource: null,
-    items: source.items.map((item, index) => ({
+    ...(stage === 'crash'
+      ? {
+          iterations: 3,
+          maxPrompts: 1,
+          sourcePrompts: structuredClone(source.items[0].prompts),
+          expectedAdmissions: 3,
+          expectedCompletions: 1,
+          expectedCanceled: 2,
+        }
+      : {}),
+    items: items.map((item, index) => ({
       ...structuredClone(item),
       stage,
       baseSeed: replaySeed,
@@ -62,20 +81,27 @@ export function validateAnimaImageSeedReplayFixture(fixture) {
     'artifacts',
     ...(fixture?.mode === 'outpaint' ? ['lamaSource'] : []),
     ...(fixture?.stage === 'replay' ? ['baseline', 'replaySeed'] : []),
+    ...(['crash', 'reuse'].includes(fixture?.stage)
+      ? ['baseline', 'baseSeed', 'baselineSourceSnapshots']
+      : []),
+    ...(fixture?.stage === 'reuse' ? ['crashSource'] : []),
   ])
   assert.equal(fixture.profile, 'anima-image-seed-replay')
   const plan = literalAnimaImageSeedReplayPlan(
     fixture.stage,
     fixture.mode,
-    fixture.replaySeed ?? null,
+    fixture.replaySeed ?? fixture.baseSeed ?? null,
   )
   const common = { ...fixture, profile: 'anima-dynamic-image-per-prompt', stage: 'numeric-control' }
   delete common.baseline
   delete common.replaySeed
+  delete common.baseSeed
+  delete common.baselineSourceSnapshots
+  delete common.crashSource
   validateImage(common)
-  if (fixture.stage === 'replay') {
-    exactKeys(fixture.baseline, ['reportPath', 'reportSha256'])
-    const filename = fixture.baseline.reportPath
+  const checkReference = (descriptor, fields) => {
+    exactKeys(descriptor, fields)
+    const filename = descriptor[fields[0]]
     assert.ok(
       typeof filename === 'string' &&
         path.isAbsolute(filename) &&
@@ -89,8 +115,15 @@ export function validateAnimaImageSeedReplayFixture(fixture) {
         !filename.startsWith(fixture.artifacts + path.sep) &&
         !fixture.artifacts.startsWith(filename + path.sep),
     )
-    assert.match(fixture.baseline.reportSha256, /^[a-f0-9]{64}$/)
+    assert.match(descriptor[fields[1]], /^[a-f0-9]{64}$/)
   }
+  if (fixture.stage !== 'random') checkReference(fixture.baseline, ['reportPath', 'reportSha256'])
+  if (['crash', 'reuse'].includes(fixture.stage)) {
+    exactKeys(fixture.baselineSourceSnapshots, animaImageSeedReplayBaselineSources)
+    for (const descriptor of Object.values(fixture.baselineSourceSnapshots))
+      checkReference(descriptor, ['path', 'sha256'])
+  }
+  if (fixture.stage === 'reuse') checkReference(fixture.crashSource, ['reportPath', 'reportSha256'])
   return plan
 }
 function resolvedRandom(original, baseSeed, queueItemId) {
@@ -134,8 +167,8 @@ export function resolveAnimaImageSeedReplayPlan(plan, admitted) {
   if (plan.stage === 'random' && plan.baseSeed !== null)
     assertAnimaImageSeedReplayResolvedPlan(plan)
   else assert.deepEqual(plan, original)
-  assert.equal(admitted.length, 8)
-  assert.equal(new Set(admitted.map(({ id }) => id)).size, 8)
+  assert.equal(admitted.length, original.expectedAdmissions)
+  assert.equal(new Set(admitted.map(({ id }) => id)).size, original.expectedAdmissions)
   const first = frozenOf(admitted[0])
   const resolved =
     plan.stage === 'random'
@@ -157,8 +190,12 @@ export function resolveAnimaImageSeedReplayPlan(plan, admitted) {
 /** Full membership is established before any raw/native/portable projection or normalization. */
 export function assertAnimaImageSeedReplayItem(item) {
   uint32(item?.baseSeed)
-  assert.ok(['random', 'replay'].includes(item.stage))
-  const canonical = literalAnimaImageSeedReplayPlan('replay', item.mode, item.baseSeed).items.find(
+  assert.ok(['random', 'replay', 'crash', 'reuse'].includes(item.stage))
+  const canonical = literalAnimaImageSeedReplayPlan(
+    item.stage === 'random' ? 'replay' : item.stage,
+    item.mode,
+    item.baseSeed,
+  ).items.find(
     (entry) => entry.promptPairIndex === item.promptPairIndex && entry.iteration === item.iteration,
   )
   assert.ok(canonical, 'Independent full-pair/iteration/base/actual-seed membership is required.')
@@ -167,7 +204,8 @@ export function assertAnimaImageSeedReplayItem(item) {
     {
       ...canonical,
       stage: item.stage,
-      requestedSeedPolicy: item.stage === 'random' ? 'random' : 'fixed',
+      requestedSeedPolicy:
+        item.stage === 'random' ? 'random' : item.stage === 'reuse' ? 'reuse' : 'fixed',
     },
     'Independent full-pair/iteration/base/actual-seed membership is required.',
   )
@@ -212,23 +250,31 @@ export const normalizeAnimaImageSeedReplayNativeInputs = normalize
 export function normalizeAnimaImageSeedReplayReferenceInputs(frozen) {
   const value = normalize(frozen)
   assert.equal(value.context.sampling.seedBehavior, 'per-prompt')
-  assert.ok(['random', 'fixed'].includes(value.context.sampling.requestedSeedPolicy))
+  assert.ok(['random', 'fixed', 'reuse'].includes(value.context.sampling.requestedSeedPolicy))
   delete value.context.sampling.requestedSeedPolicy
   return value
 }
 export function assertAnimaImageSeedReplayBaseline({ baseline, fixture, plan, reference }) {
-  assert.equal(fixture.stage, 'replay')
+  assert.ok(['replay', 'crash', 'reuse'].includes(fixture.stage))
   assert.deepEqual(plan, validateAnimaImageSeedReplayFixture(fixture))
   assert.equal(baseline.status, 'passed')
   assert.equal(baseline.profile, fixture.profile)
-  assert.equal(baseline.stage, 'random')
-  assert.deepEqual(baseline.literalPlan, literalAnimaImageSeedReplayPlan('random', fixture.mode))
+  const expectedStage = fixture.stage === 'replay' ? 'random' : 'replay'
+  assert.equal(baseline.stage, expectedStage)
+  assert.deepEqual(
+    baseline.literalPlan,
+    literalAnimaImageSeedReplayPlan(
+      expectedStage,
+      fixture.mode,
+      expectedStage === 'random' ? null : fixture.baseSeed,
+    ),
+  )
   const resolved = assertAnimaImageSeedReplayResolvedPlan(baseline.resolvedPlan)
-  assert.equal(resolved.stage, 'random')
+  assert.equal(resolved.stage, expectedStage)
   assert.equal(resolved.mode, fixture.mode)
   assert.equal(
     resolved.baseSeed,
-    fixture.replaySeed,
+    fixture.replaySeed ?? fixture.baseSeed,
     'Replay uses actual Random base, not last completed seed.',
   )
   assert.equal(baseline.nativePhysicalExit?.confirmed, true)
@@ -239,18 +285,20 @@ export function assertAnimaImageSeedReplayBaseline({ baseline, fixture, plan, re
   assert.equal(baseline.savedPackage?.totalLayers, 9)
   assert.equal(baseline.savedPackage?.reopened, true)
   assert.equal(baseline.savedPackage?.lastActualSeedSnapshot, resolved.items.at(-1).seed)
-  const observed = baseline.seedAdmissionObservation
-  assert.equal(observed?.producer, 'Main node:crypto.randomBytes(4).readUInt32LE(0)')
-  assert.equal(observed.outputSubstitution, false)
-  assert.equal(observed.originalIdentityRestored, true)
-  assert.equal(observed.calls.length, 1)
-  const call = observed.calls[0]
-  assert.equal(call.seed, resolved.baseSeed)
-  assert.equal(call.argumentCount, 1)
-  assert.equal(call.byteSize, 4)
-  assert.equal(call.synchronous, true)
-  assert.ok(typeof call.stack === 'string' && /prepareAnimaGenerationInternal/.test(call.stack))
-  assert.equal(observed.firstAdmittedQueueItemId, resolved.randomBaseSource.queueItemId)
+  if (expectedStage === 'random') {
+    const observed = baseline.seedAdmissionObservation
+    assert.equal(observed?.producer, 'Main node:crypto.randomBytes(4).readUInt32LE(0)')
+    assert.equal(observed.outputSubstitution, false)
+    assert.equal(observed.originalIdentityRestored, true)
+    assert.equal(observed.calls.length, 1)
+    const call = observed.calls[0]
+    assert.equal(call.seed, resolved.baseSeed)
+    assert.equal(call.argumentCount, 1)
+    assert.equal(call.byteSize, 4)
+    assert.equal(call.synchronous, true)
+    assert.ok(typeof call.stack === 'string' && /prepareAnimaGenerationInternal/.test(call.stack))
+    assert.equal(observed.firstAdmittedQueueItemId, resolved.randomBaseSource.queueItemId)
+  }
   assert.equal(new Set(baseline.generations.map(({ queueItemId }) => queueItemId)).size, 8)
   for (const [index, generation] of baseline.generations.entries()) {
     const item = resolved.items[index]
@@ -269,8 +317,13 @@ export function assertAnimaImageSeedReplayBaseline({ baseline, fixture, plan, re
       reference,
     )
   }
-  assert.equal(baseline.generations[0].queueItemId, resolved.randomBaseSource.queueItemId)
-  return { pinnedRandomBaseSeed: resolved.baseSeed, allEightOwningResultsVerified: true }
+  if (expectedStage === 'random')
+    assert.equal(baseline.generations[0].queueItemId, resolved.randomBaseSource.queueItemId)
+  return {
+    [expectedStage === 'random' ? 'pinnedRandomBaseSeed' : 'pinnedFixedBaseSeed']:
+      resolved.baseSeed,
+    allEightOwningResultsVerified: true,
+  }
 }
 /** Adjacent seeds within each literal weighted pair only; no cross-pair/weight/quality claim. */
 export function assertAnimaImageSeedReplayPixels(generations, plan) {

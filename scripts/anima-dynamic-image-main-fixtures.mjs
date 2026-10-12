@@ -140,12 +140,19 @@ export function resource(reference, key) {
 
 function finiteRecipe(value, stage) {
   if (value === undefined) return null
+  assert.deepEqual(Object.keys(value).sort(), ['iterations', 'seedBehavior'])
+  if (stage === 'prefix') {
+    assert.ok(
+      value.iterations === 3 && value.seedBehavior === 'per-prompt',
+      'Only the declared first-pair three-admission crash precondition uses an optional prefix recipe.',
+    )
+    return { iterations: 3, seedBehavior: 'per-prompt' }
+  }
   assert.equal(
     stage,
     'baseline',
     'Optional numeric-control/per-prompt recipes retain all four pairs.',
   )
-  assert.deepEqual(Object.keys(value).sort(), ['iterations', 'seedBehavior'])
   assert.ok(
     (value.iterations === 8 && value.seedBehavior === 'per-iteration') ||
       (value.iterations === 2 && value.seedBehavior === 'per-prompt'),
@@ -158,8 +165,8 @@ function finiteRecipe(value, stage) {
 function capturedSeed(value) {
   if (value === undefined) return { policy: 'fixed', value: 0 }
   assert.deepEqual(Object.keys(value).sort(), ['policy', 'value'])
-  assert.ok(value.policy === 'fixed' || value.policy === 'random')
-  if (value.policy === 'random') assert.equal(value.value, null)
+  assert.ok(['fixed', 'random', 'reuse'].includes(value.policy))
+  if (value.policy !== 'fixed') assert.equal(value.value, null)
   else assert.ok(Number.isSafeInteger(value.value) && value.value >= 0 && value.value <= 4294967295)
   return { policy: value.policy, value: value.value }
 }
@@ -175,10 +182,19 @@ export function authoring(reference, stage, mode, options = {}) {
     vaePrecision: 'Auto',
     cfgRescale: 0,
     positivePrompt: {
-      text: 'a {(red:1.3)|(blue:1.3)} ceramic cup on a wooden table, studio photograph',
+      text:
+        stage === 'prefix' && recipe?.iterations === 3
+          ? 'a (red:1.3) ceramic cup on a wooden table, studio photograph'
+          : 'a {(red:1.3)|(blue:1.3)} ceramic cup on a wooden table, studio photograph',
       embeddingRefs: [],
     },
-    negativePrompt: { text: '{(blurry:0.7)|(noisy:0.7)}, low quality', embeddingRefs: [] },
+    negativePrompt: {
+      text:
+        stage === 'prefix' && recipe?.iterations === 3
+          ? '(blurry:0.7), low quality'
+          : '{(blurry:0.7)|(noisy:0.7)}, low quality',
+      embeddingRefs: [],
+    },
     seed: capturedSeed(options.seed),
     dynamicPrompt: {
       maxPrompts: stage === 'baseline' ? 4 : 1,
@@ -273,6 +289,10 @@ export async function produced(reference, stage, mode, options = {}) {
   // Snapshot finite caller inputs before PNG construction, qualification or any other await.
   const selectedSeed = capturedSeed(options.seed)
   const controlledRandomSeed = options.randomSeed
+  // Optional supplied cursor/saved-snapshot preconditions. This direct producer does not read
+  // an operational cursor; scoped SQLite reads and actual restart recovery have separate owners.
+  const lastActualSeed = options.lastActualSeed
+  const lastActualSeedSnapshot = options.lastActualSeedSnapshot ?? null
   if (selectedSeed.policy === 'random')
     assert.ok(
       Number.isSafeInteger(controlledRandomSeed) &&
@@ -313,7 +333,7 @@ export async function produced(reference, stage, mode, options = {}) {
     documentId: document.documentId,
     documentRevision: document.documentRevision,
     generationDraft: document.generationDraft,
-    lastActualSeedSnapshot: null,
+    lastActualSeedSnapshot,
     mode,
     composite: {
       bytes: Buffer.from(sourceBytes),
@@ -332,6 +352,7 @@ export async function produced(reference, stage, mode, options = {}) {
   const prepared = await (
     mode === 'outpaint' ? prepareAnimaOutpaintGeneration : prepareAnimaGeneration
   )({
+    lastActualSeed,
     target,
     modelService: models,
     randomUint32: () => {
@@ -582,6 +603,7 @@ export async function produced(reference, stage, mode, options = {}) {
       edits,
       capacityPreflights: capacityChecks.length,
       picks,
+      seedPreconditions: { lastActualSeed, lastActualSeedSnapshot },
       entropyObservation: {
         producer: 'controlled CPU uint32 collaborator',
         outputSubstitution: selectedSeed.policy === 'random',

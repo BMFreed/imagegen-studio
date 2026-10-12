@@ -187,6 +187,6 @@ for the then-next finite Anima image Random→Fixed replay, subsequently qualifi
 common-source fixture copies or downloads. Source copy is disposed; its restoration
 and removal manifests remain evidence, not a claim that it can still be read.
 
-Subsequent [Anima Random → Fixed checkpoint](phase-2c-anima-image-seed-replay-research.md):32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA replays and2 unmodified original Main crypto returns. These counts remain separate from this historical80/4/16 gate. Next: recovered Anima image Reuse. uint32 wrap/refusal/cap32 and remaining
+Subsequent [Anima Random → Fixed checkpoint](phase-2c-anima-image-seed-replay-research.md):32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA replays and2 unmodified original Main crypto returns. These counts remain separate from this historical80/4/16 gate. The subsequent [recovered Anima image Reuse gate](./phase-2c-anima-image-reuse-crash-research.md) is qualified separately. Next: deliberate Anima image uint32 wrap. uint32 wrap/refusal/cap32 and remaining
 method/input/format/geometry/Advanced/quality/public delivery/release combinations
 remain open; masks/Regional Guidance/Smart Patch remain phase4.
