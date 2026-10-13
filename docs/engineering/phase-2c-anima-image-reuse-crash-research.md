@@ -104,7 +104,7 @@ process/dependency closure; retain compact recovery proofs with measured invento
 
 Quality, trained Invoke pixel parity, forced uint32 wrap, cap32, other Anima methods/
 geometries/formats, full MVP and release are not claimed. The next finite cut is
-deliberate Anima image uint32 wrap; historical Random/Fixed32 counts stay separate.
+Anima image cap32/prefix refusal; historical Random/Fixed32 counts stay separate.
 
 ## Actual validation and retained evidence
 
@@ -183,3 +183,5 @@ to retain another environment. Reinspect it at that gate's handoff and release
 superseded captures only after all concrete reproduction/dependency pins are cleared.
 Post-cleanup verification confirms all43 worker bytes/physical identities unchanged
 and the actual runtime/native data idle. No user app data or original model was deleted.
+
+The subsequent [Anima image MAX→0 gate](./phase-2c-anima-image-seed-wrap-research.md) qualified its own8 outputs/6 packages/4 wholeRGBA controls; these counts remain separate from this historical checkpoint. Next: Anima image cap32/prefix refusal.

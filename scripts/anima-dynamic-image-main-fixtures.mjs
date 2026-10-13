@@ -143,10 +143,10 @@ function finiteRecipe(value, stage) {
   assert.deepEqual(Object.keys(value).sort(), ['iterations', 'seedBehavior'])
   if (stage === 'prefix') {
     assert.ok(
-      value.iterations === 3 && value.seedBehavior === 'per-prompt',
-      'Only the declared first-pair three-admission crash precondition uses an optional prefix recipe.',
+      [1, 2, 3].includes(value.iterations) && value.seedBehavior === 'per-prompt',
+      'Only declared one-pair uint32 controls/wrap or three-admission crash preconditions use an optional prefix recipe.',
     )
-    return { iterations: 3, seedBehavior: 'per-prompt' }
+    return { iterations: value.iterations, seedBehavior: 'per-prompt' }
   }
   assert.equal(
     stage,
@@ -183,14 +183,14 @@ export function authoring(reference, stage, mode, options = {}) {
     cfgRescale: 0,
     positivePrompt: {
       text:
-        stage === 'prefix' && recipe?.iterations === 3
+        stage === 'prefix' && recipe
           ? 'a (red:1.3) ceramic cup on a wooden table, studio photograph'
           : 'a {(red:1.3)|(blue:1.3)} ceramic cup on a wooden table, studio photograph',
       embeddingRefs: [],
     },
     negativePrompt: {
       text:
-        stage === 'prefix' && recipe?.iterations === 3
+        stage === 'prefix' && recipe
           ? '(blurry:0.7), low quality'
           : '{(blurry:0.7)|(noisy:0.7)}, low quality',
       embeddingRefs: [],
