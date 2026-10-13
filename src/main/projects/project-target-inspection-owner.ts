@@ -93,7 +93,10 @@ export class ProjectTargetInspectionOwner {
   }
 
   /** Save/import/rebuild retain their action instead of being superseded by a newer inspection. */
-  async useWorker<T>(use: (worker: ProjectWorkerClient) => Promise<T>): Promise<T | null> {
+  async useWorker<T>(
+    use: (worker: ProjectWorkerClient) => Promise<T>,
+    options: { retainCompletedResult?: boolean } = {},
+  ): Promise<T | null> {
     return await this.withLease(
       async (lease, source) => {
         if (!source) {
@@ -103,7 +106,7 @@ export class ProjectTargetInspectionOwner {
         return client ? await use(client) : null
       },
       () => true,
-      true,
+      options.retainCompletedResult !== false,
     )
   }
 

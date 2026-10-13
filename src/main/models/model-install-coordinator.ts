@@ -465,6 +465,7 @@ export class ModelInstallCoordinator {
           },
           sourceMetadata: {
             baseModel: preview.baseModel,
+            previewImageUrl: preview.previewImageUrl,
             trainedWords: preview.trainedWords,
             ...(preview.resourceType === 'checkpoint' &&
             preview.baseModelFamily === 'anima' &&

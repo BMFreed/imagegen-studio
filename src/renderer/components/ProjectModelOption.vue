@@ -15,10 +15,10 @@ defineProps<{
 <template>
   <div class="model-option" :class="{ 'model-option--added': added }">
     <img
-      v-if="resource.previewDataUrl"
+      v-if="version?.thumbnailDataUrl"
       alt=""
       class="model-preview"
-      :src="resource.previewDataUrl"
+      :src="version.thumbnailDataUrl"
     />
     <span v-else aria-hidden="true" class="model-preview model-preview--empty">—</span>
     <span class="model-description">

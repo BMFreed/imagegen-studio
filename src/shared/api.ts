@@ -464,7 +464,10 @@ export interface ModelVersionView {
   noiseProfile?: CheckpointNoiseProfileView
   predictionType: 'epsilon' | 'sample' | 'v_prediction' | null
   predictionTypeSource?: 'default' | 'manifest' | 'not-applicable' | 'user'
+  /** Optional local worker derivatives; absent artwork never changes file readiness. */
+  previewDataUrl?: string | null
   sha256: string
+  thumbnailDataUrl?: string | null
   trainedWords: string[]
 }
 export interface ModelCatalogItem {
@@ -477,6 +480,7 @@ export interface ModelCatalogItem {
   previewDataUrl: string | null
   resourceType: ModelResourceType
   sourceUrl: string | null
+  thumbnailDataUrl?: string | null
   trainedWords: string[]
   versions: ModelVersionView[]
 }

@@ -25,13 +25,14 @@ import {
 } from '../../shared/projects/prompt-embeddings.js'
 
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, createReadStream } from 'node:fs'
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { lstat } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { CivitaiImportPreview } from './civitai-client.js'
 import type { CivitaiClient } from './civitai-client.js'
 import type { CivitaiTokenStore } from './civitai-token-store.js'
+import type { ModelPreviewCache } from './model-preview-cache.js'
 import type {
   BaseModelFamily,
   CheckpointNoiseProfileOverride,
@@ -131,14 +132,13 @@ export class ModelService {
     { fingerprint: string; sha256: string; status: 'corrupt' | 'ready' }
   >()
   private readonly fileStatusInFlight = new Map<string, Promise<'corrupt' | 'ready'>>()
-  private readonly previewImageCache = new Map<string, string | null>()
   private readonly previews = new Map<string, PreviewSession>()
 
   constructor(
     readonly repository: ModelRepository,
     readonly civitai: CivitaiClient,
     readonly tokenStore: CivitaiTokenStore,
-    private readonly cacheRoot?: string,
+    _legacyCacheRoot?: string,
     private readonly compatibilityManifest: readonly CheckpointCompatibilityFingerprint[] = CHECKPOINT_COMPATIBILITY_MANIFEST,
     private readonly checkpointQualifier: (
       managedPath: string,
@@ -147,6 +147,7 @@ export class ModelService {
     private readonly animaQualificationProfile: AnimaGenerationQualificationProfile = ANIMA_GENERATION_QUALIFICATION_PROFILE,
     /** Trusted Main collaborator, never configurable through IPC or Project inputs. */
     private readonly animaLoraQualifier: (managedPath: string) => Promise<void> = qualifyAnimaLora,
+    private readonly resourcePreviews?: Pick<ModelPreviewCache, 'get' | 'read'>,
   ) {}
 
   /** Generate never silently binds a typed activation literal or guesses among exact versions. */
@@ -240,7 +241,7 @@ export class ModelService {
     this.previews.delete(previewId)
   }
 
-  async getCatalog(): Promise<ModelCatalogItem[]> {
+  async getCatalog(options: { buildPreviews?: boolean } = {}): Promise<ModelCatalogItem[]> {
     const installed = await this.repository.listInstalled()
     const predictionOverrides = new Map(
       (await this.repository.listPredictionOverrides()).map((override) => [
@@ -261,14 +262,22 @@ export class ModelService {
       installed
         .filter((model) => model.source.kind === 'civitai')
         .map(async (model) => {
-          const previewUrl = model.previewUrl
-          let previewDataUrl: string | null = null
-          if (previewUrl) {
-            if (!this.previewImageCache.has(previewUrl)) {
-              this.previewImageCache.set(previewUrl, await this.readCachedPreview(previewUrl))
-            }
-            previewDataUrl = this.previewImageCache.get(previewUrl) ?? null
-          }
+          const previews = new Map(
+            await Promise.all(
+              model.versions.map(async (version) => {
+                // Historical resource URLs have no exact owner when several versions exist.
+                const url = Object.hasOwn(version.sourceMetadata, 'previewImageUrl')
+                  ? version.sourceMetadata.previewImageUrl
+                  : model.versions.length === 1
+                    ? model.previewUrl
+                    : null
+                return [
+                  version.id,
+                  await this.resourcePreview(url, options.buildPreviews === true),
+                ] as const
+              }),
+            ),
+          )
           const source = model.source
           const defaultVersion =
             model.versions.find((version) => version.id === model.defaultVersionId) ??
@@ -281,10 +290,15 @@ export class ModelService {
             id: model.id,
             modelId: source.kind === 'civitai' ? source.modelId : null,
             name: model.displayName,
-            previewDataUrl,
+            previewDataUrl: model.defaultVersionId
+              ? (previews.get(model.defaultVersionId)?.previewDataUrl ?? null)
+              : null,
             resourceType: model.type as ModelCatalogItem['resourceType'],
             sourceUrl:
               source.kind === 'civitai' ? `https://civitai.com/models/${source.modelId}` : null,
+            thumbnailDataUrl: model.defaultVersionId
+              ? (previews.get(model.defaultVersionId)?.thumbnailDataUrl ?? null)
+              : null,
             trainedWords: Array.isArray(trainedWords)
               ? trainedWords.filter((word): word is string => typeof word === 'string')
               : [],
@@ -370,7 +384,9 @@ export class ModelService {
                     : {}),
                   predictionType: prediction.value,
                   predictionTypeSource: prediction.source,
+                  previewDataUrl: previews.get(version.id)?.previewDataUrl ?? null,
                   sha256: version.file.sha256,
+                  thumbnailDataUrl: previews.get(version.id)?.thumbnailDataUrl ?? null,
                   trainedWords: Array.isArray(version.sourceMetadata.trainedWords)
                     ? version.sourceMetadata.trainedWords.filter(
                         (word): word is string => typeof word === 'string',
@@ -564,13 +580,8 @@ export class ModelService {
               )
             : 0)
         : null
-    const previewImageDataUrl = await this.civitai.previewImageDataUrl(preview.previewImageUrl)
-    if (preview.previewImageUrl) {
-      this.previewImageCache.set(preview.previewImageUrl, previewImageDataUrl)
-      if (previewImageDataUrl) {
-        await this.writeCachedPreview(preview.previewImageUrl, previewImageDataUrl)
-      }
-    }
+    const previewImageDataUrl =
+      (await this.resourcePreview(preview.previewImageUrl))?.previewDataUrl ?? null
     return {
       author: preview.author,
       baseModel: preview.baseModel,
@@ -1471,44 +1482,12 @@ export class ModelService {
     return (await this.actualFileStatus(file, true)) === 'ready'
   }
 
-  private previewCacheFile(url: string): string | null {
-    return this.cacheRoot
-      ? path.join(
-          this.cacheRoot,
-          'model-source-previews',
-          `${createHash('sha256').update(url).digest('hex')}.txt`,
-        )
-      : null
-  }
-
   private prunePreviewSessions(): void {
     const now = Date.now()
     for (const [id, session] of this.previews) {
       if (session.expiresAt <= now) {
         this.previews.delete(id)
       }
-    }
-  }
-
-  private async readCachedPreview(url: string): Promise<string | null> {
-    const filePath = this.previewCacheFile(url)
-    if (!filePath) {
-      return null
-    }
-    try {
-      const handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW)
-      try {
-        const stat = await handle.stat()
-        if (!stat.isFile() || stat.size > 1_500_000) {
-          return null
-        }
-        const value = await handle.readFile('utf8')
-        return /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null
-      } finally {
-        await handle.close()
-      }
-    } catch {
-      return null
     }
   }
 
@@ -1720,31 +1699,15 @@ export class ModelService {
     }
   }
 
-  private async writeCachedPreview(url: string, dataUrl: string): Promise<void> {
-    const filePath = this.previewCacheFile(url)
-    if (!filePath || dataUrl.length > 1_500_000) {
-      return
+  private async resourcePreview(url: unknown, build = true) {
+    if (typeof url !== 'string' || !url || !this.resourcePreviews) {
+      return null
     }
-    const directory = path.dirname(filePath)
-    const tempPath = `${filePath}.${randomUUID()}.tmp`
     try {
-      await mkdir(directory, { mode: 0o700, recursive: true })
-      const dirStat = await lstat(directory)
-      if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
-        return
-      }
-      const handle = await open(tempPath, 'wx', 0o600)
-      try {
-        await handle.writeFile(dataUrl, 'utf8')
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await rename(tempPath, filePath)
+      return await (build ? this.resourcePreviews.get(url) : this.resourcePreviews.read(url))
     } catch {
-      // The catalog still works with a text fallback if its optional preview cache is unavailable.
-    } finally {
-      await unlink(tempPath).catch(() => undefined)
+      // Optional artwork never changes resource readiness or install planning.
+      return null
     }
   }
 }

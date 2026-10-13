@@ -411,6 +411,7 @@ MVP includes:
 - store preview/avatar metadata;
 - have the worker create derived thumbnail images where needed; main process
   fetches CivitAI source previews and owns thumbnail/cache publication;
+
 - detect duplicate already-installed resources by CivitAI version id and/or file hash;
 - detect newer versions for a known CivitAI model identity;
 - show an explicit available-update state;
@@ -425,6 +426,27 @@ MVP includes:
 - keep presets/accepted-result provenance readable after deletion by storing copied human-readable resource metadata;
 - expose installed resources to the Generate model and LoRA selectors and unified prompt autocomplete;
 - show compatibility warnings for active model family mismatch.
+
+### Local resource artwork
+
+Local resource artwork uses the selected exact version's source image URL in
+version metadata. Resource rows show the default version's thumbnail; exact-version
+Project options and focused Model Manager details use that version's own image,
+with a text fallback when absent. Installing another version or changing Default
+does not relabel existing previews or Project references.
+
+Main fetches a bounded source; the existing CPU image worker produces sRGB WebP
+preview (maximum side 512 px) and thumbnail (96 px), preserving aspect and alpha
+without cropping/upscaling. Main verifies and publishes disposable local cache;
+already cached artwork works offline without a usable worker. Source/decode/cache
+failure is optional and does not affect installation or Generate readiness.
+Operational resource resolution only reads cache. UI catalog refresh/import may
+build missing artwork; fetching does not occupy the shared CPU worker lease.
+
+Historical catalog versions without a recorded source URL are not assigned a
+neighbor's image. The old resource URL is usable only for a single-version resource;
+ambiguous older multi-version resources retain text fallback. Legacy raw `.txt`
+images are not served as verified derivatives and require a new source fetch.
 
 ## Post-MVP / Later
 

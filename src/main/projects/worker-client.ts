@@ -31,6 +31,9 @@ const MAX_TARGET_SIDE = 2048
 const MAX_TARGET_PIXELS = 4_000_000
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_ICC_BYTES = 4 * 1024 * 1024
+const MAX_RESOURCE_SOURCE_BYTES = 1_000_000
+const MAX_RESOURCE_PREVIEW_BYTES = 1_000_000
+const MAX_RESOURCE_THUMBNAIL_BYTES = 128_000
 const MAX_IMAGE_SIDE = 16_384
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const SHUTDOWN_WAIT_MS = 2000
@@ -67,6 +70,21 @@ export interface NormalizeImportInput {
   normalizedPngPath: string
   originalIccPath: string
   stagingRoot: string
+}
+
+export interface ResourcePreviewInput {
+  inputPath: string
+  inputSha256: string
+  previewMaxSide: number
+  previewWebpPath: string
+  stagingRoot: string
+  thumbnailMaxSide: number
+  thumbnailWebpPath: string
+}
+
+export interface VerifiedResourcePreviewResult {
+  preview: VerifiedWorkerImage
+  thumbnail: VerifiedWorkerImage
 }
 
 /** Frozen source layers in Project stack order, topmost first. */
@@ -171,7 +189,13 @@ type PendingRequest = {
   reject: (error: ProjectWorkerError) => void
   resolve: (message: Record<string, unknown>) => void
   timer: ReturnType<typeof setTimeout>
-  type: 'derivative-done' | 'import-done' | 'preview-done' | 'self-test-result' | 'target-done'
+  type:
+    | 'derivative-done'
+    | 'import-done'
+    | 'preview-done'
+    | 'resource-preview-done'
+    | 'self-test-result'
+    | 'target-done'
 }
 
 type OutputPaths = { paths: string[]; stagingRoot: string }
@@ -483,6 +507,69 @@ export class ProjectWorkerClient {
     })
   }
 
+  async createResourcePreview(
+    request: ResourcePreviewInput,
+  ): Promise<VerifiedResourcePreviewResult> {
+    const input = { ...request }
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('resource-preview')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot create resource previews.',
+        )
+      }
+      for (const [side, maximum] of [
+        [input.previewMaxSide, 512],
+        [input.thumbnailMaxSide, 128],
+      ]) {
+        if (!Number.isSafeInteger(side) || side < 32 || side > maximum) {
+          throw new ProjectWorkerError('INVALID_REQUEST', 'Resource preview size is invalid.')
+        }
+      }
+      const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
+        [input.previewWebpPath, '.webp'],
+        [input.thumbnailWebpPath, '.webp'],
+      ])
+      await validateInputPath(input.inputPath, input.inputSha256, paths)
+      const source = await inspectVerifiedFile(
+        input.inputPath,
+        MAX_RESOURCE_SOURCE_BYTES,
+        async () => ({}),
+      )
+      if (source.sha256 !== input.inputSha256) {
+        throw new ProjectWorkerError(
+          'INVALID_REQUEST',
+          'The resource preview source does not match its frozen identity.',
+        )
+      }
+      const response = await this.request('create-resource-preview', 'resource-preview-done', {
+        input: { path: input.inputPath, sha256: input.inputSha256 },
+        output: { previewWebpPath: paths[0], stagingRoot, thumbnailWebpPath: paths[1] },
+        previewMaxSide: input.previewMaxSide,
+        thumbnailMaxSide: input.thumbnailMaxSide,
+      })
+      const preview = await verifyImageOutput(
+        paths[0],
+        response.preview,
+        MAX_RESOURCE_PREVIEW_BYTES,
+        'webp',
+      )
+      const thumbnail = await verifyImageOutput(
+        paths[1],
+        response.thumbnail,
+        MAX_RESOURCE_THUMBNAIL_BYTES,
+        'webp',
+      )
+      if (
+        Math.max(preview.width, preview.height) > input.previewMaxSide ||
+        Math.max(thumbnail.width, thumbnail.height) > input.thumbnailMaxSide
+      ) {
+        throw this.outputFailure('Resource preview dimensions exceed their requested limits.')
+      }
+      return { preview, thumbnail }
+    })
+  }
+
   async deriveImage(input: DeriveImageInput): Promise<VerifiedDerivativeResult> {
     return this.exclusive(async () => {
       const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
@@ -775,7 +862,13 @@ export class ProjectWorkerClient {
   }
 
   private request(
-    type: 'compose-preview' | 'compose-target' | 'derive-image' | 'normalize-import' | 'self-test',
+    type:
+      | 'compose-preview'
+      | 'compose-target'
+      | 'create-resource-preview'
+      | 'derive-image'
+      | 'normalize-import'
+      | 'self-test',
     resultType: PendingRequest['type'],
     fields: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {

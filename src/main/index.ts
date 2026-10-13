@@ -60,6 +60,7 @@ import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './model
 import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-token-store.js'
 import { ModelDownloader, ModelDownloadError } from './models/model-downloader.js'
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
+import { ModelPreviewCache } from './models/model-preview-cache.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import {
@@ -380,11 +381,25 @@ if (!gotInstanceLock) {
         console.error('Project storage is unavailable', error)
       }
       const modelRepository = new ModelRepository(database.db)
+      const civitaiClient = new CivitaiClient()
+      const resourcePreviews = new ModelPreviewCache({
+        cacheRoot: paths.cacheRoot,
+        canBuild: async () => Boolean(await resolveProjectImageWorker()),
+        fetchSource: (url) => civitaiClient.previewImageDataUrl(url),
+        scratchRoot: projectImageScratch,
+        withWorker: (use) => targetInspectionOwner.useWorker(use, { retainCompletedResult: false }),
+      })
       const modelService = new ModelService(
         modelRepository,
-        new CivitaiClient(),
+        civitaiClient,
         new CivitaiTokenStore(safeStorage, paths.dataRoot),
         paths.cacheRoot,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        resourcePreviews,
       )
       // Keep the recovered queue/staging pair and their single owner for this app lifetime.
       // Recover storage before exposing any user generation action.
@@ -1623,7 +1638,9 @@ if (!gotInstanceLock) {
           }),
       )
 
-      registerModelHandler(ipcChannels.models.getCatalog, noArgs, () => modelService.getCatalog())
+      registerModelHandler(ipcChannels.models.getCatalog, noArgs, () =>
+        modelService.getCatalog({ buildPreviews: true }),
+      )
       registerModelHandler(
         ipcChannels.models.getStorageSummary,
         noArgs,

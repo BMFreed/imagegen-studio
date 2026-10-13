@@ -1,7 +1,12 @@
 # Engineering Workflow
 
-Latest finite checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md). V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать».
-Next implementation item: local installed-resource thumbnails/previews in Phase2C.
+Latest finite checkpoint: [Local installed-resource previews](./phase-2c-resource-previews-research.md).
+Existing CPU worker creates verified sRGB artwork; Main owns local source/cache,
+exact-version association and the confirmed-exit barrier. Built UI covers picker,
+manager/default, explicit Save and offline restart without runtime. PP-004 remains
+«Пока не обещать»: full lifecycle/Preset owners and packaged delivery stay open.
+Next: remaining Phase2C exit checks before production Presets.
+Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).
 Older checkpoint successor labels retain their historical meaning.
 
 Продуктовые обещания задают ожидаемый результат, supporting contracts — точные

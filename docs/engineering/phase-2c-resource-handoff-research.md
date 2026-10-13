@@ -1,5 +1,9 @@
 # Phase 2C: Project resource handoff to Model Manager
 
+Follow-up: [Local resource previews](./phase-2c-resource-previews-research.md) connects
+worker-created artwork to exact-version Project options and focused Model Manager
+details. This older handoff checkpoint retains its original evidence scope.
+
 ## Expected result and risk
 
 Project checkpoint, LoRA and VAE controls open Model Manager in the matching

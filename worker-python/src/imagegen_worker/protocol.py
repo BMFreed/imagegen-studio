@@ -35,6 +35,7 @@ from imagegen_worker.derivatives import (
     create_derivatives,
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
+from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
 
 if TYPE_CHECKING:
     from imagegen_worker.anima_conditioning import CompiledAnimaPrompt
@@ -69,6 +70,12 @@ class DeriveImageCommand:
 class NormalizeImportCommand:
     request_id: str
     imported: NormalizeImportRequest
+
+
+@dataclass(frozen=True)
+class ResourcePreviewCommand:
+    request_id: str
+    preview: ResourcePreviewRequest
 
 
 @dataclass(frozen=True)
@@ -241,6 +248,7 @@ def ready_message() -> dict[str, object]:
             "image-derivatives",
             "import-normalization",
             "preview-composition",
+            "resource-preview",
             "self-test",
             "target-composition",
         ],
@@ -884,6 +892,7 @@ def parse_request(
     SelfTestCommand
     | DeriveImageCommand
     | NormalizeImportCommand
+    | ResourcePreviewCommand
     | ComposePreviewCommand
     | ComposeTargetCommand
     | GenerateIllustriousTxt2ImgCommand
@@ -930,6 +939,38 @@ def parse_request(
             request_id,
             img2img=fields["type"] != "generate-anima-txt2img",
             outpaint=fields["type"] == "generate-anima-outpaint",
+        )
+    if fields.get("type") == "create-resource-preview":
+        _object(
+            fields,
+            "Resource preview request",
+            {
+                "type",
+                "requestId",
+                "protocolVersion",
+                "input",
+                "output",
+                "previewMaxSide",
+                "thumbnailMaxSide",
+            },
+        )
+        source = _object(fields["input"], "Input", {"path", "sha256"})
+        output = _object(
+            fields["output"], "Output", {"stagingRoot", "previewWebpPath", "thumbnailWebpPath"}
+        )
+        return ResourcePreviewCommand(
+            request_id=request_id,
+            preview=ResourcePreviewRequest(
+                input_path=_path(source["path"], "Input path"),
+                input_sha256=_sha256(source["sha256"], "Input SHA-256"),
+                staging_root=_path(output["stagingRoot"], "Staging root"),
+                preview_webp_path=_path(output["previewWebpPath"], "Preview output path"),
+                thumbnail_webp_path=_path(output["thumbnailWebpPath"], "Thumbnail output path"),
+                preview_max_side=_positive_integer(fields["previewMaxSide"], "previewMaxSide"),
+                thumbnail_max_side=_positive_integer(
+                    fields["thumbnailMaxSide"], "thumbnailMaxSide"
+                ),
+            ),
         )
     if fields.get("type") == "normalize-import":
         _object(
@@ -1113,6 +1154,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **result,
+            }
+        if isinstance(command, ResourcePreviewCommand):
+            resource_result = create_resource_preview(command.preview)
+            return {
+                "type": "resource-preview-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **resource_result,
             }
         if isinstance(command, ComposeTargetCommand):
             result = compose_target(command.target)

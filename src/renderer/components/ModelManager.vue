@@ -1241,9 +1241,9 @@ onBeforeUnmount(() => {
                       >
                         <div class="resource-thumbnail">
                           <img
-                            v-if="resource.previewDataUrl"
+                            v-if="resource.thumbnailDataUrl"
                             alt=""
-                            :src="resource.previewDataUrl"
+                            :src="resource.thumbnailDataUrl"
                           />
                           <span v-else>{{ resource.name.slice(0, 1).toUpperCase() }}</span>
                         </div>
@@ -1304,9 +1304,9 @@ onBeforeUnmount(() => {
                       <template v-slot:cover>
                         <div class="large-preview">
                           <img
-                            v-if="selectedResource.previewDataUrl"
+                            v-if="detailVersion?.previewDataUrl"
                             alt=""
-                            :src="selectedResource.previewDataUrl"
+                            :src="detailVersion.previewDataUrl"
                           />
                           <span v-else>{{ selectedResource.name.slice(0, 1).toUpperCase() }}</span>
                         </div>

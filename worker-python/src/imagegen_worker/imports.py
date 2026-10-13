@@ -280,7 +280,7 @@ def webp_embedded_icc(source_bytes: bytes) -> bytes | None:
     return profile
 
 
-def _normalize_pixels(source_bytes: bytes) -> tuple[Image.Image, bytes | None, str]:
+def normalize_image_pixels(source_bytes: bytes) -> tuple[Image.Image, bytes | None, str]:
     container_format: str | None = None
     container_icc: bytes | None = None
     if source_bytes.startswith(PNG_SIGNATURE):
@@ -417,7 +417,7 @@ def normalize_import(request: NormalizeImportRequest) -> NormalizeImportResult:
     """Write sRGB PNG and exact original ICC bytes to app-managed staging only."""
     source, normalized_path, profile_path = _validate_paths(request)
     source_bytes = read_snapshot(source, request.input_sha256)
-    image, original_icc, source_format = _normalize_pixels(source_bytes)
+    image, original_icc, source_format = normalize_image_pixels(source_bytes)
     temporary: list[Path] = []
     published: list[Path] = []
     succeeded = False

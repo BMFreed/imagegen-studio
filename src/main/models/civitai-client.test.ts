@@ -477,3 +477,75 @@ test('untrusted preview images are not fetched', async () => {
   )
   assert.equal(dataUrl, null)
 })
+
+test('source previews use bounded unauthenticated fetch and preserve optional failure', async (t) => {
+  await t.test('approved source bytes arrive without credentials or redirects', async () => {
+    const bytes = Buffer.from('bounded downloaded source; decoding belongs to worker')
+    const client = new CivitaiClient(async (url, options) => {
+      assert.equal(String(url), 'https://image.civitai.com/source.png')
+      assert.equal(options?.redirect, 'error')
+      assert.equal(new Headers(options?.headers).get('Authorization'), null)
+      assert.ok(options?.signal instanceof AbortSignal)
+      return new Response(bytes, { headers: { 'content-type': 'image/png; charset=binary' } })
+    })
+    assert.equal(
+      await client.previewImageDataUrl('https://image.civitai.com/source.png'),
+      `data:image/png;base64,${bytes.toString('base64')}`,
+    )
+  })
+  await t.test(
+    'URL credentials, protocol, port and lookalike hosts never reach transport',
+    async () => {
+      let calls = 0
+      const client = new CivitaiClient(async () => {
+        calls++
+        throw new Error('Unexpected transport')
+      })
+      for (const url of [
+        'http://image.civitai.com/source.png',
+        'https://image.civitai.com:8080/source.png',
+        'https://person:secret@image.civitai.com/source.png',
+        'https://image.civitai.com.example.com/source.png',
+        'file:///etc/passwd',
+      ]) {
+        assert.equal(await client.previewImageDataUrl(url), null)
+      }
+      assert.equal(calls, 0)
+    },
+  )
+  await t.test('oversized streamed source is canceled', async () => {
+    let canceled = false
+    const client = new CivitaiClient(
+      async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              canceled = true
+            },
+            start(controller) {
+              controller.enqueue(new Uint8Array(1_000_001))
+            },
+          }),
+          { headers: { 'content-type': 'image/png' } },
+        ),
+    )
+    assert.equal(await client.previewImageDataUrl('https://image.civitai.com/source.png'), null)
+    assert.equal(canceled, true)
+  })
+  await t.test('non-image, server failure and transport failure remain optional', async () => {
+    for (const fetcher of [
+      async () => new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } }),
+      async () => new Response('failure', { status: 503 }),
+      async () => {
+        throw new Error('Redirect or transport failure')
+      },
+    ]) {
+      assert.equal(
+        await new CivitaiClient(fetcher).previewImageDataUrl(
+          'https://image.civitai.com/source.png',
+        ),
+        null,
+      )
+    }
+  })
+})

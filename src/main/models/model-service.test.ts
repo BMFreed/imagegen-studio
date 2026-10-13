@@ -72,8 +72,10 @@ function civitaiApi(options: {
   fileUrl?: string
   includeThirdVersion?: boolean
   omitSecondPublishedAt?: boolean
+  previewImageUrl?: string
   requests: { authorization: string | null; pathname: string }[]
   secondVersionHash?: string
+  secondVersionPreviewImageUrl?: string
   secondVersionTrainedWords?: string[]
   type?: 'Checkpoint' | 'LORA' | 'TextualInversion' | 'Upscaler' | 'VAE'
 }): typeof fetch {
@@ -99,7 +101,7 @@ function civitaiApi(options: {
       },
     ],
     id: 7,
-    images: [],
+    images: options.previewImageUrl ? [{ url: options.previewImageUrl }] : [],
     modelId: 42,
     name: 'v1',
     trainedWords: ['portrait'],
@@ -151,6 +153,9 @@ function civitaiApi(options: {
                 },
               ],
               id: 8,
+              images: options.secondVersionPreviewImageUrl
+                ? [{ url: options.secondVersionPreviewImageUrl }]
+                : [],
               name: 'v2',
               trainedWords: options.secondVersionTrainedWords ?? ['portrait v2'],
             }
@@ -689,6 +694,8 @@ test('CivitAI install stores manifest prediction only for the exact verified che
 test('a newer CivitAI version installs beside the first and changes default only on explicit selection', async () => {
   const firstBytes = Buffer.from('first checkpoint version')
   const secondBytes = Buffer.from('second checkpoint version')
+  const firstImageUrl = 'https://image.civitai.com/first-exact-version.png'
+  const secondImageUrl = 'https://image.civitai.com/second-exact-version.png'
   const requests: { authorization: string | null; pathname: string }[] = []
   const downloader = new ModelDownloader({
     resolveAddresses: PUBLIC_ADDRESSES,
@@ -700,8 +707,10 @@ test('a newer CivitAI version installs beside the first and changes default only
   await withModelHarness(
     civitaiApi({
       fileHash: sha256(firstBytes),
+      previewImageUrl: firstImageUrl,
       requests,
       secondVersionHash: sha256(secondBytes),
+      secondVersionPreviewImageUrl: secondImageUrl,
       secondVersionTrainedWords: ['cinematic light', 'portrait v2'],
     }),
     downloader,
@@ -715,15 +724,21 @@ test('a newer CivitAI version installs beside the first and changes default only
         )
       }
       const firstPreview = selectedFilePreview(await service.previewImport(MODEL_URL))
+      assert.equal(firstPreview.previewImageDataUrl, null)
       const firstJob = await waitForTerminalJob(coordinator, () =>
         coordinator.startInstall(firstPreview.previewId, 701, false),
       )
       assert.equal(firstJob.status, 'completed')
+      assert.equal(
+        (await repository.listInstalled())[0]?.versions[0]?.sourceMetadata['previewImageUrl'],
+        firstImageUrl,
+      )
       assert.deepEqual((await service.checkUpdates(42)).availableVersions, [{ id: 8, name: 'v2' }])
 
       const secondPreview = selectedFilePreview(
         await service.previewImport('https://civitai.com/models/42?modelVersionId=8'),
       )
+      assert.equal(secondPreview.previewImageDataUrl, null)
       const secondJob = await waitForTerminalJob(coordinator, () =>
         coordinator.startInstall(secondPreview.previewId, 801, false),
       )
@@ -738,6 +753,10 @@ test('a newer CivitAI version installs beside the first and changes default only
       const firstVersion = resource.versions.find((version) => version.civitaiVersionId === 7)!
       const secondVersion = resource.versions.find((version) => version.civitaiVersionId === 8)!
       assert.equal(resource.defaultVersionId, firstVersion.id)
+      assert.equal(resource.previewUrl, secondImageUrl)
+      assert.equal(firstVersion.sourceMetadata['previewImageUrl'], firstImageUrl)
+      assert.equal(secondVersion.sourceMetadata['previewImageUrl'], secondImageUrl)
+      assert.ok(requests.every((request) => request.pathname.startsWith('/api/v1/')))
       assert.deepEqual((await service.getCatalog())[0]?.trainedWords, ['portrait'])
       const exactVersionTriggers = (await service.getCatalog())[0]?.versions
       assert.deepEqual(
@@ -764,6 +783,10 @@ test('a newer CivitAI version installs beside the first and changes default only
         assert.deepEqual(
           afterRestart?.versions.map((version) => version.id),
           [firstVersion.id, secondVersion.id],
+        )
+        assert.deepEqual(
+          afterRestart?.versions.map((version) => version.sourceMetadata['previewImageUrl']),
+          [firstImageUrl, secondImageUrl],
         )
       } finally {
         await reopened.close()
@@ -1318,7 +1341,11 @@ for (const component of [
         assert.equal(first.civitaiVersionId, 7)
         assert.equal(first.civitaiFileId, 701)
         assert.equal(first.predictionType, null)
-        assert.deepEqual(first.sourceMetadata, { baseModel: 'NoobAI', trainedWords: ['portrait'] })
+        assert.deepEqual(first.sourceMetadata, {
+          baseModel: 'NoobAI',
+          previewImageUrl: null,
+          trainedWords: ['portrait'],
+        })
         assert.ok(first.file.managedPath.startsWith(path.join(root, 'models') + path.sep))
         assert.equal(first.file.sha256, sha256(bytes))
         assert.equal(first.file.sizeBytes, bytes.length)
@@ -1368,6 +1395,7 @@ for (const component of [
         assert.equal(later.predictionType, null)
         assert.deepEqual(later.sourceMetadata, {
           baseModel: 'NoobAI',
+          previewImageUrl: null,
           trainedWords: ['source version two'],
         })
         const invalid = await selectExact(service, resource.id, later.id, '<new-version>')

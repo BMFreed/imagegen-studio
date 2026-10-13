@@ -427,6 +427,14 @@ component coverage, dynamic batches, engine first setup and release remain open.
   request и frozen queue/Retry interpretation пока не подключены. Internal
   default Euler denoising имеет отдельный checkpoint ниже.
 - Worker создаёт запрошенные thumbnails/image derivatives из main-managed immutable sources и может отдавать промежуточный denoising preview. Main process задаёт назначение, проверяет размеры/формат, кэширует и публикует файлы; прогресс/preview не является готовым candidate и не попадает в `.igs` автоматически.
+  Installed-resource artwork использует optional CPU capability `resource-preview`:
+  `create-resource-preview` принимает SHA-bound JPEG/PNG/WebP source, назначенные
+  Main paths `previewWebpPath`/`thumbnailWebpPath` под `stagingRoot` и max sides.
+  `resource-preview-done` возвращает два sRGB WebP artifacts с SHA/size/dimensions.
+  Source/preview ≤1 000 000 bytes, thumbnail ≤128 000 bytes; side ranges32…512 и
+  32…128, Main запрашивает512/96. EXIF/ICC нормализуются, alpha/aspect сохраняются,
+  crop/upscale отсутствует. Старый worker без capability оставляет текстовый
+  fallback; existing image capabilities и inference protocol не меняются.
 - Для raster import worker применяет EXIF Orientation, затем преобразует pixels
   из встроенного ICC в рабочее sRGB. Он возвращает исходные ICC bytes отдельно
   для metadata слоя и сообщает ошибку при повреждённом профиле. Untagged RGB

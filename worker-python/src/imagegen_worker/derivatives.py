@@ -96,7 +96,7 @@ def _validate_paths(request: DerivativeRequest) -> tuple[Path, Path, Path]:
     return source, merged, thumbnail
 
 
-def read_snapshot(source: Path, expected_sha256: str) -> bytes:
+def read_snapshot(source: Path, expected_sha256: str, *, max_bytes: int = MAX_INPUT_BYTES) -> bytes:
     try:
         descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as error:
@@ -105,14 +105,14 @@ def read_snapshot(source: Path, expected_sha256: str) -> bytes:
         entry = os.fstat(stream.fileno())
         if not stat.S_ISREG(entry.st_mode):
             raise DerivativeError("INPUT_UNAVAILABLE", "Input must be a regular file.")
-        if entry.st_size > MAX_INPUT_BYTES:
+        if entry.st_size > max_bytes:
             raise DerivativeError("INPUT_TOO_LARGE", "Input image exceeds the worker byte limit.")
         chunks: list[bytes] = []
         size = 0
         digest = hashlib.sha256()
         while chunk := stream.read(1024 * 1024):
             size += len(chunk)
-            if size > MAX_INPUT_BYTES:
+            if size > max_bytes:
                 raise DerivativeError(
                     "INPUT_TOO_LARGE", "Input image exceeds the worker byte limit."
                 )
