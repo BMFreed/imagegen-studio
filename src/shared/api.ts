@@ -1,3 +1,4 @@
+import type { PresetApplicationRequest } from './presets/preset-application.js'
 import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
 import type {
   AcceptedResultHistoryCursor,
@@ -76,6 +77,7 @@ export const ipcChannels = {
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
+    applyPreset: 'projects:apply-preset',
     cancelCurrentGeneration: 'projects:cancel-current-generation',
     cancelGenerationJob: 'projects:cancel-generation-job',
     cancelImport: 'projects:cancel-import',
@@ -365,6 +367,7 @@ export interface ProjectApi {
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,
   ) => Promise<ApiResult<ProjectTab>>
+  applyPreset: (tabId: string, request: PresetApplicationRequest) => Promise<ApiResult<ProjectTab>>
   cancelCurrentGeneration: (
     tabId: string,
     documentId: string,

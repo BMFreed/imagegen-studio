@@ -1,4 +1,7 @@
 import type { ModelImportPreview, ModelInstallJobView } from '../../shared/api.js'
+import { parsePresetApplication } from '../../shared/presets/preset-application.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import type { GenerationPrompt } from '../../shared/projects/prompt-embeddings.js'
 
 import Database from 'better-sqlite3'
@@ -52,6 +55,160 @@ const PUBLIC_ADDRESSES = async () => ['1.1.1.1']
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
+
+test('preset Apply verifies nested exact embedding bytes, retaining copied alias and unselected missing resources', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const fixture = await publishIllustriousEmbeddingFixture(repository, root, 9800, 9801)
+      const prompt = await service.resolveGenerationPromptEmbeddings({
+        modelFamily: 'illustrious',
+        prompt: { embeddingRefs: [], text: '' },
+        text: '<clean-style>',
+      })
+      const resource = {
+        ...prompt.embeddingRefs[0].resource,
+        displayName: 'Saved alias',
+        versionName: 'Saved version',
+      }
+      const current = createEmptyProjectDocumentV1({ title: 'Apply resources' })
+      const source = {
+        documentId: current.documentId,
+        payload: {
+          loras: [
+            {
+              enabled: true,
+              resource: { ...resource, kind: 'lora', localModelId: randomUUID() },
+              weight: 1,
+            },
+          ],
+          prompt: {
+            embeddingRefs: [{ resource, token: '<legacy-alias>' }],
+            text: '<legacy-alias>',
+          },
+        },
+        selectedSections: ['prompt'],
+        sourcePresetId: randomUUID(),
+      }
+      const request = parsePresetApplication(source)
+      const before = structuredClone(request)
+      await service.verifyPresetApplication(request, current)
+      assert.deepEqual(
+        request,
+        before,
+        'verification must not rewrite saved names or activation literal',
+      )
+      assert.deepEqual(current.generationDraft.positivePrompt.embeddingRefs, [])
+      for (const change of [
+        { fileSha256: 'f'.repeat(64) },
+        { civitaiFileId: 1 },
+        { localVersionId: randomUUID() },
+      ]) {
+        const forged = parsePresetApplication({
+          ...source,
+          payload: {
+            prompt: {
+              ...source.payload.prompt,
+              embeddingRefs: [{ resource: { ...resource, ...change }, token: '<legacy-alias>' }],
+            },
+          },
+        })
+        await assert.rejects(service.verifyPresetApplication(forged, current), {
+          code: 'MODEL_PRESET_RESOURCE_UNAVAILABLE',
+        })
+      }
+      await writeFile(fixture.managedPath, Buffer.alloc(fixture.bytes.length, 0))
+      await assert.rejects(service.verifyPresetApplication(request, current), {
+        code: 'MODEL_FILE_CORRUPT',
+      })
+      await writeFile(fixture.managedPath, fixture.bytes)
+      await service.verifyPresetApplication(request, current)
+      await rm(fixture.managedPath)
+      await assert.rejects(service.verifyPresetApplication(request, current), {
+        code: 'MODEL_PRESET_RESOURCE_UNAVAILABLE',
+      })
+      const textOnly = parsePresetApplication({
+        ...source,
+        payload: { prompt: { embeddingRefs: [], text: 'ordinary prompt' } },
+      })
+      await service.verifyPresetApplication(textOnly, current)
+      assert.deepEqual(await repository.listPredictionOverrides(), [])
+    },
+  )
+})
+
+test('preset Apply verifies a checkpoint while retaining advisory snapshots and current exact-file library policy', async () => {
+  await withModelHarness(
+    civitaiApi({ requests: [] }),
+    new ModelDownloader(),
+    async ({ repository, root, service }) => {
+      const bytes = Buffer.from('small installed identity fixture; no inference claim')
+      const managedPath = path.join(root, 'preset-checkpoint.safetensors')
+      await writeFile(managedPath, bytes)
+      const published = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: 'preset-checkpoint.safetensors',
+            sha256: sha256(bytes),
+            sizeBytes: bytes.length,
+            verifiedAt: new Date().toISOString(),
+          },
+          resource: {
+            displayName: 'Checkpoint identity fixture',
+            source: { kind: 'civitai', modelId: 9810 },
+            sourceMetadata: {},
+            type: 'checkpoint',
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'SafeTensor',
+            name: 'v9811',
+            source: {
+              expectedSha256: sha256(bytes),
+              fileId: 9812,
+              kind: 'civitai',
+              versionId: 9811,
+            },
+            sourceMetadata: {},
+          },
+        },
+      })
+      const copied = await service.resolveGenerationCheckpoint(
+        published.resourceId,
+        published.versionId,
+      )
+      assert.equal(copied.predictionType, 'epsilon')
+      await service.setPredictionType(published.resourceId, published.versionId, 'v_prediction')
+      await service.setNoiseProfile(published.resourceId, published.versionId, {
+        kind: 'rescale-betas-zero-snr',
+        value: true,
+      })
+      const current = createEmptyProjectDocumentV1({ title: 'Advisory policy' })
+      const request = parsePresetApplication({
+        documentId: current.documentId,
+        payload: { model: { ...copied, noiseProfile: defaultIllustriousNoiseProfile() } },
+        selectedSections: ['model'],
+        sourcePresetId: randomUUID(),
+      })
+      const snapshot = structuredClone(request)
+      const catalog = await service.getCatalog()
+      await service.verifyPresetApplication(request, current)
+      assert.deepEqual(request, snapshot)
+      assert.deepEqual(
+        await service.getCatalog(),
+        catalog,
+        'Apply verification never writes exact-file policy',
+      )
+      assert.equal(
+        (await service.resolveGenerationCheckpoint(published.resourceId, published.versionId))
+          .predictionType,
+        'v_prediction',
+      )
+    },
+  )
+})
 
 function safeStorage(): SafeStorageAdapter {
   return {

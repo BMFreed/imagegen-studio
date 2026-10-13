@@ -449,3 +449,16 @@ prototype mocks do not prove that mapping. PP-006 stays `пока не обещ�
 - Project Playwright coverage must prove warnings for nested LoRA and prompt-owned embedding refs, deselection recovery and the absence of silent application.
 - Applying a preset copies settings into the project and does not create a live synchronization relationship.
 - Apply initially selects every source section except Size and Seed, keeps all sections collapsed, and disables Apply for an empty selection or a missing resource in a selected section.
+
+## Production Project Apply checkpoint
+
+[Project preset Apply](../engineering/phase-3-preset-apply-research.md) connects the
+active SQLite catalog to the Project chooser and detached Apply modal. The shared
+editor supports selected-only validation, Current/Apply summaries, independent
+resets and a guarded Edit original path to the same production Manager. Main
+rehashes selected exact resources, rejects changed destinations and copies
+selected values in one Project history step. Library prediction/noise policy and
+saved preset definitions stay unchanged. Missing resources can be deselected;
+unsupported selected Anima values are explained. Smart Patch target routing,
+New Project customization, Save Current/result-to-preset and Open in Models
+remain separate pending slices; PP-006 is not complete.

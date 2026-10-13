@@ -9,6 +9,7 @@ import type {
   ProjectLoraIdentity,
   ProjectTab,
 } from '../../shared/api.js'
+import type { PresetRecord } from '../../shared/presets/preset-schema.js'
 import {
   ANIMA_SAMPLING_METHOD_OPTIONS,
   isAnimaSamplingMethod,
@@ -102,6 +103,7 @@ import ProjectGenerationAdvancedOptions from './ProjectGenerationAdvancedOptions
 import ProjectLayerStack from './ProjectLayerStack.vue'
 import ProjectLoraStack from './ProjectLoraStack.vue'
 import ProjectModelOption from './ProjectModelOption.vue'
+import ProjectPresetCard from './ProjectPresetCard.vue'
 import ProjectQueuePanel from './ProjectQueuePanel.vue'
 import ProjectVaePicker from './ProjectVaePicker.vue'
 import { promptEmbeddingDiagnosticReason } from './prompt-embeddings-codemirror.js'
@@ -132,6 +134,9 @@ const props = defineProps<{
   modelCatalogLoaded: boolean
   modelCatalogLoading: boolean
   pending: 'bbox' | 'clear-history' | 'import-image' | 'model' | 'redo' | 'save' | 'undo' | null
+  presets: PresetRecord[]
+  presetsError: string | null
+  presetsLoading: boolean
   promptHistoryEpoch: number
   reloadRequired: boolean
   runtimeUnavailableReason: string | null
@@ -159,6 +164,7 @@ const emit = defineEmits<{
   addLora: [identity: ProjectLoraIdentity]
   applyBbox: [rect: IgsRectV1]
   cancelGeneration: []
+  choosePreset: [id: string]
   clearExportFeedback: []
   clearHistory: []
   generate: [iterations: number]
@@ -170,6 +176,7 @@ const emit = defineEmits<{
   refreshGenerationResults: []
   refreshGenerationState: []
   refreshModels: []
+  refreshPresets: []
   relinkEmbedding: [identity: ProjectEmbeddingIdentity]
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
@@ -1468,9 +1475,17 @@ function applyFitBbox() {
           </p>
         </footer>
         <div class="settings-scroll">
-          <NButton :disabled="busy" size="small" tertiary @click="emit('managePresets')">
-            Manage Presets
-          </NButton>
+          <ProjectPresetCard
+            :catalog="modelCatalog"
+            :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+            :disabled="busy || reloadRequired"
+            :error="presetsError"
+            :loading="presetsLoading"
+            :presets
+            @choose="emit('choosePreset', $event)"
+            @manage="emit('managePresets')"
+            @refresh="emit('refreshPresets')"
+          />
           <div class="document-actions">
             <span
               class="document-state"

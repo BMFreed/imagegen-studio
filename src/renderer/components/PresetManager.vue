@@ -46,7 +46,11 @@ import {
 import { PresetManagerSession, type PresetManagerState } from './preset-manager-session.js'
 import PresetPayloadEditor from './PresetPayloadEditor.vue'
 
-const props = defineProps<{ catalog: ModelCatalogItem[]; catalogReady: boolean }>()
+const props = defineProps<{
+  catalog: ModelCatalogItem[]
+  catalogReady: boolean
+  initialPresetId?: string | null
+}>()
 const show = defineModel<boolean>('show', { required: true })
 let closingWindow: {
   reject: (error: Error) => void
@@ -320,7 +324,12 @@ watch(
     if (open) {
       resetFilters()
       globalThis.window.addEventListener('keydown', onKeydown, true)
-      void session.open()
+      const initialId = props.initialPresetId
+      void session.open().then(() => {
+        if (show.value && initialId && props.initialPresetId === initialId) {
+          session.requestSelect(initialId)
+        }
+      })
     } else {
       globalThis.window.removeEventListener('keydown', onKeydown, true)
       session.dispose()

@@ -323,3 +323,11 @@ Project. CSS marks/tooltips используют общий `prompt-editor.css` 
 sentinel. Keep semantic dialog attributes (`role="dialog"`, `aria-modal`, name)
 on the `div` and use semantic sections inside it. Do not disable focus trapping
 to compensate. Qualify actual typing and Tab/focus as well as mouse clicks.
+
+### Naive alert semantics
+
+Installed Naive `NAlert` declares `role="alert"` in its render implementation;
+an inherited `role="status"` does not override it. Use its actual alert role and
+an explicit `aria-label` when inspecting diagnostics. Check the live accessible
+tree and the installed component API instead of deriving the role from a Vue
+call site. The Project Apply native qualification verifies this boundary.

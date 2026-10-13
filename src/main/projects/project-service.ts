@@ -17,6 +17,12 @@ import {
   isProjectRasterLayerChange,
 } from '../../shared/api.js'
 import {
+  applyPresetSections,
+  parsePresetApplication,
+  type PresetApplicationRequest,
+  type PresetApplicationTarget,
+} from '../../shared/presets/preset-application.js'
+import {
   type AcceptedResultHistoryCursor,
   type AcceptedResultHistoryPage,
   type AcceptedResultHistoryReference,
@@ -249,6 +255,61 @@ export class ProjectService {
           loras: [...document.generationDraft.loras, { enabled: true, resource, weight: 0.7 }],
         },
       },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
+  /** Verify a detached selection against the captured document, then publish one undo step. */
+  async applyPreset(
+    tabId: string,
+    input: PresetApplicationRequest,
+    verify: (request: PresetApplicationRequest, current: PresetApplicationTarget) => Promise<void>,
+  ): Promise<ProjectTab> {
+    let request: PresetApplicationRequest
+    try {
+      request = parsePresetApplication(input)
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Choose valid preset sections to apply.',
+      )
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const epoch = coordinator.documentEpoch
+    if (document.documentId !== request.documentId) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The destination Project changed. Reopen Apply.',
+      )
+    }
+    const current = structuredClone({
+      generationDraft: document.generationDraft,
+      primaryBbox: document.primaryBbox,
+    })
+    // Collaborators receive their own copy; the accepted request remains immutable across await.
+    await verify(structuredClone(request), current)
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.documentEpoch !== epoch ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed while verifying preset settings. Review and apply again.',
+      )
+    }
+    const next = applyPresetSections(document, request.payload, request.selectedSections)
+    if (
+      JSON.stringify(next.generationDraft) === JSON.stringify(document.generationDraft) &&
+      JSON.stringify(next.primaryBbox) === JSON.stringify(document.primaryBbox)
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      { ...document, ...next },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )

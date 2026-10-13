@@ -42,6 +42,7 @@ import { CivitaiClient } from '../models/civitai-client.js'
 import { CivitaiTokenStore } from '../models/civitai-token-store.js'
 import { ModelRepository } from '../models/model-repository.js'
 import { ModelService } from '../models/model-service.js'
+import { PresetRepository } from '../presets/preset-repository.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry, type ProjectAutosaveOptions } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
@@ -55,6 +56,210 @@ import {
   acceptedRasterProvenanceFixture,
 } from './test-fixtures/accepted-provenance.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
+
+test('preset Apply copies selected values in one Main undo step, preserving saved source and neighboring Project', async () => {
+  await withService(async ({ database, modelService, repository, service }) => {
+    const presets = new PresetRepository(database.db)
+    const source = await presets.create({
+      description: '',
+      favorite: false,
+      name: 'Apply source',
+      payload: {
+        cfgRescale: 0,
+        denoisingStrength: 0.4,
+        guidance: { cfgScale: 6, steps: 32 },
+        loras: [],
+        negativePrompt: { embeddingRefs: [], text: 'source negative' },
+        prompt: { embeddingRefs: [], text: 'saved source prompt' },
+        sampling: { animaMethod: 'heun' },
+        seed: { policy: 'fixed', value: 0 },
+        size: { height: 832, width: 1440 },
+        vae: null,
+        vaePrecision: 'Auto',
+      },
+      tags: [],
+      workflow: 'imageToImage',
+    })
+    const created = await service.create({ height: 64, title: 'Apply target', width: 64 })
+    const neighbor = await service.create({ height: 64, title: 'Neighbor', width: 64 })
+    const entries = await repository.listProjects()
+    const targetPath = entries.find((row) => row.localProjectKey === created.id)!.canonicalPath
+    const neighborPath = entries.find((row) => row.localProjectKey === neighbor.id)!.canonicalPath
+    const originalBytes = await readFile(targetPath)
+    const neighborBytes = await readFile(neighborPath)
+    const current = structuredClone(created)
+    const payload = structuredClone(source.payload)
+    payload.prompt!.text = 'temporary customized prompt'
+    const applied = await service.applyPreset(
+      created.id,
+      {
+        documentId: created.documentId,
+        payload,
+        selectedSections: [
+          'prompt',
+          'guidance',
+          'sampling',
+          'cfgRescale',
+          'loras',
+          'vae',
+          'vaePrecision',
+          'denoisingStrength',
+        ],
+        sourcePresetId: source.id,
+      },
+      (request, target) => modelService.verifyPresetApplication(request, target),
+    )
+    assert.equal(applied.generationDraft.positivePrompt.text, 'temporary customized prompt')
+    assert.equal(applied.generationDraft.sampling.steps, 32)
+    assert.equal(applied.generationDraft.sampling.animaMethod, 'heun')
+    assert.equal(applied.generationDraft.cfgRescale, 0)
+    assert.equal(applied.generationDraft.sampling.denoisingStrength, 0.4)
+    assert.equal(applied.generationDraft.sampling.sampler, current.generationDraft.sampling.sampler)
+    assert.equal(
+      applied.generationDraft.sampling.scheduler,
+      current.generationDraft.sampling.scheduler,
+    )
+    assert.deepEqual(applied.primaryBbox, current.primaryBbox)
+    assert.deepEqual(applied.generationDraft.seed, current.generationDraft.seed)
+    assert.deepEqual(applied.generationDraft.negativePrompt, current.generationDraft.negativePrompt)
+    assert.deepEqual(applied.layers, current.layers)
+    assert.deepEqual(await presets.get(source.id), source)
+    await service.flushAutosave(created.id)
+    assert.ok(
+      (await readFile(targetPath)).equals(originalBytes),
+      'Apply only writes recovery before Save',
+    )
+    const undone = await service.undo(created.id)
+    assert.equal(undone.canUndo, false, 'all copied sections are one undo operation')
+    assert.deepEqual(undone.generationDraft, current.generationDraft)
+    assert.deepEqual(undone.primaryBbox, current.primaryBbox)
+    const redone = await service.redo(created.id)
+    assert.deepEqual(redone.generationDraft, applied.generationDraft)
+    const saved = await service.save(created.id)
+    assert.equal(saved.tab.dirty, false)
+    assert.deepEqual(
+      (await readIgsPackage(targetPath)).project.generationDraft,
+      applied.generationDraft,
+    )
+    assert.deepEqual(await presets.get(source.id), source)
+    assert.deepEqual(
+      service.getOpenTabs().find((tab) => tab.id === neighbor.id),
+      neighbor,
+    )
+    assert.ok(
+      (await readFile(neighborPath)).equals(neighborBytes),
+      'neighbor saved package unchanged',
+    )
+    assert.deepEqual(
+      await service.applyPreset(
+        created.id,
+        {
+          documentId: created.documentId,
+          payload: { prompt: payload.prompt },
+          selectedSections: ['prompt'],
+          sourcePresetId: source.id,
+        },
+        (request, target) => modelService.verifyPresetApplication(request, target),
+      ),
+      saved.tab,
+      'no-op Apply creates no history',
+    )
+    await service.close(created.id)
+    await service.close(neighbor.id)
+  })
+})
+
+test('preset Apply rejects failed verification and asynchronous changed or closed destination without publishing', async () => {
+  await withService(async ({ service }) => {
+    const created = await service.create({ height: 64, title: 'Apply races', width: 64 })
+    const request = {
+      documentId: created.documentId,
+      payload: { prompt: { embeddingRefs: [], text: 'must not publish' } },
+      selectedSections: ['prompt'] as const,
+      sourcePresetId: randomUUID(),
+    }
+    const input = { ...request, selectedSections: [...request.selectedSections] }
+    await assert.rejects(
+      service.applyPreset(created.id, input, async () => {
+        throw new Error('verification failed')
+      }),
+      /verification failed/,
+    )
+    assert.deepEqual(service.getOpenTabs()[0], created)
+    let release!: () => void
+    const verifyPending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pending = service.applyPreset(created.id, input, () => verifyPending)
+    const rejection = assert.rejects(pending, { code: 'EDIT_CONFLICT' })
+    input.payload.prompt.text = 'caller changed during await'
+    const edited = await service.updateGenerationDraft(created.id, {
+      kind: 'sampling-steps',
+      value: 24,
+    })
+    release()
+    await rejection
+    assert.deepEqual(service.getOpenTabs()[0], edited)
+    const undone = await service.undo(created.id)
+    assert.equal(undone.canUndo, false, 'rejected Apply added no undo entry')
+    assert.equal(
+      undone.generationDraft.positivePrompt.text,
+      created.generationDraft.positivePrompt.text,
+    )
+    const closePending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const late = service.applyPreset(
+      created.id,
+      { ...input, payload: request.payload },
+      () => closePending,
+    )
+    const lateRejection = assert.rejects(late, { code: 'EDIT_CONFLICT' })
+    await service.close(created.id)
+    release()
+    await lateRejection
+    assert.equal(service.getOpenTabs().length, 0)
+  })
+})
+
+test('preset Apply captures immutable selected data, ignores unselected invalid data and rejects wrong identity', async () => {
+  await withService(async ({ service }) => {
+    const created = await service.create({ height: 64, title: 'Apply capture', width: 64 })
+    const input = {
+      documentId: created.documentId,
+      payload: {
+        guidance: { cfgScale: -1, steps: -1 },
+        prompt: { embeddingRefs: [], text: 'captured' },
+      },
+      selectedSections: ['prompt'] as 'prompt'[],
+      sourcePresetId: randomUUID(),
+    }
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const operation = service.applyPreset(created.id, input, async (request, current) => {
+      request.payload.prompt!.text = 'verifier mutation'
+      current.generationDraft.positivePrompt.text = 'verifier mutation'
+      await paused
+    })
+    input.payload.prompt.text = 'caller mutation'
+    release()
+    const applied = await operation
+    assert.equal(applied.generationDraft.positivePrompt.text, 'captured')
+    assert.deepEqual(applied.generationDraft.sampling, created.generationDraft.sampling)
+    await assert.rejects(
+      service.applyPreset(
+        created.id,
+        { ...input, documentId: randomUUID() },
+        async () => undefined,
+      ),
+      { code: 'EDIT_CONFLICT' },
+    )
+    await service.undo(created.id)
+    await service.close(created.id)
+  })
+})
 
 test('native draft choices and clear cross Main history, real shadow recovery and explicit package Save', async () => {
   await withService(async ({ dataRoot, modelService, repository, service, shadow }) => {

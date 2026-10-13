@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ModelCatalogItem } from '../../shared/api.js'
+import type { BaseModelFamily, ModelCatalogItem } from '../../shared/api.js'
+import { parsePresetApplicationPayload } from '../../shared/presets/preset-application.js'
 import type {
   PresetPayload,
   PresetSectionKey,
@@ -46,21 +47,35 @@ const props = defineProps<{
   catalog: ModelCatalogItem[]
   catalogReady: boolean
   disabled: boolean
+  fallbackModelFamily?: BaseModelFamily | null
+  sectionRevisions?: Partial<Record<PresetSectionKey, number>>
+  sections?: PresetSectionKey[]
+  selectedSections?: PresetSectionKey[]
   workflow: PresetWorkflow
 }>()
 const payload = defineModel<EditablePresetPayload>({ required: true })
-const emit = defineEmits<{ validity: [valid: boolean] }>()
-const expandedSections = ref<PresetSectionKey[]>(['prompt', 'model', 'loras'])
+const emit = defineEmits<{
+  dirtyRaw: [dirty: boolean]
+  rawSections: [sections: PresetSectionKey[]]
+  validity: [valid: boolean]
+}>()
+const expandedSections = defineModel<PresetSectionKey[]>('expandedSections', {
+  default: () => ['prompt', 'model', 'loras'],
+})
 const editingNativeOnlySampling = ref(false)
 watch(payload, () => {
   editingNativeOnlySampling.value = false
 })
 const visibleSections = computed(() =>
-  PRESET_SECTION_KEYS.filter(
+  (props.sections ?? PRESET_SECTION_KEYS).filter(
     (section) => section !== 'denoisingStrength' || props.workflow !== 'textToImage',
   ),
 )
-const family = computed(() => payload.value.model?.baseModelFamily ?? null)
+const family = computed(() =>
+  props.selectedSections !== undefined && !props.selectedSections.includes('model')
+    ? (props.fallbackModelFamily ?? null)
+    : (payload.value.model?.baseModelFamily ?? props.fallbackModelFamily ?? null),
+)
 const nativeSampling = computed(
   () =>
     family.value === 'anima' ||
@@ -107,6 +122,7 @@ const schedulerOptions = computed(() =>
 )
 
 const numericValidity = ref<Record<string, boolean>>({})
+const observedSectionRevisions = new Map<PresetSectionKey, number>()
 const sizeAspect = ref<AspectRatioState>({ id: 'free', locked: false, value: 1 })
 const sizeRaw = ref<Partial<Record<'height' | 'width', string>>>({})
 const sizeFocused = ref<'height' | 'width' | null>(null)
@@ -132,7 +148,7 @@ const denoisingStrengthValue = computed({
     payload.value.denoisingStrength = value
   },
 })
-const activeNumericKeys = computed(() => {
+const availableNumericKeys = computed(() => {
   const keys: string[] = []
   if (payload.value.guidance) {
     keys.push('guidance.steps', 'guidance.cfgScale')
@@ -143,7 +159,7 @@ const activeNumericKeys = computed(() => {
   if (payload.value.seed?.policy === 'fixed') {
     keys.push('seed.value')
   }
-  if (payload.value.cfgRescale !== undefined && !unsupportedSection('cfgRescale')) {
+  if (payload.value.cfgRescale !== undefined) {
     keys.push('cfgRescale')
   }
   if (payload.value.denoisingStrength !== undefined && props.workflow !== 'textToImage') {
@@ -155,7 +171,7 @@ const activeNumericKeys = computed(() => {
   return keys
 })
 watch(
-  activeNumericKeys,
+  availableNumericKeys,
   (keys) => {
     const active = new Set(keys)
     numericValidity.value = Object.fromEntries(
@@ -166,6 +182,10 @@ watch(
 )
 const validPayload = computed(() => {
   try {
+    if (props.selectedSections !== undefined) {
+      parsePresetApplicationPayload(payload.value, props.selectedSections)
+      return true
+    }
     parsePresetDefinition({
       description: '',
       favorite: false,
@@ -182,9 +202,49 @@ const validPayload = computed(() => {
 const editorValid = computed(
   () =>
     validPayload.value &&
-    activeNumericKeys.value.every((key) => numericValidity.value[key] !== false),
+    availableNumericKeys.value.every(
+      (key) =>
+        (props.selectedSections !== undefined &&
+          !props.selectedSections.includes(numericSection(key))) ||
+        numericValidity.value[key] !== false,
+    ),
 )
 watch(editorValid, (valid) => emit('validity', valid), { flush: 'sync', immediate: true })
+watch(
+  () => [
+    ...new Set(
+      Object.entries(numericValidity.value)
+        .filter(([, valid]) => !valid)
+        .map(([key]) => numericSection(key)),
+    ),
+  ],
+  (sections) => {
+    emit('dirtyRaw', sections.length > 0)
+    emit('rawSections', sections)
+  },
+  { flush: 'sync', immediate: true },
+)
+watch(
+  () => props.sectionRevisions,
+  (revisions) => {
+    for (const section of PRESET_SECTION_KEYS) {
+      const revision = revisions?.[section] ?? 0
+      if (revision !== (observedSectionRevisions.get(section) ?? 0)) {
+        numericValidity.value = Object.fromEntries(
+          Object.entries(numericValidity.value).filter(([key]) => numericSection(key) !== section),
+        )
+        if (section === 'size') {
+          clearSizeRaw()
+        }
+      }
+      observedSectionRevisions.set(section, revision)
+    }
+  },
+  { deep: true, flush: 'sync' },
+)
+function numericSection(key: string): PresetSectionKey {
+  return key.startsWith('[') ? 'loras' : (key.split('.')[0] as PresetSectionKey)
+}
 
 function setNumericValidity(key: string, valid: boolean) {
   numericValidity.value[key] = valid
@@ -231,7 +291,7 @@ function clearSizeRaw() {
   setNumericValidity('size.height', true)
 }
 function sizeNumber(event: Event, settle = false) {
-  if (props.disabled && !settle) {
+  if (sectionDisabled('size') && !settle) {
     return
   }
   const target = sizeDimension(event)
@@ -284,7 +344,7 @@ function sizeNumber(event: Event, settle = false) {
 }
 
 function toggleIncluded(section: PresetSectionKey, included: boolean) {
-  if (props.disabled) {
+  if (props.disabled || props.selectedSections !== undefined) {
     return
   }
   if (included) {
@@ -295,6 +355,12 @@ function toggleIncluded(section: PresetSectionKey, included: boolean) {
   } else {
     delete payload.value[section]
   }
+}
+function sectionDisabled(section: PresetSectionKey) {
+  return (
+    props.disabled ||
+    (props.selectedSections !== undefined && !props.selectedSections.includes(section))
+  )
 }
 function retainedOptions(values: string[], saved?: string) {
   const options: SelectOption[] = values.map((value) => ({ label: value, value }))
@@ -392,7 +458,7 @@ function renderResource(kind: 'checkpoint' | 'lora' | 'vae', option: SelectOptio
     : String(option.label)
 }
 function chooseResource(kind: 'checkpoint' | 'vae', value: string) {
-  if (props.disabled || !props.catalogReady) {
+  if (sectionDisabled(kind === 'checkpoint' ? 'model' : 'vae') || !props.catalogReady) {
     return
   }
   if (kind === 'vae' && value === 'embedded') {
@@ -413,7 +479,7 @@ function chooseResource(kind: 'checkpoint' | 'vae', value: string) {
   }
 }
 function addLora(value: string) {
-  if (props.disabled || !props.catalogReady) {
+  if (sectionDisabled('loras') || !props.catalogReady) {
     return
   }
   const entry = catalogChoices('lora').find((choice) => choice.value === value && !choice.disabled)
@@ -452,7 +518,7 @@ function updatePrompt(
   text: string,
   selection?: PromptEmbeddingSelection,
 ) {
-  if (props.disabled) {
+  if (sectionDisabled(section)) {
     return
   }
   const current = payload.value[section]
@@ -486,7 +552,7 @@ function updatePrompt(
 }
 function updateSampling(key: 'animaMethod' | 'sampler' | 'scheduler', value: string | null) {
   if (
-    props.disabled ||
+    sectionDisabled('sampling') ||
     !payload.value.sampling ||
     (key === 'animaMethod' && value !== null && !isAnimaSamplingMethod(value))
   ) {
@@ -507,7 +573,7 @@ function updateSampling(key: 'animaMethod' | 'sampler' | 'scheduler', value: str
   }
 }
 function updateSeedPolicy(value: 'fixed' | 'random' | 'reuse') {
-  if (props.disabled) {
+  if (sectionDisabled('seed')) {
     return
   }
   payload.value.seed =
@@ -528,21 +594,26 @@ function unsupportedSection(section: PresetSectionKey) {
     <NCollapse v-model:expandedNames="expandedSections" displayDirective="show">
       <PresetPayloadSection
         v-for="section of visibleSections"
-        :key="section"
+        :key="`${section}:${sectionRevisions?.[section] ?? 0}`"
         :contentVisible="payload[section] !== undefined"
+        :data-preset-section="section"
         :name="section"
         :title="sectionLabels[section]"
       >
+        <template v-slot:context><slot name="section-context" :section /></template>
+        <template v-slot:actions><slot name="section-actions" :section /></template>
         <template v-slot:control>
-          <NCheckbox
-            :aria-label="`Include ${sectionLabels[section]}`"
-            :aria-labelledby="undefined"
-            :checked="payload[section] !== undefined"
-            :disabled
-            @update:checked="toggleIncluded(section, $event)"
-          >
-            Included
-          </NCheckbox>
+          <slot name="section-control" :section>
+            <NCheckbox
+              :aria-label="`Include ${sectionLabels[section]}`"
+              :aria-labelledby="undefined"
+              :checked="payload[section] !== undefined"
+              :disabled="sectionDisabled(section)"
+              @update:checked="toggleIncluded(section, $event)"
+            >
+              Included
+            </NCheckbox>
+          </slot>
         </template>
         <template v-slot:empty>
           <NText depth="3">Not included. Current project settings will be kept.</NText>
@@ -551,7 +622,7 @@ function unsupportedSection(section: PresetSectionKey) {
         <PlainPromptEditor
           v-if="(section === 'prompt' || section === 'negativePrompt') && payload[section]"
           :ariaLabel="section === 'prompt' ? 'Preset prompt' : 'Preset negative prompt'"
-          :disabled
+          :disabled="sectionDisabled(section)"
           :embeddingCatalogReady="catalogReady"
           :embeddingRefs="payload[section]!.embeddingRefs"
           :embeddingSources
@@ -572,7 +643,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NText depth="3">Model &amp; version</NText>
             <NSelect
               aria-label="Preset model"
-              :disabled="disabled || !catalogReady"
+              :disabled="sectionDisabled(section) || !catalogReady"
               filterable
               :options="resourceOptions('checkpoint')"
               placeholder="Choose an installed exact version"
@@ -614,7 +685,7 @@ function unsupportedSection(section: PresetSectionKey) {
         <div v-else-if="section === 'loras'" class="field-stack">
           <NSelect
             aria-label="Add preset LoRA"
-            :disabled="disabled || !catalogReady"
+            :disabled="sectionDisabled(section) || !catalogReady"
             filterable
             :options="catalogChoices('lora')"
             placeholder="Add LoRA"
@@ -636,7 +707,7 @@ function unsupportedSection(section: PresetSectionKey) {
               <NSwitch
                 v-model:value="lora.enabled"
                 :aria-label="`Enable preset LoRA ${lora.resource.displayName}`"
-                :disabled
+                :disabled="sectionDisabled(section)"
                 size="small"
               />
               <div class="resource-name">
@@ -645,7 +716,7 @@ function unsupportedSection(section: PresetSectionKey) {
               </div>
               <IconButton
                 compact
-                :disabled
+                :disabled="sectionDisabled(section)"
                 :icon="TrashIcon"
                 :label="`Remove preset LoRA ${lora.resource.displayName}`"
                 @click="payload.loras!.splice(index, 1)"
@@ -655,7 +726,7 @@ function unsupportedSection(section: PresetSectionKey) {
               <NText depth="3">Weight</NText>
               <PresetNumberInput
                 v-model="lora.weight"
-                :disabled
+                :disabled="sectionDisabled(section)"
                 :label="`Preset ${lora.resource.displayName} weight`"
                 :showButton="false"
                 :step="0.1"
@@ -672,7 +743,7 @@ function unsupportedSection(section: PresetSectionKey) {
           v-else-if="section === 'size' && payload.size"
           v-model="payload.size"
           v-model:aspectRatio="sizeAspect"
-          :disabled
+          :disabled="sectionDisabled(section)"
           :heightFormat="(value) => sizeFormat('height', value)"
           heightLabel="Preset height"
           :max="IGS_SAFETY_CEILINGS.rasterDimension"
@@ -692,7 +763,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NSelect
               aria-label="Preset Anima method"
               clearable
-              :disabled
+              :disabled="sectionDisabled(section)"
               :options="ANIMA_SAMPLING_METHOD_OPTIONS"
               placeholder="Choose method"
               :value="payload.sampling.animaMethod ?? null"
@@ -705,7 +776,7 @@ function unsupportedSection(section: PresetSectionKey) {
               <NSelect
                 aria-label="Preset sampler"
                 clearable
-                :disabled
+                :disabled="sectionDisabled(section)"
                 :options="samplerOptions"
                 placeholder="Choose sampler"
                 :value="payload.sampling.sampler ?? null"
@@ -717,7 +788,7 @@ function unsupportedSection(section: PresetSectionKey) {
               <NSelect
                 aria-label="Preset scheduler"
                 clearable
-                :disabled
+                :disabled="sectionDisabled(section)"
                 :options="schedulerOptions"
                 placeholder="Choose scheduler"
                 :value="payload.sampling.scheduler ?? null"
@@ -742,7 +813,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NText depth="3">Steps</NText>
             <PresetNumberInput
               v-model="payload.guidance.steps"
-              :disabled
+              :disabled="sectionDisabled(section)"
               integer
               label="Preset steps"
               :min="1"
@@ -753,7 +824,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NText depth="3">CFG</NText>
             <PresetNumberInput
               v-model="payload.guidance.cfgScale"
-              :disabled
+              :disabled="sectionDisabled(section)"
               label="Preset CFG"
               :min="0"
               :step="0.1"
@@ -762,7 +833,10 @@ function unsupportedSection(section: PresetSectionKey) {
           </label>
         </div>
 
-        <div v-else-if="unsupportedSection(section)" class="field-stack">
+        <div
+          v-else-if="unsupportedSection(section) && section !== 'cfgRescale'"
+          class="field-stack"
+        >
           <NText>
             {{
               section === 'vae'
@@ -778,26 +852,42 @@ function unsupportedSection(section: PresetSectionKey) {
                 ? 'Anima uses its pinned companion VAE.'
                 : `${sectionLabels[section]} is not an Anima setting.`
             }}
-            The saved section is preserved until you uncheck Included.
+            {{
+              selectedSections === undefined
+                ? 'The saved section is preserved until you uncheck Included.'
+                : 'The temporary section is preserved until Reset or deselection.'
+            }}
           </p>
         </div>
 
-        <PresetNumberInput
-          v-else-if="section === 'cfgRescale'"
-          key="cfg-rescale"
-          v-model="cfgRescaleValue"
-          :disabled
-          label="Preset CFG Rescale"
-          :max="1"
-          :min="0"
-          :step="0.05"
-          @validity="setNumericValidity('cfgRescale', $event)"
-        />
+        <div v-else-if="section === 'cfgRescale'" key="cfg-rescale" class="field-stack">
+          <PresetNumberInput
+            v-show="!unsupportedSection(section)"
+            v-model="cfgRescaleValue"
+            :disabled="sectionDisabled(section) || unsupportedSection(section)"
+            label="Preset CFG Rescale"
+            :max="1"
+            :min="0"
+            :step="0.05"
+            @validity="setNumericValidity('cfgRescale', $event)"
+          />
+          <template v-if="unsupportedSection(section)">
+            <NText>{{ payload.cfgRescale }}</NText>
+            <p class="setting-warning" role="status">
+              CFG Rescale is not an Anima setting.
+              {{
+                selectedSections === undefined
+                  ? 'The saved section is preserved until you uncheck Included.'
+                  : 'The temporary section is preserved until Reset or deselection.'
+              }}
+            </p>
+          </template>
+        </div>
         <PresetNumberInput
           v-else-if="section === 'denoisingStrength'"
           key="denoising-strength"
           v-model="denoisingStrengthValue"
-          :disabled
+          :disabled="sectionDisabled(section)"
           label="Preset denoising strength"
           :max="1"
           :min="0"
@@ -810,7 +900,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NText depth="3">Seed policy</NText>
             <NSelect
               aria-label="Preset seed policy"
-              :disabled
+              :disabled="sectionDisabled(section)"
               :options="seedPolicies"
               :value="payload.seed.policy"
               @update:value="updateSeedPolicy"
@@ -820,7 +910,7 @@ function unsupportedSection(section: PresetSectionKey) {
             <NText depth="3">Seed value</NText>
             <PresetNumberInput
               v-model="payload.seed.value"
-              :disabled
+              :disabled="sectionDisabled(section)"
               integer
               label="Preset seed value"
               :max="0xffffffff"
@@ -836,7 +926,7 @@ function unsupportedSection(section: PresetSectionKey) {
         <div v-else-if="section === 'vae'" class="field-stack">
           <NSelect
             aria-label="Preset VAE"
-            :disabled="disabled || !catalogReady"
+            :disabled="sectionDisabled(section) || !catalogReady"
             filterable
             :options="resourceOptions('vae')"
             :renderLabel="(option) => renderResource('vae', option)"
@@ -856,7 +946,7 @@ function unsupportedSection(section: PresetSectionKey) {
           v-else-if="section === 'vaePrecision'"
           v-model:value="payload.vaePrecision"
           aria-label="Preset VAE precision"
-          :disabled
+          :disabled="sectionDisabled(section)"
           :options="precisions"
         />
       </PresetPayloadSection>

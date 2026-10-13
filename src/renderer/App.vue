@@ -17,6 +17,8 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import type { PresetApplicationRequest } from '../shared/presets/preset-application.js'
+import type { PresetRecord } from '../shared/presets/preset-schema.js'
 import type {
   AcceptedResultHistoryCursor,
   AcceptedResultHistoryReference,
@@ -58,6 +60,7 @@ import {
 } from './components/accepted-history-navigation.js'
 import AcceptedResultsBrowser from './components/AcceptedResultsBrowser.vue'
 import AppChrome from './components/AppChrome.vue'
+import ApplyPresetModal from './components/ApplyPresetModal.vue'
 import {
   GenerationQueueResultNavigator,
   resultFocusCandidate,
@@ -106,6 +109,7 @@ type PendingProjectAction =
         | 'import-image'
         | 'layer'
         | 'model'
+        | 'preset'
         | 'redo'
         | 'save'
         | 'undo'
@@ -116,6 +120,35 @@ const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const presetManagerOpen = ref(false)
+const presetManagerInitialId = ref<string | null>(null)
+const presetCatalog = ref<PresetRecord[]>([])
+const presetCatalogLoading = ref(false)
+const presetCatalogError = ref<string | null>(null)
+let presetCatalogEpoch = 0
+let presetOpeningEpoch = 0
+const presetApplication = ref<{ documentId: string; source: PresetRecord; tabId: string } | null>(
+  null,
+)
+const presetApplyOpen = ref(false)
+const presetApplyError = ref<string | null>(null)
+const presetApplyBusy = ref(false)
+const presetApplyTab = computed(() => {
+  const application = presetApplication.value
+  return application
+    ? (projectTabs.value.find(
+        (tab) => tab.id === application.tabId && tab.documentId === application.documentId,
+      ) ?? null)
+    : null
+})
+const presetApplyCurrent = computed(
+  () =>
+    presetApplyTab.value && {
+      generationDraft:
+        generationDraftOverlays.value[presetApplyTab.value.id] ??
+        presetApplyTab.value.generationDraft,
+      primaryBbox: presetApplyTab.value.primaryBbox,
+    },
+)
 const presetManager = ref<InstanceType<typeof PresetManager> | null>(null)
 const generationQueueOpen = ref(false)
 const generationQueueEpoch = ref(0)
@@ -259,9 +292,127 @@ function openModelManager(focus: ModelManagerFocus | null = null) {
 }
 
 function openPresetManager() {
+  presetManagerInitialId.value = null
   presetManagerOpen.value = true
   void refreshModelCatalog()
 }
+async function refreshPresetCatalog() {
+  const epoch = ++presetCatalogEpoch
+  presetCatalogLoading.value = true
+  presetCatalogError.value = null
+  try {
+    const api = globalThis.window.api?.presets
+    if (!api) {
+      throw new Error('The desktop preset connection is unavailable.')
+    }
+    const records = await apiValue(() => api.list())
+    if (epoch === presetCatalogEpoch) {
+      presetCatalog.value = records
+    }
+  } catch (cause) {
+    if (epoch === presetCatalogEpoch) {
+      presetCatalog.value = []
+      presetCatalogError.value = errorMessage(cause)
+    }
+  } finally {
+    if (epoch === presetCatalogEpoch) {
+      presetCatalogLoading.value = false
+    }
+  }
+}
+async function chooseProjectPreset(tabId: string, id: string) {
+  const tab = projectTabs.value.find((item) => item.id === tabId)
+  if (
+    !tab ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const epoch = ++presetOpeningEpoch
+  presetApplyError.value = null
+  try {
+    const api = globalThis.window.api?.presets
+    if (!api) {
+      throw new Error('The desktop preset connection is unavailable.')
+    }
+    const source = await apiValue(() => api.get(id))
+    if (
+      epoch !== presetOpeningEpoch ||
+      activeTab.value?.id !== tabId ||
+      activeTab.value.documentId !== tab.documentId
+    ) {
+      return
+    }
+    if (!source) {
+      throw new Error('This preset is no longer active. Refresh the preset list.')
+    }
+    presetApplication.value = { documentId: tab.documentId, source, tabId }
+    presetApplyOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    if (epoch === presetOpeningEpoch) {
+      presetCatalogError.value = errorMessage(cause)
+    }
+  }
+}
+async function applyProjectPreset(
+  selection: Pick<PresetApplicationRequest, 'payload' | 'selectedSections'>,
+) {
+  const application = presetApplication.value
+  if (
+    !application ||
+    !presetApplyTab.value ||
+    presetApplyBusy.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(application.tabId)
+  ) {
+    return
+  }
+  const request: PresetApplicationRequest = {
+    ...JSON.parse(JSON.stringify(selection)),
+    documentId: application.documentId,
+    sourcePresetId: application.source.id,
+  }
+  presetApplyBusy.value = true
+  presetApplyError.value = null
+  pendingProjectAction.value = { kind: 'preset', tabId: application.tabId }
+  try {
+    await flushProjectDraft(application.tabId)
+    replaceTab(await apiValue(() => projectApi().applyPreset(application.tabId, request)))
+    saveNotices.value = { ...saveNotices.value, [application.tabId]: null }
+    presetApplyOpen.value = false
+  } catch (cause) {
+    presetApplyError.value = errorMessage(cause)
+  } finally {
+    presetApplyBusy.value = false
+    pendingProjectAction.value = null
+  }
+}
+function editPresetOriginal(id: string) {
+  presetManagerInitialId.value = id
+  presetManagerOpen.value = true
+  void refreshModelCatalog()
+}
+watch(presetManagerOpen, (open) => {
+  if (!open) {
+    void refreshPresetCatalog()
+  }
+})
+watch(
+  () => activeTab.value?.id,
+  () => {
+    ++presetOpeningEpoch
+    if (!presetApplyBusy.value) {
+      presetApplyOpen.value = false
+    }
+    if (activeTab.value) {
+      void refreshPresetCatalog()
+    }
+  },
+)
 const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
@@ -2197,6 +2348,7 @@ function onAppKeydown(event: KeyboardEvent) {
     !tab ||
     modelManagerOpen.value ||
     presetManagerOpen.value ||
+    presetApplyOpen.value ||
     showNewProject.value ||
     importDialogVisible.value ||
     recoveryDecision.value ||
@@ -2333,6 +2485,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  ++presetCatalogEpoch
+  ++presetOpeningEpoch
   rendererDisposed = true
   cancelAcceptedHistoryNavigation()
   queueResultNavigator.cancel()
@@ -2496,6 +2650,9 @@ onBeforeUnmount(() => {
           :modelCatalogLoaded
           :modelCatalogLoading
           :pending="activeTabPending"
+          :presets="presetCatalog"
+          :presetsError="presetCatalogError"
+          :presetsLoading="presetCatalogLoading"
           :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :runtimeUnavailableReason
@@ -2508,6 +2665,7 @@ onBeforeUnmount(() => {
           @addLora="addGenerationLora(activeTab.id, $event)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
+          @choosePreset="chooseProjectPreset(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
           @generate="generateProject(activeTab.id, $event)"
@@ -2519,6 +2677,7 @@ onBeforeUnmount(() => {
           @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
           @refreshGenerationState="refreshGenerationState(activeTab.id)"
           @refreshModels="refreshModelCatalog"
+          @refreshPresets="refreshPresetCatalog"
           @relinkEmbedding="relinkGenerationEmbedding(activeTab.id, $event)"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
@@ -2548,6 +2707,20 @@ onBeforeUnmount(() => {
         v-model:show="presetManagerOpen"
         :catalog="modelCatalog"
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+        :initialPresetId="presetManagerInitialId"
+      />
+      <ApplyPresetModal
+        v-if="presetApplication && presetApplyTab && presetApplyCurrent"
+        v-model:show="presetApplyOpen"
+        :busy="presetApplyBusy"
+        :catalog="modelCatalog"
+        :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+        :current="presetApplyCurrent"
+        :error="presetApplyError"
+        :projectName="presetApplyTab.title"
+        :source="presetApplication.source"
+        @apply="applyProjectPreset"
+        @editOriginal="editPresetOriginal"
       />
 
       <AcceptedResultsBrowser

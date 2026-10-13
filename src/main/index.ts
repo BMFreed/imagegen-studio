@@ -20,6 +20,7 @@ import type {
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
 } from '../shared/api.js'
+import { parsePresetApplication } from '../shared/presets/preset-application.js'
 import {
   type AcceptedResultHistoryCursor,
   type AcceptedResultHistoryReference,
@@ -1449,6 +1450,36 @@ if (!gotInstanceLock) {
           }
           return await action()
         })
+      registerProjectHandler(
+        ipcChannels.projects.applyPreset,
+        (args) => {
+          if (args.length !== 2 || !isProjectId(args[0])) {
+            return false
+          }
+          try {
+            parsePresetApplication(args[1])
+            return true
+          } catch {
+            return false
+          }
+        },
+        (tabId, input) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.applyPreset(
+              tabId as string,
+              parsePresetApplication(input),
+              async (request, current) => {
+                await modelService.verifyPresetApplication(request, current)
+                if (!(await presetService.get(request.sourcePresetId))) {
+                  throw new ProjectServiceError(
+                    'PROJECT_INVALID_INPUT',
+                    'This preset is no longer active. Choose it again.',
+                  )
+                }
+              },
+            ),
+          ),
+      )
       registerProjectHandler(
         ipcChannels.projects.setGenerationVae,
         (args) =>

@@ -762,6 +762,8 @@ const api: StudioApi = {
       ),
     addGenerationLora: (tabId, selection) =>
       invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
+    applyPreset: (tabId, request) =>
+      invokeProject(ipcChannels.projects.applyPreset, [tabId, request], isProjectTab),
     cancelCurrentGeneration: (tabId, documentId, expectedJobId) =>
       invokeProject(
         ipcChannels.projects.cancelCurrentGeneration,

@@ -9,6 +9,11 @@ import type {
 } from '../../shared/api.js'
 import { isCheckpointNoiseProfileChange } from '../../shared/api.js'
 import {
+  presetApplicationDiagnostics,
+  type PresetApplicationRequest,
+  type PresetApplicationTarget,
+} from '../../shared/presets/preset-application.js'
+import {
   defaultIllustriousNoiseProfile,
   type IllustriousNoiseProfileV1,
 } from '../../shared/projects/illustrious-noise-profile.js'
@@ -1338,6 +1343,62 @@ export class ModelService {
       resourceId,
       versionId,
     })
+  }
+
+  /** Authoring Apply verifies selected exact files without changing copied advisory policy. */
+  async verifyPresetApplication(
+    request: PresetApplicationRequest,
+    current: PresetApplicationTarget,
+  ): Promise<void> {
+    const payload = request.payload
+    const references = [
+      ...(payload.model ? [payload.model] : []),
+      ...(payload.vae ? [payload.vae] : []),
+      ...(payload.loras ?? []).map((entry) => entry.resource),
+      ...(payload.prompt?.embeddingRefs ?? []).map((entry) => entry.resource),
+      ...(payload.negativePrompt?.embeddingRefs ?? []).map((entry) => entry.resource),
+    ]
+    const diagnostics = presetApplicationDiagnostics({
+      catalog: references.length ? await this.getCatalog({ buildPreviews: false }) : null,
+      current,
+      payload,
+      selectedSections: request.selectedSections,
+    })
+    const blocking = diagnostics.find((item) => item.blocking)
+    if (blocking) {
+      throw new ModelServiceError('MODEL_PRESET_RESOURCE_UNAVAILABLE', blocking.message)
+    }
+    const verified = new Set<string>()
+    for (const reference of references) {
+      const key = JSON.stringify([
+        reference.kind,
+        reference.localModelId,
+        reference.localVersionId,
+        reference.fileSha256,
+      ])
+      if (verified.has(key)) {
+        continue
+      }
+      const resolved = await this.resolveGenerationResource(
+        reference.localModelId,
+        reference.localVersionId,
+        reference.kind,
+      )
+      if (
+        resolved.kind !== reference.kind ||
+        resolved.fileSha256 !== reference.fileSha256 ||
+        resolved.baseModelFamily !== reference.baseModelFamily ||
+        resolved.civitaiModelId !== reference.civitaiModelId ||
+        resolved.civitaiVersionId !== reference.civitaiVersionId ||
+        resolved.civitaiFileId !== reference.civitaiFileId
+      ) {
+        throw new ModelServiceError(
+          'MODEL_VERSION_MISMATCH',
+          'The selected preset resource changed during verification.',
+        )
+      }
+      verified.add(key)
+    }
   }
 
   private async actualFileStatus(
