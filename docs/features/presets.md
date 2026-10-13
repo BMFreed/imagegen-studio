@@ -24,8 +24,13 @@ qualification results and limits are recorded in that checkpoint.
 connects a detached active Text to Image copy to the shared editor and initializes
 the generation draft before the first `.igs` write, with a clean new history.
 Its actual qualification results and limits belong to that checkpoint.
-Result-to-preset, Models handoff and Smart Patch
-source/target routing remain pending. Existing prototype flows are not production
+[Accepted Raster result](../engineering/phase-3-result-preset-research.md) connects
+saved portable settings and one concrete expanded prompt pair to detached creation.
+[Project Apply Models handoff](../engineering/phase-3-preset-model-handoff-research.md)
+connects selected-resource diagnostics to exact category/version browsing and
+returns to the same edited Apply draft after catalog refresh. Smart Patch
+source/target routing, other handoff contexts and installed Apply→inference
+qualification remain separate work. Existing prototype flows are not production
 persistence evidence, and PP-006 remains unavailable as a complete user flow.
 
 ## Feature
@@ -444,7 +449,15 @@ Behavior:
 - `Apply` becomes available again once the user deselects the problematic section (or resolves the resource);
 - Apply shows one prominent `Selected resource is missing` warning and a footer explanation while any selected section is problematic;
 - Preset Manager shows a manager-level warning and affected catalog rows carry a `Missing resource` badge;
-- `Open in Models` is present in the prototype as the intended handoff, but focusing/resolving the resource is not interactive yet.
+- Production Project Apply exposes `Open in Models` for each distinct diagnosed
+  resource in a selected section. Its target comes from the current edited copy,
+  including Prompt/Negative Prompt embedding sidecars, rather than the saved
+  preset or library Default. Model Manager receives the expected exact identity;
+  a matching nominal version with another SHA remains unavailable. Browsing and
+  catalog refresh preserve the draft, selection, expansion and raw inputs.
+  Repair removes diagnostics only when the exact reference becomes available;
+  replacement remains an explicit action in Apply. Prototype buttons and other
+  production contexts retain their separate integration scope.
 
 Presets should store enough copied display metadata to remain understandable after a resource is removed.
 
@@ -546,5 +559,8 @@ are explained rather than replaced with defaults; Anima bundle components do not
 become an external preset VAE. Seed is excluded initially and can be included
 explicitly in the editor. Cancel creates no record, storage failures preserve
 the draft for retry, and source/project/library ownership remains unchanged.
-Smart Patch source/target routing and Open in Models remain pending; PP-006 is
+[Project Apply handoff checkpoint](../engineering/phase-3-preset-model-handoff-research.md)
+connects diagnostics to exact Model Manager focus with a guarded return to the
+same detached editor. Smart Patch source/target routing, other handoff contexts
+and installed-resource Apply→inference qualification remain pending; PP-006 is
 not complete. Actual qualification counts and limitations belong to each checkpoint.

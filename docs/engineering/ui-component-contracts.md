@@ -1,5 +1,16 @@
 # Общие UI-компоненты
 
+`ApplyPresetModal` сохраняет logical `show` при `suspended`: Naive
+`displayDirective="show"` удерживает mounted редактор и его raw values, а
+отдельное presentation `show` освобождает focus trap. Событие `suspended`
+после `afterLeave` разрешает App открыть Model Manager; возврат ждёт его
+`afterClose` и settlement guarded catalog read. Диагностики преобразуются в
+typed browse intent с `origin: 'preset'` и copied `expectedResource`; библиотечный
+Default не выбирается автоматически. Stable action key по section/exact resource
+восстанавливает focus после пересоздания diagnostic button. Сигнатуры и executable
+границы: `preset-model-handoff.ts`,
+[handoff checkpoint](./phase-3-preset-model-handoff-research.md).
+
 Production Preset Manager принимает detached `PresetCreateIntent` от текущего
 Project или принятого Raster результата. Общий session/editor владеет transient
 draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.

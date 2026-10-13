@@ -139,6 +139,13 @@ const presetApplication = ref<{ documentId: string; source: PresetRecord; tabId:
 const presetApplyOpen = ref(false)
 const presetApplyError = ref<string | null>(null)
 const presetApplyBusy = ref(false)
+const presetModelHandoff = ref<{
+  application: NonNullable<typeof presetApplication.value>
+  catalogSettled: boolean
+  focus: ModelManagerFocus
+  managerHidden: boolean
+  phase: 'models' | 'refreshing' | 'suspending'
+} | null>(null)
 const presetApplyTab = computed(() => {
   const application = presetApplication.value
   return application
@@ -290,9 +297,86 @@ function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
   )
 }
 
-function openModelManager(focus: ModelManagerFocus | null = null) {
+function openModelManager(focus: ModelManagerFocus | null = null, fromPresetHandoff = false) {
+  if (presetModelHandoff.value && !fromPresetHandoff) {
+    presetApplyOpen.value = false
+    presetModelHandoff.value = null
+  }
   modelManagerFocus.value = focus
   modelManagerOpen.value = true
+}
+function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandoff.value>) {
+  return (
+    presetModelHandoff.value === request &&
+    presetApplication.value === request.application &&
+    presetApplyOpen.value &&
+    !modelManagerOpen.value &&
+    activeTab.value?.id === request.application.tabId &&
+    activeTab.value.documentId === request.application.documentId &&
+    presetApplyTab.value !== null &&
+    !pendingProjectAction.value &&
+    !windowClosePending.value &&
+    !reloadRequiredIds.value.has(request.application.tabId)
+  )
+}
+function openPresetResourceModels(focus: ModelManagerFocus) {
+  const application = presetApplication.value
+  if (
+    !application ||
+    !presetApplyOpen.value ||
+    presetApplyBusy.value ||
+    presetModelHandoff.value ||
+    modelManagerOpen.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    activeTab.value?.id !== application.tabId ||
+    activeTab.value.documentId !== application.documentId ||
+    reloadRequiredIds.value.has(application.tabId)
+  ) {
+    return
+  }
+  presetModelHandoff.value = {
+    application,
+    catalogSettled: false,
+    focus: JSON.parse(JSON.stringify(focus)) as ModelManagerFocus,
+    managerHidden: false,
+    phase: 'suspending',
+  }
+}
+function openSuspendedPresetModels() {
+  const request = presetModelHandoff.value
+  if (!request || request.phase !== 'suspending') {
+    return
+  }
+  if (!currentPresetModelHandoff(request)) {
+    presetApplyOpen.value = false
+    presetModelHandoff.value = null
+    return
+  }
+  request.phase = 'models'
+  openModelManager(request.focus, true)
+}
+function resumePresetAfterModels() {
+  const request = presetModelHandoff.value
+  if (
+    !request ||
+    request.phase !== 'refreshing' ||
+    !request.managerHidden ||
+    !request.catalogSettled
+  ) {
+    return
+  }
+  if (!currentPresetModelHandoff(request)) {
+    presetApplyOpen.value = false
+  }
+  presetModelHandoff.value = null
+}
+function presetModelsDismissed() {
+  const request = presetModelHandoff.value
+  if (request?.phase === 'refreshing') {
+    request.managerHidden = true
+    resumePresetAfterModels()
+  }
 }
 
 function openPresetManager() {
@@ -485,6 +569,7 @@ async function applyProjectPreset(
     !application ||
     !presetApplyTab.value ||
     presetApplyBusy.value ||
+    presetModelHandoff.value ||
     pendingProjectAction.value ||
     windowClosePending.value ||
     reloadRequiredIds.value.has(application.tabId)
@@ -524,19 +609,17 @@ watch(presetManagerOpen, (open) => {
     void refreshPresetCatalog()
   }
 })
-watch(
-  () => activeTab.value?.id,
-  () => {
-    ++presetCreateEpoch
-    ++presetOpeningEpoch
-    if (!presetApplyBusy.value) {
-      presetApplyOpen.value = false
-    }
-    if (activeTab.value) {
-      void refreshPresetCatalog()
-    }
-  },
-)
+watch([() => activeTab.value?.id, () => activeTab.value?.documentId], () => {
+  ++presetCreateEpoch
+  ++presetOpeningEpoch
+  if (!presetApplyBusy.value) {
+    presetApplyOpen.value = false
+    presetModelHandoff.value = null
+  }
+  if (activeTab.value) {
+    void refreshPresetCatalog()
+  }
+})
 const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
@@ -1010,9 +1093,19 @@ function clearResultFocus(tabId: string, revision: number) {
   }
 }
 
-watch(modelManagerOpen, (open, previous) => {
+watch(modelManagerOpen, async (open, previous) => {
   if (previous && !open && activeTab.value) {
-    void refreshModelCatalog()
+    const request = presetModelHandoff.value
+    if (request?.phase === 'models') {
+      request.phase = 'refreshing'
+      await refreshModelCatalog()
+      if (presetModelHandoff.value === request) {
+        request.catalogSettled = true
+        resumePresetAfterModels()
+      }
+    } else {
+      void refreshModelCatalog()
+    }
   }
 })
 
@@ -2805,7 +2898,11 @@ onBeforeUnmount(() => {
         </NEmpty>
       </main>
 
-      <ModelManager v-model:show="modelManagerOpen" :focus="modelManagerFocus" />
+      <ModelManager
+        v-model:show="modelManagerOpen"
+        :focus="modelManagerFocus"
+        @afterClose="presetModelsDismissed"
+      />
       <PresetManager
         ref="presetManager"
         v-model:show="presetManagerOpen"
@@ -2824,8 +2921,11 @@ onBeforeUnmount(() => {
         :error="presetApplyError"
         :projectName="presetApplyTab.title"
         :source="presetApplication.source"
+        :suspended="presetModelHandoff !== null"
         @apply="applyProjectPreset"
         @editOriginal="editPresetOriginal"
+        @manageModels="openPresetResourceModels"
+        @suspended="openSuspendedPresetModels"
       />
 
       <AcceptedResultsBrowser

@@ -27,11 +27,13 @@ import {
 } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
+import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { EditablePresetPayload } from './preset-editor.js'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 import { sectionLabels, workflowLabels } from './preset-editor.js'
+import { presetDiagnosticModelRows } from './preset-model-handoff.js'
 import PresetPayloadEditor from './PresetPayloadEditor.vue'
 
 const props = defineProps<{
@@ -42,12 +44,18 @@ const props = defineProps<{
   error: string | null
   projectName: string
   source: PresetRecord
+  suspended: boolean
 }>()
 const show = defineModel<boolean>('show', { required: true })
 const emit = defineEmits<{
   apply: [value: { payload: PresetPayload; selectedSections: PresetSectionKey[] }]
   editOriginal: [id: string]
+  manageModels: [focus: ModelManagerFocus]
+  suspended: []
 }>()
+const modalRoot = ref<HTMLDivElement | null>(null)
+let handoffTrigger: HTMLElement | null = null
+let handoffActionKey: string | null = null
 const draft = ref<EditablePresetPayload>(clone(props.source.payload))
 const selectedSections = ref<PresetSectionKey[]>(initialSelection())
 const expandedSections = ref<PresetSectionKey[]>([])
@@ -79,6 +87,7 @@ const diagnostics = computed(() =>
       })
     : [],
 )
+const diagnosticRows = computed(() => presetDiagnosticModelRows(diagnostics.value))
 const changedSections = computed(() =>
   sections.value.filter((section) => !equal(draft.value[section], props.source.payload[section])),
 )
@@ -100,8 +109,12 @@ watch(
   () => [show.value, props.source.id],
   () => {
     if (!show.value) {
+      handoffTrigger = null
+      handoffActionKey = null
       return
     }
+    handoffTrigger = null
+    handoffActionKey = null
     draft.value = clone(props.source.payload)
     selectedSections.value = initialSelection()
     expandedSections.value = []
@@ -186,6 +199,44 @@ function apply() {
       selectedSections: [...selectedSections.value],
     })
   }
+}
+function requestModels(
+  focus: ModelManagerFocus | null,
+  actionKey: string | null,
+  event: MouseEvent,
+) {
+  if (!focus || props.busy || props.suspended || editOriginalConfirm.value) {
+    return
+  }
+  handoffTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  handoffActionKey = actionKey
+  emit('manageModels', focus)
+}
+function afterLeave() {
+  if (show.value && props.suspended) {
+    emit('suspended')
+  }
+}
+function afterEnter() {
+  if (!handoffActionKey || !show.value || props.suspended) {
+    return
+  }
+  const restoredAction = Array.from(
+    modalRoot.value?.querySelectorAll<HTMLButtonElement>('[data-preset-model-action]') ?? [],
+  ).find((button) => button.dataset.presetModelAction === handoffActionKey && !button.disabled)
+  const target =
+    handoffTrigger?.isConnected &&
+    modalRoot.value?.contains(handoffTrigger) &&
+    !handoffTrigger.hasAttribute('disabled') &&
+    handoffTrigger.dataset.presetModelAction === handoffActionKey
+      ? handoffTrigger
+      : (restoredAction ??
+        modalRoot.value?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Close Apply Preset"]',
+        ))
+  handoffTrigger = null
+  handoffActionKey = null
+  target?.focus({ preventScroll: true })
 }
 function currentValue(section: PresetSectionKey): unknown {
   const { generationDraft: current, primaryBbox } = props.current
@@ -284,12 +335,16 @@ function summary(section: PresetSectionKey, value: unknown): string {
 <template>
   <NModal
     :closeOnEsc="!busy && !editOriginalConfirm"
+    displayDirective="show"
     :maskClosable="false"
-    :show
+    :show="show && !suspended"
     :zIndex="AppLayer.appOverlay"
+    @afterEnter="afterEnter"
+    @afterLeave="afterLeave"
     @update:show="!$event && close()"
   >
     <div
+      ref="modalRoot"
       :aria-label="`Apply Preset: ${source.name}`"
       aria-modal="true"
       class="apply-modal"
@@ -342,12 +397,24 @@ function summary(section: PresetSectionKey, value: unknown): string {
             title="Selected settings need attention"
             type="warning"
           >
-            <p
-              v-for="(diagnostic, index) of diagnostics"
+            <div
+              v-for="({ actionKey, diagnostic, focus }, index) of diagnosticRows"
               :key="`${diagnostic.section}:${diagnostic.code}:${index}`"
+              class="preset-diagnostic"
             >
-              {{ sectionLabels[diagnostic.section] }}: {{ diagnostic.message }}
-            </p>
+              <span>{{ sectionLabels[diagnostic.section] }}: {{ diagnostic.message }}</span>
+              <NButton
+                v-if="focus"
+                :aria-label="`Open ${focus.resource?.resourceName} in Models`"
+                :data-preset-model-action="actionKey"
+                :disabled="busy || suspended"
+                size="small"
+                text
+                @click="requestModels(focus, actionKey, $event)"
+              >
+                Open in Models
+              </NButton>
+            </div>
             <p>
               Correct the selected setting or deselect its section to keep your current settings.
             </p>
@@ -530,6 +597,16 @@ function summary(section: PresetSectionKey, value: unknown): string {
 }
 .modal-content p {
   margin: 4px 0;
+}
+.preset-diagnostic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-block: 4px;
+}
+.preset-diagnostic > span {
+  flex: 1 1 220px;
 }
 .preset-description {
   padding: 10px 12px;

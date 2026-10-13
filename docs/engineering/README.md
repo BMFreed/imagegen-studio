@@ -1,7 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Accepted Raster result preset](./phase-3-result-preset-research.md)
-over [New Project preset customization](./phase-3-new-project-preset-research.md),
+Latest implementation checkpoint: [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
+over [Accepted Raster result preset](./phase-3-result-preset-research.md),
+[New Project preset customization](./phase-3-new-project-preset-research.md),
 [Save Current](./phase-3-preset-save-current-research.md),
 [Project Apply](./phase-3-preset-apply-research.md),
 [production Preset Manager](./phase-3-preset-manager-research.md) and
@@ -38,8 +39,13 @@ Accepted Raster result creation now copies saved concrete prompts and recorded
 portable settings through a separate worker-independent read, ignoring current
 Project draft/bbox. Its detached Manager source, explicit Create/retry and stale
 reply handling preserve Project/provenance/library ownership; execution evidence
-and limits belong to its checkpoint. Models handoff is next; Smart Patch
-source/target routing remains open. PP-006 remains «Пока не обещать».
+and limits belong to its checkpoint. Project Apply Models handoff now uses exact
+references from selected edited diagnostics, preserves the mounted authoring DOM
+and returns after Model Manager dismissal/catalog settlement. Missing nominal
+versions and SHA mismatches remain visible; late/cancelled refresh cannot reopen
+an obsolete Apply. Its finite qualification and PP-006 review pilot belong to
+the newest checkpoint. Installed checkpoint Apply→inference is next; Smart Patch
+and other-context handoffs remain open. PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).
@@ -184,19 +190,20 @@ work project `dev` на `<private revision>` (2026-09-23).
 
 ## Пилоты и дальнейшая автоматизация
 
-Protocols и указатели в AGENTS.md действуют сейчас. Пилоты ниже ещё не выполнены;
-они привязаны к реализации соответствующих boundaries и не делают promises
-публично готовыми.
+Protocols и указатели в AGENTS.md действуют сейчас. PP-006 handoff pilot
+выполнен на конечном production Project Apply срезе, его границы и результаты
+описаны в [checkpoint](./phase-3-preset-model-handoff-research.md). Это не
+закрывает полное promise; остальные pilots имеют отдельный execution status.
 
-| Пилот                         | Что проверить                                                                                               | Критерий завершения                                                                                                                     |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе                                       | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием |
-| PP-006 Apply handoff review   | `Open in Models` для missing resource и возврат к Apply; позднее — настоящие resource/SQLite/`.igs` команды | Red→green через Project picker; selected sections, current Project и source preset проверены; evidence прототипа и production разделены |
+| Пилот                         | Что проверить                                                                                               | Критерий завершения                                                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PP-007 Save/recovery research | `.igs` loader/save, atomic replacement, dirty/shadow state при отказе                                       | Исследование и production filesystem tests: старый файл читается после отказа, recovery сохраняется, успех проверен повторным открытием                                      |
+| PP-006 Apply handoff review   | `Open in Models` для missing resource и возврат к Apply; позднее — настоящие resource/SQLite/`.igs` команды | Выполнен: production baseline RED→GREEN через Project picker; edited/selected/raw draft, exact resources, current Project и source preset; finite scope — handoff checkpoint |
 
-Первый пилот начинается вместе с production Save/recovery slice. Второй — при
-реализации [оставшегося `Open in Models` gap](../features/presets.md#known-pp-006-prototype-gaps).
-Project Apply diagnostics и regression coverage через picker уже есть на mocks;
-формальным пилотом review они не отмечены.
+PP-007 сохраняет самостоятельную цепочку Save/recovery evidence. PP-006 pilot
+проверяет настоящий Project picker, preload/Main/SQLite, exact file verification
+и независимые source/history/seed/package controls; prototype кнопки не считаются
+доказательством production handoff.
 
 Сбор данных для оценки методики начинается **до и во время** реализации, а не
 задним числом после готового приложения. Сейчас можно зафиксировать acceptance

@@ -26,7 +26,9 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
 
 Открытые обязательные owners:
 
-- Фаза 3: remaining `Open in Models` preset handoff. Project Apply, Save Current,
+- Фаза 3: remaining installed checkpoint → picker → Apply → inference qualification,
+  включая NoobAI sampler/noise snapshots. [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md),
+  Project Apply, Save Current,
   New Project customization и [accepted Raster result creation](./phase-3-result-preset-research.md)
   подключены к production owners с отдельными qualification checkpoints.
   [Ручной production Preset Manager](./phase-3-preset-manager-research.md)

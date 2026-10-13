@@ -47,10 +47,29 @@ import type { ModelManagerFocus } from './model-manager-focus.js'
 import CheckpointNoiseProfileControls from './CheckpointNoiseProfileControls.vue'
 import { mergeModelManagerJobSnapshot } from './model-manager-job-snapshot.js'
 import { ModelManagerReadGuard } from './model-manager-read-guard.js'
+import { savedModelAvailability } from './project-model-picker.js'
 
 const show = defineModel<boolean>('show', { required: true })
+const emit = defineEmits<{ afterClose: [] }>()
 const props = defineProps<{ focus: ModelManagerFocus | null }>()
 const focusedResource = computed(() => props.focus?.resource ?? null)
+const focusedFromPreset = computed(() => props.focus?.origin === 'preset')
+const focusedPresetReady = computed(
+  () =>
+    props.focus?.expectedResource !== undefined &&
+    !loading.value &&
+    !error.value &&
+    savedModelAvailability(props.focus.expectedResource, catalog.value) === 'ready',
+)
+const focusedPresetUnavailable = computed(
+  () =>
+    focusedFromPreset.value &&
+    props.focus?.expectedResource !== undefined &&
+    selectedId.value === focusedResource.value?.resourceId &&
+    !loading.value &&
+    !error.value &&
+    !focusedPresetReady.value,
+)
 const readGuard = new ModelManagerReadGuard(() => show.value)
 // Naive's active color is available through its theme API, not an app-shell token.
 const themeVars = useThemeVars()
@@ -395,6 +414,9 @@ const detailVersion = computed(() => {
     return null
   }
   if (focusedResource.value?.resourceId === resource.id) {
+    if (focusedFromPreset.value && !focusedPresetReady.value) {
+      return null
+    }
     return (
       resource.versions.find((version) => version.id === focusedResource.value?.versionId) ?? null
     )
@@ -943,6 +965,7 @@ onBeforeUnmount(() => {
     :closeOnEsc="!importOpen"
     :maskClosable="false"
     transform-origin="center"
+    @afterLeave="emit('afterClose')"
   >
     <div
       ref="managerShell"
@@ -1049,24 +1072,41 @@ onBeforeUnmount(() => {
           {{ notice }}
         </NAlert>
       </div>
-      <div v-if="focusedModelMissing || focusedVersionMissing" class="manager-feedback">
+      <div
+        v-if="focusedModelMissing || focusedVersionMissing || focusedPresetUnavailable"
+        class="manager-feedback"
+      >
         <NAlert
           v-if="focusedModelMissing"
           key="focused-model-missing"
-          title="Project model unavailable"
+          :title="focusedFromPreset ? 'Preset model unavailable' : 'Project model unavailable'"
           type="warning"
         >
-          {{ focusedResource?.resourceName }} is not in this model library. The Project selection is
-          unchanged.
+          {{ focusedResource?.resourceName }} is not in this model library.
+          {{
+            focusedFromPreset
+              ? 'The Apply selection is unchanged.'
+              : 'The Project selection is unchanged.'
+          }}
         </NAlert>
         <NAlert
-          v-else
+          v-else-if="focusedVersionMissing"
           key="focused-version-missing"
-          title="Project version unavailable"
+          :title="focusedFromPreset ? 'Preset version unavailable' : 'Project version unavailable'"
           type="warning"
         >
           {{ focusedResource?.versionName }} is not installed for
-          {{ focusedResource?.resourceName }}. The Project selection is unchanged.
+          {{ focusedResource?.resourceName }}.
+          {{
+            focusedFromPreset
+              ? 'The Apply selection is unchanged.'
+              : 'The Project selection is unchanged.'
+          }}
+        </NAlert>
+        <NAlert v-else key="n-alert-5" title="Preset resource unavailable" type="warning">
+          The exact file referenced by Apply is unavailable or does not match this library version.
+          The Apply selection is unchanged. Repair the exact resource or explicitly replace it in
+          Apply.
         </NAlert>
       </div>
 
@@ -1358,7 +1398,8 @@ onBeforeUnmount(() => {
                           :class="{
                             'version-row--project':
                               focusedResource?.resourceId === selectedResource.id &&
-                              focusedResource.versionId === version.id,
+                              focusedResource.versionId === version.id &&
+                              (!focusedFromPreset || focusedPresetReady),
                           }"
                         >
                           <div class="version-main">
@@ -1374,13 +1415,14 @@ onBeforeUnmount(() => {
                             <NTag
                               v-if="
                                 focusedResource?.resourceId === selectedResource.id &&
-                                focusedResource.versionId === version.id
+                                focusedResource.versionId === version.id &&
+                                (!focusedFromPreset || focusedPresetReady)
                               "
                               key="selected-in-project"
                               size="small"
                               type="info"
                             >
-                              Selected in Project
+                              {{ focusedFromPreset ? 'Selected for Apply' : 'Selected in Project' }}
                             </NTag>
                             <NTag
                               v-if="selectedResource.defaultVersionId === version.id"
