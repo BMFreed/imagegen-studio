@@ -21,7 +21,7 @@ from imagegen_worker.inference import (
     run_sdxl_pipeline,
 )
 from imagegen_worker.inference_lora import (
-    finite_lora_outputs,
+    finite_unet_outputs,
     load_generation_loras,
     qualify_lora_state,
     read_lora_snapshot,
@@ -257,7 +257,7 @@ def test_actual_generation_two_adapters_additive_signed_replay_zero_and_fresh_pi
             return step(noise, *args, **kwargs)
 
         pipeline.scheduler.step = record
-        with finite_lora_outputs(pipeline, torch):
+        with finite_unet_outputs(pipeline, torch):
             result = run_sdxl_pipeline(
                 pipeline,
                 conditioning,
@@ -392,8 +392,16 @@ def test_worker_snapshot_size_hash_symlink_header_and_effective_dtype_refusals(
 
 def test_finite_output_guard_fails_before_nan_pixels_and_always_removes_hooks(native: Any) -> None:
     torch, pipeline = native
-    with pytest.raises(DerivativeError, match="non-finite"), finite_lora_outputs(pipeline, torch):
-        pipeline.vae.decoder(torch.full((1, 4, 8, 8), float("nan")))
+    with (
+        pytest.raises(DerivativeError, match="UNet inference produced non-finite values"),
+        finite_unet_outputs(pipeline, torch),
+    ):
+        pipeline.unet(
+            torch.full((1, 4, 8, 8), float("nan")),
+            timestep=0,
+            encoder_hidden_states=torch.zeros(1, 4, 32),
+            added_cond_kwargs={"text_embeds": torch.zeros(1, 16), "time_ids": torch.zeros(1, 6)},
+        )
     assert len(pipeline.unet._forward_hooks) == len(pipeline.vae.decoder._forward_hooks) == 0
 
 

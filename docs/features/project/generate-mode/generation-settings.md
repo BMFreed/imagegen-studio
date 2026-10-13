@@ -612,3 +612,13 @@ Anima embedding actions остаются неподдерживаемыми; mas
 ## Installed Anima image cap32 and selected prefix evidence
 
 [Anima image cap32/prefix](../../../engineering/phase-2c-anima-image-batch-cap-research.md) qualifies76 owning comparisons in four Save-reopened packages. Fixed0/per-iteration32 and Fixed0/per-prompt6 retain original weighted prompts/resources/Euler3/CFG4/Auto/rescale0/strength0.5/Myth−0.5 against later Heun/Fixed37/green-prompt/opposite-behavior/maxPrompts3/LoRA−0.25 edits. Portable provenance keeps concrete raw prompts, actual seed and captured settings/source context; authored templates/maxPrompts and compiled arrays remain outside it. Four cursor/Save snapshots end at7/5. Anima embeddings and broader geometry/Advanced/quality/fullMVP/release remain outside this finite gate.
+
+## Installed NoobAI Karras numerical refusal
+
+[UNet stage diagnostics](../../../engineering/phase-2c-noobai-karras-failure-research.md): V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать».
+The error identifies non-finite denoising output, without attributing it to LoRA
+or silently changing prediction/noise settings. Existing VAE precision diagnosis
+is separate. Retry retains original inputs. Exact V Karras/EPS Normal TXT256/N4
+controls only; original lost traceback, broader inputs/quality/fullMVP/release
+remain unqualified. The formerly pending diagnostic gate is closed; local
+installed-resource thumbnails/previews are the next implementation item.

@@ -6,7 +6,6 @@ inference entrypoint qualifies its offline config and CUDA runtime.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import importlib
 import importlib.metadata
@@ -40,7 +39,7 @@ from imagegen_worker.inference_embeddings import (
     validate_expanded_conditioning,
 )
 from imagegen_worker.inference_external_vae import load_generation_vae
-from imagegen_worker.inference_lora import finite_lora_outputs, load_generation_loras
+from imagegen_worker.inference_lora import finite_unet_outputs, load_generation_loras
 from imagegen_worker.inference_vae import configure_vae_precision, finite_vae_outputs
 from imagegen_worker.protocol import (
     MAX_GENERATION_STEPS,
@@ -915,7 +914,7 @@ def _generate_illustrious(
     pipeline = pipeline.to("cuda")
     with (
         finite_vae_outputs(pipeline, torch),
-        finite_lora_outputs(pipeline, torch) if command.loras else contextlib.nullcontext(),
+        finite_unet_outputs(pipeline, torch),
     ):
         with torch.inference_mode():
             conditioning = build_sdxl_conditioning(

@@ -2977,7 +2977,7 @@ test('manager pages real SQLite history by newest stable keys without reading fr
   }
 })
 
-test('manager projects the VAE refusal from its Main code without exposing stored worker diagnostics', async () => {
+test('manager projects VAE and UNet refusals from Main codes without exposing or trusting stored worker diagnostics', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-manager-vae-error-'))
   const database = openAppDatabase(root, migrations)
   try {
@@ -2987,7 +2987,7 @@ test('manager projects the VAE refusal from its Main code without exposing store
     await inQualifiedBatchLeases(
       root,
       prepared,
-      3,
+      4,
       async (items) =>
         await queue.enqueueIllustriousTxt2ImgBatch({
           items,
@@ -3001,6 +3001,11 @@ test('manager projects the VAE refusal from its Main code without exposing store
         code: 'GENERATION_VAE_NON_FINITE',
         message:
           'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.',
+      },
+      {
+        code: 'GENERATION_UNET_NON_FINITE',
+        message:
+          'The UNet produced non-finite values. Review the checkpoint prediction type and noise settings; Retry uses the original settings.',
       },
       {
         code: 'GENERATION_WORKER_FAILED',
@@ -3017,7 +3022,7 @@ test('manager projects the VAE refusal from its Main code without exposing store
       assert.ok(claimed)
       await queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
         code: error.code,
-        message: '/private/model.safetensors: VAE inference produced non-finite values.',
+        message: '/private/model.safetensors: UNet inference produced non-finite values.',
       })
       ids.push(claimed.item.id)
       assert.deepEqual((await queue.getManagerEntry(claimed.item.id)).error, error)
@@ -3028,14 +3033,14 @@ test('manager projects the VAE refusal from its Main code without exposing store
       assert.deepEqual(page.items.find((entry) => entry.id === id)?.error, expected[index])
     }
     assert.ok(!JSON.stringify(page).includes('/private/'))
-    assert.ok(!JSON.stringify(page).includes('VAE inference produced'))
+    assert.ok(!JSON.stringify(page).includes('inference produced'))
     // Corrupt legacy codes still receive the existing generic code and safe literal.
     await database.db
       .updateTable('generation_queue_item')
       .set({ error_code: '/private/invalid-code' })
-      .where('id', '=', ids[2])
+      .where('id', '=', ids[3])
       .execute()
-    assert.deepEqual((await queue.getManagerEntry(ids[2])).error, {
+    assert.deepEqual((await queue.getManagerEntry(ids[3])).error, {
       code: 'GENERATION_FAILED',
       message: 'The generation job could not be completed.',
     })

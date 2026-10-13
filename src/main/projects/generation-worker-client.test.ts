@@ -100,7 +100,7 @@ else {
         process.stdout.write(JSON.stringify({type:'error',protocolVersion:'1',requestId:request.requestId,code:'MODEL_LOAD_FAILED',message:'Safe error.'})+'\n')
         continue
       }
-      if (mode === 'precision-error') {
+      if (mode === 'precision-error' || mode === 'noise-error') {
         process.stdout.write(JSON.stringify({
           type:'error', protocolVersion:process.env.FAKE_ERROR_PROTOCOL || '1',
           requestId:process.env.FAKE_ERROR_ID || request.requestId,
@@ -439,12 +439,17 @@ function isCode(code: GenerationWorkerError['code']) {
   return (error: unknown): boolean => error instanceof GenerationWorkerError && error.code === code
 }
 
-test('validated native Illustrious JSONL VAE non-finite errors retain only a typed private reason', async () => {
+test('validated native Illustrious JSONL VAE and UNet non-finite errors retain only a typed private reason', async () => {
   await withFixture(async (fixture) => {
-    for (const mode of ['txt2img', 'img2img'] as const) {
+    for (const [workerMessage, reason, mode] of [
+      ['VAE inference produced non-finite values.', 'vae-non-finite', 'txt2img'],
+      ['VAE inference produced non-finite values.', 'vae-non-finite', 'img2img'],
+      ['UNet inference produced non-finite values.', 'unet-non-finite', 'txt2img'],
+      ['UNet inference produced non-finite values.', 'unet-non-finite', 'img2img'],
+    ] as const) {
       const client = await GenerationWorkerClient.start(
         fixture.location,
-        options('precision-error'),
+        options('precision-error', { FAKE_ERROR_MESSAGE: workerMessage }),
       )
       try {
         const original = await requestFor(fixture)
@@ -464,11 +469,12 @@ test('validated native Illustrious JSONL VAE non-finite errors retain only a typ
           assert.ok(error instanceof GenerationWorkerError)
           assert.equal(error.code, 'WORKER_REQUEST_FAILED')
           assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
-          assert.equal(error.failureReason, 'vae-non-finite')
+          assert.equal(error.failureReason, reason)
           assert.equal(error.message, 'The generation worker rejected the request.')
-          assert.ok(!JSON.stringify(error).includes('VAE inference produced'))
+          assert.ok(!JSON.stringify(error).includes('inference produced'))
           return true
         })
+        assert.deepEqual(request.job.loras ?? [], [], 'UNet refusal does not require a LoRA')
         assert.equal(existsSync(request.job.output.pngPath), false)
       } finally {
         await client.close()
@@ -477,7 +483,82 @@ test('validated native Illustrious JSONL VAE non-finite errors retain only a typ
   })
 })
 
-test('other or malformed JSONL errors cannot acquire the VAE non-finite classification', async () => {
+test('validated Illustrious outpaint JSONL UNet refusal retains its stage without publishing output', async () => {
+  await withFixture(async (peer) => {
+    await withOutpaintConsumerFixture('illustrious', async (fixture) => {
+      const marker = path.join(peer.root, 'unet-outpaint-wire.json')
+      const client = await GenerationWorkerClient.start(
+        { ...peer.location, scratchBasePath: fixture.scratch },
+        options('noise-error', {
+          FAKE_ERROR_MESSAGE: 'UNet inference produced non-finite values.',
+          FAKE_PAYLOAD_MARKER: marker,
+        }),
+      )
+      try {
+        const provisionalRoot = await mkdtemp(path.join(fixture.scratch, 'illustrious-request-'))
+        const targetPath = path.join(provisionalRoot, 'target.png')
+        await writeFile(targetPath, fixture.target.composite.bytes)
+        const request = buildQueuedOutpaintWorkerRequest({
+          infill: await fixture.infillResolver.resolveVerifiedOutpaintInfill(),
+          outputPath: path.join(provisionalRoot, 'result.png'),
+          payload: buildFrozenQueuedOutpaintV1(fixture.outpaintPrepared, randomUUID()),
+          provisionalRoot,
+          ready: client.ready,
+          requestId: randomUUID(),
+          targetPath,
+        })
+        assert.equal(request.type, 'generate-illustrious-outpaint')
+        const expectedWire = structuredClone(request)
+        const pathClient = client as unknown as {
+          validateRequestPaths: (request: GenerationWorkerRequest) => Promise<void>
+        }
+        const verifyPaths = pathClient.validateRequestPaths.bind(pathClient)
+        // This fixture supplies a tiny identity-only LaMa substitute. Control only that
+        // verification precondition; validate every other file with the actual ordinary-family
+        // path verifier. The native outpaint DTO, JSONL dispatch and physical close stay real.
+        // This test makes no LaMa hash qualification or trained inference claim.
+        const pathPrecondition = mock.method(
+          pathClient,
+          'validateRequestPaths',
+          async (input: GenerationWorkerRequest) => {
+            assert.deepEqual(input, expectedWire)
+            const { conditioning: _conditioning, infillResource, ...job } = request.job
+            assert.equal(
+              await readFile(infillResource.path, 'utf8'),
+              'Explicit identity-only LaMa resolver substitute',
+            )
+            await verifyPaths({
+              ...request,
+              job,
+              type: 'generate-illustrious-img2img',
+            })
+          },
+        )
+        try {
+          await assert.rejects(client.generate(request), (error) => {
+            assert.ok(error instanceof GenerationWorkerError)
+            assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+            assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+            assert.equal(error.failureReason, 'unet-non-finite')
+            assert.equal(error.message, 'The generation worker rejected the request.')
+            assert.ok(!JSON.stringify(error).includes('inference produced'))
+            return true
+          })
+          assert.equal(pathPrecondition.mock.callCount(), 1)
+          assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), expectedWire)
+        } finally {
+          pathPrecondition.mock.restore()
+        }
+        assert.deepEqual(await readFile(targetPath), fixture.target.composite.bytes)
+        assert.equal(existsSync(request.job.output.pngPath), false)
+      } finally {
+        await client.close()
+      }
+    })
+  })
+})
+
+test('other or malformed JSONL errors cannot acquire a VAE or UNet non-finite classification', async () => {
   await withFixture(async (fixture) => {
     for (const [environment, code] of [
       [
@@ -488,6 +569,24 @@ test('other or malformed JSONL errors cannot acquire the VAE non-finite classifi
         {
           FAKE_ERROR_MESSAGE:
             'VAE inference produced non-finite values. /private/worker-model.safetensors',
+        },
+        'WORKER_REQUEST_FAILED',
+      ],
+      [
+        {
+          FAKE_ERROR_MESSAGE:
+            'UNet inference produced non-finite values. /private/worker-model.safetensors',
+        },
+        'WORKER_REQUEST_FAILED',
+      ],
+      [
+        { FAKE_ERROR_MESSAGE: 'LoRA inference produced non-finite values.' },
+        'WORKER_REQUEST_FAILED',
+      ],
+      [
+        {
+          FAKE_ERROR_CODE: 'MODEL_LOAD_FAILED',
+          FAKE_ERROR_MESSAGE: 'UNet inference produced non-finite values.',
         },
         'WORKER_REQUEST_FAILED',
       ],
@@ -507,7 +606,7 @@ test('other or malformed JSONL errors cannot acquire the VAE non-finite classifi
           assert.equal(error.code, code)
           assert.equal(error.failureReason, undefined)
           assert.ok(!JSON.stringify(error).includes('/private/'))
-          assert.ok(!error.message.includes('VAE inference'))
+          assert.ok(!error.message.includes('inference produced'))
           return true
         })
       } finally {
@@ -519,67 +618,83 @@ test('other or malformed JSONL errors cannot acquire the VAE non-finite classifi
 
 test('target composition JSONL errors never acquire a native generation failure reason', async () => {
   await withFixture(async (fixture) => {
-    const client = await GenerationWorkerClient.start(fixture.location, options('precision-error'))
-    try {
-      const stagingRoot = await mkdtemp(
-        path.join(fixture.location.scratchBasePath, 'target-error-'),
+    for (const workerMessage of [
+      'VAE inference produced non-finite values.',
+      'UNet inference produced non-finite values.',
+    ]) {
+      const client = await GenerationWorkerClient.start(
+        fixture.location,
+        options('precision-error', { FAKE_ERROR_MESSAGE: workerMessage }),
       )
-      await assert.rejects(
-        client.composeTarget({
-          bbox: { height: 64, width: 64, x: 0, y: 0 },
-          layers: [],
-          stagingRoot,
-          targetPngPath: path.join(stagingRoot, 'target.png'),
-        }),
-        (error) => {
-          assert.ok(error instanceof GenerationWorkerError)
-          assert.equal(error.code, 'WORKER_REQUEST_FAILED')
-          assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
-          assert.equal(error.failureReason, undefined)
-          return true
-        },
-      )
-    } finally {
-      await client.close()
-    }
-  })
-})
-
-test('native Anima JSONL errors with the same code and message stay unclassified', async () => {
-  await withAnimaDispatchClientFixture(async (fixture) => {
-    const executable = fixture.location.pythonExecutable
-    const source = await readFile(executable, 'utf8')
-    const anchor = 'const total = request.job.sampling.totalSteps'
-    assert.equal(source.split(anchor).length, 2)
-    await writeFile(
-      executable,
-      source.replace(
-        anchor,
-        String.raw`process.stdout.write(JSON.stringify({
-      type:'error', protocolVersion:'1', requestId:request.requestId,
-      code:'GENERATION_WORKER_FAILED', message:'VAE inference produced non-finite values.'
-    })+'\n')
-    continue
-    const total = request.job.sampling.totalSteps`,
-      ),
-    )
-    for (const strength of [null, 0.5]) {
-      const client = await GenerationWorkerClient.start(fixture.location, {
-        environment: { MARKER: fixture.marker },
-      })
       try {
-        await assert.rejects(client.generate(await fixture.request('euler', strength)), (error) => {
-          assert.ok(error instanceof GenerationWorkerError)
-          assert.equal(error.code, 'WORKER_REQUEST_FAILED')
-          assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
-          assert.equal(error.failureReason, undefined)
-          return true
-        })
+        const stagingRoot = await mkdtemp(
+          path.join(fixture.location.scratchBasePath, 'target-error-'),
+        )
+        await assert.rejects(
+          client.composeTarget({
+            bbox: { height: 64, width: 64, x: 0, y: 0 },
+            layers: [],
+            stagingRoot,
+            targetPngPath: path.join(stagingRoot, 'target.png'),
+          }),
+          (error) => {
+            assert.ok(error instanceof GenerationWorkerError)
+            assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+            assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+            assert.equal(error.failureReason, undefined)
+            return true
+          },
+        )
       } finally {
         await client.close()
       }
     }
   })
+})
+
+test('native Anima JSONL errors with the same code and message stay unclassified', async () => {
+  for (const workerMessage of [
+    'VAE inference produced non-finite values.',
+    'UNet inference produced non-finite values.',
+  ]) {
+    await withAnimaDispatchClientFixture(async (fixture) => {
+      const executable = fixture.location.pythonExecutable
+      const source = await readFile(executable, 'utf8')
+      const anchor = 'const total = request.job.sampling.totalSteps'
+      assert.equal(source.split(anchor).length, 2)
+      await writeFile(
+        executable,
+        source.replace(
+          anchor,
+          String.raw`process.stdout.write(JSON.stringify({
+      type:'error', protocolVersion:'1', requestId:request.requestId,
+      code:'GENERATION_WORKER_FAILED', message:${JSON.stringify(workerMessage)}
+    })+'\n')
+    continue
+    const total = request.job.sampling.totalSteps`,
+        ),
+      )
+      for (const strength of [null, 0.5]) {
+        const client = await GenerationWorkerClient.start(fixture.location, {
+          environment: { MARKER: fixture.marker },
+        })
+        try {
+          await assert.rejects(
+            client.generate(await fixture.request('euler', strength)),
+            (error) => {
+              assert.ok(error instanceof GenerationWorkerError)
+              assert.equal(error.code, 'WORKER_REQUEST_FAILED')
+              assert.equal(error.workerCode, 'GENERATION_WORKER_FAILED')
+              assert.equal(error.failureReason, undefined)
+              return true
+            },
+          )
+        } finally {
+          await client.close()
+        }
+      }
+    })
+  }
 })
 
 test(

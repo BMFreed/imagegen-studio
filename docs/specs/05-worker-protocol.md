@@ -658,3 +658,19 @@ native image processing can turn NaN into a successful black PNG. Hooks are
 removed after both success and failure; no silent precision retry is performed.
 Immutable provenance records the selected policy; no effective dtype is invented
 for Auto or legacy results. External VAE/Anima remain separate work.
+
+## Illustrious numerical failure diagnostics
+
+The UNet output guard runs for TXT/IMG/OUT with or without LoRA, separately from
+the VAE guard. A non-finite UNet tensor is refused before decode/publication with
+the exact worker error `GENERATION_WORKER_FAILED` / `UNet inference produced
+non-finite values.` This identifies the observed stage, not its cause. Hooks are
+removed on success and failure; no automatic prediction/precision/noise fallback.
+
+Only the correlated exact Illustrious code/message pair becomes Main's
+`GENERATION_UNET_NON_FINITE`. Main owns the safe message asking the user to review
+checkpoint prediction type/noise settings. Existing `GENERATION_VAE_NON_FINITE`
+and its FP32 advice remain separate. Other codes, arbitrary message suffixes,
+Anima and unrelated operations stay generic; raw worker paths/stderr do not enter
+the renderer. JSONL version/error shape and existing frozen Retry are unchanged.
+See the [finite diagnostic research](../engineering/phase-2c-noobai-karras-failure-research.md).

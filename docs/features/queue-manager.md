@@ -4,6 +4,15 @@
 
 Queue Manager lets the user enqueue generation operations, monitor their status, cancel/retry failed work and inspect outputs/errors. Upscale jobs may reuse the same queue later, but Upscale UI is outside the current Project pass.
 
+Illustrious non-finite UNet and VAE failures have distinct Main-owned diagnostics:
+`GENERATION_UNET_NON_FINITE` asks the user to review the checkpoint prediction
+type/noise settings; `GENERATION_VAE_NON_FINITE` suggests FP32 for a new generation.
+Neither changes model settings or retries automatically. Retry keeps the original
+frozen inputs. Raw worker messages and paths are not displayed. A numerical
+refusal becomes a failed job after worker exit and produces no candidate,
+completion receipt, accepted provenance or seed-cursor update. See the
+[worker contract](../specs/05-worker-protocol.md#illustrious-numerical-failure-diagnostics).
+
 The queue is a first-class app runtime feature. ImageGen Studio should follow InvokeAI's proven queue model, adapted to a single-user desktop application and `.igs` project files.
 
 ## Reference

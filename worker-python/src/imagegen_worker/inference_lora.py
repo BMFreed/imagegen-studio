@@ -321,8 +321,8 @@ def load_generation_loras(pipeline: Any, loras: tuple[GenerationLora, ...], torc
 
 
 @contextmanager
-def finite_lora_outputs(pipeline: Any, torch: Any) -> Generator[None]:
-    """Refuse numeric overflow before Diffusers turns non-finite values into pixels."""
+def finite_unet_outputs(pipeline: Any, torch: Any) -> Generator[None]:
+    """Observe denoising overflow without attributing it to any adapter or setting."""
 
     def check(_module: Any, _args: Any, output: Any) -> None:
         tensor = cast(
@@ -330,15 +330,11 @@ def finite_lora_outputs(pipeline: Any, torch: Any) -> Generator[None]:
         )
         if not bool(torch.isfinite(tensor).all().item()):
             raise DerivativeError(
-                "GENERATION_WORKER_FAILED", "LoRA inference produced non-finite values."
+                "GENERATION_WORKER_FAILED", "UNet inference produced non-finite values."
             )
 
-    handles = [
-        pipeline.unet.register_forward_hook(check),
-        pipeline.vae.decoder.register_forward_hook(check),
-    ]
+    handle = pipeline.unet.register_forward_hook(check)
     try:
         yield
     finally:
-        for handle in handles:
-            handle.remove()
+        handle.remove()

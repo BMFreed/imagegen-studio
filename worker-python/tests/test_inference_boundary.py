@@ -409,11 +409,15 @@ class _MaskTorch:
 
 
 class _HookHandle:
-    def __init__(self, unet: _HookUnet) -> None:
+    def __init__(self, unet: _HookUnet, *, post: bool = False) -> None:
         self.unet = unet
+        self.post = post
 
     def remove(self) -> None:
-        self.unet.hook = None
+        if self.post:
+            self.unet.post_hook = None
+        else:
+            self.unet.hook = None
         self.unet.remove_count += 1
 
 
@@ -421,6 +425,7 @@ class _HookUnet:
     def __init__(self) -> None:
         self.config = SimpleNamespace(time_cond_proj_dim=None)
         self.hook: Any = None
+        self.post_hook: Any = None
         self.register_count = 0
         self.remove_count = 0
 
@@ -432,7 +437,12 @@ class _HookUnet:
         return _HookHandle(self)
 
     def register_forward_hook(self, hook: Any) -> _HookHandle:
-        return self.register_forward_pre_hook(hook, with_kwargs=True)
+        # Progress/publication doubles do not execute numerical outputs. Keep
+        # post hooks separate from the attention-mask pre-hook, as native torch does.
+        assert self.post_hook is None
+        self.post_hook = hook
+        self.register_count += 1
+        return _HookHandle(self, post=True)
 
 
 class _MaskPipeline:
@@ -782,8 +792,12 @@ def test_generation_connects_real_pipeline_progress_before_provisional_png_publi
         command, config_dir=tmp_path, runtime=runtime, on_progress=observe
     )
     assert events == [(1, 3), (2, 3), (3, 3)]
+    assert pipeline.unet.register_count == pipeline.unet.remove_count == 1
+    assert pipeline.unet.hook is None and pipeline.unet.post_hook is None
     assert all(
-        module.register_count == module.remove_count == 1 and module.hook is None
+        module.register_count == module.remove_count == 1
+        and module.hook is None
+        and module.post_hook is None
         for module in vars(pipeline.vae).values()
     )
     thumbnail_path = Path(str(command.output_path) + ".thumb.webp")

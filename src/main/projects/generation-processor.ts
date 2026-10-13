@@ -664,30 +664,37 @@ export class GenerationProcessor {
           }
         }
         try {
-          const vaeNonFinite =
+          const illustriousInferenceFailure =
             dispatched &&
             !isAnimaPayload(claimed.payload) &&
             error instanceof GenerationWorkerError &&
             error.code === 'WORKER_REQUEST_FAILED' &&
-            error.workerCode === 'GENERATION_WORKER_FAILED' &&
-            error.failureReason === 'vae-non-finite'
+            error.workerCode === 'GENERATION_WORKER_FAILED'
+          const vaeNonFinite =
+            illustriousInferenceFailure && error.failureReason === 'vae-non-finite'
+          const unetNonFinite =
+            illustriousInferenceFailure && error.failureReason === 'unet-non-finite'
           await this.queue.failRunning(claimed.item.id, claimed.item.statusSequence, {
             code: vaeNonFinite
               ? 'GENERATION_VAE_NON_FINITE'
-              : !dispatched && isQueuedOutpaint(claimed.payload)
-                ? 'GENERATION_OUTPAINT_UNAVAILABLE'
-                : dispatched
-                  ? 'GENERATION_WORKER_FAILED'
-                  : 'GENERATION_INPUT_CHANGED',
+              : unetNonFinite
+                ? 'GENERATION_UNET_NON_FINITE'
+                : !dispatched && isQueuedOutpaint(claimed.payload)
+                  ? 'GENERATION_OUTPAINT_UNAVAILABLE'
+                  : dispatched
+                    ? 'GENERATION_WORKER_FAILED'
+                    : 'GENERATION_INPUT_CHANGED',
             message: vaeNonFinite
               ? 'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.'
-              : !dispatched &&
-                  isQueuedOutpaint(claimed.payload) &&
-                  error instanceof GenerationProcessorError
-                ? error.message
-                : dispatched
-                  ? 'The generation worker did not return a valid completed result.'
-                  : 'The frozen generation input could not be verified.',
+              : unetNonFinite
+                ? 'The UNet produced non-finite values. Review the checkpoint prediction type and noise settings; Retry uses the original settings.'
+                : !dispatched &&
+                    isQueuedOutpaint(claimed.payload) &&
+                    error instanceof GenerationProcessorError
+                  ? error.message
+                  : dispatched
+                    ? 'The generation worker did not return a valid completed result.'
+                    : 'The frozen generation input could not be verified.',
           })
         } catch (failure) {
           if (active.cancelPromise) {

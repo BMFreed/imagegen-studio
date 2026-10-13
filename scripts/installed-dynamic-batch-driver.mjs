@@ -81,6 +81,47 @@ export async function awaitVerifiedCompletions({ waitForCompleted, admitted, obs
   for (const [index, row] of admitted.entries()) await observeCompleted(row, index)
 }
 
+/** An expected failure is a separate, single-job plan; ordinary completion plans stay strict. */
+export function expectedInstalledTerminalFailure(adapter, fixture, plan, provisionalOnly) {
+  if (!Object.hasOwn(adapter, 'expectedTerminalFailure')) {
+    assert.equal(plan.expectedFailed ?? 0, 0)
+    return null
+  }
+  assert.equal(typeof adapter.expectedTerminalFailure, 'function')
+  const expected = adapter.expectedTerminalFailure(fixture)
+  if (expected === null) {
+    assert.equal(plan.expectedFailed ?? 0, 0)
+    return null
+  }
+  assert.ok(expected && typeof expected === 'object' && !Array.isArray(expected))
+  assert.deepEqual(Object.keys(expected).sort(), ['code', 'message'])
+  assert.match(expected.code, /^[A-Z][A-Z0-9_]{0,127}$/)
+  assert.ok(typeof expected.message === 'string' && expected.message.trim() === expected.message)
+  assert.ok(expected.message.length > 0 && expected.message.length <= 512)
+  assert.equal(plan.expectedAdmissions, 1)
+  assert.equal(plan.items.length, 1)
+  assert.equal(plan.expectedCompletions, 0)
+  assert.equal(plan.expectedFailed, 1)
+  assert.equal(plan.expectedCanceled, 0)
+  assert.equal(provisionalOnly, true)
+  assert.ok(!['crash', 'reuse'].includes(fixture.stage))
+  assert.equal(typeof adapter.assertTerminalFailure, 'function')
+  return Object.freeze({ ...expected })
+}
+
+/** A poll observes the actual failed row; its preservation oracle runs once and cannot be skipped. */
+export async function awaitVerifiedTerminalFailure({ waitForFailed, admitted, observeFailed }) {
+  assert.equal(typeof waitForFailed, 'function')
+  assert.equal(typeof observeFailed, 'function')
+  assert.ok(Array.isArray(admitted) && admitted.length === 1)
+  await waitForFailed()
+  const evidence = await observeFailed(admitted[0])
+  assert.ok(evidence && typeof evidence === 'object' && !Array.isArray(evidence))
+  assert.equal(evidence.queueItemId, admitted[0].id)
+  assert.equal(evidence.outcome, 'qualified-terminal-failure')
+  return evidence
+}
+
 /** Bind explicit historical harness changes without allowing native producer changes. */
 export function assertReferenceSourceLineage(prior, current, allowed = [], snapshots = {}) {
   assert.deepEqual(Object.keys(prior).sort(), Object.keys(current).sort())
@@ -175,6 +216,12 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
   assert.ok(Number.isSafeInteger(observedSteps) && observedSteps > 0 && observedSteps <= 2000)
   const provisionalOnly = adapter.provisionalOnly ? adapter.provisionalOnly(fixture) : false
   assert.equal(typeof provisionalOnly, 'boolean')
+  const expectedTerminalFailure = expectedInstalledTerminalFailure(
+    adapter,
+    fixture,
+    plan,
+    provisionalOnly,
+  )
   const requiresSourceImage =
     typeof adapter.requiresSourceImage === 'function'
       ? adapter.requiresSourceImage(fixture)
@@ -957,7 +1004,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     await visit(directory)
     return { root: directory, exists: true, entries }
   }
-  async function captureAdmissionEffects(project, label) {
+  async function captureAdmissionEffects(project, label, { includeAcceptedIndex = false } = {}) {
     assert.match(label, /^[a-z0-9-]{1,64}$/)
     await expect.poll(runtimeUsers).toEqual([])
     const current = await tab(project)
@@ -969,6 +1016,7 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       ['generation_seed_cursor', 'local_project_key'],
       ['generation_staging_discarded_session', 'staging_session_id'],
       ['generation_acceptance_journal', 'operation_id'],
+      ...(includeAcceptedIndex ? [['project_accepted_result_index', 'layer_id']] : []),
     ])
       tableRows[table] = await database.db.selectFrom(table).selectAll().orderBy(orderKey).execute()
     const projection = {}
@@ -1368,6 +1416,99 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
     report.lastActualSeed = results.lastActualSeed
     await expect.poll(async () => (await api('getGenerationState', project.id)).phase).toBe('idle')
     await expect.poll(runtimeUsers).toEqual([])
+  }
+
+  async function awaitTerminalFailure(project, captured, currentDraft, beforeEffects) {
+    return await awaitVerifiedTerminalFailure({
+      admitted: captured.admitted,
+      waitForFailed: () =>
+        expect
+          .poll(
+            async () => {
+              const rows = (await queueRows(project)).filter(({ id }) =>
+                captured.admitted.some((item) => item.id === id),
+              )
+              assert.equal(rows.length, 1)
+              assert.ok(!['completed', 'canceled'].includes(rows[0].status))
+              if (rows[0].status !== 'failed') return false
+              assert.equal(rows[0].error_code, expectedTerminalFailure.code)
+              assert.equal(rows[0].error_message, expectedTerminalFailure.message)
+              return true
+            },
+            { timeout: completionTimeoutMs, intervals: [1000, 2000, 5000] },
+          )
+          .toBe(true),
+      observeFailed: async (admitted) => {
+        await expect
+          .poll(async () => (await api('getGenerationState', project.id)).phase)
+          .toBe('idle')
+        await expect.poll(runtimeUsers).toEqual([])
+        const terminalFailure = (await queueRows(project)).find(({ id }) => id === admitted.id)
+        assert.equal(terminalFailure.status, 'failed')
+        assert.equal(terminalFailure.status_sequence, 2)
+        assert.equal(terminalFailure.error_code, expectedTerminalFailure.code)
+        assert.equal(terminalFailure.error_message, expectedTerminalFailure.message)
+        assert.equal(terminalFailure.frozen_payload_json, admitted.frozen_payload_json)
+        adapter.assertFrozen(
+          JSON.parse(terminalFailure.frozen_payload_json),
+          plan.items[0],
+          reference,
+        )
+        const afterEffects = await captureAdmissionEffects(project, 'failure-after', {
+          includeAcceptedIndex: true,
+        })
+        for (const table of Object.keys(beforeEffects.effects.tableRows)) {
+          if (table === 'generation_queue_item') continue
+          assert.deepEqual(
+            afterEffects.effects.tableRows[table],
+            beforeEffects.effects.tableRows[table],
+          )
+        }
+        const oldQueue = beforeEffects.effects.tableRows.generation_queue_item
+        assert.deepEqual(
+          afterEffects.effects.tableRows.generation_queue_item.filter(
+            ({ id }) => id !== admitted.id,
+          ),
+          oldQueue,
+        )
+        assert.deepEqual(afterEffects.effects.results, beforeEffects.effects.results)
+        assert.deepEqual(afterEffects.effects.tab.layers, beforeEffects.effects.tab.layers)
+        assert.equal(afterEffects.effects.tab.documentId, beforeEffects.effects.tab.documentId)
+        assert.deepEqual(
+          afterEffects.effects.tab.primaryBbox,
+          beforeEffects.effects.tab.primaryBbox,
+        )
+        assert.deepEqual(afterEffects.effects.tab.generationDraft, currentDraft)
+        assert.deepEqual(afterEffects.effects.portable, beforeEffects.effects.portable)
+        assert.equal(report.generations.length, 0)
+        const progress = afterEffects.effects.progress.filter(
+          ({ current }) => current.jobId === admitted.id,
+        )
+        const evidence = await adapter.assertTerminalFailure({
+          window,
+          expect,
+          application,
+          api,
+          tab,
+          project,
+          fixture,
+          plan,
+          report,
+          admitted,
+          terminalFailure,
+          expectedTerminalFailure,
+          captured,
+          currentDraft,
+          beforeEffects,
+          afterEffects,
+          progress,
+          screenshot,
+          runtimeUsers,
+          checkpoint,
+        })
+        return evidence
+      },
+    })
   }
   async function addAll(project, count) {
     const beforeLayerCount = (await tab(project)).layers.length
@@ -2117,6 +2258,11 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
       assert.deepEqual(saved.saved.project.layers, sourceLayers)
       report.savedPrecondition = { path: saved.path, sha256: saved.sha256, snapshot: null }
     }
+    const failureBeforeEffects = expectedTerminalFailure
+      ? await captureAdmissionEffects(project, 'failure-before-admission', {
+          includeAcceptedIndex: true,
+        })
+      : null
     const captured = await admit(project)
     report.admissionPrecondition = {
       path: captured.portable.path,
@@ -2130,7 +2276,17 @@ export async function runInstalledDynamicBatchQualification(adapter, fixturePath
         (await queueRows(project)).find(({ id }) => id === row.id).frozen_payload_json,
         row.frozen_payload_json,
       )
-    if (fixture.stage === 'crash') await crash(project, captured, currentDraft)
+    if (expectedTerminalFailure) {
+      report.expectedTerminalFailure = expectedTerminalFailure
+      report.terminalFailure = await awaitTerminalFailure(
+        project,
+        captured,
+        currentDraft,
+        failureBeforeEffects,
+      )
+      report.outcome = 'finite-expected-terminal-failure'
+      await checkpoint()
+    } else if (fixture.stage === 'crash') await crash(project, captured, currentDraft)
     else {
       await awaitCompletions(project, captured)
       if (adapter.afterCompletions) {

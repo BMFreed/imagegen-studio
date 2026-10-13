@@ -117,7 +117,7 @@ export class GenerationWorkerError extends Error {
       | 'WORKER_VERSION_MISMATCH',
     message: string,
     readonly workerCode?: string,
-    readonly failureReason?: 'vae-non-finite',
+    readonly failureReason?: 'unet-non-finite' | 'vae-non-finite',
   ) {
     super(message)
     this.name = 'GenerationWorkerError'
@@ -686,9 +686,12 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
             (active.generationType === 'generate-illustrious-txt2img' ||
               active.generationType === 'generate-illustrious-img2img' ||
               active.generationType === 'generate-illustrious-outpaint') &&
-            input.code === 'GENERATION_WORKER_FAILED' &&
-            input.message === 'VAE inference produced non-finite values.'
-            ? 'vae-non-finite'
+            input.code === 'GENERATION_WORKER_FAILED'
+            ? input.message === 'VAE inference produced non-finite values.'
+              ? 'vae-non-finite'
+              : input.message === 'UNet inference produced non-finite values.'
+                ? 'unet-non-finite'
+                : undefined
             : undefined,
         ),
       )

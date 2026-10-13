@@ -6,8 +6,10 @@ import { homedir } from 'node:os'
 import {
   assertReferenceSourceLineage,
   awaitVerifiedCompletions,
+  awaitVerifiedTerminalFailure,
   createStickyCompletionCache,
   createInstalledDynamicBatchDeadlineBounds,
+  expectedInstalledTerminalFailure,
   invokeCrashLayersAdapter,
   invokeComparisonAdapter,
   invokeRecoveredInputAdapter,
@@ -15,6 +17,162 @@ import {
 } from './installed-dynamic-batch-driver.mjs'
 import { illustriousImageBatchCapProfile } from './illustrious-image-batch-cap-profile.mjs'
 import { illustriousImageSeedWrapProfile } from './illustrious-image-seed-wrap-profile.mjs'
+
+const terminalFailure = {
+  code: 'GENERATION_UNET_NON_FINITE',
+  message:
+    'The UNet produced non-finite values. Review the checkpoint prediction type and noise settings; Retry uses the original settings.',
+}
+const failurePlan = () => ({
+  expectedAdmissions: 1,
+  expectedCompletions: 0,
+  expectedFailed: 1,
+  expectedCanceled: 0,
+  items: [{ seed: 0 }],
+})
+
+// Production boundary: actual shared driver opt-in/verification helpers.
+// Mutation: drop the preservation oracle await or accept an ordinary completion plan as failure.
+// Neighbor: ordinary adapters still use the existing completion path and have no failure opt-in.
+test('expected terminal failure requires an explicit frozen single-job failure plan before admission', () => {
+  const adapter = {
+    expectedTerminalFailure: () => terminalFailure,
+    assertTerminalFailure: async () => {},
+  }
+  const expected = expectedInstalledTerminalFailure(
+    adapter,
+    { stage: 'control' },
+    failurePlan(),
+    true,
+  )
+  assert.deepEqual(expected, terminalFailure)
+  assert.equal(Object.isFrozen(expected), true)
+  assert.notEqual(expected, terminalFailure)
+  assert.equal(expectedInstalledTerminalFailure({}, {}, { expectedCompletions: 1 }, false), null)
+  assert.equal(
+    expectedInstalledTerminalFailure({ expectedTerminalFailure: () => null }, {}, {}, false),
+    null,
+  )
+  for (const changes of [
+    { expectedAdmissions: 2 },
+    { expectedCompletions: 1 },
+    { expectedFailed: 0 },
+    { expectedCanceled: 1 },
+    { items: [] },
+  ])
+    assert.throws(() =>
+      expectedInstalledTerminalFailure(
+        adapter,
+        { stage: 'control' },
+        { ...failurePlan(), ...changes },
+        true,
+      ),
+    )
+  assert.throws(() => expectedInstalledTerminalFailure(adapter, {}, failurePlan(), false))
+  assert.throws(() => expectedInstalledTerminalFailure({}, {}, failurePlan(), true))
+  for (const stage of ['crash', 'reuse'])
+    assert.throws(() => expectedInstalledTerminalFailure(adapter, { stage }, failurePlan(), true))
+  for (const expectedTerminalFailure of [undefined, null, false, terminalFailure])
+    assert.throws(() =>
+      expectedInstalledTerminalFailure(
+        { ...adapter, expectedTerminalFailure },
+        {},
+        failurePlan(),
+        true,
+      ),
+    )
+  for (const value of [
+    undefined,
+    false,
+    {},
+    { ...terminalFailure, extra: true },
+    { ...terminalFailure, code: 'malformed' },
+    { ...terminalFailure, message: 'x'.repeat(513) },
+  ])
+    assert.throws(() =>
+      expectedInstalledTerminalFailure(
+        { ...adapter, expectedTerminalFailure: () => value },
+        {},
+        failurePlan(),
+        true,
+      ),
+    )
+  assert.throws(() =>
+    expectedInstalledTerminalFailure(
+      { expectedTerminalFailure: () => terminalFailure },
+      {},
+      failurePlan(),
+      true,
+    ),
+  )
+})
+
+test('the terminal failure boundary waits for actual status then awaits the one preservation oracle', async () => {
+  const order = []
+  const admitted = [{ id: 'real-admission-id' }]
+  let release
+  const barrier = new Promise((resolve) => {
+    release = resolve
+  })
+  let settled = false
+  const evidence = { queueItemId: admitted[0].id, outcome: 'qualified-terminal-failure' }
+  const pending = awaitVerifiedTerminalFailure({
+    admitted,
+    waitForFailed: async () => {
+      order.push('actual-failed-row')
+    },
+    observeFailed: async (row) => {
+      assert.equal(row, admitted[0])
+      order.push('preservation-oracle')
+      await barrier
+      return evidence
+    },
+  }).then((value) => {
+    settled = true
+    return value
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(order, ['actual-failed-row', 'preservation-oracle'])
+  assert.equal(settled, false)
+  release()
+  assert.equal(await pending, evidence)
+})
+
+test('terminal failure checks preserve exact poll and oracle rejection without completing or accepting', async () => {
+  const fault = new Error('wrong durable error or changed accepted source')
+  for (const atPoll of [true, false]) {
+    let oracleCalls = 0
+    await assert.rejects(
+      awaitVerifiedTerminalFailure({
+        admitted: [{ id: 'real-admission-id' }],
+        waitForFailed: async () => {
+          if (atPoll) throw fault
+        },
+        observeFailed: async () => {
+          oracleCalls++
+          throw fault
+        },
+      }),
+      (error) => error === fault,
+    )
+    assert.equal(oracleCalls, atPoll ? 0 : 1)
+  }
+  for (const evidence of [
+    undefined,
+    null,
+    false,
+    { queueItemId: 'another-job', outcome: 'qualified-terminal-failure' },
+    { queueItemId: 'real-admission-id', outcome: 'completed' },
+  ])
+    await assert.rejects(
+      awaitVerifiedTerminalFailure({
+        admitted: [{ id: 'real-admission-id' }],
+        waitForFailed: async () => {},
+        observeFailed: async () => evidence,
+      }),
+    )
+})
 
 // Only proc/cgroup/systemd observations are doubled. Both guards and actual profile selection run.
 // Mutation: replace either forwarded seconds option with1800; the2700 boundary becomes RED while

@@ -382,6 +382,52 @@ def test_actual_worker_applies_precision_before_native_ml_and_publishes_only_fin
     )
 
 
+@pytest.mark.parametrize("opaque", [False, True])
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_worker_nonfinite_unet_without_lora_refuses_before_decode_and_removes_hooks(
+    native: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    opaque: bool,
+    bad_value: float,
+) -> None:
+    torch, pipeline, runtime, config, request = _worker(native, monkeypatch, tmp_path, opaque)
+    request["job"]["vaePrecision"] = "FP32"
+    assert "loras" not in request["job"]
+    decoded: list[bool] = []
+
+    def inject(_module: Any, _args: Any, output: Any) -> Any:
+        # Native Diffusers uses a tuple at this entry point; replace only its tensor.
+        assert isinstance(output, tuple)
+        return (torch.full_like(output[0], bad_value), *output[1:])
+
+    def observe_decode(_module: Any, _args: Any) -> None:
+        decoded.append(True)
+
+    injection = pipeline.unet.register_forward_hook(inject)
+    decoder = pipeline.vae.decoder.register_forward_pre_hook(observe_decode)
+    try:
+        result = process_inference_request(request, config_dir=config, runtime=runtime)
+        assert result == {
+            "type": "error",
+            "protocolVersion": "1",
+            "requestId": "precision-native",
+            "code": "GENERATION_WORKER_FAILED",
+            "message": "UNet inference produced non-finite values.",
+        }
+        assert decoded == []
+        assert not Path(request["job"]["output"]["pngPath"]).exists()
+        assert not list((tmp_path / "stage").glob("*.thumb.webp"))
+        assert not list((tmp_path / "stage").glob("*.tmp"))
+    finally:
+        injection.remove()
+        decoder.remove()
+    assert not pipeline.unet._forward_hooks
+    assert all(
+        not module._forward_hooks and not module._forward_pre_hooks for module in _modules(pipeline)
+    )
+
+
 @pytest.mark.parametrize("module_name", ["encoder", "quant_conv", "post_quant_conv", "decoder"])
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf")], ids=["nan", "inf"])
 def test_worker_nonfinite_vae_without_lora_never_publishes_and_removes_hooks(

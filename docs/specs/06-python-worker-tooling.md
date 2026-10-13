@@ -98,3 +98,14 @@ CI не устанавливает undeclared dependencies вручную. Из�
 Tooling не должен подталкивать проект к переписыванию inference-механизмов ради чистоты типов.
 
 Если Diffusers API динамический, мы изолируем динамику в adapter-слое. Базовое поведение worker'а остаётся InvokeAI-like: использовать зрелый Diffusers/PyTorch runtime и адаптировать его под доменную модель ImageGen Studio.
+
+## Numerical refusal diagnostics
+
+The [NoobAI Karras refusal checkpoint](../engineering/phase-2c-noobai-karras-failure-research.md) adds unconditional
+Illustrious UNet finite-output checking alongside the existing VAE guard. Exact
+safe correlated errors reach Main and Queue Manager; JSONL version/shape and
+frozen Retry are unchanged. Five qualified native cases confirm4 completions,
+1 failed-before-output and2 Save-reopen packages; one outer-observer restoration
+attempt is retained separately. Source-only changes do not qualify public runtime
+installation or the Linux/NVIDIA release. Local installed-resource previews remain
+an open Phase2C item.

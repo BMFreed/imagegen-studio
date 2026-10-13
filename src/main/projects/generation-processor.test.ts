@@ -431,9 +431,11 @@ test('completed candidates keep the actual worker seed through Add and portable 
   }
 })
 
-test('native JSONL VAE refusal reaches a safe public error without changing accepted source, receipt or seed', async (t) => {
+test('native JSONL VAE and UNet refusals reach safe stage diagnostics without changing accepted source, receipt or seed', async (t) => {
   const safeVaeMessage =
     'The VAE produced non-finite values. Choose FP32 for a new generation; Retry uses the original precision.'
+  const safeUnetMessage =
+    'The UNet produced non-finite values. Review the checkpoint prediction type and noise settings; Retry uses the original settings.'
   const genericMessage = 'The generation worker did not return a valid completed result.'
   for (const [workerCode, workerMessage, publicCode] of [
     [
@@ -443,7 +445,22 @@ test('native JSONL VAE refusal reaches a safe public error without changing acce
     ],
     [
       'GENERATION_WORKER_FAILED',
+      'UNet inference produced non-finite values.',
+      'GENERATION_UNET_NON_FINITE',
+    ],
+    [
+      'GENERATION_WORKER_FAILED',
       'VAE inference produced non-finite values. /private/model.safetensors',
+      'GENERATION_WORKER_FAILED',
+    ],
+    [
+      'GENERATION_WORKER_FAILED',
+      'UNet inference produced non-finite values. /private/model.safetensors',
+      'GENERATION_WORKER_FAILED',
+    ],
+    [
+      'GENERATION_WORKER_FAILED',
+      'LoRA inference produced non-finite values.',
       'GENERATION_WORKER_FAILED',
     ],
     [
@@ -452,6 +469,7 @@ test('native JSONL VAE refusal reaches a safe public error without changing acce
       'GENERATION_WORKER_FAILED',
     ],
     ['MODEL_LOAD_FAILED', 'VAE inference produced non-finite values.', 'GENERATION_WORKER_FAILED'],
+    ['MODEL_LOAD_FAILED', 'UNet inference produced non-finite values.', 'GENERATION_WORKER_FAILED'],
   ] as const) {
     await t.test(`${workerMessage} / ${workerCode}`, async () => {
       await withFixture(async (fixture) => {
@@ -485,6 +503,18 @@ test('native JSONL VAE refusal reaches a safe public error without changing acce
           const historyBefore = [owner.canUndo, owner.canRedo, owner.dirty]
           const packageBefore = await readFile(candidate.projectPath)
           const acceptedAsset = owner.document.layers[0].asset.path
+          const receiptsBefore = await fixture.database.db
+            .selectFrom('generation_candidate_receipt')
+            .selectAll()
+            .execute()
+          const cursorsBefore = await fixture.database.db
+            .selectFrom('generation_seed_cursor')
+            .selectAll()
+            .execute()
+          const acceptedIndexBefore = await fixture.database.db
+            .selectFrom('project_accepted_result_index')
+            .selectAll()
+            .execute()
           const originalPreparation = await opaquePreparation(fixture, 0.5)
           const prepared = {
             ...originalPreparation,
@@ -560,6 +590,11 @@ process.stdin.on('data', chunk => {
               generate: async (request) => {
                 assert.ok(request.type === 'generate-illustrious-img2img')
                 assert.equal(request.job.vaePrecision, 'FP16')
+                assert.deepEqual(
+                  request.job.loras ?? [],
+                  [],
+                  'UNet refusal has no LoRA precondition',
+                )
                 assert.deepEqual(await readFile(request.job.target.path), fixture.outputBytes)
                 outputPath = request.job.output.pngPath
                 return await client.generate(request)
@@ -573,13 +608,18 @@ process.stdin.on('data', chunk => {
             assert.deepEqual(await readFile(after.targetPath), prepared.targetPngBytes)
             const publicError = {
               code: publicCode,
-              message: publicCode === 'GENERATION_VAE_NON_FINITE' ? safeVaeMessage : genericMessage,
+              message:
+                publicCode === 'GENERATION_VAE_NON_FINITE'
+                  ? safeVaeMessage
+                  : publicCode === 'GENERATION_UNET_NON_FINITE'
+                    ? safeUnetMessage
+                    : genericMessage,
             }
             assert.deepEqual((await fixture.queue.getManagerEntry(failed.id)).error, publicError)
             const page = await fixture.queue.listManagerPage()
             assert.deepEqual(page.items.find((entry) => entry.id === failed.id)?.error, publicError)
             assert.ok(!JSON.stringify(page).includes('/private/'))
-            assert.ok(!JSON.stringify(page).includes('VAE inference produced'))
+            assert.ok(!JSON.stringify(page).includes('inference produced'))
             const stored = await fixture.database.db
               .selectFrom('generation_queue_item')
               .select(['error_code', 'error_message'])
@@ -590,6 +630,24 @@ process.stdin.on('data', chunk => {
               error_message: publicError.message,
             })
             assert.equal(await fixture.staging.hasPublicationReceipt(failed.id), false)
+            assert.deepEqual(
+              await fixture.database.db
+                .selectFrom('generation_candidate_receipt')
+                .selectAll()
+                .execute(),
+              receiptsBefore,
+            )
+            assert.deepEqual(
+              await fixture.database.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+              cursorsBefore,
+            )
+            assert.deepEqual(
+              await fixture.database.db
+                .selectFrom('project_accepted_result_index')
+                .selectAll()
+                .execute(),
+              acceptedIndexBefore,
+            )
             assert.deepEqual(
               await fixture.staging.listVerifiedCandidates(failed.localProjectKey),
               [],
@@ -618,148 +676,152 @@ process.stdin.on('data', chunk => {
   }
 })
 
-test('untyped or unrelated typed worker failures cannot masquerade as a VAE non-finite refusal', async () => {
-  for (const error of [
-    Object.assign(new Error('/private/untrusted-worker-error'), {
-      code: 'WORKER_REQUEST_FAILED',
-      failureReason: 'vae-non-finite',
-      workerCode: 'GENERATION_WORKER_FAILED',
-    }),
-    new GenerationWorkerError(
-      'PROTOCOL_ERROR',
-      '/private/protocol-error',
-      'GENERATION_WORKER_FAILED',
-      'vae-non-finite',
-    ),
-    new GenerationWorkerError(
-      'WORKER_REQUEST_FAILED',
-      '/private/other-worker-error',
-      'MODEL_LOAD_FAILED',
-      'vae-non-finite',
-    ),
-  ]) {
-    await withFixture(async (fixture) => {
-      const id = await enqueue(fixture)
-      assert.deepEqual(
-        await fixture.processor.runOne(
-          transport(async () => {
-            throw error
-          }),
-        ),
-        {
-          kind: 'failed',
-          queueItemId: id,
-        },
-      )
-      const row = await fixture.queue.getManagerEntry(id)
-      assert.equal(row.error?.code, 'GENERATION_WORKER_FAILED')
-      assert.equal(
-        row.error?.message,
-        'The generation worker did not return a valid completed result.',
-      )
-      assert.ok(!JSON.stringify(row).includes('/private/'))
-      assert.equal(await fixture.staging.hasPublicationReceipt(id), false)
-      assert.deepEqual(await fixture.staging.listVerifiedCandidates(row.projectKey), [])
-    })
+test('untyped or unrelated typed worker failures cannot masquerade as VAE or UNet non-finite refusals', async () => {
+  for (const reason of ['vae-non-finite', 'unet-non-finite'] as const) {
+    for (const error of [
+      Object.assign(new Error('/private/untrusted-worker-error'), {
+        code: 'WORKER_REQUEST_FAILED',
+        failureReason: reason,
+        workerCode: 'GENERATION_WORKER_FAILED',
+      }),
+      new GenerationWorkerError(
+        'PROTOCOL_ERROR',
+        '/private/protocol-error',
+        'GENERATION_WORKER_FAILED',
+        reason,
+      ),
+      new GenerationWorkerError(
+        'WORKER_REQUEST_FAILED',
+        '/private/other-worker-error',
+        'MODEL_LOAD_FAILED',
+        reason,
+      ),
+    ]) {
+      await withFixture(async (fixture) => {
+        const id = await enqueue(fixture)
+        assert.deepEqual(
+          await fixture.processor.runOne(
+            transport(async () => {
+              throw error
+            }),
+          ),
+          {
+            kind: 'failed',
+            queueItemId: id,
+          },
+        )
+        const row = await fixture.queue.getManagerEntry(id)
+        assert.equal(row.error?.code, 'GENERATION_WORKER_FAILED')
+        assert.equal(
+          row.error?.message,
+          'The generation worker did not return a valid completed result.',
+        )
+        assert.ok(!JSON.stringify(row).includes('/private/'))
+        assert.equal(await fixture.staging.hasPublicationReceipt(id), false)
+        assert.deepEqual(await fixture.staging.listVerifiedCandidates(row.projectKey), [])
+      })
+    }
   }
 })
 
-test('an Anima job cannot project the Illustrious precision remedy even from a typed transport failure', async () => {
-  for (const opaque of [false, true]) {
-    await withAnimaBatchFixture(
-      async (source) => {
-        const database = openAppDatabase(source.root, migrations)
-        try {
-          const projectPath = path.join(source.root, 'Project.igs')
-          const project = await ProjectSession.create(
-            projectPath,
-            'Anima failure fixture',
-            {
-              placeholdersDir: placeholders,
-              scratchDir: source.scratch,
-            },
-            source.prepared.context.bbox,
-          )
-          source.prepared.context.documentId = project.document.documentId
-          source.prepared.context.documentRevision = project.document.documentRevision
-          const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared: source.prepared })
-          const queue = new GenerationQueueRepository(database.db, source.root)
-          const staging = new GenerationStagingRepository(database.db, source.root)
-          await queue.recoverAfterRestart()
-          await staging.recoverAfterRestart()
-          const unsupported = async () => {
-            throw new Error('The Anima dispatcher must not resolve Illustrious resources.')
+test('an Anima job cannot project Illustrious VAE or UNet remedies even from a typed transport failure', async () => {
+  for (const reason of ['vae-non-finite', 'unet-non-finite'] as const) {
+    for (const opaque of [false, true]) {
+      await withAnimaBatchFixture(
+        async (source) => {
+          const database = openAppDatabase(source.root, migrations)
+          try {
+            const projectPath = path.join(source.root, 'Project.igs')
+            const project = await ProjectSession.create(
+              projectPath,
+              'Anima failure fixture',
+              {
+                placeholdersDir: placeholders,
+                scratchDir: source.scratch,
+              },
+              source.prepared.context.bbox,
+            )
+            source.prepared.context.documentId = project.document.documentId
+            source.prepared.context.documentRevision = project.document.documentRevision
+            const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared: source.prepared })
+            const queue = new GenerationQueueRepository(database.db, source.root)
+            const staging = new GenerationStagingRepository(database.db, source.root)
+            await queue.recoverAfterRestart()
+            await staging.recoverAfterRestart()
+            const unsupported = async () => {
+              throw new Error('The Anima dispatcher must not resolve Illustrious resources.')
+            }
+            const models: GenerationDispatchModelResolver = {
+              ...source.modelService,
+              assertNoUnboundGenerationEmbeddings: unsupported,
+              resolveVerifiedGenerationCheckpointForPlan: unsupported,
+              resolveVerifiedGenerationEmbeddingForPlan: unsupported,
+              resolveVerifiedGenerationLoraForPlan: unsupported,
+              resolveVerifiedGenerationVaeForPlan: unsupported,
+            }
+            const session = randomUUID()
+            const [queued] = await withAnimaGenerationBatchRequests({
+              modelService: source.modelService,
+              prepared: batch,
+              ready: ANIMA_BATCH_READY,
+              scratchBasePath: source.scratch,
+              use: async (requests) =>
+                await queue.enqueuePreparedAnimaGenerationBatch({
+                  preflight: async (entries) =>
+                    await staging.preflightBatchCapacity({
+                      entries,
+                      localProjectKey: localProjectRecoveryKey(projectPath),
+                      projectPath,
+                      stagingSessionId: session,
+                    }),
+                  preparedBatch: batch,
+                  projectPath,
+                  requests,
+                  stagingSessionId: session,
+                }),
+            })
+            const processor = new GenerationProcessor(queue, staging, models, source.scratch)
+            const before = structuredClone(project.document)
+            const result = await processor.runOne({
+              close: async () => undefined,
+              generate: async (request) => {
+                assert.equal(
+                  request.type,
+                  opaque ? 'generate-anima-img2img' : 'generate-anima-txt2img',
+                )
+                throw new GenerationWorkerError(
+                  'WORKER_REQUEST_FAILED',
+                  '/private/untrusted-anima-diagnostic',
+                  'GENERATION_WORKER_FAILED',
+                  reason,
+                )
+              },
+              ready: ANIMA_BATCH_READY,
+            })
+            assert.deepEqual(result, { kind: 'failed', queueItemId: queued.id })
+            assert.deepEqual((await queue.getManagerEntry(queued.id)).error, {
+              code: 'GENERATION_WORKER_FAILED',
+              message: 'The generation worker did not return a valid completed result.',
+            })
+            assert.ok(!JSON.stringify(await queue.listManagerPage()).includes('/private/'))
+            assert.equal(await staging.hasPublicationReceipt(queued.id), false)
+            assert.deepEqual(await staging.listVerifiedCandidates(queued.localProjectKey), [])
+            assert.equal(
+              await staging.readLastActualSeed(
+                queued.localProjectKey,
+                source.prepared.context.documentId,
+              ),
+              null,
+            )
+            assert.deepEqual(project.document, before)
+            assert.deepEqual(await readdir(source.scratch), [])
+          } finally {
+            await database.close()
           }
-          const models: GenerationDispatchModelResolver = {
-            ...source.modelService,
-            assertNoUnboundGenerationEmbeddings: unsupported,
-            resolveVerifiedGenerationCheckpointForPlan: unsupported,
-            resolveVerifiedGenerationEmbeddingForPlan: unsupported,
-            resolveVerifiedGenerationLoraForPlan: unsupported,
-            resolveVerifiedGenerationVaeForPlan: unsupported,
-          }
-          const session = randomUUID()
-          const [queued] = await withAnimaGenerationBatchRequests({
-            modelService: source.modelService,
-            prepared: batch,
-            ready: ANIMA_BATCH_READY,
-            scratchBasePath: source.scratch,
-            use: async (requests) =>
-              await queue.enqueuePreparedAnimaGenerationBatch({
-                preflight: async (entries) =>
-                  await staging.preflightBatchCapacity({
-                    entries,
-                    localProjectKey: localProjectRecoveryKey(projectPath),
-                    projectPath,
-                    stagingSessionId: session,
-                  }),
-                preparedBatch: batch,
-                projectPath,
-                requests,
-                stagingSessionId: session,
-              }),
-          })
-          const processor = new GenerationProcessor(queue, staging, models, source.scratch)
-          const before = structuredClone(project.document)
-          const result = await processor.runOne({
-            close: async () => undefined,
-            generate: async (request) => {
-              assert.equal(
-                request.type,
-                opaque ? 'generate-anima-img2img' : 'generate-anima-txt2img',
-              )
-              throw new GenerationWorkerError(
-                'WORKER_REQUEST_FAILED',
-                '/private/untrusted-anima-diagnostic',
-                'GENERATION_WORKER_FAILED',
-                'vae-non-finite',
-              )
-            },
-            ready: ANIMA_BATCH_READY,
-          })
-          assert.deepEqual(result, { kind: 'failed', queueItemId: queued.id })
-          assert.deepEqual((await queue.getManagerEntry(queued.id)).error, {
-            code: 'GENERATION_WORKER_FAILED',
-            message: 'The generation worker did not return a valid completed result.',
-          })
-          assert.ok(!JSON.stringify(await queue.listManagerPage()).includes('/private/'))
-          assert.equal(await staging.hasPublicationReceipt(queued.id), false)
-          assert.deepEqual(await staging.listVerifiedCandidates(queued.localProjectKey), [])
-          assert.equal(
-            await staging.readLastActualSeed(
-              queued.localProjectKey,
-              source.prepared.context.documentId,
-            ),
-            null,
-          )
-          assert.deepEqual(project.document, before)
-          assert.deepEqual(await readdir(source.scratch), [])
-        } finally {
-          await database.close()
-        }
-      },
-      { opaque },
-    )
+        },
+        { opaque },
+      )
+    }
   }
 })
 

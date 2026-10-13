@@ -25,7 +25,7 @@ from imagegen_worker.inference import (
     run_sdxl_pipeline,
     select_inference_scheduler,
 )
-from imagegen_worker.inference_lora import finite_lora_outputs, load_generation_loras
+from imagegen_worker.inference_lora import finite_unet_outputs, load_generation_loras
 from imagegen_worker.protocol import GenerateIllustriousImg2ImgCommand, IllustriousNoiseProfile
 from imagegen_worker.sdxl_outpaint import outpaint_pipeline_class, run_sdxl_outpaint_pipeline
 from test_embedding_polarity_image_oracle import image_inputs
@@ -169,7 +169,7 @@ def run_native_image(
                 denoising_strength=0.5,
                 on_progress=record_progress,
             )
-            with torch.inference_mode(), finite_lora_outputs(pipeline, torch):
+            with torch.inference_mode(), finite_unet_outputs(pipeline, torch):
                 if mode == "outpaint":
                     result = run_sdxl_outpaint_pipeline(
                         pipeline, conditioning, keep_mask=keep, **arguments

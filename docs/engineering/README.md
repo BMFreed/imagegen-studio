@@ -1,5 +1,9 @@
 # Engineering Workflow
 
+Latest finite checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md). V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать».
+Next implementation item: local installed-resource thumbnails/previews in Phase2C.
+Older checkpoint successor labels retain their historical meaning.
+
 Продуктовые обещания задают ожидаемый результат, supporting contracts — точные
 границы, а research и review связывают их с реализацией и доказательствами.
 
