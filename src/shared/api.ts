@@ -16,6 +16,7 @@ import type {
 } from './projects/generation-queue-manager.js'
 import type { RasterGenerationData } from './projects/generation-settings-comparison.js'
 import type { IllustriousNoiseProfileV1 } from './projects/illustrious-noise-profile.js'
+import type { ProjectCreateInput } from './projects/project-create.js'
 import type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
@@ -37,6 +38,8 @@ export type {
   PresetSectionKey,
   PresetWorkflow,
 } from './presets/preset-schema.js'
+
+export type { ProjectCreateInput } from './projects/project-create.js'
 
 export type {
   ProjectGenerateOptions,
@@ -377,11 +380,7 @@ export interface ProjectApi {
   cancelImport: (importId: string) => Promise<ApiResult<void>>
   clearHistory: (tabId: string) => Promise<ApiResult<ProjectTab>>
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
-  create: (options: {
-    height: number
-    title: string
-    width: number
-  }) => Promise<ApiResult<ProjectTab>>
+  create: (options: ProjectCreateInput) => Promise<ApiResult<ProjectTab>>
   deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   finishImport: (

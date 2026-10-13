@@ -9,6 +9,7 @@ import {
 } from '../shared/api.js'
 import type {
   ApiResult,
+  ProjectCreateInput,
   ProjectEmbeddingIdentity,
   ProjectGenerateOptions,
   ProjectGenerationDraftChange,
@@ -38,6 +39,7 @@ import type {
   GenerationQueueReview,
   GenerationQueueTerminalStatus,
 } from '../shared/projects/generation-queue-manager.js'
+import { isProjectCreateInput } from '../shared/projects/project-create.js'
 import {
   isProjectDocumentId,
   isProjectGenerateOptions,
@@ -1298,28 +1300,9 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(
         ipcChannels.projects.create,
-        (args) => {
-          if (args.length !== 1 || typeof args[0] !== 'object' || args[0] === null) {
-            return false
-          }
-          const input = args[0] as Record<string, unknown>
-          return (
-            Object.keys(input).length === 3 &&
-            typeof input.title === 'string' &&
-            input.title.trim().length > 0 &&
-            new TextEncoder().encode(input.title).byteLength <= IGS_SAFETY_CEILINGS.titleBytes &&
-            Number.isSafeInteger(input.width) &&
-            Number.isSafeInteger(input.height) &&
-            (input.width as number) >= 1 &&
-            (input.height as number) >= 1 &&
-            (input.width as number) <= IGS_SAFETY_CEILINGS.rasterDimension &&
-            (input.height as number) <= IGS_SAFETY_CEILINGS.rasterDimension
-          )
-        },
+        (args) => args.length === 1 && isProjectCreateInput(args[0]),
         async (input) => {
-          const tab = await projectService.create(
-            input as { height: number; title: string; width: number },
-          )
+          const tab = await projectService.create(input as ProjectCreateInput)
           const warning = await reconcileOpenedProject(tab.id, false)
           if (warning) {
             tab.storageWarning = warning

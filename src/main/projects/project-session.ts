@@ -1,3 +1,5 @@
+import type { PresetPayload } from '../../shared/presets/preset-schema.js'
+import { initializeProjectGenerationPayload } from '../../shared/projects/project-create.js'
 import type {
   IgsPreviewRectV1,
   IgsProjectDocumentV1,
@@ -123,7 +125,13 @@ export class ProjectSession {
     roots: ProjectSessionRoots,
     primaryBbox?: IgsRectV1,
     expectedDirectory?: string,
+    generationPayload?: PresetPayload,
   ): Promise<ProjectSession> {
+    // Capture and validate all authored values before the first asynchronous filesystem step.
+    const project = initializeProjectGenerationPayload(
+      createEmptyProjectDocumentV1({ primaryBbox, title }),
+      generationPayload,
+    )
     const canonicalPath = await canonicalProjectPath(filePath, { allowNewFile: true })
     if (expectedDirectory && path.dirname(canonicalPath) !== expectedDirectory) {
       throw new ProjectIdentityError(
@@ -131,7 +139,6 @@ export class ProjectSession {
         'The Project workspace no longer matches its managed location.',
       )
     }
-    const project = createEmptyProjectDocumentV1({ primaryBbox, title })
     const placeholders = await readProjectPlaceholders(roots.placeholdersDir, 'empty')
     const written = await saveIgsPackage(
       canonicalPath,

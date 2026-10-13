@@ -1,8 +1,9 @@
+import type { PresetPayload } from '../../shared/presets/preset-schema.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -45,6 +46,85 @@ async function withSession(
     await rm(directory, { force: true, recursive: true })
   }
 }
+
+test('initial preset authoring is detached before asynchronous creation and present in the first saved package', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-session-initial-'))
+  try {
+    const filePath = path.join(directory, 'initial.igs')
+    const roots = {
+      placeholdersDir: bundledPlaceholders,
+      scratchDir: path.join(directory, 'scratch'),
+    }
+    const primaryBbox = { height: 512, width: 768, x: 0, y: 0 }
+    const payload: PresetPayload = {
+      cfgRescale: 0,
+      prompt: { embeddingRefs: [], text: 'captured initial settings' },
+      sampling: { animaMethod: 'dpmpp_2m' },
+      seed: { policy: 'fixed', value: 0 },
+      size: { height: 512, width: 768 },
+      vaePrecision: 'Auto',
+    }
+    const creating = ProjectSession.create(
+      filePath,
+      'Initial',
+      roots,
+      primaryBbox,
+      directory,
+      payload,
+    )
+    payload.prompt!.text = 'later caller text'
+    payload.seed = { policy: 'reuse' }
+    primaryBbox.width = 64
+    const session = await creating
+    const firstPackage = await readIgsPackage(filePath)
+    assert.equal(session.dirty, false)
+    assert.deepEqual(session.document, firstPackage.project)
+    assert.equal(
+      firstPackage.project.generationDraft.positivePrompt.text,
+      'captured initial settings',
+    )
+    assert.deepEqual(firstPackage.project.generationDraft.seed, { policy: 'fixed', value: 0 })
+    assert.equal(firstPackage.project.generationDraft.sampling.animaMethod, 'dpmpp_2m')
+    assert.equal(firstPackage.project.generationDraft.cfgRescale, 0)
+    assert.equal(firstPackage.project.generationDraft.vaePrecision, 'Auto')
+    assert.deepEqual(firstPackage.project.primaryBbox, { height: 512, width: 768, x: 0, y: 0 })
+    assert.deepEqual(firstPackage.project.layers, [])
+    assert.equal(firstPackage.project.lastActualSeedSnapshot, null)
+    assert.equal(firstPackage.manifest.preview.status, 'empty')
+    const reopened = await ProjectSession.open(filePath, roots)
+    assert.deepEqual(reopened.document, firstPackage.project)
+    assert.equal(reopened.dirty, false)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test('invalid initialization fails before ProjectSession publishes any package or temporary write', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-session-initial-refusal-'))
+  try {
+    const roots = {
+      placeholdersDir: bundledPlaceholders,
+      scratchDir: path.join(directory, 'scratch'),
+    }
+    const filePath = path.join(directory, 'invalid.igs')
+    await assert.rejects(
+      ProjectSession.create(
+        filePath,
+        'Invalid',
+        roots,
+        { height: 512, width: 768, x: 0, y: 0 },
+        directory,
+        { size: { height: 512, width: 1024 } },
+      ),
+    )
+    assert.deepEqual(await readdir(directory), [])
+    const valid = await ProjectSession.create(filePath, 'Valid neighbor', roots)
+    assert.equal((await readIgsPackage(filePath)).project.title, 'Valid neighbor')
+    assert.equal(valid.dirty, false)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
 
 test('New Project, exact undo, Save and portable reopen use the actual package', async () => {
   await withSession(async (session, directory) => {

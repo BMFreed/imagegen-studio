@@ -20,7 +20,11 @@ preview, selected-section diagnostics and one Main history mutation.
 [Save Current](../engineering/phase-3-preset-save-current-research.md) now connects
 Project settings to a detached source draft in the same manager; its actual
 qualification results and limits are recorded in that checkpoint.
-New Project customization, result-to-preset, Models handoff and Smart Patch
+[New Project customization](../engineering/phase-3-new-project-preset-research.md)
+connects a detached active Text to Image copy to the shared editor and initializes
+the generation draft before the first `.igs` write, with a clean new history.
+Its actual qualification results and limits belong to that checkpoint.
+Result-to-preset, Models handoff and Smart Patch
 source/target routing remain pending. Existing prototype flows are not production
 persistence evidence, and PP-006 remains unavailable as a complete user flow.
 
@@ -147,7 +151,7 @@ For list-like sections, selection and content remain distinct. A selected empty 
 
 ## New Project Preset Customization
 
-Home `New Project` reuses `PresetPayloadEditor` rather than copying Apply controls. The Generation preset select contains Text to Image presets only. Choosing one creates a detached temporary payload for the new project; editing it never changes the saved preset.
+Home `New Project` reuses `PresetPayloadEditor` rather than copying Apply controls. The Generation preset select contains active Text to Image presets only. Choosing one creates a detached temporary payload for the new project; editing it never changes the saved preset. The source is copied once, so later catalog changes do not replace customized values or reset their selection mask.
 
 The customization differs from Apply where project creation needs an initial generation area:
 
@@ -159,6 +163,29 @@ The customization differs from Apply where project creation needs an initial gen
 - choosing `No preset` restores default generation bounding-box dimensions of
   1024 × 1024 and removes the temporary generation payload. The finite-Canvas
   prototype still presents these as Canvas fields.
+
+The production [New Project checkpoint](../engineering/phase-3-new-project-preset-research.md)
+connects this flow to the typed Create command. `Size` is mandatory and labeled
+`Generation area`; a source without Size gets a detached 1024 × 1024 fallback.
+Each other section keeps its copied value when Use is off. Validation and raw
+input validity consider only used sections, so an invalid deselected field does
+not block creation. Missing selected resources produce an amber warning and stay
+copied for repair before generation; they do not become a Create-time admission
+gate. Prediction/noise metadata remain advisory and never override library policy.
+
+Top-level Create width/height own the initial bbox dimensions. A supplied payload
+Size must match them exactly; conflicting values are refused before publication.
+The selected settings initialize the fresh document before its first `.igs`
+write, rather than applying a preset afterward. The new Project has no Apply
+undo step or saved-preset link. Create errors keep the temporary form for retry;
+Cancel/reopen discards it. The ordinary No preset path retains its existing
+positive geometry contract and default generation settings.
+
+Qualification has passed 221 focused tests and nine built Electron scenarios,
+including actual first-package data, index failure/rediscovery and restart.
+Typecheck, lint, build and visual checks are recorded separately in the checkpoint.
+This initialization flow does not qualify
+accepted-result projection, Models handoff or Smart Patch sources/targets.
 
 ## Save Current As Preset
 
@@ -506,6 +533,8 @@ resets and a guarded Edit original path to the same production Manager. Main
 rehashes selected exact resources, rejects changed destinations and copies
 selected values in one Project history step. Library prediction/noise policy and
 saved preset definitions stay unchanged. Missing resources can be deselected;
-unsupported selected Anima values are explained. Smart Patch target routing,
-New Project customization, result-to-preset and Open in Models
+unsupported selected Anima values are explained. The separate
+[New Project checkpoint](../engineering/phase-3-new-project-preset-research.md)
+initializes selected settings before the first saved document without an Apply
+history step. Smart Patch source/target routing, result-to-preset and Open in Models
 remain separate pending slices; PP-006 is not complete.

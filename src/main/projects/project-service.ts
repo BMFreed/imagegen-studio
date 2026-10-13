@@ -1,4 +1,5 @@
 import type {
+  ProjectCreateInput,
   ProjectEmbeddingIdentity,
   ProjectGenerationDraftChange,
   ProjectImportFinishResult,
@@ -38,6 +39,10 @@ import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-bat
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import type { RasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { supportsInferenceAnima } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  initializeProjectGenerationPayload,
+  parseProjectCreateInput,
+} from '../../shared/projects/project-create.js'
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import {
   generationTargetSignature,
@@ -347,8 +352,8 @@ export class ProjectService {
     this.openTabs.delete(tabId)
   }
 
-  async create(input: { height: number; title: string; width: number }): Promise<ProjectTab> {
-    const { primaryBbox, title } = parseCreateInput(input)
+  async create(input: ProjectCreateInput): Promise<ProjectTab> {
+    const { generationPayload, primaryBbox, title } = parseCreateInput(input)
     await this.initialize()
     const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
     // A random basename avoids path traversal, invalid filename characters and title collisions.
@@ -360,6 +365,7 @@ export class ProjectService {
       this.options.roots,
       primaryBbox,
       workspace.directoryPath,
+      generationPayload,
     )
     // Indexing is derived. On failure the committed .igs remains in the workspace so a later
     // scan can discover it; removing the file here would lose the user's new Project.
@@ -2265,31 +2271,25 @@ function rasterImportName(sourcePath: string): string {
   return name || 'Imported image'
 }
 
-function parseCreateInput(input: unknown): { primaryBbox: IgsRectV1; title: string } {
-  if (!input || typeof input !== 'object') {
-    throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Project details are invalid.')
-  }
-  const value = input as Record<string, unknown>
-  if (
-    typeof value.title !== 'string' ||
-    !value.title.trim() ||
-    Buffer.byteLength(value.title, 'utf8') > IGS_SAFETY_CEILINGS.titleBytes ||
-    typeof value.width !== 'number' ||
-    typeof value.height !== 'number'
-  ) {
-    throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Project details are invalid.')
-  }
-  const title = value.title.trim()
-  const primaryBbox = { height: value.height, width: value.width, x: 0, y: 0 }
+function parseCreateInput(input: unknown): {
+  generationPayload?: ProjectCreateInput['generationPayload']
+  primaryBbox: IgsRectV1
+  title: string
+} {
   try {
-    createEmptyProjectDocumentV1({ primaryBbox, title })
-  } catch (error) {
-    if (error instanceof IgsSchemaError) {
-      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Project size is invalid.')
-    }
-    throw error
+    const { generationPayload, height, title, width } = parseProjectCreateInput(input)
+    const primaryBbox = { height, width, x: 0, y: 0 }
+    initializeProjectGenerationPayload(
+      createEmptyProjectDocumentV1({ primaryBbox, title }),
+      generationPayload,
+    )
+    return { generationPayload, primaryBbox, title }
+  } catch {
+    throw new ProjectServiceError(
+      'PROJECT_INVALID_INPUT',
+      'The Project details or preset settings are invalid.',
+    )
   }
-  return { primaryBbox, title }
 }
 
 function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {

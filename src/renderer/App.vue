@@ -4,6 +4,7 @@ import type {
   ModelCatalogItem,
   ProjectApi,
   ProjectCloseImpact,
+  ProjectCreateInput,
   ProjectEmbeddingIdentity,
   ProjectGenerateOptions,
   ProjectGenerationActionState,
@@ -30,7 +31,6 @@ import {
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
-import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
@@ -41,9 +41,7 @@ import {
   NCard,
   NConfigProvider,
   NEmpty,
-  NFormItem,
   NIcon,
-  NInput,
   NModal,
   NRadio,
   NRadioGroup,
@@ -57,7 +55,6 @@ import type {
   QueueResultReference,
 } from './components/generation-queue-result.js'
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
-import type { AspectRatioState, ResolutionSize } from './components/resolution-control'
 
 import {
   type AcceptedHistoryFocusRequest,
@@ -73,6 +70,7 @@ import {
 import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
+import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
 import {
@@ -80,7 +78,6 @@ import {
   type PresetProjectCreateIntent,
 } from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
-import ResolutionControl from './components/ResolutionControl.vue'
 import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
@@ -225,9 +222,6 @@ const closeImpact = ref<ProjectCloseImpact | null>(null)
 const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
-const newProjectName = ref('')
-const newProjectSize = ref<ResolutionSize>({ height: 1024, width: 1024 })
-const newProjectAspect = ref<AspectRatioState>({ id: 'free', locked: false, value: 1 })
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importChoice = ref<'copy' | 'move'>('move')
@@ -509,23 +503,6 @@ const activeTabPending = computed<
 const showRuntimeNotice = computed(
   () => status.value?.kind !== 'ready' || runtimeError.value !== null,
 )
-const canCreateProject = computed(
-  () =>
-    newProjectName.value.trim().length > 0 &&
-    new TextEncoder().encode(newProjectName.value.trim()).length <=
-      IGS_SAFETY_CEILINGS.titleBytes &&
-    validDimension(newProjectSize.value.width) &&
-    validDimension(newProjectSize.value.height),
-)
-
-function validDimension(value: number | null): value is number {
-  return (
-    value !== null &&
-    Number.isSafeInteger(value) &&
-    value >= 1 &&
-    value <= IGS_SAFETY_CEILINGS.rasterDimension
-  )
-}
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'An unexpected error occurred.'
@@ -1536,27 +1513,21 @@ async function refreshProjects() {
 
 function beginNewProject() {
   queueResultNavigator.cancelProjectOpen()
-  newProjectName.value = ''
-  newProjectSize.value = { height: 1024, width: 1024 }
-  newProjectAspect.value = { id: 'free', locked: false, value: 1 }
   newProjectError.value = null
   showNewProject.value = true
+  void refreshPresetCatalog()
+  void refreshModelCatalog()
 }
 
-async function createProject() {
-  if (!canCreateProject.value || pendingProjectAction.value !== null) {
+async function createProject(input: ProjectCreateInput) {
+  if (pendingProjectAction.value !== null || windowClosePending.value) {
     return
   }
-  const { height, width } = newProjectSize.value
-  if (!validDimension(width) || !validDimension(height)) {
-    return
-  }
+  const captured: ProjectCreateInput = JSON.parse(JSON.stringify(input))
   pendingProjectAction.value = { kind: 'create' }
   newProjectError.value = null
   try {
-    const tab = await apiValue(() =>
-      projectApi().create({ height, title: newProjectName.value.trim(), width }),
-    )
+    const tab = await apiValue(() => projectApi().create(captured))
     showNewProject.value = false
     focusTab(tab)
     if (tab.storageWarning) {
@@ -2868,65 +2839,18 @@ onBeforeUnmount(() => {
         </NCard>
       </NModal>
 
-      <NModal
+      <NewProjectModal
         v-model:show="showNewProject"
-        :closeOnEsc="pendingProjectAction?.kind !== 'create'"
-        :maskClosable="false"
-      >
-        <NCard
-          aria-label="New Project"
-          class="dialog-card"
-          contentScrollable
-          role="dialog"
-          size="small"
-          title="New Project"
-        >
-          <form id="new-project-form" @submit.prevent="createProject">
-            <NAlert v-if="newProjectError" class="dialog-error" type="error">
-              {{ newProjectError }}
-            </NAlert>
-            <NFormItem label="Project name">
-              <NInput
-                v-model:value="newProjectName"
-                autofocus
-                :inputProps="{ 'aria-label': 'Project name' }"
-                maxlength="256"
-                placeholder="Untitled Project"
-              />
-            </NFormItem>
-            <section aria-label="Initial generation area" class="create-dimensions">
-              <h3>Generation area</h3>
-              <ResolutionControl
-                v-model="newProjectSize"
-                v-model:aspectRatio="newProjectAspect"
-                :disabled="pendingProjectAction !== null"
-                heightLabel="Project height"
-                :max="IGS_SAFETY_CEILINGS.rasterDimension"
-                widthLabel="Project width"
-              />
-              <p class="dialog-secondary">
-                Sets the first generation area. The canvas is unbounded.
-              </p>
-            </section>
-          </form>
-          <template v-slot:footer>
-            <div class="dialog-actions dialog-actions--footer">
-              <NButton :disabled="pendingProjectAction !== null" @click="showNewProject = false">
-                Cancel
-              </NButton>
-              <NButton
-                attrType="submit"
-                :disabled="!canCreateProject || pendingProjectAction !== null"
-                form="new-project-form"
-                :loading="pendingProjectAction?.kind === 'create'"
-                type="primary"
-              >
-                Create Project
-              </NButton>
-            </div>
-          </template>
-        </NCard>
-      </NModal>
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :catalog="modelCatalog"
+        :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+        :createError="newProjectError"
+        :presets="presetCatalog"
+        :presetsError="presetCatalogError"
+        :presetsLoading="presetCatalogLoading"
+        @create="createProject"
+        @refreshPresets="refreshPresetCatalog"
+      />
 
       <NModal
         :closeOnEsc="pendingProjectAction?.kind !== 'recover'"
@@ -3258,21 +3182,6 @@ onBeforeUnmount(() => {
 
 .dialog-error {
   margin-bottom: 14px;
-}
-
-.create-dimensions {
-  display: grid;
-  gap: 12px;
-}
-
-.create-dimensions h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.create-dimensions p {
-  margin: 0;
 }
 
 .dialog-actions {

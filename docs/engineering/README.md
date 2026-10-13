@@ -1,7 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Project Save Current as Preset](./phase-3-preset-save-current-research.md)
-over [Project Apply](./phase-3-preset-apply-research.md),
+Latest implementation checkpoint: [New Project preset customization](./phase-3-new-project-preset-research.md)
+over [Save Current](./phase-3-preset-save-current-research.md),
+[Project Apply](./phase-3-preset-apply-research.md),
 [production Preset Manager](./phase-3-preset-manager-research.md) and
 [preset storage/API](./phase-3-preset-storage-research.md).
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
@@ -21,8 +22,18 @@ invalid excluded seed/batch inputs do not prevent this copy.
 Verified current mode is used; empty Canvas may default to Text to Image, while
 unknown nonempty mode requires an explicit Workflow choice. Incomplete copied
 settings must be repaired or excluded. Project/history/library ownership remains
-unchanged; verification results and limits belong to the new checkpoint.
-New Project customization is next. Result-to-preset, Models handoff and Smart Patch
+unchanged; verification results and limits belong to the Save Current checkpoint.
+New Project now edits a detached active TXT source through the shared editor:
+Size supplies the initial generation area, Seed is off by default, resets preserve
+Use selection and No preset restores 1024 × 1024 with no generation payload.
+Selected-only raw validation blocks invalid used fields; missing references warn
+but allow Create. Main initializes settings before the first `.igs` write with
+clean history; top-level dimensions own the bbox and conflicting payload Size is
+refused. Source presets and model policy remain unchanged. Qualification has
+passed 221 focused tests and nine built Electron scenarios, including first-package
+data, index failure/rediscovery and restart. Typecheck, lint, build and standard/narrow
+visual checks pass; exact boundaries are recorded in the latest checkpoint.
+Result-to-preset is next. Models handoff and Smart Patch
 source/target routing remain open. PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.

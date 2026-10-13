@@ -3,6 +3,7 @@ import {
   isProjectGenerationModelSelection,
 } from '../../shared/api.js'
 import type { ProjectGenerationDraftChange } from '../../shared/api.js'
+import { parsePresetApplicationPayload } from '../../shared/presets/preset-application.js'
 import { isAcceptedResultHistoryPage } from '../../shared/projects/accepted-result-history.js'
 import { isRasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
@@ -56,6 +57,197 @@ import {
   acceptedRasterProvenanceFixture,
 } from './test-fixtures/accepted-provenance.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
+
+function newProjectResource<K extends 'checkpoint' | 'embedding' | 'lora' | 'vae'>(kind: K) {
+  return {
+    baseModelFamily: 'illustrious' as const,
+    civitaiFileId: 303,
+    civitaiModelId: 101,
+    civitaiVersionId: 202,
+    displayName: `Missing exact ${kind}`,
+    fileSha256: 'c'.repeat(64),
+    kind,
+    localModelId: randomUUID(),
+    localVersionId: randomUUID(),
+    predictionType: kind === 'checkpoint' ? ('v_prediction' as const) : null,
+    versionName: 'Saved version; never the catalog default',
+  }
+}
+
+test('New Project publishes detached preset settings in its first real package without Apply, history or resource fallback', async () => {
+  await withService(async ({ database, modelService, repository, service, shadow }) => {
+    const presets = new PresetRepository(database.db)
+    const checkpoint = newProjectResource('checkpoint')
+    const lora = newProjectResource('lora')
+    const embedding = newProjectResource('embedding')
+    const vae = newProjectResource('vae')
+    const source = await presets.create({
+      description: 'Saved source stays independent',
+      favorite: true,
+      name: 'Initialization source',
+      payload: {
+        cfgRescale: 0,
+        guidance: { cfgScale: 0, steps: 9 },
+        loras: [{ enabled: false, resource: lora, weight: -0.75 }],
+        model: { ...checkpoint, noiseProfile: defaultIllustriousNoiseProfile() },
+        negativePrompt: { embeddingRefs: [], text: 'authored negative' },
+        prompt: {
+          embeddingRefs: [{ resource: embedding, token: 'chosen' }],
+          text: 'chosen studio',
+        },
+        sampling: { sampler: 'DPM++ 2M', scheduler: 'Karras' },
+        seed: { policy: 'fixed', value: 123 },
+        size: { height: 768, width: 1024 },
+        vae,
+        vaePrecision: 'Auto',
+      },
+      tags: ['source'],
+      workflow: 'textToImage',
+    })
+    const generationPayload = parsePresetApplicationPayload(source.payload, [
+      'prompt',
+      'negativePrompt',
+      'model',
+      'loras',
+      'size',
+      'sampling',
+      'guidance',
+      'cfgRescale',
+      'vae',
+      'vaePrecision',
+    ])
+    generationPayload.prompt!.text = 'chosen customized studio'
+    const expected = structuredClone(generationPayload)
+    const creating = service.create({
+      generationPayload,
+      height: 768,
+      title: 'Customized initialization',
+      width: 1024,
+    })
+    generationPayload.prompt!.text = 'late caller edit'
+    generationPayload.loras![0].weight = 8
+    const tab = await creating
+    assert.equal(tab.dirty, false)
+    assert.equal(tab.canUndo, false)
+    assert.equal(tab.canRedo, false)
+    assert.deepEqual(tab.primaryBbox, { height: 768, width: 1024, x: 0, y: 0 })
+    assert.deepEqual(tab.generationDraft.positivePrompt, expected.prompt)
+    assert.deepEqual(tab.generationDraft.negativePrompt, expected.negativePrompt)
+    assert.deepEqual(tab.generationDraft.loras, expected.loras)
+    assert.deepEqual(tab.generationDraft.model, checkpoint)
+    assert.deepEqual(tab.generationDraft.vae, vae)
+    assert.equal(tab.generationDraft.cfgRescale, 0)
+    assert.equal(tab.generationDraft.vaePrecision, 'Auto')
+    assert.equal(tab.generationDraft.sampling.cfgScale, 0)
+    assert.equal(tab.generationDraft.sampling.steps, 9)
+    assert.equal(tab.generationDraft.sampling.sampler, 'DPM++ 2M')
+    assert.equal(tab.generationDraft.sampling.scheduler, 'Karras')
+    assert.equal(tab.generationDraft.sampling.denoisingStrength, null)
+    assert.deepEqual(tab.generationDraft.seed, { policy: 'random', value: null })
+    assert.equal(tab.lastActualSeedSnapshot, null)
+    assert.deepEqual(tab.layers, [])
+    assert.deepEqual(await modelService.getCatalog({ buildPreviews: false }), [])
+    assert.deepEqual(await presets.get(source.id), source)
+    const savedPath = (await repository.listProjects())[0].canonicalPath
+    const saved = await readIgsPackage(savedPath)
+    assert.deepEqual(saved.project.generationDraft, tab.generationDraft)
+    assert.deepEqual(saved.project.primaryBbox, tab.primaryBbox)
+    assert.equal(saved.manifest.preview.status, 'empty')
+    assert.equal(Object.hasOwn(saved.project, 'sourcePresetId'), false)
+    assert.equal(
+      (await shadow.inspect({ projectPath: savedPath, savedPackage: saved })).status,
+      'absent',
+    )
+    await service.close(tab.id)
+    const reopened = await service.open(tab.id)
+    assert.equal(reopened.kind, 'opened')
+    assert.ok(reopened.kind === 'opened')
+    assert.deepEqual(reopened.tab.generationDraft, tab.generationDraft)
+    assert.equal(reopened.tab.canUndo, false)
+    await service.close(reopened.tab.id)
+    const neighbor = await service.create({ height: 64, title: 'No preset neighbor', width: 64 })
+    assert.deepEqual(neighbor.generationDraft.seed, { policy: 'random', value: null })
+    assert.deepEqual(neighbor.generationDraft.positivePrompt, { embeddingRefs: [], text: '' })
+    assert.equal(neighbor.generationDraft.sampling.steps, null)
+    assert.equal(neighbor.generationDraft.model, null)
+    await service.close(neighbor.id)
+  })
+})
+
+test('New Project retains explicit Fixed zero and Reuse without inheriting a cursor', async () => {
+  await withService(async ({ repository, service }) => {
+    for (const seed of [{ policy: 'fixed', value: 0 }, { policy: 'reuse' }] as const) {
+      const tab = await service.create({
+        generationPayload: { sampling: { animaMethod: 'heun' }, seed, vae: null },
+        height: 64,
+        title: `Explicit ${seed.policy}`,
+        width: 64,
+      })
+      const expected = { policy: seed.policy, value: seed.policy === 'fixed' ? 0 : null }
+      assert.deepEqual(tab.generationDraft.seed, expected)
+      assert.equal(tab.lastActualSeedSnapshot, null)
+      assert.equal(tab.generationDraft.sampling.animaMethod, 'heun')
+      assert.equal(tab.generationDraft.sampling.sampler, null)
+      assert.equal(tab.generationDraft.sampling.scheduler, null)
+      const savedPath = (await repository.listProjects()).find(
+        (row) => row.localProjectKey === tab.id,
+      )!.canonicalPath
+      assert.deepEqual((await readIgsPackage(savedPath)).project.generationDraft.seed, expected)
+      await service.close(tab.id)
+    }
+  })
+})
+
+test('invalid New Project payloads refuse before managed directories, package or index publication', async () => {
+  await withService(async ({ database, dataRoot, repository, service }) => {
+    const files = (await readdir(dataRoot)).sort()
+    const invalid: unknown[] = [
+      { height: 64, sourcePresetId: randomUUID(), title: 'Invalid', width: 64 },
+      { generationPayload: { denoisingStrength: 0.4 }, height: 64, title: 'Invalid', width: 64 },
+      {
+        generationPayload: { size: { height: 64, width: 128 } },
+        height: 64,
+        title: 'Invalid',
+        width: 64,
+      },
+      {
+        generationPayload: { prompt: { text: 'missing sidecars' } },
+        height: 64,
+        title: 'Invalid',
+        width: 64,
+      },
+      {
+        generationPayload: { guidance: { cfgScale: 0, steps: null } },
+        height: 64,
+        title: 'Invalid',
+        width: 64,
+      },
+      {
+        generationPayload: { model: { ...newProjectResource('vae'), kind: 'vae' } },
+        height: 64,
+        title: 'Invalid',
+        width: 64,
+      },
+      { generationPayload: { layers: [] }, height: 64, title: 'Invalid', width: 64 },
+    ]
+    for (const input of invalid) {
+      await assert.rejects(service.create(input as never), { code: 'PROJECT_INVALID_INPUT' })
+      assert.deepEqual((await readdir(dataRoot)).sort(), files)
+      assert.deepEqual(await repository.listProjects(), [])
+      assert.deepEqual(await database.db.selectFrom('project_workspace').selectAll().execute(), [])
+      assert.deepEqual(service.getOpenTabs(), [])
+    }
+    const valid = await service.create({
+      generationPayload: {},
+      height: 64,
+      title: 'Valid neighbor',
+      width: 64,
+    })
+    assert.equal(valid.dirty, false)
+    assert.equal((await repository.listProjects()).length, 1)
+    await service.close(valid.id)
+  })
+})
 
 test('preset Apply copies selected values in one Main undo step, preserving saved source and neighboring Project', async () => {
   await withService(async ({ database, modelService, repository, service }) => {
@@ -2975,9 +3167,20 @@ test('a post-create index failure preserves the new .igs for the next Home scan'
       roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
       shadow: new ProjectShadowStore(path.join(dataRoot, 'autosave')),
     })
-    await assert.rejects(service.create({ height: 512, title: 'Still on disk', width: 512 }), {
-      code: 'PROJECT_CREATED_NOT_INDEXED',
-    })
+    await assert.rejects(
+      service.create({
+        generationPayload: {
+          prompt: { embeddingRefs: [], text: 'initialized before the index outage' },
+          seed: { policy: 'fixed', value: 0 },
+        },
+        height: 512,
+        title: 'Still on disk',
+        width: 512,
+      }),
+      {
+        code: 'PROJECT_CREATED_NOT_INDEXED',
+      },
+    )
     const workspace = await repository.workspaceById('uncategorized')
     const files = await readdir(workspace.directoryPath)
     assert.equal(files.length, 1)
@@ -2985,6 +3188,13 @@ test('a post-create index failure preserves the new .igs for the next Home scan'
       (await readIgsPackage(path.join(workspace.directoryPath, files[0]))).project.title,
       'Still on disk',
     )
+    const survivingDocument = (await readIgsPackage(path.join(workspace.directoryPath, files[0])))
+      .project
+    assert.equal(
+      survivingDocument.generationDraft.positivePrompt.text,
+      'initialized before the index outage',
+    )
+    assert.deepEqual(survivingDocument.generationDraft.seed, { policy: 'fixed', value: 0 })
     const rediscovered = await service.list()
     assert.equal(rediscovered.length, 1)
     assert.equal(rediscovered[0].title, 'Still on disk')

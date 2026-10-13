@@ -122,6 +122,23 @@ Vue-прототипа, а не готовность production UI.
   `value` находится вне label. Клик по подписи фокусирует поле, не меняя его
   значение; несколько экземпляров получают разные id.
 
+## Production New Project preset customization
+
+Production [`NewProjectModal`](../../src/renderer/components/NewProjectModal.vue)
+uses `defineModel<boolean>('show')`. App supplies `busy`, `createError`, the
+preset list/loading/error and model catalog/readiness; `create(ProjectCreateInput)`
+and `refreshPresets` are intents. App owns the actual Create command and closes
+only on success. Failed writes retain the form; reopening resets the transient
+state. It composes the shared `PresetPayloadEditor` with selected sections,
+section revisions and context/control/action slots, rather than reimplementing
+its inputs. Size is always used, Seed starts unchecked, resets preserve Use.
+The [detached state helper](../../src/renderer/components/new-project-preset-draft.ts)
+captures active TXT values once and projects used fields into the strict
+[Create contract](../../src/shared/projects/project-create.ts). Source IDs are
+not sent; missing resources warn without blocking structurally valid creation.
+The modal root is a direct element for the focus trap; only its body scrolls,
+with a visible header/footer and one primary Create action.
+
 ## Production resource navigation
 
 `ModelManagerFocus` is renderer-only browse intent: `resourceType` plus nullable
