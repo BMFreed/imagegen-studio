@@ -706,7 +706,12 @@ typed JSON payload для настроек генерации
 
 ### Таблица presets
 
-Предварительная форма:
+Базовая форма реализована в
+[`0017_presets.sql`](../../src/main/db/migrations/0017_presets.sql).
+Production migration дополнительно ограничивает workflow enum, типы JSON и
+непустые значения и добавляет catalog index. Строгий shared parser валидирует
+portable definitions при записи и чтении; SQL JSON checks сами не доказывают
+валидность payload.
 
 ```sql
 CREATE TABLE presets (
@@ -734,6 +739,15 @@ next launch. Neither the preset payload nor its copied resource-reference
 metadata is physically removed before expiry. The referenced model files have
 their own lifecycle. This preset lifecycle is separate from managed `.igs`
 Project Trash.
+
+Production Main выполняет cleanup при запуске и каждый час; один cleanup не
+пересекается со следующим. Restore сам проверяет точную границу 30×24 часа UTC,
+поэтому просроченную запись нельзя восстановить между sweep. Shutdown
+прекращает admission/timer и ждёт принятые preset operations до SQLite close.
+Повреждённая deleted запись вызывает атомарный отказ purge с сохранением всех
+строк; Main логирует отказ и сохраняет доступность остальных возможностей.
+Эта граница квалифицирована в [preset storage research](../engineering/phase-3-preset-storage-research.md);
+production Manager/Apply остаются следующими срезами.
 
 `workflow_type` — категория применимости пресета, а не параметр генерации.
 

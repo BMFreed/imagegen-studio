@@ -1,11 +1,12 @@
 # Engineering Workflow
 
-Latest finite checkpoint: [Local installed-resource previews](./phase-2c-resource-previews-research.md).
-Existing CPU worker creates verified sRGB artwork; Main owns local source/cache,
-exact-version association and the confirmed-exit barrier. Built UI covers picker,
-manager/default, explicit Save and offline restart without runtime. PP-004 remains
-«Пока не обещать»: full lifecycle/Preset owners and packaged delivery stay open.
-Next: remaining Phase2C exit checks before production Presets.
+Latest finite checkpoint: [Production preset storage/API](./phase-3-preset-storage-research.md).
+Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
+supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
+Electron restart and startup purge are qualified; production manager/editor,
+Apply and result-to-preset are the next slice. PP-006 remains «Пока не обещать».
+[Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
+Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).
 Older checkpoint successor labels retain their historical meaning.
 

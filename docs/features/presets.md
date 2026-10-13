@@ -5,6 +5,15 @@ This document is the canonical supporting contract for
 It translates the general user-facing promise into preset ownership, create,
 edit, apply, validation, resource-diagnostic, prototype and acceptance rules.
 
+## Current production boundary
+
+[Storage/API checkpoint](../engineering/phase-3-preset-storage-research.md) implements
+strict portable definitions, SQLite CRUD/duplicate, deleted records, restore before
+30 elapsed UTC days, automatic startup/hourly expiry and typed native IPC.
+The production UI manager/editor, Project Apply, New Project customization and
+result-to-preset are still pending. Existing prototype flows are not production
+persistence evidence, and PP-006 remains unavailable as a complete user flow.
+
 ## Feature
 
 Presets let the user save and reuse generation settings without treating them as a hidden workflow graph.

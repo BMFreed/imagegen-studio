@@ -168,6 +168,19 @@ export interface ModelVersionDependency {
   role: string
 }
 
+export interface Presets {
+  created_at: string
+  deleted_at: string | null
+  description: string | null
+  favorite: Generated<number>
+  id: string
+  name: string
+  payload_json: string
+  tags_json: Generated<string>
+  updated_at: string
+  workflow_type: string
+}
+
 export interface ProjectAcceptedResultIndex {
   accepted_at: string
   actual_seed: number
@@ -241,6 +254,7 @@ export interface DB {
   model_resource: ModelResource
   model_resource_version: ModelResourceVersion
   model_version_dependency: ModelVersionDependency
+  presets: Presets
   project_accepted_result_index: ProjectAcceptedResultIndex
   project_index: ProjectIndex
   project_workspace: ProjectWorkspace

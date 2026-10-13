@@ -63,6 +63,9 @@ import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelPreviewCache } from './models/model-preview-cache.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
+import { registerPresetIpc } from './presets/preset-ipc.js'
+import { PresetRepository } from './presets/preset-repository.js'
+import { PresetService } from './presets/preset-service.js'
 import {
   parseAcceptedHistoryImageUrl,
   readSavedAcceptedResultImage,
@@ -248,7 +251,15 @@ if (!gotInstanceLock) {
       ensureAppPaths(paths)
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
-      closeDatabase = database.close
+      const presetService = new PresetService(new PresetRepository(database.db), {
+        onCleanupError: () => console.error('Expired preset cleanup could not be completed.'),
+      })
+      const closeStorage = async () => {
+        await presetService.shutdown()
+        await database.close()
+      }
+      closeDatabase = closeStorage
+      await presetService.start()
       const projectRepository = new ProjectIndexRepository(database.db)
       let readGenerationSeed:
         ((projectKey: string, documentId: string) => Promise<number | null>) | null = null
@@ -576,7 +587,7 @@ if (!gotInstanceLock) {
         }
       })
       const appShutdown = new GenerationAppShutdown({
-        closeDatabase: database.close,
+        closeDatabase: closeStorage,
         context: ownedGenerationContext,
         coordinator: generationActions,
         pendingJobs: recoveredGeneration?.queue ?? null,
@@ -906,6 +917,7 @@ if (!gotInstanceLock) {
         })
       }
       const noArgs = (args: unknown[]): boolean => args.length === 0
+      registerPresetIpc(ipcMain, window.webContents, presetService)
       const oneString = (args: unknown[]): boolean =>
         args.length === 1 && typeof args[0] === 'string'
 

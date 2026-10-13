@@ -942,7 +942,10 @@ LoRA для обеих семейств.
 - Довести реальное взаимодействие Model Manager и Project picker: typed
   checkpoint/LoRA/VAE/embedding entry, exact version против Default и возврат
   с refresh каталога проверяются [resource handoff checkpoint](../engineering/phase-2c-resource-handoff-research.md) ниже.
-  Локальные thumbnails installed resources и Preset handoff остаются открытыми.
+  Локальные thumbnails installed resources завершены отдельным
+  [previews checkpoint](../engineering/phase-2c-resource-previews-research.md);
+  missing exact version Close/Escape проверен в
+  [current exit ledger](../engineering/phase-2c-exit-ledger.md). Preset handoff остаётся фазой 3.
   Delayed presentation responses Model Manager отдельно квалифицированы
   [read-ordering checkpoint](../engineering/phase-2c-model-manager-read-research.md):
   opening/request guards и observed job merge сохраняют соседние строки.
@@ -1787,7 +1790,8 @@ Main exposes safe diagnostics, preserves frozen Retry and changes no model polic
 Original installed43 files/identities restored; peak<=14GiB/swap0/1800s.
 Older «next gate» statements below describe historical checkpoints.
 Local installed-resource previews выполнены отдельным [finite срезом](../engineering/phase-2c-resource-previews-research.md).
-Следующий шаг — remaining Phase2C exit checks перед production Presets.
+Текущий [finite exit ledger](../engineering/phase-2c-exit-ledger.md) отделяет
+закрытый generation slice от оставшихся owners фаз 3–5. Следующий шаг — production Presets.
 Broader modes/Advanced/quality/fullMVP/release stay open.
 
 ### Installed Anima image cap32 and selected prefix
@@ -2287,6 +2291,14 @@ PP-004/005/007/008 сохраняют текущие открытые стату
 NoobAI MVP или release gate.
 
 ## Фаза 3. Presets
+
+**Текущий checkpoint:** [production preset storage/API](../engineering/phase-3-preset-storage-research.md).
+Строгий shared payload, SQLite CRUD/duplicate/soft-delete/restore/30-day expiry,
+startup/hourly cleanup и native API реализованы; UI manager/editor, Apply и
+result-to-preset ещё не подключены. PP-006 остаётся «Пока не обещать».
+
+**Следующий срез:** подключить production Preset Manager к этому API, сохраняя
+approved prototype editor, detached create/edit drafts и восстановление Deleted.
 
 **Зависимости:** первый generation slice 2C, production resources и `.igs`.
 

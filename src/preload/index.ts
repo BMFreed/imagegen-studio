@@ -1,4 +1,4 @@
-import { ipcChannels } from '../shared/api.js'
+import { ipcChannels, PRESET_ERROR_CODES } from '../shared/api.js'
 import type {
   ApiError,
   ApiResult,
@@ -6,6 +6,9 @@ import type {
   ModelCatalogItem,
   ModelImportPreview,
   ModelInstallJobView,
+  PresetApiError,
+  PresetApiResult,
+  PresetRecord,
   ProjectAcceptedResultView,
   ProjectCandidateExportResult,
   ProjectCloseImpact,
@@ -20,6 +23,7 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { isPresetRecord } from '../shared/presets/preset-schema.js'
 import { isAcceptedResultHistoryPage } from '../shared/projects/accepted-result-history.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
@@ -212,6 +216,53 @@ async function invokeModel<T>(
 
 function isVoid(value: unknown): value is void {
   return value === undefined
+}
+
+const presetErrorCodes = new Set<string>(PRESET_ERROR_CODES)
+
+function isPresetApiError(value: unknown): value is PresetApiError {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    typeof value.code === 'string' &&
+    presetErrorCodes.has(value.code) &&
+    typeof value.message === 'string' &&
+    value.message.trim().length > 0 &&
+    new TextEncoder().encode(value.message).byteLength <= IGS_SAFETY_CEILINGS.titleBytes
+  )
+}
+
+async function invokePreset<T>(
+  channel: (typeof ipcChannels.presets)[keyof typeof ipcChannels.presets],
+  args: unknown[],
+  isValue: (value: unknown) => value is T,
+): Promise<PresetApiResult<T>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(channel, ...args)
+    if (isRecord(result) && Object.keys(result).length === 2) {
+      if (result.ok === true && isValue(result.value)) {
+        return { ok: true, value: result.value }
+      }
+      if (result.ok === false && isPresetApiError(result.error)) {
+        return { error: { code: result.error.code, message: result.error.message }, ok: false }
+      }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: 'The preset service returned an invalid response.',
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: 'The application could not reach the preset service.',
+      },
+      ok: false,
+    }
+  }
 }
 
 function isProjectCloseImpact(value: unknown): value is ProjectCloseImpact {
@@ -632,6 +683,68 @@ const api: StudioApi = {
         ipcChannels.models.startInstall,
         [previewId, fileId, acceptedAnimaLicense],
         isModelInstallJob,
+      ),
+  },
+  presets: {
+    create: (definition) =>
+      invokePreset(
+        ipcChannels.presets.create,
+        [definition],
+        (value): value is PresetRecord => isPresetRecord(value) && value.deletedAt === null,
+      ),
+    duplicate: (id, name) =>
+      invokePreset(
+        ipcChannels.presets.duplicate,
+        [id, name],
+        (value): value is PresetRecord =>
+          isPresetRecord(value) && value.id !== id && value.deletedAt === null,
+      ),
+    get: (id, options) => {
+      const includeDeleted = options?.includeDeleted === true
+      return invokePreset(
+        ipcChannels.presets.get,
+        [id, options ?? {}],
+        (value): value is PresetRecord | null =>
+          value === null ||
+          (isPresetRecord(value) &&
+            value.id === id &&
+            (includeDeleted || value.deletedAt === null)),
+      )
+    },
+    list: (options) => {
+      const deleted = options?.deleted === true
+      return invokePreset(
+        ipcChannels.presets.list,
+        [options ?? {}],
+        (value): value is PresetRecord[] =>
+          Array.isArray(value) &&
+          value.every(
+            (record: unknown) =>
+              isPresetRecord(record) &&
+              (deleted ? record.deletedAt !== null : record.deletedAt === null),
+          ),
+      )
+    },
+    restore: (id) =>
+      invokePreset(
+        ipcChannels.presets.restore,
+        [id],
+        (value): value is PresetRecord =>
+          isPresetRecord(value) && value.id === id && value.deletedAt === null,
+      ),
+    softDelete: (id) =>
+      invokePreset(
+        ipcChannels.presets.softDelete,
+        [id],
+        (value): value is PresetRecord =>
+          isPresetRecord(value) && value.id === id && value.deletedAt !== null,
+      ),
+    update: (id, definition) =>
+      invokePreset(
+        ipcChannels.presets.update,
+        [id, definition],
+        (value): value is PresetRecord =>
+          isPresetRecord(value) && value.id === id && value.deletedAt === null,
       ),
   },
   projects: {

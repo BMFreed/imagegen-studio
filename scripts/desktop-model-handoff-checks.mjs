@@ -17,6 +17,243 @@ import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const typeLabels = { checkpoint: 'Checkpoints', embedding: 'Embeddings', lora: 'LoRA', vae: 'VAE' }
 
+/**
+ * A saved exact LoRA version disappears from the genuine Main catalog while its sibling stays
+ * installed. The caller controls only the isolated catalog file row, never the model bytes or the
+ * renderer/API response. Preparing/clearing one owned prompt-history entry is fixture setup and
+ * cleanup; manager navigation itself must preserve that entry, the draft, cursor and saved
+ * package.
+ */
+export async function checkMissingExactVersionHandoff({
+  window,
+  projectId,
+  projectTitle,
+  packagePath,
+  exact,
+  neighbor,
+  withdrawExactVersion,
+  restoreExactVersion,
+  record,
+  screenshot,
+}) {
+  const region = window.getByRole('region', { name: `Project ${projectTitle}`, exact: true })
+  const manager = window.getByRole('dialog', { name: 'Model Manager', exact: true })
+  const details = manager.getByRole('complementary', { name: 'Model details', exact: true })
+  const opener = region.getByRole('button', {
+    name: `Open ${exact.name} in Models`,
+    exact: true,
+  })
+  const positive = region.getByRole('textbox', { name: 'Positive prompt', exact: true })
+  const history = region.getByRole('toolbar', { name: 'Project history', exact: true })
+  const loras = region.getByRole('region', { name: 'LoRAs', exact: true })
+  const missingMessage =
+    'Exact version unavailable. Restore it in Model Manager, or remove this LoRA.'
+  const savedBytes = readFileSync(packagePath)
+  const savedDraft = (await readIgsPackage(packagePath)).project.generationDraft
+  let withdrawn = false
+
+  async function api(scope, method, ...args) {
+    const result = await window.evaluate(
+      ({ scope, method, args }) => window.api[scope][method](...args),
+      { scope, method, args },
+    )
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.value
+  }
+  async function tab() {
+    const result = await api('projects', 'open', projectId)
+    assert.equal(result.kind, 'opened')
+    return result.tab
+  }
+  const projectState = (value) => ({
+    acceptedResults: value.acceptedResults,
+    canRedo: value.canRedo,
+    canUndo: value.canUndo,
+    dirty: value.dirty,
+    documentId: value.documentId,
+    generationDraft: value.generationDraft,
+    lastActualSeedSnapshot: value.lastActualSeedSnapshot,
+    layers: value.layers,
+    primaryBbox: value.primaryBbox,
+  })
+  async function seed() {
+    const result = await api('projects', 'listGenerationResults', projectId)
+    assert.equal(Object.hasOwn(result, 'lastActualSeed'), true)
+    return result.lastActualSeed
+  }
+  async function catalogResource(absent) {
+    const catalog = await api('models', 'getCatalog')
+    const resource = catalog.find((entry) => entry.id === exact.resourceId)
+    assert.ok(resource, 'The selected resource must remain in the actual Main catalog')
+    assert.equal(resource.defaultVersionId, neighbor.versionId)
+    const other = resource.versions.find((version) => version.id === neighbor.versionId)
+    assert.ok(other, 'The sibling must stay installed instead of making the whole resource absent')
+    assert.equal(other.fileStatus, 'ready')
+    assert.equal(other.previewDataUrl, neighbor.previewDataUrl)
+    assert.equal(other.thumbnailDataUrl, neighbor.thumbnailDataUrl)
+    assert.equal(resource.previewDataUrl, neighbor.previewDataUrl)
+    assert.equal(resource.thumbnailDataUrl, neighbor.thumbnailDataUrl)
+    const selected = resource.versions.find((version) => version.id === exact.versionId)
+    if (absent) assert.equal(selected, undefined)
+    else {
+      assert.ok(selected)
+      assert.equal(selected.fileStatus, 'ready')
+      assert.equal(selected.previewDataUrl, exact.previewDataUrl)
+    }
+    return resource
+  }
+  async function refresh(absent) {
+    const button = region.getByRole('button', { name: 'Refresh models', exact: true })
+    await expect(button).toBeEnabled()
+    await button.click()
+    // The UI refresh is the real renderer/preload/Main operation, not a synthetic catalog event.
+    await window.evaluate(() => new Promise(requestAnimationFrame))
+    await expect(button).toBeEnabled()
+    await catalogResource(absent)
+    if (absent) await expect(loras).toContainText(missingMessage)
+    else await expect(loras).not.toContainText(missingMessage)
+  }
+  async function decodeImage(locator, expected) {
+    await expect(locator).toHaveAttribute('src', expected)
+    await expect
+      .poll(() => locator.evaluate((image) => image.complete && image.naturalWidth > 0))
+      .toBe(true)
+  }
+  const baseline = projectState(await tab())
+  assert.equal(baseline.dirty, false)
+  assert.equal(baseline.canUndo, false)
+  assert.equal(baseline.canRedo, false)
+  assert.deepEqual(baseline.generationDraft, savedDraft)
+  assert.ok(
+    baseline.generationDraft.loras.some(
+      (lora) =>
+        lora.resource.localModelId === exact.resourceId &&
+        lora.resource.localVersionId === exact.versionId,
+    ),
+    'The exact missing-version subject must already be saved in the Project',
+  )
+  assert.notEqual(exact.versionId, neighbor.versionId)
+  assert.notEqual(exact.previewDataUrl, neighbor.previewDataUrl)
+  const seedBefore = await seed()
+  const authoredText = `${baseline.generationDraft.positivePrompt.text} missing-version handoff edit`
+  await positive.fill(authoredText)
+  await positive.press('Tab')
+  await expect
+    .poll(async () => (await tab()).generationDraft.positivePrompt.text)
+    .toBe(authoredText)
+  const authored = projectState(await tab())
+  assert.equal(authored.dirty, true)
+  assert.equal(authored.canUndo, true)
+  assert.equal(authored.canRedo, false)
+  record('Missing-version fixture prepares one real unsaved prompt-history entry', {
+    lastActualSeed: seedBefore,
+    savedPackageSha256: digest(savedBytes),
+    selectedVersionId: exact.versionId,
+    neighborVersionId: neighbor.versionId,
+  })
+
+  async function preserved() {
+    assert.deepEqual(projectState(await tab()), authored)
+    assert.equal(await seed(), seedBefore)
+    assert.equal(readFileSync(packagePath).equals(savedBytes), true, 'The saved .igs bytes changed')
+    assert.deepEqual((await readIgsPackage(packagePath)).project.generationDraft, savedDraft)
+    await expect(window.getByRole('tab', { name: projectTitle, exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+  }
+  async function roundtrip(label, absent, close) {
+    await opener.focus()
+    await opener.click()
+    await expect(manager).toBeVisible()
+    await expect(details.locator('h2')).toHaveText(exact.name)
+    const otherRow = manager.locator('.version-row').filter({ hasText: neighbor.versionName })
+    await expect(otherRow).toHaveCount(1)
+    await expect(otherRow).toContainText('Default')
+    const resourceRow = manager.locator('.resource-row').filter({ hasText: exact.name })
+    await decodeImage(resourceRow.locator('img'), neighbor.thumbnailDataUrl)
+    if (absent) {
+      await expect(manager).toContainText('Project version unavailable')
+      await expect(manager).toContainText(
+        `${exact.versionName} is not installed for ${exact.name}. The Project selection is unchanged.`,
+      )
+      await expect(manager).not.toContainText('Project model unavailable')
+      await expect(manager.locator('.version-row--project')).toHaveCount(0)
+      await expect(details.locator('.large-preview img')).toHaveCount(0)
+      await expect(details.locator('.metadata-list dd')).toHaveText(['—', '—'])
+      await expect(details.locator('h3').filter({ hasText: /^Trigger Words$/ })).toHaveCount(0)
+      await expect(details.locator('.model-card .detail-tags')).not.toContainText(
+        neighbor.baseModelFamily,
+      )
+    } else {
+      await expect(manager).not.toContainText('Project version unavailable')
+      const selected = manager.locator('.version-row--project')
+      await expect(selected).toHaveCount(1)
+      await expect(selected).toContainText(exact.versionName)
+      await expect(selected).toContainText('Selected in Project')
+      await expect(details.locator('.metadata-list dd')).toHaveText([
+        exact.versionName,
+        exact.fileName,
+      ])
+      await decodeImage(details.locator('.large-preview img'), exact.previewDataUrl)
+      await expect(details.locator('h3').filter({ hasText: /^Trigger Words$/ })).toHaveCount(1)
+      for (const word of exact.trainedWords) await expect(details).toContainText(word)
+    }
+    await preserved()
+    await screenshot(label, manager)
+    if (close === 'escape') await manager.press('Escape')
+    else await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+    await expect(manager).toHaveCount(0)
+    await expect(opener).toBeFocused()
+    await refresh(absent)
+    await preserved()
+    record(label, { absentExactVersion: absent, close, lastActualSeed: seedBefore })
+  }
+  try {
+    await catalogResource(false)
+    await roundtrip(
+      'Present exact B shows B details while default A stays available',
+      false,
+      'button',
+    )
+    // This caller-controlled inventory change is a fixture, not the unsupported UI delete flow.
+    withdrawn = true
+    await withdrawExactVersion()
+    await catalogResource(true)
+    await refresh(true)
+    await roundtrip('Absent exact B keeps blank details and warning on Close', true, 'button')
+    await roundtrip('Absent exact B keeps blank details and warning on Escape', true, 'escape')
+    await history.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect.poll(async () => (await tab()).generationDraft).toEqual(baseline.generationDraft)
+    assert.equal((await tab()).dirty, false)
+    assert.equal((await tab()).canRedo, true)
+    await history.getByRole('button', { name: 'Redo', exact: true }).click()
+    await expect.poll(async () => (await tab()).generationDraft).toEqual(authored.generationDraft)
+    await preserved()
+    record('Absent-version manager roundtrips preserve the real last Undo/Redo entry')
+    await restoreExactVersion()
+    withdrawn = false
+    await catalogResource(false)
+    await refresh(false)
+    await roundtrip(
+      'Restored exact B returns B details without replacing its Project reference',
+      false,
+      'escape',
+    )
+    await history.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect.poll(async () => (await tab()).generationDraft).toEqual(baseline.generationDraft)
+    assert.equal((await tab()).dirty, false)
+    // Only our controlled test-history entry is discarded; no Save or resource selection occurs.
+    await api('projects', 'clearHistory', projectId)
+    assert.deepEqual(projectState(await tab()), baseline)
+    assert.equal(await seed(), seedBefore)
+    assert.equal(readFileSync(packagePath).equals(savedBytes), true)
+    record('Fixture cleanup restores the saved draft/history and unchanged package without Save')
+  } finally {
+    if (withdrawn) await restoreExactVersion()
+  }
+}
+
 export async function checkModelResourceHandoff({
   application,
   checkpointVersions: fixture,

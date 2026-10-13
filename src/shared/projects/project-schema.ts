@@ -534,6 +534,12 @@ const IgsManifestV1Schema = v.strictObject({
   schemaVersion: v.literal(IGS_SCHEMA_VERSION),
 })
 
+export {
+  LoraSchema as GenerationLoraSchema,
+  PromptSchema as GenerationPromptSchema,
+  ExactResourceRefSchema as GenerationResourceRefSchema,
+}
+
 export type IgsRectV1 = v.InferOutput<typeof RectSchema>
 export type IgsPreviewRectV1 = v.InferOutput<typeof PreviewRectSchema>
 export type IgsMemberRefV1 = v.InferOutput<typeof MemberRefSchema>

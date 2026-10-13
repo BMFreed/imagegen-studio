@@ -1,3 +1,4 @@
+import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
 import type {
   AcceptedResultHistoryCursor,
   AcceptedResultHistoryPage,
@@ -29,6 +30,14 @@ import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
 export type {
+  PresetDefinition,
+  PresetPayload,
+  PresetRecord,
+  PresetSectionKey,
+  PresetWorkflow,
+} from './presets/preset-schema.js'
+
+export type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
   ProjectGenerationActionState,
@@ -54,6 +63,15 @@ export const ipcChannels = {
     setNoiseProfile: 'models:set-noise-profile',
     setPredictionType: 'models:set-prediction-type',
     startInstall: 'models:start-install',
+  },
+  presets: {
+    create: 'presets:create',
+    duplicate: 'presets:duplicate',
+    get: 'presets:get',
+    list: 'presets:list',
+    restore: 'presets:restore',
+    softDelete: 'presets:soft-delete',
+    update: 'presets:update',
   },
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
@@ -129,6 +147,44 @@ export interface ApiError {
 }
 
 export type ApiResult<T> = { error: ApiError; ok: false } | { ok: true; value: T }
+
+export const PRESET_ERROR_CODES = [
+  'IPC_INVALID_CALLER',
+  'PRESET_CONFLICT',
+  'PRESET_DELETED',
+  'PRESET_EXPIRED',
+  'PRESET_INPUT_INVALID',
+  'PRESET_NOT_DELETED',
+  'PRESET_NOT_FOUND',
+  'PRESET_STORAGE_FAILED',
+  'PRESET_STORAGE_INVALID',
+  'PRESET_UNAVAILABLE',
+] as const
+
+export type PresetErrorCode = (typeof PRESET_ERROR_CODES)[number]
+export interface PresetApiError {
+  code: 'IPC_INVALID_RESPONSE' | 'IPC_UNAVAILABLE' | PresetErrorCode
+  message: string
+}
+export type PresetApiResult<T> = { error: PresetApiError; ok: false } | { ok: true; value: T }
+
+export interface PresetGetOptions {
+  includeDeleted?: boolean
+}
+export interface PresetListOptions {
+  deleted?: boolean
+}
+
+/** Storage operations only. Apply and result-to-preset retain their own Project boundaries. */
+export interface PresetApi {
+  create: (definition: PresetDefinition) => Promise<PresetApiResult<PresetRecord>>
+  duplicate: (id: string, name?: string) => Promise<PresetApiResult<PresetRecord>>
+  get: (id: string, options?: PresetGetOptions) => Promise<PresetApiResult<PresetRecord | null>>
+  list: (options?: PresetListOptions) => Promise<PresetApiResult<PresetRecord[]>>
+  restore: (id: string) => Promise<PresetApiResult<PresetRecord>>
+  softDelete: (id: string) => Promise<PresetApiResult<PresetRecord>>
+  update: (id: string, definition: PresetDefinition) => Promise<PresetApiResult<PresetRecord>>
+}
 
 export interface ProjectSummary {
   bbox: Pick<IgsRectV1, 'height' | 'width'> | null
@@ -586,6 +642,7 @@ export interface RuntimeApi {
 
 export interface StudioApi {
   models: ModelApi
+  presets: PresetApi
   projects: ProjectApi
   runtime: RuntimeApi
 }

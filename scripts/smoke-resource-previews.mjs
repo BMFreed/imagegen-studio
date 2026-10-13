@@ -3,7 +3,7 @@
  * Checkpoint/LoRA bytes and remote image responses are independently prepared fixtures; no ML.
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
@@ -29,6 +29,7 @@ import { developmentImageWorkerLocation } from '../src/main/projects/development
 import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
 import { ProjectTargetInspectionOwner } from '../src/main/projects/project-target-inspection-owner.ts'
+import { checkMissingExactVersionHandoff } from './desktop-model-handoff-checks.mjs'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
   boundQualificationProcess,
@@ -74,10 +75,13 @@ const report = {
   networkObserverControls: [],
   sourceSha256: hashFiles([
     'scripts/smoke-resource-previews.mjs',
+    'scripts/desktop-model-handoff-checks.mjs',
     'scripts/native-smoke-window.mjs',
     'scripts/qualification-resource-limits.mjs',
     'src/main/models/model-preview-cache.ts',
     'src/main/models/model-service.ts',
+    'src/renderer/components/ModelManager.vue',
+    'src/renderer/components/ProjectLoraStack.vue',
     'src/main/projects/worker-client.ts',
     'worker-python/src/imagegen_worker/resource_previews.py',
     'worker-python/src/imagegen_worker/protocol.py',
@@ -92,9 +96,9 @@ const report = {
   ]),
   boundary: {
     actual:
-      'Checkout CPU image worker → shared CPU owner → real bounded disk cache; built Electron Main/SQLite/catalog → preload → Project exact-version thumbnails, Added state, manager exact-version preview/default controls, real explicit .igs Save/readback and offline restart.',
+      'Checkout CPU image worker → shared CPU owner → real bounded disk cache; built Electron Main/SQLite/catalog → preload → Project exact-version thumbnails, Added state, manager exact-version preview/default controls, absent exact-version handoff, real prompt Undo/Redo, explicit .igs Save/readback and offline restart.',
     fixtures:
-      'Two independent 160×80 PNG images with two colors/alpha; their remote data URL responses; four tiny catalog-only checkpoint/LoRA files. No actual model parsing, inference, CUDA, installed runtime qualification or release delivery.',
+      'Two independent 160×80 PNG images with two colors/alpha; their remote data URL responses; four tiny catalog-only checkpoint/LoRA files and a document-scoped SQLite seed-cursor fixture of 0. One exact LoRA local_model_file row is withdrawn/restored to remove that version from the actual Main catalog while leaving the file bytes and sibling intact. One owned prompt-history edit is prepared/cleared through real Project actions. No UI resource deletion, actual generation completion, model parsing, inference, CUDA, installed runtime qualification or release delivery.',
     browser:
       'Native _electron test is required for actual preload/IPC and isolated XDG data; an HTTP browser cannot exercise this boundary.',
     limits:
@@ -294,6 +298,23 @@ async function prepareFixture() {
     },
   })
   await session.save()
+  const cursorDatabase = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  try {
+    // Fixture setup only: the cursor read/preservation is real, but no inference produced this 0.
+    await cursorDatabase.db
+      .insertInto('generation_seed_cursor')
+      .values({
+        actual_seed: 0,
+        candidate_id: randomUUID(),
+        completion_order: 1,
+        document_id: session.document.documentId,
+        local_project_key: session.localRecoveryKey,
+        updated_at: new Date().toISOString(),
+      })
+      .execute()
+  } finally {
+    await cursorDatabase.close()
+  }
   return {
     checkpointA,
     checkpointB,
@@ -634,6 +655,102 @@ try {
     'Offline restart with no runtime pointer and CPU adapter disabled loads durable cached images and persisted Added state',
   )
   await offlineManager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+  await expect(offlineManager).toHaveCount(0)
+  await api('models', 'setDefaultVersion', fixture.loraA.resourceId, fixture.loraA.versionId)
+  const handoffResource = (await api('models', 'getCatalog')).find(
+    (resource) => resource.id === fixture.loraB.resourceId,
+  )
+  assert.ok(handoffResource)
+  const exactVersion = handoffResource.versions.find(
+    (version) => version.id === fixture.loraB.versionId,
+  )
+  const neighborVersion = handoffResource.versions.find(
+    (version) => version.id === fixture.loraA.versionId,
+  )
+  assert.ok(exactVersion && neighborVersion)
+  assert.equal(
+    (await api('projects', 'listGenerationResults', fixture.projectId)).lastActualSeed,
+    0,
+  )
+  const inventoryDatabase = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  let withdrawnFile = null
+  const modelFileHashes = hashFiles(
+    (
+      await inventoryDatabase.db
+        .selectFrom('local_model_file')
+        .select('managed_path')
+        .orderBy('managed_path')
+        .execute()
+    ).map((file) => file.managed_path),
+  )
+  async function restoreExactVersion() {
+    if (!withdrawnFile) return
+    await inventoryDatabase.db.transaction().execute(async (transaction) => {
+      const existing = await transaction
+        .selectFrom('local_model_file')
+        .selectAll()
+        .where('resource_version_id', '=', fixture.loraB.versionId)
+        .executeTakeFirst()
+      if (existing) assert.deepEqual(existing, withdrawnFile)
+      else await transaction.insertInto('local_model_file').values(withdrawnFile).execute()
+    })
+    assert.deepEqual(hashFiles(Object.keys(modelFileHashes)), modelFileHashes)
+    withdrawnFile = null
+  }
+  try {
+    await checkMissingExactVersionHandoff({
+      window,
+      projectId: fixture.projectId,
+      projectTitle: fixture.title,
+      packagePath: fixture.filePath,
+      exact: {
+        resourceId: handoffResource.id,
+        versionId: exactVersion.id,
+        name: handoffResource.name,
+        versionName: exactVersion.name,
+        previewDataUrl: exactVersion.previewDataUrl,
+        fileName: exactVersion.fileName,
+        trainedWords: exactVersion.trainedWords,
+      },
+      neighbor: {
+        versionId: neighborVersion.id,
+        versionName: neighborVersion.name,
+        previewDataUrl: neighborVersion.previewDataUrl,
+        thumbnailDataUrl: neighborVersion.thumbnailDataUrl,
+        baseModelFamily: neighborVersion.baseModelFamily,
+      },
+      withdrawExactVersion: async () => {
+        await inventoryDatabase.db.transaction().execute(async (transaction) => {
+          assert.equal(withdrawnFile, null)
+          withdrawnFile = await transaction
+            .selectFrom('local_model_file')
+            .selectAll()
+            .where('resource_version_id', '=', fixture.loraB.versionId)
+            .executeTakeFirstOrThrow()
+          const deleted = await transaction
+            .deleteFrom('local_model_file')
+            .where('id', '=', withdrawnFile.id)
+            .where('resource_version_id', '=', fixture.loraB.versionId)
+            .executeTakeFirstOrThrow()
+          assert.equal(deleted.numDeletedRows, 1n)
+        })
+        assert.deepEqual(hashFiles(Object.keys(modelFileHashes)), modelFileHashes)
+      },
+      restoreExactVersion,
+      record: check,
+      screenshot: (label, locator) => screenshot(label, locator, 1380, 900),
+    })
+    assert.deepEqual(hashFiles(Object.keys(modelFileHashes)), modelFileHashes)
+    check(
+      'Missing-version fixture restores its exact catalog row and preserves all four model files',
+    )
+  } finally {
+    try {
+      await restoreExactVersion()
+    } finally {
+      await inventoryDatabase.close()
+    }
+  }
   await closeNative('offline-restart')
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.nativeClosures.length, 2)
@@ -655,6 +772,15 @@ try {
 } finally {
   if (application) {
     try {
+      if (window && report.outcome === 'failed' && fixture?.projectId) {
+        // The failed assertion may leave our controlled prompt edit dirty. Discard only
+        // this isolated fixture tab before app.quit, which otherwise awaits a user dialog.
+        const discarded = await window.evaluate(
+          (id) => window.api.projects.discardAndClose(id, true),
+          fixture.projectId,
+        )
+        assert.equal(discarded.ok, true, JSON.stringify(discarded))
+      }
       await closeNative('failure-cleanup')
     } catch (error) {
       report.cleanupFailure = { message: error.message, stack: error.stack }
